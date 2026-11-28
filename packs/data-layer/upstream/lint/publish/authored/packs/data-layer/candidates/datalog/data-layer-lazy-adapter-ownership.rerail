@@ -101,7 +101,7 @@ out_scope(d) :- doc(d, p, _), glob("**/node_modules/**", p).
 out_scope(d) :- doc(d, p, _), glob("**/tmp/**", p).
 out_scope(d) :- doc(d, p, _), glob("**/browser_build/**", p).
 tape_syntax_error(d) :- syntax_error(d).
-violation("data-layer-lazy-adapter-ownership", "invalid-source", "LAO000", p, l) :- node(_, n, "module", _, _), node(d, n, _, _, _), in_scope(d), syntax_error(d), !out_scope(d), doc(d, p, _), line(n, l).
+violation("data-layer-lazy-adapter-ownership", "invalid-source", "LAO000", p, l) :- node(_, n, "module", _, _), node(d, n, _, _, _), in_scope(d), syntax_error(d), !out_scope(d), doc(d, p, _), node_line_number(n, l).
 lao_doc(d) :- doc(d, _, _), in_scope(d), !out_scope(d), !tape_syntax_error(d).
 lao_fn(d, f, nm, gp, rs) :- lao_doc(d), node(d, f, "function_definition", _, _), field(f, "name", ni), text(ni, nm), child(w, f, _), node(d, w, "decorated_definition", rs, _), child(gp, w, _).
 lao_fn(d, f, nm, p, rs) :- lao_doc(d), node(d, f, "function_definition", rs, _), field(f, "name", ni), text(ni, nm), child(p, f, _), !node(d, p, "decorated_definition", _, _).
@@ -157,4 +157,4 @@ lao_issue(d, f, "LAO003") :- lao_legacy(d, f, _, _), lao_owned(d, f, _, c, _, _)
 lao_issue(d, f, "LAO004") :- lao_pure(f), lao_owned(d, f, _, _, _, _), lao_call(f, callee, _), lao_terminal(callee).
 lao_issue(d, f, "LAO005") :- lao_owned(d, f, _, _, _, _), !lao_is_legacy(f), !lao_external(f), !lao_pure(f), lao_eager(f).
 lao_issue(d, f, "LAO006") :- lao_owned(d, f, _, _, _, _), op(f, "async"), !lao_is_legacy(f), !lao_external(f), lao_abstract_bad(f), lao_has_tx(f), !lao_awaits(f).
-violation("data-layer-lazy-adapter-ownership", "adapter-ownership", code, p, l) :- lao_issue(d, f, code), doc(d, p, _), line(f, l).
+violation("data-layer-lazy-adapter-ownership", "adapter-ownership", code, p, l) :- lao_issue(d, f, code), doc(d, p, _), node_line_number(f, l).

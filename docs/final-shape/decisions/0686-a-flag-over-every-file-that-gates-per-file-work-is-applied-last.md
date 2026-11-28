@@ -33,7 +33,7 @@ A **flag** is a derived relation the split finds cross-file, with no column (`pl
 document's id (`plp_docin(d)`: its placing column), and read by a rule the split leaves cross-file.
 
 Its **cone** is the relations that are per-file once the flag is placeless and are not before, reached from the flag's
-readers through each other (`Program::without`, as a stage's exports are read in 0675). The flag is applied last when:
+readers through each other (`Program::without`, as a stage's exports are read in 0709). The flag is applied last when:
 
 - **Each read is at the reader's own document.** A one-column flag's argument in every rule of the cone is a variable
   that a positive read of another relation holds at a column placing its row's document (`docof(f, d)`, `doc(d, …)`).
@@ -65,7 +65,7 @@ The rewrite (`FileLocal::flags_applied_last`, `flags_last.rs`):
   copy that reads another flag is applied in turn. A relation a round made the cross-file part's choice is no cone's
   again. Four rounds at most.
 
-The run applies it before staging (0675), so a stage sees the copies (`phases::flags_last`, `RERAIL_FLAGS_LAST=off`
+The run applies it before staging (0709), so a stage sees the copies (`phases::flags_last`, `RERAIL_FLAGS_LAST=off`
 leaves it out). A phase's own run and the constants' are left as they are, as with staging.
 
 The cost is the cone derived for every file rather than for the candidate files alone, once per value. Under the
@@ -106,7 +106,7 @@ which holds it cross-file whatever the flag.
 ## Results
 
 - The position report (every data-layer policy over the 334-file corpus, every pack over a small corpus, one Linux
-  host, every run completed): 32 flagged rules after step 2 (0675), 31 now. No rule is newly flagged.
+  host, every run completed): 32 flagged rules after step 2 (0709), 31 now. No rule is newly flagged.
   - swallowed-exceptions' `ignored_at` is per-file (§2).
   - pure-lazy-runtime-purity's flag `plp_docin` is applied last: `plp_in_rec`, `plp_fq`, the `__all__` reads and
     `rr_agg52` are derived per file under each value. Its rules still flagged are each held by another cause, now
@@ -115,11 +115,11 @@ which holds it cross-file whatever the flag.
     allowlist with no place (§2). They and `plp_found` and `rr_ctx58` are held by `plp_xq`, PLP-007's resolution
     through re-exports. It reads the flag at the document of another module (`doc(d, _, pm), plp_docin(d)`), so it
     is cross-file, as resolution is.
-  - Django's `p34_rr_not2`, which the staging refused on the way (0675, Left open), is not flagged: Django's batches
+  - Django's `p34_rr_not2`, which the staging refused on the way (0709, Left open), is not flagged: Django's batches
     stage.
 - The split's 50 tests, the 33 pack split tests, and `rerail-logic`, `rerail-typing`, `rerail-rr-root`,
   `tests_logic`, `tests_corpus`, `tests_rr`, `tests_lang`, `tests_findings` and the device crate's tests pass (1,496).
-  Two of the device crate's GPU tests fail on a Linux host, now on every run, and at 0675's commit too:
+  Two of the device crate's GPU tests fail on a Linux host, now on every run, and at 0709's commit too:
   `views_made_on_the_device_are_the_hosts_rows` (CUDA error 716, a misaligned address) and
   `an_index_built_twice_that_a_batch_took_is_kept` (a launch outside any evaluation, past the launch budget).
   Neither reads the split.
@@ -129,7 +129,7 @@ which holds it cross-file whatever the flag.
 - purity-calls' `pc_tgt` (a call joined to its target in another file, undeclared) holds pure-lazy-runtime-purity's
   analysis cross-file: step 4 (E), read against the original linter. Once it is declared, `plp_colored` is a
   coloring across files, cross-file as meant, and what reads it follows.
-- PLP-007's `plp_xq` reads the flag at another module's document. Staging it (0675) needs the flag's cone in its
+- PLP-007's `plp_xq` reads the flag at another module's document. Staging it (0709) needs the flag's cone in its
   stage: step 4, with `pc_tgt`.
 - The cost of a cone derived for every file, rather than for the candidate files alone, is not measured. pure-lazy's
   cone is small until `pc_tgt` is settled.

@@ -5,7 +5,7 @@
 .scope include "**/*.ts", "**/*.tsx", "**/*.mts", "**/*.cts", "**/*.js", "**/*.jsx", "**/*.mjs", "**/*.cjs"
 
 #include "tsx/eslint-a-control.rerail"
-//   deparen, token_text
+//   deparen, node_tokens_text
 
 // ESLint's no-duplicate-case: a `case` whose test is token for token the test of an earlier case of the same
 // switch. Spacing, comments and outer parentheses do not count.
@@ -21,5 +21,5 @@ no_duplicate_case(c) :- test(c, s), precedes(p, c), test(p, s).
 
 // test(c, s): case c's test, as tokens.
 .decl test(c: node, s: symbol)
-test(c, s) :- kind(c, "switch_case"), field(c, "value", v), deparen(v, x), token_text(x, s).
-token_text_ask(x) :- kind(c, "switch_case"), field(c, "value", v), deparen(v, x).
+test(c, s) :- kind(c, "switch_case"), field(c, "value", v), deparen(v, x), node_tokens_text(x, s).
+node_tokens_text_ask(x) :- kind(c, "switch_case"), field(c, "value", v), deparen(v, x).

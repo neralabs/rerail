@@ -36,7 +36,7 @@ use std::sync::Arc;
 
 /// The pointer's schema: bumped when its meaning changes (105: the programs as their text, decision 0155; 106: the
 /// decisions preparing made, decision 0269; 107: the memo's strata's leaves, each set of them once; 108: a relation's columns in one row; 109: the views the split
-/// covers, decision 0672). It names the shipped pointer (`shipped_key`).
+/// covers, decision 0708). It names the shipped pointer (`shipped_key`).
 const POINTER: u32 = 109;
 
 /// The pointer's plan: the engine build, the grammar version and `key` (the program's texts, the dialect and the
@@ -525,7 +525,7 @@ fn invalid(e: impl std::fmt::Display) -> StoreError {
 const PROGRAM: &str = "prepared_program";
 
 fn hex(bytes: &[u8]) -> String {
-    bytes.iter().map(|b| format!("{b:02x}")).collect()
+    rerail_prof::code_rule_dsl::prof::lower_hex(bytes)
 }
 
 fn unhex(text: &str) -> Option<[u8; 32]> {

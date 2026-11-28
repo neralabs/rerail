@@ -28,13 +28,13 @@ up006_string_content(n) :- (kind(n, "string") ; kind(n, "concatenated_string")),
 
 // direct_ref(n): the JSON util `direct-ref`, used where the JSON says `matches: "direct-ref"`
 //   T: metavariable this relation binds for the calling rule
-.decl up006_direct_ref(n: node, t: loc)
+.decl up006_direct_ref(n: node, t: node)
 up006_direct_ref(n, T) :- up006_string_content(n), parsed(n, "annotation", r1), within(c2, r1),
     up006_generic_ref(c2), T = c2.
 
 // nested_ref(n): the JSON util `nested-ref`, used where the JSON says `matches: "nested-ref"`
 //   T: metavariable this relation binds for the calling rule
-.decl up006_nested_ref(n: node, t: loc)
+.decl up006_nested_ref(n: node, t: node)
 up006_nested_ref(n, T) :- up006_string_content(n), parsed(n, "annotation", r1), within(c2, r1),
     up006_alt_2(c2, T).
 
@@ -80,7 +80,7 @@ up006_in_future_annotation(n) :- up006_future_annotations(n), up006_up_1(n, p1).
 // Each rule is one way a JSON `rule` can match.
 // Columns after `at` are the metavariables the JSON's message, anchor or `each` names: one finding per distinct row.
 // `options` carries JSON settings that have no .rerail form yet.
-.violation UP006(at: loc, t: node) "Replace `{t}` with the builtin generic (`list`, `dict`, `set`, `frozenset`, `tuple`, `type`) or `collections.deque` / `collections.defaultdict`, and drop the typing import if unused."
+.violation UP006(at: node, t: node) "Replace `{t}` with the builtin generic (`list`, `dict`, `set`, `frozenset`, `tuple`, `type`) or `collections.deque` / `collections.defaultdict`, and drop the typing import if unused."
     suppress noqa "UP006"
 UP006(T, n) :- up006_generic_ref(n), node(_, n, _, _, _), T = n.
 UP006(T, n) :- up006_direct_ref(n, T).
@@ -90,7 +90,7 @@ UP006(T, n) :- up006_nested_ref(n, T).
 // Each rule is one way a JSON `rule` can match.
 // Columns after `at` are the metavariables the JSON's message, anchor or `each` names: one finding per distinct row.
 // `options` carries JSON settings that have no .rerail form yet.
-.violation UP006_typing_alias_stub(at: loc, t: node) code "UP006" "Replace `{t}` with the builtin generic (`list`, `dict`, `set`, `frozenset`, `tuple`, `type`) or `collections.deque` / `collections.defaultdict`, and drop the typing import if unused."
+.violation UP006_typing_alias_stub(at: node, t: node) code "UP006" "Replace `{t}` with the builtin generic (`list`, `dict`, `set`, `frozenset`, `tuple`, `type`) or `collections.deque` / `collections.defaultdict`, and drop the typing import if unused."
     suppress noqa "UP006"
 UP006_typing_alias_stub_raw(T, n) :- up006_generic_ref(n), node(_, n, _, _, _), T = n.
 UP006_typing_alias_stub_raw(T, n) :- up006_direct_ref(n, T).
@@ -100,7 +100,7 @@ UP006_typing_alias_stub_raw(T, n) :- up006_nested_ref(n, T).
 // Each rule is one way a JSON `rule` can match.
 // Columns after `at` are the metavariables the JSON's message, anchor or `each` names: one finding per distinct row.
 // `options` carries JSON settings that have no .rerail form yet.
-.violation UP006_typing_alias_future_annotations(at: loc, t: node) code "UP006" "Replace `{t}` with the builtin generic (`list`, `dict`, `set`, `frozenset`, `tuple`, `type`) or `collections.deque` / `collections.defaultdict`, and drop the typing import if unused."
+.violation UP006_typing_alias_future_annotations(at: node, t: node) code "UP006" "Replace `{t}` with the builtin generic (`list`, `dict`, `set`, `frozenset`, `tuple`, `type`) or `collections.deque` / `collections.defaultdict`, and drop the typing import if unused."
     suppress noqa "UP006"
 UP006_typing_alias_future_annotations_raw(T, n) :- up006_alt_4(n, T), up006_in_future_annotation(n).
 UP006_typing_alias_future_annotations_raw(T, n) :- up006_nested_ref(n, T),
@@ -123,18 +123,18 @@ up006_set_1("typing_extensions.Deque"). up006_set_1("typing_extensions.DefaultDi
 
 // alt_2(n): the JSON `any`: n matches if any one of these rules does
 //   T: metavariable this relation binds for the calling rule
-.decl up006_alt_2(n: node, t: loc)
+.decl up006_alt_2(n: node, t: node)
 up006_alt_2(n, T) :- up006_direct_ref(n, T).
 up006_alt_2(n, T) :- up006_nested_ref(n, T).
 
 // alt_4(n): the JSON `any`: n matches if any one of these rules does
 //   T: metavariable this relation binds for the calling rule
-.decl up006_alt_4(n: node, t: loc)
+.decl up006_alt_4(n: node, t: node)
 up006_alt_4(n, T) :- up006_generic_ref(n), node(_, n, _, _, _), T = n.
 up006_alt_4(n, T) :- up006_direct_ref(n, T).
 
 // pythonVersion {"max": "3.8"} excludes Python 3.10, main's default: no findings.
-.decl UP006_typing_alias_stub_raw(at: loc, t: node)
+.decl UP006_typing_alias_stub_raw(at: node, t: node)
 
 // pythonVersion {"max": "3.8"} excludes Python 3.10, main's default: no findings.
-.decl UP006_typing_alias_future_annotations_raw(at: loc, t: node)
+.decl UP006_typing_alias_future_annotations_raw(at: node, t: node)

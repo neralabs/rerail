@@ -49,6 +49,12 @@ pub const REMEMBERED: u16 = u16::MAX - 2;
 /// names (`Words::word_kinds`), as the lean parser's leaf takes its kind from its token. So the
 /// arms of a switch's keywords that differ only in it are one arm.
 pub const WORD_KIND: u16 = u16::MAX - 4;
+/// The kind of a statement that failed (`STATEMENT`, decision 0650): the tape's ERROR leaf, of no kind of the grammar's.
+pub const ERROR_LEAF: u16 = u16::MAX - 5;
+/// The JIT's row kind for an ERROR leaf (`native_cpu_stream::recover_statement`): the last of a kind's bits, which no
+/// grammar's kind takes (`native_cpu_stream::compile_with` checks). Its slot is numbered as the table's ERROR code
+/// (`stream_analysis::numbers_by_key`, `CompiledStream::numbers_by`), as `ERROR_LEAF` is (`stream::entry_of`).
+pub const ERROR_ROW: u16 = 0x3ff;
 
 /// A reading (`reading R = …`, `reread R`): what `RETAG m=3` does with the node made last at a
 /// level and each node inside it, by kind; a kind not listed refuses. A node read but the first
@@ -62,17 +68,16 @@ pub struct Reading {
     pub root: Option<u16>,
 }
 
-/// A program's readings, and its provisional fields: a node holding one at `ACCEPT` refuses.
+/// A program's readings, and its extras' kinds.
 #[derive(Clone, Debug, Default, PartialEq, Eq, Hash)]
 pub struct Readings {
     pub maps: Vec<Reading>,
-    pub provisional: Vec<u16>,
     /// The extras' kinds (`extra K`): a node of one is flagged an extra in the table (comments).
     pub extras: Vec<u16>,
 }
 
 impl Readings {
     pub fn is_empty(&self) -> bool {
-        self.maps.is_empty() && self.provisional.is_empty() && self.extras.is_empty()
+        self.maps.is_empty() && self.extras.is_empty()
     }
 }

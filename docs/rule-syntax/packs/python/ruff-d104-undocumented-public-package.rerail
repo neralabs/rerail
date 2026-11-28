@@ -10,7 +10,7 @@
 //   pkg/__init__.py:  import os        ← D104 at line 1
 #include "python/docstrings.rerail"
 
-.violation D104(at: span) code "D104"
+.violation D104(at: node) code "D104"
     "Add a docstring as the first statement of this package's `__init__.py`, summarizing what the package provides."
     suppress ruff "D104"
 D104(@place(p, 1)) :- doc_missing(m, "module", _, _), docof(m, d), file_name(d, "__init__.py"), doc(d, p, _).

@@ -109,4 +109,4 @@ generated_issue(f) :- generated_factory(f), !generated_has_source(f).
 generated_issue(f) :- generated_first_source(f, p), !generated_annotated(p).
 generated_issue(f) :- generated_last_kwonly_source(f, p), field(p, "value", v0), generated_unparen(v0, v), node(_, v, "identifier", _, _), text(v, "MODEL_DECLARED").
 generated_issue(f) :- generated_last_kwonly_source(f, p), field(p, "value", v0), generated_unparen(v0, v), node(_, v, "attribute", _, _), field(v, "attribute", a), text(a, "MODEL_DECLARED"), field(v, "object", o0), generated_unparen(o0, o), node(_, o, "identifier", _, _), text(o, "IndexSource").
-violation("data-layer-generated-index-sources", "generated-index-source", "missing_source", p, l) :- generated_issue(n), node(d, n, _, _, _), doc(d, p, _), line(n, l).
+violation("data-layer-generated-index-sources", "generated-index-source", "missing_source", p, l) :- generated_issue(n), node(d, n, _, _, _), doc(d, p, _), node_line_number(n, l).

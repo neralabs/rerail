@@ -331,7 +331,7 @@ fn locate(name: &str, dir: Option<&Path>) -> Option<PathBuf> {
 
 /// The keys `v`'s reads of the phases' exports are declared with (decision 0705), by the reader's relation
 /// (`<phase>__<export>`), each read off the phase's file where the run will find it (`locate`). Known before the phases
-/// run, so the stage cut before them (decision 0675) keys an export as the memo will: by its declaration, not by
+/// run, so the stage cut before them (decision 0709) keys an export as the memo will: by its declaration, not by
 /// probes.
 pub fn reader_keys(v: &Version, options: &serde_json::Value) -> Vec<(String, crate::code_rule_dsl::logic::plan::phased::Keyed)> {
     use crate::code_rule_dsl::logic::plan::phased::{SEP, STAGE, declared_exports_in};
@@ -564,7 +564,7 @@ pub fn batch_plans(root: &str, plan: [u8; 32], also: &[[u8; 32]]) -> Option<Vect
     Some(earlier)
 }
 
-/// The stages of the run under way (decision 0675), by name: each a phase cut from its program (`stage`), held while
+/// The stages of the run under way (decision 0709), by name: each a phase cut from its program (`stage`), held while
 /// the run is, and run as a phase is when the program reads its exports.
 #[derive(Clone, Default)]
 struct Stages(std::sync::Arc<Vec<HeldStage>>);
@@ -596,7 +596,7 @@ pub struct Staged {
     /// The stage's name and the relations it exports.
     pub name: String,
     pub exports: Vec<String>,
-    /// Each probe (decision 0675 §3): a file-local output of the values a file-local rule reads an export at, by
+    /// Each probe (decision 0709 §3): a file-local output of the values a file-local rule reads an export at, by
     /// name, with the export as the program reads it (`<stage>__<relation>`) and the export's columns its own columns
     /// after the first (a node of the reader's document) hold.
     pub probes: Vec<(String, String, Vec<usize>)>,
@@ -613,7 +613,7 @@ pub fn is_probe(rel: &str) -> bool {
 /// The prefix of a probe's name (`Staged::probes`).
 pub use crate::code_rule_dsl::logic::plan::phased::PROBE;
 
-/// `v`'s stage (decision 0675), if it has one: the program it leaves, which reads the staged relations as the stage's
+/// `v`'s stage (decision 0709), if it has one: the program it leaves, which reads the staged relations as the stage's
 /// exports (`<stage>__<relation>`, placeless inputs), and the stage held for the run. The stage is `v`'s rules for
 /// the staged relations and every relation below them, a phase exporting the staged ones. A phase's or the constants'
 /// own run, and a stage's, stage nothing; nor does `RERAIL_STAGE=off`.
@@ -624,7 +624,7 @@ pub fn stage(v: &std::sync::Arc<Version>, options: &serde_json::Value) -> Result
     if options.get(super::constants::OWN).is_some() || declared(&**v).is_some() || std::env::var("RERAIL_STAGE").is_ok_and(|s| s == "off") {
         return Ok(None);
     }
-    // An earlier phase's export the program reads (decision 0675 §3): probed as a stage's is.
+    // An earlier phase's export the program reads (decision 0709 §3): probed as a stage's is.
     let phase_read = v.rules().any(|r| r.reads().any(|a| crate::code_rule_dsl::logic::plan::phased::is_probed(v.rel_name(a.rel())) && !v.rules().any(|q| q.head().rel() == a.rel())));
     let requests: BTreeSet<String> = {
         let d = crate::code_rule_dsl::logic::program_image::manager::analysis::<crate::code_rule_dsl::logic::plan::fields::FieldsData>(v).map_err(Error::Plan)?;
@@ -890,7 +890,7 @@ pub const ANY: &str = "rr_any_";
 
 /// `v` with each read of a located relation that leaves every placing column open (`class_def(_, c)`: is `c` a class
 /// in any file) read from a relation of the columns it fixes, `rr_any_<relation>_<columns>(c) :- class_def(_, c)`
-/// (decision 0675 §1): a relation of names, where none of those columns is a node. Its rows are the read's: a rule's
+/// (decision 0709 §1): a relation of names, where none of those columns is a node. Its rows are the read's: a rule's
 /// meaning is unchanged. `None` where no read is such.
 fn existence_reads(v: &std::sync::Arc<Version>) -> Result<Option<std::sync::Arc<Version>>> {
     use crate::code_rule_dsl::logic::program_image::fields::FieldsMut;
@@ -1020,7 +1020,7 @@ pub fn facts(prog: &(impl ProgramFields + ?Sized), shape: &super::shape::Shape, 
     }
     let dir = options.get("phase_dir").and_then(|v| v.as_str()).map(PathBuf::from);
     for (name, reads) in wanted_in(prog, shape, dir.as_deref())? {
-        // A stage (decision 0675): a phase cut from the program it runs before, held for the run, not a file.
+        // A stage (decision 0709): a phase cut from the program it runs before, held for the run, not a file.
         let staged = staged(&name);
         // Phase 1 ran before any phase, for the run (`PhaseOne`): its exports are handed on as it left them. A run
         // that did not run it (given its files, or with `RERAIL_SOURCES_PHASE=off`) reads none.
@@ -1384,7 +1384,7 @@ pub fn sources(
     // Its frame, for a later process: where the run consulted what it read (a run that read nothing it can name is
     // not comparable, `changes_of`) and a store keeps it.
     let frame = (store.is_some() && !report.consulted.is_empty())
-        .then(|| super::Summary::of(&[], &[], Some(&handed), root, &options).ok().and_then(|s| s.encode()))
+        .then(|| super::Summary::of(&[], &[], &[], Some(&handed), root, &options).ok().and_then(|s| s.encode()))
         .flatten()
         .map(|summary| (identity, Some(super::frame::Frame { reads: report.consulted.clone(), plans: report.plans.clone(), summary, image: image.clone(), then: None })));
     let (one, exports) = one_of_rows(root, label, files, &declared, rows);

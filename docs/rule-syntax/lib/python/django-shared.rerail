@@ -1,6 +1,7 @@
 // python/django-shared: what python/django and the phase py_names' Django section (decision 0677 fix 3) both read,
 // one definition for both: the classes outside the run that Django's rules take for models, which documents are test
 // code, and a queryset chain's manager and root. The phase includes neither python/names nor python/django.
+#include "python/scopes.rerail"  // attr_of, and unparen through python/syntax: its includers include it already
 // dj_model_base(q): classes outside the run that are models: Django's own and common third-party bases.
 .decl dj_model_base(q: symbol)
 dj_model_base("django.db.models.Model"). dj_model_base("django.db.models.base.Model").

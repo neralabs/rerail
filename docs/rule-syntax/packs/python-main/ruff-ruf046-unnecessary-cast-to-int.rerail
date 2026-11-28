@@ -175,7 +175,7 @@ ruf046_cast_of_int(n) :- kind(n, "call"), field(n, "function", c1),
 
 // cast_of_int_in_type(n): the JSON util `cast-of-int-in-type`, used where the JSON says `matches: "cast-of-int-in-type"`
 //   C: metavariable this relation binds for the calling rule
-.decl ruf046_cast_of_int_in_type(n: node, c: loc)
+.decl ruf046_cast_of_int_in_type(n: node, c: node)
 ruf046_cast_of_int_in_type(n, C) :- (kind(n, "string") ; kind(n, "concatenated_string")),
     parsed(n, "annotation", r1), within(c2, r1), ruf046_alt_22(c2, C).
 
@@ -188,7 +188,7 @@ ruf046_cast_of_rounded(n) :- kind(n, "call"), field(n, "function", c1),
 
 // cast_of_rounded_in_type(n): the JSON util `cast-of-rounded-in-type`, used where the JSON says `matches: "cast-of-rounded-in-type"`
 //   C: metavariable this relation binds for the calling rule
-.decl ruf046_cast_of_rounded_in_type(n: node, c: loc)
+.decl ruf046_cast_of_rounded_in_type(n: node, c: node)
 ruf046_cast_of_rounded_in_type(n, C) :- (kind(n, "string") ; kind(n, "concatenated_string")),
     parsed(n, "annotation", r1), within(c2, r1), ruf046_alt_23(c2, C).
 
@@ -205,7 +205,7 @@ RUF046(n, "wrapper; this call already returns an int. Keep it if the operand's t
 // RUF046_int_of_integer_in_string_type(n, detail): findings from clauses `int-of-integer-in-string-type`, `int-of-rounding-in-string-type`. Their messages differ only in
 // `detail`: each rule's head gives its clause's words. Each rule is one way a JSON `rule` can match.
 // Columns after `at` are the metavariables the JSON's message, anchor or `each` names: one finding per distinct row.
-.violation RUF046_int_of_integer_in_string_type(at: loc, c: node, detail: symbol) code "RUF046" "Drop the `int(...)` {detail}."
+.violation RUF046_int_of_integer_in_string_type(at: node, c: node, detail: symbol) code "RUF046" "Drop the `int(...)` {detail}."
     suppress noqa "RUF046"
 RUF046_int_of_integer_in_string_type(C, n, "wrapper and use its argument directly; the argument is already an integer") :- ruf046_cast_of_int_in_type(n, C).
 RUF046_int_of_integer_in_string_type(C, n, "wrapper; this call already returns an int. Keep it if the operand's type overrides `__round__`, `__ceil__`, `__floor__` or `__trunc__` to return a non-int") :- ruf046_cast_of_rounded_in_type(n, C).
@@ -418,12 +418,12 @@ ruf046_alt_14(n) :- child(n, c2, _), ruf046_kw_ndigits(c2), field(c2, "value", c
 
 // alt_22(n): the JSON `any`: n matches if any one of these rules does
 //   C: metavariable this relation binds for the calling rule
-.decl ruf046_alt_22(n: node, c: loc)
+.decl ruf046_alt_22(n: node, c: node)
 ruf046_alt_22(n, C) :- ruf046_cast_of_int(n), C = n.
 ruf046_alt_22(n, C) :- ruf046_cast_of_int_in_type(n, C).
 
 // alt_23(n): the JSON `any`: n matches if any one of these rules does
 //   C: metavariable this relation binds for the calling rule
-.decl ruf046_alt_23(n: node, c: loc)
+.decl ruf046_alt_23(n: node, c: node)
 ruf046_alt_23(n, C) :- ruf046_cast_of_rounded(n), C = n.
 ruf046_alt_23(n, C) :- ruf046_cast_of_rounded_in_type(n, C).

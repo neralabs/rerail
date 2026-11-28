@@ -232,7 +232,7 @@ pub fn facts_dir(store: &Path) -> PathBuf {
 }
 
 pub fn space_dir(store: &Path, space: &[u8; 32]) -> PathBuf {
-    facts_dir(store).join(space.iter().map(|b| format!("{b:02x}")).collect::<String>())
+    facts_dir(store).join(rerail_prof::code_rule_dsl::prof::lower_hex(&space[..]))
 }
 
 /// A space's chain as its rows name it, oldest first: (seq, name, tag).
@@ -476,6 +476,53 @@ impl RowsIn for PutRows<'_> {
             PutRows::Picked(rows) => rows.get(r, c),
         }
     }
+    /// A relation's chunk read where it lies: rows from a position on, as a range of its column (`Rows::read_range`: a
+    /// chunk at a time, a sealed chunk decoded in one pass); rows by id, through the column resolved once (`reader`).
+    /// A continuation's rows, down its chain, row by row. A picked put's by its own read.
+    #[inline]
+    fn read(&self, c: usize, at: rerail_blocks::packed::At<'_>, out: &mut [i64]) {
+        use rerail_blocks::packed::At;
+        match self {
+            PutRows::Rel { rel, ids, .. } if !rel.continues() => match (ids, at) {
+                (None, At::From(r)) => rel.rows.read_range(c, r as u32, out),
+                (ids, at) => {
+                    let col = rel.rows.reader(c);
+                    let id = |r: usize| ids.as_ref().map_or(r as u32, |ids| ids[r]);
+                    match at {
+                        At::From(r) => {
+                            for (j, o) in out.iter_mut().enumerate() {
+                                *o = col.get(id(r + j));
+                            }
+                        }
+                        At::Rows(rows) => {
+                            for (o, &r) in out.iter_mut().zip(rows) {
+                                *o = col.get(id(r as usize));
+                            }
+                        }
+                    }
+                }
+            },
+            PutRows::Rel { rel, ids, .. } => {
+                let one = |r: usize| {
+                    let id = ids.as_ref().map_or(r as u32, |ids| ids[r]);
+                    if rel.continues() { rel.get(id, c) } else { rel.rows.get(id, c) }
+                };
+                match at {
+                    At::From(r) => {
+                        for (j, o) in out.iter_mut().enumerate() {
+                            *o = one(r + j);
+                        }
+                    }
+                    At::Rows(rows) => {
+                        for (o, &r) in out.iter_mut().zip(rows) {
+                            *o = one(r as usize);
+                        }
+                    }
+                }
+            }
+            PutRows::Picked(rows) => rows.read(c, at, out),
+        }
+    }
 }
 
 /// `rows` with each atom column's ids mapped (a forked process's to the store's, `map`): each column's distinct ids
@@ -498,6 +545,15 @@ impl RowsIn for Mapped<'_> {
         match &self.tables[c] {
             Some(t) => t[&v],
             None => v,
+        }
+    }
+    #[inline]
+    fn read(&self, c: usize, at: rerail_blocks::packed::At<'_>, out: &mut [i64]) {
+        self.rows.read(c, at, out);
+        if let Some(t) = &self.tables[c] {
+            for v in out.iter_mut() {
+                *v = t[v];
+            }
         }
     }
 }
@@ -565,7 +621,12 @@ fn put_rows(w: &mut KeptW, meta: Meta, p: &KeptPut, map: Option<MapIds>) -> Stor
     let (rows, levels) = rows_of(&p.what);
     let mapped = map.map(|m| Mapped::of(&rows, &p.types, m)).transpose()?;
     let rows: &dyn RowsIn = match &mapped { Some(m) => m, None => &rows };
+    // `RERAIL_KEPT_PUT_TRACE`: each put's relation, its values and the time its rows took to pack and write.
+    let traced = rerail_prof::code_rule_dsl::logic::profile::setting(|| std::env::var_os("RERAIL_KEPT_PUT_TRACE").is_some()).then(std::time::Instant::now);
     w.put_rows(meta, rows, levels.as_deref(), given).map_err(StoreError::Io)?;
+    if let Some(t0) = traced {
+        eprintln!("RERAIL_KEPT_PUT {} values {} arity {} us {}", p.rel, expected_bytes(&p.what) / 3, p.types.len(), t0.elapsed().as_micros());
+    }
     Ok(())
 }
 
@@ -607,7 +668,7 @@ pub fn write_space(store: &Path, t: &Connection, space: &[u8; 32], puts: Vec<Kep
 
 /// Collection's roll-up of `space` in transaction `t` (decision 0401 F4): its next base, one file of the entries
 /// `keep` keeps, when it keeps fewer than the space holds; with none kept, the space is dropped (its rows; its files
-/// go once committed, `drop_space_files`). `None` when every entry stays.
+/// go once committed, `sweep_committed`). `None` when every entry stays.
 pub fn rewrite_space(store: &Path, t: &Connection, space: &[u8; 32], keep: &dyn Fn(&FactKey<'_>) -> bool) -> StoreResult<Option<ChainRows>> {
     write_chain(store, t, space, Vec::new(), None, Some(keep))
 }
@@ -1110,8 +1171,10 @@ impl super::ContentStore {
                 }
             }
             let written = self.immediate_transaction(|t| {
+                // The mapping `kept_space` made above, where the chain is still the one it mapped: mapped again here,
+                // each space a commit changed was mapped twice a collection.
                 let rows = chain_rows(t, &space)?;
-                let old = KeptSpace::open(&path, &space, &rows)?;
+                let old = self.space_mapped(&space, rows)?;
                 let chain = old.view();
                 // The partitions whose holder the store no longer keeps (`HOLDER`).
                 let mut unheld = HashSet::new();
@@ -1207,12 +1270,31 @@ impl super::ContentStore {
     }
 }
 
+impl super::ContentStore {
+    /// Space `space`'s files as `rows` name them, the mapping kept (`MappedSpaces`) where it is of these rows.
+    fn space_mapped(&self, space: &[u8; 32], rows: ChainRows) -> StoreResult<Arc<KeptSpace>> {
+        let key = (self.database_path.clone(), *space);
+        let mapped = rerail_prof::code_rule_dsl::logic::profile::shared::<MappedSpaces>();
+        if let Some((was, kept)) = mapped.0.lock().unwrap_or_else(|e| e.into_inner()).get(&key)
+            && *was == rows
+        {
+            return Ok(Arc::clone(kept));
+        }
+        let kept = Arc::new(KeptSpace::open(&self.database_path, space, &rows)?);
+        mapped.0.lock().unwrap_or_else(|e| e.into_inner()).insert(key, (rows, Arc::clone(&kept)));
+        Ok(kept)
+    }
+}
+
+/// A space's chain as mapped: the rows that named its files, and the mapping.
+type MappedChain = (ChainRows, Arc<KeptSpace>);
+
 /// Each space's chain as this process mapped it, by the store's file and the space, with the rows that named its
 /// files (`kept_space`): mapped again only when a commit changed them. A file a row names is never rewritten (a
 /// write makes a new file, and its row), so a mapping of the same rows reads what a new one would. The shared
 /// object's (decision 0442), shared by design by the runs on a store.
 #[derive(Default)]
-struct MappedSpaces(std::sync::Mutex<HashMap<(PathBuf, [u8; 32]), (ChainRows, Arc<KeptSpace>)>>);
+struct MappedSpaces(std::sync::Mutex<HashMap<(PathBuf, [u8; 32]), MappedChain>>);
 
 impl super::ContentStore {
     /// Notes `space`'s chain as a write in a transaction of this process's left it (`written`, from `write_space`),

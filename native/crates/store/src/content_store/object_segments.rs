@@ -48,6 +48,18 @@ pub use rerail_store_base::content_store::{ObjectBytes, ObjectFrame, TapeBytes, 
 
 /// A row's object: the range of a segment it names (`seg`, `seg_at`, `seg_len`). `None` when that segment is not
 /// there or holds no such range (`seg` -1: it went missing): the object is absent, made again.
+/// Where a source lies (`pinned_sources_by_alias`): its row's segment range and its length, read there by `source_at`.
+#[derive(Clone, Copy, Debug)]
+pub struct SourcePlace {
+    pub source: SourceId,
+    /// When the owner's pin of it ends (unix seconds).
+    pub lease_until: i64,
+    length: i64,
+    seg: i64,
+    at: i64,
+    len: i64,
+}
+
 pub(super) fn row_frame(maps: &mut SegmentMaps, seg: i64, at: i64, len: i64) -> Option<ObjectFrame> {
     if seg <= 0 {
         return None;
@@ -117,18 +129,6 @@ impl ObjectMaps {
     pub fn frame(&mut self, seg: i64, at: i64, len: i64) -> Option<ObjectFrame> {
         row_frame(&mut self.0, seg, at, len)
     }
-}
-
-/// Where a source's bytes lie (`ContentStore::pinned_sources_placed`): its segment, the range there, its length, and
-/// when its pin ends; read with no statement (`ContentStore::source_at`).
-#[derive(Clone, Copy, Debug)]
-pub struct SourcePlace {
-    pub id: SourceId,
-    length: i64,
-    seg: i64,
-    at: i64,
-    len: i64,
-    pub lease_until: i64,
 }
 
 /// A tape (with its source) this process queued and the store has not written: read in memory until it is placed,
@@ -457,11 +457,10 @@ impl ContentStore {
         Ok(out)
     }
 
-    /// Every source `owner` pins, under each of its aliases, and where its bytes lie in their segment, with when the
-    /// pin ends: one statement, read before a run's waves, so a source found inside them is read where it lies
-    /// (`source_at`) with none (decision 0104). An archived source (decision 0450 step 4) is not placed: it has no
-    /// place here.
-    pub fn pinned_sources_placed(&self, owner: &str) -> StoreResult<Vec<(HashKey, SourcePlace)>> {
+    /// Every source `owner` pins, under each of its aliases, with where it lies in its segment: one
+    /// read, for a run to take before its first wave (decision 0104) and read the sources in their segments from its
+    /// waves, with no statement (`source_at`). A source not in a segment (archived, or its segment gone) is left out.
+    pub fn pinned_sources_by_alias(&self, owner: &str) -> StoreResult<HashMap<HashKey, SourcePlace>> {
         let connection = self.connection.lock().expect("content store mutex poisoned");
         let mut st = connection.prepare_cached(
             "SELECT h.algorithm_id, h.lane0, h.lane1, h.lane2, h.lane3, s.source_id, s.raw_length, s.seg, s.seg_at, s.seg_len, p.lease_until \
@@ -471,14 +470,16 @@ impl ContentStore {
              WHERE p.object_kind_id = ?1 AND o.domain_id = ?2 AND o.value = ?3 AND s.seg > 0",
         )?;
         let rows = st.query_map(params![super::reclamation::OBJECT_SOURCE, super::STRING_OWNER, owner], |r| {
-            let key = HashKey { algorithm: r.get(0)?, lanes: [r.get(1)?, r.get(2)?, r.get(3)?, r.get(4)?] };
-            Ok((key, SourcePlace { id: SourceId(r.get(5)?), length: r.get(6)?, seg: r.get(7)?, at: r.get(8)?, len: r.get(9)?, lease_until: r.get(10)? }))
+            Ok((
+                HashKey { algorithm: r.get(0)?, lanes: [r.get(1)?, r.get(2)?, r.get(3)?, r.get(4)?] },
+                SourcePlace { source: SourceId(r.get(5)?), length: r.get(6)?, seg: r.get(7)?, at: r.get(8)?, len: r.get(9)?, lease_until: r.get(10)? },
+            ))
         })?;
         rows.collect::<Result<_, _>>().map_err(StoreError::from)
     }
 
-    /// The bytes of the source at `place` (`pinned_sources_placed`), read where its segment, a block, lies, mapped: no
-    /// statement. `None` where the segment is not there, or holds no such range (reclaimed or moved since).
+    /// The source at `place` (`pinned_sources_by_alias`), read in its segment, mapped: no statement. `None` where the
+    /// segment no longer holds it (compacted since), which its reader takes as not held.
     pub fn source_at(&self, place: &SourcePlace) -> Option<ObjectBytes> {
         let mut maps = SegmentMaps::new(object_dir(&self.database_path));
         let frame = row_frame(&mut maps, place.seg, place.at, place.len)?;

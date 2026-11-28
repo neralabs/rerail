@@ -200,7 +200,7 @@ module_file(q, p) :- modnode(d, m), modname(m, q), doc(d, p, _).
 module_file(q, p) :- sources__library(p, q, _, _).
 // at(s, p, l): where definition s is, path and line: a position, kept out of freshness (`.positions`).
 .decl at(s: symbol, p: symbol, l: number)
-at(q, p, l) :- sym(n, q), docof(n, d), doc(d, p, _), line(n, l).
+at(q, p, l) :- sym(n, q), docof(n, d), doc(d, p, _), node_line_number(n, l).
 
 // ---- annotations, read off their own trees -------------------------------------------------------------------
 // What P2 resolves an annotation by: its alternatives, each one's head name and its arguments. Read from the tree,

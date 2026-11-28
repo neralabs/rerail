@@ -74,7 +74,7 @@ scope_kind("catch_clause"). scope_kind("switch_body"). scope_kind("class_body").
 loose_for(f) :- (kind(f, "for_statement") ; kind(f, "for_in_statement")), !lexical_for(f).
 .decl lexical_for(f: node)
 lexical_for(f) :- kind(f, "for_statement"), field(f, "initializer", i), kind(i, "lexical_declaration").
-lexical_for(f) :- kind(f, "for_in_statement"), field(f, "left", l), token_before(l, k), (text(k, "let") ; text(k, "const")).
+lexical_for(f) :- kind(f, "for_in_statement"), field(f, "left", l), node_to_token_before(l, k), (token_text(k, "let") ; token_text(k, "const")).
 // accessed(n, sc): isPropsMemberAccessed: within n, a props read that is a member access's object, or a prop read.
 .decl accessed(n: node, sc: node)
 accessed(n, sc) :- pref(sc, r, "props"), estree_parent(r, m), field(m, "object", w), deparen(w, r),

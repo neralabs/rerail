@@ -614,7 +614,8 @@ resolved(k, q) :- answer(k, q).
 
     /// A later round's partial hits derive the rules that read the asks alone (decision 0705): the relations those
     /// read without reading an ask (`named`, a per-file relation made by three rules) are held in the file's entry
-    /// from round 1, so round 2's chunk of `m.py` runs `answer`'s rule, not `named`'s, `sig`'s and `defn`'s. Its
+    /// from round 1, so round 2's chunk of `m.py` runs `answer`'s rule and `resolved`'s (a union of `answer`'s rows,
+    /// per-file by decision 0680, located through `answer`'s twin), not `named`'s, `sig`'s and `defn`'s. Its
     /// constants are round 1's, not measured again (`phases::RoundsMeasured`).
     #[test]
     fn a_later_round_derives_only_the_rules_that_read_its_asks() {
@@ -625,7 +626,7 @@ resolved(k, q) :- answer(k, q).
         let q = report.phase_runs.iter().find(|r| r.name == "q").expect("q ran");
         assert_eq!(q.rounds.iter().map(|r| (r.asks, r.files - r.memo.0)).collect::<Vec<_>>(), [(1, 2), (1, 1)], "round 2 builds m.py alone");
         assert_eq!(q.rounds[0].partial_rules, 0, "round 1 has no partial hit");
-        assert_eq!(q.rounds[1].partial_rules, 1, "round 2's partial hit of m.py runs answer's rule alone, named read from its entry");
+        assert_eq!(q.rounds[1].partial_rules, 2, "round 2's partial hit of m.py runs answer's rule and resolved's alone, named read from its entry");
         assert_eq!((q.rounds[0].constants_measured, q.rounds[1].constants_measured), (1, 0), "round 2 reads its chunk's constants as round 1 measured them");
     }
 

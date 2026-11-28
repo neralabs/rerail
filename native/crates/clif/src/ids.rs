@@ -14,9 +14,10 @@
 //! of each stretch between them (`runs`), and the slots and runs by key (`by_slot`, `run_at`).
 
 /// The items a rank index marks: numbered nodes, tokens, nodes under a field, nodes after a numbered sibling, spread
-/// nodes, the token order's (the lexical tokens, the places with a token, one before, one after), and `op`'s (a
-/// numbered node's anonymous children), and the nodes with a numbered tape parent (and the root: `structural_before`'s, `rr_token_named`'s; `Item`'s numbers).
-pub const ITEMS: u32 = 11;
+/// nodes, the token order's (the lexical tokens, the places with a token, one before, one after), `op`'s (a
+/// numbered node's anonymous children), the nodes with a numbered tape parent (and the root: `structural_before`'s,
+/// `rr_token_named`'s), an anchored projection's anchors, and the nodes with text (`Item`'s numbers).
+pub const ITEMS: u32 = 13;
 /// `op`'s item (the engine's `ranks::Item::Op`): a numbered node's anonymous children, which `view_op` selects.
 pub const OP_ITEM: u32 = 9;
 /// A group's words: one of bits an item, then the counts before it, two to a word.
@@ -30,6 +31,12 @@ pub const SLOT_BITS: u32 = 14;
 pub const INDEX_BITS: u32 = 32 - SLOT_BITS;
 /// The top slots, from the last down, that hold a document's spans past its nodes and tokens (`span_low`).
 pub const SPAN_SLOTS: u32 = 16;
+/// The slots below the spans' that hold the spans a batch makes beside a document's tape (the facts' `ExtraSpan`:
+/// its lines, its comments no node is, its matches): two, then the matches' 14.
+pub const EXTRA_SLOTS: u32 = 16;
+/// The slot of a document's `source` span and its `src_line` spans (`ExtraSpan::Line`, the extra spans' first): line
+/// `l`'s id has low bits `LINE_SLOT << INDEX_BITS | l`, line 0 the whole source (`view_line_span`).
+pub const LINE_SLOT: u32 = (1 << SLOT_BITS) - SPAN_SLOTS - EXTRA_SLOTS;
 /// An order key's low bits: its index in its granule; above them, its run's rank.
 pub const ORDER_INDEX_BITS: u32 = 18;
 /// The items a granule jump stands for (`Numbering::jumps`).
@@ -108,7 +115,7 @@ pub struct Numbering {
     /// granule is searched between two of them.
     pub jumps: [Run; 2],
 }
-const _: () = assert!(std::mem::size_of::<Numbering>() == 56 + 16 * 30);
+const _: () = assert!(std::mem::size_of::<Numbering>() == 64 + 16 * 32);
 
 /// No number, no node, no granule: a read's answer for none (the CLIF's `NONE`).
 pub const NONE: u32 = u32::MAX;

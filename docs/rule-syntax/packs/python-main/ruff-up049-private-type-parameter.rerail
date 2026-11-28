@@ -8,7 +8,7 @@
 // UP049(n): a finding at node n, from clause `private-type-parameter`.
 // Each rule below is one way the JSON `rule` can match.
 // Columns after `at` are the metavariables the JSON's message, anchor or `each` names: one finding per distinct row.
-.violation UP049(at: node, name: loc) "Remove the leading underscores from type parameter `{name}` here and in every use; if the bare name would shadow a variable or builtin, or is not a valid identifier, choose another name."
+.violation UP049(at: node, name: node) "Remove the leading underscores from type parameter `{name}` here and in every use; if the bare name would shadow a variable or builtin, or is not a valid identifier, choose another name."
     suppress noqa "UP049"
 UP049(n, NAME) :- kind(n, "identifier"), node(_, n, _, _, _), NAME = n, match("_.*[^_]", n),
     child(p1, n, _),

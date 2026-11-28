@@ -1,17 +1,23 @@
 // #16 `rules/` directories holding things other than rules.
 //
 // Predicate: every tracked file with a `rules` directory in its path (at any depth below it) is a rule
-// document (JSON whose `format` is `rerail.policy/v1`, or a conversation rule); the metric counts the offending `rules/`
-// directories.
+// document (JSON whose `format` is `rerail.policy/v1`, or a conversation rule), or a `.rerail` file in a pack's
+// `rules/` (a rule written in `.rerail`, or a library file such a rule includes); the metric counts the offending
+// `rules/` directories.
 // Exemption `data-roots`: `fixtures/**` and `packs/<id>/upstream/**` keep upstream projects' own trees,
 // whose `rules/` directories hold upstream sources and expected findings.
 // Exemption `vendored`: `native/grammars/**` is third-party code kept byte-identical.
 
-import { finding, isDataPath, isRuleDoc, isVendored, sortFindings } from "../lib.mjs";
+import { finding, isDataPath, isPackRerailFile, isRuleDoc, isVendored, sortFindings } from "../lib.mjs";
 
 export const id = 16;
 export const title = "`rules/` dirs holding non-rules";
 export const target = "0";
+
+/** Whether `path`, below a `rules/` directory, belongs there: a rule document, or a `.rerail` file in a pack's `rules/`. */
+function belongsInRules(repo, path) {
+  return isRuleDoc(repo, path) || isPackRerailFile(path);
+}
 
 export function check(repo) {
   const findings = [];
@@ -20,7 +26,7 @@ export function check(repo) {
     if (isDataPath(path) || isVendored(path)) continue;
     const segments = path.split("/");
     const index = segments.slice(0, -1).indexOf("rules");
-    if (index < 0 || isRuleDoc(repo, path)) continue;
+    if (index < 0 || belongsInRules(repo, path)) continue;
     dirs.add(segments.slice(0, index + 1).join("/"));
     findings.push(finding(path, "not a rule document, in a rules/ directory"));
   }

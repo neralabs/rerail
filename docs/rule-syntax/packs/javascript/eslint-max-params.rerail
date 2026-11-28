@@ -13,7 +13,7 @@
 // `countThis` (TypeScript only): "except-void" (the default) leaves out `this: void`, "never" any `this`
 // parameter, "always" counts it; the deprecated `countVoidThis: true` is "always".
 // Reported at the function's head: a method's key, an arrow's `=>`, else the function itself.
-.violation max_params(at: loc, name: symbol, k: number, m: number) code "max-params"
+.violation max_params(at: place, name: symbol, k: number, m: number) code "max-params"
     "{name} has too many parameters ({k}). Maximum allowed is {m}; group them into one options object."
     suppress eslint "max-params"
     suppress oxlint "max-params"

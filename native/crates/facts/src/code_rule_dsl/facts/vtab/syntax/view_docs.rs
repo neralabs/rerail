@@ -81,7 +81,7 @@ impl ViewEntry {
             Cells::build(block, n.max(1), |out| {
                 for (l, o) in out.iter_mut().enumerate().take(n) {
                     let [s, e] = place.host(p.span(l as u32));
-                    *o = u64::from(s) << 32 | u64::from(e);
+                    *o = u64::from(s) << 32 | u64::from(e); // bits: a span's start and end
                 }
                 n
             })
@@ -113,13 +113,8 @@ impl ViewEntry {
             if let Some(names) = &names {
                 Run::set(&raw mut (*d).names, names.as_ptr(), names.len());
             }
-            // A node's place: read in its tape's auxiliary index (`tape_place`), or the derived column.
-            if p.places_by_index() {
-                (*d).places_by_index = 1;
-            } else {
-                let places = p.places_column();
-                Run::set(&raw mut (*d).places, places.as_ptr(), places.len());
-            }
+            // A node's place, read in its tape's auxiliary index (`tape_place`, `tape_place_past_comments`).
+            (*d).place = p.place_kind() as u32;
             // The tape's rows' derived columns made by now (`tape_rows::derive`: those its program reads).
             let (columns, named, digests) = p.derived.made();
             let [before, after, visits] = columns;

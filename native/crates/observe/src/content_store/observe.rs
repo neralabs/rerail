@@ -2151,7 +2151,7 @@ fn plain(path: &Path) -> bool {
 
 /// Where a root's journal cursor is kept (its settings, `facts`): `journal:<volume>:<root>`.
 fn cursor_key(root: &Path, volume: [u8; 16]) -> String {
-    format!("journal:{}:{}", volume.iter().map(|b| format!("{b:02x}")).collect::<String>(), stored(root))
+    format!("journal:{}:{}", rerail_prof::code_rule_dsl::prof::lower_hex(&volume), stored(root))
 }
 
 /// Where the observer of the store at `path` writes the journal's cookies: `<store>.cookies`, holding nothing else.
@@ -2478,7 +2478,7 @@ pub fn with<T>(store: Option<&Path>, f: impl FnOnce(&mut Observer) -> T) -> T {
 
 /// A hex digest, as records keep them.
 pub fn hex(d: &[u8; 32]) -> String {
-    d.iter().map(|b| format!("{b:02x}")).collect()
+    rerail_prof::code_rule_dsl::prof::lower_hex(d)
 }
 
 /// Whether the observer asks the file system's journal (decision 0105): on unless `RERAIL_JOURNAL=off` (a run's

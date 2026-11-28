@@ -74,7 +74,7 @@ RUF006(n) :- kind(n, "call"), ruf006_task_call(n), ruf006_up_1(n, p1), !ruf006_t
 // RUF006_unread_task_variable(n): a finding at node n, from clause `unread-task-variable`.
 // Each rule below is one way the JSON `rule` can match.
 // Columns after `at` are the metavariables the JSON's message, anchor or `each` names: one finding per distinct row.
-.violation RUF006_unread_task_variable(at: node, n_mv: loc) code "RUF006" "`{n_mv}` is never read, so the task is only weakly referenced. Add it to a set and discard it in `add_done_callback`, or await it."
+.violation RUF006_unread_task_variable(at: node, n_mv: node) code "RUF006" "`{n_mv}` is never read, so the task is only weakly referenced. Add it to a set and discard it in `add_done_callback`, or await it."
     suppress noqa "RUF006"
 RUF006_unread_task_variable(n, N) :- kind(n, "call"), ruf006_task_call(n), ruf006_up_2(n, p1),
     field(p1, "right", f2), (f2 = n ; within(n, f2)),
@@ -84,7 +84,7 @@ RUF006_unread_task_variable(n, N) :- kind(n, "call"), ruf006_task_call(n), ruf00
 // RUF006_unused_comprehension_variable(n): a finding at node n, from clause `unused-comprehension-variable`.
 // Each rule below is one way the JSON `rule` can match.
 // Columns after `at` are the metavariables the JSON's message, anchor or `each` names: one finding per distinct row.
-.violation RUF006_unused_comprehension_variable(at: node, c: loc) code "RUF006" "Keep a reference to this task until it finishes: await it, or add it to a set and discard it in `add_done_callback`. Leave it if the variable it is assigned to is already awaited."
+.violation RUF006_unused_comprehension_variable(at: node, c: node) code "RUF006" "Keep a reference to this task until it finishes: await it, or add it to a set and discard it in `add_done_callback`. Leave it if the variable it is assigned to is already awaited."
     suppress noqa "RUF006"
 RUF006_unused_comprehension_variable(n, C) :- kind(n, "call"), ruf006_task_call(n),
     ruf006_up_2(n, p1), field(p1, "right", f2), (f2 = n ; within(n, f2)),
@@ -149,7 +149,7 @@ ruf006_stop_2(n) :- ruf006_scope(n).
 
 // alt_8(n): the JSON `any`: n matches if any one of these rules does
 //   N: metavariable this relation binds for the calling rule
-.decl ruf006_alt_8(n: node, n_mv: loc)
+.decl ruf006_alt_8(n: node, n_mv: node)
 ruf006_alt_8(n, N) :- kind(n, "identifier"), node(_, n, _, _, _), N = n, ruf006_live_unused(n, N).
 ruf006_alt_8(n, N) :- (kind(n, "tuple_pattern") ; kind(n, "list_pattern") ; kind(n, "pattern_list")),
     within_stop(c1, n, ruf006_stop_7), kind(c1, "identifier"), node(_, c1, _, _, _), N = c1, ruf006_live_unused(c1, N).

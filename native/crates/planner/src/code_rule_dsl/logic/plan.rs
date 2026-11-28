@@ -199,10 +199,8 @@ impl Fx<'_> {
     fn stats(&self, name: &str, symbols_text: &dyn Fn(usize, usize) -> bool) -> Result<Vec<LiveRel>> {
         let _span = super::profile::span(|| "engine live statistics".into());
         if self.direct {
-            return Ok(super::native::component::live(self.db, name)?
-                .into_iter()
-                .map(LiveRel::of_native)
-                .collect());
+            // Made in the thread's long-lived room: the model keeps them for the run (decision 0342 amended).
+            return rerail_blocks::maps::long(|| Ok(super::native::component::live(self.db, name)?.into_iter().map(LiveRel::of_native).collect()));
         }
         let text: String = self.db.query_row("SELECT set_fixpoint_stats(?1)", [name], |r| r.get(0))?;
         Ok(text.split('\n').enumerate().map(|(i, line)| LiveRel::parse(line, &|c| symbols_text(i, c))).collect())
@@ -218,10 +216,7 @@ impl Fx<'_> {
         if rerail_prof::code_rule_dsl::logic::profile::setting(|| matches!(std::env::var("RERAIL_LIVE_ALL").as_deref(), Ok("on"))) {
             seen.clear();
         }
-        Ok(super::native::component::live_changed(self.db, name, seen)?
-            .into_iter()
-            .map(|l| l.map(LiveRel::of_native))
-            .collect())
+        rerail_blocks::maps::long(|| Ok(super::native::component::live_changed(self.db, name, seen)?.into_iter().map(|l| l.map(LiveRel::of_native)).collect()))
     }
     fn reprobe(&self, name: &str, i: usize, new: &Reprobe) -> Result<()> {
         let _span = super::profile::span(|| "engine reprobe".into());
@@ -455,9 +450,12 @@ fn add_answers(db: &Connection, answered: &mut BTreeMap<String, Vec<Vector<i64>>
         by.entry(p).or_default().extend(got);
     }
     if let Some(log) = log {
-        for (p, rows) in by.iter().filter(|(p, _)| !p.starts_with(super::answers::HELD_BACK)) {
-            log.entry(p.clone()).or_default().extend(rows.iter().cloned());
-        }
+        // The log lives the run: its rows made in the thread's long room (decision 0342, amended 2026-11-24).
+        rerail_blocks::maps::long(|| {
+            for (p, rows) in by.iter().filter(|(p, _)| !p.starts_with(super::answers::HELD_BACK)) {
+                log.entry(p.clone()).or_default().extend(rows.iter().cloned());
+            }
+        });
     }
     for (p, rows) in by {
         if let Some(req) = p.strip_prefix(super::answers::HELD_BACK) {
@@ -4161,7 +4159,9 @@ impl<'a> Run<'a, '_> {
             let idle = |line: &[(i64, i64)]| line.iter().all(|&(a, b)| a == 0 && b == 0);
             for ((o, &rule), line) in orders.iter().map(|(_, o)| o).chain(probes.iter().map(|p| &p.2)).zip(&line_bodies).map(|(o, b)| Order::new(b, o)).zip(&order_rules).zip(&steps) {
                 if !idle(line) {
-                    observe(&mut self.model.stats, rule, o, line);
+                    // The run's observations live through it: made in the thread's long-lived room (decision 0342
+                    // amended), not on its stack.
+                    rerail_blocks::maps::long(|| observe(&mut self.model.stats, rule, o, line));
                 }
             }
             // A step whose fanout was observed, or moved, is priced by it now: its probe is planned again.
@@ -8443,9 +8443,9 @@ fn run_within(program: &body::Placed, db: &Connection, inputs: Inputs, lowering:
     // and documents' inputs, in SQL.
     let native_out: BTreeSet<String> = if atoms {
         // `finding` too, when the nodes and documents it is decoded with are bound in place (`finding_rows`).
-        // Only the findings form (`finding(key, n)`) is decoded with them: a `finding` of another shape is an output
-        // like any other.
-        let findings_form = |r: &str| r == "finding" && f0.columns(r).is_none_or(|c| c.len() == 2);
+        // Only the findings form (`finding(key, n)`, `n` a node) is decoded with them: a `finding` of another shape, or
+        // placed by a symbol (decision 0727), is an output like any other.
+        let findings_form = |r: &str| r == "finding" && f0.columns(r).is_none_or(|c| c.len() == 2 && c[1].1 == "node");
         let in_place = |r: &str| !findings_form(r) || ["node", "doc"].iter().all(|t| crate::code_rule_dsl::facts::vtab::bound_source(db, t).is_some());
         written.iter().filter(|r| in_place(r) && run.native_rels.contains(*r) && !run.inputs.contains(r.as_str()) && super::native::component::held(db, r).is_some()).cloned().collect()
     } else {
@@ -8972,13 +8972,31 @@ fn decoded_outputs(
     kept: &BTreeSet<String>,
     native: &BTreeSet<String>,
 ) -> Result<(BTreeMap<String, std::sync::Arc<output::Rows>>, BTreeMap<String, Vector<usize>>)> {
+    // The run's outputs live to its end: made in the thread's long-lived room (decision 0342 amended 2026-11-24). On
+    // the stack they held every region the run took after them.
+    rerail_blocks::maps::long(|| decoded_outputs_within(outputs_of, is_input, types, db, lowered, facts, atoms, kept, native))
+}
+
+#[allow(clippy::too_many_arguments)]
+fn decoded_outputs_within(
+    outputs_of: &[&str],
+    is_input: &dyn Fn(&str) -> bool,
+    types: &dyn Fn(&str) -> Option<Vec<String>>,
+    db: &Connection,
+    lowered: Option<lower::Lowering<'_>>,
+    facts: &str,
+    atoms: bool,
+    kept: &BTreeSet<String>,
+    native: &BTreeSet<String>,
+) -> Result<(BTreeMap<String, std::sync::Arc<output::Rows>>, BTreeMap<String, Vector<usize>>)> {
     let (mut outputs, mut all_nodes) = (BTreeMap::new(), BTreeMap::new());
     let text = |e: &str| if atoms { format!("sym_text({e})") } else { e.to_owned() };
     for &rel in outputs_of.iter().filter(|r| !kept.contains(**r)) {
-        // The findings form `finding(key, n)` is written as `finding_at` (key, path, start); a `finding` of another
-        // shape (a data-layer program's `finding(clause, code, n)`) is an output like any other.
+        // The findings form `finding(key, n)`, `n` a node, is written as `finding_at` (key, path, start); a `finding` of
+        // another shape (a data-layer program's `finding(clause, code, n)`, or one placed by a symbol, `n: symbol`, as
+        // a cross-file part's is: decision 0727) is an output like any other.
         let declared = types(rel);
-        let findings_form = rel == "finding" && declared.as_ref().is_none_or(|t| t.len() == 2);
+        let findings_form = rel == "finding" && declared.as_ref().is_none_or(|t| t.len() == 2 && t[1] == "node");
         // Each column's decoding: symbols as text (names in SQL, kinds and fields from the dialect's grammar).
         let domains: Vec<lower::Domain> = match lowered {
             Some(l) if !findings_form => l.domains.get(rel).cloned().ok_or_else(|| Error::Plan(format!("the output {rel} has no columns' domains")))?,
@@ -9045,9 +9063,17 @@ fn decoded_outputs(
                 .unwrap_or_default()
         };
         let text_domain = |i: usize| types.get(i).is_none_or(|&t| t == output::col::TEXT);
+        // A node leaves its chunk here (plan "Chunk node numbers", step 3): an output's node column holds it as its
+        // document's key and its low bits in the document's own numbering (`Numbering::located`), what every reader
+        // of an output reads, never the chunk's id.
+        let numbering = crate::code_rule_dsl::facts::numbering::of(db);
+        let located = |i: usize, v: i64| match (&numbering, types.get(i)) {
+            (Some(n), Some(&output::col::NODE)) => n.located(v),
+            _ => v,
+        };
         let cell = |i: usize, v: SqlValue| -> Result<Shown> {
             Ok(match v {
-                SqlValue::Integer(v) => decode(i, v).map_or(Shown::Int(v), Shown::Text),
+                SqlValue::Integer(v) => decode(i, v).map_or_else(|| Shown::Int(located(i, v)), Shown::Text),
                 SqlValue::Null if text_domain(i) => Shown::Text("None".to_owned()),
                 SqlValue::Null => Shown::Int(output::NULL),
                 SqlValue::Text(s) if text_domain(i) => Shown::Text(s),

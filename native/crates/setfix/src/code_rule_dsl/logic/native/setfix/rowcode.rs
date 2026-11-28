@@ -17,6 +17,7 @@
 //! The steps' observed fanouts (`JoinRule::counts`) stay exact: the program outputs each fused
 //! step's running mask, and its popcount is the rows that step passed on.
 
+use rerail_blocks::frame::InlineVec;
 use rerail_blocks::vector::Vector;
 use super::{Key, ScalarKind, Step};
 use rerail_compiler::block::{BlockOp, BlockProgram, CmpOp, Rhs, RowBatch, RowShape};
@@ -274,7 +275,8 @@ impl Fused {
     /// The chunk's computed columns from its gathered ones, then the program over the chunk:
     /// calls `each` with each fused step's passed count (`counts`), then returns the output
     /// words of the rows that go on.
-    pub(super) fn run<'s>(&'s self, s: &'s mut Scratch, mut each: impl FnMut(usize, u64)) -> &'s [u64] {
+    /// `docs`: the run's documents, a `Word::Doc`'s (`Store::docs`).
+    pub(super) fn run<'s>(&'s self, s: &'s mut Scratch, docs: &super::DocOf, mut each: impl FnMut(usize, u64)) -> &'s [u64] {
         let n = s.rows;
         for (k, w) in self.columns.iter().enumerate() {
             if let Word::Doc(c) = *w {
@@ -287,13 +289,14 @@ impl Fused {
                     (&b[0], &mut a[k])
                 };
                 dst.clear();
-                dst.extend(src.iter().map(|&x| x >> 32));
+                dst.extend(src.iter().map(|&x| docs.key(x)));
             }
         }
-        let cols: Vec<&[i64]> = s.columns.iter().map(|v| v.as_slice()).collect();
+        // On the stack (decision 0687): a fused chunk's columns and outputs are few.
+        let cols: InlineVec<&[i64], 8> = s.columns.iter().map(|v| v.as_slice()).collect();
         let batch = RowBatch { columns: &cols, params: &s.params, sets: &[], len: n };
         s.values.resize(self.program.row_words(n), 0);
-        let outputs: Vec<&'s [u64]> = self.program.interpret_rows(&batch, &mut s.values[..]).collect();
+        let outputs: InlineVec<&'s [u64], 8> = self.program.interpret_rows(&batch, &mut s.values[..]).collect();
         for (m, p) in self.passed.iter().enumerate() {
             each(m, p.map_or(n as u64, |k| outputs[k].iter().map(|w| u64::from(w.count_ones())).sum()));
         }

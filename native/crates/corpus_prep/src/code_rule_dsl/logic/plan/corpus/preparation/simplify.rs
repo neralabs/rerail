@@ -309,8 +309,8 @@ impl Rewrite for Subst {
         match t {
             TermRef::Var(s) => self.to.get(&s).cloned(),
             TermRef::Call(f, mut args) if Some(f) == self.doc && args.count() == 1 => match args.next() {
-                Some(TermRef::Int(n)) => Some(T::Int(n >> 32)),
-                Some(TermRef::Var(s)) => self.ints.get(&s).map(|n| T::Int(n >> 32)),
+                Some(TermRef::Int(n)) => Some(T::Int(rerail_blocks::located::Located::key_wide(n))),
+                Some(TermRef::Var(s)) => self.ints.get(&s).map(|n| T::Int(rerail_blocks::located::Located::key_wide(*n))),
                 _ => None,
             },
             _ => None,
@@ -1151,7 +1151,7 @@ const FILTER_RULES: usize = 2;
 
 /// A base relation a negation may test inside a filter: the functional lookups' relations.
 fn base_lookup(rel: &str) -> bool {
-    matches!(rel, "docof" | "visit_index" | "node_order" | "kind" | "text" | "name" | "line" | "op" | "node" | "field" | "child")
+    matches!(crate::code_rule_dsl::facts::core::counterpart(rel), "docof" | "visit_index" | "node_order" | "kind" | "text" | "name" | "line" | "op" | "node" | "field" | "child")
 }
 
 /// A literal an inlined filter writes: a literal placed, or `l = r`, the reader's term `l` (of `reader`) and the
@@ -1198,7 +1198,7 @@ impl ProgramPass for InlineFilters {
                 Some(TermRef::Wild) | None => false,
                 Some(_) => true,
             };
-            match rel_of(a) {
+            match crate::code_rule_dsl::facts::core::counterpart(rel_of(a)) {
                 "docof" | "visit_index" | "node_order" | "kind" | "text" | "name" | "line" | "op" => on(0),
                 "node" => on(1),
                 "field" => on(2),
@@ -1892,7 +1892,7 @@ impl RulePass for MergeKeyed {
 }
 
 fn keyed_rel(v: &Version, a: AtomRef<'_>) -> Option<usize> {
-    KEYS.iter().find(|(rel, n, _)| *rel == v.rel_name(a.rel()) && *n == a.arity()).map(|&(_, _, k)| k)
+    KEYS.iter().find(|(rel, n, _)| *rel == crate::code_rule_dsl::facts::core::counterpart(v.rel_name(a.rel())) && *n == a.arity()).map(|&(_, _, k)| k)
 }
 
 /// Term `t` of rule `r` to write, each variable as `to` maps it.
@@ -2857,7 +2857,7 @@ fn location_column(v: &Version, f: &Fields<'_>, rel: &str, rules: &[RuleRef<'_>]
 /// location) kept each line's span, a row per line between every pair (3.6-10 M rows priced for 25,425 pairs).
 /// A read of a relation of no location that only tests values the located reads bind (`er_tr_helper(a)`, a set of names,
 /// after `er_cattr(c, a, _)`) makes no rows of its own: the rule is still its file's. Without it, a stage's existence
-/// read of `er_tr(_, k)` (decision 0675) dropped `er_tr`'s def, and its rules moved to the cross-file part over every
+/// read of `er_tr(_, k)` (decision 0709) dropped `er_tr`'s def, and its rules moved to the cross-file part over every
 /// file's nodes (0677).
 /// `rules` are the relation's, and `by_head` every derived relation's, indexed once (`ProjectAll`).
 fn file_local_reads(v: &Version, f: &Fields<'_>, by_head: &BTreeMap<&str, Vec<RuleRef<'_>>>, rules: &[RuleRef<'_>]) -> bool {

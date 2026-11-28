@@ -13,8 +13,8 @@
 use rerail_blocks::vector::Vector;
 use std::cmp::Ordering;
 
-/// Ids a fence covers.
-pub(super) const FENCE: usize = 64;
+/// Ids a fence covers (the orders' one, `rerail_blocks::order`).
+pub(super) use rerail_blocks::order::FENCE;
 
 /// The row ids of a relation's live rows, sorted by their values in `order` (then by id), with the leading value of
 /// every `FENCE`th id.
@@ -74,8 +74,7 @@ impl Ordered {
             return self.range_hashed(rows, k, key);
         }
         // The blocks that may hold the leading value: from the last fence below it to the first fence above it.
-        let lo = self.fences.partition_point(|&f| f < lead).saturating_sub(1) * FENCE;
-        let hi = (self.fences.partition_point(|&f| f <= lead) * FENCE).min(self.ids.len());
+        let (lo, hi) = rerail_blocks::order::fence_span(&self.fences, self.ids.len(), lead);
         let block = &self.ids[lo..hi];
         let cmp = |id: u32| -> Ordering {
             let r = &rows[id as usize * k..][..k];
@@ -151,7 +150,7 @@ pub(super) fn key_hash(vals: impl Iterator<Item = i64>) -> u64 {
     let mut h = vals.fold(0u64, |h, v| (h.rotate_left(5) ^ v as u64).wrapping_mul(0x517c_c1b7_2722_0a95));
     h ^= h >> 29;
     h = h.wrapping_mul(0xbf58_476d_1ce4_e5b9);
-    h ^ (h >> 32)
+    h ^ (h >> 32) // bits: a hash's mix
 }
 
 /// mldb's frozen `PathIndex` (the IdHash idea, `plugins/tabular/tabular_dataset.cc`): the live rows sorted by the hash

@@ -10,7 +10,7 @@
 // RUF026(n): a finding at node n, from clause `default-factory-kwarg`.
 // Each rule below is one way the JSON `rule` can match.
 // Columns after `at` are the metavariables the JSON's message, anchor or `each` names: one finding per distinct row.
-.violation RUF026(at: loc, c: node) "Pass the factory positionally, as in `defaultdict(list)`; `default_factory=` is stored as a dict entry and leaves the dict without a default. Leave it if that entry is intended."
+.violation RUF026(at: node, c: node) "Pass the factory positionally, as in `defaultdict(list)`; `default_factory=` is stored as a dict entry and leaves the dict without a default. Leave it if that entry is intended."
     suppress noqa "RUF026"
 RUF026(C, n) :- ruf026_bad_call(n), node(_, n, _, _, _), C = n.
 RUF026(C, n) :- ruf026_in_string(n, C).
@@ -41,7 +41,7 @@ ruf026_bad_call(n) :- kind(n, "call"), field(n, "function", c1), ruf026_callee(c
 
 // in_string(n): the JSON util `in-string`, used where the JSON says `matches: "in-string"`
 //   C: metavariable this relation binds for the calling rule
-.decl ruf026_in_string(n: node, c: loc)
+.decl ruf026_in_string(n: node, c: node)
 ruf026_in_string(n, C) :- kind(n, "string"), count : { contains("\\", n) } = 0,
     parsed(n, "annotation", r1), within(c2, r1), ruf026_alt_3(c2, C).
 
@@ -72,6 +72,6 @@ ruf026_alt_1(n) :- node(_, n, _, _, _), glob("[(),]", n).
 
 // alt_3(n): the JSON `any`: n matches if any one of these rules does
 //   C: metavariable this relation binds for the calling rule
-.decl ruf026_alt_3(n: node, c: loc)
+.decl ruf026_alt_3(n: node, c: node)
 ruf026_alt_3(n, C) :- ruf026_bad_call(n), C = n.
 ruf026_alt_3(n, C) :- ruf026_in_string(n, C).

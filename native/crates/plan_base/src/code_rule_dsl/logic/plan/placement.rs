@@ -335,7 +335,18 @@ fn is_text_fn_of_rows(v: &Version, t: TermRef<'_>) -> bool {
         Some((f, args)) if makes_text(f) && !args.is_empty() => {
             // A regex's and its replacement's texts are constants (the device's automaton is made before the run).
             let constants = device_fn(f) != Some(DeviceFn::RegexReplace) || args[1..].iter().all(|a| !matches!(a, TermRef::Var(_)));
-            constants && (!is_call(&args[0]) || is_text_fn_of_rows(v, args[0])) && args[1..].iter().all(|a| !is_call(a))
+            // Its numbers may be row code (`substr(s, 1, strlen(s) - 2)`: a name's characters, arithmetic), bound
+            // by stages before it; its other texts are variables or constants, but `str_between`'s, which may be cats
+            // (a cat compared with a bound text inverts to `n = str_between(c, cat(l, "/"), "")`).
+            let (texts, between) = match device_fn(f) {
+                Some(DeviceFn::Text { texts, f: tf, .. }) => (texts, tf == caps::TextFn::StrBetween),
+                _ => (args.len(), false),
+            };
+            constants
+                && (!is_call(&args[0]) || is_text_fn_of_rows(v, args[0]))
+                && args[1..].iter().enumerate().all(|(k, &a)| {
+                    !is_call(&a) || if k + 1 >= texts { row_term(v, a) } else { between && (is_made_cat(v, a) || is_text_fn_of_rows(v, a)) }
+                })
         }
         _ => false,
     }
@@ -792,8 +803,9 @@ pub mod tests {
         assert!(p.gpu && p.missing.is_empty(), "{p:?}");
         assert!(!place(&plain).gpu, "the CPU binding keeps it");
         // `@doc(x) = @doc(y)` and `@in(x, {…})` are row code, and so is `z = cat(x, y)` (a text the device makes);
-        // `sha256(x)` is not; `lower(x)` is (a text the device makes into its arena), and a cat or `lower(x)` in a
-        // recursive stratum too (decision 0661: its rounds keep each made text one value in their arena).
+        // `sha256(x)` is not; a cat in a recursive stratum is (its rounds keep their texts one value a content,
+        // decision 0661), and so is `lower(x)`, there or not (a text the device makes into the component's arena,
+        // decision 0659: `setfix::device` refuses a made text only in a lattice).
         let cmp = |l: T<'static>, r: T<'static>| Literal::Eq(l, r);
         let doc = |v: &'static str| T::Call("doc", vec![T::Var(v)]);
         let mut docs = Shape::default();

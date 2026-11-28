@@ -10,7 +10,7 @@
 // T100(n): a finding at node n, from clause `debugger-import`.
 // Each rule below is one way the JSON `rule` can match.
 // Columns after `at` are the metavariables the JSON's message, anchor or `each` names: one finding per distinct row.
-.violation T100(at: node, d: loc) "Remove this debugger import of `{d}` before committing."
+.violation T100(at: node, d: node) "Remove this debugger import of `{d}` before committing."
     suppress noqa "T100"
 T100(n, D) :- kind(n, "import_statement"), has(n, c1, "dotted_name"),
     t100_statement_name(c1, q2),

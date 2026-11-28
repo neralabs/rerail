@@ -71,6 +71,26 @@ export function fileSpecDirectory(spec: string): string | undefined {
 }
 
 /**
+ * A copy in `copy` of the pack in `source`, as one published for an earlier Rerail: its rule `ruleId` asks for the
+ * `print` token of Python 2's `print >>f, x`, which a print statement implies and parsed files now leave out, so this
+ * Rerail loads the pack and does not run that rule. Returns `copy`.
+ */
+export function withOlderTokenRule(source: string, copy: string, ruleId: string): string {
+  for (const entry of ["pack.json", "package.json", "rules"]) cpSync(join(source, entry), join(copy, entry), { recursive: true });
+  const path = join(copy, "rules", `${ruleId}.json`);
+  const document = JSON.parse(readFileSync(path, "utf8")) as Record<string, unknown>;
+  writeFileSync(path, JSON.stringify({
+    ...document,
+    clauses: [{
+      id: "print-token",
+      violation: { anchor: "witness.start", code: "PRINT", message: "never" },
+      forbid: { ast: { language: "python", rule: { regex: "^print$", inside: { kind: "print_statement" } } } },
+    }],
+  }));
+  return copy;
+}
+
+/**
  * A copy, under `root`, of the valid fixture pack as a third party publishes it: package `packageName`, pack id `id`,
  * each rule id `<id>-<rule>` (so it can clash with another pack only by its pack id), at `version` and, with `range`,
  * for those versions of core. Returns its folder.

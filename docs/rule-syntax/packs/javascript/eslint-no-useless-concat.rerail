@@ -13,12 +13,12 @@
 //   "a" + "b"     `a` + "b"     foo + "a" + "b"  (the second +)     → reported, at the `+`
 //   "a" + 1       "a" +⏎ "b"  (a line break: kept for line length)  fine
 // No options.
-.violation no_useless_concat(at: span) code "no-useless-concat" "Unexpected string concatenation of literals."
+.violation no_useless_concat(at: token) code "no-useless-concat" "Unexpected string concatenation of literals."
     suppress eslint "no-useless-concat"
     suppress oxlint "no-useless-concat"
     suppress biome "lint/complexity/noUselessStringConcat"
 no_useless_concat(t) :- binop(n, "+", l, r), right_end(l, a), left_end(r, b), string_like(a), string_like(b),
-    end_line(a, k), line(b, k), op_token(n, t).
+    node_end_line_number(a, k), node_line_number(b, k), op_token(n, t).
 
 // right_end(e, x): ESLint's getLeft: `a + "b"` ends with "b". left_end(e, x), getRight, is the mirror:
 // `"a" + b` starts with "a". Parentheses do not count: binop strips them, as ESTree has none.

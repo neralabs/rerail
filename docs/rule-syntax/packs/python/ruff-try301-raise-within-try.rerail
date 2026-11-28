@@ -25,7 +25,8 @@ TRY301(r) :- field(t, "body", b), kind(t, "try_statement"), exc_raise(r, e), wit
 // caught_here(t, c): a handler of t names the raised class c (compared as dotted text, as ComparableExpr does
 // for names), or catches everything.
 .decl caught_here(t: node, c: node)
-caught_here(t, c) :- exc_handler(t, x), exc_type(x, h), exc_dotted(h, s), exc_raise(_, e), exc_class(e, c),
-    exc_dotted(c, s).
+// The raise is in t, as its reader's is: `exc_raise(_, e)` alone took every raise of the corpus (decision 0652).
+caught_here(t, c) :- exc_handler(t, x), exc_type(x, h), exc_dotted(h, s), exc_raise(r, e), within(r, t),
+    exc_class(e, c), exc_dotted(c, s).
 caught_here(t, c) :- exc_handler(t, x), exc_type(x, h), exc_qual(h, q), (q = "builtins.Exception" ;
-    q = "builtins.BaseException"), exc_raise(_, e), exc_class(e, c).
+    q = "builtins.BaseException"), exc_raise(r, e), within(r, t), exc_class(e, c).

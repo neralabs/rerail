@@ -1,6 +1,7 @@
 # 0458: The cross part reads the base relations off every file's tape
 
-Status: partly built (audited 2026-11-23). Left: documents made when first read (batch still makes every document);
+Status: retired (2026-11-27) by 0727: the cross part reads no base relation, and no node reaches it. Before that:
+partly built (audited 2026-11-23). Left: documents made when first read (batch still makes every document);
 phase-run old sources read without SQL. Decided by the user (2026-11-19, Q285: "Read the tapes"), over the 2026-11-15
 answer to Q2/Q5, whose widening (0286) stays for the requests it covers. Follows 0353 (a view is a read of the tape,
 never a relation); amends 0117 step 1 (the kept inputs) and 0401 F6 (what the keep writes) for base relations.
@@ -153,3 +154,8 @@ Each has its test before the code that meets it.
 
 - A run of many files holds every file's tape mapped for the cross part. Their bytes are the tape store's, mapped,
   not the heap's; the peak is measured in step 5.
+
+**Amended by 0689** (2026-11-25): where every cross-part `text` atom reads a bound node or line, the corpus batch
+makes no `text` row. The versions, the semi-join's held rows and the statistics read `text` by probes of the tape
+(`ProbedText`), and a step that binds no column a made-on-lookup relation or a batch view is probed by is priced as
+reading every row.

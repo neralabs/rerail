@@ -1,0 +1,1 @@
+A pack's rules written in `.rerail` now run: after a session's writes in their scope, once the checkout is quiet or the turn ends, steering at the next boundary; and in every scan, in the same audit as the JSON rules. A run past its time or memory budget fails only its own rules.

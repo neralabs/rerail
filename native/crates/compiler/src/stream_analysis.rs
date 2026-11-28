@@ -165,7 +165,7 @@ pub fn successors(native: &Structure, pushes: &[u16], pc: usize) -> Vec<usize> {
             out
         }
         Op::Return { again } => pushes.iter().map(|&p| usize::from(p) + usize::from(again)).collect(),
-        Op::Word { test: true, .. } | Op::Mark { .. } | Op::Row { .. } | Op::Flag { op: FlagOp::Test, .. } => vec![pc + 1, pc + 2],
+        Op::Word { test: true, .. } | Op::Mark { .. } | Op::Row { .. } | Op::Flag { op: FlagOp::Test, .. } | Op::MadeIs { .. } => vec![pc + 1, pc + 2],
         _ => vec![pc + 1],
     }
     .into_iter()
@@ -437,7 +437,20 @@ pub enum Mem {
 
 impl Mem {
     pub const COUNT: u32 = 30;
+    /// Every field, in order: what a statement's mark keeps (decision 0650).
+    pub const ALL: [Mem; Mem::COUNT as usize] = [
+        Mem::Supers, Mem::Pending, Mem::Keep, Mem::Moved, Mem::Sel, Mem::Shift, Mem::LastMade, Mem::Word, Mem::Flags, Mem::Next, Mem::Taken, Mem::Lw, Mem::Start, Mem::End, Mem::Limit, Mem::LastEnd,
+        Mem::Nodes, Mem::Open, Mem::Ret, Mem::Need, Mem::Live, Mem::Depth, Mem::Coded, Mem::Codes, Mem::PartAt, Mem::PartEnd, Mem::PartClose, Mem::PartRd, Mem::Lost, Mem::Strings,
+    ];
 }
+
+const _: () = {
+    let mut k = 0;
+    while k < Mem::COUNT as usize {
+        assert!(Mem::ALL[k] as usize == k);
+        k += 1;
+    }
+};
 
 /// The fields a rule's function holds in registers (`Cut::held`) and passes to its calls, given
 /// back with their results (`Cut::pass`): none. The whole state stays in memory, read and
@@ -872,13 +885,19 @@ pub fn shared_runs(native: &Structure, pushes: &[u16], alone_to: Option<&[bool]>
 /// `lang`'s numbers by a program's keys, `u32::MAX` where the table has none: each entry of its table that a key names
 /// (no alias, a kind and field within a key's bits, its flags the extra's where its kind is one of `extras`, its
 /// classes among `classes`, the program's supertype classes), at the key (`kind | field << KIND_BITS | class bits <<
-/// 16`). The JIT's run reads them at run time (`Ctx::numbers`).
+/// 16`). The table's ERROR code (`stream::entry_of`'s) is at a recovered statement's row kind
+/// (`stream_ir::ERROR_ROW`, decision 0650). The JIT's run reads them at run time (`Ctx::numbers`).
 pub fn numbers_by_key(lang: &rerail_tape_format::f16::Lang, classes: &[u16], extras: &[u16]) -> rerail_tape_format::Vector<u32> {
     use rerail_tape_format::{CODE_EXTRA, KIND_BITS};
     let mut by = rerail_tape_format::Vector::new();
     by.resize(id_slots(classes.len()), u32::MAX);
+    let error = crate::stream::entry_of(crate::stream_ir::ERROR_LEAF, 0, &[], false);
     for e in lang.table().entries() {
         let Some(n) = lang.number(e) else { continue };
+        if e.to_owned() == error {
+            by[usize::from(crate::stream_ir::ERROR_ROW)] = n;
+            continue;
+        }
         let extra = if extras.contains(&e.kind) { CODE_EXTRA } else { 0 };
         if e.alias.is_some() || e.kind >= 1 << KIND_BITS || e.field >= 1 << 6 || e.flags != extra {
             continue;

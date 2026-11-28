@@ -8,7 +8,7 @@
 // SIM212(n): a finding at node n, from clause `if-expr-with-twisted-arms`.
 // Each rule below is one way the JSON `rule` can match.
 // Columns after `at` are the metavariables the JSON's message, anchor or `each` names: one finding per distinct row.
-.violation SIM212(at: node, a: loc) "Swap the arms to read `{a} if {a} else ...`, dropping the `not` from `... if not {a} else {a}`."
+.violation SIM212(at: node, a: node) "Swap the arms to read `{a} if {a} else ...`, dropping the `not` from `... if not {a} else {a}`."
     suppress noqa "SIM212"
 SIM212(n, A) :- kind(n, "conditional_expression"), child(n, c1, _),
     sim212_negated_name_a(c1, A), sim212_tok_follows_1(c1), child(n, c9, _), sim212_name_a(c9, A),
@@ -16,13 +16,13 @@ SIM212(n, A) :- kind(n, "conditional_expression"), child(n, c1, _),
 
 // name_a(n): the JSON util `name-a`, used where the JSON says `matches: "name-a"`
 //   A: metavariable this relation binds for the calling rule
-.decl sim212_name_a(n: node, a: loc)
+.decl sim212_name_a(n: node, a: node)
 sim212_name_a(n, A) :- kind(n, "identifier"), node(_, n, _, _, _), A = n.
 sim212_name_a(n, A) :- kind(n, "parenthesized_expression"), child(n, c1, _), sim212_name_a(c1, A).
 
 // negated_name_a(n): the JSON util `negated-name-a`, used where the JSON says `matches: "negated-name-a"`
 //   A: metavariable this relation binds for the calling rule
-.decl sim212_negated_name_a(n: node, a: loc)
+.decl sim212_negated_name_a(n: node, a: node)
 sim212_negated_name_a(n, A) :- kind(n, "not_operator"), child(n, c1, _), sim212_name_a(c1, A).
 sim212_negated_name_a(n, A) :- kind(n, "parenthesized_expression"), child(n, c2, _),
     sim212_negated_name_a(c2, A).

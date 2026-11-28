@@ -11,7 +11,7 @@
 //   -------                  ← D408
 #include "python/docstrings-sections.rerail"
 
-.violation D408(at: span, k: symbol) code "D408"
+.violation D408(at: place, k: symbol) code "D408"
     "Move this underline up to the line directly below the section name, removing the blank lines between them."
     suppress ruff "D408"
 D408(at, v) :- doc_section(s, i, v, _, _, _), doc_after(s, i, f, k), k > 0, doc_dashes(s, f, _), doc_at(s, f, at).

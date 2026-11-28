@@ -1112,7 +1112,7 @@ mod tests {
             fn indexed(&self, _: usize) -> bool {
                 false
             }
-            fn lookup(&self, _: usize, _: &[i64]) -> Option<rerail_blocks::vector::Vector<usize>> {
+            fn lookup(&self, _: usize, _: &[i64]) -> Option<Vector<usize>> {
                 None
             }
             fn value(&self, row: usize, column: usize) -> i64 {

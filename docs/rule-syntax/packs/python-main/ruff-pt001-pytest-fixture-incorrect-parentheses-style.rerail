@@ -10,7 +10,7 @@
 // PT001(n): a finding at node n, from clause `fixture-empty-parentheses`.
 // Each rule below is one way the JSON `rule` can match.
 // Columns after `at` are the metavariables the JSON's message, anchor or `each` names: one finding per distinct row.
-.violation PT001(at: loc, span: node, f: loc) "Remove the empty parentheses: write the decorator as `@{f}` instead of `@{f}()`."
+.violation PT001(at: place, span: place, f: node) "Remove the empty parentheses: write the decorator as `@{f}` instead of `@{f}()`."
     suppress noqa "PT001"
 // SPAN: not bound by every branch, so empty (unset) where not bound, as in ast-grep.
 PT001(rr_at, SPAN, F) :- kind(n, "decorator"), child(n, c1, _), pt001_empty_call(c1, F),
@@ -31,12 +31,12 @@ pt001_fixture_name(n) :- (kind(n, "identifier") ; kind(n, "attribute")),
 
 // fixture_ref(n): the JSON util `fixture-ref`, used where the JSON says `matches: "fixture-ref"`
 //   F: metavariable this relation binds for the calling rule
-.decl pt001_fixture_ref(n: node, f: loc)
+.decl pt001_fixture_ref(n: node, f: node)
 pt001_fixture_ref(n, F) :- pt001_fixture_name(n), node(_, n, _, _, _), F = n.
 
 // callee(n): the JSON util `callee`, used where the JSON says `matches: "callee"`
 //   F: metavariable this relation binds for the calling rule
-.decl pt001_callee(n: node, f: loc)
+.decl pt001_callee(n: node, f: node)
 pt001_callee(n, F) :- pt001_fixture_ref(n, F).
 pt001_callee(n, F) :- kind(n, "parenthesized_expression"), child(n, c1, _), pt001_callee(c1, F).
 
@@ -55,7 +55,7 @@ pt001_fixture_expr(n) :- kind(n, "parenthesized_expression"), child(n, c2, _),
 
 // empty_call(n): the JSON util `empty-call`, used where the JSON says `matches: "empty-call"`
 //   F: metavariable this relation binds for the calling rule
-.decl pt001_empty_call(n: node, f: loc)
+.decl pt001_empty_call(n: node, f: node)
 pt001_empty_call(n, F) :- kind(n, "call"), field(n, "function", c1), pt001_callee(c1, F),
     field(n, "arguments", c2), kind(c2, "argument_list"),
     count : { child(c2, c3, _), !pt001_alt_1(c3) } = 0.

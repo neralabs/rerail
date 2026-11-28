@@ -10,7 +10,7 @@
 // F402(n): a finding at node n, from clause `import-shadowed-by-loop-var`.
 // Each rule below is one way the JSON `rule` can match.
 // Columns after `at` are the metavariables the JSON's message, anchor or `each` names: one finding per distinct row.
-.violation F402(at: node, name: loc) "Import `{name}` shadowed by loop variable"
+.violation F402(at: node, name: node) "Import `{name}` shadowed by loop variable"
     suppress noqa "F402"
 F402(n, NAME) :- kind(n, "identifier"), node(_, n, _, _, _), NAME = n, bind_name(n, b1),
     main_form(b1, "for"),

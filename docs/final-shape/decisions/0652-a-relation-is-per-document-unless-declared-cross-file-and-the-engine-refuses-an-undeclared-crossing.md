@@ -161,41 +161,30 @@ rows of every value, and the split read it as a join of everything. Preparation 
 (`head_bound`, beside `bound`): a variable is bound by a positive atom, a pattern, a nearest, an aggregate's
 result, or a comparison that defines it from bound terms, either way round (`$n = $r`).
 
-**Rule text kept as written.** The policies whose crossings were the split's gaps (covered views, a request's tie)
-run as they were: `purity-calls`, `ruff-try301`, `ruff-up008`, JavaScript's and TypeScript's `no-useless-constructor`,
-TypeScript's `no-misused-new` and `parameter-properties`, Vue's `no-duplicate-attributes` and `valid-v-for`, and the
-libraries (`python/references`, `python/modules`, `bootstrap`).
-
-**Text that joined documents by accident**, written per document. Each was run against its original with the crossing
-declared (where it is derived, never its rows) over one file and over two: the same findings on one file, and on two
-the original's finding in a file it does not concern.
-
-| Policy | The original | On two files |
-|---|---|---|
-| Python's F402 | a `__future__` import before the loop by node order, in any file | flags `b.py`'s loop for `a.py`'s import |
-| React's `jsx-no-constructed-context-values` | a `createContext` at any file's program root | flags `d.jsx`'s `Ctx`, a plain `1` |
-| TypeScript's `explicit-module-boundary-types` | `followed(x, d)` by the name alone | flags `b.ts`'s private `g` for `a.ts`'s export `g` |
-| React's `no-deprecated` | `replaced` by any file's pragma | the same on these files (no pragma) |
-| `phpcs-…-size-functions-in-loops` | every loop with every `$this->x` (`this_changes`, unbounded) | refused before the split: does not run |
-| `post-op-side-effects` | `pos_runtime_sig` gated by the allowlist read in any file | one allowlist file: the same |
-
-Two used `0` for "no node", which 0649 writes `unset`: TypeScript's `array-type` (`long_form`'s argument; `simple_arg`,
-`shown_arg` keyed by the form) and Vue's `require-valid-default-prop` (`prop`'s call). The same findings either way.
-
-**Generated text is the translator's.** The python-main pack is the JSON translator's output byte for byte
-(`json_rules_pack_is_current`). The translator now declares what it makes cross-file: a helper whose rule reads a guest
-capture by text and binds it to nothing else (`fast003_alt_2`: any file's node of the capture's text). A pattern's
-`$$$X` binds nothing, as the lowering reads it, so a capture only a `$$$X` names is unset, and a negated read of it
-asks for no row at all (RUF016's fallback: no span of the index, `!ruf016_tuple_span(n, _)`, found at the subscript).
+**Text that joined documents by accident**, written per document (each one's findings unchanged on its examples):
+`purity-calls` (`pc_modattr`, `pc_shadowed` through `docof`), `post-op-side-effects` (`pos_runtime_sig`),
+`django-practice-bulk-not-loop` (`bnl_model_is` within its call; the numeric field names apart, declared),
+`eslint-no-useless-constructor` (`passes_on`, `same_arg` within their method), `ruff-try301` (`caught_here` within its
+`try`), `eslint-plugin-vue-valid-v-for` (`child_for_uses` within its element), `ruff-fast003` (`@doc` joins),
+`ruff-ruf016` (its fallback span is the node's own), `phpcs-…-size-functions-in-loops` (`this_changes` within its
+loop: every loop of the corpus with every `$this->x` before), `eslint-plugin-vue-require-valid-default-prop` (`prop`'s
+"no call" is `unset`, a nullable location, not `0`), React's `jsx-no-constructed-context-values` (a `createContext`
+at any file's program root) and `no-deprecated` (`replaced` by the file's own pragma), TypeScript's
+`no-useless-constructor` (as JavaScript's), `no-misused-new` (`returns_own` within its type), `array-type`
+(`simple_arg`, `shown_arg` keyed by the form, and "no argument" is `unset`, not 0), `explicit-module-boundary-types`
+(`followed` in the module's own file), `parameter-properties` (`same_type` within one class), and Python's F402 (a
+`__future__` import of the loop's module).
 
 **Crossings that are meant, declared** with a comment saying why: the data layer's `cpl_msg`, `cpl_missing`,
 `er_facade_site`, `stale_entry`, `la_eager_delegate`, `annotations`, `static_tests`, `pos_bypass`,
-`pos_allow_broken`, `ma_branch_aware`, `csa_owner_key` (CONN301 counts a name's owners over every file of the
-surface); Django's `bnl_number` (a model's number fields, in any file); the generated FAST003's `fast003_alt_2` and
-`fast003_pyd_field`; the typing programs' `wantx` (Python), `modchild` and `res` (Rust), `fn_ref` and `type_of` (the
-workload: a call no file defines), in their `.rdl` sources, which now carry `cross_file` to `.rerail`; and the engine
-tests' programs whose subject is a cross-file relation (`uses`, `dep`, `pair`, `shared`, …). R4's stratum `a` is one
-by its rules now (each imported module's `f0`), not by a declaration on a relation of one file.
+`pos_allow_broken`, `ma_branch_aware`, `csa_owners` (CONN301's count across the surface); `python/references`'
+`rf_imported` and `rf_own_fn`; the typing programs' `wantx` (Python), `modchild` and `res` (Rust), `fn_ref` and
+`type_of` (the workload: a call no file defines), in their `.rdl` sources, which now carry `cross_file` to `.rerail`; and the engine tests' programs whose subject is a cross-file relation (`uses`, `dep`, `pair`, `shared`, …).
+
+Each side of the merge of 2026-11-25 wrote this part apart. The engine keeps both: the split's gaps closed here (covered
+views, a request's tie, `row_documents`) and the policies' text written per document above. Where both rewrote one
+policy (CONN301, `django-practice-bulk-not-loop`, RUF016, the `python/references` comments), the text above is the
+one kept.
 
 A crossing inside a pack can hide behind another: run with its pack, CONN301's `csa_owners` followed a cross-file read
 of another policy's and was not its own cause; run alone it was refused. The pack test shards python-main, which
@@ -209,8 +198,9 @@ fixed text waits in the tool-pack's `publish/`, which CI lays over the pulled ar
 - TypeScript's `triple-slash-reference` bound a regex capture over a node as a symbol; the captures are spans,
   read as text.
 - The node and react packs read `tsconfig_for`, which core declares and nothing made (O80). The repository reader
-  makes them now: decision 0670. A library's own `.input` that core does not make and no fact gives (`npm_ignored`,
-  "until core has it") is bound empty, under its declared columns, where a cross-file rule reads it.
+  makes `tsconfig`, `tsconfig_for` and `tsconfig_path` now (JSONC, `extends` chains; one reader with the import
+  resolver, decision 0670). A library's own `.input` that core does not make and no fact gives (`npm_ignored`, "until
+  core has it") is bound empty, under its declared columns, where a cross-file rule reads it.
 - Next's `default_component` ran `match_all` over a field's node, which the span binder did not know: a field's node
   binds spans as a child's does.
 - JavaScript's messages with a literal brace (`{{`, as clippy's).
@@ -219,6 +209,27 @@ fixed text waits in the tool-pack's `publish/`, which CI lays over the pulled ar
   claim of each class is found in three rounds of plain rules, and `crowded` reads them.
 - Python's `perf403` and Vue's `no-child-content` ran `match` over a node the span binder could not place: the first
   reads the key's text, the second names its element's kinds.
+
+## Amended (2026-11-24, user, at the hub's green pass): demand keeps a left-out atom's document
+
+Merged with the hub (roll-up 125), the check refused a crossing no source wrote. python/compare.rerail's `same_pair`
+carries a comparison's asks down to children; `unparen`'s demand from its recursive rule must leave
+`same_pair(x, y)` out to stay stratified (it negates `same_leaf`, which reads `value`), and what was left,
+`magic_unparen_bf(c) :- same_child(x, i, c), same_child(y, i, d)`, joined any two nodes of the corpus
+(`an_answer_the_programs_demand_puts_across_files_is_eager_alone_as_in_a_pack`, #932). Asked whether demand may make
+such a crossing, be exempt from the check, or keep the document, the user chose the last:
+
+- **A positive atom demand leaves out keeps its document.** A relation not declared `cross_file` holds rows of one
+  document each, so its atom's node variables lie in one. The magic rule that leaves it out keeps
+  `@doc(x) = @doc(y)` for each pair of those variables its kept literals bind (`magic::same_documents`). It is still
+  wider than the atom, so the demand stays sound, and it is a file's pairs, not the corpus's.
+- An atom of a `cross_file` relation says nothing of documents, and leaves no join.
+
+Tests: `a_left_out_per_document_atom_keeps_its_nodes_in_one_document` (the shape, both ways); #932's test, whose own
+`twin` (a crossing by `d != e`) is now declared `cross_file`.
+
+The pack-wide test reads each pack from the repository's root: the Django pack moved to `packs/django` (main's #930)
+the day this record's test listed it under `docs/rule-syntax/packs`.
 
 ## Order of work
 

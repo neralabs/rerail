@@ -43,7 +43,8 @@ const NOT_CACHES: &[&str] = &[
     // paths that changed, by the check's generation (decision 0399 step 1): names and sources' bookkeeping.
     "guest_keys", "observed_changes",
     // The segments sources (and tapes) are in (decision 0295 step 5), and the sum of the bytes of every file the
-    // store's rows name, which the disk budget reads (`store_bytes`, kept by those tables' triggers).
+    // store's rows name, which the disk budget reads (`store_bytes`, kept by those tables' triggers): the store's
+    // bookkeeping, as `store_state` is.
     "object_segments", "store_bytes",
     "push_pending", "snapshots", "snapshot_files", "workspaces", "store_sessions", "object_archive", "workspace_overlay", "git_trees", "git_tree_entries", "git_alias",
     // Analysis claims, release receipts, and collection work. Their rows reference results held elsewhere.
@@ -100,9 +101,9 @@ const FRESHNESS_CALLS: &[(&str, &str, usize)] = &[
     ("code_rule_dsl/logic/plan/corpus/reuse.rs", "!leaves.still(c)", 2),
     ("code_rule_dsl/logic/plan/corpus/combined.rs", "file.unchanged(", 1),
     ("code_rule_dsl/facts.rs", "derivation_valid(", 1),
-    // The store's calls as a trait below it (crate split 10b-2), forwarding the one above: not a test of their own.
+    // The crate split's forwarders of the store's trait (16c1a8b6f6: `ContentStore`'s, as `facts.rs`'s above; 79ecfbfb5d:
+    // the overlay's recovery store's), and recovery's own test of the reads it recovers. None tests a cache's freshness.
     ("content_store/as_fact_store.rs", "derivation_valid(", 1),
-    // The overlay's recovery test's store wrapper forwarding it, and the test's check of it (crate split 10c-2).
     ("code_rule_dsl/facts/overlay/recovery.rs", "derivation_valid(", 2),
     ("code_rule_dsl/logic/plan/corpus/constants.rs", ".all(|c| leaves.still(c))", 1),
 ];
@@ -111,7 +112,7 @@ const FRESHNESS_CALLS: &[(&str, &str, usize)] = &[
 fn no_cache_tests_its_own_freshness_but_those_not_yet_moved() {
     let mut files = Vec::new();
     every_source(&mut files);
-    // Each needle once, though several files may still call it.
+    // Each needle once: several files may have the same one.
     let mut needles: Vec<&str> = FRESHNESS_CALLS.iter().map(|(_, n, _)| *n).collect();
     needles.sort_unstable();
     needles.dedup();

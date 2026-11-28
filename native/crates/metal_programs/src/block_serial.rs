@@ -1573,7 +1573,7 @@ DEFINE_KERNEL2(serial, serial_write,
 }}
 "#,
         r = 2 * sw,
-        tgs = format!("{PREFIX_THREADS}u / GROUP_LANES"),
+        tgs = format_args!("{PREFIX_THREADS}u / GROUP_LANES"),
         states = GROUP_STATES,
     ));
     out.push_str(&records_source(programs));
@@ -1657,6 +1657,10 @@ fn records_source(programs: &[&BlockNative]) -> String {
                 distinct.push(c);
             }
         }
+        // The readers with an arm `open` at the file's end (`ReadNone::Bad`), and the marks the
+        // readers give (`records::pass`'s `retagged`).
+        let opening: Vec<u16> = (0..r.readers.len()).filter(|&i| r.readers[i].arms.iter().any(|a| matches!(a.none, rerail_compiler::records::ReadNone::Bad(_)))).map(|i| i as u16).collect();
+        let retagged: u32 = r.readers.iter().flat_map(|rd| rd.tags()).fold(0, |a, (_, m)| a | m);
         let bit_of = |c: &rerail_compiler::records::TokenCheck| distinct.iter().position(|d| *d == rerail_compiler::records::TokenCheck { rule: if c.always() { c.rule } else { 0 }, ..*c }).expect("listed");
         out.push_str(&format!(
             "UKL_TABLE uint8_t record_kinds_{p}[256] = {{{kinds}}};\n\
@@ -1664,6 +1668,13 @@ fn records_source(programs: &[&BlockNative]) -> String {
              UKL_TABLE uint32_t record_meta_{p}[{slots}] = {{{meta}}};\n\
              UKL_TABLE uint64_t record_tails_{p}[{nt}] = {{{tails}}};\n\
              UKL_TABLE uint8_t record_tests_{p}[256] = {{{tests}}};\n\
+             UKL_TABLE uint8_t record_open_{p}[256] = {{{opens}}};\n\
+             // A region open at the file's end (`Reader::open_kind`): its kind and one, else 0.\n\
+             UKL_INLINE uint32_t record_bad_{p}(Bytes bytes, FileRow f, UKL_GLOBAL const uint64_t* out, uint32_t s, uint32_t l) {{\n\
+             \x20 uint32_t bad = 0u;{open}\n\
+             \x20 (void)bytes; (void)f; (void)out; (void)s; (void)l;\n\
+             \x20 return bad;\n\
+             }}\n\
              // The word of the token at `s` of `len` bytes: its first eight bytes and its length\n\
              // to a slot, compared, and a word past eight bytes its other words.\n\
              UKL_INLINE uint32_t record_word_{p}(Bytes bytes, FileRow f, uint32_t s, uint32_t len) {{\n\
@@ -1680,6 +1691,7 @@ fn records_source(programs: &[&BlockNative]) -> String {
              }}\n\
              // The marks' tests' hits at the token `s..=l` (`records::check_hits`).\n\
              UKL_INLINE uint32_t record_hits_{p}(Bytes bytes, FileRow f, UKL_GLOBAL const uint64_t* out, uint32_t s, uint32_t l) {{\n\
+             \x20 if (record_bad_{p}(bytes, f, out, s, l) != 0u) return 0u;\n\
              \x20 const uint32_t len = l + 1u - s;\n\
              \x20 const uint32_t on = record_tests_{p}[U32(record_load8(bytes, f, s) & 0xfful)];\n\
              \x20 uint32_t hits = 0u;{hits}\n\
@@ -1701,7 +1713,11 @@ fn records_source(programs: &[&BlockNative]) -> String {
              \x20   const uint32_t len = l + 1u - s;\n\
              \x20   uint32_t kind = record_kinds_{p}[U32(record_load8(bytes, f, s) & 0xfful)];\n\
              \x20   uint32_t word = record_word_{p}(bytes, f, s, len);{unword}\n\
-             \x20   uint32_t marks = 0u;{marks}{retags}{gaps}{checks}\n\
+             \x20   uint32_t marks = 0u;{marks}{retags}\n\
+             \x20   const uint32_t bad_kind = record_bad_{p}(bytes, f, out, s, l);\n\
+             \x20   const bool open_bad = bad_kind != 0u;\n\
+             \x20   if (open_bad) {{ kind = bad_kind - 1u; word = 0u; marks &= ~{retagged}u; }}\n\
+             \x20   (void)open_bad;{gaps}{checks}\n\
              \x20   codes[k] = kind | (word << {kb}u) | (marks << {ms}u);\n\
              \x20   if (bad && !told) {{ told = true; ukl_atomic_max(stop, ~(k + 1u)); }}\n\
              \x20 }}\n\
@@ -1726,6 +1742,34 @@ fn records_source(programs: &[&BlockNative]) -> String {
                 let rule = r.ends.get(b).copied().unwrap_or(rerail_compiler::records::NO_RULE);
                 r.checks.iter().filter(|c| c.rule == rule).fold(0u32, |a, c| a | 1 << bit_of(c)).to_string()
             })),
+            // The readers with a region open at the file's end (`ReadNone::Bad`), by the first byte:
+            // 1 + their place among them, else 0.
+            opens = list(&mut (0..256usize).map(|b| match r.rules.get(usize::from(r.ends.get(b).copied().unwrap_or(rerail_compiler::records::NO_RULE))) {
+                Some(&rerail_compiler::records::EndRule::Read(i)) => opening.iter().position(|&x| x == i).map_or(0, |k| k + 1).to_string(),
+                _ => "0".to_string(),
+            })),
+            // A region open at the file's end (`Reader::open_kind`): the first arm whose opener holds
+            // at the start, with no closer's first byte where the last says: its kind, no word,
+            // none of the readers' marks and none of the tests, as `records::pass` and `walk`.
+            open = opening
+                .iter()
+                .enumerate()
+                .map(|(k, &i)| {
+                    let arms = r.readers[usize::from(i)]
+                        .arms
+                        .iter()
+                        .map(|a| {
+                            let then = match a.none {
+                                rerail_compiler::records::ReadNone::Bad(kind) => format!("if (!(l > s + {off}u && record_bit(out, f, {c}u, l - {off}u))) bad = {}u;", u32::from(kind) + 1, off = a.off, c = a.closer),
+                                _ => String::new(),
+                            };
+                            format!("if (record_bit(out, f, {}u, s)) {{ {then} }}", a.opener)
+                        })
+                        .collect::<Vec<_>>()
+                        .join(" else ");
+                    format!(" if (record_open_{p}[U32(record_load8(bytes, f, s) & 0xfful)] == {}u) {{ {arms} }}", k + 1)
+                })
+                .collect::<String>(),
             // A reader's kind and marks by its start mask (`Records::retags`).
             // A token a reader says is no word (`records::pass`).
             unword = r.retags.iter().filter(|t| !t.part).map(|t| format!(" if (record_bit(out, f, {}u, s)) word = 0u;", t.o)).collect::<String>(),
@@ -1738,7 +1782,7 @@ fn records_source(programs: &[&BlockNative]) -> String {
                 .iter()
                 .enumerate()
                 .filter(|(_, c)| c.then == rerail_compiler::records::CheckThen::Escape)
-                .map(|(i, c)| format!(" if ((record_tests_{p}[U32(record_load8(bytes, f, s) & 0xfful)] >> {i}u) & 1u) {{ {} }}", test_code(r, i, c)))
+                .map(|(i, c)| format!(" if (!open_bad && ((record_tests_{p}[U32(record_load8(bytes, f, s) & 0xfful)] >> {i}u) & 1u)) {{ {} }}", test_code(r, i, c)))
                 .collect::<String>(),
             // The marks' tests (`CheckThen::At`, `After`): a token's hits, `records::check_hits`.
             hits = distinct

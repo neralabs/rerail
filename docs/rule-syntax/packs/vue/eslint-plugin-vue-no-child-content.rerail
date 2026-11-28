@@ -14,7 +14,7 @@
 // attribute values skipped).
 //   <div v-html="html">fallback</div>            reported
 //   <div v-text="msg">  </div>   <div v-html="x" />        not reported
-.violation child_content(at: span, d: symbol) code "vue/no-child-content"
+.violation child_content(at: match, d: symbol) code "vue/no-child-content"
     "Child content is disallowed because it will be overwritten by the v-{d} directive."
     suppress eslint "vue/no-child-content"
 // e's kinds (vel_kind) said where match reads it: its tree's spans of those kinds.

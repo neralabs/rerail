@@ -62,7 +62,7 @@ ruf015_pop_of_comp(n) :- kind(n, "parenthesized_expression"), child(n, c10, _),
 
 // first_comp(n): the JSON util `first-comp`, used where the JSON says `matches: "first-comp"`
 //   W: metavariable this relation binds for the calling rule
-.decl ruf015_first_comp(n: node, w: loc)
+.decl ruf015_first_comp(n: node, w: node)
 ruf015_first_comp(n, W) :- node(_, n, _, _, _), W = n,
     ( kind(n, "subscript"), field(n, "value", c1), ruf015_comp_target(c1), !ruf015_tok_has_2(n), field(n, "subscript", c2), ruf015_zero(c2)
     ; kind(n, "call"), field(n, "function", c3), ruf015_pop_of_comp(c3), field(n, "arguments", c4), kind(c4, "argument_list"), k1 = count : { child(c4, c5, _), !ruf015_alt_11(c5) }, k1 >= 1, k1 <= 1, child(c4, c6, _), ruf015_zero(c6)
@@ -71,7 +71,7 @@ ruf015_first_comp(n, W) :- node(_, n, _, _, _), W = n,
 
 // first_comp_in_annotation(n): the JSON util `first-comp-in-annotation`, used where the JSON says `matches: "first-comp-in-annotation"`
 //   W: metavariable this relation binds for the calling rule
-.decl ruf015_first_comp_in_annotation(n: node, w: loc)
+.decl ruf015_first_comp_in_annotation(n: node, w: node)
 ruf015_first_comp_in_annotation(n, W) :- (kind(n, "string") ; kind(n, "concatenated_string")),
     parsed(n, "annotation", r1), within(c2, r1), ruf015_alt_10(c2, W).
 
@@ -84,7 +84,7 @@ ruf015_pop_of_plain(n) :- kind(n, "parenthesized_expression"), child(n, c10, _),
 
 // first_plain(n): the JSON util `first-plain`, used where the JSON says `matches: "first-plain"`
 //   W: metavariable this relation binds for the calling rule
-.decl ruf015_first_plain(n: node, w: loc)
+.decl ruf015_first_plain(n: node, w: node)
 ruf015_first_plain(n, W) :- node(_, n, _, _, _), W = n,
     ( kind(n, "subscript"), field(n, "value", c1), ruf015_plain_target(c1), !ruf015_tok_has_2(n), field(n, "subscript", c2), ruf015_zero(c2)
     ; kind(n, "call"), field(n, "function", c3), ruf015_pop_of_plain(c3), field(n, "arguments", c4), kind(c4, "argument_list"), k1 = count : { child(c4, c5, _), !ruf015_alt_11(c5) }, k1 >= 1, k1 <= 1, child(c4, c6, _), ruf015_zero(c6)
@@ -93,14 +93,14 @@ ruf015_first_plain(n, W) :- node(_, n, _, _, _), W = n,
 
 // first_plain_in_annotation(n): the JSON util `first-plain-in-annotation`, used where the JSON says `matches: "first-plain-in-annotation"`
 //   W: metavariable this relation binds for the calling rule
-.decl ruf015_first_plain_in_annotation(n: node, w: loc)
+.decl ruf015_first_plain_in_annotation(n: node, w: node)
 ruf015_first_plain_in_annotation(n, W) :- (kind(n, "string") ; kind(n, "concatenated_string")),
     parsed(n, "annotation", r1), within(c2, r1), ruf015_alt_14(c2, W).
 
 // RUF015(n, detail): findings from clauses `first-of-comprehension`, `first-of-copy`. Their messages differ only in
 // `detail`: each rule's head gives its clause's words. Each rule is one way a JSON `rule` can match.
 // Columns after `at` are the metavariables the JSON's message, anchor or `each` names: one finding per distinct row.
-.violation RUF015(at: loc, w: node, detail: symbol) "{detail}."
+.violation RUF015(at: node, w: node, detail: symbol) "{detail}."
     suppress noqa "RUF015"
 RUF015(W, n, "Take the first item lazily with `next(...)` over a generator expression (or `next(iter(x))` for a plain copy of `x`) instead of building the list; an empty source then raises StopIteration") :- ruf015_first_comp(n, W).
 RUF015(W, n, "Take the first item lazily with `next(...)` over a generator expression (or `next(iter(x))` for a plain copy of `x`) instead of building the list; an empty source then raises StopIteration") :- ruf015_first_comp_in_annotation(n, W).
@@ -137,7 +137,7 @@ ruf015_alt_1(n) :- node(_, n, _, _, _), glob("[\\[\\](),]", n).
 
 // alt_10(n): the JSON `any`: n matches if any one of these rules does
 //   W: metavariable this relation binds for the calling rule
-.decl ruf015_alt_10(n: node, w: loc)
+.decl ruf015_alt_10(n: node, w: node)
 ruf015_alt_10(n, W) :- ruf015_first_comp(n, W).
 ruf015_alt_10(n, W) :- ruf015_first_comp_in_annotation(n, W).
 
@@ -148,6 +148,6 @@ ruf015_alt_11(n) :- kind(n, "comment").
 
 // alt_14(n): the JSON `any`: n matches if any one of these rules does
 //   W: metavariable this relation binds for the calling rule
-.decl ruf015_alt_14(n: node, w: loc)
+.decl ruf015_alt_14(n: node, w: node)
 ruf015_alt_14(n, W) :- ruf015_first_plain(n, W).
 ruf015_alt_14(n, W) :- ruf015_first_plain_in_annotation(n, W).

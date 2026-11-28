@@ -248,7 +248,18 @@ def choose(named, need, roots):
             reasons = [f"{h['name']}: {need.why_not(h) or farm.health(h).get('why')}" for h in farm.hosts()
                        if h.get("enabled", True) and h.get("tests", True)]
             return None, None, None, "no usable host" + (f" ({'; '.join(reasons)})" if reasons else " (none configured)")
+    # Its place in the line (farm.SlotQueue): a slot goes to the earliest command that would take it.
+    queue = farm.SlotQueue(farm.shared_base(h)["name"] for h in candidates if farm.health(h).get("ok"))
+    try:
+        return wait_for_slot(named, need, roots, candidates, queue)
+    finally:
+        queue.leave()
+
+
+def wait_for_slot(named, need, roots, candidates, queue):
     said = False
+    deferred = set()
+    other_tree = []
     starting = []
     while True:
         # A guest started for this command (below) that is up now is a candidate too.
@@ -263,6 +274,11 @@ def choose(named, need, roots):
         # frees on any host is taken, not only the first host's.
         free = []
         tree = mirror.fingerprint(roots)
+        # The machines it would take now: the usable ones, but not one where this checkout's copy ran
+        # another command from other files at the last look (that slot is for a command behind it).
+        queue.update(farm.shared_base(h)["name"] for h in candidates
+                     if farm.health(h).get("ok") and h["name"] not in other_tree)
+        ahead = queue.counts()
         other_tree = []
         for host in candidates:
             # Asked again while waiting: a host that started a fleet job meanwhile takes nothing more.
@@ -279,6 +295,16 @@ def choose(named, need, roots):
                         got = lock
                         continue
                 lock.release()
+            machine = farm.shared_base(host)["name"]
+            earlier = ahead.get(machine, 0) + ahead.get("*", 0)
+            if got and earlier >= idle:
+                # Its free slots are for the commands that came first and would take them.
+                got.release()
+                got = None
+                if machine not in deferred:
+                    deferred.add(machine)
+                    say(f"{host['name']} has {idle} free test slot{'s' if idle > 1 else ''}, "
+                        f"and {earlier} earlier command{'s' if earlier > 1 else ''} wait{'' if earlier > 1 else 's'} for it: they go first")
             if got:
                 # This checkout's copy there: idle, or running from this very tree; else another
                 # command of this checkout runs there from other files, which this one would change.

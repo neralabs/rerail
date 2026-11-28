@@ -10,7 +10,7 @@
 // PTH117(n): a finding at node n, from clause `os-path-isabs`.
 // Each rule below is one way the JSON `rule` can match.
 // Columns after `at` are the metavariables the JSON's message, anchor or `each` names: one finding per distinct row.
-.violation PTH117(at: loc, f: node, s: loc) "Use `Path({s}).is_absolute()` from pathlib instead of `os.path.isabs({s})`; leave it where the argument is a bytes path."
+.violation PTH117(at: node, f: node, s: node) "Use `Path({s}).is_absolute()` from pathlib instead of `os.path.isabs({s})`; leave it where the argument is a bytes path."
     suppress noqa "PTH117"
 PTH117(F, n, S) :- kind(n, "call"), field(n, "function", c1), pth117_callee(c1, F),
     pth117_arg_s_1(n, a2), S = a2,
@@ -26,7 +26,7 @@ pth117_target(n) :- (kind(n, "identifier") ; kind(n, "attribute")),
 
 // callee(n): the JSON util `callee`, used where the JSON says `matches: "callee"`
 //   F: metavariable this relation binds for the calling rule
-.decl pth117_callee(n: node, f: loc)
+.decl pth117_callee(n: node, f: node)
 pth117_callee(n, F) :- pth117_target(n), node(_, n, _, _, _), F = n.
 pth117_callee(n, F) :- kind(n, "parenthesized_expression"), child(n, c1, _), pth117_callee(c1, F).
 

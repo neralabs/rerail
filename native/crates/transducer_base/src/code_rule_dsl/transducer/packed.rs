@@ -1016,6 +1016,63 @@ pub struct ExecutionArena {
     greedy_indexes: HashMap<(u16, u32, u32, u32, u32), u32>,
 }
 
+thread_local! {
+    /// This thread's execution arena and states between transducer runs: their containers' room, the same on any
+    /// thread. Made a run, their first captures were 5 arrays a run (1.16 M runs on cold PostHog).
+    static SPARE_ARENA: std::cell::Cell<Option<Box<(ExecutionArena, HashMap<QueryStateKey, CaptureStateSet>)>>> =
+        const { std::cell::Cell::new(None) };
+}
+
+/// A run's arena and states, from the thread's spare (a new one when a run on this thread holds it), given back when
+/// the run ends, by any path.
+struct SpareArena(Option<Box<(ExecutionArena, HashMap<QueryStateKey, CaptureStateSet>)>>);
+
+impl SpareArena {
+    fn take() -> Self {
+        SpareArena(Some(SPARE_ARENA.take().unwrap_or_default()))
+    }
+    fn parts(&mut self) -> (&mut ExecutionArena, &mut HashMap<QueryStateKey, CaptureStateSet>) {
+        let held = self.0.as_mut().expect("held until dropped");
+        (&mut held.0, &mut held.1)
+    }
+}
+
+impl Drop for SpareArena {
+    fn drop(&mut self) {
+        if let Some(mut held) = self.0.take() {
+            held.0.clear();
+            held.1.clear();
+            let other = SPARE_ARENA.take();
+            SPARE_ARENA.set(Some(match other {
+                // A nested run's gave its back first: the larger kept.
+                Some(o) if o.1.capacity() > held.1.capacity() => o,
+                _ => held,
+            }));
+        }
+    }
+}
+
+impl ExecutionArena {
+    /// As `default`, its containers' room kept: one arena serves every root of a run (`execute_roots_split`), where
+    /// an arena a root made seven containers each time (2.3 M arenas on cold PostHog).
+    pub fn clear(&mut self) {
+        self.captures.truncate(1);
+        self.captures[0].clear();
+        self.ordered_captures.truncate(1);
+        self.capture_transitions.clear();
+        self.cursors.truncate(1);
+        self.cursors[0].clear();
+        self.cursor_indexes.clear();
+        self.cursor_indexes.insert(Vec::new(), 0);
+        self.repeats.truncate(1);
+        self.repeats[0].clear();
+        self.repeat_indexes.clear();
+        self.repeat_indexes.insert(Vector::new(), 0);
+        self.greedy_paths.clear();
+        self.greedy_indexes.clear();
+    }
+}
+
 impl Default for ExecutionArena {
     fn default() -> Self {
         Self {
@@ -2325,10 +2382,6 @@ impl Program {
                     digest.update(w.to_le_bytes());
                 }
             }
-            digest.update((self.readings.provisional.len() as u64).to_le_bytes());
-            for f in &self.readings.provisional {
-                digest.update(f.to_le_bytes());
-            }
             if !self.readings.extras.is_empty() {
                 digest.update(b"extras");
                 digest.update((self.readings.extras.len() as u64).to_le_bytes());
@@ -3533,12 +3586,16 @@ impl Program {
         let reach = if self.set_mode { set_mode::Reach::of(&self.words) } else { None };
         let eligible = |node: u32, named: bool| !named || tape.transducer_flags(node) & 1 != 0;
         let next_descendant = |from: u32, end: u32, named: bool| (from..end).find(|&node| eligible(node, named));
+        // A root's arena and states, cleared at each root: their room kept across the run's roots, and the thread's
+        // runs (`SPARE_ARENA`).
+        let mut spare = SpareArena::take();
+        let (arena, seen_states) = spare.parts();
         for root in roots {
             debug_assert!(pending.is_empty());
             let mut fired = 0_u64;
-            let mut seen_states = HashMap::<QueryStateKey, CaptureStateSet>::new();
+            seen_states.clear();
             let mut task_work = 0_usize;
-            let mut arena = ExecutionArena::default();
+            arena.clear();
             pending.push(WorkItem::Path(Path {
                 pc: initial_pc,
                 node: root,
@@ -3574,7 +3631,7 @@ impl Program {
                             && !self.admit_query_state(
                                 &path,
                                 &arena,
-                                &mut seen_states,
+                                &mut *seen_states,
                                 &mut task_work,
                             )?
                         {
@@ -3671,7 +3728,7 @@ impl Program {
                         && !self.admit_query_state(
                             &path,
                             &arena,
-                            &mut seen_states,
+                            &mut *seen_states,
                             &mut task_work,
                         )?
                     {

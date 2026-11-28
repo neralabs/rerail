@@ -94,6 +94,9 @@ unsafe fn zero(p: *mut u8, len: usize) {
 pub struct Extent {
     pub top: AtomicUsize,
     pub free: AtomicUsize,
+    /// The bytes of its free chunks whose pages went to the OS (`Ledger::give_free_pages`), until a chunk handed out
+    /// takes them again: `free` less these is what its free lists keep resident.
+    pub given: AtomicUsize,
 }
 
 pub struct Block {
@@ -200,7 +203,7 @@ impl Block {
 
     fn make(base: *mut u8, reserved: usize, top: usize, file: Option<File>, writable: bool, backing: Option<Box<dyn Backing>>) -> Block {
         let dirty = backing.is_some();
-        let ext = Arc::new(Extent { top: AtomicUsize::new(top), free: AtomicUsize::new(0) });
+        let ext = Arc::new(Extent { top: AtomicUsize::new(top), ..Extent::default() });
         // Only an anonymous block's pages go to the OS: a slab's are the device buffer's, and a file's are written back.
         let ledger = crate::ledger::Ledger::new(base, reserved, file.is_none() && backing.is_none(), ext.clone());
         Block {
@@ -228,6 +231,14 @@ impl Block {
             self.ledger.track(self.used());
         }
         self
+    }
+
+    /// Its used bytes reach at least `end`: a block whose bytes its holder hands out itself (a thread's stack,
+    /// `scratch::Stack`), so the device's wrap of it (`device_buffer`, its used bytes) covers each region it reads.
+    pub(crate) fn reach(&self, end: usize) {
+        if end > self.ext.top.load(Acquire) {
+            self.ext.top.fetch_max(end, AcqRel);
+        }
     }
 
     /// Its ledger (decision 0487): what is live in it, and what the GPU has queued on it.
@@ -292,7 +303,8 @@ impl Block {
     /// the OS too (Q76: a dead relation's pages otherwise stayed in the footprint until its chunks were taken again),
     /// and are marked in use again when the list hands a chunk in them out. Returns the bytes given to the OS.
     pub fn free_chunk(&self, at: usize, bytes: usize) -> usize {
-        self.release_chunk(at, crate::free::class_of(bytes).1, crate::ledger::Freeing { pages: true })
+        let size = crate::free::class_of(bytes).1;
+        self.release_chunk(at, size, crate::ledger::Freeing { pages: true })
     }
 
     /// A live chunk of `len` bytes at `at` freed through the ledger (decision 0487): at once, or when the GPU work

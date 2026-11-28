@@ -43,7 +43,7 @@ next_code(x, t) :- after_stop(x, a, g), match("\\s*", g), layout_next(a, g, t).
 .decl after_line(x: node, l: number)
 // k: the line breaks in g's leading space (g's length less that of g without them).
 after_line(x, l) :- after_stop(x, a, g), ws = @replace_all(g, "(?s)\\S.*", ""),
-    k = strlen(ws) - strlen(@replace_all(ws, "\\n", "")), end_line(a, la), l = la + k.
+    k = strlen(ws) - strlen(@replace_all(ws, "\\n", "")), node_end_line_number(a, la), l = la + k.
 
 // ---- before ------------------------------------------------------------------------------------------------------
 .decl before_up(x: node, a: node)
@@ -68,7 +68,7 @@ prev_code(x, t) :- before_stop(x, a, g), match("\\s*", g), layout_prev(a, g, t).
 // before_line(x, l): the code before x ends on line l.
 .decl before_line(x: node, l: number)
 before_line(x, l) :- before_stop(x, a, g), ws = @replace_all(g, "(?s)^.*\\S", ""),
-    k = strlen(ws) - strlen(@replace_all(ws, "\\n", "")), line(a, la), l = la - k.
+    k = strlen(ws) - strlen(@replace_all(ws, "\\n", "")), node_line_number(a, la), l = la - k.
 
 // ---- neighbours ----------------------------------------------------------------------------------------------
 // prev_node(x, p) / next_node(x, n): where the code before (after) x is a stored named node, that node: the

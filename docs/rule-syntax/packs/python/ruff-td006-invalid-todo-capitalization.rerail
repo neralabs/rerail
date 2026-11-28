@@ -10,7 +10,7 @@
 //   # TODO: fix this       not reported
 #include "python/misc2-todo-span.rerail"   // todo_at; python/misc2-todo: todo_item and the TD helpers
 
-.violation TD006(at: span, tag: symbol) code "TD006"
+.violation TD006(at: match, tag: symbol) code "TD006"
     "Write the `{tag}` tag in uppercase as `TODO`."
     suppress ruff "TD006"
     fix safe td006_upper "Write `TODO`"

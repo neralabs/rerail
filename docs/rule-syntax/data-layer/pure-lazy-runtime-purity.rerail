@@ -238,7 +238,7 @@ plp_shared(k) :- pc_key(f, k), plp_explicit(f).
 plp_shared(k) :- plp_owner_seed(k).
 plp_shared(g) :- plp_shared(k), pc_edge(k, g, 0).
 .decl plp_cand(d: number)
-plp_cand(d) :- source(d, sp), text(sp, t), plp_name("file_triggers", x), contains(x, t).
+plp_cand(d) :- document_source(d, sp), line_text(sp, t), plp_name("file_triggers", x), contains(x, t).
 plp_cand(d) :- pc_rec(f), def_name(f, x), docof(f, d), plp_name("global_state_factories", x).
 plp_cand(d) :- plp_shared(k), pc_key(f, k), docof(f, d).
 .decl plp_anycand()
@@ -261,7 +261,7 @@ plp_id_in(k, d) :- plp_krec(k, d), plp_docin(d).
 plp_id_legacy(k) :- pc_key(f, k), plp_legacy(f).
 // plp_step(k, g): both walks step from record k to the record g it calls, when g is in a file scan_paths reads and
 // is no boundary. A call in one file joined to the record it reaches in another: a crossing meant (decision 0652).
-// The walks over it read keys alone, and are staged (decision 0675).
+// The walks over it read keys alone, and are staged (decision 0709).
 .decl plp_step(k: symbol, g: symbol) cross_file
 plp_step(k, g) :- pc_edge(k, g, _), plp_id_in(g, _), !plp_id_legacy(g).
 .decl plp_colored_id(k: symbol)
@@ -284,7 +284,7 @@ plp_an(f, 1, 1) :- !plp_src_mode(), plp_owner(f), !plp_colored(f).
 // scan_source: a def decorated @pure_lazy, and any def inside one, in a file whose text names a trigger and whose
 // path has no tests/ directory.
 .decl plp_src_doc(d: number)
-plp_src_doc(d) :- source(d, sp), text(sp, t), plp_name("PURE_SOURCE_TRIGGERS", x), contains(x, t), doc(d, p, _),
+plp_src_doc(d) :- document_source(d, sp), line_text(sp, t), plp_name("PURE_SOURCE_TRIGGERS", x), contains(x, t), doc(d, p, _),
     !prefix("tests/", p), !contains("/tests/", p).
 .decl plp_pure_dec(f: node)
 plp_pure_dec(f) :- kind(f, "function_definition"), decorator(f, e), short_name(e, x), plp_name("PURE_DECORATOR_NAMES", x).
@@ -565,7 +565,7 @@ allow_entry("plp_ceiling", e) :- plp_ceiling_line(_, t), match("\\s*(?<e>[^\\t]+
 plp_approved(p, c, q, s, m, a) :- plp_entry(_, p, c, q, s, m), a = count : { plp_entry(_, p, c, q, s, m) }.
 // plp_found(p, c, q, s, m, l): one finding per line (the linter dedupes on code, file, line and message).
 .decl plp_found(p: symbol, c: symbol, q: symbol, s: symbol, m: symbol, l: number)
-plp_found(p, c, q, s, m, l) :- plp_payload(n, p, c, q, s, m), line(n, l).
+plp_found(p, c, q, s, m, l) :- plp_payload(n, p, c, q, s, m), node_line_number(n, l).
 .decl plp_found_n(p: symbol, c: symbol, q: symbol, s: symbol, m: symbol, k: number)
 plp_found_n(p, c, q, s, m, k) :- plp_found(p, c, q, s, m, _), k = count : { plp_found(p, c, q, s, m, _) }.
 // plp_report(n): the finding at n stands: not the plugin, or beyond its payload's approved count.
@@ -573,7 +573,7 @@ plp_found_n(p, c, q, s, m, k) :- plp_found(p, c, q, s, m, _), k = count : { plp_
 plp_report(n) :- plp_payload(n, _, _, _, _, _), !plp_plugin().
 plp_report(n) :- plp_payload(n, p, c, q, s, m), plp_plugin(), !plp_approved(p, c, q, s, m, _).
 plp_report(n) :- plp_payload(n, p, c, q, s, m), plp_plugin(), plp_approved(p, c, q, s, m, a), plp_found_n(p, c, q, s, m, k),
-    line(n, l), r = count : { plp_found(p, c, q, s, m, l2), l2 < l }, r < k - a.
+    node_line_number(n, l), r = count : { plp_found(p, c, q, s, m, l2), l2 < l }, r < k - a.
 // The list's own errors: the whole list against every file's findings, a crossing meant (decision 0693).
 .decl plp_list_error(m: symbol) cross_file
 plp_list_error(cat("spurious allowlist entry: ", e)) :- plp_entry(e, p, c, q, s, m), plp_approved(p, c, q, s, m, a),
@@ -595,6 +595,6 @@ plp_list_error(cat("cannot read ", p)) :- input_error(p, _, _), contains("pure_l
 
 .violation PLP(at: node, c: symbol, q: symbol, m: symbol) code {c} "{q}: {m}"
 PLP(n, c, q, m) :- plp_payload(n, _, c, q, _, m), plp_report(n).
-.violation PLP_ALLOWLIST(at: span, m: symbol) code "PLP-ALLOWLIST" "{m}"
+.violation PLP_ALLOWLIST(at: match, m: symbol) code "PLP-ALLOWLIST" "{m}"
 PLP_ALLOWLIST(@place("scripts/allowlists/architecture_grandfathered/pure_lazy_runtime_purity", 1), m) :-
     plp_plugin(), plp_list_error(m).

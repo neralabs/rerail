@@ -37,6 +37,9 @@ const FACT_STORE: &[&str] = &[
     // The segment files objects (sources, tapes) are in, by number (decision 0295), and each guest's key, an identity
     // interned to its number as `strings` and `hashes` are (decision 0391; frames retired, 0439).
     "object_segments",
+    // The sum of the bytes of the store's files its rows name (`bytes`), kept by their triggers: the store's
+    // bookkeeping its capacity check reads in one row, as `store_state` is.
+    "store_bytes",
     "guest_keys",
     // The sum of the bytes of the files the rows above and the kept facts' name (the disk budget's, kept by triggers).
     "store_bytes",
@@ -238,7 +241,7 @@ const STATE: &[(&str, &str)] = &[
     // Phase 1's exports while the run that ran it is under way: the run's own facts, gone when it ends.
     ("code_rule_dsl/logic/plan/corpus/phases.rs", "HeldPhaseOne"),
     ("code_rule_dsl/logic/plan/corpus/phases.rs", "Phases"),
-    // The run's stages (decision 0675) while the run is under way: its own program's parts, gone when it ends.
+    // The run's stages (decision 0709) while the run is under way: its own program's parts, gone when it ends.
     ("code_rule_dsl/logic/plan/corpus/phases.rs", "Stages"),
     // The keys the run's phases declare for their exports (decision 0705), bound while the run is under way: how its
     // readers' entries are keyed, not results.
@@ -254,11 +257,9 @@ const STATE: &[(&str, &str)] = &[
     ("code_rule_dsl/logic/profile.rs", "SHARD"),
     ("code_rule_dsl/logic/profile.rs", "STACK"),
     ("code_rule_dsl/logic/profile.rs", "THREADS"),
-    // The dispatch queue each nameless system thread was seen serving: the profiler's registry of the process's
-    // threads, for its report's labels; no reusable results.
+    // Each nameless system thread's dispatch queue as last seen (macOS), to name its CPU in the report.
     ("code_rule_dsl/logic/profile.rs", "QUEUE_LABELS"),
-    // The run's frame keys while the run is under way (`reuse::Naming`, K4), for its manifest to name: the run's own
-    // binding, gone when it ends.
+    // The frame keys of the run under way, for its manifest to name: bound while the run runs, gone when it ends.
     ("code_rule_dsl/logic/plan/corpus/reuse.rs", "RunFrame"),
     // The keys the run's phases declared on their exports (decision 0705), bound once they ran: the run's own
     // binding, gone when it ends.

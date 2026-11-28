@@ -32,6 +32,36 @@ pub fn tape(src: &str) -> Result<rerail_tape_format::f16::Tape16, String> {
     lean::tape(src)
 }
 
+/// `text` as the lean parser and the engine read what a checker's parser (the generated parser) read, its leaves
+/// `(start, end)`: where a string leaf holds a `\\u` escape, its `u` a backslash (an escaped backslash, of the
+/// escape's length), and an integer leaf past an `i64` its digits `0…01`. The lean parser writes `Bad` for a `\\u`
+/// that is no code point and an integer past an `i64`, as the engine's `unescape` and `parse` refuse them; the
+/// generated parser reads a string and a number, as a checker does (decision 0655 step 13). The rest of `text`, and
+/// so of the tapes, is the same.
+#[cfg(any(test, feature = "test-hooks"))]
+pub fn as_lean_reads(text: &str, leaves: impl IntoIterator<Item = (usize, usize)>) -> String {
+    let mut b = text.as_bytes().to_vec();
+    for (start, end) in leaves {
+        if end <= start || end > b.len() {
+            continue;
+        }
+        if b[start] == b'"' {
+            let mut esc = false;
+            for c in &mut b[start + 1..end - 1] {
+                let was = *c;
+                if esc && was == b'u' {
+                    *c = b'\\';
+                }
+                esc = !esc && was == b'\\';
+            }
+        } else if b[start..end].iter().all(u8::is_ascii_digit) && text[start..end].parse::<i64>().is_err() {
+            b[start..end - 1].fill(b'0');
+            b[end - 1] = b'1';
+        }
+    }
+    String::from_utf8(b).expect("ASCII bytes for ASCII bytes")
+}
+
 /// The tree as the statement parser makes it (`syntax::Parser::taped`, flattened): the lean
 /// parser's oracle.
 pub fn engine_tape(src: &str) -> Vec<tape::Node> {

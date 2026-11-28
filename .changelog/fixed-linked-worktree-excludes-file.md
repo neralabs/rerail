@@ -1,0 +1,1 @@
+In a linked worktree, Rerail now leaves out the same files Git does, in its checks and in the untracked files its rules read, when your Git configuration names an excludes file under `includeIf "gitdir:..."`. It used to test that condition against the main checkout's Git folder, so it skipped files Git shows there and checked files Git ignores.

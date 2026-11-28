@@ -252,6 +252,7 @@ mod tests {
     /// A staged column is read after its writer fills it and the gate opens; a dropped opener opens it too.
     #[test]
     fn a_staged_column_is_read_once_its_gate_opens() {
+        let _big = crate::gpu::shared::big_leases();
         let (gate, opener) = Gate::new();
         let (col, mut w) = gate.column(5).unwrap();
         assert_eq!(col.len(), 5);

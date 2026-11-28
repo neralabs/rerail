@@ -85,20 +85,20 @@ pt011_ann_slot(n) :- pt011_tok_follows_19(n), child(p18, n, _), kind(p18, "keywo
 // PT011(n): a finding at node n, from clause `builtin`.
 // Each rule below is one way the JSON `rule` can match.
 // Columns after `at` are the metavariables the JSON's message, anchor or `each` names: one finding per distinct row.
-.violation PT011(at: loc, x: node) "Add `match=` with the expected message (or `check=` on pytest 8.4+) to `pytest.raises({x})`, or expect a more specific exception, so unrelated `{x}` errors do not pass."
+.violation PT011(at: node, x: node) "Add `match=` with the expected message (or `check=` on pytest 8.4+) to `pytest.raises({x})`, or expect a more specific exception, so unrelated `{x}` errors do not pass."
     suppress noqa "PT011"
 PT011(X, n) :- pt011_exc(n, X), pt011_exc_slot(n).
 PT011(X, n) :- pt011_ann_string(n, X).
 
 // exc(n): the JSON util `exc`, used where the JSON says `matches: "exc"`
 //   X: metavariable this relation binds for the calling rule
-.decl pt011_exc(n: node, x: loc)
+.decl pt011_exc(n: node, x: node)
 pt011_exc(n, X) :- kind(n, "parenthesized_expression"), child(n, c1, _), pt011_exc(c1, X).
 pt011_exc(n, X) :- kind(n, "identifier"), node(_, n, _, _, _), X = n, global_ref(n, g2), pt011_set_10(g2).
 
 // ann_string(n): the JSON util `ann-string`, used where the JSON says `matches: "ann-string"`
 //   X: metavariable this relation binds for the calling rule
-.decl pt011_ann_string(n: node, x: loc)
+.decl pt011_ann_string(n: node, x: node)
 pt011_ann_string(n, X) :- kind(n, "string"),
     count : { has(n, c1, "escape_sequence"), node(_, c1, _, _, _) } = 0,
     parsed(n, "annotation", r2), within(c3, r2), pt011_alt_11(c3, X).
@@ -106,14 +106,14 @@ pt011_ann_string(n, X) :- kind(n, "string"),
 // PT011_socket_error(n): a finding at node n, from clause `socket-error`.
 // Each rule below is one way the JSON `rule` can match.
 // Columns after `at` are the metavariables the JSON's message, anchor or `each` names: one finding per distinct row.
-.violation PT011_socket_error(at: loc, x: node) code "PT011" "`{x}` is an alias of `OSError`; expect a specific subclass such as `ConnectionRefusedError`, or add `match=` (or `check=` on pytest 8.4+) so unrelated OS errors do not pass."
+.violation PT011_socket_error(at: node, x: node) code "PT011" "`{x}` is an alias of `OSError`; expect a specific subclass such as `ConnectionRefusedError`, or add `match=` (or `check=` on pytest 8.4+) so unrelated OS errors do not pass."
     suppress noqa "PT011"
 PT011_socket_error(X, n) :- pt011_exc_socket_error(n, X), pt011_exc_slot(n).
 PT011_socket_error(X, n) :- pt011_ann_string_socket_error(n, X).
 
 // exc_socket_error(n): the JSON util `exc`, used where the JSON says `matches: "exc"`
 //   X: metavariable this relation binds for the calling rule
-.decl pt011_exc_socket_error(n: node, x: loc)
+.decl pt011_exc_socket_error(n: node, x: node)
 pt011_exc_socket_error(n, X) :- kind(n, "parenthesized_expression"), child(n, c1, _),
     pt011_exc_socket_error(c1, X).
 pt011_exc_socket_error(n, X) :- (kind(n, "identifier") ; kind(n, "attribute")), node(_, n, _, _, _), X = n,
@@ -121,7 +121,7 @@ pt011_exc_socket_error(n, X) :- (kind(n, "identifier") ; kind(n, "attribute")), 
 
 // ann_string_socket_error(n): the JSON util `ann-string`, used where the JSON says `matches: "ann-string"`
 //   X: metavariable this relation binds for the calling rule
-.decl pt011_ann_string_socket_error(n: node, x: loc)
+.decl pt011_ann_string_socket_error(n: node, x: node)
 pt011_ann_string_socket_error(n, X) :- kind(n, "string"),
     count : { has(n, c1, "escape_sequence"), node(_, c1, _, _, _) } = 0,
     parsed(n, "annotation", r2), within(c3, r2), pt011_alt_12(c3, X).
@@ -602,12 +602,12 @@ pt011_alt_9(n) :- kind(n, "keyword_argument"), child(n, c25, _), kind(c25, "iden
 
 // alt_11(n): the JSON `any`: n matches if any one of these rules does
 //   X: metavariable this relation binds for the calling rule
-.decl pt011_alt_11(n: node, x: loc)
+.decl pt011_alt_11(n: node, x: node)
 pt011_alt_11(n, X) :- pt011_exc(n, X), pt011_ann_slot(n).
 pt011_alt_11(n, X) :- pt011_ann_string(n, X).
 
 // alt_12(n): the JSON `any`: n matches if any one of these rules does
 //   X: metavariable this relation binds for the calling rule
-.decl pt011_alt_12(n: node, x: loc)
+.decl pt011_alt_12(n: node, x: node)
 pt011_alt_12(n, X) :- pt011_exc_socket_error(n, X), pt011_ann_slot(n).
 pt011_alt_12(n, X) :- pt011_ann_string_socket_error(n, X).

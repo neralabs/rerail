@@ -436,7 +436,7 @@ fn key(programs: &[&str], added: &super::added::Added, root: &Path, options: &se
         h.update(crate::git_workspace::snapshot::canonicalize(root).unwrap_or_else(|_| root.to_path_buf()).to_string_lossy().as_bytes());
     }
     h.update(crate::code_rule_dsl::build_ids::engine().as_bytes());
-    h.finalize().iter().map(|b| format!("{b:02x}")).collect()
+    rerail_prof::code_rule_dsl::prof::lower_hex(&h.finalize()[..])
 }
 
 /// The frame the constants of `key` are kept as.

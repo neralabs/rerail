@@ -36,7 +36,7 @@ c417_not_first(n) :- precedes(s1, n), !c417_lead(s1).
 
 // lambda_ok(n): the JSON util `lambda-ok`, used where the JSON says `matches: "lambda-ok"`
 //   B, P: metavariables this relation binds for the calling rule
-.decl c417_lambda_ok(n: node, b: loc, p: loc)
+.decl c417_lambda_ok(n: node, b: node, p: node)
 c417_lambda_ok(n, B, P) :- kind(n, "lambda"), node(_, n, _, _, _), L = n, field(n, "parameters", c1),
     kind(c1, "lambda_parameters"), k3 = count : { child(c1, c2, _), !c417_alt_1(c2) },
     k3 >= 1, k3 <= 1, child(c1, c4, _), kind(c4, "identifier"), node(_, c4, _, _, _), P = c4,
@@ -48,7 +48,7 @@ c417_lambda_ok(n, B, P) :- kind(n, "parenthesized_expression"), child(n, c22, _)
 
 // map_call(n): the JSON util `map-call`, used where the JSON says `matches: "map-call"`
 //   B, P: metavariables this relation binds for the calling rule
-.decl c417_map_call(n: node, b: loc, p: loc)
+.decl c417_map_call(n: node, b: node, p: node)
 c417_map_call(n, B, P) :- kind(n, "call"), field(n, "function", c1), c417_fn(c1, "map"),
     field(n, "arguments", c2), kind(c2, "argument_list"),
     count : { child(c2, c3, _), (kind(c3, "keyword_argument") ; kind(c3, "dictionary_splat") ; kind(c3, "list_splat")) } = 0,
@@ -69,14 +69,14 @@ c417_pair_lambda(n) :- kind(n, "parenthesized_expression"), child(n, c2, _),
 
 // inner_map(n): the JSON util `inner-map`, used where the JSON says `matches: "inner-map"`
 //   B, P: metavariables this relation binds for the calling rule
-.decl c417_inner_map(n: node, b: loc, p: loc)
+.decl c417_inner_map(n: node, b: node, p: node)
 c417_inner_map(n, B, P) :- c417_map_call(n, B, P).
 c417_inner_map(n, B, P) :- kind(n, "parenthesized_expression"), child(n, c1, _),
     c417_inner_map(c1, B, P).
 
 // inner_pair_map(n): the JSON util `inner-pair-map`, used where the JSON says `matches: "inner-pair-map"`
 //   P: metavariable this relation binds for the calling rule
-.decl c417_inner_pair_map(n: node, p: loc)
+.decl c417_inner_pair_map(n: node, p: node)
 c417_inner_pair_map(n, P) :- c417_map_call(n, _, P), field(n, "arguments", c1), child(c1, c2, _),
     c417_pair_lambda(c2), !c417_not_first(c2).
 c417_inner_pair_map(n, P) :- kind(n, "parenthesized_expression"), child(n, c3, _),
@@ -105,7 +105,7 @@ c417_fn(n, q1) :- c417_fn_case(q1, s1), kind(n, "list_splat"), child(n, c2, _), 
 // C417(n): a finding at node n, from clause `generator`.
 // Each rule below is one way the JSON `rule` can match.
 // Columns after `at` are the metavariables the JSON's message, anchor or `each` names: one finding per distinct row.
-.violation C417(at: loc, m: node, b: loc, p: loc) "Replace this `map()` of a lambda with the generator expression `({b} for {p} in <iterable>)`; keep `map` if code resumes the iterator after the lambda raises."
+.violation C417(at: match, m: node, b: node, p: node) "Replace this `map()` of a lambda with the generator expression `({b} for {p} in <iterable>)`; keep `map` if code resumes the iterator after the lambda raises."
     suppress noqa "C417"
 C417(M, n, B, P) :- c417_map_call(n, B, P), !c417_container_arg(n),
     match("(?s)(?:\\*\\s*)?(?P<M>.*)", n).
@@ -113,7 +113,7 @@ C417(M, n, B, P) :- c417_map_call(n, B, P), !c417_container_arg(n),
 // C417_list(n): a finding at node n, from clause `list`.
 // Each rule below is one way the JSON `rule` can match.
 // Columns after `at` are the metavariables the JSON's message, anchor or `each` names: one finding per distinct row.
-.violation C417_list(at: loc, m: node, b: loc, p: loc) code "C417" "Replace this `list(map(...))` of a lambda with the list comprehension `[{b} for {p} in <iterable>]`, which avoids a function call per item."
+.violation C417_list(at: match, m: node, b: node, p: node) code "C417" "Replace this `list(map(...))` of a lambda with the list comprehension `[{b} for {p} in <iterable>]`, which avoids a function call per item."
     suppress noqa "C417"
 C417_list(M, n, B, P) :- kind(n, "call"), field(n, "function", c1), c417_fn(c1, "list"),
     field(n, "arguments", c2), kind(c2, "argument_list"),
@@ -124,7 +124,7 @@ C417_list(M, n, B, P) :- kind(n, "call"), field(n, "function", c1), c417_fn(c1, 
 // C417_set(n): a finding at node n, from clause `set`.
 // Each rule below is one way the JSON `rule` can match.
 // Columns after `at` are the metavariables the JSON's message, anchor or `each` names: one finding per distinct row.
-.violation C417_set(at: loc, m: node, b: loc, p: loc) code "C417" "Replace this `set(map(...))` of a lambda with the set comprehension `{{{b} for {p} in <iterable>}}`, which avoids a function call per item."
+.violation C417_set(at: match, m: node, b: node, p: node) code "C417" "Replace this `set(map(...))` of a lambda with the set comprehension `{{{b} for {p} in <iterable>}}`, which avoids a function call per item."
     suppress noqa "C417"
 C417_set(M, n, B, P) :- kind(n, "call"), field(n, "function", c1), c417_fn(c1, "set"),
     field(n, "arguments", c2), kind(c2, "argument_list"),
@@ -135,7 +135,7 @@ C417_set(M, n, B, P) :- kind(n, "call"), field(n, "function", c1), c417_fn(c1, "
 // C417_dict(n): a finding at node n, from clause `dict`.
 // Each rule below is one way the JSON `rule` can match.
 // Columns after `at` are the metavariables the JSON's message, anchor or `each` names: one finding per distinct row.
-.violation C417_dict(at: loc, m: node, p: loc) code "C417" "Replace this `dict(map(...))` of a lambda with a dict comprehension `{{key: value for {p} in <iterable>}}`, using the lambda's two items as key and value."
+.violation C417_dict(at: match, m: node, p: node) code "C417" "Replace this `dict(map(...))` of a lambda with a dict comprehension `{{key: value for {p} in <iterable>}}`, using the lambda's two items as key and value."
     suppress noqa "C417"
 C417_dict(M, n, P) :- kind(n, "call"), field(n, "function", c1), c417_fn(c1, "dict"),
     field(n, "arguments", c2), kind(c2, "argument_list"),

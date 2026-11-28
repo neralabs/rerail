@@ -8,7 +8,7 @@
 // F632(n, detail): findings from clauses `is-literal-is`, `is-literal-is-not`. Their messages differ only in
 // `detail`: each rule's head gives its clause's words. Each rule is one way a JSON `rule` can match.
 // Columns after `at` are the metavariables the JSON's message, anchor or `each` names: one finding per distinct row.
-.violation F632(at: loc, o: loc, c: node, detail: symbol) "Use {detail} to compare this literal value."
+.violation F632(at: node, o: node, c: node, detail: symbol) "Use {detail} to compare this literal value."
     suppress noqa "F632"
 // O: not bound by this rule, so empty (unset) here, as in ast-grep.
 F632(C, O, n, "`==` instead of `is`") :- f632_is_literal_op(n), child(p1, n, _),
@@ -49,7 +49,7 @@ f632_is_literal_op(n) :- glob("is", n),
 
 // is_literal_in_string(n): the JSON util `is-literal-in-string`, used where the JSON says `matches: "is-literal-in-string"`
 //   C, O: metavariables this relation binds for the calling rule
-.decl f632_is_literal_in_string(n: node, c: loc, o: loc)
+.decl f632_is_literal_in_string(n: node, c: node, o: node)
 f632_is_literal_in_string(n, C, O) :- (kind(n, "string") ; kind(n, "concatenated_string")),
     parsed(n, "annotation", r1), within(c2, r1), f632_alt_5(c2, C, O).
 
@@ -85,7 +85,7 @@ f632_is_literal_op_is_literal_is_not(n) :- match("is[\\s\\\\]+not", n),
 
 // is_literal_in_string_is_literal_is_not(n): the JSON util `is-literal-in-string`, used where the JSON says `matches: "is-literal-in-string"`
 //   C, O: metavariables this relation binds for the calling rule
-.decl f632_is_literal_in_string_is_literal_is_not(n: node, c: loc, o: loc)
+.decl f632_is_literal_in_string_is_literal_is_not(n: node, c: node, o: node)
 f632_is_literal_in_string_is_literal_is_not(n, C, O) :- (kind(n, "string") ; kind(n, "concatenated_string")),
     parsed(n, "annotation", r1), within(c2, r1), f632_alt_10(c2, C, O).
 
@@ -342,7 +342,7 @@ f632_alt_2(n) :- f632_alt_2_u7(n).
 
 // alt_5(n): the JSON `any`: n matches if any one of these rules does
 //   C, O: metavariables this relation binds for the calling rule
-.decl f632_alt_5(n: node, c: loc, o: loc)
+.decl f632_alt_5(n: node, c: node, o: node)
 f632_alt_5(n, C, O) :- kind(n, "comparison_operator"), child(n, c1, _), f632_is_literal_op(c1),
     O = c1, C = n.
 f632_alt_5(n, C, O) :- f632_is_literal_in_string(n, C, O).
@@ -353,7 +353,7 @@ f632_alt_7(n) :- f632_alt_7_u7(n).
 
 // alt_10(n): the JSON `any`: n matches if any one of these rules does
 //   C, O: metavariables this relation binds for the calling rule
-.decl f632_alt_10(n: node, c: loc, o: loc)
+.decl f632_alt_10(n: node, c: node, o: node)
 f632_alt_10(n, C, O) :- kind(n, "comparison_operator"), child(n, c1, _),
     f632_is_literal_op_is_literal_is_not(c1), O = c1, C = n.
 f632_alt_10(n, C, O) :- f632_is_literal_in_string_is_literal_is_not(n, C, O).

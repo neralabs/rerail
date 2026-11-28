@@ -10,7 +10,7 @@
 // PD012(n): a finding at node n, from clause `pandas-use-of-dot-read-table`.
 // Each rule below is one way the JSON `rule` can match.
 // Columns after `at` are the metavariables the JSON's message, anchor or `each` names: one finding per distinct row.
-.violation PD012(at: loc, func: node) "Replace `read_table` with `read_csv` (import it if needed) and drop `sep=\",\"`; `read_csv` splits on commas by default and takes the same other arguments."
+.violation PD012(at: node, func: node) "Replace `read_table` with `read_csv` (import it if needed) and drop `sep=\",\"`; `read_csv` splits on commas by default and takes the same other arguments."
     suppress noqa "PD012"
 PD012(FUNC, n) :- pd012_read_table(n), node(_, n, _, _, _), FUNC = n.
 PD012(FUNC, n) :- pd012_in_string(n, FUNC).
@@ -21,7 +21,7 @@ pd012_comma_string(n) :- pd012_alt_1(n), value(n, ",").
 
 // in_string(n): the JSON util `in-string`, used where the JSON says `matches: "in-string"`
 //   FUNC: metavariable this relation binds for the calling rule
-.decl pd012_in_string(n: node, func: loc)
+.decl pd012_in_string(n: node, func: node)
 pd012_in_string(n, FUNC) :- (kind(n, "string") ; kind(n, "concatenated_string")),
     parsed(n, "annotation", r1), within(c2, r1), pd012_alt_2(c2, FUNC).
 
@@ -75,6 +75,6 @@ pd012_alt_1(n) :- kind(n, "parenthesized_expression"), child(n, c2, _), pd012_co
 
 // alt_2(n): the JSON `any`: n matches if any one of these rules does
 //   FUNC: metavariable this relation binds for the calling rule
-.decl pd012_alt_2(n: node, func: loc)
+.decl pd012_alt_2(n: node, func: node)
 pd012_alt_2(n, FUNC) :- pd012_read_table(n), FUNC = n.
 pd012_alt_2(n, FUNC) :- pd012_in_string(n, FUNC).

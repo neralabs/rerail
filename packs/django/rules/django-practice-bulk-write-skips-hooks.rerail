@@ -1,0 +1,93 @@
+.policy "django-practice-bulk-write-skips-hooks" revision 1
+.description "A queryset bulk write skips the model's save()/delete() overrides and its pre_save/post_save receivers; call them or do their work."
+.language python
+.mode steer
+.scope include "**/*.py"
+// Rerail's own rule, not a port. Django's bulk writes run SQL directly: `update()`, `bulk_create()` and
+// `bulk_update()` call no save() and send no pre_save/post_save; `delete()` on a queryset calls no delete() method
+// (it still sends pre_delete/post_delete). A bulk write on `M.objects…` is reported when M, or a base class of M in
+// the run, overrides the method the write skips with more than a bare base-class call (`super().save(…)`,
+// `models.Model.save(self, …)`), or when a pre_save/post_save receiver for `sender=M` is connected anywhere in the
+// run (`@receiver(post_save, sender=M)`, `post_save.connect(fn, sender=M)`). The message names each skipped hook and
+// where it is defined. It leaves alone an `update()` whose every value is `F("x") ± n` on its own field x: an atomic
+// counter bump, the write Django documents for counters (and django-practice-read-modify-write recommends).
+//   Book.objects.filter(x=1).update(y=2)       reported when Book.save() sets a slug, or a post_save for Book exists
+//   Book.objects.bulk_create(books)            reported likewise
+//   Book.objects.filter(x=1).delete()          reported only when Book (or a base) overrides delete()
+//   Note.objects.filter(x=1).update(y=2)       not reported: Note has no save() override and no receiver
+//   Book.objects.filter(pk=pk).update(views=F("views") + 1)   not reported: a counter bump
+//   in Book.save() or a Book receiver: Book.objects.filter(pk=self.pk).update(slug=s)   not reported: the hook itself
+// Migrations and tests are skipped.
+// Gaps: querysets not rooted at a manager name (related managers, `self.get_queryset()`, a queryset in a variable);
+// string senders (`sender="app.Model"`); hooks in base classes outside the run; a counter bump whose model's hooks
+// do depend on that counter.
+
+#include "lib/django.rerail"
+
+.violation BulkWriteSkipsHooks(at: node, op: symbol, model: symbol, hooks: symbol) "`{op}()` writes {model} rows in bulk and skips {hooks}. Django's bulk writes call no save()/delete() method and send no pre_save/post_save signal; if this write needs that work, do it here or save the objects one by one (for a counter, `obj.n = F(\"n\") + 1` then `obj.save()`, so no concurrent change is lost)."
+
+BulkWriteSkipsHooks(c, m, mn, hs) :- dj_qs_call(c, m), bwh_skips(m, k), bwh_model(c, _, mq, _), split_dot(mq, _, mn),
+    bwh_hook(c, k, _), !bwh_in_hook(c, mq), !bwh_counter_update(c), docof(c, d), !dj_test_doc(d),
+    !path_part(d, "unittests"), !dj_migration_doc(d), hs = join h by h sep "; " : { bwh_hook(c, k, h) }, hs != "".
+
+// bwh_model(c, r, mq, m): the queryset call c writes rows of model mq, of module m, named by r, the queryset's root in
+// c's own file (python/django's dj_model_named: the model is read by its symbol, 0677 fix 3d).
+.decl bwh_model(c: node, r: node, mq: symbol, m: symbol)
+bwh_model(c, r, mq, m) :- dj_qs_call(c, _), field(c, "function", fn), attr_of(fn, o, _), dj_qs_root(o, r),
+    dj_model_named(r, mq), dj_model_ref(r, mq, m).
+// bwh_hook(c, k, h): h describes a hook of kind k on c's model that a bulk write skips (python/django's dj_model_hook:
+// a save()/delete() override of the model or a base class of the run, or a pre_save/post_save receiver anywhere).
+.decl bwh_hook(c: node, k: symbol, h: symbol)
+bwh_hook(c, k, h) :- bwh_model(c, r, _, _), dj_model_hook(r, k, h).
+
+// bwh_counter_update(c): c is `….update(x=F("x") + n, …)`, every value an F() of its own field plus or minus
+// something: the database does the arithmetic, the documented way to bump a counter.
+.decl bwh_counter_update(c: node)
+bwh_counter_update(c) :- dj_qs_call(c, "update"), field(c, "arguments", al), child(al, a, _), bwh_counter_kw(a),
+    !bwh_other_arg(c).
+.decl bwh_other_arg(c: node)
+bwh_other_arg(c) :- dj_qs_call(c, "update"), field(c, "arguments", al), child(al, a, _), !kind(a, "comment"),
+    !bwh_counter_kw(a).
+.decl bwh_counter_kw(a: node)
+bwh_counter_kw(a) :- kind(a, "keyword_argument"), field(a, "name", n), text(n, x), field(a, "value", v), unparen(v, b),
+    kind(b, "binary_operator"), (op(b, "+") ; op(b, "-")), child(b, e, _), bwh_f_of(e, x).
+.decl bwh_f_of(e: node, x: symbol)
+bwh_f_of(e, x) :- kind(e, "call"), field(e, "function", fn), sym_of(fn, q),
+    (q = "django.db.models.F" ; q = "django.db.models.expressions.F"), posarg(e, 0, a), str(a, x).
+
+// bwh_skips(m, k): queryset method m skips the hooks of kind k ("save" or "delete").
+.decl bwh_skips(m: symbol, k: symbol)
+bwh_skips("update", "save"). bwh_skips("bulk_create", "save"). bwh_skips("bulk_update", "save").
+bwh_skips("delete", "delete").
+
+// bwh_in_hook(c, mq): c runs inside one of mq's own save()/delete() methods or one of its receivers (a decorated
+// def, or the def a `.connect(fn, …)` names), which write in bulk on purpose (to skip the hooks they are).
+.decl bwh_in_hook(c: node, mq: symbol)
+bwh_in_hook(c, mq) :- bwh_model(c, _, mq, m), kind(f, "function_definition"), within(c, f), def_name(f, x),
+    (x = "save" ; x = "delete"), nearest(f, cb, scope), class_def(cb, bq), (bq = mq ; py_names__ancestor(mq, m, bq)).
+bwh_in_hook(c, mq) :- bwh_model(c, _, mq, _), within(c, f), dj_receiver_def(f, mq).
+
+// The cases, `cases/django-practice-bulk-write-skips-hooks/`, read as one repository: each line ending in `# caught` is
+// reported, and no other line.
+.test cases exactly
+    .fixture "shop/__init__.py" from "../cases/django-practice-bulk-write-skips-hooks/shop/__init__.py"
+    .fixture "shop/migrations/0002_fill.py" from "../cases/django-practice-bulk-write-skips-hooks/shop/migrations/0002_fill.py"
+    .fixture "shop/migrations/__init__.py" from "../cases/django-practice-bulk-write-skips-hooks/shop/migrations/__init__.py"
+    .fixture "shop/models.py" from "../cases/django-practice-bulk-write-skips-hooks/shop/models.py"
+    .fixture "shop/signals.py" from "../cases/django-practice-bulk-write-skips-hooks/shop/signals.py"
+    .fixture "shop/tests/__init__.py" from "../cases/django-practice-bulk-write-skips-hooks/shop/tests/__init__.py"
+    .fixture "shop/tests/test_books.py" from "../cases/django-practice-bulk-write-skips-hooks/shop/tests/test_books.py"
+    .fixture "shop/views.py" from "../cases/django-practice-bulk-write-skips-hooks/shop/views.py"
+    .fixture "unittests/dojo_test_case.py" from "../cases/django-practice-bulk-write-skips-hooks/unittests/dojo_test_case.py"
+    .expect _ at "shop/models.py":31
+    .expect _ at "shop/models.py":34
+    .expect _ at "shop/views.py":7
+    .expect _ at "shop/views.py":8
+    .expect _ at "shop/views.py":9
+    .expect _ at "shop/views.py":11
+    .expect _ at "shop/views.py":14
+    .expect _ at "shop/views.py":15
+    .expect _ at "shop/views.py":17
+    .expect _ at "shop/views.py":19
+    .expect _ at "shop/views.py":20
+.end

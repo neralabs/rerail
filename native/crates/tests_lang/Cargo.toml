@@ -174,7 +174,7 @@ tree-sitter = "=0.27.1"
 bitlex = { path = "../../../tools/bitlex", default-features = false }
 # CPython's identifier normalization (NFKC, PEP 3131), which Ruff applies to Python names too.
 unicode-normalization = "=0.1.26"
-zstd = "=0.14.3"
+zstd = "=0.14.4"
 
 # The engine's crates (tools/cratify/apply.py): its sources, mounted in place.
 rerail-facts = { path = "../facts", default-features = false }

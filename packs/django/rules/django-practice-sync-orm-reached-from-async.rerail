@@ -1,0 +1,209 @@
+.policy "django-practice-sync-orm-reached-from-async" revision 1
+.description "An async def must not call a sync function that queries the database; call it through sync_to_async."
+.language python
+.mode log
+.scope include "**/*.py"
+// Rerail's own rule, not a port. Django raises SynchronousOnlyOperation when a coroutine runs a blocking ORM query,
+// also when the query sits in a plain function the coroutine calls. It reports, in an async def's own frame (not a
+// nested def or lambda) and outside test code:
+//   - a query written there (SyncOrmInAsync): a blocking QuerySet method (sora_blocking), a sync `for` over a
+//     queryset, `with transaction.atomic`, or save()/delete()/refresh_from_db() on a model instance;
+//   - a call (SyncOrmReached) whose target, by the call graph (python/calls, across files), is a sync workspace
+//     function that runs such a query, or reaches one through other sync functions (a call written in a nested def
+//     or lambda of those functions runs later and is not followed).
+// A model instance is `self` in a model method, a name assigned a fetched or constructed instance, or a receiver the
+// type program proves is a model. A method call on such an instance (`book = await Book.objects.aget(pk=1);
+// book.bump()`) follows the model's method, which the call program cannot resolve.
+//   helpers.py: def total(): return Book.objects.count()
+//   views.py:   async def v(request): n = Book.objects.count()             reported at count()
+//   views.py:   async def v(request): n = total()                         reported at total()
+//   views.py:   async def v(request): n = await sync_to_async(total)()     not reported: runs in a thread
+//   views.py:   async def v(request): await asyncio.to_thread(total)       not reported
+//   helpers.py: @sync_to_async
+//               def atotal(): return Book.objects.count()
+//   views.py:   async def v(request): n = await atotal()                  not reported: the decorator offloads it
+// A call whose target is unknown (call_open) is not reported, nor a chain through an async def (calling one only
+// makes a coroutine) or through a function decorated with sync_to_async/database_sync_to_async. `self.m()` in a
+// class's methods goes to that class's m: a base consumer's `async def receive` that calls `self.handle()` is judged
+// with the base's handle at the call, and with a subclass's override at `class Sub`, when only the override queries.
+
+#include "lib/django.rerail"
+#include "python/calls.rerail"
+#include "python/types.rerail"
+
+.violation SyncOrmInAsync(at: node, what: symbol, fx: symbol)
+    "`{what}` runs a blocking ORM query inside `async def {fx}`, where Django raises SynchronousOnlyOperation. Use the async ORM (`aget()`, `acount()`, `async for`, `asave()`), or move the query into a function called through `await sync_to_async(...)`."
+SyncOrmInAsync(o, what, fx) :- sora_query(o, f, what), is_async(f), def_name(f, fx), docof(o, d), !dj_test_doc(d).
+// The walk is over symbols (decision 0677: no node crosses files): an async def by its symbol (`pt_def`, as
+// `call_target` names it), a call in it by its node path (decision 0722), a class by its `class_def` name. Each def's
+// first query is stated in its own file (`sora_ran`); a finding reads its call's or class's node in its own file and
+// names the query by its path and line.
+.violation SyncOrmReached(at: node, g: symbol, what: symbol, p: symbol, l: number)
+    "`{g}()` runs a blocking ORM query (`{what}` at {p}:{l}) inside `async def`, where Django raises SynchronousOnlyOperation. Call it through `await sync_to_async({g})(...)`, or use the async ORM."
+SyncOrmReached(c, x, what, p, l) :- sora_start(kq, fq, ct, gq), sora_own(kq, fq), sora_first(kq, gq, hq),
+    sora_ran(hq, what, p, l), pt_def(f, fq), nearest(c, f, dj_region_stop), kind(c, "call"), ct = @node_path(c),
+    field(c, "function", fn), text(fn, x).
+.violation SyncOrmReachedInherited(at: node, kx: symbol, fx: symbol, x: symbol, cl: number, what: symbol, p: symbol, l: number)
+    "`{kx}` inherits `async def {fx}`, whose call `{x}()` at line {cl} runs, for this class, a blocking ORM query (`{what}` at {p}:{l}), where Django raises SynchronousOnlyOperation. Call it through `sync_to_async`, or use the async ORM."
+SyncOrmReachedInherited(k, kx, fx, x, cl, what, p, l) :- sora_start(kq, fq, ct, gq), !sora_own(kq, fq),
+    sora_first_new(kq, fq, ct, hq), sora_ran(hq, what, p, l), sora_sync(gq, x), sora_call_at(fq, ct, fx, cl),
+    class_def(k, kq), def_name(k, kx).
+// sora_own(k, f): async def f is written in k's own body (or is a plain async def, k = f). sora_new(k, f, c, h): k
+// inherits f, and only for k does f's call c reach h, which queries. One of each is named, the least symbol (a `min`
+// over symbols would order their ids).
+.decl sora_own(k: symbol, f: symbol)
+sora_own(fq, fq) :- sora_home(fq, fq).
+sora_own(kq, fq) :- sora_frame(fq, kq), method_sym(kq, _, fq).
+.decl sora_hit(k: symbol, f: symbol, c: node_path, h: symbol)
+sora_hit(kq, fq, ct, hq) :- sora_start(kq, fq, ct, gq), sora_reach(kq, gq, hq), sora_ran(hq, _, _, _).
+.decl sora_new(k: symbol, f: symbol, c: node_path, h: symbol)
+sora_new(kq, fq, ct, hq) :- sora_hit(kq, fq, ct, hq), !sora_own(kq, fq), method_sym(bq, _, fq), !sora_hit(bq, fq, ct, hq).
+.decl sora_first_new(k: symbol, f: symbol, c: node_path, h: symbol)
+sora_first_new(kq, fq, ct, hq) :- sora_new(kq, fq, ct, hq), !sora_later_new(kq, fq, ct, hq).
+.decl sora_later_new(k: symbol, f: symbol, c: node_path, h: symbol)
+sora_later_new(kq, fq, ct, hq) :- sora_new(kq, fq, ct, hq), sora_new(kq, fq, ct, gq), gq < hq.
+.decl sora_hit_from(k: symbol, g: symbol, h: symbol)
+sora_hit_from(kq, gq, hq) :- sora_reach(kq, gq, hq), sora_ran(hq, _, _, _).
+.decl sora_first(k: symbol, g: symbol, h: symbol)
+sora_first(kq, gq, hq) :- sora_hit_from(kq, gq, hq), !sora_later(kq, gq, hq).
+.decl sora_later(k: symbol, g: symbol, h: symbol)
+sora_later(kq, gq, hq) :- sora_hit_from(kq, gq, hq), sora_hit_from(kq, gq, iq), iq < hq.
+
+// sora_start(k, f, c, g): call c, in async def f's own frame outside test code, surely calls the sync function g (and
+// nothing unknown); k is f's class, or a class that inherits f, when f is a method, else f. `self.m()` in a method
+// goes to what k resolves m to (a late-bound self may be any subclass, whose override does not run for k). A call
+// that is itself a query (sora_direct: a blocking QuerySet method, save() on an instance it can see) is
+// SyncOrmInAsync's.
+.decl sora_start(k: symbol, f: symbol, c: node_path, g: symbol)
+sora_start(kq, fq, ct, gq) :- sora_call_at(fq, ct, _, _), !sora_direct_at(fq, ct), sora_frame(fq, kq),
+    sora_self_call_at(fq, ct, m), mro_method_sym(kq, m, gq), sora_sync(gq, _).
+sora_start(kq, fq, ct, gq) :- sora_call_at(fq, ct, _, _), !sora_direct_at(fq, ct), sora_frame(fq, kq),
+    sora_sure(fq, ct, gq), sora_sync(gq, _), !sora_self_bound(kq, fq, ct).
+// sora_call_at(f, c, fx, l): call c, at line l, is in async def f's own frame (f named fx), outside test code. Stated
+// in f's file. sora_direct_at(f, c): c is a query itself.
+.decl sora_call_at(f: symbol, c: node_path, fx: symbol, l: number)
+sora_call_at(fq, ct, fx, l) :- kind(c, "call"), nearest(c, f, dj_region_stop), is_async(f), docof(c, d),
+    !dj_test_doc(d), pt_def(f, fq), ct = @node_path(c), def_name(f, fx), node_line_number(c, l).
+.decl sora_direct_at(f: symbol, c: node_path)
+sora_direct_at(fq, ct) :- sora_query(c, f, _), kind(c, "call"), pt_def(f, fq), ct = @node_path(c).
+// sora_frame(f, k): def f runs for class k: its own class or itself when it is no method (sora_home, in f's file), or
+// a class that inherits it.
+.decl sora_frame(f: symbol, k: symbol)
+sora_frame(fq, kq) :- sora_home(fq, kq).
+sora_frame(fq, kq) :- method_sym(bq, fx, fq), subclass(kq, bq), mro_method_sym(kq, fx, fq).
+.decl sora_home(f: symbol, k: symbol)
+sora_home(fq, kq) :- kind(f, "function_definition"), nearest(f, k, scope), class_def(k, kq), pt_def(f, fq).
+sora_home(fq, fq) :- kind(f, "function_definition"), nearest(f, s, scope), !kind(s, "class_definition"), pt_def(f, fq).
+// sora_sync(g, x): g, named x, is a sync def that runs in its caller's thread.
+.decl sora_sync(g: symbol, x: symbol)
+sora_sync(gq, x) :- kind(g, "function_definition"), !is_async(g), !sora_offloaded(g), pt_def(g, gq), def_name(g, x).
+// sora_sure(f, c, g): call c of f surely calls g: the call program's only answers (nothing unknown, sora_cg in f's
+// file), or a model's method.
+.decl sora_sure(f: symbol, c: node_path, g: symbol)
+sora_sure(fq, ct, gq) :- sora_cg(fq, ct, gq).
+sora_sure(fq, ct, gq) :- sora_model_call(fq, ct, _, gq).
+.decl sora_cg(f: symbol, c: node_path, g: symbol)
+sora_cg(fq, ct, gq) :- kind(c, "call"), !call_open(c), call_target(c, gq), nearest(c, f, dj_region_stop),
+    pt_def(f, fq), ct = @node_path(c).
+// sora_self_site(x, c, m): call c, in method x, is `self.m(...)`. sora_self_call_at: by symbol and term.
+// sora_self_bound(k, f, c): c is such a call and f is a method of class k or of one of its bases, so self is a k.
+.decl sora_self_site(x: node, c: node, m: symbol)
+sora_self_site(x, c, m) :- kind(c, "call"), field(c, "function", fn), attr_of(fn, r, m), kind(r, "identifier"),
+    text(r, "self"), nearest(c, x, dj_region_stop), look(r, "self", x).
+.decl sora_self_call_at(x: symbol, c: node_path, m: symbol)
+sora_self_call_at(xq, ct, m) :- sora_self_site(x, c, m), pt_def(x, xq), ct = @node_path(c).
+.decl sora_own_method(k: symbol, x: symbol)
+sora_own_method(kq, xq) :- sora_frame(_, kq), method_sym(bq, _, xq), (bq = kq ; subclass(kq, bq)).
+.decl sora_self_bound(k: symbol, f: symbol, c: node_path)
+sora_self_bound(kq, xq, ct) :- sora_self_call_at(xq, ct, _), sora_own_method(kq, xq).
+.decl sora_direct(c: node)
+sora_direct(c) :- sora_query(c, _, _), kind(c, "call").
+// sora_offloaded(g): calling g returns an awaitable that runs g in a worker thread.
+.decl sora_offloaded(g: node)
+sora_offloaded(g) :- decorator(g, e), (unparen(e, m) ; (kind(e, "call"), field(e, "function", m))), sym_of(m, q),
+    (q = "asgiref.sync.sync_to_async" ; q = "channels.db.database_sync_to_async").
+// sora_reach(k, g, h): from a start g, for k, the sync function h runs in the same thread: g itself, or a chain of
+// calls through sync functions, none offloaded, with `self.m()` in k's methods going to k's m.
+.decl sora_reach(k: symbol, g: symbol, h: symbol)
+sora_reach(kq, gq, gq) :- sora_start(kq, _, _, gq).
+sora_reach(kq, gq, hq) :- sora_reach(kq, gq, xq), sora_self_call_at(xq, _, m), sora_own_method(kq, xq),
+    mro_method_sym(kq, m, hq), sora_sync(hq, _).
+sora_reach(kq, gq, hq) :- sora_reach(kq, gq, xq), sora_edge(xq, hq, "call"), sora_sync(hq, _).
+sora_reach(kq, gq, hq) :- sora_reach(kq, gq, xq), sora_edge(xq, hq, "self"), !sora_own_method(kq, xq), sora_sync(hq, _).
+// sora_edge(x, h, how): a call in function x's own frame (not a nested def or lambda, which runs later) may call h: a
+// call-graph edge, or a model method call; at a `self.m(...)` site (`self`) or another (`call`). Stated in x's file.
+.decl sora_edge(x: symbol, h: symbol, how: symbol)
+sora_edge(xq, hq, how) :- sora_call(xq, hq, how).
+sora_edge(xq, hq, how) :- sora_model_call(xq, _, how, hq).
+.decl sora_call(x: symbol, h: symbol, how: symbol)
+sora_call(xq, hq, how) :- call_target(c, hq), nearest(c, x, dj_region_stop), pt_def(x, xq), sora_site(x, c, how).
+.decl sora_site(x: node, c: node, how: symbol)
+sora_site(x, c, "self") :- sora_self_site(x, c, _).
+sora_site(x, c, "call") :- kind(c, "call"), nearest(c, x, dj_region_stop), !sora_self_site(x, c, _).
+// sora_ran(h, what, p, l): def h's first query, `what`, at line l of path p. Stated in h's file.
+.decl sora_ran(h: symbol, what: symbol, p: symbol, l: number)
+sora_ran(hq, what, p, l) :- sora_query(_, h, _), o = min v : { sora_query(v, h, _) }, sora_query(o, h, what),
+    pt_def(h, hq), node_line_number(o, l), docof(o, d), doc(d, p, _).
+
+// sora_query(o, h, what): o, in function h's own frame, runs a database query.
+.decl sora_query(o: node, h: node, what: symbol)
+sora_query(o, h, cat(m, "()")) :- dj_qs_call(o, m), sora_blocking(m), nearest(o, h, dj_region_stop).
+sora_query(e, h, "for … in <queryset>") :- (kind(l, "for_statement") ; kind(l, "for_in_clause")), !op(l, "async"),
+    field(l, "right", r), unparen(r, e), dj_qs(e), nearest(l, h, dj_region_stop).
+sora_query(w, h, "with transaction.atomic") :- dj_atomic_with(w, _), nearest(w, h, dj_region_stop).
+sora_query(o, h, cat(m, "()")) :- kind(o, "call"), field(o, "function", fn), attr_of(fn, r, m), sora_instance_method(m),
+    nearest(o, h, dj_region_stop), sora_model_instance(r, h).
+
+// sora_blocking(m): QuerySet methods that run a query; each has an `a`-prefixed async twin (`aget`, `acount`, …).
+.decl sora_blocking(m: symbol)
+sora_blocking("get"). sora_blocking("create"). sora_blocking("get_or_create"). sora_blocking("update_or_create").
+sora_blocking("bulk_create"). sora_blocking("bulk_update"). sora_blocking("count"). sora_blocking("exists").
+sora_blocking("first"). sora_blocking("last"). sora_blocking("earliest"). sora_blocking("latest").
+sora_blocking("aggregate"). sora_blocking("in_bulk"). sora_blocking("delete"). sora_blocking("update").
+sora_blocking("iterator"). sora_blocking("contains"). sora_blocking("explain").
+.decl sora_instance_method(m: symbol)
+sora_instance_method("save"). sora_instance_method("delete"). sora_instance_method("refresh_from_db").
+// sora_model_instance(r, h): receiver r, in function h, holds a model instance: one whose class lib/django's
+// dj_instance_class knows (`self` in a model method, a name bound to `Q(...)` or to a fetch from Q's manager, awaited
+// or not), or an expression the type program proves is a model.
+.decl sora_model_instance(r: node, h: node)
+sora_model_instance(r, h) :- dj_instance_class(r, h, _).
+sora_model_instance(r, h) :- proven_type(r, t), class_def(k, t), dj_model(k), nearest(r, h, dj_region_stop).
+// sora_model_call(h, c, how, g): call c of h, `o.m(...)` with o a model instance of class q, runs q's method m, g.
+// Only where the call program has no target for c. Each file states its calls (sora_instance_call).
+.decl sora_model_call(h: symbol, c: node_path, how: symbol, g: symbol)
+sora_model_call(hq, ct, how, gq) :- sora_instance_call(hq, ct, how, q, m), mro_method_sym(q, m, gq).
+.decl sora_instance_call(h: symbol, c: node_path, how: symbol, q: symbol, m: symbol)
+sora_instance_call(hq, ct, how, q, m) :- kind(c, "call"), field(c, "function", fn), attr_of(fn, r, m),
+    nearest(c, h, dj_region_stop), dj_instance_class(r, h, q), !call_target(c, _), pt_def(h, hq), ct = @node_path(c),
+    sora_site(h, c, how).
+
+// The cases, `cases/django-practice-sync-orm-reached-from-async/`, read as one repository: each line ending in `#
+// caught` is reported, and no other line.
+.test cases exactly
+    .fixture "shop/__init__.py" from "../cases/django-practice-sync-orm-reached-from-async/shop/__init__.py"
+    .fixture "shop/consumers.py" from "../cases/django-practice-sync-orm-reached-from-async/shop/consumers.py"
+    .fixture "shop/consumers_late.py" from "../cases/django-practice-sync-orm-reached-from-async/shop/consumers_late.py"
+    .fixture "shop/helpers.py" from "../cases/django-practice-sync-orm-reached-from-async/shop/helpers.py"
+    .fixture "shop/models.py" from "../cases/django-practice-sync-orm-reached-from-async/shop/models.py"
+    .fixture "shop/tests/__init__.py" from "../cases/django-practice-sync-orm-reached-from-async/shop/tests/__init__.py"
+    .fixture "shop/tests/test_views.py" from "../cases/django-practice-sync-orm-reached-from-async/shop/tests/test_views.py"
+    .fixture "shop/views.py" from "../cases/django-practice-sync-orm-reached-from-async/shop/views.py"
+    .expect _ at "shop/consumers.py":7
+    .expect _ at "shop/consumers.py":10
+    .expect _ at "shop/consumers_late.py":12
+    .expect _ at "shop/consumers_late.py":19
+    .expect _ at "shop/views.py":11
+    .expect _ at "shop/views.py":12
+    .expect _ at "shop/views.py":13
+    .expect _ at "shop/views.py":14
+    .expect _ at "shop/views.py":15
+    .expect _ at "shop/views.py":16
+    .expect _ at "shop/views.py":21
+    .expect _ at "shop/views.py":43
+    .expect _ at "shop/views.py":44
+    .expect _ at "shop/views.py":45
+    .expect _ at "shop/views.py":56
+    .expect _ at "shop/views.py":58
+    .expect _ at "shop/views.py":60
+.end

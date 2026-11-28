@@ -131,6 +131,8 @@ impl Drop for Scope {
             let was = self.was.take();
             super::profile::RUN.with(|r| *r.borrow_mut() = was);
             super::profile::run_ended();
+            // What the run freed and its lists kept for reuse goes back to the system (`ledger::trim_all`).
+            rerail_blocks::ledger::trim_all();
         }
     }
 }

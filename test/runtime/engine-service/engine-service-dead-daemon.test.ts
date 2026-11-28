@@ -170,10 +170,10 @@ function live(databasePath: string, sessionId: string): boolean {
 }
 
 /** A scan asked for the session, as `rerail scan --session` asks the daemon for one. */
-function askScan(databasePath: string, sessionId: string): { id: string; status: string; error: string | null } {
+async function askScan(databasePath: string, sessionId: string): Promise<{ id: string; status: string; error: string | null }> {
   const controls = new SqliteAuditControlStore(databasePath);
   try {
-    return controls.requestAudit(sessionId, { scope: "repository" });
+    return await controls.requestAudit(sessionId, { scope: "repository" });
   } finally {
     controls.close();
   }
@@ -237,7 +237,7 @@ describe("the next daemon's start after a daemon that died", () => {
       await daemon.send(prompt("q", "last"));
       const closedAt = await daemon.idleClose(IDLE_MS + 1_000);
       // Asked while the daemon held the session: it waits for the session's next open, which never comes there.
-      const queued = askScan(databasePath, "q");
+      const queued = await askScan(databasePath, "q");
       expect(queued.status).toBe("queued");
       await daemon.kill();
       setOwner(databasePath, "q", { processId: await pidHolder() });
@@ -249,7 +249,7 @@ describe("the next daemon's start after a daemon that died", () => {
       expect(live(databasePath, "q")).toBe(false);
       expect(scanOf(databasePath, "q", queued.id)).toEqual(INTERRUPTED);
       // A scan asked for it is refused at once, rather than queued for a daemon that is gone.
-      expect(askScan(databasePath, "q")).toMatchObject({ status: "failed", error: "Session is inactive" });
+      expect(await askScan(databasePath, "q")).toMatchObject({ status: "failed", error: "Session is inactive" });
       // Its next event opens it again here, rather than finding it owned by a runtime that runs.
       await ingestEngineEvent({ socketPath: next.socketPath }, prompt("q", "again"));
       expect([recorded(databasePath, "q").endedAt, live(databasePath, "q")]).toEqual([null, true]);
@@ -327,7 +327,7 @@ describe("a daemon that runs on after another on the same records died", () => {
     await daemon.send(prompt("q", "last"));
     const closedAt = await daemon.idleClose(IDLE_MS + 1_000);
     const other = await service(root, databasePath, () => Date.now() + 3 * DAY);
-    const queued = askScan(databasePath, "q");
+    const queued = await askScan(databasePath, "q");
     expect(queued.status).toBe("queued");
     await daemon.kill();
     setOwner(databasePath, "q", { processId: await runningProcess() });

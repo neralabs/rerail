@@ -34,7 +34,10 @@ export interface PackState {
   gatedTools: string[];
   /** Each shipped rule's upstream tool, from its conformance.json entry; absent when it has none. */
   toolOf: Map<string, string>;
-  /** The pack's own rules (conformance.json `own`): no upstream tool, proven by their examples. */
+  /**
+   * The pack's own rules: no upstream tool, proven by their examples. Those conformance.json lists under `own`, and
+   * every rule written in `.rerail`, which the pack validation proves by its examples and its `.test` blocks.
+   */
   own: Set<string>;
   /** `"private": true` in the pack's package.json: never published, so never reaches a user through the gates. */
   isPrivate: boolean;
@@ -51,10 +54,11 @@ export function packStates(root: string): PackState[] {
       const conformance = join(packs, pack, "conformance.json");
       const manifest = existsSync(conformance) ? readJson<{ tools?: { name: string }[]; rules?: { id: string; upstream?: { tool?: string } }[]; own?: string[] }>(conformance) : {};
       const tools = (manifest.tools ?? []).map((tool) => tool.name);
-      const shipped = (readJson<{ rules?: { id: string }[] }>(join(packs, pack, "pack.json")).rules ?? []).map((rule) => rule.id).sort(byText);
+      const listed = readJson<{ rules?: { id: string; document?: string }[] }>(join(packs, pack, "pack.json")).rules ?? [];
+      const shipped = listed.map((rule) => rule.id).sort(byText);
       const gatedTools = tools.filter((tool) => existsSync(join(packs, pack, "upstream", tool, GATES_MANIFEST)));
       const toolOf = new Map((manifest.rules ?? []).filter((rule) => typeof rule.upstream?.tool === "string").map((rule) => [rule.id, rule.upstream!.tool!]));
-      const own = new Set(manifest.own ?? []);
+      const own = new Set([...(manifest.own ?? []), ...listed.filter((rule) => rule.document?.endsWith(".rerail") === true).map((rule) => rule.id)]);
       const packageJson = join(packs, pack, "package.json");
       const isPrivate = existsSync(packageJson) && isPrivatePack(readJson<unknown>(packageJson), packageJson);
       return { pack, tools, shipped, gatedTools, toolOf, own, isPrivate };

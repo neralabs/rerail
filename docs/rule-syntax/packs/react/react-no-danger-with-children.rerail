@@ -29,7 +29,7 @@ danger_with_children(c) :- kind(c, "call_expression"), field(c, "function", f), 
 // child on a later line than the open tag (and not text) had one before it.
 .decl nested(e: node)
 nested(e) :- kind(e, "jsx_element"), field(e, "open_tag", o), child(e, c, 1), !field(e, "close_tag", c),
-    (kind(c, "jsx_text") ; end_line(o, l), line(c, l)).
+    (kind(c, "jsx_text") ; node_end_line_number(o, l), node_line_number(c, l)).
 // el_prop(o, x): open tag o has prop x, itself or in a spread variable's object.
 .decl el_prop(o: node, x: symbol)
 el_prop(o, x) :- jsx_prop(o, x, _).

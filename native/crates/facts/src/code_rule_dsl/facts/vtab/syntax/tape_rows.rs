@@ -125,6 +125,11 @@ pub(super) trait TapeRows: Send + Sync + 'static {
     fn row(&self, at: &At, d: &Self::Doc, item: u32, k: u32, out: &mut [i64]);
     /// The tape nodes under tape node `x` that may have a row whose `parent()` column is `x`, in order.
     fn under(&self, _at: &At, _x: u32, _each: &mut dyn FnMut(u32)) {}
+    /// What bounds column `column`'s values before any row is read (`Source::col_bounds`, `Batch::bounds_of`): none
+    /// where nothing does.
+    fn col_kind(&self, _column: usize) -> Option<super::made::ColKind> {
+        None
+    }
     /// Whether a lookup on `column` finds its items (`find`).
     fn keyed(&self, column: usize) -> bool {
         column == self.own() || Some(column) == self.parent()
@@ -132,10 +137,10 @@ pub(super) trait TapeRows: Send + Sync + 'static {
     /// The items (each with its document) a lookup of `value` on a `keyed` column may find, with a row or not: by the
     /// row's own id, its tape node; by a parent's, the nodes under it.
     fn find(&self, batch: &Batch, column: usize, value: i64, each: &mut dyn FnMut(usize, u32)) {
-        let Some(doc) = batch.doc(value >> 32, &mut 0) else { return };
+        // Its document and local id, by its page (plan "Chunk node numbers").
+        let Some((doc, local)) = batch.docs.of_id(value) else { return };
         let at = At { batch, doc };
         let p = at.p();
-        let Some(local) = p.local_of((value & 0xffff_ffff) as u32) else { return };
         if column == self.own() {
             let x = p.place_node(local);
             if x != NONE {
@@ -214,6 +219,9 @@ impl<R: TapeRows> RowsView<R> {
 }
 
 impl<R: TapeRows> Source for RowsView<R> {
+    fn col_bounds(&self, column: usize) -> Option<[i64; 2]> {
+        self.rows.col_kind(column).map(|k| self.batch.bounds_of(k))
+    }
     fn syntax_batch(&self) -> Option<Arc<dyn std::any::Any + Send + Sync>> {
         Some(Arc::clone(&self.batch) as _)
     }
@@ -304,25 +312,30 @@ impl<R: TapeRows> Source for RowsView<R> {
         if !self.rows.keyed(column) {
             return None;
         }
-        let firsts = self.firsts();
         let mut rows = Vector::new();
-        for &v in values {
-            self.rows.find(&self.batch, column, v, &mut |doc, x| {
-                let per = self.per(doc);
-                let at = self.at(doc);
-                let rank = match per.rows {
-                    Rows::Ranked { .. } => per.rows.rank(at.p(), x),
-                    Rows::Doc => (x == 0).then_some(0),
-                    Rows::None => None,
-                };
-                if let Some(k) = rank {
-                    rows.push(firsts.at(doc) + k as usize);
-                }
-            });
-        }
+        self.found(column, values, &mut |r| rows.push(r));
         rows.sort_unstable();
         rows.dedup();
         Some(rows)
+    }
+    /// `lookup`'s rows in its order, sorted in the probe's frame: a list made a probe was 2.07 M on cold PostHog.
+    fn lookup_each(&self, column: usize, values: &[i64], each: &mut dyn FnMut(usize)) -> bool {
+        if !self.rows.keyed(column) {
+            return false;
+        }
+        rerail_blocks::frame::op(|fr| {
+            let mut rows = fr.vec::<u64>();
+            self.found(column, values, &mut |r| rows.push(r as u64));
+            rows.sort_unstable();
+            let mut last = None;
+            for &r in rows.iter() {
+                if last != Some(r) {
+                    each(r as usize);
+                    last = Some(r);
+                }
+            }
+        });
+        true
     }
 }
 
@@ -703,6 +716,10 @@ impl TapeRows for DocRow {
     fn columns(&self) -> &'static [&'static str] {
         &["d", "path", "module"]
     }
+    /// A document's key, and two atoms.
+    fn col_kind(&self, column: usize) -> Option<super::made::ColKind> {
+        Some(if column == 0 { super::made::ColKind::Key } else { super::made::ColKind::Atom })
+    }
     fn own(&self) -> usize {
         0
     }
@@ -730,7 +747,13 @@ impl TapeRows for DocRow {
     /// By its key, its document; by its path or module, the documents the batch's interned paths and modules name.
     fn find(&self, batch: &Batch, column: usize, value: i64, each: &mut dyn FnMut(usize, u32)) {
         let keys = match column {
-            0 => u32::try_from(value).ok().into_iter().collect(),
+            // By its key: the one document, no list made (a list of the key a probe was 2.06 M on cold PostHog).
+            0 => {
+                if let Ok(k) = u32::try_from(value) && let Some(doc) = batch.docs.position(k) {
+                    each(doc, 0);
+                }
+                return;
+            }
             1 => batch.keys_of_paths(&[value]).unwrap_or_default(),
             _ => batch.keys_of_modules(&[value]).unwrap_or_default(),
         };
@@ -768,7 +791,7 @@ impl VisitIndex {
                     out[l as usize] = i;
                     order.push(l);
                 });
-                super::tree::keys_by_run(&order, |l| (p.global(l) as u32) >> rerail_clif::ids::INDEX_BITS, out);
+                super::tree::keys_by_run(&order, |l| rerail_blocks::located::Located(p.located(l)).low() >> rerail_clif::ids::INDEX_BITS, out);
                 n.max(1)
             })
             .expect("a projection's block holds a view's places")
@@ -860,5 +883,26 @@ impl TapeRows for TreeDigest {
     fn row(&self, at: &At, _: &(), _: u32, k: u32, out: &mut [i64]) {
         out[0] = at.p().global(k);
         out[1] = super::core_rr::digest_value(&Self::hashes(at)[k as usize]);
+    }
+}
+
+impl<R: TapeRows> RowsView<R> {
+    /// The rows `find` gives of `values` on `column` (a keyed one), each given to `each`, unsorted and maybe twice.
+    fn found(&self, column: usize, values: &[i64], each: &mut dyn FnMut(usize)) {
+        let firsts = self.firsts();
+        for &v in values {
+            self.rows.find(&self.batch, column, v, &mut |doc, x| {
+                let per = self.per(doc);
+                let at = self.at(doc);
+                let rank = match per.rows {
+                    Rows::Ranked { .. } => per.rows.rank(at.p(), x),
+                    Rows::Doc => (x == 0).then_some(0),
+                    Rows::None => None,
+                };
+                if let Some(k) = rank {
+                    each(firsts.at(doc) + k as usize);
+                }
+            });
+        }
     }
 }

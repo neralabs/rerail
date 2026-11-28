@@ -1369,7 +1369,7 @@ pt_possible_open_all(n) :- pt_type_of_all(n, t), pt_tsup_open(n, t).
 // bodies are typed as the workspace's: a call of their functions has a target and their returns a type (the user,
 // 2026-11-27, of the ways to type such a library's calls: "do B"). Read by path, each document its own row. Here, not
 // in python/points-to-file: a rule that reads the answers (python/points-to) takes no library as its document.
-// pt_chk(t): t is the path of a call or a value position of a checked document, which the interface is about.
+// pt_chk(t): t is the node path of a call or a value position of a checked document, which the interface is about.
 .decl sources__source_library(p: symbol)
 .decl pt_srclib(d: number)
 pt_srclib(d) :- doc(d, p, _), sources__source_library(p).

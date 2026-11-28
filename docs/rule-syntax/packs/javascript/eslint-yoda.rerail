@@ -86,14 +86,14 @@ flip(n, o, _) :- yoda(n, o, _), yoda_flip(o, f), !yoda_comment(n), field(n, "lef
 .decl yoda_gap(n: node, a: node, g1: symbol, g2: symbol)
 yoda_gap(n, a, g1, g2) :- yoda(n, _, _), field(n, "left", a), op_token(n, t), yoda_ws(a, t, g1), field(n, "right", b),
     yoda_ws_to(t, b, g2).
-.decl yoda_ws(a: node, t: span, g: symbol)  // the gap from a's end to token t
-yoda_ws(a, t, substr(s, x, y - x)) :- yoda(n, _, _), field(n, "left", a), op_token(n, t), end_line(a, l), line(t, l),
-    docof(t, d), src_line(d, l, sp), text(sp, s), end_col(a, x), col(t, y).
-yoda_ws(a, t, " ") :- yoda(n, _, _), field(n, "left", a), op_token(n, t), end_line(a, l), !line(t, l).
-.decl yoda_ws_to(t: span, b: node, g: symbol)  // the gap from token t's end to b
-yoda_ws_to(t, b, substr(s, x, y - x)) :- yoda(n, _, _), op_token(n, t), field(n, "right", b), end_line(t, l), line(b, l),
-    docof(b, d), src_line(d, l, sp), text(sp, s), end_col(t, x), col(b, y).
-yoda_ws_to(t, b, " ") :- yoda(n, _, _), op_token(n, t), field(n, "right", b), end_line(t, l), !line(b, l).
+.decl yoda_ws(a: node, t: token, g: symbol)  // the gap from a's end to token t
+yoda_ws(a, t, substr(s, x, y - x)) :- yoda(n, _, _), field(n, "left", a), op_token(n, t), node_end_line_number(a, l), token_line_number(t, l),
+    token_document(t, d), document_line(d, sp), line_number(sp, l), line_text(sp, s), end_col(a, x), token_start_column(t, y).
+yoda_ws(a, t, " ") :- yoda(n, _, _), field(n, "left", a), op_token(n, t), node_end_line_number(a, l), !token_line_number(t, l).
+.decl yoda_ws_to(t: token, b: node, g: symbol)  // the gap from token t's end to b
+yoda_ws_to(t, b, substr(s, x, y - x)) :- yoda(n, _, _), op_token(n, t), field(n, "right", b), token_end_line_number(t, l), node_line_number(b, l),
+    docof(b, d), document_line(d, sp), line_number(sp, l), line_text(sp, s), token_text(t, ts), token_start_column(t, tx), x = tx + strlen(ts), node_start_column(b, y).
+yoda_ws_to(t, b, " ") :- yoda(n, _, _), op_token(n, t), field(n, "right", b), token_end_line_number(t, l), !node_line_number(b, l).
 // yoda_lead(n, p), yoda_trail(n, s): " " where a touching token outside n would join the new first (last) token.
 .decl yoda_lead(n: node, p: symbol)
 yoda_lead(n, " ") :- yoda_lead_sp(n).

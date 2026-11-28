@@ -67,6 +67,9 @@ pub fn kf(f: &mut FunctionBuilder<'_>, key: Value) -> Value {
     f.ins().bor(kind, field)
 }
 
+/// A row's kind for an ERROR leaf, a statement recovered (decision 0650): `stream_ir::ERROR_ROW`.
+pub use crate::stream_ir::ERROR_ROW;
+
 /// The first supertype record of a node from `from` on: back from the last (0 where the program
 /// names no classes).
 fn first_super(f: &mut FunctionBuilder<'_>, snode: Value, supers: Value, from: Value, classes: &[u16], heads: &mut Vec<(cranelift_codegen::ir::Block, Step)>) -> Value {

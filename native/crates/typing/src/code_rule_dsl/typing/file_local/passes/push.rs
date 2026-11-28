@@ -57,11 +57,12 @@ fn has_var(v: &Version, rule: RuleRef<'_>, a: AtomRef<'_>, x: &str) -> bool {
 /// Whether nothing in `atoms` narrows a node: each is a plain lookup of a node's attributes (no constant, no repeated
 /// variable) or has no node column, and some node is read.
 fn unrestricted(v: &Version, f: Fields<'_>, rule: RuleRef<'_>, atoms: &[AtomRef<'_>]) -> bool {
-    let rel = |a: &AtomRef<'_>| v.rel_name(a.rel());
+    // A line's, a match's or a token's read is an attribute as its node counterpart is (decision 0724 step 3).
+    let rel = |a: &AtomRef<'_>| crate::code_rule_dsl::facts::core::counterpart(v.rel_name(a.rel()));
     atoms.iter().any(|a| matches!(rel(a), "docof" | "line" | "end_line" | "col" | "visit_index" | "node_order" | "node"))
         && atoms.iter().all(|a| {
             let attribute = ATTRIBUTES.contains(&rel(a));
-            (attribute && plain(v, rule, *a)) || (!attribute && !f.columns(rel(a)).is_some_and(|cols| cols.iter().any(|(_, t)| matches!(*t, "node" | "loc" | "span"))))
+            (attribute && plain(v, rule, *a)) || (!attribute && !f.columns(rel(a)).is_some_and(|cols| cols.iter().any(|(_, t)| matches!(*t, "node" | "place"))))
         })
 }
 
@@ -76,7 +77,7 @@ fn descends(v: &Version, rule: RuleRef<'_>, atoms: &[AtomRef<'_>]) -> bool {
         match (v.rel_name(w.rel()), args.as_slice()) {
             ("within", [TermRef::Var(n), a]) if !matches!(a, TermRef::Var(m) if m == n) => {
                 let n = name(v, rule, *n);
-                atoms.iter().enumerate().filter(|(bi, b)| *bi != wi && has_var(v, rule, **b, &n)).all(|(_, b)| attribute(v.rel_name(b.rel())))
+                atoms.iter().enumerate().filter(|(bi, b)| *bi != wi && has_var(v, rule, **b, &n)).all(|(_, b)| attribute(crate::code_rule_dsl::facts::core::counterpart(v.rel_name(b.rel()))))
             }
             _ => false,
         }
@@ -88,7 +89,7 @@ fn node_vars(v: &Version, f: Fields<'_>, rule: RuleRef<'_>, atom: AtomRef<'_>) -
     let Some(columns) = f.columns(v.rel_name(atom.rel())) else { return BTreeSet::new() };
     atom.args()
         .zip(&columns)
-        .filter_map(|(term, (_, ty))| if matches!(*ty, "node" | "loc" | "span") && let TermRef::Var(s) = term { Some(name(v, rule, s)) } else { None })
+        .filter_map(|(term, (_, ty))| if matches!(*ty, "node" | "place") && let TermRef::Var(s) = term { Some(name(v, rule, s)) } else { None })
         .collect()
 }
 
@@ -111,7 +112,7 @@ fn domain<'v>(v: &'v Version, f: Fields<'v>, local: &BTreeSet<String>, of: &[Rul
                             && !a.gated()
                             && !f.lattice(rel)
                             && (f.is_input(rel) || local.contains(rel))
-                            && !(ATTRIBUTES.contains(&rel) && plain(v, r, a))
+                            && !(ATTRIBUTES.contains(&crate::code_rule_dsl::facts::core::counterpart(rel)) && plain(v, r, a))
                             && a.args().any(|t| matches!(t, TermRef::Var(s) if s == x))
                     }
                     _ => false,
@@ -127,7 +128,7 @@ fn node_groups(v: &Version, f: Fields<'_>, rule: RuleRef<'_>, atoms: &[AtomRef<'
         .iter()
         .filter_map(|a| {
             let args: Vec<TermRef<'_>> = a.args().collect();
-            match (v.rel_name(a.rel()), args.as_slice()) {
+            match (crate::code_rule_dsl::facts::core::counterpart(v.rel_name(a.rel())), args.as_slice()) {
                 ("docof", [_, TermRef::Var(d)]) => Some(name(v, rule, *d)),
                 ("node" | "doc", [TermRef::Var(d), ..]) => Some(name(v, rule, *d)),
                 _ => None,
@@ -265,12 +266,30 @@ impl Readers {
     }
 }
 
+/// The file-local relations a helper cannot read and stay file-local (`placeless`): those with no location column
+/// (`FileLocal::locations`), not constants or filters, which the split lets any rule read. Each file's rows of one are
+/// part of a relation of every file's, so a rule that reads one joins no document by it and is cross-file ("reads r
+/// with no location"): a join pushed with it is refused every round, and its reader left reading the base relations.
+fn placeless(split: &FileLocal) -> BTreeSet<String> {
+    let located = |rel: &String| split.locations.get(rel).is_some_and(|c| !c.is_empty());
+    split.local.iter().filter(|rel| !located(rel) && !split.constants.contains(*rel) && !split.filters.contains(*rel)).cloned().collect()
+}
+
 /// A round of `PushLocalJoins`: the relations made, and the split of the program as it is left; `None` where it makes
-/// nothing.
+/// nothing. `split`'s placeless relations (`placeless`) are the reader's, as a cross-file relation is.
 /// `rounds`: the rounds it took, each a split of the whole program.
-fn push_with<'v>(v: &'v Arc<Version>, f: Fields<'v>, local: &BTreeSet<String>, keep_unrestricted: bool, rounds: &mut usize) -> Result<Option<Pushed<'v>>, String> {
-    let equal_columns = push_equal_columns();
+fn push_with<'v>(v: &'v Arc<Version>, f: Fields<'v>, split: &FileLocal, keep_unrestricted: bool, rounds: &mut usize) -> Result<Option<Pushed<'v>>, String> {
+    let local = &split.local;
     let rules: Vec<RuleRef<'v>> = v.rules().collect();
+    let heads: HashSet<&str> = rules.iter().map(|r| v.rel_name(r.head().rel())).collect();
+    let rules_of = |rel: &str| heads.contains(rel);
+    let placeless = placeless(split);
+    // A relation of stated facts alone (`effect_kind("call")`, no rule of it) is every chunk's too, as a constant of
+    // the split is: a component takes it, so its variable stays inside rather than every row's value being handed on
+    // to the cross part.
+    let stated = |rel: &str| f.facts(rel).is_some_and(|x| !x.about()) && !rules_of(rel);
+    let joinable = |rel: &str| (local.contains(rel) && !placeless.contains(rel)) || split.constants.contains(rel) || stated(rel);
+    let equal_columns = push_equal_columns();
     let decl_names: HashSet<String> = f.decls().iter().map(|d| v.text(d.name()).to_owned()).collect();
     let base = |rel: &str| f.is_input(rel);
     let mut rules_of: BTreeMap<&str, Vec<RuleRef<'v>>> = BTreeMap::new();
@@ -299,7 +318,7 @@ fn push_with<'v>(v: &'v Arc<Version>, f: Fields<'v>, local: &BTreeSet<String>, k
                 continue;
             }
             let body: Vec<LitRef<'v>> = rule.body().collect();
-            let candidate = |l: LitRef<'_>| matches!(l.view(), L::Atom(a) if !a.neg() && !f.lattice(v.rel_name(a.rel())) && (base(v.rel_name(a.rel())) || local.contains(v.rel_name(a.rel()))));
+            let candidate = |l: LitRef<'_>| matches!(l.view(), L::Atom(a) if !a.neg() && !f.lattice(v.rel_name(a.rel())) && (base(v.rel_name(a.rel())) || joinable(v.rel_name(a.rel()))));
             let idx: Vector<usize> = (0..body.len()).filter(|&j| candidate(body[j])).collect();
             let equal: Vec<(String, String)> = var_equalities_in(v, rule).into_iter().map(|(a, b)| (name(v, rule, a), name(v, rule, b))).collect();
             let mut comps: Vec<(BTreeSet<usize>, BTreeSet<String>)> = Vec::new();
@@ -327,7 +346,31 @@ fn push_with<'v>(v: &'v Arc<Version>, f: Fields<'v>, local: &BTreeSet<String>, k
                 // (decision 0292 §3).
                 let node_reads: Vec<String> = body.iter().filter_map(|l| node_read(v, rule, *l)).filter(|(_, n)| vars.contains(n)).map(|(x, _)| x).collect();
                 vars.extend(node_reads.iter().cloned());
-                let must = !node_reads.is_empty();
+                // A component that reads a node it does not hand on (`callee(_, s)`, a node, line, match or token
+                // column the rest of the rule leaves unread) is pushed too, whatever else would leave it: handed on
+                // whole, the export carries that column into the cross part, and no node id crosses (decision 0677).
+                // Pushed, it is the columns the rest reads (`fl<h>_target(s) :- callee(_, s)`).
+                let outside: BTreeSet<String> = rule
+                    .head()
+                    .args()
+                    .flat_map(|t| term_vars(v, rule, t))
+                    .chain(body.iter().enumerate().filter(|(j, _)| !lits.contains(j)).flat_map(|(_, l)| lit_vars(v, rule, *l)))
+                    .collect();
+                let mut outside = outside;
+                close_under(&mut outside, &equal);
+                let drops_node = atoms.iter().any(|a| {
+                    f.columns(rel(a)).is_some_and(|cols| {
+                        a.args().zip(cols.iter()).any(|(t, (_, ty))| {
+                            matches!(*ty, "node" | "line" | "match" | "token" | "place")
+                                && match t {
+                                    TermRef::Wild => true,
+                                    TermRef::Var(s) => !outside.contains(&name(v, rule, s)),
+                                    _ => false,
+                                }
+                        })
+                    })
+                });
+                let must = !node_reads.is_empty() || drops_node;
                 if !must && !atoms.iter().any(|a| base(rel(a))) && atoms.len() < 2 {
                     continue;
                 }
@@ -338,14 +381,14 @@ fn push_with<'v>(v: &'v Arc<Version>, f: Fields<'v>, local: &BTreeSet<String>, k
                 // filter its rows in the chunk.
                 let goes_with = |l: LitRef<'_>| match l.view() {
                     L::Cmp { .. } => true,
-                    L::Atom(a) => a.neg() && !a.gated() && !f.lattice(rel(&a)) && (base(rel(&a)) || (at == 0 && local.contains(rel(&a)))),
+                    L::Atom(a) => a.neg() && !a.gated() && !f.lattice(rel(&a)) && (base(rel(&a)) || (at == 0 && joinable(rel(&a)))),
                     _ => false,
                 };
                 let filtered = body.iter().enumerate().any(|(j, l)| {
                     let lv = lit_vars(v, rule, *l);
                     !lits.contains(&j) && goes_with(*l) && !lv.is_empty() && lv.is_subset(&vars)
                 });
-                let attribute = |a: &AtomRef<'_>| ATTRIBUTES.contains(&rel(a)) && plain(v, rule, *a);
+                let attribute = |a: &AtomRef<'_>| ATTRIBUTES.contains(&crate::code_rule_dsl::facts::core::counterpart(rel(a))) && plain(v, rule, *a);
                 let rest: Vec<&AtomRef<'v>> = atoms.iter().filter(|a| !attribute(a)).collect();
                 // One plain atom and lookups of its nodes' attributes (`child(p, f, _), text(p, s)`) is a row a node the
                 // cross part reads as well where it is: left, unless a test of its variables goes with it
@@ -413,18 +456,11 @@ fn push_with<'v>(v: &'v Arc<Version>, f: Fields<'v>, local: &BTreeSet<String>, k
                         outside.extend(lit_vars(v, rule, *l));
                     }
                 }
-                // A bound (`$x < k`) is the reader's, its variable handed on: two rules that differ only in their
-                // bounds (a narrow copy, its original and its candidates, decision 0575) then push one join. Not a
-                // bound of an id's range, as lowering writes it (`$f < 6917529027641081856`, `$d < 1610612736`): every
-                // copy has the same, so it stays with the join, and a node or document the reader needs for nothing
-                // else is not handed on to the cross part (decision 0677; eager-resolve's `er_dirty`).
-                for &j in &lits {
-                    if let L::Cmp { op: CmpOp::Lt | CmpOp::Le | CmpOp::Gt | CmpOp::Ge, l: TermRef::Var(_), r: TermRef::Int(c) } = body[j].view()
-                        && c.unsigned_abs() < 1 << 30
-                    {
-                        outside.extend(lit_vars(v, rule, body[j]));
-                    }
-                }
+                // A bound (`$x < k`) is the reader's where its variable is handed on anyway: two rules that differ only
+                // in their bounds (a narrow copy, its original and its candidates, decision 0575) then push one join.
+                // A bound of a variable nothing else outside reads stays in the join: handing the variable on for it
+                // alone made a row of every value (`p297_effect`'s `$n < …`: every node under each `e`, 7 rows a node
+                // of the 300-file bench).
                 // The literals in one order whatever the rule's (by their text), and the interface by first sight in
                 // it: two rules that push the same join with their literals written in another order (a recheck and
                 // its original, decision 0575) name one helper.
@@ -447,7 +483,12 @@ fn push_with<'v>(v: &'v Arc<Version>, f: Fields<'v>, local: &BTreeSet<String>, k
                         && matches!(l.view(), L::Atom(a) if !a.neg() && !f.lattice(rel(&a)) && !candidate(*l)
                             && iface.iter().all(|x| has_var(v, rule, a, x)))
                 });
-                if !must && joined_away && filtered {
+                // A join on a variable it projects away whose interface a cross-file read binds whole stays in the cross
+                // part, which starts from the filter (ed8dd88c04: F823's pairs, 15.4 M rows for one file). An interface
+                // of one variable is no product: at most a row a value. Where the join narrows its nodes (a kind of
+                // `effect_kind`'s), the chunk makes it once and the memo keeps it; one that narrows none
+                // (`docof(n, d), lead(d)`) is a row of every node, and stays the filter's.
+                if !must && joined_away && filtered && (iface.len() > 1 || unrestricted(v, f, rule, &atoms)) {
                     continue;
                 }
                 let typed: Option<Vec<(String, String)>> = iface
@@ -604,7 +645,7 @@ impl ProgramPass for PushLocalJoins {
         let f = Fields::over(v, &d);
         let split = cx.get::<FileLocal>()?;
         let inputs: BTreeSet<&str> = f.inputs().collect();
-        let first = push_with(v, f, &split.local, false, &mut self.rounds)?;
+        let first = push_with(v, f, &split, false, &mut self.rounds)?;
         let reads_base = match &first {
             Some(p) => cross_reads_base(&p.candidate, &inputs, &p.local),
             None => cross_reads_base(v, &inputs, &split.local),
@@ -620,7 +661,7 @@ impl ProgramPass for PushLocalJoins {
         // A part pushes in the run's mode (decision 0345 stage 2): every part's reads together decide it.
         use crate::code_rule_dsl::logic::plan::fields::{PART_WHOLE, PUSH_BASE, PUSH_DECIDED};
         let mode = if f.qualified(PART_WHOLE, PUSH_DECIDED) { f.qualified(PART_WHOLE, PUSH_BASE) } else { reads_base };
-        let pushed = if mode { push_with(v, f, &split.local, true, &mut self.rounds)? } else { first };
+        let pushed = if mode { push_with(v, f, &split, true, &mut self.rounds)? } else { first };
         if let Some(p) = pushed {
             self.made = p.made;
             write(w.derive()?, v, &p.round)?;

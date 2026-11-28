@@ -456,8 +456,8 @@ DEFINE_KERNEL2(device_tests, d_clock,
 "#;
 
 /// The device's clock (`ukl_clock_ns`) counts nanoseconds: two launches a measured host sleep apart read times as far
-/// apart as the host's clock says, within the launches' own time. CUDA's and HIP's kernels have a clock; Metal's,
-/// OpenCL's and the CPU's read 0.
+/// apart as the host's clock says, within the launches' own time. CUDA's and HIP's kernels have a clock, as the CPU's
+/// have on arm64 (its virtual counter, `backend.h`); Metal's, OpenCL's and the CPU's elsewhere read 0.
 #[test]
 fn the_device_clock_counts_nanoseconds() {
     let Some(_) = crate::shared::get() else { return };
@@ -483,7 +483,12 @@ fn the_device_clock_counts_nanoseconds() {
     let host = start.elapsed().as_nanos() as u64;
     let w = read::<u32>(&t, 4);
     let (a, b) = (w[0] as u64 | (w[1] as u64) << 32, w[2] as u64 | (w[3] as u64) << 32);
-    if !matches!(crate::device::backend(), "CUDA" | "HIP") {
+    let clocked = match crate::device::backend() {
+        "CUDA" | "HIP" => true,
+        "CPU" => cfg!(target_arch = "aarch64"),
+        _ => false,
+    };
+    if !clocked {
         assert_eq!((a, b), (0, 0), "{} has no kernel clock", crate::device::backend());
         return;
     }

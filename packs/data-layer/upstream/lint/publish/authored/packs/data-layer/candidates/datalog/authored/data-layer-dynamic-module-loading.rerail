@@ -30,7 +30,7 @@ pattern_0_top(n) :- child(m, n, _), node(_, m, "module", _, _).
 pattern_0_top(n) :- child(w, n, _), node(_, w, "decorated_definition", _, _), child(m, w, _), node(_, m, "module", _, _).
 violation("data-layer-dynamic-module-loading", "pattern-0", "DML001", p, l) :-
   node(d, n, "function_definition", _, _), field(n, "name", x), node_text(x, "__getattr__"), !op(n, "async"),
-  pattern_0_top(n), in_scope(d), !out_scope(d), doc(d, p, _), line(n, l).
+  pattern_0_top(n), in_scope(d), !out_scope(d), doc(d, p, _), node_line_number(n, l).
 
 // ---- pattern-1: `globals()[…]` as an assignment's target (or the value of a subscript that is one) ----
 .decl pattern_1_target(s: node)
@@ -39,7 +39,7 @@ pattern_1_target(s) :- field(t, "value", s), node(_, t, "subscript", _, _), fiel
 violation("data-layer-dynamic-module-loading", "pattern-1", "DML001", p, l) :-
   node(d, n, "subscript", _, _), field(n, "value", c), node(_, c, "call", _, _),
   field(c, "function", f), node_text(f, "globals"), field(c, "arguments", g), node_text(g, t), match("\(\s*\)", t),
-  pattern_1_target(n), !pattern_in_tc(n), in_scope(d), !out_scope(d), doc(d, p, _), line(n, l).
+  pattern_1_target(n), !pattern_in_tc(n), in_scope(d), !out_scope(d), doc(d, p, _), node_line_number(n, l).
 
 // ---- shared by pattern-2 and pattern-4: a name as a callee (bare or an attribute) or a definition's name ----
 .decl pattern_site(n: node)
@@ -50,22 +50,22 @@ pattern_site(n) :- field(f, "name", n), node(_, f, "function_definition", _, _).
 // ---- pattern-2: __import__ ----
 violation("data-layer-dynamic-module-loading", "pattern-2", "DML001", p, l) :-
   node(d, n, "identifier", _, _), node_text(n, "__import__"), pattern_site(n), !pattern_in_tc(n),
-  in_scope(d), !out_scope(d), doc(d, p, _), line(n, l).
+  in_scope(d), !out_scope(d), doc(d, p, _), node_line_number(n, l).
 
 // ---- shared by pattern-3 and pattern-4: the lines `layout.line` matches ----
 .decl pattern_layout_line(d: number, l: number)
-pattern_layout_line(d, l) :- src_line(d, l, sp), text(sp, s),
+pattern_layout_line(d, l) :- document_line(d, sp), line_number(sp, l), line_text(sp, s),
   match("(?s:.*)(?:(?:^def\s+__getattr__\s*\()|(?:\bglobals\s*\(\s*\)\s*\[.*\]\s*=)|(?:\b__import__\s*\())(?s:.*)", s).
 
 // ---- pattern-3: importlib.import_module(…) ----
 violation("data-layer-dynamic-module-loading", "pattern-3", "DML001", p, l) :-
   node(d, n, "call", _, _), field(n, "function", f), node(_, f, "attribute", _, _),
   node_text(f, s), suffix("importlib.import_module", s),
-  !pattern_in_tc(n), line(n, l), !pattern_layout_line(d, l),
+  !pattern_in_tc(n), node_line_number(n, l), !pattern_layout_line(d, l),
   in_scope(d), !out_scope(d), doc(d, p, _).
 
 // ---- pattern-4: import_module ----
 violation("data-layer-dynamic-module-loading", "pattern-4", "DML001", p, l) :-
   node(d, n, "identifier", _, _), node_text(n, "import_module"), pattern_site(n),
-  !pattern_in_tc(n), line(n, l), !pattern_layout_line(d, l),
+  !pattern_in_tc(n), node_line_number(n, l), !pattern_layout_line(d, l),
   in_scope(d), !out_scope(d), doc(d, p, _).

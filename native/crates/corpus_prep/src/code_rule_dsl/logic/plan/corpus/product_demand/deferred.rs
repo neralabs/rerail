@@ -386,7 +386,7 @@ pub fn rewrite(p: &mut Program<'_>, input: &Arc<Version>, adaptive: bool, cache_
                 // requests, its keys were a table of every file's values, and its factors and pair cache held the
                 // file's nodes, all in the cross-file part (decision 0677). A join with no node (`deps_on(dir, r)`, by
                 // a package's directory) is driven as before: its requests carry no node.
-                let nodes = p.columns(rel).unwrap_or_default().iter().any(|(_, t)| matches!(t.as_str(), "node" | "loc" | "span"));
+                let nodes = p.columns(rel).unwrap_or_default().iter().any(|(_, t)| matches!(t.as_str(), "node" | "place"));
                 let lookup = nodes && rules.iter().find(|r| p.head_rel(**r) == rel).and_then(|r| self::split(v, *r).map(|(_, parts)| (*r, parts))).is_some_and(|(r, parts)| {
                     let lits: Vec<_> = r.body().collect();
                     // A constant: of facts and settings alone (the split's), facts and no rule, or an input placeless to

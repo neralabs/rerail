@@ -1,0 +1,6 @@
+// sample-calls: the pack's own library file (fixtures/packs/README.md), which rr-sample-print-call includes.
+//
+// Interface
+//   sample_call_named(c, name)  c is a call whose function is the plain name `name`
+.decl sample_call_named(c: node, name: symbol)
+sample_call_named(c, n) :- kind(c, "call"), field(c, "function", f), text(f, n).

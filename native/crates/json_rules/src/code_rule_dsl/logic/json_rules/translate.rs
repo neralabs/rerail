@@ -516,7 +516,7 @@ pub fn translate(px: &Patterns, doc: &Value, reserved: &Set) -> R<(String, usize
             let d = prog.decls[name].clone();
             let add: String = ps
                 .iter()
-                .map(|p| format!(", {}: {}", col(p), if prog.numeric.contains(p) { "number" } else if prog.symbolic.contains(p) { "symbol" } else { "loc" }))
+                .map(|p| format!(", {}: {}", col(p), if prog.numeric.contains(p) { "number" } else if prog.symbolic.contains(p) { "symbol" } else { "place" }))
                 .collect();
             prog.decls.insert(name.clone(), format!("{}{add})", &d[..d.len() - 1]));
             let ins: Vec<String> = ps.iter().filter(|p| shared.inputs[name].contains(*p)).cloned().collect();
@@ -637,12 +637,12 @@ pub fn translate(px: &Patterns, doc: &Value, reserved: &Set) -> R<(String, usize
                 let mut first = lines[0].clone();
                 for c in &prog.numeric {
                     let l = c.to_lowercase();
-                    first = sub(&re(&format!(r"\b{l}: loc\b")), &first, |_| format!("{l}: number"));
+                    first = sub(&re(&format!(r"\b{l}: place\b")), &first, |_| format!("{l}: number"));
                 }
                 // a capture found symbolic while the rules were lowered (a token's text): a symbol
                 for c in &prog.symbolic {
                     let l = c.to_lowercase();
-                    first = sub(&re(&format!(r"\b{l}: loc\b")), &first, |_| format!("{l}: symbol"));
+                    first = sub(&re(&format!(r"\b{l}: place\b")), &first, |_| format!("{l}: symbol"));
                 }
                 em.out.push(first);
                 em.out.extend(lines[1..].iter().cloned());

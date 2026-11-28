@@ -11,7 +11,7 @@
 // Each rule below is one way the JSON `rule` can match.
 // Columns after `at` are the metavariables the JSON's message, anchor or `each` names: one finding per distinct row.
 // `options` carries JSON settings that have no .rerail form yet.
-.violation D103(at: node, n_mv: loc) "Add a docstring as the first statement of function `{n_mv}`, describing what it does, its arguments and its return value."
+.violation D103(at: node, n_mv: node) "Add a docstring as the first statement of function `{n_mv}`, describing what it does, its arguments and its return value."
     suppress noqa "D103"
 D103_raw(n, N) :- kind(n, "identifier"), node(_, n, _, _, _), N = n, match("[^_].*", n),
     field(p1, "name", n), kind(p1, "function_definition"),
@@ -127,5 +127,5 @@ d103_alt_1(n) :- kind(n, "comment").
 d103_stop_3_within(x, y) :- within_stop(x, y, d103_stop_3).
 
 // main's file condition {"notRegex": "\\.pyi$"}
-.decl D103_raw(at: node, n_mv: loc)
+.decl D103_raw(at: node, n_mv: node)
 D103(v0, v1) :- D103_raw(v0, v1), rr_d = @doc(v0), doc(rr_d, rr_p, _), !match("\\.pyi$", rr_p).

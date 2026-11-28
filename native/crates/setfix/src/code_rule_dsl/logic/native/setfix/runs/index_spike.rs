@@ -173,13 +173,13 @@ struct Dense {
 impl Dense {
     /// `None` unless every lead value is a node id (`doc << 32 | local`, a document past 0).
     fn new(t: &Table, ids: Vec<u32>) -> Option<Dense> {
-        if (0..t.n() as u32).any(|id| (t.at(id, 0) >> 32) <= 0) {
+        if (0..t.n() as u32).any(|id| rerail_blocks::located::Located::key_wide(t.at(id, 0)) <= 0) {
             return None;
         }
         let mut docs: Vec<(u32, u32, u32)> = Vec::new();
         for &id in &ids {
             let v = t.at(id, 0);
-            let (d, l) = ((v >> 32) as u32, v as u32);
+            let (d, l) = (rerail_blocks::located::Located(v).key(), rerail_blocks::located::Located(v).low());
             match docs.last_mut() {
                 Some(last) if last.0 == d => last.2 = last.2.max(l.saturating_add(1)),
                 _ => docs.push((d, 0, l.saturating_add(1))),
@@ -202,7 +202,7 @@ impl Dense {
             for l in 0..=locals {
                 while pos < ids.len() && {
                     let v = t.at(ids[pos], 0);
-                    ((v >> 32) as u32, v as u32) < (doc, l)
+                    (rerail_blocks::located::Located(v).key(), rerail_blocks::located::Located(v).low()) < (doc, l)
                 } {
                     pos += 1;
                 }
@@ -213,7 +213,7 @@ impl Dense {
     }
     #[inline]
     fn range(&self, lead: i64) -> (usize, usize) {
-        let (d, l) = ((lead >> 32) as u32, lead as u32);
+        let (d, l) = (rerail_blocks::located::Located(lead).key(), rerail_blocks::located::Located(lead).low());
         let Ok(i) = self.docs.binary_search_by_key(&d, |e| e.0) else { return (0, 0) };
         let (_, base, locals) = self.docs[i];
         if l >= locals {

@@ -1,0 +1,1 @@
+Add rule packs lists the packs suggested for this repo first, each saying why, and shows each pack's version; a pack's sheet lists which of its rules start on and which start off. "Update available" and Overview's banner copy `/rerail-update` for your coding agent. Rule tables put Enforcement before Violations. A pack's sheet no longer switches suppression comments.

@@ -23,17 +23,17 @@ isc003_string_like(n) :- (kind(n, "string") ; kind(n, "concatenated_string")).
 
 // left_string(n): the JSON util `left-string`, used where the JSON says `matches: "left-string"`
 //   L: metavariable this relation binds for the calling rule
-.decl isc003_left_string(n: node, l: loc)
+.decl isc003_left_string(n: node, l: node)
 isc003_left_string(n, L) :- isc003_string_like(n), node(_, n, _, _, _), L = n.
 isc003_left_string(n, L) :- kind(n, "parenthesized_expression"), child(n, c1, _),
     isc003_left_string(c1, L).
 
 // right_string_on_later_line(n): the JSON util `right-string-on-later-line`, used where the JSON says `matches: "right-string-on-later-line"`
 //   L: metavariable of the calling rule, passed in (bound by the caller)
-.decl isc003_right_string_on_later_line(n: node, l: loc)
+.decl isc003_right_string_on_later_line(n: node, l: node)
 isc003_right_string_on_later_line(n, L) :- isc003_demand_right_string_on_later_line(n, L),
     isc003_string_like(n), t2 = L, node(_, n, _, s5, e6), node(_, L, _, s7, e8), e8 <= s5,
-    @doc(n) = @doc(L), line(n, l4), end_line(t2, l3), k1 = l4 - l3, k1 >= 1.
+    @doc(n) = @doc(L), node_line_number(n, l4), node_end_line_number(t2, l3), k1 = l4 - l3, k1 >= 1.
 isc003_right_string_on_later_line(n, L) :- isc003_demand_right_string_on_later_line(n, L),
     kind(n, "parenthesized_expression"), child(n, c9, _),
     isc003_right_string_on_later_line(c9, L).
@@ -67,7 +67,7 @@ isc003_tok_has_1(n) :- node_text(n, g3), !child(n, _, _),
     match("(?s)^(?:(?:.*[^\\-+*/%@\\&|\\^<>=!:.\\~])?(?:\\+)(?:[^\\-+*/%@\\&|\\^<>=!:.\\~].*)?)$", g3).
 
 // demand_right_string_on_later_line: the rows of right_string_on_later_line its callers ask for (the metavariable columns they pass in)
-.decl isc003_demand_right_string_on_later_line(n: node, l: loc)
+.decl isc003_demand_right_string_on_later_line(n: node, l: node)
 isc003_demand_right_string_on_later_line(c10, L) :- kind(n, "binary_operator"), isc003_tok_has_1(n),
     field(n, "left", c9), isc003_left_string(c9, L), field(n, "right", c10),
     ( field(n, "left", c1), isc003_text_util(c1), field(n, "right", c2), isc003_text_util(c2)

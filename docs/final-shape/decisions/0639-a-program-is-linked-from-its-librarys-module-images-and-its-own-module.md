@@ -164,16 +164,34 @@ and key (`rr::planned_module`). A library file or a phase program as a seed is a
 so its graph holds its own module and the template plans and lowers every one; a program file of the run's own is
 no module.
 
+**Held images, read before the first wave (2026-11-23).** The answer reads no store (decision 0104), so a new
+process lowered every module again, even those its store held; T4 passed only because an earlier run in the same
+process had lowered them (it ran because the graphs kept as facts lacked their plan, t33 step 2, now kept:
+`p0g_module`, `p0g_lowered`). Before its run, `phase0::derive` reads the kept graphs of its seeds (`planning`: each
+file seed, and the library files a text seed includes by name) and holds their planned modules' images in the process
+(`rr::hold_planned_modules`, one read of the store). A module whose key changed, or that no store holds, is lowered
+in the waves as before. A wrong guess costs a read, never an answer.
+
+**The packs' tables are modules too (2026-11-23).** A file seed is a module only under the library or the phase
+programs: elsewhere it is a program's own text. The run's library (`rr::planned_library`) seeded every library file
+as a file, so the packs' tables beside the library (`#include "../packs/python/….stdlib.rerail"`) were in no module,
+and a program that includes one, lowered in its scope with any other program, met its relations undeclared.
+`Dirs::module_seed` seeds such a file as a text that includes it by its name from the library, as its program names
+it. Test: `every_library_file_a_pack_includes_is_a_planned_module`.
+
 **Read in place, with no statement inside the waves (2026-11-24, the user's choice B).** The answer is given inside
 the run's waves, where a run sends no SQL (decision 0104), so the hub's aec6f2539e had it read no store and lower
 every module the process did not hold; a copy of the template then lowered the library again, and T4 failed once the
 template was filled. Now, before phase 0's run, one statement reads the image store's index of the images it pins:
-each alias and where its bytes lie in the store's segments (`ContentStore::pinned_sources_placed`, `rr::PlacedModules`).
+each alias and where its bytes lie in the store's segments (`ContentStore::pinned_sources_by_alias`, `rr::images_ahead`).
 Inside the waves a module the process does not hold is read where its segment, a block, holds it, mapped
-(`ContentStore::source_at`, `rr::module_in_waves`), and decoded in place; its lease is renewed behind the run where
+(`ContentStore::source_at`, `rr::held_or_ahead`), and decoded in place; its lease is renewed behind the run where
 it runs down. Only a module the store does not hold is lowered. A module lowered here is held as its image's decode,
 read where the image is, as every other reader reads it. `Graph::holds` and the reuse check look in the index before
-the store. An archived image has no place in the index and is lowered again.
+the store. An archived image has no place in the index and is lowered again. Both lines
+built this on their own (decision 0675's third cause on one, choice B on the other); their merge (2026-11-26) keeps
+one: `images_ahead`'s index, which holds its store and reads the shipped bundle first, the lease renewed behind the
+run only where it runs down (`renew_image_leased`).
 
 **Precedent for rounds over answers.** `bootstrap.rerail` already derives requests through negation over an answer:
 `load` ← `p0_resolved` ← `!p0_before` ← `p0_exists` ← `dir_entry`, the answer to `rr_dir_req`. The count over
@@ -581,3 +599,19 @@ silently. Each place a digest stands for content, what can collide, and what is 
    T10.
 7. §5 checked by T4 on the template, and the template's fill time measured.
 8. The cold run measured by span before and after (`tmp/cold2.sh`, spark2), and recorded here.
+
+## Amended (2026-11-24, user): every composition's modules derived in one run
+
+A build's first run finds no image (each build keeps its own image store, 0264), and composed its 300 rule files'
+graphs one seed at a time: each composition asked `graphs` for its own modules, and each seed whose modules no run had
+derived yet ran `bootstrap.rerail` for those alone. That was 36 runs one after another, against 3 for the pre-merge
+engine, and most of the first run's wall.
+
+Now `graphs` makes every wanted seed's composition first (`composition`: its modules, phase programs and absent
+candidates, no graph read), asks for the union of their modules in one call (one run where no image holds them), and
+then assembles each seed's graph from its parts (`Composition::assemble`). A build's first run over 15 files of corpus0
+makes 4 runs. Its instructions are 0.62 times the pre-merge engine's, its CPU 0.76 and its wall 0.9 (M3, fresh image
+store). A new binary's first launch takes longer in wall: macOS scans the executable first, outside the engine's CPU.
+
+Test: `composed_seeds_take_their_modules_from_one_run` (two file seeds of different library modules, no images, as a
+first run: one run, and each graph the one its own run derives). With the union's call removed it finds 2 runs.

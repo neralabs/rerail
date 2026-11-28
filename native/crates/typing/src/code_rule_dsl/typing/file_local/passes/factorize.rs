@@ -120,7 +120,7 @@ fn relation_keys(v: &Version, f: Fields<'_>, roots: Option<&BTreeSet<String>>) -
             continue;
         }
         let Some(k) = at("n") else { continue };
-        let others_nodes = types.iter().enumerate().any(|(i, (_, t))| i != k && (matches!(*t, "node" | "loc" | "span") || matches!(columns.get(i), Some(&("par" | "a" | "p" | "h")))));
+        let others_nodes = types.iter().enumerate().any(|(i, (_, t))| i != k && (matches!(*t, "node" | "place") || matches!(columns.get(i), Some(&("par" | "a" | "p" | "h")))));
         if !others_nodes {
             keys.insert(rel.to_owned(), vec![rerail_blocks::vector![k]]);
         }
@@ -309,10 +309,10 @@ fn choose<'v>(v: &'v Version, f: Fields<'v>, scope: Scope<'_>, keys: &Keys, cons
             // is one (`file_local::placeless_input`: a run's option, a phase's export declared keyed or whole):
             // each file reads its rows. `class_anc(c, b) :- class_def(c, q), docof(c, d), doc(d, p, _),
             // py_names__own_at(p, q), py_names__ancestor(q, m, b)` is a lookup in `py_names__ancestor` by the file's
-            // own class symbol q; as parts, its node part `(c, q)` went to the cross part. An earlier phase's or a
-            // stage's export read by probes (`phased::is_probed`, decision 0675) is one too: every file reads the same
-            // rows. `node_module`, staged, was factorized, its part keyed by `star_export(_, s)` of every file, and
-            // `module_use` went to the cross part over the exports' nodes.
+            // own class symbol q; as parts, its node part `(c, q)` went to the cross part. So is an earlier phase's or
+            // a stage's export (`phased::is_probed`, decision 0709): every file reads the same rows. `node_module`,
+            // staged, was factorized, its part keyed by `star_export(_, s)` of every file, and `module_use` went to the
+            // cross part over the exports' nodes.
             let constant = |r: &str| {
                 constants.contains(r)
                     || (f.has_facts(r) && !rules_of.contains_key(r))

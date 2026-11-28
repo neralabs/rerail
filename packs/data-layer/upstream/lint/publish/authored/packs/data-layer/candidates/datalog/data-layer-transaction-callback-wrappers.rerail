@@ -104,7 +104,7 @@ tcw_cb_annotation(t) :- node(_, t, "type", _, _), inside(x, t, tcw_type), tcw_cb
 tcw_cb_param(f) :- field(f, "parameters", ps), child(ps, q, _), node(_, q, "typed_parameter", _, _), field(q, "type", t), tcw_cb_annotation(t).
 tcw_cb_param(f) :- field(f, "parameters", ps), child(ps, q, _), node(_, q, "typed_default_parameter", _, _), field(q, "type", t), tcw_cb_annotation(t).
 tcw_cb_reads(f) :- tcw_reads_call(c), tcw_in_body(f, c).
-violation("data-layer-transaction-callback-wrappers", "callback-helper", "transaction_callback_wrapper", p, l) :- tcw_owner(_, p, f), node_text(f, s), contains("Callable", s), contains("Transaction", s), tcw_cb_param(f), tcw_cb_reads(f), line(f, l).
+violation("data-layer-transaction-callback-wrappers", "callback-helper", "transaction_callback_wrapper", p, l) :- tcw_owner(_, p, f), node_text(f, s), contains("Callable", s), contains("Transaction", s), tcw_cb_param(f), tcw_cb_reads(f), node_line_number(f, l).
 tcw_ir_owner(d, p, f) :- tcw_owner(d, p, f), node_text(f, s), (contains("versioned_read", s) ; contains("versioned_write", s)).
 tcw_ir_kwfn(al, v) :- child(al, kw, _), node(_, kw, "keyword_argument", _, _), field(kw, "name", nm), node(_, nm, "identifier", _, _), text(nm, "fn"), field(kw, "value", v).
 tcw_ir_has_kwfn(al) :- tcw_ir_kwfn(al, _).
@@ -125,9 +125,9 @@ tcw_ir_first_end_at(f, e) :- tcw_ir_first_start(f, s), tcw_ir_named(f, c, _), no
 tcw_ir_first_end(f, e) :- tcw_ir_first_end_at(f, _), e = max x : { tcw_ir_first_end_at(f, x) }.
 tcw_ir_first_name(f, t) :- tcw_ir_first_start(f, s), tcw_ir_first_end(f, e), tcw_ir_named(f, c, cb), node(_, c, _, s, e), text(cb, t).
 tcw_ir_def_versioned(g) :- tcw_ir_vcall(x), tcw_in_body(g, x).
-violation("data-layer-transaction-callback-wrappers", "inline-reentrant", "transaction_callback_wrapper", p, l) :- tcw_ir_owner(_, p, f), tcw_ir_first_name(f, t), field(f, "body", b), child(b, g, _), node(_, g, "function_definition", _, _), field(g, "name", gn), node(_, gn, "identifier", _, _), text(gn, t), tcw_ir_def_versioned(g), line(f, l).
+violation("data-layer-transaction-callback-wrappers", "inline-reentrant", "transaction_callback_wrapper", p, l) :- tcw_ir_owner(_, p, f), tcw_ir_first_name(f, t), field(f, "body", b), child(b, g, _), node(_, g, "function_definition", _, _), field(g, "name", gn), node(_, gn, "identifier", _, _), text(gn, t), tcw_ir_def_versioned(g), node_line_number(f, l).
 tcw_ir_lambda(al, v) :- tcw_ir_kwfn(al, v), node(_, v, "lambda", _, _).
 tcw_ir_lambda(al, y) :- tcw_ir_second(al, y), node(_, y, "lambda", _, _), !tcw_ir_has_kwfn(al).
 tcw_ir_lambda_versioned(la) :- field(la, "body", lb), tcw_ir_vcall(lb).
 tcw_ir_lambda_versioned(la) :- field(la, "body", lb), node(_, lb, _, bs, be), inside(x, la, tcw_lambda), tcw_ir_vcall(x), node(_, x, _, xs, xe), xs >= bs, xe <= be.
-violation("data-layer-transaction-callback-wrappers", "inline-reentrant", "transaction_callback_wrapper", p, l) :- tcw_ir_owner(_, p, f), tcw_reads_call(c), tcw_in_body(f, c), field(c, "arguments", al), tcw_ir_lambda(al, la), tcw_ir_lambda_versioned(la), line(f, l).
+violation("data-layer-transaction-callback-wrappers", "inline-reentrant", "transaction_callback_wrapper", p, l) :- tcw_ir_owner(_, p, f), tcw_reads_call(c), tcw_in_body(f, c), field(c, "arguments", al), tcw_ir_lambda(al, la), tcw_ir_lambda_versioned(la), node_line_number(f, l).

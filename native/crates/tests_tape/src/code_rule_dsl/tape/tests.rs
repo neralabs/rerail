@@ -333,7 +333,7 @@ fn persisted_image_round_trips_without_parsing() {
     // change of format 16's layout (decision 0434) or of what its home holds (its auxiliary index, decision 0656).
     assert_eq!(
         digest,
-        "08ed9a68527ae39b7260f820a56650867f024d739f70d54f6bfd51889ab43ca4"
+        "7a5af35f41d747bf64e59f1f34fe3b9d04cd6d435a9180cd6a9a592d5f2f6ef5"
     );
 }
 

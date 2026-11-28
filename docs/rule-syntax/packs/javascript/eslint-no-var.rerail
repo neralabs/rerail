@@ -13,7 +13,7 @@
 //   let a = 1;   const b = 2;   declare global { var g: T }   → not: a global augmentation must use var
 // No options. ESLint fixes `var` to `let` where that cannot change the program; the fix here is a smaller,
 // sure subset of those cases (to_let, below).
-.violation no_var(at: loc) code "no-var" "Unexpected var, use let or const instead."
+.violation no_var(at: place) code "no-var" "Unexpected var, use let or const instead."
     suppress eslint "no-var"
     suppress oxlint "no-var"
     suppress biome "lint/suspicious/noVar"

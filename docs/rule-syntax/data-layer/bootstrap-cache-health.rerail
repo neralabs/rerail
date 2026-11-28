@@ -29,10 +29,10 @@ bch_helper(x) :- callee_name(_, x),
 
 // bch_call(c, x): call c of callee x, the Name's id or the Attribute's attr, on a line without the allow marker.
 .decl bch_call(c: node, x: symbol)
-bch_call(c, x) :- callee_name(c, x), line(c, l), docof(c, d), !bch_allowed(d, l).
+bch_call(c, x) :- callee_name(c, x), node_line_number(c, l), docof(c, d), !bch_allowed(d, l).
 .decl bch_allowed(d: number, l: number)  // line l, or the line after l, carries the marker
-bch_allowed(d, l) :- src_line(d, l, sp), contains("bootstrap-cache-health: allow", sp).
-bch_allowed(d, l + 1) :- src_line(d, l, sp), contains("bootstrap-cache-health: allow", sp).
+bch_allowed(d, l) :- document_line(d, sp), line_number(sp, l), contains("bootstrap-cache-health: allow", sp).
+bch_allowed(d, l + 1) :- document_line(d, sp), line_number(sp, l), contains("bootstrap-cache-health: allow", sp).
 
 // bch_in_test(c): c's innermost def is a test or a fixture.
 .decl bch_in_test(c: node)

@@ -17,7 +17,7 @@ pyi018_typevar_call(n) :- kind(n, "parenthesized_expression"), child(n, c3, _),
 // PYI018(n): findings from clauses `unused-private-type-var`, `unused-private-type-var-in-function-calling-locals`, which say the same.
 // Each rule is one way a JSON `rule` can match.
 // Columns after `at` are the metavariables the JSON's message, anchor or `each` names: one finding per distinct row.
-.violation PYI018(at: node, name: loc) "Remove the unused private type variable `{name}`, or use it in an annotation; rename it without the underscore if other modules import it."
+.violation PYI018(at: node, name: match) "Remove the unused private type variable `{name}`, or use it in an annotation; rename it without the underscore if other modules import it."
     suppress noqa "PYI018"
 PYI018(n, NAME) :- kind(n, "identifier"), match("(?P<NAME>_.*)", n), bind_name(n, b1),
     main_form(b1, "assignment"),
@@ -40,7 +40,7 @@ PYI018(n, NAME) :- kind(n, "identifier"), match("(?P<NAME>_.*)", n), bind_name(n
 // Each rule below is one way the JSON `rule` can match.
 // Columns after `at` are the metavariables the JSON's message, anchor or `each` names: one finding per distinct row.
 // `options` carries JSON settings that have no .rerail form yet.
-.violation PYI018_unused_private_type_var_in_stub_class(at: node, name: loc) code "PYI018" "Remove the unused private type variable `{name}`, or use it in an annotation; rename it without the underscore if other modules import it."
+.violation PYI018_unused_private_type_var_in_stub_class(at: node, name: match) code "PYI018" "Remove the unused private type variable `{name}`, or use it in an annotation; rename it without the underscore if other modules import it."
     suppress noqa "PYI018"
 PYI018_unused_private_type_var_in_stub_class_raw(n, NAME) :- kind(n, "identifier"),
     match("(?P<NAME>_.*)", n), bind_name(n, b1), main_form(b1, "assignment"),
@@ -61,5 +61,5 @@ pyi018_set_1("typing_extensions.TypeVarTuple"). pyi018_set_1("_typeshed.TypeVarT
 pyi018_stop_2("function_definition"). pyi018_stop_2("lambda"). pyi018_stop_2("class_definition").
 
 // main's file condition {"regex": "\\.pyi$"}
-.decl PYI018_unused_private_type_var_in_stub_class_raw(at: node, name: loc)
+.decl PYI018_unused_private_type_var_in_stub_class_raw(at: node, name: match)
 PYI018_unused_private_type_var_in_stub_class(v0, v1) :- PYI018_unused_private_type_var_in_stub_class_raw(v0, v1), rr_d = @doc(v0), doc(rr_d, rr_p, _), match("\\.pyi$", rr_p).

@@ -10,7 +10,7 @@
 // PYI063(n): a finding at node n, from clause `pep484-style-positional-only-parameter`.
 // Each rule below is one way the JSON `rule` can match.
 // Columns after `at` are the metavariables the JSON's message, anchor or `each` names: one finding per distinct row.
-.violation PYI063(at: node, name: loc) "Drop the `__` prefix from `{name}` and from the `__`-prefixed parameters right after it (renaming their uses), then add `/` after the last one; skip this if the code supports Python before 3.8."
+.violation PYI063(at: node, name: node) "Drop the `__` prefix from `{name}` and from the `__`-prefixed parameters right after it (renaming their uses), then add `/` after the last one; skip this if the code supports Python before 3.8."
     suppress noqa "PYI063"
 PYI063(n, NAME) :- kind(n, "identifier"), node(_, n, _, _, _), NAME = n, glob("_[_＿︳︴﹍-﹏]**", n),
     !glob("**[_＿︳︴﹍-﹏][_＿︳︴﹍-﹏]", n),

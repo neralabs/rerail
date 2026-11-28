@@ -313,7 +313,7 @@ pub fn keep(key: [u8; 32], chosen: Chosen) {
 }
 
 pub fn hex(bytes: &[u8]) -> String {
-    bytes.iter().map(|b| format!("{b:02x}")).collect()
+    rerail_prof::code_rule_dsl::prof::lower_hex(bytes)
 }
 
 /// The source a prepared program's choices are kept under: a small text naming its key.

@@ -10,7 +10,7 @@
 // YTT301(n): a finding at node n, from clause `sys-version0`.
 // Each rule below is one way the JSON `rule` can match.
 // Columns after `at` are the metavariables the JSON's message, anchor or `each` names: one finding per distinct row.
-.violation YTT301(at: loc, c: node) "Use `sys.version_info.major` (an int, so compare it to ints, not strings) instead of `sys.version[0]`, which is only the first digit of a two-digit major version."
+.violation YTT301(at: node, c: node) "Use `sys.version_info.major` (an int, so compare it to ints, not strings) instead of `sys.version[0]`, which is only the first digit of a two-digit major version."
     suppress noqa "YTT301"
 YTT301(C, n) :- ytt301_target(n), node(_, n, _, _, _), C = n.
 YTT301(C, n) :- ytt301_in_string(n, C).
@@ -41,7 +41,7 @@ ytt301_target(n) :- (kind(n, "identifier") ; kind(n, "attribute")), sym_of(n, "s
 
 // in_string(n): the JSON util `in-string`, used where the JSON says `matches: "in-string"`
 //   C: metavariable this relation binds for the calling rule
-.decl ytt301_in_string(n: node, c: loc)
+.decl ytt301_in_string(n: node, c: node)
 ytt301_in_string(n, C) :- (kind(n, "string") ; kind(n, "concatenated_string")),
     parsed(n, "annotation", r1), within(c2, r1), ytt301_alt_2(c2, C).
 
@@ -63,6 +63,6 @@ ytt301_counted_1(n) :- node(_, n, _, _, _), !kind(n, "comment"),
 
 // alt_2(n): the JSON `any`: n matches if any one of these rules does
 //   C: metavariable this relation binds for the calling rule
-.decl ytt301_alt_2(n: node, c: loc)
+.decl ytt301_alt_2(n: node, c: node)
 ytt301_alt_2(n, C) :- ytt301_target(n), C = n.
 ytt301_alt_2(n, C) :- ytt301_in_string(n, C).

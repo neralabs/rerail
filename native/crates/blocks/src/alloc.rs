@@ -94,6 +94,20 @@ pub fn block(need: &Need) -> Result<Block, String> {
     }
 }
 
+/// What a block or a room a run makes for the device to read asks about the device: the run's binding's
+/// (`placement::block_device`, above this crate, installed by `install_run_device`): `May` for a run bound to the
+/// device, `No` for a CPU run's (Q58). `May` until one is installed (a tool's, a crate's tests).
+pub fn run_device() -> Device {
+    RUN_DEVICE.get().map_or(Device::May, |f| f())
+}
+
+static RUN_DEVICE: std::sync::OnceLock<fn() -> Device> = std::sync::OnceLock::new();
+
+/// Installs `run_device`'s answer (the run's binding's); the first one stays.
+pub fn install_run_device(device: fn() -> Device) {
+    let _ = RUN_DEVICE.set(device);
+}
+
 /// A block built once and read on the host (a builder's: a memo entry, a packed relation, a program, facts), from
 /// the policy.
 pub fn host(kind: u32, bytes: usize) -> Block {

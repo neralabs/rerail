@@ -401,12 +401,12 @@ missing_async_counterpart(f, c) :- pair_selected(d, f, g, x, 0), !suffix("_async
 missing_async_paired(f) :- missing_async_counterpart(f, _).
 missing_async_public(x) :- pair_selected(_, _, _, x, 0), !prefix("_", x).
 missing_async_public(x) :- pair_selected(_, _, _, x, 0), pair_public_sync(x).
-violation("data-layer-missing-async-pairs", "missing-async", "missing_pair", p, l) :- pair_selected(d, f, _, x, 0), missing_async_public(x), pair_io(f), !missing_async_paired(f), doc(d, p, _), line(f, l).
+violation("data-layer-missing-async-pairs", "missing-async", "missing_pair", p, l) :- pair_selected(d, f, _, x, 0), missing_async_public(x), pair_io(f), !missing_async_paired(f), doc(d, p, _), node_line_number(f, l).
 missing_sync_paired(f) :- pair_selected(d, f, g, x, 1), pair_def(d, _, g, y, _, _, 0), x = @concat(y, "_async").
 missing_sync_paired(f) :- pair_selected(d, f, g, x, 1), !suffix("_async", x), pair_def(d, _, g, x, _, _, 0).
 missing_sync_public(x) :- pair_selected(_, _, _, x, 1), !prefix("_", x).
 missing_sync_public(x) :- pair_selected(_, _, _, x, 1), pair_public_async(x).
-violation("data-layer-missing-async-pairs", "missing-sync", "missing_pair", p, l) :- pair_selected(d, f, _, x, 1), missing_sync_public(x), pair_io(f), !missing_sync_paired(f), doc(d, p, _), line(f, l).
+violation("data-layer-missing-async-pairs", "missing-sync", "missing_pair", p, l) :- pair_selected(d, f, _, x, 1), missing_sync_public(x), pair_io(f), !missing_sync_paired(f), doc(d, p, _), node_line_number(f, l).
 argument_mismatch_def(f) :- pair_selected(_, f, _, _, 0).
 argument_mismatch_def(c) :- missing_async_counterpart(_, c).
 argument_mismatch_has_pos(f) :- argument_mismatch_def(f), field(f, "parameters", ps), pair_pos(ps, _, _, _).
@@ -420,4 +420,4 @@ argument_mismatch_matched(f, k, t) :- argument_mismatch_param(f, k, t), missing_
 argument_mismatch_unmatched(f) :- pair_selected(_, f, _, _, 0), argument_mismatch_param(f, k, t), !argument_mismatch_matched(f, k, t).
 argument_mismatch_found(f) :- missing_async_counterpart(f, c), argument_mismatch_count(f, n), argument_mismatch_count(c, m), n != m.
 argument_mismatch_found(f) :- missing_async_paired(f), argument_mismatch_unmatched(f).
-violation("data-layer-missing-async-pairs", "argument-mismatch", "signature_mismatch", p, l) :- pair_selected(d, f, _, x, 0), missing_async_public(x), argument_mismatch_found(f), doc(d, p, _), line(f, l).
+violation("data-layer-missing-async-pairs", "argument-mismatch", "signature_mismatch", p, l) :- pair_selected(d, f, _, x, 0), missing_async_public(x), argument_mismatch_found(f), doc(d, p, _), node_line_number(f, l).

@@ -118,7 +118,7 @@ fn a_gated_region_equals_the_interpreter() {
     }
 }
 
-/// `.rerail`'s `\u` check (`h4`, the `\u{…}` forms, `u_ok`) is behind the gate of a `\u` in a
+/// A `\u` check (`h4`, as `.rerail`'s JSON `\u` check reads it) behind the gate of a `\u` in a
 /// string: set in 0.02% of the corpus's blocks.
 /// The gate after a `back_fill` (`ahead`, `small`), as `.rerail`'s `uesc` is (a string's fill comes
 /// after one): the

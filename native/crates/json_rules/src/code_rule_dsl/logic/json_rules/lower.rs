@@ -1793,7 +1793,7 @@ pub fn violation_lines(viol: &Obj, rel: &str, cols: &[String], ast: bool, numeri
     }
     let colsig: String = cols
         .iter()
-        .map(|c| format!(", {}: {}", col(c), if numeric.contains(c) { "number" } else if symbolic.contains(c) { "symbol" } else { "loc" }))
+        .map(|c| format!(", {}: {}", col(c), if numeric.contains(c) { "number" } else if symbolic.contains(c) { "symbol" } else { "place" }))
         .collect();
     let mut head = format!(".violation {rel}(at: node{colsig})");
     if code.as_str() != Some(rel) {

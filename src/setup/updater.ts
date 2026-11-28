@@ -124,7 +124,7 @@ export interface ManagedUpdaterOptions {
   lockEngine?: () => LockEngine;
 }
 
-function assertChannel(channel: string): void {
+export function assertChannel(channel: string): void {
   if (!/^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$/u.test(channel)) {
     throw new Error(`Invalid npm update channel: ${channel}`);
   }
@@ -211,10 +211,13 @@ export class NpmPackageRegistry implements PackageRegistry {
     this.npm = prefixInstallNpm(npm);
   }
 
-  /** Asked from a scratch folder: `rerail update` runs inside repositories, and one's `.npmrc` must not pick the answer. */
+  /**
+   * Asked from a scratch folder: `rerail update` runs inside repositories, and one's `.npmrc` must not pick the answer.
+   * npm's own update notifier stays off, so the daemon's daily check asks the registry for Rerail's version alone.
+   */
   async resolveVersion(channel: string): Promise<string> {
     const result = await outsideAnyProject(async cwd => await this.npm(
-      ["view", `${RERAIL_PACKAGE_NAME}@${channel}`, "version", "--json"],
+      ["view", `${RERAIL_PACKAGE_NAME}@${channel}`, "version", "--json", "--no-update-notifier"],
       { cwd, timeoutMs: NPM_QUERY_TIMEOUT_MS },
     ));
     const parsed = JSON.parse(result.stdout) as unknown;

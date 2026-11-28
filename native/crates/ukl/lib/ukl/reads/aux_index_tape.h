@@ -45,6 +45,27 @@ UKL_INLINE uint32_t ukl_aux_place(CLIF_T_ARGS, UKL_AUX_ARGS, uint32_t node)
     return i;
 }
 
+// `node`'s place among its named siblings that are no comment (T's shape's places): as `ukl_aux_place`, the comments
+// before the every-K-th taken off, and the steps counting no comment.
+UKL_INLINE uint32_t ukl_aux_place_past_comments(CLIF_T_ARGS, UKL_AUX_ARGS, uint32_t node)
+{
+    uint32_t p = clif_tape_parent(t, v, node);
+    if (p == CLIF_T_NONE)
+        return 0u;
+    uint32_t c = p + 1u, i = 0u;
+    uint64_t e = ukl_aux_entry_at_or_before(s, p, node);
+    if ((uint32_t)e != UKL_AUX_NONE && ukl_aux_section(s, UKL_AUX_COMMENTS) != 0u) {
+        c = ukl_aux_pair_node(s, ukl_aux_section(s, UKL_AUX_SIBLINGS), (uint32_t)e);
+        i = (uint32_t)(e >> 32) * UKL_AUX_K - ukl_aux_comments_before(s, (uint32_t)e);
+    }
+    while (c != node) {
+        uint32_t code = clif_tape_number(t, v, c);
+        i += ukl_aux_named(s, code) & (ukl_aux_comment(s, code) ^ 1u);
+        c = clif_tape_end_of(t, v, c);
+    }
+    return i;
+}
+
 // `parent`'s named child `i`, or `CLIF_T_NONE`.
 UKL_INLINE uint32_t ukl_aux_child(CLIF_T_ARGS, UKL_AUX_ARGS, uint32_t parent, uint32_t i)
 {
@@ -77,4 +98,18 @@ UKL_INLINE uint32_t clif_f15_place(CLIF_T_ARGS, uint32_t node) { return clif_tap
 UKL_INLINE uint32_t clif_f16_place(CLIF_T_ARGS, uint32_t node) { return clif_tape_place(t, v, node); }
 #if defined(CLIF_READS_TAPE_Z)
 UKL_INLINE uint32_t clif_f16z_place(CLIF_T_ARGS, uint32_t node) { return clif_tape_place(t, v, node); }
+#endif
+
+// `tape_place_past_comments(node)`: `ukl_aux_place_past_comments` over the index in the tape's home, as
+// `clif_tape_place` (`CLIF_F(place_past_comments)`).
+UKL_INLINE uint32_t clif_tape_place_past_comments(CLIF_T_ARGS, uint32_t node)
+{
+    if (clif_view(v, CLIF_T_PRESENCE) == 0u)
+        return CLIF_T_NONE;
+    return ukl_aux_place_past_comments(t, v, t + ukl_aux_in_home(t, v), node);
+}
+UKL_INLINE uint32_t clif_f15_place_past_comments(CLIF_T_ARGS, uint32_t node) { return clif_tape_place_past_comments(t, v, node); }
+UKL_INLINE uint32_t clif_f16_place_past_comments(CLIF_T_ARGS, uint32_t node) { return clif_tape_place_past_comments(t, v, node); }
+#if defined(CLIF_READS_TAPE_Z)
+UKL_INLINE uint32_t clif_f16z_place_past_comments(CLIF_T_ARGS, uint32_t node) { return clif_tape_place_past_comments(t, v, node); }
 #endif

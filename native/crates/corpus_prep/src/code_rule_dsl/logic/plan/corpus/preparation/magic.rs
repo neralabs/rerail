@@ -58,6 +58,8 @@ enum M<'v> {
     True,
     /// The rule's own negation or aggregate, gated: it waits for its relation's `done_` gate.
     Gated(LitRef<'v>),
+    /// `@doc(a) = @doc(b)`: what a left-out atom of a per-document relation said of its nodes (`same_documents`).
+    SameDoc(Slot, Slot),
 }
 
 /// The rules of the program being made, as a trial writes them: magic rules, adorned rules and views.
@@ -113,6 +115,10 @@ impl<'v> M<'v> {
                 term_vars(*call, &mut out);
             }
             M::True => {}
+            M::SameDoc(a, b) => {
+                out.insert(*a);
+                out.insert(*b);
+            }
         }
         out
     }
@@ -125,7 +131,7 @@ impl<'v> M<'v> {
             },
             M::Guard(rel, _) => Some(rel),
             M::True => Some("magic_true"),
-            M::Call(..) | M::Gated(_) => None,
+            M::Call(..) | M::Gated(_) | M::SameDoc(..) => None,
         }
     }
     /// The first term of a positive atom.
@@ -133,7 +139,7 @@ impl<'v> M<'v> {
         match self {
             M::Own(l) => l.atom().and_then(|a| a.args().next()).map(Tm::Own),
             M::Guard(_, args) => args.first().copied(),
-            M::True | M::Call(..) | M::Gated(_) => None,
+            M::True | M::Call(..) | M::Gated(_) | M::SameDoc(..) => None,
         }
     }
     /// The atom it reads: its relation, whether negated or aggregated.
@@ -146,7 +152,7 @@ impl<'v> M<'v> {
             },
             M::Guard(rel, _) => Some((rel, false, false)),
             M::True => Some(("magic_true", false, false)),
-            M::Call(..) => None,
+            M::Call(..) | M::SameDoc(..) => None,
         }
     }
     fn own_atom(&self) -> Option<AtomRef<'v>> {
@@ -171,8 +177,34 @@ impl<'v> M<'v> {
             M::Guard(rel, args) => format!("{rel}({})", args.iter().map(|t| show_tm(v, r, *t)).collect::<Vec<_>>().join(", ")),
             M::Call(n, call) => format!("$_m{n} = {}", v.show_term(r, *call)),
             M::True => "magic_true(0)".into(),
+            M::SameDoc(a, b) => format!("@doc({}) = @doc({})", v.show_term(r, TermRef::Var(*a)), v.show_term(r, TermRef::Var(*b))),
         }
     }
+}
+
+/// The same-document joins a magic rule keeps for a positive atom it leaves out (decision 0652). A relation not
+/// declared `cross_file` holds rows of one document each, so the atom's node variables lie in one document; left out,
+/// it would let the rule join them across files (python/compare.rerail's `same_pair`, left out to stay stratified,
+/// tied the two nodes the rule compares). The rule keeps `@doc(x) = @doc(y)` for each pair `bound` holds, from the
+/// first. Still wider than the atom, so the demand stays sound.
+fn same_documents<'v>(v: &'v Version, about: &About, l: &M<'v>, bound: &VarSet) -> Vec<M<'v>> {
+    let Some(a) = l.own_atom().filter(|a| !a.neg()) else { return Vec::new() };
+    let rel = v.rel_name(a.rel());
+    let Some(d) = v.decl_of(rel) else { return Vec::new() };
+    if super::demand::qualified(v, about, rel, "cross_file") {
+        return Vec::new();
+    }
+    let mut nodes: Vec<Slot> = Vec::new();
+    for (t, (_, ty)) in a.args().zip(d.cols()) {
+        if let TermRef::Var(s) = t
+            && v.text(ty) == "node"
+            && bound.contains(s)
+            && !nodes.contains(&s)
+        {
+            nodes.push(s);
+        }
+    }
+    nodes.iter().skip(1).map(|&s| M::SameDoc(nodes[0], s)).collect()
 }
 
 fn show_tm(v: &Version, r: RuleRef<'_>, t: Tm<'_>) -> String {
@@ -243,6 +275,7 @@ fn binds(v: &Version, r: RuleRef<'_>, l: &M<'_>, bound: &VarSet) -> Option<VarSe
         M::Guard(..) | M::True => Some(l.vars(r)),
         M::Call(n, call) => cmp_binds(v, r, Tm::Fresh(*n), CmpOp::Eq, *call, bound),
         M::Gated(x) => binds(v, r, &M::Own(*x), bound),
+        M::SameDoc(..) => l.vars(r).is_subset(bound).then(VarSet::new),
     }
 }
 
@@ -1079,6 +1112,9 @@ fn keys_once<'v>(v: &'v Version, about: &About, demand: &[String]) -> Result<Opt
                     body.push(l.clone());
                 }
             }
+            for ((l, _), _) in pre.iter().zip(ks).filter(|(_, k)| !**k) {
+                body.extend(same_documents(v, about, l, &bound));
+            }
             let mut key = VarSet::new();
             tm_vars(*r, mh.1[0], &mut key);
             if !key.is_subset(&bound) && !is_const(mh.1[0]) {
@@ -1141,7 +1177,7 @@ fn drop_other_documents<'v>(v: &Version, r: RuleRef<'v>, key: &VarSet, pre: &[(M
         let document = crate::code_rule_dsl::logic::front::document_column(rel);
         for (i, (t, (_, ty))) in a.args().zip(d.cols()).enumerate() {
             if let TermRef::Var(x) = t
-                && (matches!(v.text(ty), "node" | "loc" | "span") || document == Some(i))
+                && (matches!(v.text(ty), "node" | "place") || document == Some(i))
             {
                 places.insert(x);
             }
@@ -1247,6 +1283,7 @@ fn attempt<'v>(cx: &mut Ctx<'v, '_>, full_in: &BTreeSet<String>, gate: bool) -> 
     }
     let mut keep: Vec<Vec<bool>> = magic.iter().map(|(_, _, pre)| pre.iter().map(|(_, extra)| !extra).collect()).collect();
     let views: Vec<Made<'_>> = v.rules().filter(|r| !cx.idb.contains(v.rel_name(r.head().rel()))).map(|rule| Made { rule, head: None, body: rule.body().map(M::Own).collect() }).collect();
+    let about0: &About = cx.about;
     // One magic rule's body, as `ks` keeps its literals.
     let one = |mh: &(String, Vec<Tm<'v>>), r: RuleRef<'v>, pre: &[(M<'v>, bool)], ks: &[bool]| -> Result<Vec<M<'v>>, Error> {
         let mut key = VarSet::new();
@@ -1271,7 +1308,7 @@ fn attempt<'v>(cx: &mut Ctx<'v, '_>, full_in: &BTreeSet<String>, gate: bool) -> 
                 M::Call(n, call) if is_cat(v, *call) => (l.vars(r), Some((Some(fresh(r, *n)), *call))),
                 M::Call(n, call) => (VarSet::of([fresh(r, *n)]), Some((Some(fresh(r, *n)), *call))),
                 // A gated negation gives nothing (and gates come after the magic rules' prefixes).
-                M::Gated(_) => (VarSet::new(), None),
+                M::Gated(_) | M::SameDoc(..) => (VarSet::new(), None),
             };
             if gives.is_disjoint(&need) {
                 continue;
@@ -1326,6 +1363,9 @@ fn attempt<'v>(cx: &mut Ctx<'v, '_>, full_in: &BTreeSet<String>, gate: bool) -> 
                 body.push(l.clone());
                 bound.extend(&b);
             }
+        }
+        for ((l, _), _) in pre.iter().zip(&ks).filter(|(_, k)| !**k) {
+            body.extend(same_documents(v, about0, l, &bound));
         }
         if !key.is_subset(&bound) {
             return Err(Error::UnboundDemand {
@@ -1595,7 +1635,7 @@ fn gate_negations<'v>(
                 },
                 M::Guard(rel, _) => Some(rel.as_str()),
                 M::True => Some("magic_true"),
-                M::Call(..) => None,
+                M::Call(..) | M::SameDoc(..) => None,
             })
             .filter(|rel| names.contains(*rel) && **rel != name)
             .map(str::to_owned)
@@ -1654,6 +1694,7 @@ fn write<'v>(v: &'v Version, w: RuleBuilder<'_, '_>, m: &Made<'v>) -> std::resul
             }
             M::Call(n, call) => w.cmp(T::Var(name_of(*n)), CmpOp::Eq, t_of(r, *call)),
             M::True => w.atom("magic_true", &[T::Int(0)]),
+            M::SameDoc(a, b) => w.cmp(T::Call("doc", vec![t_of(r, TermRef::Var(*a))]), CmpOp::Eq, T::Call("doc", vec![t_of(r, TermRef::Var(*b))])),
         };
     }
     w.finish()?;

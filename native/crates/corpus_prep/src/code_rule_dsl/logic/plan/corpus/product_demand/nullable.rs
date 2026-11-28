@@ -33,7 +33,7 @@ fn compared_to_unset(literal: LitRef<'_>, term: TermRef<'_>, comparison: CmpOp) 
 
 impl<'p, 'i> Proofs<'p, 'i> {
     fn location(&self, rel: &str, column: usize) -> bool {
-        self.program.columns(rel).and_then(|cols| cols.get(column).cloned()).is_some_and(|(_, ty)| matches!(ty.as_str(), "loc" | "node"))
+        self.program.columns(rel).and_then(|cols| cols.get(column).cloned()).is_some_and(|(_, ty)| matches!(ty.as_str(), "place" | "node"))
     }
 
     fn for_column(&mut self, rel: &str, column: usize, fuel: usize) -> Witnesses {

@@ -66,6 +66,9 @@ use rerail_blocks::vector::Vector;
         assert_eq!(kept, here);
         assert!(super::relocate(&store, &mut facts, &moved).expect("read").is_none(), "already this store's");
         super::prepared_of(&facts, std::sync::Arc::clone(&prepared.source), moved, prepared.lowered.dialect).expect("the moved program reads as prepared");
+        // Its writes land before its folder goes: a write still queued would find no file.
+        store.written().expect("the other store's writes");
+        drop(store);
         let _ = std::fs::remove_dir_all(&dir);
     }
 

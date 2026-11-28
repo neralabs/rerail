@@ -196,9 +196,9 @@ awaited(c) :- kind(c, "call"), child(w, c, 0), kind(w, "await").
 // A decorator imported from outside the run: the call targets the def and is open.
 .test an_outside_decorator_keeps_the_def_as_the_target uses decorated
     .decl target_at(l: number, f: number) cross_file
-    target_at(l, f) :- call_target(c, d), line(c, l), pt_def(g, d), line(g, f).
+    target_at(l, f) :- call_target(c, d), node_line_number(c, l), pt_def(g, d), node_line_number(g, f).
     .decl open_at(l: number)
-    open_at(l) :- call_open(c), line(c, l).
+    open_at(l) :- call_open(c), node_line_number(c, l).
     .expect target_at(46, 7)
     .expect open_at(46)
     .expect target_at(48, 12)
@@ -208,9 +208,9 @@ awaited(c) :- kind(c, "call"), child(w, c, 0), kind(w, "await").
 // A decorator of the run: the call targets the wrapper it returns, as before, and is not open.
 .test a_decorator_of_the_run_gives_its_wrapper uses decorated
     .decl target_at(l: number, f: number) cross_file
-    target_at(l, f) :- call_target(c, d), line(c, l), pt_def(g, d), line(g, f).
+    target_at(l, f) :- call_target(c, d), node_line_number(c, l), pt_def(g, d), node_line_number(g, f).
     .decl open_at(l: number)
-    open_at(l) :- call_open(c), line(c, l).
+    open_at(l) :- call_open(c), node_line_number(c, l).
     .expect target_at(49, 18)
     .expect no target_at(49, 25)
     .expect no open_at(49)
@@ -219,9 +219,9 @@ awaited(c) :- kind(c, "call"), child(w, c, 0), kind(w, "await").
 // Two outside decorators stacked: the def is the target, and the call is open.
 .test stacked_outside_decorators_keep_the_def_as_the_target uses decorated
     .decl target_at(l: number, f: number) cross_file
-    target_at(l, f) :- call_target(c, d), line(c, l), pt_def(g, d), line(g, f).
+    target_at(l, f) :- call_target(c, d), node_line_number(c, l), pt_def(g, d), node_line_number(g, f).
     .decl open_at(l: number)
-    open_at(l) :- call_open(c), line(c, l).
+    open_at(l) :- call_open(c), node_line_number(c, l).
     .expect target_at(50, 31)
     .expect open_at(50)
 .end
@@ -230,9 +230,9 @@ awaited(c) :- kind(c, "call"), child(w, c, 0), kind(w, "await").
 // outside `…property` replaces the def by a value its call does not run: open, no target.
 .test a_handled_decorator_and_a_property_are_unchanged uses decorated
     .decl target_at(l: number, f: number) cross_file
-    target_at(l, f) :- call_target(c, d), line(c, l), pt_def(g, d), line(g, f).
+    target_at(l, f) :- call_target(c, d), node_line_number(c, l), pt_def(g, d), node_line_number(g, f).
     .decl open_at(l: number)
-    open_at(l) :- call_open(c), line(c, l).
+    open_at(l) :- call_open(c), node_line_number(c, l).
     .decl targeted(l: number)
     targeted(l) :- target_at(l, _).
     .expect target_at(51, 37)
@@ -245,7 +245,7 @@ awaited(c) :- kind(c, "call"), child(w, c, 0), kind(w, "await").
 // cache`) may be the run's: the call targets its wrapper (`w`, app/compat.py:6), not the def.
 .test a_decorator_the_run_also_defines_gives_its_wrapper uses decorated
     .decl both_target(l: number, f: number) cross_file
-    both_target(l, f) :- call_target(c, d), docof(c, k), doc(k, "app/both.py", _), line(c, l), pt_def(g, d), line(g, f).
+    both_target(l, f) :- call_target(c, d), docof(c, k), doc(k, "app/both.py", _), node_line_number(c, l), pt_def(g, d), node_line_number(g, f).
     .expect both_target(13, 6)
     .expect no both_target(13, 8)
 .end
@@ -254,7 +254,7 @@ awaited(c) :- kind(c, "call"), child(w, c, 0), kind(w, "await").
 // C.who (line 15), never A's `@lru_cache` who (line 6), which C overrides.
 .test an_outside_decorated_method_follows_the_method_order uses decorated
     .decl diamond_target(l: number, f: number) cross_file
-    diamond_target(l, f) :- call_target(c, d), docof(c, k), doc(k, "app/diamond.py", _), line(c, l), pt_def(g, d), line(g, f).
+    diamond_target(l, f) :- call_target(c, d), docof(c, k), doc(k, "app/diamond.py", _), node_line_number(c, l), pt_def(g, d), node_line_number(g, f).
     .expect diamond_target(24, 15)
     .expect no diamond_target(24, 6)
 .end

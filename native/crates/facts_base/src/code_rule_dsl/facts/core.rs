@@ -156,10 +156,6 @@ pub struct Facts {
     grammar: Option<Arc<crate::code_rule_dsl::tape::Grammar>>,
     /// The ERROR and MISSING nodes, ascending, found on first ask (a scan of the codes): few, and most files have none.
     errors: std::sync::OnceLock<Vector<u32>>,
-    /// Its index's bytes (decision 0656 step 4, `DocIndex`), built on the first read that needs it where its tape's
-    /// home holds none (a format 15 tape, one stored before layout 8); a home's own is read where it lies
-    /// (`FactsIn::index`).
-    index: std::sync::OnceLock<Vec<u8>>,
     /// Computed only for a demanded Python syntax verdict; shared by every projection of this tape. `Err`: `ast.parse`
     /// raises another exception than `SyntaxError` (`facts::vtab::syntax::python_syntax`).
     pub python_syntax: std::sync::OnceLock<Result<Option<(u32, String)>, String>>,
@@ -236,7 +232,7 @@ fn record_parse(file: &dyn SourceFile, reader: &'static str) {
     if prof::on() {
         use sha2::{Digest as _, Sha256};
         let digest = Sha256::digest(file.source().as_bytes()).into();
-        prof::count_named(format!("source_tape.input.{reader}.{}.{}", file.language(), crate::content_store::observe::hex(&digest)), 1);
+        prof::count_named_args(format_args!("source_tape.input.{reader}.{}.{}", file.language(), crate::content_store::observe::hex(&digest)), 1);
     }
 }
 
@@ -383,6 +379,12 @@ fn queued_image(stored: &crate::content_store::ObjectBytes, grammar: &Arc<crate:
         }
         _ => {}
     }
+    // A parse's image the writer took as it lies (`placed_parse` with no device room): the image itself.
+    if let crate::content_store::ObjectBytes::Tape(held) = stored
+        && let Ok(image) = (Arc::clone(held) as Arc<dyn std::any::Any + Send + Sync>).downcast::<crate::code_rule_dsl::tape::StoredImage>()
+    {
+        return Ok(image.0.clone());
+    }
     crate::code_rule_dsl::prof::count("tape.queued_read_apart", 1);
     // copy (0353 step 4a): a queued tape in no room (a gathered segment's entry, mapped or decompressed) written into
     // the room a device reads it in. It goes when a segment's load writes its frames there.
@@ -407,8 +409,19 @@ fn placed_where_read(image: crate::code_rule_dsl::tape::TapeImage, grammar: &Arc
     Ok(image)
 }
 
+/// A parse's tape and the bytes the store's writer takes: in a slab's room where a device reads tapes (one write, read
+/// there by the host and the device), else the image as the parser made it, its bytes taken where they lie
+/// (`StoredImage`): a CPU run copied every tape into a vector for the writer alone (t57 §8, the cost case
+/// `a_tape_is_not_copied_into_its_room`).
 fn placed_parse(image: crate::code_rule_dsl::tape::TapeImage, grammar: &Arc<crate::code_rule_dsl::tape::Grammar>) -> Result<(crate::content_store::TapeBytes, crate::code_rule_dsl::tape::TapeImage), String> {
     use crate::code_rule_dsl::tape::TapeImage;
+    #[cfg(any(target_os = "macos", target_os = "linux", windows))]
+    let roomless = crate::code_rule_dsl::tape::placed::device().is_none();
+    #[cfg(not(any(target_os = "macos", target_os = "linux", windows)))]
+    let roomless = true;
+    if roomless {
+        return Ok((Arc::new(crate::code_rule_dsl::tape::StoredImage(image.clone())), image));
+    }
     let home = image.place_stored()?;
     // Written in its room by its parser (`placed::rooms`), or in no room: the image is the one read.
     if !home.placed() || image.placed() {
@@ -743,7 +756,6 @@ pub fn from_tape(doc: &TapeDoc, lines: Arc<LineTable>) -> Result<Facts, String> 
         tape: Some(Arc::clone(doc.doc_tape())),
         grammar: Some(Arc::clone(doc.grammar())),
         errors: Default::default(),
-        index: Default::default(),
         python_syntax: Default::default(),
         programs: None,
         tape_verdict: false,
@@ -763,7 +775,7 @@ pub fn from_image(source: Arc<crate::code_rule_dsl::tape::Text>, grammar: &Arc<c
 
 /// The facts of `tape` (checked), of `source` in `grammar`'s dialect.
 fn holding(tape: Arc<crate::code_rule_dsl::tape::formats::DocTape>, source: Arc<crate::code_rule_dsl::tape::Text>, grammar: &Arc<crate::code_rule_dsl::tape::Grammar>, tag: u8, lines: Arc<LineTable>) -> Facts {
-    Facts { tag, source, lines, tape: Some(tape), grammar: Some(Arc::clone(grammar)), errors: Default::default(), index: Default::default(), python_syntax: Default::default(), programs: None, tape_verdict: false }
+    Facts { tag, source, lines, tape: Some(tape), grammar: Some(Arc::clone(grammar)), errors: Default::default(), python_syntax: Default::default(), programs: None, tape_verdict: false }
 }
 
 /// The tape tag of a text-only document's facts (`text`): no dialect has it.
@@ -773,13 +785,13 @@ pub const TEXT: u8 = u8::MAX;
 /// for a file with no language (`lines::terminators_of(None)`: `\r\n`, `\r`, `\n`, U+2028, U+2029).
 pub fn text(source: Arc<crate::code_rule_dsl::tape::Text>) -> Facts {
     let lines = Arc::new(LineTable::new(&source, crate::code_rule_dsl::lines::terminators_of(None)));
-    Facts { tag: TEXT, source, lines, tape: None, grammar: None, errors: std::sync::OnceLock::from(rerail_blocks::vector::Vector::new()), index: Default::default(), python_syntax: Default::default(), programs: None, tape_verdict: false }
+    Facts { tag: TEXT, source, lines, tape: None, grammar: None, errors: std::sync::OnceLock::from(rerail_blocks::vector::Vector::new()), python_syntax: Default::default(), programs: None, tape_verdict: false }
 }
 
 /// The text document of parsed file `f` (decision 0512: a file the run reads for its programs): its source and line
 /// table, shared, and no tree.
 pub fn text_of(f: &Facts) -> Facts {
-    Facts { tag: TEXT, source: Arc::clone(&f.source), lines: Arc::clone(&f.lines), tape: None, grammar: None, errors: std::sync::OnceLock::from(rerail_blocks::vector::Vector::new()), index: Default::default(), python_syntax: Default::default(), programs: None, tape_verdict: false }
+    Facts { tag: TEXT, source: Arc::clone(&f.source), lines: Arc::clone(&f.lines), tape: None, grammar: None, errors: std::sync::OnceLock::from(rerail_blocks::vector::Vector::new()), python_syntax: Default::default(), programs: None, tape_verdict: false }
 }
 
 /// Counts a read of the facts' `$part` of node `$node` (E17, `tape::reads`); nothing without `tape-reads`.
@@ -965,8 +977,9 @@ impl<'a> FactsIn<'a> {
             deepest as u32
         })
     }
-    /// The node's children, in order.
-    pub fn children(&self, id: u32) -> Vector<u32> {
+    /// The node's children, in order: on the stack (a node's children are few; past 16, on the heap). A caller that
+    /// reads each once takes `each_child`.
+    pub fn children(&self, id: u32) -> rerail_blocks::frame::InlineVec<u32, 16> {
         on_tape!(self, |t| rerail_tape_format::tape::children(&t, id as usize).map(|c| c as u32).collect())
     }
     /// `id`'s children in order, each handed to `f`, read off the tape with no list made (a probe's).
@@ -1001,23 +1014,22 @@ impl<'a> FactsIn<'a> {
     pub fn token_text(&self, token: &Token) -> &'a str {
         &self.facts.source[token.start as usize..token.end as usize]
     }
-    /// The document's index (decision 0656 step 4): its tape home's, read where it lies, else built once for it
-    /// (`DocIndex::build`). Every count, listed code, text test and place the facts answer from it goes through it.
+    /// The document's index (decision 0656 step 4), read in its tape's home, where every tape holds one
+    /// (`TapeImage::doc_index`). Every count, listed code, text test, term and place the facts answer from it goes
+    /// through it.
     pub fn index(&self) -> rerail_tape_format::doc_index::DocIndex<'a> {
-        use rerail_tape_format::doc_index::DocIndex;
         let facts: &'a Facts = self.facts;
-        if let Some(x) = facts.tape.as_deref().and_then(|t| t.image().aux_bytes()).and_then(|b| DocIndex::read(b).ok()) {
-            return x;
-        }
-        let bytes = facts.index.get_or_init(|| {
-            let _span = crate::code_rule_dsl::logic::profile::span(|| "a document's index, built (its home holds none)".into());
-            let grammar = facts.grammar.as_ref().expect("a document's index, of facts with a tape");
-            on_tape!(self, |t| {
-                let named = crate::code_rule_dsl::tape::formats::named_codes(t.table(), grammar.lang);
-                DocIndex::build(&t, facts.source.as_bytes(), &named).unwrap_or_else(|e| panic!("a document's index: {e}"))
-            })
-        });
-        DocIndex::read(bytes).expect("the index built")
+        facts.tape.as_deref().expect("a document's index, of facts with a tape").image().doc_index()
+    }
+    /// Named node `id`'s place among its parent's named children that are no comment (T's shape's places), read in
+    /// the document's index (`DocIndex::place_past_comments`).
+    pub fn place_past_comments(&self, id: u32) -> u32 {
+        let index = self.index();
+        on_tape!(self, |t| index.place_past_comments(&t, id))
+    }
+    /// Node `id`'s code in its tape's table (what its index keys codes by).
+    pub fn code(&self, id: u32) -> u32 {
+        on_tape!(self, |t| t.code(id as usize))
     }
     /// Named node `id`'s place among its parent's named children (0 for the first, and the root's), read in the
     /// document's index (`DocIndex::place`).
@@ -1238,8 +1250,60 @@ pub fn input_column_name(rel: &str, name: &str) -> Option<&'static str> {
     input_columns(rel)?.get(i).copied()
 }
 
+/// The types a place read of core.rerail reads (decision 0724 §3): each its own, and nothing converts between them.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub enum PlaceType {
+    Node,
+    Line,
+    Match,
+    Token,
+}
+
+/// core.rerail's reads of a line, a match and a token, each a base relation of its own (decision 0724 step 3), and the
+/// node read it is the counterpart of: a node's are `text`, `docof`, `line`, `end_line`, `col`, `token_before` and
+/// `token_after`, read over nodes alone. A pass that knows a node read by name knows each of these by its counterpart
+/// (`counterpart`), and reads the one of its value's type (`typed_read`).
+pub const TYPED_READS: [(&str, PlaceType, &str); 15] = [
+    ("line_text", PlaceType::Line, "text"),
+    ("line_document", PlaceType::Line, "docof"),
+    ("line_number", PlaceType::Line, "line"),
+    ("match_text", PlaceType::Match, "text"),
+    ("match_document", PlaceType::Match, "docof"),
+    ("match_line_number", PlaceType::Match, "line"),
+    ("match_end_line_number", PlaceType::Match, "end_line"),
+    ("match_start_column", PlaceType::Match, "col"),
+    ("token_text", PlaceType::Token, "text"),
+    ("token_document", PlaceType::Token, "docof"),
+    ("token_line_number", PlaceType::Token, "line"),
+    ("token_end_line_number", PlaceType::Token, "end_line"),
+    ("token_start_column", PlaceType::Token, "col"),
+    ("token_previous", PlaceType::Token, "token_before"),
+    ("token_next", PlaceType::Token, "token_after"),
+];
+
+/// Typed read `rel`'s type and its node counterpart (`TYPED_READS`).
+pub fn typed(rel: &str) -> Option<(PlaceType, &'static str)> {
+    TYPED_READS.iter().find(|(r, _, _)| *r == rel).map(|&(_, t, n)| (t, n))
+}
+
+/// The node read `rel` is the counterpart of: itself where it is no typed read.
+pub fn counterpart(rel: &str) -> &str {
+    typed(rel).map_or(rel, |(_, n)| n)
+}
+
+/// The read of type `ty` whose node counterpart is `node_read`; `None` where that type has none (a line's column).
+pub fn typed_read(ty: PlaceType, node_read: &str) -> Option<&'static str> {
+    if ty == PlaceType::Node {
+        return ["text", "docof", "line", "end_line", "col", "token_before", "token_after"].into_iter().find(|r| *r == node_read);
+    }
+    TYPED_READS.iter().find(|(_, t, n)| *t == ty && *n == node_read).map(|&(r, _, _)| r)
+}
+
 /// The columns of the planner's base relations (T's input schema). Others are `c0`, `c1`, ….
 pub fn input_columns(rel: &str) -> Option<&'static [&'static str]> {
+    if let Some((_, node)) = typed(rel) {
+        return input_columns(node);
+    }
     Some(match rel {
         "node" => &["d", "n", "kind", "start", "end_"],
         "line" => &["n", "l"],

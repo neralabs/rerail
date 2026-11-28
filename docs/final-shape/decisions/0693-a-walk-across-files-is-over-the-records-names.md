@@ -43,7 +43,7 @@ pure-lazy's walks read names alone:
   meant, declared `cross_file` (0652).
 - Each file reads its own records back: `plp_colored(f) :- pc_sid(s, f), plp_colored_id(s)`.
 
-The walks hold names and read no relation of their readers, so they are staged (0675): a stage over every file, its
+The walks hold names and read no relation of their readers, so they are staged (0709): a stage over every file, its
 ids read by each file's part as settings. `plp_an`, `plp_in` and everything under them are per-file.
 
 A closure in the old port was cross-file only by reading the flag `plp_docin`, and that hid its own join of two files

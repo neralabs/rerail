@@ -349,7 +349,7 @@ impl Source for Family {
         if (location || document) && values.iter().all(|&v| v >= 0) {
             let mut rows = rerail_blocks::vector![];
             for &v in values {
-                let encoded = if location { v >> 32 } else { v };
+                let encoded = if location { rerail_blocks::located::Located::key_wide(v) } else { v };
                 if let Ok(key) = u32::try_from(encoded)
                     && let Some((p, base)) = self.get(key) {
                         rows.extend(
@@ -392,7 +392,7 @@ impl Source for Family {
             && lo.is_some_and(|(v, _)| v >= 0)
             && hi.is_none_or(|(v, _)| v >= 0)
         {
-            let key = |v: i64| if location { v >> 32 } else { v };
+            let key = |v: i64| if location { rerail_blocks::located::Located::key_wide(v) } else { v };
             let lower = key(lo.unwrap().0);
             if lower > i64::from(u32::MAX) {
                 return Some(rerail_blocks::vector![]);

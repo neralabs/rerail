@@ -15,7 +15,10 @@
 //
 // Every test file is selected (`all`) when the change reaches every test or this cannot tell: the dependencies and
 // their lockfile, the TypeScript and vitest configuration, this workflow and its actions, this script and the
-// engine-inputs.mjs it reads; a failure of any kind.
+// engine-inputs.mjs and prose.mjs it reads; a failure of any kind.
+//
+// A change of prose alone (prose.mjs: changesets, changelog entries, the root's and docs/'s Markdown) gets no Windows
+// shard: it changes no code, and its bytes and file names are the same on Windows. The Linux shards run what it selects.
 //
 //   node scripts/check/ci/test-selection.mjs <changed-files.txt>             JSON to stdout
 //   node scripts/check/ci/test-selection.mjs <changed-files.txt> --github    `name=value` lines for $GITHUB_OUTPUT
@@ -24,6 +27,7 @@ import { existsSync, readdirSync, readFileSync } from "node:fs";
 import { dirname, posix, relative, resolve, sep } from "node:path";
 import { fileURLToPath } from "node:url";
 import { engineSources, isEngineInput } from "./engine-inputs.mjs";
+import { proseOnly } from "./prose.mjs";
 
 /** Files whose change selects every test file (exact paths, or a directory's prefix ending in `/`). */
 export const FORCE_ALL = [
@@ -37,6 +41,7 @@ export const FORCE_ALL = [
   ".github/actions/",
   "scripts/check/ci/test-selection.mjs",
   "scripts/check/ci/engine-inputs.mjs",
+  "scripts/check/ci/prose.mjs",
 ];
 
 /** vitest's setup files (vitest.config.ts): every test file runs them. */
@@ -343,38 +348,41 @@ export function shards(count, all, total) {
   return Array.from({ length: n }, (_, i) => i + 1);
 }
 
-/** The selection for `changed` under `root`: `{ unit, tests, windowsExtra, reasons }`. */
+/** The selection for `changed` under `root`: `{ unit, tests, windowsExtra, prose, reasons }`. */
 export async function select(root, changed) {
   const forced = changed.find((path) => startsWithAny(path, FORCE_ALL));
   const tests = testFiles(root);
-  if (forced !== undefined) return { unit: "all", tests, all: tests.length, windowsExtra: true, reasons: [`${forced} reaches every test`] };
+  if (forced !== undefined) return { unit: "all", tests, all: tests.length, windowsExtra: true, prose: false, reasons: [`${forced} reaches every test`] };
   const graph = await closures(root, [...tests, ...WINDOWS_EXTRA]);
   const sources = engineSources(root);
   const selected = affected(tests, graph, changed, sources);
   const windowsExtra = affected(WINDOWS_EXTRA, graph, changed, sources).length > 0;
   const long = selected.join(" ").length > MOST_CHARACTERS;
   const unit = selected.length === 0 ? "none" : long || selected.length === tests.length ? "all" : "some";
-  return { unit, tests: selected, all: tests.length, windowsExtra, reasons: [`${selected.length} of ${tests.length} test files`] };
+  const prose = proseOnly(changed);
+  const reasons = [`${selected.length} of ${tests.length} test files`, ...(prose ? ["prose alone: no Windows shard"] : [])];
+  return { unit, tests: selected, all: tests.length, windowsExtra, prose, reasons };
 }
 
-/** Windows' shards: the selection's, its first alone when only its hook test is selected, or none. */
-function windowsShards(unit, count, all, windowsExtra) {
+/** Windows' shards: none for prose alone, the selection's, its first alone when only its hook test is selected, or none. */
+function windowsShards(unit, count, all, windowsExtra, prose) {
+  if (prose) return [];
   if (unit !== "none") return shards(count, all, SHARDS.windows);
   return windowsExtra ? shards(0, all, SHARDS.windows) : [];
 }
 
 /** The `select-tests` job's outputs. */
-export function outputs({ unit, tests, all, windowsExtra }) {
+export function outputs({ unit, tests, all, windowsExtra, prose = false }) {
   const count = unit === "all" ? all : tests.length;
   return {
     unit,
     "unit-tests": unit === "some" ? tests.join(" ") : "",
     "unit-shards": JSON.stringify(unit === "none" ? [] : shards(count, all, SHARDS.linux)),
-    "windows-shards": JSON.stringify(windowsShards(unit, count, all, windowsExtra)),
+    "windows-shards": JSON.stringify(windowsShards(unit, count, all, windowsExtra, prose)),
   };
 }
 
-const EVERYTHING = { unit: "all", tests: [], all: 1, windowsExtra: true, reasons: ["the selection failed"] };
+const EVERYTHING = { unit: "all", tests: [], all: 1, windowsExtra: true, prose: false, reasons: ["the selection failed"] };
 
 if (process.argv[1] !== undefined && resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
   const [list, flag] = process.argv.slice(2);

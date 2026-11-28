@@ -341,6 +341,7 @@ const HOOKS_UTILS = {
         { kind: "identifier", regex: HOOK_NAME },
         { kind: "member_expression", all: [{ has: { field: "object", kind: "identifier", regex: "^[A-Z]" } }, { has: { field: "property", kind: "property_identifier", regex: HOOK_NAME } }] },
       ],
+      not: { matches: "foreign-use" },
     },
   },
   "use-hook": {
@@ -350,8 +351,25 @@ const HOOKS_UTILS = {
         { kind: "identifier", regex: "^use$" },
         { kind: "member_expression", all: [{ has: { field: "object", kind: "identifier", regex: "^React$" } }, { has: { field: "property", regex: "^use$" } }] },
       ],
+      not: { matches: "foreign-use" },
     },
   },
+  /**
+   * A departure from upstream, whose isHook goes by name alone: a `use` (or `X.use`) callee the file binds to anything
+   * but React is not React's `use`, e.g. chai's `use(plugin)` or markdown-it's `Md.use(plugin)`. React is an import from
+   * `react` or a declarator initialised from `React` or `require('react')` (react-site); any other import, declaration
+   * or parameter is not. An unbound `use` / `X.use`, and every `useX`, stay hooks.
+   */
+  "foreign-use": {
+    any: [
+      { kind: "identifier", regex: "^use$", matches: "bound-not-react" },
+      { kind: "member_expression", all: [{ has: { field: "property", regex: "^use$" } }, { has: { field: "object", kind: "identifier", matches: "bound-not-react" } }] },
+    ],
+  },
+  "bound-not-react": { resolves: { binding: { site: { not: { matches: "react-site" } } } } },
+  "react-site": CREATE_ELEMENT_UTILS["react-site"],
+  "react-init": CREATE_ELEMENT_UTILS["react-init"],
+  "require-react": CREATE_ELEMENT_UTILS["require-react"],
   "named-component": functionNamed(COMPONENT_NAME),
   "named-hook": functionNamed(HOOK_NAME_NODE),
   "named": functionNamed({ regex: "[\\s\\S]" }),

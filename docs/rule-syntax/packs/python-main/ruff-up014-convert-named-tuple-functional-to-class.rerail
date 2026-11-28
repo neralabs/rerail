@@ -52,7 +52,7 @@ up014_second_positional(n) :- up014_positional_arg(n), precedes(s1, n), up014_po
 
 // named_tuple_ref(n): the JSON util `named-tuple-ref`, used where the JSON says `matches: "named-tuple-ref"`
 //   BASE: metavariable this relation binds for the calling rule
-.decl up014_named_tuple_ref(n: node, base: loc)
+.decl up014_named_tuple_ref(n: node, base: node)
 up014_named_tuple_ref(n, BASE) :- (kind(n, "identifier") ; kind(n, "attribute")),
     node(_, n, _, _, _), BASE = n,
     ( sym_of(n, "typing.NamedTuple")
@@ -63,21 +63,21 @@ up014_named_tuple_ref(n, BASE) :- (kind(n, "identifier") ; kind(n, "attribute"))
 
 // named_tuple_callee(n): the JSON util `named-tuple-callee`, used where the JSON says `matches: "named-tuple-callee"`
 //   BASE: metavariable this relation binds for the calling rule
-.decl up014_named_tuple_callee(n: node, base: loc)
+.decl up014_named_tuple_callee(n: node, base: node)
 up014_named_tuple_callee(n, BASE) :- up014_named_tuple_ref(n, BASE).
 up014_named_tuple_callee(n, BASE) :- kind(n, "parenthesized_expression"), child(n, c1, _),
     up014_named_tuple_callee(c1, BASE).
 
 // name_target(n): the JSON util `name-target`, used where the JSON says `matches: "name-target"`
 //   NAME: metavariable this relation binds for the calling rule
-.decl up014_name_target(n: node, name: loc)
+.decl up014_name_target(n: node, name: node)
 up014_name_target(n, NAME) :- kind(n, "identifier"), node(_, n, _, _, _), NAME = n.
 up014_name_target(n, NAME) :- kind(n, "tuple_pattern"), !up014_tok_has_1(n), child(n, c9, _),
     up014_name_target(c9, NAME).
 
 // named_tuple_value(n): the JSON util `named-tuple-value`, used where the JSON says `matches: "named-tuple-value"`
 //   BASE: metavariable this relation binds for the calling rule
-.decl up014_named_tuple_value(n: node, base: loc)
+.decl up014_named_tuple_value(n: node, base: node)
 up014_named_tuple_value(n, BASE) :- kind(n, "call"), field(n, "function", c1),
     up014_named_tuple_callee(c1, BASE), field(n, "arguments", c2), up014_named_tuple_arguments(c2).
 up014_named_tuple_value(n, BASE) :- kind(n, "parenthesized_expression"), child(n, c3, _),
@@ -113,7 +113,7 @@ up014_named_tuple_arguments(n) :- up014_two_positional(n), up014_no_keywords(n),
 // UP014(n): a finding at node n, from clause `named-tuple-functional`.
 // Each rule below is one way the JSON `rule` can match.
 // Columns after `at` are the metavariables the JSON's message, anchor or `each` names: one finding per distinct row.
-.violation UP014(at: node, name: loc, base: loc) "Define `{name}` as `class {name}({base}):` with one `field: type` line per field, in the same order."
+.violation UP014(at: node, name: node, base: node) "Define `{name}` as `class {name}({base}):` with one `field: type` line per field, in the same order."
     suppress noqa "UP014"
 UP014(n, NAME, BASE) :- kind(n, "assignment"),
     count : { child(p1, n, _), kind(p1, "assignment") } = 0, field(n, "left", c2),

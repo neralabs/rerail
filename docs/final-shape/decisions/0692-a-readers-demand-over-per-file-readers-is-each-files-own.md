@@ -2,7 +2,7 @@
 
 Status: decided (2026-11-25), by the user's plan for the rules the position report flagged after 0665: "E and F, read
 against the originals, 14 rules." This is its first part: plan-helpers-allowlist and versioned-merged-identity, read
-against their linters, and what the engine needed for them. It amends the split (0051, 0652, 0672,
+against their linters, and what the engine needed for them. It amends the split (0051, 0652, 0708,
 `typing::file_local`) and product demand's deferred joins (0488).
 
 ## Intro
@@ -35,7 +35,7 @@ A reader's demand (`rr_reader_demand_r`, `READER_DEMAND`) is the optional guard 
 producers (`product_demand::upstream`). Its rules are the prefixes of `r`'s readers, so it holds every key they ask for.
 Its rows are values and name no document, so the split took it as cross-file, and `r` and everything above with it.
 
-The split now takes it as each file's own, as a covered view of values (0672), where:
+The split now takes it as each file's own, as a covered view of values (0708), where:
 
 - each of its rules reads one document's rows at most in each derivation (`one_document_each`): a positive read whose
   location is left open (`alias(_, x)`) is on a document of its own, and a rule reading no document's rows is on none;

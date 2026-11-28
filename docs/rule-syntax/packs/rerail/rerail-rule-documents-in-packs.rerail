@@ -14,15 +14,15 @@
 // The files are read as text: the regexes need no tree, and a JSON file that does not parse is still searched.
 // The regexes are the JSON's, copied exactly.
 
-.violation RULE_DRAFT_IN_REPOSITORY(at: span) "Keep rule drafts in a temp folder outside the repo; to add this rule, save only its rule object as packs/<pack>/candidates/rules/<id>.json. A recorded API response may stay."
-RULE_DRAFT_IN_REPOSITORY(m) :- source(_, sp), match_all("\\A\\s*\\{\\s*(?:(?:\"folder\"\\s*:\\s*\"(?:[^\"\\\\]|\\\\.)*\"|\"cases\"\\s*:\\s*\\{(?s:.*?)\\})\\s*,\\s*)*(?:\"kind\"\\s*:\\s*\"(?:code|conversation)\"\\s*,\\s*(?:(?:\"folder\"\\s*:\\s*\"(?:[^\"\\\\]|\\\\.)*\"|\"cases\"\\s*:\\s*\\{(?s:.*?)\\})\\s*,\\s*)*\"rule\"\\s*:\\s*\\{|\"rule\"\\s*:\\s*\\{(?s:.*)\"kind\"\\s*:\\s*\"(?:code|conversation)\"\\s*[,}])", sp, m).
+.violation RULE_DRAFT_IN_REPOSITORY(at: match) "Keep rule drafts in a temp folder outside the repo; to add this rule, save only its rule object as packs/<pack>/candidates/rules/<id>.json. A recorded API response may stay."
+RULE_DRAFT_IN_REPOSITORY(m) :- document_source(_, sp), line_regex_match("\\A\\s*\\{\\s*(?:(?:\"folder\"\\s*:\\s*\"(?:[^\"\\\\]|\\\\.)*\"|\"cases\"\\s*:\\s*\\{(?s:.*?)\\})\\s*,\\s*)*(?:\"kind\"\\s*:\\s*\"(?:code|conversation)\"\\s*,\\s*(?:(?:\"folder\"\\s*:\\s*\"(?:[^\"\\\\]|\\\\.)*\"|\"cases\"\\s*:\\s*\\{(?s:.*?)\\})\\s*,\\s*)*\"rule\"\\s*:\\s*\\{|\"rule\"\\s*:\\s*\\{(?s:.*)\"kind\"\\s*:\\s*\"(?:code|conversation)\"\\s*[,}])", sp, m).
 
-.violation CODE_RULE_OUTSIDE_PACK(at: span) "Save this rule as packs/<pack>/candidates/rules/<id>.json (rules/ once it ships). An engine test's input may stay in fixtures/ if no folder on its path is rules, candidates, probes or policies."
-CODE_RULE_OUTSIDE_PACK(g) :- source(_, sp), match_group("\\A\\s*\\{\\s*(?:(?:\"(?:description|id|mode)\"\\s*:\\s*\"(?:[^\"\\\\]|\\\\.)*\"|\"revision\"\\s*:\\s*\\d+|\"scope\"\\s*:\\s*\\{(?:[^{}\"]|\"(?:[^\"\\\\]|\\\\.)*\"|\\{(?:[^{}\"]|\"(?:[^\"\\\\]|\\\\.)*\")*\\})*\\})\\s*,\\s*)*(?:\"clauses\"\\s*:(?s:.*?))?(?P<FORMAT>\"format\")\\s*:\\s*\"rerail\\.policy/v1\"", sp, _, "FORMAT", g).
+.violation CODE_RULE_OUTSIDE_PACK(at: match) "Save this rule as packs/<pack>/candidates/rules/<id>.json (rules/ once it ships). An engine test's input may stay in fixtures/ if no folder on its path is rules, candidates, probes or policies."
+CODE_RULE_OUTSIDE_PACK(g) :- document_source(_, sp), line_regex_group("\\A\\s*\\{\\s*(?:(?:\"(?:description|id|mode)\"\\s*:\\s*\"(?:[^\"\\\\]|\\\\.)*\"|\"revision\"\\s*:\\s*\\d+|\"scope\"\\s*:\\s*\\{(?:[^{}\"]|\"(?:[^\"\\\\]|\\\\.)*\"|\\{(?:[^{}\"]|\"(?:[^\"\\\\]|\\\\.)*\")*\\})*\\})\\s*,\\s*)*(?:\"clauses\"\\s*:(?s:.*?))?(?P<FORMAT>\"format\")\\s*:\\s*\"rerail\\.policy/v1\"", sp, _, "FORMAT", g).
 
-.violation CONVERSATION_RULE_OUTSIDE_PACK(at: span) "Save this conversation rule as packs/<pack>/candidates/rules/<id>.json. An engine test's input may stay in fixtures/ if no folder on its path is rules, candidates, probes or policies."
-CONVERSATION_RULE_OUTSIDE_PACK(g) :- source(_, sp),
-    match_group("\\A\\s*\\{\\s*(?:(?:\"(?:id|mode|reference)\"\\s*:\\s*\"(?:[^\"\\\\]|\\\\.)*\"|\"(?:action|repeat)\"\\s*:\\s*\\{(?:[^{}\"]|\"(?:[^\"\\\\]|\\\\.)*\")*\\})\\s*,\\s*)*(?:\"match\"\\s*:(?s:.*?))?(?P<SAMPLE>\"sample\")\\s*:\\s*\\{\\s*(?:\"(?:boundary|minimumTokens)\"\\s*:\\s*(?:\"(?:[^\"\\\\]|\\\\.)*\"|\\d+)\\s*,\\s*)*\"source\"\\s*:\\s*\"(?:tool:[^\"]*|user-input|assistant-text)\"\\s*(?:,\\s*\"(?:boundary|minimumTokens)\"\\s*:\\s*(?:\"(?:[^\"\\\\]|\\\\.)*\"|\\d+)\\s*)*\\}", sp, _, "SAMPLE", g).
+.violation CONVERSATION_RULE_OUTSIDE_PACK(at: match) "Save this conversation rule as packs/<pack>/candidates/rules/<id>.json. An engine test's input may stay in fixtures/ if no folder on its path is rules, candidates, probes or policies."
+CONVERSATION_RULE_OUTSIDE_PACK(g) :- document_source(_, sp),
+    line_regex_group("\\A\\s*\\{\\s*(?:(?:\"(?:id|mode|reference)\"\\s*:\\s*\"(?:[^\"\\\\]|\\\\.)*\"|\"(?:action|repeat)\"\\s*:\\s*\\{(?:[^{}\"]|\"(?:[^\"\\\\]|\\\\.)*\")*\\})\\s*,\\s*)*(?:\"match\"\\s*:(?s:.*?))?(?P<SAMPLE>\"sample\")\\s*:\\s*\\{\\s*(?:\"(?:boundary|minimumTokens)\"\\s*:\\s*(?:\"(?:[^\"\\\\]|\\\\.)*\"|\\d+)\\s*,\\s*)*\"source\"\\s*:\\s*\"(?:tool:[^\"]*|user-input|assistant-text)\"\\s*(?:,\\s*\"(?:boundary|minimumTokens)\"\\s*:\\s*(?:\"(?:[^\"\\\\]|\\\\.)*\"|\\d+)\\s*)*\\}", sp, _, "SAMPLE", g).
 
 // The pack's example (packs/rerail/pack.json).
 .test a_rule_draft_is_reported exactly

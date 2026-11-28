@@ -5,14 +5,15 @@
 //   - has `pack.json`, `package.json`, `README.md`, `LICENSE` and `NOTICE`;
 //   - has an `<id>` of lowercase letters, digits and dashes;
 //   - has a `pack.json` whose `format` is `rerail.rule-pack/v1` and whose `id` is `<id>`, and whose every
-//     `rules[].document` is a tracked file, while every file in `rules/` is listed;
+//     `rules[].document` is a tracked file, while every file in `rules/` is listed (a `.rerail` file there may instead
+//     be a library file a listed rule includes, which the pack validation's check 1 tells through the engine);
 //   - has a `pack.json` `name` with no brackets, digits or ported tool, repeated exactly in its README headings and,
 //     for a published pack, in docs/rule-packs.md's table;
 //   - has a `package.json` named `@neralabs/rerail-pack-<id>` with a `license`, no `dependencies`, and
 //     `files` publishing `pack.json`, `rules`, `LICENSE`.
 // `packs/README.md` is the directory's index, not a pack.
 
-import { finding, packIds, readJson, RULE_PACK_FORMAT, sortFindings } from "../lib.mjs";
+import { finding, isPackRerailFile, packIds, readJson, RULE_PACK_FORMAT, sortFindings } from "../lib.mjs";
 
 export const id = 8;
 export const title = "Packs pass the pack-format layout";
@@ -66,7 +67,7 @@ function listedDocumentFindings(repo, dir, manifest, listed) {
 function unlistedRuleFindings(repo, dir, listed) {
   const problems = [];
   for (const path of repo.files) {
-    if (path.startsWith(`${dir}/rules/`) && !listed.has(path)) problems.push(finding(path, "in rules/ but not listed in pack.json"));
+    if (path.startsWith(`${dir}/rules/`) && !listed.has(path) && !isPackRerailFile(path)) problems.push(finding(path, "in rules/ but not listed in pack.json"));
   }
   return problems;
 }

@@ -10,7 +10,7 @@
 // ANN001(n): a finding at node n, from clause `missing-type-function-argument`.
 // Each rule below is one way the JSON `rule` can match.
 // Columns after `at` are the metavariables the JSON's message, anchor or `each` names: one finding per distinct row.
-.violation ANN001(at: node, name: loc) "Add a type annotation to parameter `{name}`."
+.violation ANN001(at: node, name: node) "Add a type annotation to parameter `{name}`."
     suppress noqa "ANN001"
 ANN001(n, NAME) :- kind(n, "identifier"), node(_, n, _, _, _), NAME = n,
     ( child(p1, n, _), kind(p1, "parameters"), ann001_reported_parameter(n)
@@ -67,7 +67,7 @@ ann001_holds_definition(n) :- within_stop(c1, n, ann001_stop_5), ann001_definiti
 
 // last_definition_is_overload(n): the JSON util `last-definition-is-overload`, used where the JSON says `matches: "last-definition-is-overload"`
 //   FN: metavariable this relation binds for the calling rule
-.decl ann001_last_definition_is_overload(n: node, fn: loc)
+.decl ann001_last_definition_is_overload(n: node, fn: node)
 ann001_last_definition_is_overload(n, FN) :- ann001_overload_decorated(n), child(n, c1, _),
     kind(c1, "function_definition"), child(c1, c2, _), kind(c2, "identifier"),
     node(_, c2, _, _, _), FN = c2.
@@ -77,7 +77,7 @@ ann001_last_definition_is_overload(n, FN) :- !ann001_alt_6(n), child(n, c4, _), 
 
 // previous_overload(n): the JSON util `previous-overload`, used where the JSON says `matches: "previous-overload"`
 //   FN: metavariable this relation binds for the calling rule
-.decl ann001_previous_overload(n: node, fn: loc)
+.decl ann001_previous_overload(n: node, fn: node)
 ann001_previous_overload(n, FN) :- precedes_stop(s1, n, ann001_stop_7),
     ann001_last_definition_is_overload(s1, FN).
 ann001_previous_overload(n, FN) :- count : { precedes(s2, n), ann001_holds_definition(s2) } = 0,
@@ -86,7 +86,7 @@ ann001_previous_overload(n, FN) :- count : { precedes(s2, n), ann001_holds_defin
 
 // overload_implementation(n): the JSON util `overload-implementation`, used where the JSON says `matches: "overload-implementation"`
 //   FN: metavariable of the calling rule, passed in (bound by the caller)
-.decl ann001_overload_implementation(n: node, fn: loc)
+.decl ann001_overload_implementation(n: node, fn: node)
 ann001_overload_implementation(n, FN) :- ann001_demand_overload_implementation(n, FN),
     count : { child(p1, n, _), ann001_overload_decorated(p1) } = 0, ann001_previous_overload(n, FN).
 
@@ -117,7 +117,7 @@ ann001_reported_parameter(n) :- child(p1, n, _), kind(p1, "parameters"), child(p
 
 
 // demand_overload_implementation: the rows of overload_implementation its callers ask for (the metavariable columns they pass in)
-.decl ann001_demand_overload_implementation(n: node, fn: loc)
+.decl ann001_demand_overload_implementation(n: node, fn: node)
 ann001_demand_overload_implementation(p2, FN) :- child(p1, n, _), kind(p1, "parameters"),
     child(p2, p1, _), kind(p2, "function_definition"), child(p2, c3, _),
     kind(c3, "identifier"), node(_, c3, _, _, _), FN = c3.

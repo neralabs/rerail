@@ -466,7 +466,7 @@ in_enum(a) :- nearest(a, c, scope), class_ancestor(c, q), split_dot(q, "enum", x
 enum_class("Enum"). enum_class("Flag"). enum_class("IntEnum"). enum_class("IntFlag"). enum_class("StrEnum").
 enum_class("ReprEnum"). enum_class("CheckEnum").
 // first_param(f, p, ann): p is f's first positional parameter (`self`, `cls`), with its annotation or unset.
-.decl first_param(f: node, p: node, ann: loc)
+.decl first_param(f: node, p: node, ann: node)
 first_param(f, p, a) :- kind(f, "function_definition"), i = min j : { sig_param(f, q, n, j, k, b, d), pos_kind(k) },
     sig_param(f, p, _, i, _, a, _).
 // typevar_name(e, x): e is the name x of a type variable: a TypeVar assigned in the file, or a PEP 695 type

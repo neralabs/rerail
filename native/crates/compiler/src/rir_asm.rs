@@ -62,6 +62,7 @@ pub const OPCODES: &[(u8, &str)] = &[
     (COUNT, "COUNT"),
     (CHECK, "CHECK"),
     (SETTLE, "SETTLE"),
+    (STATEMENT, "STATEMENT"),
     (READ, "READ"),
     (LINE, "LINE"),
     (IS, "IS"),
@@ -531,12 +532,27 @@ pub fn word_row(parts: &mut Words, line: &mut Line<'_>, keyword: &str) -> Result
             }
             parts.counts.push(line.number("")?);
         }
-        "tokenmark" | "gappattern" => {
-            let order: u8 = line.number("")?;
+        "tokenmark" | "gappattern" | "recover" => {
+            // `recover at|past [first]`: a resume point's pattern (`Words::recover`), its elements a token mark's.
+            let recover = keyword == "recover";
+            let (order, past, first): (u8, bool, bool) = if recover {
+                let past = match line.word()?.as_str() {
+                    "at" => false,
+                    "past" => true,
+                    w => return Err(format!("recover at|past, not `{w}`")),
+                };
+                let first = line.peek_word().as_deref() == Some("first");
+                if first {
+                    line.word()?;
+                }
+                (0, past, first)
+            } else {
+                (line.number("")?, false, false)
+            };
             let gap = keyword == "gappattern";
             let list = if gap { &parts.gap_patterns } else { &parts.token_marks };
             // A mark's entries share its order (`program::patterns_hold`).
-            if list.last().is_some_and(|m| m.order > order) {
+            if !recover && list.last().is_some_and(|m| m.order > order) {
                 return Err(format!("{keyword} {order} out of order"));
             }
             let mut elems: Vec<crate::program::TokenElem> = Vec::new();
@@ -621,6 +637,13 @@ pub fn word_row(parts: &mut Words, line: &mut Line<'_>, keyword: &str) -> Result
                     return Err(format!("a bad token mark's part `{w}`"));
                 }
             }
+            if recover {
+                if refuses || unless {
+                    return Err("recover: no `refuses` or `unless`".into());
+                }
+                parts.recover.push(crate::program::Recover { past, first, elems });
+                return Ok(());
+            }
             let m = crate::program::TokenMark { order, elems, refuses, unless };
             if gap {
                 parts.gap_patterns.push(m);
@@ -635,10 +658,6 @@ pub fn word_row(parts: &mut Words, line: &mut Line<'_>, keyword: &str) -> Result
                 return Err(format!("tokenextra b{b} out of order"));
             }
             parts.extras.push((b, k));
-        }
-        "provisional" => {
-            let f: u16 = line.number("#")?;
-            parts.readings.provisional.push(f);
         }
         "extra" => {
             let k: u16 = line.number("#")?;
@@ -833,7 +852,8 @@ pub fn word_row(parts: &mut Words, line: &mut Line<'_>, keyword: &str) -> Result
                 let none = match line.word()?.as_str() {
                     "refuse" => crate::records::ReadNone::Refuse,
                     "end" => crate::records::ReadNone::End,
-                    w => crate::records::ReadNone::Bytes(w.strip_prefix("bytes").and_then(|m| m.parse().ok()).ok_or(format!("block {at} recarm: `refuse`, `end` or `bytesM`, not {w}"))?),
+                    w if w.starts_with("bad") => crate::records::ReadNone::Bad(w["bad".len()..].parse().map_err(|_| format!("block {at} recarm: `badK`, not {w}"))?),
+                    w => crate::records::ReadNone::Bytes(w.strip_prefix("bytes").and_then(|m| m.parse().ok()).ok_or(format!("block {at} recarm: `refuse`, `end`, `bytesM` or `badK`, not {w}"))?),
                 };
                 let (mut retag, mut last, mut template) = (None, None, None);
                 while let Ok(w) = line.word() {
@@ -1112,6 +1132,7 @@ pub fn head_rows(out: &mut String, program: &Words) {
     crate::rir_text::extra_rows(out, &program.extras);
     crate::rir_text::token_mark_rows(out, &program.token_marks);
     crate::rir_text::gap_pattern_rows(out, &program.gap_patterns);
+    crate::rir_text::recover_rows(out, &program.recover);
     crate::rir_text::count_rows(out, &program.counts);
     crate::rir_text::local_check_rows(out, &program.local_checks);
     crate::rir_text::rule_rows(out, &program.rules);

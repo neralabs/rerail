@@ -871,6 +871,7 @@ mod tests {
         let (mut first, mut second) = (b.queue(Lane::Gpu, item()), b.queue(Lane::Gpu, item()));
         let begun = Instant::now();
         b.start(&mut first);
+        let after_first_start = Instant::now();
         pause();
         let before_second = Instant::now();
         b.start(&mut second);
@@ -880,17 +881,22 @@ mod tests {
         let (ran_first, _) = b.finish(first, true);
         let after_first = Instant::now();
         pause();
+        let before_second_finish = Instant::now();
         let (ran_second, _) = b.finish(second, true);
         let span = begun.elapsed().as_secs_f64();
+        let ended = begun + std::time::Duration::from_secs_f64(span);
         let busy = b.score().units[Lane::Gpu.index()].busy;
         // Each ran about 60 ms; together the lane was busy about 90. The walls overlap by the time both ran: from the
-        // second's start to the first's finish, bounded by the clock read on either side of each (a stall of the
-        // machine anywhere stretches the span and the walls alike, never the overlap's bounds).
+        // second's start to the first's finish, bounded by the clock read on either side of each. The span is read
+        // outside the first's start and the second's finish: it is longer than the lane's busy time by at most the
+        // time between those reads and the calls they bracket (`outside`), however long the machine stalled there.
         let overlap = ran_first + ran_second - span;
+        let outside = (after_first_start - begun).as_secs_f64() + (ended - before_second_finish).as_secs_f64();
         let (least, most) = ((before_first - after_second).as_secs_f64(), (after_first - before_second).as_secs_f64());
         assert!(least > 0.025, "the jobs ran side by side for {least} s");
-        assert!(overlap > least - 0.002 && overlap < most + 0.002, "the walls overlap by {overlap}, not within {least}..{most}");
-        assert!((busy - span).abs() < 0.005, "shares {busy} against the lane's span {span}");
+        let slack = 1e-6;
+        assert!(overlap > least - outside - slack && overlap < most + slack, "the walls overlap by {overlap}, not within {least}..{most} less {outside}");
+        assert!(busy <= span + slack && busy >= span - outside - slack, "shares {busy} against the lane's span {span} less {outside}");
         // The cores run jobs on threads of their own: each is charged its wall.
         let (mut a, mut c) = (b.queue(Lane::Cpu, item()), b.queue(Lane::Cpu, item()));
         b.start(&mut a);

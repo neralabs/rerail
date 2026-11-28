@@ -120,10 +120,12 @@ impl PythonProject for Batch {
         if !["qualified", "origins", "assigned", "arguments"].contains(&kind) {
             return Err(format!("unknown Python producer {kind}"));
         }
+        // Each request's document and local id, by its page (plan "Chunk node numbers"), by its document's key.
         let mut by_doc: BTreeMap<u32, BTreeSet<u32>> = BTreeMap::new();
         for &n in requests {
             if n >= 0 {
-                by_doc.entry((n >> 32) as u32).or_default().insert(n as u32);
+                let (index, local) = self.docs.of_id(n).ok_or("Python demand references an invalid node")?;
+                by_doc.entry(self.docs.key(index)).or_default().insert(local);
             }
         }
         let mut rows = Vec::new();
@@ -141,10 +143,7 @@ impl PythonProject for Batch {
             let py_families = self.bound::<super::py_families::Py>().ok_or("Python facts unavailable")?;
             let grammar = &py_families.grammar;
             let mut ids = BTreeSet::new();
-            for n in low {
-                let local = p
-                    .local_of(n)
-                    .ok_or("Python demand references an invalid node")?;
+            for local in low {
                 let core = p
                     .ranks()
                     .select(Item::Node, local)

@@ -266,7 +266,7 @@ pub fn check_rr(paths: &[std::path::PathBuf]) -> serde_json::Value {
                 "outputs": program.output_names(),
                 "files": files.iter().map(|file| serde_json::json!({
                     "path": file.path,
-                    "sha256": file.sha256.map(|hash| hash.iter().map(|b| format!("{b:02x}")).collect::<String>())
+                    "sha256": file.sha256.map(|hash| rerail_prof::code_rule_dsl::prof::lower_hex(&hash[..]))
                 })).collect::<Vec<_>>()
             }),
             Err(error) => serde_json::json!({"path": path, "status": "reader-failed", "error": error.to_string()})
@@ -1058,16 +1058,17 @@ pub struct LogicRun<'a> {
 /// findings. T's facts reproduce one program's run only.
 /// `run`'s settings are `--env key=value`s ([`settings`]).
 pub fn logic(programs: &[String], root: &std::path::Path, t_facts: Option<&std::path::Path>, out: &std::path::Path, run: &LogicRun<'_>) -> Result<String, String> {
-    logic_checked(programs, root, t_facts, out, run).map_err(|error| error.to_string())
+    logic_checked(programs, &[], root, t_facts, out, run).map_err(|error| error.to_string())
 }
 
-fn logic_checked(programs: &[String], root: &std::path::Path, t_facts: Option<&std::path::Path>, out: &std::path::Path, run: &LogicRun<'_>) -> Result<String, ProgramRunError> {
-    logic_framed(programs, root, t_facts, out, run).map(|(text, _)| text)
+/// `parsed`: each text's parse where its read made one (`settings::program_texts_parsed`), which the run takes.
+fn logic_checked(programs: &[String], parsed: &[crate::code_rule_dsl::logic::settings::Parsed], root: &std::path::Path, t_facts: Option<&std::path::Path>, out: &std::path::Path, run: &LogicRun<'_>) -> Result<String, ProgramRunError> {
+    logic_framed(programs, parsed, root, t_facts, out, run).map(|(text, _)| text)
 }
 
 /// `logic_checked`, with the run's frame (`Report::frame`) where the command is one run whatever its corpus holds: no
 /// program names a language of several dialects, so a command's frame may lead to it (`reuse::command`).
-fn logic_framed(programs: &[String], root: &std::path::Path, t_facts: Option<&std::path::Path>, out: &std::path::Path, run: &LogicRun<'_>) -> Result<(String, Option<[u8; 32]>), ProgramRunError> {
+fn logic_framed(programs: &[String], parsed: &[crate::code_rule_dsl::logic::settings::Parsed], root: &std::path::Path, t_facts: Option<&std::path::Path>, out: &std::path::Path, run: &LogicRun<'_>) -> Result<(String, Option<[u8; 32]>), ProgramRunError> {
     let LogicRun { modes, metal, chunk_nodes, settings } = *run;
     use super::typing::file_local::Binding;
     let binding = if metal { Binding::Metal } else { Binding::Cpu };
@@ -1091,7 +1092,7 @@ fn logic_framed(programs: &[String], root: &std::path::Path, t_facts: Option<&st
         if let Some(label) = label {
             options["dialect"] = serde_json::json!(label);
         }
-        let each = super::logic::plan::corpus::run_with_options(&texts, root, t_facts, &dir, modes, binding, chunk_nodes, &super::logic::plan::corpus::Typing::default(), &options)?;
+        let each = super::logic::plan::corpus::run_with_parsed(&texts, parsed, root, t_facts, &dir, modes, binding, chunk_nodes, &super::logic::plan::corpus::Typing::default(), &options)?;
         match &mut report {
             None => report = Some(each),
             Some(first) => {
@@ -1732,9 +1733,9 @@ fn logic_command(args: &[String]) -> Result<String, String> {
         .transpose()?;
     // A directory: every `.rerail` in it, run as one program (each file parsed once for all of them); each file's
     // `#include`s are read in.
-    let read_programs = || -> Result<(Vec<String>, _), String> {
+    let read_programs = || -> Result<(Vec<String>, Vec<crate::code_rule_dsl::logic::settings::Parsed>, _), String> {
         let _reading = crate::code_rule_dsl::logic::profile::span(|| "read the rule files".into());
-        let (programs, sources) = if is_dir {
+        let (programs, parsed, sources) = if is_dir {
             let files = listed.clone();
             // A file another one `#include`s is a library of it (`…confusables.rerail`), not a program of its own: alone
             // it has neither the declarations it reads nor the rules that fill its inputs.
@@ -1753,37 +1754,37 @@ fn logic_command(args: &[String]) -> Result<String, String> {
                 .collect();
             let (files, read): (Vec<_>, Vec<_>) = files.into_iter().zip(read).filter(|(path, _)| !path.file_name().is_some_and(|n| included.contains(n))).unzip();
             timeline_mark("the program files listed");
-            let texts = crate::tools::program_texts_read(&files.iter().map(|p| p.as_ref()).collect::<Vec<&std::path::Path>>(), read.into_iter().map(Result::ok).collect())?;
+            let (texts, parsed) = crate::code_rule_dsl::logic::settings::program_texts_parsed(&files.iter().map(|p| p.as_ref()).collect::<Vec<&std::path::Path>>(), read.into_iter().map(Result::ok).collect())?;
             let sources = super::logic::rr::profile_join_sources(&files.iter().map(|p| p.as_path()).collect::<Vec<_>>());
             timeline_mark("the program texts read");
-            (texts, sources)
+            (texts, parsed, sources)
         } else {
             let path = Path::new(program.as_str());
             let text = crate::tools::program_text(path)?;
-            (vec![text], super::logic::rr::profile_join_sources(&[path]))
+            (vec![text], vec![None], super::logic::rr::profile_join_sources(&[path]))
         };
         if programs.is_empty() {
             return Err(format!("{program} has no .rerail programs"));
         }
-        Ok((programs, sources))
+        Ok((programs, parsed, sources))
     };
     // Without a command's frame, read before the run begins, as ever.
     let early = if command.is_none() { Some(read_programs()?) } else { None };
     let eval = |root: &Path| -> Result<String, ProgramRunError> {
         let logic_run = crate::tools::LogicRun { modes: &modes, metal, chunk_nodes: chunk, settings: &env };
         let Some((key, dir, files)) = &command else {
-            let (programs, _sources) = early.as_ref().expect("read early");
-            let run = || logic_checked(programs, root, facts, Path::new(out), &logic_run);
+            let (programs, parsed, _sources) = early.as_ref().expect("read early");
+            let run = || logic_checked(programs, parsed, root, facts, Path::new(out), &logic_run);
             return if full { crate::code_rule_dsl::logic::plan::corpus::session::full(run) } else { run() };
         };
         let binding = if metal { super::typing::file_local::Binding::Metal } else { super::typing::file_local::Binding::Cpu };
         if let Some((report, programs)) = reuse::command::reused(key, root, Path::new(out), &Typing::default(), &options)? {
             return Ok(report_text(programs, &report, &modes, binding, None));
         }
-        let (programs, _sources) = read_programs()?;
+        let (programs, parsed, _sources) = read_programs()?;
         // The run's manifest names the command's frame, kept once the run ends.
         let _naming = reuse::Naming::enter(*key);
-        let (text, frame) = logic_framed(&programs, root, facts, Path::new(out), &logic_run)?;
+        let (text, frame) = logic_framed(&programs, &parsed, root, facts, Path::new(out), &logic_run)?;
         if let Some(then) = frame {
             reuse::command::record(key, dir.as_deref(), files, &then, programs.len());
         }
@@ -2731,7 +2732,7 @@ mod settings_tests {
 /// fails the test, every one shown.
 #[cfg(test)]
 mod pack_split_tests {
-    /// Every policy of `dir`.
+    /// Every policy of `dir` (from the repository's root) run over one file of each language, its scope's paths dropped.
     fn pack_runs(dir: &str) {
         pack_shard_runs(dir, None)
     }
@@ -2753,7 +2754,7 @@ mod pack_split_tests {
     fn pack_runs_as(dir: &str, shard: Option<(usize, usize)>, batch: &str) {
         // SAFETY: nextest runs each test in a process of its own.
         unsafe { std::env::set_var("RERAIL_BATCH_PACK", batch) };
-        let from = crate::source_tree::native().join("../docs/rule-syntax").join(dir);
+        let from = crate::source_tree::native().join("..").join(dir);
         let tmp = tempfile::tempdir().unwrap();
         let rules = tmp.path().join("rules").join(dir);
         let mut policies = Vec::new();
@@ -3040,9 +3041,9 @@ mod pack_split_tests {
         // SAFETY: nextest runs each test in a process of its own.
         let found = findings_of_all(
             &[
-                "packs/django/django-practice-get-handler-writes.rerail",
-                "packs/django/django-practice-sync-orm-reached-from-async.rerail",
-                "packs/django/django-practice-select-for-update-outside-atomic.rerail",
+                "../../packs/django/rules/django-practice-get-handler-writes.rerail",
+                "../../packs/django/rules/django-practice-sync-orm-reached-from-async.rerail",
+                "../../packs/django/rules/django-practice-select-for-update-outside-atomic.rerail",
             ],
             &[
                 ("shop/__init__.py", ""),
@@ -3105,7 +3106,7 @@ mod pack_split_tests {
     /// The policies reading pyflakes-format's `str.format` family (F521, F522, F524, UP030, UP032) as one pack, with a
     /// policy of another scope (PYI021, stubs only: each rule then tests its documents' scope, `s_rr_scope_not`), through
     /// the whole preparation (their counts below a bound made ranks, decision 0361 step 7): no relation is cross-file
-    /// through the family, a view of the format string's values each call holds in its own node (decision 0672). Read
+    /// through the family, a view of the format string's values each call holds in its own node (decision 0708). Read
     /// off the split's causes (`RERAIL_SPLIT_DUMP`).
     #[test]
     fn a_format_strings_ranked_fields_are_per_file() {
@@ -3149,25 +3150,25 @@ mod pack_split_tests {
     }
 
     packs! {
-        the_data_layer_is_split_with_no_node_crossing: "data-layer",
-        the_blade_pack_is_split_with_no_node_crossing: "packs/blade",
-        the_complexity_pack_is_split_with_no_node_crossing: "packs/complexity",
-        the_django_pack_is_split_with_no_node_crossing: "packs/django",
-        the_next_pack_is_split_with_no_node_crossing: "packs/next",
-        the_node_pack_is_split_with_no_node_crossing: "packs/node",
-        the_php_pack_is_split_with_no_node_crossing: "packs/php",
-        the_react_pack_is_split_with_no_node_crossing: "packs/react",
-        the_rerail_pack_is_split_with_no_node_crossing: "packs/rerail",
-        the_rr_pack_is_split_with_no_node_crossing: "packs/rr",
-        the_rust_pack_is_split_with_no_node_crossing: "packs/rust",
-        the_sql_pack_is_split_with_no_node_crossing: "packs/sql",
-        the_typescript_pack_is_split_with_no_node_crossing: "packs/typescript",
-        the_vue_pack_is_split_with_no_node_crossing: "packs/vue",
+        the_data_layer_is_split_with_no_node_crossing: "docs/rule-syntax/data-layer",
+        the_blade_pack_is_split_with_no_node_crossing: "docs/rule-syntax/packs/blade",
+        the_complexity_pack_is_split_with_no_node_crossing: "docs/rule-syntax/packs/complexity",
+        the_django_pack_is_split_with_no_node_crossing: "packs/django/rules",
+        the_next_pack_is_split_with_no_node_crossing: "docs/rule-syntax/packs/next",
+        the_node_pack_is_split_with_no_node_crossing: "docs/rule-syntax/packs/node",
+        the_php_pack_is_split_with_no_node_crossing: "docs/rule-syntax/packs/php",
+        the_react_pack_is_split_with_no_node_crossing: "docs/rule-syntax/packs/react",
+        the_rerail_pack_is_split_with_no_node_crossing: "docs/rule-syntax/packs/rerail",
+        the_rr_pack_is_split_with_no_node_crossing: "docs/rule-syntax/packs/rr",
+        the_rust_pack_is_split_with_no_node_crossing: "docs/rule-syntax/packs/rust",
+        the_sql_pack_is_split_with_no_node_crossing: "docs/rule-syntax/packs/sql",
+        the_typescript_pack_is_split_with_no_node_crossing: "docs/rule-syntax/packs/typescript",
+        the_vue_pack_is_split_with_no_node_crossing: "docs/rule-syntax/packs/vue",
     }
 
     #[test]
     fn the_data_layer_is_split_with_no_node_crossing_policy_by_policy() {
-        pack_alone_runs("data-layer")
+        pack_alone_runs("docs/rule-syntax/data-layer")
     }
 
     macro_rules! shards {
@@ -3177,7 +3178,7 @@ mod pack_split_tests {
     }
 
     shards! {
-        "packs/python-main", 12,
+        "docs/rule-syntax/packs/python-main", 12,
         the_python_main_pack_is_split_with_no_node_crossing_0: 0,
         the_python_main_pack_is_split_with_no_node_crossing_1: 1,
         the_python_main_pack_is_split_with_no_node_crossing_2: 2,
@@ -3193,13 +3194,13 @@ mod pack_split_tests {
     }
 
     shards! {
-        "packs/python", 2,
+        "docs/rule-syntax/packs/python", 2,
         the_python_pack_is_split_with_no_node_crossing_0: 0,
         the_python_pack_is_split_with_no_node_crossing_1: 1,
     }
 
     shards! {
-        "packs/javascript", 3,
+        "docs/rule-syntax/packs/javascript", 3,
         the_javascript_pack_is_split_with_no_node_crossing_0: 0,
         the_javascript_pack_is_split_with_no_node_crossing_1: 1,
         the_javascript_pack_is_split_with_no_node_crossing_2: 2,
@@ -3256,7 +3257,7 @@ mod git_revision_tests {
 #include "git.rerail"
 .policy "offline-cache" revision 1
 git_object_request(r, c) :- git_source_commit(r, c).
-.violation Seen(at: span, text: symbol) "{text}"
+.violation Seen(at: place, text: symbol) "{text}"
 Seen(@place("commit", 1), subject) :- git_source_commit(r, c), git_subject(r, c, subject).
 "#).unwrap();
         let store = fixture.path().join("corrupt.sqlite");
@@ -3341,13 +3342,13 @@ Seen(@place("commit", 1), subject) :- git_source_commit(r, c), git_subject(r, c,
 .input title(IO=json, filename="data/value.json", path="/title")
 .decl allowed(path: symbol, line: number, text: symbol)
 .input allowed(IO=lines, dir="allow")
-.violation Seen(at: span, key: symbol, value: symbol) "{key}:{value}"
+.violation Seen(at: place, key: symbol, value: symbol) "{key}:{value}"
 Seen(@place("a.py", 1), "config", value) :- env("mark", value).
 Seen(@place("a.py", 1), "json", value) :- title(value).
 Seen(@place("a.py", 1), "dirinput", value) :- allowed("allow/one.txt", 1, value).
 Seen(@place("a.py", 1), "line", value) :- file_line("allow/one.txt", 1, value).
 Seen(@place("a.py", 1), "listing", value) :- dir_entry("allow", value, 0).
-Seen(@place("a.py", 1), "source", value) :- doc(d, "a.py", _), src_line(d, 1, sp), text(sp, value).
+Seen(@place("a.py", 1), "source", value) :- doc(d, "a.py", _), document_line(d, sp), line_number(sp, 1), place_text(sp, value).
 "#).unwrap();
         let options = serde_json::json!({"revision": commit, "analysisScope": "review"});
         let report = run_rr(&policy, &root, &fixture.path().join("out"), &options).unwrap();
@@ -3378,7 +3379,7 @@ Seen(@place("a.py", 1), "source", value) :- doc(d, "a.py", _), src_line(d, 1, sp
         std::fs::write(&policy, r#"
 .policy "historical-policy" revision 1
 .language python
-.violation Old(at: span) "historical policy ran"
+.violation Old(at: place) "historical policy ran"
 Old(@place("a.py", 1)).
 "#).unwrap();
         git(&["add", "a.py", "rule.rerail"]);
@@ -3395,8 +3396,8 @@ Old(@place("a.py", 1)).
 git_revision_request(r, "HEAD") :- git_root_repo(r).
 git_object_request(r, h) :- git_revision(r, "HEAD", h).
 git_object_request(r, p) :- git_parent(r, _, _, p).
-.violation Seen(at: span, text: symbol, message: symbol, email: symbol, head: symbol) "{text}"
-Seen(@place(p, 1), text, message, email, head) :- doc(d, p, _), src_line(d, 1, sp), text(sp, text),
+.violation Seen(at: place, text: symbol, message: symbol, email: symbol, head: symbol) "{text}"
+Seen(@place(p, 1), text, message, email, head) :- doc(d, p, _), document_line(d, sp), line_number(sp, 1), place_text(sp, text),
     git_source_commit(r, c), git_message(r, c, message), git_author(r, c, _, email, _, _),
     git_revision(r, "HEAD", h), git_parent(r, h, 0, c), git_subject(r, h, head).
 "#).unwrap();
@@ -3415,8 +3416,8 @@ Seen(@place(p, 1), text, message, email, head) :- doc(d, p, _), src_line(d, 1, s
         std::fs::write(&policy, r#"
 .policy "git-tree" revision 1
 .language python
-.violation Seen(at: span, text: symbol, tree: symbol) "{text}"
-Seen(@place(p, 1), text, tree) :- doc(d, p, _), src_line(d, 1, sp), text(sp, text), git_rev("tree", tree).
+.violation Seen(at: place, text: symbol, tree: symbol) "{text}"
+Seen(@place(p, 1), text, tree) :- doc(d, p, _), document_line(d, sp), line_number(sp, 1), place_text(sp, text), git_rev("tree", tree).
 "#).unwrap();
         let result = run_rr(&policy, &root, &fixture.path().join("tree-out"), &serde_json::json!({"revision": tree, "analysisScope": "review"})).unwrap();
         let diagnostics = result["diagnostics"].as_array().unwrap();

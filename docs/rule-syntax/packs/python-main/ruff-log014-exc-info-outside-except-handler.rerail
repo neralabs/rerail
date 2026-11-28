@@ -10,7 +10,7 @@
 // LOG014(n): a finding at node n, from clause `exc-info-outside-except-handler`.
 // Each rule below is one way the JSON `rule` can match.
 // Columns after `at` are the metavariables the JSON's message, anchor or `each` names: one finding per distinct row.
-.violation LOG014(at: loc, k: node) "Remove this `exc_info` argument: outside an except block there is no exception to attach. Leave it if this code only ever runs while an exception is being handled."
+.violation LOG014(at: node, k: node) "Remove this `exc_info` argument: outside an except block there is no exception to attach. Leave it if this code only ever runs while an exception is being handled."
     suppress noqa "LOG014"
 LOG014(K, n) :- count : { inside(n, p1, "except_clause"), node(_, p1, _, _, _) } = 0,
     log014_alt_5(n, K).
@@ -68,7 +68,7 @@ log014_exc_info_kw(n) :- kind(n, "keyword_argument"), match("exc_info\\b.*", n).
 
 // kw_in_string(n): the JSON util `kw-in-string`, used where the JSON says `matches: "kw-in-string"`
 //   K: metavariable this relation binds for the calling rule
-.decl log014_kw_in_string(n: node, k: loc)
+.decl log014_kw_in_string(n: node, k: node)
 log014_kw_in_string(n, K) :- (kind(n, "string") ; kind(n, "concatenated_string")),
     parsed(n, "annotation", r1), within(c2, r1), log014_alt_4(c2, K).
 
@@ -113,7 +113,7 @@ log014_set_2("logging.warning"). log014_set_2("logging.log").
 
 // alt_4(n): the JSON `any`: n matches if any one of these rules does
 //   K: metavariable this relation binds for the calling rule
-.decl log014_alt_4(n: node, k: loc)
+.decl log014_alt_4(n: node, k: node)
 log014_alt_4(n, K) :- log014_exc_info_kw(n), child(n, c1, _), log014_truthy_literal(c1), child(p2, n, _),
     kind(p2, "argument_list"), child(p3, p2, _), kind(p3, "call"), child(p3, c4, _),
     log014_level_callee(c4), count : { precedes(s5, n), log014_exc_info_kw(s5) } = 0, K = n.
@@ -121,7 +121,7 @@ log014_alt_4(n, K) :- log014_kw_in_string(n, K).
 
 // alt_5(n): the JSON `any`: n matches if any one of these rules does
 //   K: metavariable this relation binds for the calling rule
-.decl log014_alt_5(n: node, k: loc)
+.decl log014_alt_5(n: node, k: node)
 log014_alt_5(n, K) :- log014_exc_info_kw(n), child(n, c1, _), log014_truthy_literal(c1), child(p2, n, _),
     kind(p2, "argument_list"), child(p3, p2, _), kind(p3, "call"), child(p3, c4, _),
     log014_level_callee(c4), count : { precedes(s5, n), log014_exc_info_kw(s5) } = 0, node(_, n, _, _, _), K = n.

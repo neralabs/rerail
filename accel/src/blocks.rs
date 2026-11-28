@@ -67,6 +67,18 @@ pub fn zeroed_bytes() -> u64 {
     rerail_blocks::block::zeroed_bytes()
 }
 
+/// The bytes the host blocks' free lists keep resident: their free chunks less those whose pages went to the OS
+/// (`Extent::given`).
+pub fn host_free_resident() -> usize {
+    let host = rerail_context::machine::<Host>();
+    let mut live = host.0.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+    live.retain(|e| e.strong_count() > 0);
+    live.iter().filter_map(std::sync::Weak::upgrade).map(|e| {
+        let free = e.free.load(std::sync::atomic::Ordering::Relaxed);
+        free.saturating_sub(e.given.load(std::sync::atomic::Ordering::Relaxed))
+    }).sum()
+}
+
 /// The host blocks live now: bytes used in them, and of those the bytes their free lists hold.
 pub fn host_held() -> (usize, usize) {
     let host = rerail_context::machine::<Host>();

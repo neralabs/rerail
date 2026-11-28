@@ -189,7 +189,7 @@ UP035_typing_re_to_typing_raw(n) :- kind(n, "import_from_statement"),
 // Columns after `at` are the metavariables the JSON's message, anchor or `each` names: one finding per distinct row.
 // The JSON `transform` computes LOWER from other metavariables' text; its literals end each rule.
 // `options` carries JSON settings that have no .rerail form yet.
-.violation UP035_typing_builtin_generics(at: node, name: loc, lower: symbol) code "UP035" "`typing.{name}` is deprecated; use the built-in `{lower}` in annotations and drop the `typing` import once nothing else uses it."
+.violation UP035_typing_builtin_generics(at: node, name: node, lower: symbol) code "UP035" "`typing.{name}` is deprecated; use the built-in `{lower}` in annotations and drop the `typing` import once nothing else uses it."
     suppress noqa "UP035"
 UP035_typing_builtin_generics(n, NAME, LOWER) :- kind(n, "import_from_statement"),
     field(n, "module_name", c2), kind(c2, "dotted_name"), glob("typing", c2),
@@ -199,7 +199,7 @@ UP035_typing_builtin_generics(n, NAME, LOWER) :- kind(n, "import_from_statement"
 // `detail`: each rule's head gives its clause's words. Each rule is one way a JSON `rule` can match.
 // Columns after `at` are the metavariables the JSON's message, anchor or `each` names: one finding per distinct row.
 // `options` carries JSON settings that have no .rerail form yet.
-.violation UP035_typing_deque(at: node, name: loc, detail: symbol) code "UP035" "{detail} instead and drop the `typing` import once nothing else uses it."
+.violation UP035_typing_deque(at: node, name: node, detail: symbol) code "UP035" "{detail} instead and drop the `typing` import once nothing else uses it."
     suppress noqa "UP035"
 UP035_typing_deque(n, NAME, "`typing.AsyncContextManager` is deprecated; use `contextlib.AbstractAsyncContextManager`") :- kind(n, "import_from_statement"),
     field(n, "module_name", c1), kind(c1, "dotted_name"), glob("typing", c1),
@@ -270,7 +270,7 @@ up035_alt(n, q1) :- up035_alt_case(q1, s1), kind(n, "aliased_import"), child(n, 
 // alt_of(n, key): 6 copies of one rule set (`alt_23`, `alt_24`, `alt_25` and 3 more), folded into one: row `key` of
 // alt_of_case gives the strings each copy had.
 //   NAME: metavariable this relation binds for the calling rule
-.decl up035_alt_of(n: node, key: symbol, name: loc)
+.decl up035_alt_of(n: node, key: symbol, name: node)
 up035_alt_of(n, q1, NAME) :- up035_alt_of_case(q1, s1), kind(n, "dotted_name"), glob(s1, n),
     node(_, n, _, _, _), NAME = n, !child(_, n, 0).
 up035_alt_of(n, q1, NAME) :- up035_alt_of_case(q1, s1), kind(n, "aliased_import"), child(n, c1, _),

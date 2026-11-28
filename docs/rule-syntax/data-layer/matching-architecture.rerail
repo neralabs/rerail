@@ -54,7 +54,7 @@ ma_marker("data_layer.matching"). ma_marker("l1470_matching_contracts"). ma_mark
 ma_marker("MatchSpec"). ma_marker("MatchResult"). ma_marker("MatchPhysicalPlanError"). ma_marker("MatchAccessMethodKind").
 // ma_text(d, t): the file's whole text.
 .decl ma_text(d: number, t: symbol)
-ma_text(d, t) :- source(d, sp), text(sp, t).
+ma_text(d, t) :- document_source(d, sp), line_text(sp, t).
 // ma_given_app(d): an application file the caller names: an application path, or a file under an application root.
 .decl ma_given_app(d: number)
 ma_given_app(d) :- doc(d, p, _), option_item("applicationPaths", _, p).
@@ -158,7 +158,7 @@ ma_or_leaf(t, l) :- ma_bitor(t), (field(t, "left", x) ; field(t, "right", x)), u
 ma_ann(e, s) :- unparen(e, m), !ma_bitor(m), ma_ann_base(e, s).
 ma_ann(e, s) :- unparen(e, m), ma_bitor(m), s = join x by z sep "|" : { ma_or_leaf(m, l), ma_ann_base(l, x), node(_, l, _, z, _) }.
 // ma_type(t, e): the expression of annotation t (a `type` node).
-.decl ma_type(t: loc, e: node)
+.decl ma_type(t: node, e: node)
 ma_type(t, e) :- kind(t, "type"), child(t, e, 0).
 
 // ma_static(e, v): the linter's _static_string: a str constant (each f-string piece is one), an f-string without
@@ -180,17 +180,17 @@ ma_plus_leaf(t, l) :- ma_plus(t), (field(t, "left", x) ; field(t, "right", x)), 
 ma_plus_open(t) :- ma_plus_leaf(t, l), !ma_static_leaf(l, _).
 
 // ---- 3. application files ----------------------------------------------------------------------------------------
-.violation MA001(at: span) "Application matching behavior cannot switch on backend identity"
+.violation MA001(at: match) "Application matching behavior cannot switch on backend identity"
 MA001(@place(p, l)) :- ma_app(d), ma_doc(d), ma_backend_line(d, p, l).
 // ma_backend_line(d, p, l): the first line of file d (at path p) that names BackendType; MA001 and MA026.
 .decl ma_backend_line(d: number, p: symbol, l: number)
-ma_backend_line(d, p, l) :- ma_doc(d), doc(d, p, _), l = min k : { ma_ref(n, "BackendType"), docof(n, d), line(n, k) }.
+ma_backend_line(d, p, l) :- ma_doc(d), doc(d, p, _), l = min k : { ma_ref(n, "BackendType"), docof(n, d), node_line_number(n, k) }.
 
 .decl ma_physical(v: symbol)
 ma_physical(v) :- ma_static(_, v), iglob("{bit_hamming_ops,halfvec,hnsw,ivfflat,pgvector,sql_table_hnsw,usearch,vector_cosine_ops}", v).
-.violation MA002(at: span) "Application matching declarations cannot name a physical access method"
+.violation MA002(at: match) "Application matching declarations cannot name a physical access method"
 MA002(@place(p, l)) :- ma_app(d), ma_doc(d), doc(d, p, _),
-    l = min k : { ma_static(n, v), ma_physical(v), docof(n, d), line(n, k) }.
+    l = min k : { ma_static(n, v), ma_physical(v), docof(n, d), node_line_number(n, k) }.
 
 .violation MA010(at: node) "Application matching code cannot import implementation modules"
 MA010(i) :- ma_import(i, m), ma_impl_module(m), ma_in(i, d), ma_app(d).
@@ -242,7 +242,7 @@ MA007(n) :- fstring(n), ma_in(n, d), ma_matching(d), s = join p by i sep "" : { 
     match("(?is)\\s*(SELECT|INSERT|UPDATE|DELETE|CREATE|ALTER).*", s).
 
 // ---- 5. implementation files -------------------------------------------------------------------------------------
-.violation MA026(at: span) "Shared matching code cannot switch on backend identity"
+.violation MA026(at: match) "Shared matching code cannot switch on backend identity"
 MA026(@place(p, l)) :- ma_impl(d), ma_backend_line(d, p, l).
 
 // MA027: raw SQL: nonportably_execute_sql, SqlRaw or SqlFragment, or execute / executemany on a literal.
@@ -250,12 +250,12 @@ MA026(@place(p, l)) :- ma_impl(d), ma_backend_line(d, p, l).
 ma_raw_sql(c) :- mf_call_name(c, x), (x = "nonportably_execute_sql" ; x = "SqlRaw" ; x = "SqlFragment").
 ma_raw_sql(c) :- mf_call_name(c, x), (x = "execute" ; x = "executemany"), ma_arg(c, 0, a0), unparen(a0, a),
     (ast_constant(a) ; fstring(a)).
-.violation MA027(at: span) "Matching implementation code must use typed SQL grammar"
-MA027(@place(p, l)) :- ma_impl(d), doc(d, p, _), l = min k : { ma_raw_sql(c), docof(c, d), line(c, k) }.
+.violation MA027(at: match) "Matching implementation code must use typed SQL grammar"
+MA027(@place(p, l)) :- ma_impl(d), doc(d, p, _), l = min k : { ma_raw_sql(c), docof(c, d), node_line_number(c, k) }.
 
 // ma_assign(a, t, v): a statement-level `t = v` or `t: T = v` with a name target (each of `a = b = v`); v is unset for
 // a bare `t: T`.
-.decl ma_assign(a: node, x: symbol, v: loc)
+.decl ma_assign(a: node, x: symbol, v: node)
 ma_assign(a, x, v) :- assign_target(a, t), kind(t, "identifier"), text(t, x), assign_value(a, v).
 ma_assign(a, x, u) :- assign_target(a, t), kind(t, "identifier"), text(t, x), !assign_value(a, _), unset(u).
 // ma_len_of(v, x): v holds a call len(x, …) or len(o.x, …).
@@ -317,8 +317,8 @@ MA041(i) :- ma_import(i, m), glob("{data_layer_testing,data_layer_testing.**}", 
 .decl ma_resolution(n: node)
 ma_resolution(n) :- attr_of(n, o, _), ma_ann(o, s), (s = "MatchAccessMethodKind" ; s = "MatchPhysicalStageKind").
 ma_resolution(c) :- mf_call_name(c, x), prefix("build_", x), contains("match", x).
-.violation MA021(at: span) "The public facade cannot resolve a physical matching method"
-MA021(@place(p, l)) :- ma_facade(d), doc(d, p, _), l = min k : { ma_resolution(n), docof(n, d), line(n, k) }.
+.violation MA021(at: match) "The public facade cannot resolve a physical matching method"
+MA021(@place(p, l)) :- ma_facade(d), doc(d, p, _), l = min k : { ma_resolution(n), docof(n, d), node_line_number(n, k) }.
 
 .violation MA015(at: node) "Matching conformance tests must import project APIs from data_layer"
 MA015(i) :- ma_import(i, m), (m = "impl" ; prefix("impl.", m) ; match("l[0-9]{4}_.*", m)), ma_in(i, d), ma_conf(d).
@@ -394,21 +394,21 @@ MA028(c) :- ma_def(f, _, d), ma_matching(d), !ma_conf(d), mf_walk(c, f), ma_meth
     call_arg(c, _, "update", _).
 
 // First-line codes: the first offending node in ast.walk(f), for defs whose name says what they do.
-.violation MA039(at: span) "Expression receipts must evaluate expression nodes instead of endpoint identities"
+.violation MA039(at: match) "Expression receipts must evaluate expression nodes instead of endpoint identities"
 MA039(@place(p, l)) :- ma_def(f, x, d), ma_impl(d), contains("expression_operation_receipt", x), doc(d, p, _),
-    l = min k : { ma_calls(f, c, "_sql_canonical_identity"), line(c, k) }.
-.violation MA040(at: span) "Candidate scoring requires a distinct ServerPlan stage, not a predicate"
+    l = min k : { ma_calls(f, c, "_sql_canonical_identity"), node_line_number(c, k) }.
+.violation MA040(at: match) "Candidate scoring requires a distinct ServerPlan stage, not a predicate"
 MA040(@place(p, l)) :- ma_def(f, x, d), ma_impl(d), contains("candidate", x), doc(d, p, _),
-    l = min k : { ma_calls(f, c, "SqlIsNull"), within(a, c), attr_of(a, _, "candidate_kernel"), line(c, k) }.
-.violation MA029(at: span) "Candidate deduplication and ranking must execute before result hydration"
+    l = min k : { ma_calls(f, c, "SqlIsNull"), within(a, c), attr_of(a, _, "candidate_kernel"), node_line_number(c, k) }.
+.violation MA029(at: match) "Candidate deduplication and ranking must execute before result hydration"
 MA029(@place(p, l)) :- ma_def(f, x, d), ma_impl(d), (icontains("deduplicat", x) ; icontains("rank", x)), doc(d, p, _),
-    l = min k : { ma_calls(f, c, y), ma_reorders(y), line(c, k) }.
+    l = min k : { ma_calls(f, c, y), ma_reorders(y), node_line_number(c, k) }.
 .decl ma_reorders(x: symbol)
 ma_reorders("sorted"). ma_reorders("setdefault").
-.violation MA022(at: span) "Matching pagination must lower a cursor predicate before result hydration"
+.violation MA022(at: match) "Matching pagination must lower a cursor predicate before result hydration"
 MA022(@place(p, l)) :- ma_def(f, x, d), ma_impl(d), icontains("paginat", x), doc(d, p, _),
     l = min k : { mf_walk(s, f), kind(s, "subscript"), field(s, "subscript", sl), kind(sl, "slice"),
-    !ma_multi_index(s), line(s, k) }.
+    !ma_multi_index(s), node_line_number(s, k) }.
 .decl ma_multi_index(s: node)                // `x[a:b, c]`: the index is a tuple, not a slice
 ma_multi_index(s) :- kind(s, "subscript"), field(s, "subscript", a), field(s, "subscript", b), a != b.
 // MA023: a Match*Count call with a constant positional argument, or arithmetic involving a constant.
@@ -417,9 +417,9 @@ ma_hard_counter(c) :- mf_call_name(c, x), prefix("Match", x), suffix("Count", x)
     ast_constant(a).
 ma_hard_counter(c) :- mf_call_name(c, x), prefix("Match", x), suffix("Count", x), ma_arg(c, _, a0), unparen(a0, a),
     kind(a, "binary_operator"), within(k, a), ast_constant(k).
-.violation MA023(at: span) "Runtime operation counters cannot use constants or size guesses"
+.violation MA023(at: match) "Runtime operation counters cannot use constants or size guesses"
 MA023(@place(p, l)) :- ma_def(f, _, d), ma_impl(d), doc(d, p, _),
-    l = min k : { mf_walk(c, f), ma_hard_counter(c), line(c, k) }.
+    l = min k : { mf_walk(c, f), ma_hard_counter(c), node_line_number(c, k) }.
 
 .violation MA038(at: node) "Bounded freshness must inspect transaction-local state without polling"
 MA038(f) :- ma_def(f, x, d), ma_impl(d), contains("bounded_watermark", x), mf_walk(n, f),
@@ -470,8 +470,8 @@ ma_owner(d) :- ma_doc(d), path_part(d, "l5250_matching"), doc(d, p, _), !prefix(
 // Cross-file: whether any owner file names the policy (decision 0652).
 .decl ma_branch_aware() cross_file
 ma_branch_aware() :- ma_owner(d), ma_text(d, t), contains("BranchAwareIndexPolicy", t).
-.violation MA033(at: span) "Authoritative matching maintenance must use the shared branch-aware index policy in production ownership"
+.violation MA033(at: match) "Authoritative matching maintenance must use the shared branch-aware index policy in production ownership"
 MA033(@place("l5250_matching/maintenance.py", 1)) :- ma_owner(_), !ma_branch_aware().
-.violation MA034(at: span) "Testing support cannot own the authoritative process-local matching maintenance mechanism"
+.violation MA034(at: match) "Testing support cannot own the authoritative process-local matching maintenance mechanism"
 MA034(@place(p, 1)) :- doc(d, p, _), p = "data_layer_testing/matching_operator.py", ma_text(d, t),
     contains("register_table_hook", t).

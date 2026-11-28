@@ -155,10 +155,24 @@ pub fn identities_of(entry: &Entry) -> Entry {
 
 /// Records that `entry` holds the relations of `identities`.
 pub fn cover<'a>(entry: &mut Entry, identities: impl Iterator<Item = &'a [u8; 32]>) {
-    let mut words: Vector<[i64; 2]> = covered(entry).into_iter().chain(identities.map(covered_words)).collect();
-    words.sort_unstable();
-    words.dedup();
-    entry.rows.insert(COVERED.to_owned(), (2, words.into_iter().flatten().collect()));
+    // The rows written once, flat, sorted as pairs in place: a set of the held words, a list of pairs and the rows
+    // made of it were 0.43 M on cold PostHog.
+    let mut flat: Vector<i64> = entry.rows.get(COVERED).map(|(_, v)| v.as_slice()).unwrap_or_default().iter().copied().collect();
+    flat.extend(identities.flat_map(covered_words));
+    let (pairs, _) = flat.as_chunks_mut::<2>();
+    pairs.sort_unstable();
+    let mut kept = 0;
+    for i in 0..pairs.len() {
+        if kept == 0 || pairs[i] != pairs[kept - 1] {
+            pairs[kept] = pairs[i];
+            kept += 1;
+        }
+    }
+    flat.truncate(2 * kept);
+    match entry.rows.get_mut(COVERED) {
+        Some(held) => *held = (2, flat),
+        None => { entry.rows.insert(COVERED.to_owned(), (2, flat)); }
+    }
 }
 
 /// Each of `rels`' identity in the file-local program `local` (decision 0225 §2): `plan::identities`, a digest of its
@@ -258,7 +272,7 @@ impl Strata {
             }
             // A setting (`file_local::setting_input`) keys a file's entry by the rows that file can read of it
             // (`SettingsDigests::identities`), not by all of them.
-            // A stage's export (decision 0675) keys it by the rows of it the file reads, at its probes (`StageDigests`).
+            // A stage's export (decision 0709) keys it by the rows of it the file reads, at its probes (`StageDigests`).
             let by_rows: Vec<&str> = reached
                 .iter()
                 .map(String::as_str)
@@ -534,7 +548,7 @@ fn key_bytes(out: &mut Vec<u8>, text: Option<&str>, int: i64) {
     }
 }
 
-/// The stages' exports (decision 0675 §3), each indexed by the columns its probes fix: a file's entry is kept under
+/// The stages' exports (decision 0709 §3), each indexed by the columns its probes fix: a file's entry is kept under
 /// the rows of an export at the values its probes (file-local outputs of its own rows) hold, not under every row.
 #[derive(Default)]
 pub struct StageDigests {
@@ -826,7 +840,7 @@ pub fn program_digest(v: &crate::code_rule_dsl::logic::program_image::Version) -
     let digest: [u8; 32] = hash.finalize().into();
     // `RERAIL_MEMO_PROGRAM_DUMP=dir`: what the digest is of, a file a digest (to find what moved a memo's key).
     if let Some(dir) = std::env::var_os("RERAIL_MEMO_PROGRAM_DUMP") {
-        let name: String = digest[..6].iter().map(|b| format!("{b:02x}")).collect();
+        let name: String = rerail_prof::code_rule_dsl::prof::lower_hex(&digest[..6]);
         let _ = std::fs::write(std::path::Path::new(&dir).join(format!("{name}.txt")), v.show());
     }
     digest
@@ -1239,6 +1253,11 @@ pub(super) fn found_all(store: &ContentStore, program: &Program, docs: &[(Source
 fn by_digest(store: &ContentStore, program: &Program, paths: &[&str], wanted: Vec<(usize, [u8; 32])>) -> StoreResult<Vec<(usize, Found)>> {
     let stored = !crate::code_rule_dsl::logic::profile::inside_waves();
     let space = crate::content_store::local_space(&plan_digest(program));
+    // Inside the waves only the entries admitted before them are read (decision 0104): a space not admitted (a cold
+    // run's, whose plan no earlier run stored) holds none here, and its values' rows are made again.
+    if !stored && !store.memo_admitted(&space) {
+        return Ok(Vec::new());
+    }
     let wanted: Vec<(usize, [u8; 32], i64)> = wanted.into_iter().map(|(i, d)| (i, d, part_of(&d, paths[i]))).collect();
     let parts: Vector<i64> = wanted.iter().map(|(_, _, p)| *p).collect();
     let mut blobs = {
@@ -1598,7 +1617,7 @@ impl Memo<'_> {
 
 /// The document a row's location value names: a node (`key << 32 | index`) or a document key.
 pub fn document_of(value: i64) -> i64 {
-    if value >= 1 << 32 { value >> 32 } else { value }
+    rerail_blocks::located::document_of(value)
 }
 
 // cratify: `tests` is rerail-logic's (it mounts it: it reads the language, `rr::parse_version`, or the corpus's root)

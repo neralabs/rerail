@@ -12,7 +12,7 @@ import { CONTRACT_CURSOR_EXECUTE_MESSAGE, CONTRACT_CURSOR_EXECUTE_RULE_ID, seedC
 import { cursorRelayed, steerLine, steerText } from "./support/steer-text.js";
 import { startTestRepository } from "../test/support/started-repository.js";
 import { setUpTestRepository } from "../test/support/repository-rules.js";
-import { testEngineEndpoint } from "../test/support/platform/engine-endpoint.js";
+import { startEngineAsDaemon, testEngineEndpoint } from "../test/support/platform/engine-endpoint.js";
 import { withExperiments } from "../test/support/environment/experiments.js";
 
 withExperiments("CONVERSATION_RULES");
@@ -120,7 +120,7 @@ describe("engine service", () => {
     try {
       await mkdir(join(root, "api"));
       await writeFile(join(root, "api/route.py"), "def route():\n    return 1\n");
-      service = await startEngineService({ socketPath, storageRoot, modelPath: resolve("model") });
+      service = await startEngineAsDaemon(isolatedRerailHome, { socketPath, storageRoot, modelPath: resolve("model") });
       const options = { storageRoot, modelPath: resolve("model"), kernelSocketPath: socketPath };
       const common = { session_id: "codex-resident", cwd: root };
       await runCodexHook({ ...common, hook_event_name: "SessionStart", source: "startup" }, options);
@@ -355,7 +355,7 @@ describe("engine service", () => {
           repeat: { mode: "once" },
         },
       ]);
-      service = await startEngineService({ socketPath, storageRoot, modelPath: resolve("model") });
+      service = await startEngineAsDaemon(isolatedRerailHome, { socketPath, storageRoot, modelPath: resolve("model") });
       const options = { storageRoot, modelPath: resolve("model"), kernelSocketPath: socketPath };
       const common = { workspace_roots: [root], conversation_id: "cursor", generation_id: "one" };
       await runCursorHook({ ...common, hook_event_name: "sessionStart" }, options);
@@ -431,7 +431,7 @@ describe("engine service", () => {
           repeat: { mode: "once" },
         },
       ]);
-      service = await startEngineService({ socketPath, storageRoot, modelPath: resolve("model") });
+      service = await startEngineAsDaemon(isolatedRerailHome, { socketPath, storageRoot, modelPath: resolve("model") });
       const options = { storageRoot, modelPath: resolve("model"), kernelSocketPath: socketPath };
       const common = {
         workspace_roots: [root],
@@ -490,7 +490,7 @@ describe("engine service", () => {
           repeat: { mode: "once" },
         },
       ]);
-      service = await startEngineService({ socketPath, storageRoot, modelPath: resolve("model") });
+      service = await startEngineAsDaemon(isolatedRerailHome, { socketPath, storageRoot, modelPath: resolve("model") });
       const options = { storageRoot, modelPath: resolve("model"), kernelSocketPath: socketPath };
       const common = { cwd: root, session_id: "stop-rule", turn_id: "turn" };
       await runCodexHook({ ...common, hook_event_name: "SessionStart", source: "startup" }, options);
@@ -560,7 +560,7 @@ describe("engine service", () => {
           repeat: { mode: "once" },
         },
       ], databasePath);
-      service = await startEngineService({ socketPath, storageRoot, modelPath: resolve("model") });
+      service = await startEngineAsDaemon(isolatedRerailHome, { socketPath, storageRoot, modelPath: resolve("model") });
       const options = {
         storageRoot,
         databasePath,
@@ -679,7 +679,7 @@ describe("engine service", () => {
           repeat: { mode: "once" },
         },
       ], databasePath);
-      service = await startEngineService({ socketPath, storageRoot, modelPath: resolve("model") });
+      service = await startEngineAsDaemon(isolatedRerailHome, { socketPath, storageRoot, modelPath: resolve("model") });
       const options = {
         storageRoot,
         databasePath,

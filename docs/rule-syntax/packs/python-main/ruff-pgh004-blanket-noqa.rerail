@@ -8,11 +8,11 @@
 // own_line(n): the JSON util `own-line`, used where the JSON says `matches: "own-line"`
 .decl pgh004_own_line(n: node)
 pgh004_own_line(n) :- node(_, n, _, _, _),
-    count : { pgh004_code_before_line(n, l3), line(n, l4), k1 = l4 - l3, k1 = 0 } = 0.
+    count : { pgh004_code_before_line(n, l3), node_line_number(n, l4), k1 = l4 - l3, k1 = 0 } = 0.
 
 // missing_colon(n): the JSON util `missing-colon`, used where the JSON says `matches: "missing-colon"`
 //   D: metavariable this relation binds for the calling rule
-.decl pgh004_missing_colon(n: node, d: loc)
+.decl pgh004_missing_colon(n: node, d: match)
 pgh004_missing_colon(n, D) :- kind(n, "comment"),
     match("[^#]*(?:#\\s*(?i:[^\\s#n][^#]*|n(?:[^#o][^#]*)?|no(?:[^#q][^#]*)?|noq(?:[^#a][^#]*)?)?)*(?<D>#\\s*(?i:noqa)\\s+)[\\s,]*[A-Z]+[0-9]+(?:[\\s,]*[A-Z]+[0-9]+)*(?:$|#|[\\s,]+(?:$|[^\\s,A-Z]|[A-Z]+(?:[^A-Z0-9]|$))).*", n).
 
@@ -29,7 +29,7 @@ pgh004_enabled(n) :- pgh004_demand_enabled(n), inside(n, p1, "module"),
 // PGH004(n, detail): findings from clauses `blanket-noqa`, `noqa-missing-colon`. Their messages differ only in
 // `detail`: each rule's head gives its clause's words. Each rule is one way a JSON `rule` can match.
 // Columns after `at` are the metavariables the JSON's message, anchor or `each` names: one finding per distinct row.
-.violation PGH004(at: loc, d: node, detail: symbol) "{detail}."
+.violation PGH004(at: match, d: node, detail: symbol) "{detail}."
 PGH004(D, n, "Replace the blanket `noqa` with the codes it should silence, as in `# noqa: F401`, so other problems on this line still surface; delete it if nothing needs silencing") :- kind(n, "comment"),
     match("[^#]*(?:#\\s*(?i:[^\\s#n][^#]*|n(?:[^#o][^#]*)?|no(?:[^#q][^#]*)?|noq(?:[^#a][^#]*)?)?)*(?<D>#\\s*(?i:noqa))(?:$|#|\\s+(?:$|[^\\s:])).*", n),
     !pgh004_missing_colon(n, D), pgh004_enabled(n).
@@ -51,11 +51,11 @@ pgh004_code_comment_end(p, o) :- child(p, c, _), comment(c, _), node(_, c, _, _,
 .decl pgh004_code_before_line(x: node, l: number)
 pgh004_code_before_line(x, l) :- structural_before(x, g), match("(?s).*\\S\\s*", g),
     ws = @replace_all(g, "(?s)^.*\\S", ""),
-    k = strlen(ws) - strlen(@replace_all(ws, "\n", "")), line(x, lx), l = lx - k.
+    k = strlen(ws) - strlen(@replace_all(ws, "\n", "")), node_line_number(x, lx), l = lx - k.
 pgh004_code_before_line(x, l) :- structural_before(x, g), match("\\s*", g), child(p, x, _),
     node(_, x, _, s, _), o = s - strlen(g), token(p, _, _, _, o),
     !pgh004_code_comment_end(p, o), k = strlen(g) - strlen(@replace_all(g, "\n", "")),
-    line(x, lx), l = lx - k.
+    node_line_number(x, lx), l = lx - k.
 pgh004_code_before_line(x, l) :- structural_before(x, g), match("\\s*", g), child(p, x, _),
     node(_, x, _, s, _), node(_, p, _, ps, _), ps = s - strlen(g),
     pgh004_code_before_line(p, l).

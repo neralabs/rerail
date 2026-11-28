@@ -10,7 +10,7 @@
 // PYI030(n): a finding at node n, from clause `unnecessary-literal-union`.
 // Each rule below is one way the JSON `rule` can match.
 // Columns after `at` are the metavariables the JSON's message, anchor or `each` names: one finding per distinct row.
-.violation PYI030(at: loc, u: node) "Merge the `Literal[...]` members of this union into one `Literal[...]`, keeping the other members, e.g. `Literal[1, 2] | str`; leave it alone if fewer than two members are `Literal[...]`."
+.violation PYI030(at: node, u: node) "Merge the `Literal[...]` members of this union into one `Literal[...]`, keeping the other members, e.g. `Literal[1, 2] | str`; leave it alone if fewer than two members are `Literal[...]`."
     suppress noqa "PYI030"
 PYI030(U, n) :- pyi030_top_literal_union(n), node(_, n, _, _, _), U = n.
 PYI030(U, n) :- pyi030_string_union(n, U).
@@ -82,20 +82,20 @@ pyi030_top_literal_union(n) :- pyi030_union_expr(n),
 
 // string_union(n): the JSON util `string-union`, used where the JSON says `matches: "string-union"`
 //   U: metavariable this relation binds for the calling rule
-.decl pyi030_string_union(n: node, u: loc)
+.decl pyi030_string_union(n: node, u: node)
 pyi030_string_union(n, U) :- pyi030_simple_string(n, U).
 pyi030_string_union(n, U) :- pyi030_complex_string(n, U).
 
 // simple_string(n): the JSON util `simple-string`, used where the JSON says `matches: "simple-string"`
 //   U: metavariable this relation binds for the calling rule
-.decl pyi030_simple_string(n: node, u: loc)
+.decl pyi030_simple_string(n: node, u: node)
 pyi030_simple_string(n, U) :- kind(n, "string"),
     count : { has(n, c1, "escape_sequence"), node(_, c1, _, _, _) } = 0,
     parsed(n, "annotation", r2), within(c3, r2), pyi030_alt_3(c3, U).
 
 // complex_string(n): the JSON util `complex-string`, used where the JSON says `matches: "complex-string"`
 //   U: metavariable this relation binds for the calling rule
-.decl pyi030_complex_string(n: node, u: loc)
+.decl pyi030_complex_string(n: node, u: node)
 pyi030_complex_string(n, U) :-
     ( kind(n, "concatenated_string")
     ; kind(n, "string"), has(n, c1, "escape_sequence"), node(_, c1, _, _, _)
@@ -216,7 +216,7 @@ pyi030_stop_2(n) :- node(_, n, _, _, _), !pyi030_container(n).
 
 // alt_3(n): the JSON `any`: n matches if any one of these rules does
 //   U: metavariable this relation binds for the calling rule
-.decl pyi030_alt_3(n: node, u: loc)
+.decl pyi030_alt_3(n: node, u: node)
 pyi030_alt_3(n, U) :- pyi030_top_literal_union(n), U = n.
 pyi030_alt_3(n, U) :- pyi030_string_union(n, U).
 
@@ -235,7 +235,7 @@ pyi030_stop_13(n) :- node(_, n, _, _, _), !pyi030_alt_10(n).
 
 // alt_11(n): the JSON `any`: n matches if any one of these rules does
 //   U: metavariable this relation binds for the calling rule
-.decl pyi030_alt_11(n: node, u: loc)
+.decl pyi030_alt_11(n: node, u: node)
 pyi030_alt_11(n, U) :- within(c1, n), pyi030_string_union(c1, U).
 pyi030_alt_11(n, U) :- within(c2, n), pyi030_last_name(c2), pyi030_literal_name(c2), within(c3, n), pyi030_bar(c3),
     count : { pyi030_stop_12_within(c3, p4), pyi030_bar(p4) } = 0,

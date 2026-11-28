@@ -14,7 +14,7 @@
 //   """
 #include "python/docstrings-sections.rerail"
 
-.violation D411(at: span, k: symbol) code "D411"
+.violation D411(at: place, k: symbol) code "D411"
     "Add a blank line before the `{k}` section so it is separated from the text above."
     suppress ruff "D411"
 D411(at, v) :- doc_section(s, i, v, _, _, _), !doc_blank(s, i - 1), doc_at(s, i, at).

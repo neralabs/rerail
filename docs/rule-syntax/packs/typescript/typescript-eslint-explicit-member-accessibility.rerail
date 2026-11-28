@@ -13,7 +13,7 @@
 //   "off":                     either way
 // `accessibility` sets the level, and overrides/constructors, /accessors, /methods, /properties and
 // /parameterProperties set it per kind; ignoredMethodNames skips methods by name. `#private` members are left alone.
-.violation explicit_member_accessibility(at: loc, msg: symbol) code "@typescript-eslint/explicit-member-accessibility"
+.violation explicit_member_accessibility(at: place, msg: symbol) code "@typescript-eslint/explicit-member-accessibility"
     "{msg}"
     suppress eslint "@typescript-eslint/explicit-member-accessibility"
     suppress oxlint "explicit-member-accessibility"

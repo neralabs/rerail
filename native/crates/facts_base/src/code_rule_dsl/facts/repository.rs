@@ -665,7 +665,7 @@ pub mod tests {
         write("web/src/a.ts", "");
         // The store's folder is the user's alone, whatever the umask (decision 0574).
         rerail_blocks::mapped::make_folder(&tmp.path().join("store")).unwrap();
-        let store = ContentStore::open(&tmp.path().join("store").join("store.db")).unwrap();
+        let store = rerail_store::content_store::ContentStore::open(&tmp.path().join("store").join("store.db")).unwrap();
         let docs = ["web/src/a.ts".to_owned()];
         let all = |_: &str| true;
         // The settings relations a run binds, by name, each as its sorted rows.

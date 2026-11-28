@@ -133,8 +133,8 @@ binop(n, o, l, r) :- kind(n, "binary_expression"), op(n, o), field(n, "left", a)
 // op_token(n, t): the token after the left field. That field keeps its parentheses, so in `(a) == b` the
 // token after it is `==`, not `)`.
 .stored op_token "a binary operator is a choice, so the tape keeps the token after the left operand"
-.decl op_token(n: node, t: span)
-op_token(n, t) :- kind(n, "binary_expression"), field(n, "left", a), token_after(a, t).
+.decl op_token(n: node, t: token)
+op_token(n, t) :- kind(n, "binary_expression"), field(n, "left", a), node_to_token_after(a, t).
 .decl equality(o: symbol, strict: symbol)
 equality("==", "false"). equality("!=", "false"). equality("===", "true"). equality("!==", "true").
 

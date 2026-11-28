@@ -19,11 +19,19 @@
 // Names used below: `d` a document id, `n`/`p`/`c`/`a` nodes, `s`/`v`/`k` symbols.
 
 // ---- types -------------------------------------------------------------------------------------------------------
-// A node is a syntax-tree node: an id on the tape. A span is a piece of one node's text, made by a regex capture
-// (see `match` below). Relations that read source text (text, line, the edits) take either: `loc`.
+// Four place types (decision 0724 §3), none of them another: a variable is at most one, and a column holds one.
+// Converting between them is a function a rule calls (node_to_line, line_to_node, match_to_node, …, below).
+//   node   a syntax-tree node: an id on the tape (comments and the tokens the tape stores are nodes)
+//   line   a line of a document, or its whole source (document_line, document_source)
+//   match  a match of a regex in a place's text, or a named group of one (node_regex_match, below)
+//   token  a token of the tree, in source order, named or anonymous (node_to_first_token, below)
+// `place` is any of them: the engine's own reads (text, docof, …) take one alike, and a rule reads them as a node's;
+// a line's, a match's and a token's readers are their own relations (line_text, match_text, token_text, …).
 .type node <: number
-.type span <: number
-.type loc = node | span
+.type line <: number
+.type match <: number
+.type token <: number
+.type place = node | line | match | token
 // A node's name across files (decision 0722): its granule's key, an atom, in the high 32 bits, its steps from there
 // below. The one value made from a node that may cross into the cross-file part (0677 as amended); the store maps its
 // atom as a symbol's (column type `p`).
@@ -74,7 +82,7 @@
 // text(n, "foo") for the identifier `foo`; text(call, "f(a, b)") for the call. Every node's and span's source
 // text exactly as written, comments and spacing inside it included. Interned, so equal texts compare as equal
 // symbols cheaply. For an identifier's or a dotted name's text, `name` (below) is the typed relation.
-.decl text(n: loc, s: symbol)                            // source text, interned
+.decl text(n: place, s: symbol)                            // source text, interned
 .layout text key(n) local values(s, rows / 5)
 // Every anonymous token child of n, punctuation included: in `a + b`, op(binary, "+"); in `a not in b`,
 // op(cmp, "not in") (one token); in `async def f()`, op(def, "async"); in `f(a, b)`,
@@ -83,17 +91,17 @@
 .decl op(n: node, s: symbol)                             // an anonymous token child: operators, keywords, punctuation
 .layout op fanout(n -> s, few) local values(s, ~100)
 // docof(n, d): the document node n was parsed from. Joins a node to doc(d, path, module).
-.decl docof(n: loc, d: number)
+.decl docof(n: place, d: number)
 .layout docof key(n) local values(d, documents)
 // line(n, 12): used in messages ("at line {outer.line}") and line-based suppressions.
-.decl line(n: loc, l: number)                            // 1-based start line
+.decl line(n: place, l: number)                           // 1-based start line
 .layout line key(n) local values(l, within document)
 // unset(x): one row, the empty value. A rule translated from ast-grep binds a metavariable that its match left
 // empty to it: an `any` alternative that does not mention $X, as ast-grep allows. text(x, "") holds, and no
 // tree relation has it, so `kind(X, …)` on an empty metavariable is false, as in ast-grep.
-.decl unset(x: loc)
+.decl unset(x: place)
 // list_len(l, k): list variable l (a $$$X of a pattern) has k nodes. For a JSON `count` transform.
-.decl list_len(l: loc, k: number)
+.decl list_len(l: node, k: number)
 // value(n, "a\nb") for the literal "a\\nb"; value(n, "255") for 0xff. Lets rules compare literals by meaning.
 .decl value(n: node, v: symbol)  // static value of a literal: strings unescaped, numbers normalised
 // str(n, "react") for the literal 'react' or "react": the decoded contents (escapes applied; a raw literal keeps
@@ -163,18 +171,18 @@
 // U+2029 too for C# (Roslyn); a form feed too for CSS. A \n\r is two line ends wherever \r is one. src_line and every
 // place (line, end_line, col of a node, token, comment, match or line) are read off those lines.
 // source(d, sp): the whole file as one span. match_all over it gives spans with lines.
-.decl source(d: number, sp: span)
+.decl source(d: number, sp: line)
 // src_line(d, 12, sp): line 12, without its terminator, the empty line after a final terminator included: the
 // lines line(n, l) numbers. A script's own splitting is a rule's over them (lib/data-layer/pub-lines.rerail's
 // py_line: Python's str.splitlines()).
-.decl src_line(d: number, l: number, sp: span)
+.decl src_line(d: number, l: number, sp: line)
 // line_count(d, k): the lines a linter counts (ESLint's max-lines, pylint's too-many-lines): src_line's, the empty
 // line after a final terminator left out, so an empty file has none.
 .decl line_count(d: number, k: number)
 // end_line(n, l): the line holding n's end offset, as `layout` counts: its last character's, except that a node
 // ending with a line terminator (a module) ends on the line after it.
-.decl end_line(n: loc, l: number)
-.decl col(n: loc, c: number)                             // 0-based byte column of the start, for keys that need one
+.decl end_line(n: place, l: number)
+.decl col(n: place, c: number)                            // 0-based byte column of the start, for keys that need one
 // node_text(n, "f(x,\n  y)"): n's source text exactly, comments and strings in it included: what a `regex` on a
 // node reads. text(n, s) on a node is the interned token text of names (above).
 .decl node_text(n: node, s: symbol)
@@ -210,16 +218,69 @@
 // A token is a span, as a regex capture is: text, line, end_line and col apply to it, a finding can sit on it,
 // and an edit can replace it. Read off the tree; no text is scanned.
 // In `if (a) b();`: first_token(if, `if`), last_token(if, `;`), token_before(b(), `)`), token_after(`if`, `(`).
-.decl first_token(n: node, t: span)                     // n's first token
-.decl last_token(n: node, t: span)                      // n's last token
-.decl token_before(x: loc, t: span)                     // the token just before node or token x
-.decl token_after(x: loc, t: span)                      // the token just after node or token x
+.decl first_token(n: node, t: token)                    // n's first token
+.decl last_token(n: node, t: token)                     // n's last token
+.decl token_before(x: place, t: token)                    // the token just before node or token x
+.decl token_after(x: place, t: token)                     // the token just after node or token x
 .input first_token, last_token, token_before, token_after
 // end_point(n, p): the point where n ends, an empty span at its end offset: its line is end_line's (a node ending
 // with a line terminator ends on the next line) and its col the byte column there. A finding can sit on it: main's
 // `witness.end`. Read off n's own span, not a token, so a token the tape leaves out cannot move it.
-.decl end_point(n: node, p: span)
+.decl end_point(n: node, p: node)
 .input end_point
+
+// ---- the place types' readers and conversions (decision 0724 §4) ------------------------------------------------
+// A conversion is <from>_to_<to>(input, output), after Soufflé's to_number and to_string: a relation, so it can fail
+// or give several answers. A reader of a line, a match or a token is <type>_<what>. A node's own relations keep their
+// names (text, kind, field, child, docof, within, …). The engine's reads above that take any place (line, end_line,
+// col, source, src_line, first_token, last_token, token_before, token_after, end_point) are read only through these:
+// a rule that names one is refused. Each is lowered to those reads (`lower::core`), and none makes rows.
+.decl node_line_number(n: node, k: number)               // n's 1-based start line, as a number
+.decl node_end_line_number(n: node, k: number)           // the line holding n's end (end_line's)
+.decl node_start_column(n: node, c: number)              // n's 0-based byte column
+.decl node_to_line(n: node, l: line)                     // the line n starts on
+.decl node_to_end_line(n: node, l: line)                 // the line n ends on
+.decl line_to_node(l: line, n: node)                     // each node that starts on line l
+.decl node_to_first_token(n: node, t: token)             // n's first token
+.decl node_to_last_token(n: node, t: token)              // n's last token
+.decl node_to_token_before(n: node, t: token)            // the token just before n
+.decl node_to_token_after(n: node, t: token)             // the token just after n
+.decl node_to_end_position(n: node, p: node)             // the point where n ends (end_point's)
+.decl match_to_node(m: match, n: node)                   // each node whose span is exactly m's; none when none is
+.decl document_line(d: number, l: line)                  // each line of document d (src_line's)
+.decl document_source(d: number, l: line)                // d's whole source, a line of its own (source's)
+.decl document_line_by_number(d: number, k: number, l: line)  // line l of document d, numbered k (src_line's)
+.decl line_number(l: line, k: number)                    // l's 1-based number; 0 for a document's whole source
+.decl line_text(l: line, s: symbol)                      // l's text, without its terminator
+.decl line_document(l: line, d: number)
+.decl token_text(t: token, s: symbol)
+.decl token_document(t: token, d: number)
+.decl token_line_number(t: token, k: number)
+.decl token_end_line_number(t: token, k: number)
+.decl token_start_column(t: token, c: number)
+.decl token_previous(t: token, p: token)                 // the token just before t
+.decl token_next(t: token, x: token)                     // the token just after t
+.decl match_text(m: match, s: symbol)
+.decl match_document(m: match, d: number)
+.decl match_line_number(m: match, k: number)
+.decl match_end_line_number(m: match, k: number)
+.decl match_start_column(m: match, c: number)
+// A place of any of the four types: a relation's column declared `place` (a finding's place, a metavariable that a
+// node or a regex's group binds) takes any of them in a rule's head; read from it, a value is a `place`, no other.
+.decl place_to_node(p: place, n: node)                   // p, where p is a node; none where it is not
+.decl place_text(p: place, s: symbol)
+.decl place_document(p: place, d: number)
+.decl place_line_number(p: place, k: number)
+.decl place_end_line_number(p: place, k: number)
+.decl place_start_column(p: place, c: number)
+.decl place_to_first_token(p: place, t: token)           // p's first token: a node's, or a token itself
+.decl place_to_last_token(p: place, t: token)            // p's last token
+.decl place_to_token_before(p: place, t: token)          // the token just before p
+.decl place_to_token_after(p: place, t: token)           // the token just after p
+.decl place_to_end_position(p: place, e: node)           // the point where p ends
+// Regexes over a place: node_regex_match("re", n, m), each match m of re in n's text, leftmost-first and
+// non-overlapping, its named groups bound as matches too; node_regex_group("re", n, m, "name", g), match m's named
+// group g. The same over a line (line_regex_match), a match and a token. match("re", s) reads a symbol, as Soufflé's.
 // The source around a node, for layout questions (a line break, a `;`, spacing): structural_before(n, s) holds
 // the source between n's start and the end of the node just before it among its parent's stored children (or
 // the parent's start, for a first child); structural_after(n, s) the source between n's end and the start of
@@ -238,15 +299,16 @@
 // The graph is across files, so it is keyed by each definition's symbol, never its node (decision 0677): a file's
 // rules place a symbol on its own definition by reference_def.
 // reference_def(f, s): definition f (a function_definition or class_definition node) has symbol s.
-.decl reference_def(n: node, s: symbol) extensible  // a hook Python's library fills (python/references.rerail, decision 0263)
+.decl reference_def(n: node, s: symbol) extensible  // a hook Python's library fills (python/reference-defs.rerail, decision 0263)
 // reference_edge(f, g, "self"): definition f's body refers to definition g, here as `self.g`, f and g their
 // symbols; via is how: name, bare, unqualified, self, super, field, param_type, late or sibling.
 .decl reference_edge(src: symbol, dst: symbol, via: symbol) extensible  // as reference_def
 // reference_open(f): definition f refers to something no static name denotes, or f's file does not parse: what f
 // reaches is not all known.
 .decl reference_open(s: symbol) extensible  // as reference_def
-// All three are rules, not inputs (decision 0483): a program that reads them includes python/references.rerail, the one
-// file that derives them.
+// All three are rules, not inputs (decision 0483): a program that reads them includes python/references.rerail, the
+// one file that derives the graph (or python/references_w.rerail, W's Rust graph, in its place: `rr::DERIVED_BY`),
+// and both take reference_def from python/reference-defs.rerail.
 
 // ---- tree structure (tape arithmetic, never Datalog recursion) -------------------------------------------------
 // These answer ancestor and sibling questions from node offsets. A recursive `ancestor` relation in Datalog
@@ -536,7 +598,7 @@
 // Places. @place("api/LAYER_GROUPS.yaml", 1) is a span at line 1 of that path, and @place(path, 0) the file
 // itself. It is how a finding sits where there is no node: a missing required file, an allowlist, a baseline,
 // a Markdown line. The path need not exist. text is "" and docof has no row.
-.functor place(path: symbol, line: number): span
+.functor place(path: symbol, line: number): line
 //
 // Text for keys and signatures.
 .functor count_matches(re: symbol, s: symbol): number    // non-overlapping matches of re anywhere in s
@@ -559,10 +621,10 @@
 // @text_len(n): the length in characters of n's text, a node's, a token's or a span's (a line, `src_line`): what
 // strlen(t) of `text(n, t)` is, counted where the source holds it, so no text is made: a width check, a literal's
 // digits, a prefix's dots.
-.functor text_len(n: loc): number
+.functor text_len(n: place): number
 // @indent(n): how many spaces, tabs and form feeds n's text starts with, counted where the source holds it: a line's
 // text before column k is whitespace when @indent(line) >= k (its whitespace is a byte a character).
-.functor indent(n: loc): number
+.functor indent(n: place): number
 // @node_path(n): n's node path (decision 0722), the same in every run while its granule's key and its steps hold;
 // @path_node(p): the node p names, in the per-file part of p's document (another document's gives none);
 // @path_unit(p): the path of p's granule itself (a definition or a statement of a container).
@@ -758,10 +820,10 @@
 // After a fix is applied, Rerail re-checks the edited files; the finding must be gone (checked in rule tests).
 //
 // replace(n, `$A or $B`): n's source (a node or a captured span) becomes the text.
-.edit replace(n: loc, text: symbol)                      // built in
+.edit replace(n: place, text: symbol)                    // built in
 // delete(n): remove n. In a list (arguments, parameters, import names, JSX children, dict entries) one separator
 // goes with it; a statement alone on its lines takes its lines with it, so no blank line is left behind.
-.edit delete(n: loc)                                     // built in
+.edit delete(n: place)                                   // built in
 // insert_before(n, `x = 1`) / insert_after(n, …): new text as n's sibling. Before or after a statement it goes on
 // its own line at n's indentation; in a list it gets a separator.
 .edit insert_before(n: node, text: symbol)               // built in

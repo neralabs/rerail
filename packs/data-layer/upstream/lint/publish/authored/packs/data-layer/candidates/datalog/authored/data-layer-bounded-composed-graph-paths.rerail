@@ -29,11 +29,11 @@
 .decl text_contract_present(p: symbol)
 text_contract_present(p) :- doc(d, p, _), in_scope(d).
 .decl text_contract_src(p: symbol, t: symbol)
-text_contract_src(p, t) :- doc(d, p, _), in_scope(d), source(d, sp), text(sp, t).
-.decl text_contract_span(p: symbol, l: number, sp: span)
-text_contract_span(p, l, sp) :- doc(d, p, _), in_scope(d), src_line(d, l, sp).
+text_contract_src(p, t) :- doc(d, p, _), in_scope(d), document_source(d, sp), line_text(sp, t).
+.decl text_contract_span(p: symbol, l: number, sp: line)
+text_contract_span(p, l, sp) :- doc(d, p, _), in_scope(d), document_line(d, sp), line_number(sp, l).
 .decl text_contract_line(p: symbol, l: number, u: symbol)
-text_contract_line(p, l, u) :- text_contract_span(p, l, sp), text(sp, u).
+text_contract_line(p, l, u) :- text_contract_span(p, l, sp), place_text(sp, u).
 // next(p, l, j): line j follows line l (the recursions below step along it, creating no values).
 .decl text_contract_next(p: symbol, l: number, j: number)
 text_contract_next(p, l, j) :- text_contract_line(p, l, _), j = l + 1, text_contract_line(p, j, _).
@@ -94,7 +94,7 @@ text_contract_has_cls(p, c) :- text_contract_cls(p, c, _).
 // The header's own match (`\A(class C(?:\[[^\n]*\])?(?:\([^\n]*\))?:)`, greedy): the text after it on line h is the
 // group `rest` (a class name is a whole identifier: `class C` is followed by `[`, `(` or `:`).
 .decl text_contract_cquirk(p: symbol, c: symbol)
-text_contract_cquirk(p, c) :- text_contract_cls(p, c, h), text_contract_span(p, h, sp), match_group("\\Aclass (?P<n>[A-Za-z0-9_]+)(?:\\[[^\\n]*\\])?(?:\\([^\\n]*\\))?:(?P<rest>.*)\\z", sp, m, "n", gn), text(gn, c), match_group("\\Aclass (?P<n>[A-Za-z0-9_]+)(?:\\[[^\\n]*\\])?(?:\\([^\\n]*\\))?:(?P<rest>.*)\\z", sp, m, "rest", gr), text(gr, r), match("(?:class |def |async def ).*", r).
+text_contract_cquirk(p, c) :- text_contract_cls(p, c, h), text_contract_span(p, h, sp), place_regex_group("\\Aclass (?P<n>[A-Za-z0-9_]+)(?:\\[[^\\n]*\\])?(?:\\([^\\n]*\\))?:(?P<rest>.*)\\z", sp, m, "n", gn), match_text(gn, c), place_regex_group("\\Aclass (?P<n>[A-Za-z0-9_]+)(?:\\[[^\\n]*\\])?(?:\\([^\\n]*\\))?:(?P<rest>.*)\\z", sp, m, "rest", gr), match_text(gr, r), match("(?:class |def |async def ).*", r).
 .decl text_contract_top(p: symbol, l: number)
 text_contract_top(p, l) :- text_contract_line(p, l, u), match("(?:class |def |async def ).*", u).
 .decl text_contract_cafter(p: symbol, c: symbol, l: number)
@@ -182,7 +182,7 @@ text_contract_m0(k, a) :- text_contract_mhdr(k, _), a = min x : { text_contract_
 // The block is the header alone when the text after its `(` starts `    @`, `    def ` or `    async def `.
 .decl text_contract_mquirk(k: symbol)
 text_contract_mquirk(k) :- text_contract_m0(k, a), text_contract_mcross(k, a, j), text_contract_mspec(k, p, _), text_contract_line(p, j, u), match("[\\s\\x1c-\\x1f]*\\((?:    @|    (?:async )?def ).*", u).
-text_contract_mquirk(k) :- text_contract_m0(k, a), !text_contract_mcross(k, a, _), text_contract_mspec(k, p, _), text_contract_span(p, a, sp), match_group("\\A(?P<head>    (?:async )?def (?P<n>[A-Za-z0-9_]+)(?:\\[[^\\n]*\\])?[\\s\\x1c-\\x1f]*\\()(?P<rest>.*)\\z", sp, m, "rest", gr), text(gr, r), match("(?:    @|    (?:async )?def ).*", r).
+text_contract_mquirk(k) :- text_contract_m0(k, a), !text_contract_mcross(k, a, _), text_contract_mspec(k, p, _), text_contract_span(p, a, sp), place_regex_group("\\A(?P<head>    (?:async )?def (?P<n>[A-Za-z0-9_]+)(?:\\[[^\\n]*\\])?[\\s\\x1c-\\x1f]*\\()(?P<rest>.*)\\z", sp, m, "rest", gr), match_text(gr, r), match("(?:    @|    (?:async )?def ).*", r).
 .decl text_contract_mtop(p: symbol, l: number)
 text_contract_mtop(p, l) :- text_contract_line(p, l, u), match("    (?:@|(?:async )?def ).*", u).
 .decl text_contract_mafter(k: symbol, l: number)
@@ -197,7 +197,7 @@ text_contract_min(k, l, u) :- text_contract_m0(k, l0), !text_contract_mquirk(k),
 // The header alone: line m0 through its `(` (a crossing header's other lines are blanks and `(`).
 .decl text_contract_mhead(k: symbol, s: symbol)
 text_contract_mhead(k, u) :- text_contract_mquirk(k), text_contract_m0(k, a), text_contract_mcross(k, a, _), text_contract_mspec(k, p, _), text_contract_line(p, a, u).
-text_contract_mhead(k, h) :- text_contract_mquirk(k), text_contract_m0(k, a), !text_contract_mcross(k, a, _), text_contract_mspec(k, p, _), text_contract_span(p, a, sp), match_group("\\A(?P<head>    (?:async )?def (?P<n>[A-Za-z0-9_]+)(?:\\[[^\\n]*\\])?[\\s\\x1c-\\x1f]*\\()(?P<rest>.*)\\z", sp, m, "head", gh), text(gh, h).
+text_contract_mhead(k, h) :- text_contract_mquirk(k), text_contract_m0(k, a), !text_contract_mcross(k, a, _), text_contract_mspec(k, p, _), text_contract_span(p, a, sp), place_regex_group("\\A(?P<head>    (?:async )?def (?P<n>[A-Za-z0-9_]+)(?:\\[[^\\n]*\\])?[\\s\\x1c-\\x1f]*\\()(?P<rest>.*)\\z", sp, m, "head", gh), match_text(gh, h).
 .decl text_contract_mok(k: symbol)
 
 // ---- all-present: every regex matches the whole text ------------------------------------------------------------

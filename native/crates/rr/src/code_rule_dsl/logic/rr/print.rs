@@ -192,7 +192,13 @@ impl<'v> Printer<'v> {
             return Ok(if has { format!("{bang}has({x}, {n}, {set})") } else { format!("{bang}inside({n}, {x}, {set})") });
         }
         let builtin = BUILTINS.contains(&rel) && !self.v.declares(rel);
-        let name = if builtin { rel.to_owned() } else { relation(rel) };
+        // An engine read the program does not derive (a T program derives its own `docof`) by its typed name.
+        let derived = self.v.rel(rel).is_some_and(|r| self.v.heads(r).next().is_some());
+        let name = match super::place_type::printed_name(rel).filter(|_| !derived) {
+            Some(typed) => typed.to_owned(),
+            None if builtin => rel.to_owned(),
+            None => relation(rel),
+        };
         Ok(format!("{bang}{name}({})", self.args(r, a)?))
     }
 
@@ -372,9 +378,13 @@ fn print_written(v: &Version) -> Result<String, Error> {
                     };
                     printed.push(format!("{c}: {column}"));
                 }
-                // `core.rerail`'s `docof` over nodes and spans stays an input (`lower::projections`).
-                _ if i == 0 && name == "docof" && inputs.iter().any(|r| r == "docof") => printed.push(format!("{c}: loc")),
+                // `core.rerail`'s `docof` over every place stays an input (`lower::projections`).
+                _ if i == 0 && name == "docof" && inputs.iter().any(|r| r == "docof") => printed.push(format!("{c}: place")),
                 _ if tapes.get(&name).is_some_and(|cols| cols.contains(&i)) => printed.push(format!("{c}: tape")),
+                // A program's own place column: the lowering holds every place as a node (`lower::ty`, decision 0724
+                // §3), so which place it held is not known here; `place` lowers to the same column, and the type check
+                // takes it for the one type its rows' other columns give.
+                _ if t == "node" && !super::lower::core::is_core(&name) => printed.push(format!("{c}: place")),
                 _ => printed.push(format!("{c}: {}", ty(t))),
             }
         }

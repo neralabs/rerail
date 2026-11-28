@@ -11,7 +11,7 @@
 // Each rule below is one way the JSON `rule` can match.
 // Columns after `at` are the metavariables the JSON's message, anchor or `each` names: one finding per distinct row.
 // The JSON `constraints` on L, V are added to every rule.
-.violation PERF403(at: node, l: loc) "Build the dict with a comprehension (`{{k: v for ...}}`); if `{l}` is not a fresh empty dict assigned just before the loop, pass that comprehension to `{l}.update(...)` instead."
+.violation PERF403(at: node, l: node) "Build the dict with a comprehension (`{{k: v for ...}}`); if `{l}` is not a fresh empty dict assigned just before the loop, pass that comprehension to `{l}.update(...)` instead."
     suppress noqa "PERF403"
 PERF403(n, L) :- kind(n, "assignment"), n ~ `$_[$K] = $V`,
     count : { field(n, "type", c1), kind(c1, "type") } = 0, field(n, "left", c2),
@@ -63,7 +63,7 @@ perf403_dict_bound(n) :- kind(n, "identifier"), perf403_alt_4(n).
 
 // plain_name(n): the JSON util `plain-name`, used where the JSON says `matches: "plain-name"`
 //   L: metavariable this relation binds for the calling rule
-.decl perf403_plain_name(n: node, l: loc)
+.decl perf403_plain_name(n: node, l: node)
 perf403_plain_name(n, L) :- kind(n, "identifier"), node(_, n, _, _, _), L = n.
 perf403_plain_name(n, L) :- kind(n, "parenthesized_expression"), child(n, c1, _),
     perf403_plain_name(c1, L).
@@ -74,31 +74,31 @@ perf403_only_stmt(n) :- node(_, n, _, _, _), !perf403_alt_9(n).
 
 // ref(n): the JSON util `ref`, used where the JSON says `matches: "ref"`
 //   L: metavariable of the calling rule, passed in (bound by the caller)
-.decl perf403_ref(n: node, l: loc)
+.decl perf403_ref(n: node, l: node)
 perf403_ref(n, L) :- perf403_demand_ref(n, L), kind(n, "identifier"), text(n, t_l1), text(L, t_l1),
     !perf403_alt_12(n), @doc(n) = @doc(L).
 
 // has_ref(n): the JSON util `has-ref`, used where the JSON says `matches: "has-ref"`
 //   L: metavariable of the calling rule, passed in (bound by the caller)
-.decl perf403_has_ref(n: node, l: loc)
+.decl perf403_has_ref(n: node, l: node)
 perf403_has_ref(n, L) :- perf403_demand_has_ref(n, L), perf403_ref(n, L).
 perf403_has_ref(n, L) :- perf403_demand_has_ref(n, L), within(c1, n), perf403_ref(c1, L).
 
 // post_ref(n): the JSON util `post-ref`, used where the JSON says `matches: "post-ref"`
 //   FOR: metavariable of the calling rule, passed in (bound by the caller)
-.decl perf403_post_ref(n: node, for: loc)
+.decl perf403_post_ref(n: node, for: node)
 perf403_post_ref(n, FOR) :- perf403_demand_post_ref(n, FOR), kind(n, "identifier"), ref_site(n, b1),
     st2 = b1, node(_, st2, _, _, _), SITE = st2, node(_, SITE, _, _, _), node(_, FOR, _, _, _), SITE = FOR.
 
 // has_post_ref(n): the JSON util `has-post-ref`, used where the JSON says `matches: "has-post-ref"`
 //   FOR: metavariable of the calling rule, passed in (bound by the caller)
-.decl perf403_has_post_ref(n: node, for: loc)
+.decl perf403_has_post_ref(n: node, for: node)
 perf403_has_post_ref(n, FOR) :- perf403_demand_has_post_ref(n, FOR), perf403_post_ref(n, FOR).
 perf403_has_post_ref(n, FOR) :- perf403_demand_has_post_ref(n, FOR), within(c1, n), perf403_post_ref(c1, FOR).
 
 // key_element(n): the JSON util `key-element`, used where the JSON says `matches: "key-element"`
 //   K, TC: metavariables of the calling rule, passed in (bound by the caller)
-.decl perf403_key_element(n: node, k: loc, tc: loc)
+.decl perf403_key_element(n: node, k: node, tc: node)
 perf403_key_element(n, K, TC) :- perf403_demand_key_element(n, K, TC), node(_, n, _, _, _), E1 = n,
     value(E1, t1), value(K, t1), unset(TC).
 perf403_key_element(n, K, TC) :- perf403_demand_key_element(n, K, TC), kind(n, "tuple_pattern"),
@@ -110,7 +110,7 @@ perf403_key_element(n, K, TC) :- perf403_demand_key_element(n, K, TC), kind(n, "
 
 // target(n): the JSON util `target`, used where the JSON says `matches: "target"`
 //   K, TC, V: metavariables of the calling rule, passed in (bound by the caller)
-.decl perf403_target(n: node, k: loc, tc: loc, v: loc)
+.decl perf403_target(n: node, k: node, tc: node, v: node)
 perf403_target(n, K, TC, V) :- perf403_demand_target(n, K, TC, V), kind(n, "tuple_pattern"),
     !perf403_tok_has_9(n), child(n, c9, _), perf403_target(c9, K, TC, V).
 perf403_target(n, K, TC, V) :- perf403_demand_target(n, K, TC, V), kind(n, "identifier"), node(_, n, _, _, _), E = n,
@@ -123,14 +123,14 @@ perf403_target(n, K, TC, V) :- perf403_demand_target(n, K, TC, V),
 
 // loop(n): the JSON util `loop`, used where the JSON says `matches: "loop"`
 //   K, TC, V: metavariables of the calling rule, passed in (bound by the caller)
-.decl perf403_loop(n: node, k: loc, tc: loc, v: loc)
+.decl perf403_loop(n: node, k: node, tc: node, v: node)
 perf403_loop(n, K, TC, V) :- perf403_demand_loop(n, K, TC, V), kind(n, "for_statement"), node(_, n, _, _, _), FOR = n,
     field(n, "left", c1), perf403_target(c1, K, TC, V), !perf403_alt_15(n, FOR),
     count : { inside(n, p5, "function_definition"), node(_, p5, _, _, _), field(n, "left", c6), perf403_alt_16(c6) } = 0.
 
 // has_nonlocal(n): the JSON util `has-nonlocal`, used where the JSON says `matches: "has-nonlocal"`
 //   TN: metavariable of the calling rule, passed in (bound by the caller)
-.decl perf403_has_nonlocal(n: node, tn: loc)
+.decl perf403_has_nonlocal(n: node, tn: node)
 perf403_has_nonlocal(n, TN) :- perf403_demand_has_nonlocal(n, TN), kind(n, "nonlocal_statement"),
     child(n, c1, _), kind(c1, "identifier"), text(c1, t_tn2), text(TN, t_tn2), @doc(c1) = @doc(TN).
 perf403_has_nonlocal(n, TN) :- perf403_demand_has_nonlocal(n, TN), has(n, c2, "nonlocal_statement"),
@@ -146,7 +146,7 @@ perf403_nonlocal_target(n) :- kind(n, "identifier"), node(_, n, _, _, _), TN = n
 
 // value_element(n): the JSON util `value-element`, used where the JSON says `matches: "value-element"`
 //   V: metavariable of the calling rule, passed in (bound by the caller)
-.decl perf403_value_element(n: node, v: loc)
+.decl perf403_value_element(n: node, v: node)
 perf403_value_element(n, V) :- perf403_demand_value_element(n, V), node(_, n, _, _, _), E2 = n,
     value(E2, t1), value(V, t1).
 perf403_value_element(n, V) :- perf403_demand_value_element(n, V), kind(n, "tuple_pattern"),
@@ -383,14 +383,14 @@ perf403_tok_has_10(n) :- child(n, c10, _), structural_after(c10, g5),
 perf403_tok_has_10(n) :- node_text(n, g5), !child(n, _, _), match("(?s)^(?:.*(?:,).*)$", g5).
 
 // demand_has_nonlocal: the rows of has_nonlocal its callers ask for (the metavariable columns they pass in)
-.decl perf403_demand_has_nonlocal(n: node, tn: loc)
+.decl perf403_demand_has_nonlocal(n: node, tn: node)
 perf403_demand_has_nonlocal(s1, TN) :- kind(n, "identifier"), node(_, n, _, _, _), TN = n,
     inside(n, p1, "for_statement"), precedes(p1, s1).
 perf403_demand_has_nonlocal(s2, TN) :- kind(n, "identifier"), node(_, n, _, _, _), TN = n,
     inside(n, p1, "for_statement"), within_stop(p1, p2, perf403_stop_17), precedes(p2, s2).
 
 // demand_has_ref: the rows of has_ref its callers ask for (the metavariable columns they pass in)
-.decl perf403_demand_has_ref(n: node, l: loc)
+.decl perf403_demand_has_ref(n: node, l: node)
 perf403_demand_has_ref(c2_4, L) :- kind(n, "assignment"), n ~ `$_[$K] = $V`,
     field(n, "left", c2), kind(c2, "subscript"), field(c2, "value", c3),
     perf403_plain_name(c3, L), child(p4, n, _), kind(p4, "expression_statement"),
@@ -399,7 +399,7 @@ perf403_demand_has_ref(c2_4, L) :- kind(n, "assignment"), n ~ `$_[$K] = $V`,
     kind(p6, "block"), child(p7, p6, _), field(p5, "condition", c2_4).
 
 // demand_loop: the rows of loop its callers ask for (the metavariable columns they pass in)
-.decl perf403_demand_loop(n: node, k: loc, tc: loc, v: loc)
+.decl perf403_demand_loop(n: node, k: node, tc: node, v: node)
 perf403_demand_loop(p2, K, TC, V) :- kind(n, "assignment"), n ~ `$_[$K] = $V`,
     field(n, "left", c2), kind(c2, "subscript"), field(c2, "value", c3),
     perf403_plain_name(c3, L), child(p4, n, _), kind(p4, "expression_statement"),
@@ -413,29 +413,29 @@ perf403_demand_loop(p7, K, TC, V) :- kind(n, "assignment"), n ~ `$_[$K] = $V`,
     kind(p6, "block"), child(p7, p6, _), unset(TC).
 
 // demand_alt_15: the rows of alt_15 its callers ask for (the metavariable columns they pass in)
-.decl perf403_demand_alt_15(n: node, for: loc)
+.decl perf403_demand_alt_15(n: node, for: node)
 perf403_demand_alt_15(n, FOR) :- perf403_demand_loop(n, K, TC, V), kind(n, "for_statement"),
     node(_, n, _, _, _), FOR = n, field(n, "left", c1).
 
 // demand_ref: the rows of ref its callers ask for (the metavariable columns they pass in)
-.decl perf403_demand_ref(n: node, l: loc)
+.decl perf403_demand_ref(n: node, l: node)
 perf403_demand_ref(n, L) :- perf403_demand_has_ref(n, L).
 perf403_demand_ref(c1, L) :- perf403_demand_has_ref(n, L), within(c1, n).
 
 // demand_target: the rows of target its callers ask for (the metavariable columns they pass in)
-.decl perf403_demand_target(n: node, k: loc, tc: loc, v: loc)
+.decl perf403_demand_target(n: node, k: node, tc: node, v: node)
 perf403_demand_target(c9, K, TC, V) :- perf403_demand_target(n, K, TC, V), kind(n, "tuple_pattern"),
     child(n, c9, _).
 perf403_demand_target(c1, K, TC, V) :- perf403_demand_loop(n, K, TC, V), kind(n, "for_statement"),
     node(_, n, _, _, _), FOR = n, field(n, "left", c1).
 
 // demand_has_post_ref: the rows of has_post_ref its callers ask for (the metavariable columns they pass in)
-.decl perf403_demand_has_post_ref(n: node, for: loc)
+.decl perf403_demand_has_post_ref(n: node, for: node)
 perf403_demand_has_post_ref(s1, FOR) :- perf403_demand_alt_15(n, FOR), precedes(n, s1).
 perf403_demand_has_post_ref(s3, FOR) :- perf403_demand_alt_15(n, FOR), within(n, p2), precedes(p2, s3).
 
 // demand_key_element: the rows of key_element its callers ask for (the metavariable columns they pass in)
-.decl perf403_demand_key_element(n: node, k: loc, tc: loc)
+.decl perf403_demand_key_element(n: node, k: node, tc: node)
 perf403_demand_key_element(c28, K, TC) :- perf403_demand_key_element(n, K, TC),
     kind(n, "tuple_pattern"), child(n, c28, _).
 perf403_demand_key_element(c17, K, TC) :- perf403_demand_target(n, K, TC, V),
@@ -443,7 +443,7 @@ perf403_demand_key_element(c17, K, TC) :- perf403_demand_target(n, K, TC, V),
     child(n, c18, _).
 
 // demand_value_element: the rows of value_element its callers ask for (the metavariable columns they pass in)
-.decl perf403_demand_value_element(n: node, v: loc)
+.decl perf403_demand_value_element(n: node, v: node)
 perf403_demand_value_element(c18, V) :- perf403_demand_target(n, K, TC, V),
     (kind(n, "pattern_list") ; kind(n, "tuple_pattern")), child(n, c17, _),
     child(n, c18, _).
@@ -451,7 +451,7 @@ perf403_demand_value_element(c11, V) :- perf403_demand_value_element(n, V), kind
     child(n, c11, _).
 
 // demand_post_ref: the rows of post_ref its callers ask for (the metavariable columns they pass in)
-.decl perf403_demand_post_ref(n: node, for: loc)
+.decl perf403_demand_post_ref(n: node, for: node)
 perf403_demand_post_ref(n, FOR) :- perf403_demand_has_post_ref(n, FOR).
 perf403_demand_post_ref(c1, FOR) :- perf403_demand_has_post_ref(n, FOR), within(c1, n).
 
@@ -518,7 +518,7 @@ perf403_alt_13(n) :- node(_, n, _, _, _), glob("[(),]", n).
 
 // alt_15(n): the JSON `any`: n matches if any one of these rules does
 //   FOR: metavariable of the calling rule, passed in (bound by the caller)
-.decl perf403_alt_15(n: node, for: loc)
+.decl perf403_alt_15(n: node, for: node)
 perf403_alt_15(n, FOR) :- perf403_demand_alt_15(n, FOR), precedes(n, s1), perf403_has_post_ref(s1, FOR).
 perf403_alt_15(n, FOR) :- perf403_demand_alt_15(n, FOR), within(n, p2), !kind(p2, "module"),
     precedes(p2, s3), perf403_has_post_ref(s3, FOR).

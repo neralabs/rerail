@@ -125,7 +125,7 @@ fn cache_file() -> Option<std::path::PathBuf> {
     use sha2::Digest as _;
     let exe = std::env::current_exe().ok()?;
     let key = sha2::Sha256::digest(format!("{}\0{}\0{}", ROOF_LOOPS, build_profile(&exe), cfg!(debug_assertions)).as_bytes());
-    let name: String = key.iter().take(8).map(|b| format!("{b:02x}")).collect();
+    let name: String = crate::code_rule_dsl::prof::lower_hex(&key[..8]);
     Some(std::env::temp_dir().join("rerail-roofs").join(format!("{name}.json")))
 }
 
@@ -190,7 +190,9 @@ fn best(runs: usize, mut f: impl FnMut() -> (f64, u64)) -> f64 {
 
 fn roof(u: Unit) -> Option<f64> {
     match u {
-        Unit::VmStep => {
+        // A database of its own in memory, the machine's step measured, behind the run: none of the run's SQL
+        // (decision 0104's strict mode ended a profiled run here when its day-old cache of roofs had lapsed).
+        Unit::VmStep => super::behind(|| -> Option<f64> {
             let db = rusqlite::Connection::open_in_memory().ok()?;
             db.execute_batch(
                 "CREATE TABLE t(a INTEGER PRIMARY KEY, b INTEGER, c INTEGER);
@@ -210,7 +212,7 @@ fn roof(u: Unit) -> Option<f64> {
                 }));
             }
             Some(per)
-        }
+        }),
         Unit::JoinRow => {
             let n = 1u64 << 20;
             let mut map: hashbrown::HashMap<u64, u32, foldhash::fast::FixedState> = hashbrown::HashMap::with_capacity_and_hasher(n as usize, Default::default());

@@ -61,11 +61,9 @@ fn line(source: &str, offset: usize) -> u64 {
 const SPANS: &str = "
 .decl oracle_score_at(t: node_path, p: symbol, s: number, e: number)
 oracle_score_at(t, p, s, e) :- kind(n, \"call\"), t = @node_path(n), node(d, n, _, s, e), doc(d, p, _).
-.decl oracle_score_def_at(t: symbol, p: symbol, s: number, e: number)
-oracle_score_def_at(t, p, s, e) :- oracle_score_kind(k), kind(n, k), pt_scope_tm(n, t), node(d, n, _, s, e), doc(d, p, _).
-.decl oracle_score_kind(k: symbol)
-oracle_score_kind(\"function_definition\"). oracle_score_kind(\"class_definition\").
-.output oracle_score_at, oracle_score_def_at
+.decl oracle_def_at(f: symbol, p: symbol, s: number, e: number)
+oracle_def_at(f, p, s, e) :- pt_def(n, f), node(d, n, _, s, e), doc(d, p, _).
+.output oracle_score_at, oracle_def_at
 ";
 
 /// Runs `program` over the oracle project and gives each answered call's answer, keyed by (file, start, end).
@@ -74,11 +72,12 @@ fn answers(program: &str, project: &Path, sources: &BTreeMap<String, String>) ->
     let src = format!("{program}\n{SPANS}");
     corpus::run(&src, project, None, &out, "program", Binding::Cpu, 1 << 18).unwrap();
     let outputs = Outputs::open(&out).unwrap();
-    // Each call's and definition's document and span, keyed by its term: a call's node path, a definition's symbol.
+    // Each call's and definition's document and span, keyed as `call_target` shows them: a call by its node path
+    // (decision 0722), a definition by its symbol (`pt_def`).
     let at: BTreeMap<String, (String, usize, usize)> = outputs
         .rows("oracle_score_at")
         .into_iter()
-        .chain(outputs.rows("oracle_score_def_at"))
+        .chain(outputs.rows("oracle_def_at"))
         .map(|r| (r.get(0).to_string(), (r.get(1).to_string(), r.get(2).int().unwrap() as usize, r.get(3).int().unwrap() as usize)))
         .collect();
     let key = |term: Value<'_>| at[&term.to_string()].clone();

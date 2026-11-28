@@ -174,7 +174,7 @@ impl Docs {
             let cache_gpu = cache.buffer.as_ref().and_then(|b| b.device_address()).unwrap_or(0);
             if cache_gpu != 0 && tape_gpu != 0 {
                 let rel = cache_gpu.wrapping_sub(tape_gpu + tape_home.at) as i64;
-                (view.side[0], view.side[1]) = (rel as u32, (rel >> 32) as u32);
+                (view.side[0], view.side[1]) = (rel as u32, (rel >> 32) as u32); // bits: an offset's halves
             }
         }
         let entry = ViewEntry::new(b, p, &self.context.dialects[p.tag()], self.names());
@@ -186,7 +186,7 @@ impl Docs {
             homes.write(ViewHome { host: tape_home.host, gpu: tape_gpu });
             homes.add(1).write(ViewHome { host: lines_home.host, gpu: lines_gpu });
             homes.add(2).write(ViewHome { host: source_home.host, gpu: source_gpu });
-            let at = ViewDir::block_rows(dir).add(i);
+            let at = ViewDir::block_rows(dir).add(ViewDir::row_at(dir, i as u32) as usize);
             (&raw mut (*at).entry).write(b.offset_of(entry.desc()) as u64);
             (&raw mut (*at).tape).write(tape_home.at);
             (&raw mut (*at).lines).write(lines_home.at);
@@ -221,7 +221,7 @@ impl Docs {
         // lines at their homes' host addresses, which its document's facts hold, the 16z cache in its block, which
         // the layer holds; all live as long as `self`.
         unsafe {
-            let row: &ViewRow = &*ViewDir::block_rows(dir.cast_mut()).add(i);
+            let row: &ViewRow = &*ViewDir::block_rows(dir.cast_mut()).add(ViewDir::row_at(dir, i as u32) as usize);
             let homes = ViewDir::homes_mut(dir.cast_mut());
             let base = self.context.block.ptr::<u8>(0).cast_const();
             let entry = &*base.add(row.entry as usize).cast::<ViewDoc>();
@@ -234,7 +234,7 @@ impl Docs {
                 0 => std::ptr::null(),
                 k => (*homes.add(k as usize - 1)).host as *const u8,
             };
-            Some(Doc { entry, tape: Tape::new(tape, &row.view, cache), lines, source: self[i].facts.source.as_bytes() })
+            Some(Doc::new(entry, Tape::new(tape, &row.view, cache), lines, self[i].facts.source.as_bytes()))
         }
     }
 }

@@ -29,6 +29,7 @@ import {
   temporaryDirectory,
 } from "../../support/rule-configuration-builders.js";
 import { CheckoutCatalogs } from "../../../src/engine/code-rule/code-rule-dsl-catalog.js";
+import { physicalPath } from "../../../src/engine/catalog/checkout-control.js";
 import { setUpTestRepository } from "../../support/repository-rules.js";
 import { removeFolderSync } from "../../support/platform/remove-folder.js";
 import { experimentOffMessage } from "../../../src/engine/experimental-features.js";
@@ -246,7 +247,7 @@ describe("the installed-pack catalog", () => {
     });
   });
 
-  it("loads a pack whose rule reads a token a tape may leave out, an older pack's form: the checkout catalog skips that rule alone and reports it with the engine's reason", async () => {
+  it("loads a pack whose rule reads a token a tape may leave out, an older pack's form: the rule is listed as not run, and the checkout catalog keeps it inactive, never a failure", async () => {
     // Python 2's `print >>f, x` as a published pack once asked for it: the `print` token, which a print statement implies.
     const directory = await copyPack(COMPLEXITY);
     writeJson(join(directory, "rules", `${PYTHON_RULE}.json`), {
@@ -263,8 +264,16 @@ describe("the installed-pack catalog", () => {
 
     expect(summary(catalog)).toEqual({ packs: ["complexity"], skipped: [] });
     expect(catalog.documents.has(PYTHON_RULE)).toBe(true);
+    const reason = `This Rerail no longer runs the rule as Function complexity ${COMPLEXITY_VERSION} writes it: it tests a token that parsed files now leave out. The pack's next version runs it again.`;
+    expect([...catalog.notRun]).toEqual([[PYTHON_RULE, reason]]);
+    // Another process reads the kept verdict, which keeps the rules not run with it.
+    const other = await temporaryDirectory();
+    cpSync(join(process.env.RERAIL_HOME!, PACK_COMPILE_CHECKS_FILE), join(other, PACK_COMPILE_CHECKS_FILE));
+    installPackDirectory(directory, "complexity", other);
+    expect([...loadRuleCatalog(other).notRun]).toEqual([[PYTHON_RULE, reason]]);
 
-    const root = await temporaryDirectory();
+    // The daemon asks for a checkout's catalog by its physical path: on macOS the temporary folder is reached by a link.
+    const root = physicalPath(await temporaryDirectory());
     execFileSync("git", ["init", "--quiet"], { cwd: root });
     const databasePath = join(root, ".rerail", "rerail.sqlite");
     setUpTestRepository(root, { packs: ["complexity"] }, databasePath);
@@ -272,10 +281,8 @@ describe("the installed-pack catalog", () => {
     try {
       const checkoutCatalog = catalogs.catalog(root);
       const others = [...catalog.packOf.keys()].filter(id => id !== PYTHON_RULE).sort();
+      expect(checkoutCatalog.quarantined()).toEqual([{ ruleId: PYTHON_RULE, kind: "code", owner: "rerail", reason, code: "reads-left-out-token" }]);
       expect(checkoutCatalog.snapshot().codeRules.map(({ id }) => id)).toEqual(others);
-      expect(checkoutCatalog.quarantined()).toEqual([
-        { ruleId: PYTHON_RULE, kind: "code", owner: "rerail", reason: expect.stringMatching(/^a token test reads a token the tape may leave out, which nothing answers: \/clauses\/0\/rule \(`\^print\$`, root\)/u) },
-      ]);
     } finally {
       catalogs.close();
     }
@@ -301,7 +308,7 @@ describe("the installed-pack catalog", () => {
     const catalog = loadRuleCatalog();
 
     expect(summary(catalog)).toEqual({ packs: ["complexity"], skipped: [] });
-    const root = await temporaryDirectory();
+    const root = physicalPath(await temporaryDirectory());
     execFileSync("git", ["init", "--quiet"], { cwd: root });
     const databasePath = join(root, ".rerail", "rerail.sqlite");
     setUpTestRepository(root, { packs: ["complexity"] }, databasePath);
@@ -458,12 +465,12 @@ describe("the installed-pack catalog", () => {
   // Checking a pack compiles each of its rules: 14 s of CPU and 1.7 GB for the five packs a TypeScript repository adds,
   // in every command that reads the catalog and at every daemon start.
   it("keeps the engine's verdict on each pack in the home, so another process compiles only a pack whose content changed", async () => {
-    type Kept = Array<{ build: string; verdicts: Record<string, string | null> }>;
+    type Kept = Array<{ build: string; verdicts: Record<string, string | null>; notRun?: Record<string, string[]> }>;
     const readKept = (home: string): Kept => JSON.parse(readFileSync(join(home, PACK_COMPILE_CHECKS_FILE), "utf8")) as Kept;
     installPackDirectory(COMPLEXITY, "complexity");
     loadRuleCatalog();
     const [kept] = readKept(process.env.RERAIL_HOME!);
-    expect(Object.values(kept!.verdicts)).toEqual([null]);
+    expect([Object.values(kept!.verdicts), Object.values(kept!.notRun!)]).toEqual([[null], [[]]]);
 
     // Another process, as the daemon after a restart, finds the same pack and the kept verdicts. A kept verdict is taken
     // as it is, so one that says the pack fails proves its rules were not compiled again. Another engine build's
@@ -473,7 +480,7 @@ describe("the installed-pack catalog", () => {
     installPackDirectory(copy, "complexity", other);
     const failing = Object.fromEntries(Object.keys(kept!.verdicts).map(key => [key, "the kept verdict"]));
     const otherBuild = { build: "another build", verdicts: { "0.0.1 sha256:0": null } };
-    writeJson(join(other, PACK_COMPILE_CHECKS_FILE), [{ build: kept!.build, verdicts: failing }, otherBuild]);
+    writeJson(join(other, PACK_COMPILE_CHECKS_FILE), [{ build: kept!.build, verdicts: failing, notRun: kept!.notRun }, otherBuild]);
     expect(summary(loadRuleCatalog(other)).skipped.map(({ reason }) => reason)).toEqual(["the kept verdict"]);
 
     // Once the pack's content changes the engine is asked again, and the verdict it gives replaces the kept one.
@@ -481,6 +488,19 @@ describe("the installed-pack catalog", () => {
     expect(summary(loadRuleCatalog(other))).toEqual({ packs: ["complexity"], skipped: [] });
     const [current, kept2] = readKept(other);
     expect([Object.values(current!.verdicts), kept2]).toEqual([[null], otherBuild]);
+  });
+
+  it("asks the engine again for a kept verdict that does not say which rules it does not run, as a Rerail before that kept it", async () => {
+    installPackDirectory(COMPLEXITY, "complexity");
+    loadRuleCatalog();
+    const path = join(process.env.RERAIL_HOME!, PACK_COMPILE_CHECKS_FILE);
+    const [kept] = readJson(path) as unknown as Array<{ build: string; verdicts: Record<string, string | null> }>;
+    const other = await temporaryDirectory();
+    installPackDirectory(await copyPack(COMPLEXITY), "complexity", other);
+    const failing = Object.fromEntries(Object.keys(kept!.verdicts).map(key => [key, "the kept verdict"]));
+    writeJson(join(other, PACK_COMPILE_CHECKS_FILE), [{ build: kept!.build, verdicts: failing }]);
+
+    expect(summary(loadRuleCatalog(other))).toEqual({ packs: ["complexity"], skipped: [] });
   });
 
   it("reads the packs again when the active core changes, checking their range against the new one", () => {

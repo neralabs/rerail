@@ -15,6 +15,7 @@ import {
   type ConversationRule,
   type RuleDocument,
   repositories,
+  notRunReason,
 } from "../../src/engine/index.js";
 import { removeFolder } from "./platform/remove-folder.js";
 
@@ -67,9 +68,12 @@ export function conversation(id: string): ConversationRule {
 /**
  * A small rule catalog: pack `lint` (`no-console` starts on in Steer, `no-var` starts off in Log), a By Rerail rule
  * `loose`, and a By Rerail conversation rule `talk`. Documents are Block unless the pack says otherwise. The pack
- * honours suppression comments unless `honourSuppressionComments` is false.
+ * honours suppression comments unless `honourSuppressionComments` is false. The pack's rules in `notRun` are ones this
+ * Rerail does not run (they read a token parsed files leave out).
  */
-export function testBundle(overrides: { noConsoleRevision?: number; honourSuppressionComments?: boolean } = {}): RuleCatalog {
+export function testBundle(
+  overrides: { noConsoleRevision?: number; honourSuppressionComments?: boolean; notRun?: readonly string[] } = {},
+): RuleCatalog {
   const documents: RuleDocument[] = [
     { kind: "code", rule: codeRule("no-console", { revision: overrides.noConsoleRevision ?? 1 }) },
     { kind: "code", rule: codeRule("no-var") },
@@ -99,6 +103,7 @@ export function testBundle(overrides: { noConsoleRevision?: number; honourSuppre
     sources: new Map(documents.flatMap(document => document.kind === "code" ? [[document.rule.id, document.rule] as const] : [])),
     digest: `test:${overrides.noConsoleRevision ?? 1}`,
     skipped: [],
+    notRun: new Map((overrides.notRun ?? []).map(id => [id, notRunReason(pack)])),
   };
 }
 

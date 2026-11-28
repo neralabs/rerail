@@ -10,7 +10,7 @@
 // C410(n, detail): findings from clauses `list-literal-within-list-call`, `tuple-literal-within-list-call`. Their messages differ only in
 // `detail`: each rule's head gives its clause's words. Each rule is one way a JSON `rule` can match.
 // Columns after `at` are the metavariables the JSON's message, anchor or `each` names: one finding per distinct row.
-.violation C410(at: loc, call: node, detail: symbol) "{detail}."
+.violation C410(at: node, call: node, detail: symbol) "{detail}."
     suppress noqa "C410"
 C410(CALL, n, "Remove the outer `list()` call and keep the list literal it wraps; the call only copies a list that nothing else references") :- c410_target(n),
     node(_, n, _, _, _), CALL = n.
@@ -43,7 +43,7 @@ c410_target(n) :- kind(n, "call"), field(n, "function", c1), c410_callee(c1),
 
 // in_annotation(n): the JSON util `in-annotation`, used where the JSON says `matches: "in-annotation"`
 //   CALL: metavariable this relation binds for the calling rule
-.decl c410_in_annotation(n: node, call: loc)
+.decl c410_in_annotation(n: node, call: node)
 c410_in_annotation(n, CALL) :- (kind(n, "string") ; kind(n, "concatenated_string")),
     parsed(n, "annotation", r1), within(c2, r1), c410_alt_1(c2, CALL).
 
@@ -75,18 +75,18 @@ c410_target_tuple_literal_within_list_call(n) :- kind(n, "call"), field(n, "func
 
 // in_annotation_tuple_literal_within_list_call(n): the JSON util `in-annotation`, used where the JSON says `matches: "in-annotation"`
 //   CALL: metavariable this relation binds for the calling rule
-.decl c410_in_annotation_tuple_literal_within_list_call(n: node, call: loc)
+.decl c410_in_annotation_tuple_literal_within_list_call(n: node, call: node)
 c410_in_annotation_tuple_literal_within_list_call(n, CALL) :- (kind(n, "string") ; kind(n, "concatenated_string")),
     parsed(n, "annotation", r1), within(c2, r1), c410_alt_2(c2, CALL).
 
 // alt_1(n): the JSON `any`: n matches if any one of these rules does
 //   CALL: metavariable this relation binds for the calling rule
-.decl c410_alt_1(n: node, call: loc)
+.decl c410_alt_1(n: node, call: node)
 c410_alt_1(n, CALL) :- c410_target(n), CALL = n.
 c410_alt_1(n, CALL) :- c410_in_annotation(n, CALL).
 
 // alt_2(n): the JSON `any`: n matches if any one of these rules does
 //   CALL: metavariable this relation binds for the calling rule
-.decl c410_alt_2(n: node, call: loc)
+.decl c410_alt_2(n: node, call: node)
 c410_alt_2(n, CALL) :- c410_target_tuple_literal_within_list_call(n), CALL = n.
 c410_alt_2(n, CALL) :- c410_in_annotation_tuple_literal_within_list_call(n, CALL).

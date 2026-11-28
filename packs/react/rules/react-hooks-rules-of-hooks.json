@@ -1,7 +1,7 @@
 {
   "format": "rerail.policy/v1",
   "id": "react-hooks-rules-of-hooks",
-  "revision": 1,
+  "revision": 2,
   "mode": "steer",
   "description": "Call React hooks only at the top level of components and custom hooks, never in conditions, loops, nested callbacks, async functions or after an early return.",
   "scope": {
@@ -73,7 +73,10 @@
                     }
                   ]
                 }
-              ]
+              ],
+              "not": {
+                "matches": "foreign-use"
+              }
             }
           },
           "use-hook": {
@@ -102,8 +105,123 @@
                     }
                   ]
                 }
-              ]
+              ],
+              "not": {
+                "matches": "foreign-use"
+              }
             }
+          },
+          "foreign-use": {
+            "any": [
+              {
+                "kind": "identifier",
+                "regex": "^use$",
+                "matches": "bound-not-react"
+              },
+              {
+                "kind": "member_expression",
+                "all": [
+                  {
+                    "has": {
+                      "field": "property",
+                      "regex": "^use$"
+                    }
+                  },
+                  {
+                    "has": {
+                      "field": "object",
+                      "kind": "identifier",
+                      "matches": "bound-not-react"
+                    }
+                  }
+                ]
+              }
+            ]
+          },
+          "bound-not-react": {
+            "resolves": {
+              "binding": {
+                "site": {
+                  "not": {
+                    "matches": "react-site"
+                  }
+                }
+              }
+            }
+          },
+          "react-site": {
+            "any": [
+              {
+                "kind": "variable_declarator",
+                "has": {
+                  "field": "value",
+                  "matches": "react-init"
+                }
+              },
+              {
+                "inside": {
+                  "stopBy": "end",
+                  "kind": "import_statement",
+                  "has": {
+                    "field": "source",
+                    "kind": "string",
+                    "value": {
+                      "eq": "react"
+                    }
+                  }
+                }
+              }
+            ]
+          },
+          "react-init": {
+            "any": [
+              {
+                "kind": "identifier",
+                "regex": "^React$"
+              },
+              {
+                "kind": "member_expression",
+                "has": {
+                  "field": "object",
+                  "any": [
+                    {
+                      "kind": "identifier",
+                      "regex": "^React$"
+                    },
+                    {
+                      "matches": "require-react"
+                    }
+                  ]
+                }
+              },
+              {
+                "matches": "require-react"
+              }
+            ]
+          },
+          "require-react": {
+            "kind": "call_expression",
+            "all": [
+              {
+                "has": {
+                  "field": "function",
+                  "kind": "identifier",
+                  "regex": "^require$"
+                }
+              },
+              {
+                "has": {
+                  "field": "arguments",
+                  "has": {
+                    "kind": "string",
+                    "nthChild": 1,
+                    "value": {
+                      "eq": "react"
+                    }
+                  }
+                }
+              }
+            ]
           },
           "named-component": {
             "any": [

@@ -99,7 +99,7 @@ ann_private(f) :- ann_method(f), def_name(f, x), decorator(f, e), dotted_expr(e,
 annt_fixed("posonly"). annt_fixed("pos"). annt_fixed("kwonly").
 .decl annt_skipped(f: node, i: number)   // the receiver: a non-static method's first non-variadic parameter
 annt_skipped(f, i) :- ann_method(f), !ann_static(f), i = min j : { sig_param(f, _, _, j, k, _, _), annt_fixed(k) }.
-.decl ann_param(f: node, nm: node, x: symbol, k: symbol, a: loc)
+.decl ann_param(f: node, nm: node, x: symbol, k: symbol, a: node)
 ann_param(f, nm, x, k, a) :- kind(f, "function_definition"), sig_param(f, _, nm, i, k, a, _), text(nm, x),
     !annt_skipped(f, i).
 

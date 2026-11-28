@@ -14,7 +14,7 @@
 //   interface I { m(a, b, c, d): void }  fine: a method signature is not checked, nor a class overload
 // A first parameter `this: void` is not counted unless `countVoidThis: true`. The JSON's `countThis` (ESLint
 // 10's form) is honoured as well: "never" leaves out any `this` parameter, "always" counts it.
-.violation max_params(at: loc, name: symbol, k: number, m: number) code "@typescript-eslint/max-params"
+.violation max_params(at: place, name: symbol, k: number, m: number) code "@typescript-eslint/max-params"
     "{name} has too many parameters ({k}). Maximum allowed is {m}; group them into one options object."
     suppress eslint "@typescript-eslint/max-params"
     suppress oxlint "max-params"
@@ -27,7 +27,7 @@ limit_rule("max", 3). limit_rule("maximum", 3).
 
 // checked(f, s, at): a function as ESLint names and places it, or a signature: `function f(…);` (at its
 // `declare`, if any) and a function type `(…) => T`, named "Function 'f'" and "Function".
-.decl checked(f: node, s: symbol, at: loc)
+.decl checked(f: node, s: symbol, at: place)
 checked(f, s, at) :- function_node(f), fn_name_kind(f, s), fn_head(f, at).
 checked(f, cat("Function '", cat(x, "'")), at) :- kind(f, "function_signature"), field(f, "name", n), text(n, x),
     (child(at, f, _), kind(at, "ambient_declaration") ; !declared(f), at = f).

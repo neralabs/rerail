@@ -329,12 +329,12 @@ fn window_end(source: &dyn crate::code_rule_dsl::facts::vtab::Source, lo: usize,
 
 /// The document a row's first column names: as `syntax::measured` reads it.
 pub fn doc32(first: i64) -> i64 {
-    first >> 32
+    rerail_blocks::located::Located::key_wide(first)
 }
 
 /// The document a location value names: a node (`key << 32 | index`) or a document key (as `memo::document_of`).
 pub fn document_of(v: i64) -> i64 {
-    if v >= 1 << 32 { v >> 32 } else { v }
+    rerail_blocks::located::document_of(v)
 }
 
 /// The key a (document, value) pair is counted under in a column's `pairs` sketch: the sketch hashes it again.
@@ -351,7 +351,7 @@ fn group(first: i64) -> i64 {
 /// Whether value `v` names document `d` (its first column's value `first`): a node of it, or its key.
 pub fn names_doc(v: i64, first: i64) -> bool {
     let d = doc32(first);
-    (d != 0 && v >> 32 == d) || v == document_of(first)
+    (d != 0 && rerail_blocks::located::Located::key_wide(v) == d) || v == document_of(first)
 }
 
 /// `pairs` sorted by value, each value's counts summed into one pair.
@@ -432,6 +432,19 @@ impl RelStats {
     /// rows (its first node column), whose first column may hold a value many documents share.
     pub fn rows_by(&mut self, flat: &[i64], width: usize, sign: i64, at: Option<usize>) {
         self.rows_of(flat, width, sign, Some(at), None)
+    }
+
+    /// `rows_by` of the rows `skip` does not take: a file's rows less those of the value documents another file holds
+    /// (`keptstats::Keeper::count_where`), read where they lie by their indices, not copied.
+    pub fn rows_by_except(&mut self, flat: &[i64], width: usize, sign: i64, at: Option<usize>, skip: &dyn Fn(&[i64]) -> bool) {
+        if width == 0 || flat.is_empty() {
+            return;
+        }
+        let rows: Vec<usize> = (0..flat.len() / width).filter(|&r| !skip(&flat[r * width..(r + 1) * width])).collect();
+        if rows.len() == flat.len() / width {
+            return self.rows_by(flat, width, sign, at);
+        }
+        self.count(rows.len(), width, &mut |c, each| rows.iter().enumerate().for_each(|(i, &r)| each(i, flat[r * width + c])), sign, Some(at), None)
     }
 
     /// `documents_at` over `n` rows read where they lie (`value(row, column)`, a source's), not a flat copy of them:
@@ -591,13 +604,13 @@ impl RelStats {
         let of = |r: usize| match at {
             None => (doc32(key[r]), document_of(key[r])),
             Some(at) => {
-                let d = at.map_or(-1, |_| key[r] >> 32);
+                let d = at.map_or(-1, |_| rerail_blocks::located::Located::key_wide(key[r]));
                 (d, d)
             }
         };
         let names = |v: i64, r: usize| match at {
             None => names_doc(v, key[r]),
-            Some(at) => at.is_some_and(|_| v >> 32 == key[r] >> 32),
+            Some(at) => at.is_some_and(|_| rerail_blocks::located::Located::key_wide(v) == rerail_blocks::located::Located::key_wide(key[r])),
         };
         self.rows += sign * n as i64;
         // One pass a column: each row's (document, value, whether its `doc32` is 0) is listed; in order (node

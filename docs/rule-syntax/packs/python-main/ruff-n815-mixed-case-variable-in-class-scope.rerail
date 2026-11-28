@@ -10,7 +10,7 @@
 // N815(n): a finding at node n, from clause `mixed-case-variable-in-class-scope`.
 // Each rule below is one way the JSON `rule` can match.
 // Columns after `at` are the metavariables the JSON's message, anchor or `each` names: one finding per distinct row.
-.violation N815(at: node, name: loc) "Rename the class variable `{name}` to snake_case and update its uses; keep the name if outside code depends on it or it mirrors an external schema."
+.violation N815(at: node, name: node) "Rename the class variable `{name}` to snake_case and update its uses; keep the name if outside code depends on it or it mirrors an external schema."
     suppress noqa "N815"
 N815(n, NAME) :- kind(n, "identifier"), node(_, n, _, _, _), NAME = n, n815_mixed_case(n), n815_store_target(n),
     n815_up_1(n, p1), count : { within(n, p2), n815_named_tuple_statement(p2) } = 0.

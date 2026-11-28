@@ -186,7 +186,7 @@ impl CodeRuleSqlExecutor {
                 && (types.len() != input.columns.len()
                     || types
                         .iter()
-                        .any(|t| !matches!(t.as_str(), "number" | "symbol" | "node" | "loc")))
+                        .any(|t| !matches!(t.as_str(), "number" | "symbol" | "node" | "place")))
                 {
                     return Err(error(
                         "fact types must match columns and be number, symbol, node, or loc",

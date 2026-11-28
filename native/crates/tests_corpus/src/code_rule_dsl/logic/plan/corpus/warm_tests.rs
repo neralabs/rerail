@@ -123,12 +123,14 @@ impl Corpus {
         Corpus::new(name).then_warm(FILES.len(), edit)
     }
 
-    /// This corpus's cold run, of at least `documents` documents, then the warm one after `edit`, and a fresh cold
-    /// run's rows (`cold_then_warm`).
-    fn then_warm(mut self, documents: usize, edit: Option<(&str, &str)>) -> (Ran, Ran, BTreeSet<Vec<String>>) {
+    /// This corpus's cold run, of its `files` files, then the warm one after `edit`, and a fresh cold run's rows
+    /// (`cold_then_warm`).
+    fn then_warm(mut self, files: usize, edit: Option<(&str, &str)>) -> (Ran, Ran, BTreeSet<Vec<String>>) {
         let c = &mut self;
         let cold = c.run_over("kept.sqlite");
-        assert!(cold.corpus.documents >= documents, "the cold run's corpus batch holds every file's document: {cold:?}");
+        // Its waves build every file: what the warm run's counts are measured against. (No corpus batch holds every
+        // file's document: the cross part reads no base relation, decision 0727.)
+        assert!(cold.waves.0 + cold.waves.1 >= files, "the cold run's waves build every file: {cold:?}");
         if let Some((file, body)) = edit {
             c.write(file, body);
         }
@@ -266,12 +268,10 @@ fn a_warm_edits_own_batch_makes_the_changed_document_alone() {
 }
 
 /// A JavaScript run over the scripts HTML files hold (`.embedded on`, decision 0470 step 2): each name a script calls
-/// that `d.js` defines, at its line. `defines` is cross-file (the names any file defines: declared, decision 0652),
-/// and a call is placed in its own file by the name it calls (no node crosses, decision 0677). A node's
-/// `text` and `line` go with it into its file's chunk (the push's attributes, 7ff884a7aa; decision 0353 step 3), so
-/// `named` reads no base relation in the cross part. Its `finding` does, as a pack's does: a finding's node and file
-/// are decoded off the corpus batch (`node`, `doc`), the host files' documents among them.
-const HOSTED: &str = ".language javascript\n.embedded on\n.decl called(c: node, x: symbol)\ncalled(c, x) :- kind(c, \"identifier\"), text(c, x).\n.decl defined(x: symbol, f: number)\ndefined(x, f) :- kind(d, \"function_declaration\"), field(d, \"name\", n), text(n, x), docof(d, f).\n.decl defines(x: symbol) cross_file\ndefines(x) :- defined(x, _).\n.decl named(x: symbol, l: number)\nnamed(x, l) :- called(c, x), defines(x), line(c, l).\n.decl finding(category: symbol, q: symbol, n: node)\nfinding(\"used\", x, c) :- called(c, x), defines(x).\n.output named, finding\n";
+/// that `d.js` defines, at its line. `defines` is the names any file defines, staged before the program (decision
+/// 0709), and `named` and `finding` read it in the calling file: no node crosses, a finding's place neither
+/// (decision 0727).
+const HOSTED: &str = ".language javascript\n.embedded on\n.decl called(c: node, x: symbol)\ncalled(c, x) :- kind(c, \"identifier\"), text(c, x).\n.decl defined(x: symbol, f: number)\ndefined(x, f) :- kind(d, \"function_declaration\"), field(d, \"name\", n), text(n, x), docof(d, f).\n.decl defines(x: symbol)\ndefines(x) :- defined(x, _).\n.decl named(x: symbol, l: number)\nnamed(x, l) :- called(c, x), defines(x), node_line_number(c, l).\n.decl finding(category: symbol, q: symbol, n: node)\nfinding(\"used\", x, c) :- called(c, x), defines(x).\n.output named, finding\n";
 
 /// The host files, HTML files whose scripts call `foo`, and the script of the run's own grammar that defines it.
 const HOSTS: &[(&str, &str)] = &[
@@ -286,7 +286,7 @@ const HOSTS: &[(&str, &str)] = &[
 /// neither from its tape, so it builds no document at all.
 #[test]
 fn a_warm_run_builds_no_unchanged_host_files_documents() {
-    let (_, warm, fresh) = Corpus::of("hosts", HOSTED, HOSTS, "named").then_warm(2 * HOSTS.len() - 1, None);
+    let (_, warm, fresh) = Corpus::of("hosts", HOSTED, HOSTS, "named").then_warm(HOSTS.len(), None);
     assert_eq!(warm.rows, fresh, "the warm run's outputs are a cold run's");
     // Each file starts with its marker's line: foo is defined at d.js's line 2 and called at a.html's 3 and b.html's 2, the
     // files' lines, not the scripts' own (decision 0512).
@@ -299,7 +299,7 @@ fn a_warm_run_builds_no_unchanged_host_files_documents() {
 /// documents are made whole (`hit_document`, its programs with them), and the edit's outputs are a cold run's.
 #[test]
 fn a_warm_edit_of_a_host_file_reads_as_a_cold_run() {
-    let (_, warm, fresh) = Corpus::of("hosts-edit", HOSTED, HOSTS, "named").then_warm(2 * HOSTS.len() - 1, Some(("c.html", "<p>y</p>\n<p>z</p>\n<script>solo(); foo(4)</script>\n")));
+    let (_, warm, fresh) = Corpus::of("hosts-edit", HOSTED, HOSTS, "named").then_warm(HOSTS.len(), Some(("c.html", "<p>y</p>\n<p>z</p>\n<script>solo(); foo(4)</script>\n")));
     assert_eq!(warm.rows, fresh, "the warm edit's outputs are a cold run's");
     // Q332 for host files: the run's batch builds no unchanged host file's documents from their tape, and makes the
     // changed file's three alone (its text, its tree and its script's: `d.js`'s one and each host file's three are

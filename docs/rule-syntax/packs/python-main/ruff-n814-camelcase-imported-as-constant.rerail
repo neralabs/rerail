@@ -9,7 +9,7 @@
 // Each rule below is one way the JSON `rule` can match.
 // Columns after `at` are the metavariables the JSON's message, anchor or `each` names: one finding per distinct row.
 // The JSON `transform` computes ACRONYM from other metavariables' text; its literals end each rule.
-.violation N814(at: node, asname: loc, name: loc) "Use a CamelCase alias instead of `{asname}` for `{name}` and update its uses; leave it if `{name}` is really a constant despite its CamelCase name."
+.violation N814(at: node, asname: node, name: node) "Use a CamelCase alias instead of `{asname}` for `{name}` and update its uses; leave it if `{name}` is really a constant despite its CamelCase name."
     suppress noqa "N814"
 N814(n, ASNAME, NAME) :- kind(n, "aliased_import"), field(n, "name", c2),
     kind(c2, "dotted_name"), child(c2, c3, _), kind(c3, "identifier"),

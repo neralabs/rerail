@@ -126,7 +126,7 @@ climb_stop(n) :- kind(n, "variable_declarator") ; property_def(n) ; kind(n, "exp
 // (after its decorators); an object property's function from the property; another arrow at its `=>`; anything
 // else at its start.
 //   class A { @d async m() {} }   at `async`        { a: () => 1 }   at `a`        g(x => 1)   at `=>`
-.decl return_head(f: node, at: loc)
+.decl return_head(f: node, at: place)
 return_head(f, f) :- kind(f, "method_definition").
 return_head(f, p) :- fn_value(f), estree_parent(f, p), kind(p, "pair").
 return_head(f, t) :- fn_value(f), estree_parent(f, p), property_def(p), member_head(p, t).

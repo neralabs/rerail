@@ -196,8 +196,17 @@ export interface ClauseCoverage {
   reasons: AuditCoverageReason[];
 }
 
+/**
+ * Who an audit belongs to: the session whose work it checked, or the repository, for a change the walk of its other
+ * worktrees found that no session made (`WorktreeWalks`), which is in the repository's history and in no session's.
+ */
+export type AuditOwner = "session" | "repository";
+
 export interface AuditInput {
+  /** The session whose evaluator runs the audit, and with owner `session` the session it belongs to. */
   sessionId: string;
+  /** `session` when absent. With `repository`, the repository of `workspaceRoot` owns the audit (`AuditRecord`). */
+  owner?: AuditOwner;
   workspaceRoot: string;
   scope: AuditScope;
   mode: AuditMode;
@@ -220,7 +229,13 @@ export interface AuditResult {
   unlistedFailureCount?: number;
 }
 
-export interface AuditRecord extends Omit<AuditInput, "ruleProvenance" | "origin"> {
+export interface AuditRecord extends Omit<AuditInput, "ruleProvenance" | "origin" | "sessionId" | "owner"> {
+  /** The session the audit belongs to; null for one the repository owns. */
+  sessionId: string | null;
+  /** Of an audit the repository owns, the repository's key (`checkouts.repository_key`); null for a session's. */
+  repositoryId: string | null;
+  /** Of an audit the repository owns, the session whose evaluator ran it; null for a session's. */
+  recordedBy: string | null;
   origin: AuditOrigin;
   ruleProvenance: AuditRuleProvenance[];
   auditId: string;
@@ -266,5 +281,6 @@ export interface AuditRecorder {
   progress(auditId: string, result: Pick<AuditResult, "violations" | "failures" | "unlistedFailureCount">): void;
   appendResultPage?(auditId: string, pageIndex: number, result: Pick<AuditResult, "violations" | "failures">): void;
   finishResultPages?(auditId: string, status: AuditStatus, unlistedFailureCount?: number): void;
+  /** Marks interrupted the audits left running that `sessionId` ran: its own, and those it ran for the repository. */
   interrupt(sessionId: string): void;
 }

@@ -244,6 +244,45 @@ fn demanded(src: &str) -> (Vec<String>, Vec<(String, String)>, Vec<String>) {
     (v.rules().map(|r| v.show_rule(r)).collect(), own.splits, report.reasons)
 }
 
+/// python/compare.rerail's shape: `pair` carries asks down to children, and `un`'s demand from its recursive rule
+/// must leave `pair(x, y)` out (kept, it closes a cycle through `!leaf`). The atom tied `x` and `y` to one document
+/// (decision 0652: a relation not declared `cross_file` holds one document's rows), so a magic rule joining both keeps
+/// `@doc(x) = @doc(y)` and joins no files; the coarser demand of the body left disconnected reads each `kid` alone and
+/// joins none. Declared `cross_file`, the atom says nothing of documents, and no join stays.
+const DROPPED_PAIR: &str = "
+    .decl ask(a: node, b: node)
+    .decl kid(x: node, i: number, c: node)
+    .decl val(x: node, v: symbol)
+    .input ask, kid, val
+    .decl un(a: node, x: node)
+    .pragma \"magic-transform\" \"un\"
+    un(e, e) :- val(e, k), k != \"paren\".
+    un(e, m) :- val(e, \"paren\"), kid(e, 0, i), un(i, m).
+    .decl leaf(x: node)
+    leaf(x) :- kid(x, _, _), un(x, y), val(y, _).
+    .decl pair(x: node, y: node)
+    pair(x, y) :- ask(a, b), un(a, x), un(b, y).
+    pair(u, v) :- pair(x, y), !leaf(x), kid(x, i, c), kid(y, i, d), un(c, u), un(d, v).
+    .output pair
+";
+
+#[test]
+fn a_left_out_per_document_atom_keeps_its_nodes_in_one_document() {
+    // The magic rules of `un` the recursive `pair` rule makes: they read `kid($x, $i, $c)` or `kid($y, $i, $d)`.
+    let magic = |src: &str| -> Vec<String> {
+        let (rules, _, _) = demanded(src);
+        rules.into_iter().filter(|r| r.starts_with("magic_un_bf(") && (r.contains("kid($x, $i, $c)") || r.contains("kid($y, $i, $d)"))).collect()
+    };
+    let both = |r: &String| r.contains("kid($x, $i, $c)") && r.contains("kid($y, $i, $d)");
+    let per_doc = magic(DROPPED_PAIR);
+    assert!(!per_doc.is_empty() && per_doc.iter().all(|r| !r.contains("pair(")), "pair(x, y) is left out: {per_doc:#?}");
+    // A rule joining both nodes keeps them in one document; one reading a node alone joins none (the coarser demand
+    // of a disconnected body, each atom's own).
+    assert!(per_doc.iter().all(|r| !both(r) || (r.contains("doc($x) = ") && r.contains("doc($y)"))), "x and y in one document: {per_doc:#?}");
+    let across = magic(&DROPPED_PAIR.replace(".decl pair(x: node, y: node)", ".decl pair(x: node, y: node) cross_file"));
+    assert!(!across.is_empty() && across.iter().all(|r| !r.contains("doc(")), "a cross_file atom leaves no join: {across:#?}");
+}
+
 /// A string annotation's shape (decision 0431 §8): the parse request reads `unparen` (through `tsub`), and a reader
 /// of the request's answer (`parsed`, through `ref_site`) asks `unparen` too. One demand for both would join the
 /// request's component with `unparen` and `tsub` (`rr_embed_req -> tsub -> unparen -> magic_unparen_bf -> ref_site ->

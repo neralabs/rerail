@@ -8,19 +8,19 @@
 // B020(n): a finding at node n, from clause `loop-variable-overrides-iterator`.
 // Each rule below is one way the JSON `rule` can match.
 // Columns after `at` are the metavariables the JSON's message, anchor or `each` names: one finding per distinct row.
-.violation B020(at: node, name: loc) "Loop control variable `{name}` overrides iterable it iterates"
+.violation B020(at: node, name: node) "Loop control variable `{name}` overrides iterable it iterates"
     suppress noqa "B020"
 B020(n, NAME) :- kind(n, "identifier"), node(_, n, _, _, _), NAME = n, !b020_tok_follows_1(n),
     b020_in_target(n, NAME).
 
 // name_ref(n): the JSON util `name-ref`, used where the JSON says `matches: "name-ref"`
 //   NAME: metavariable this relation binds for the calling rule
-.decl b020_name_ref(n: node, name: loc)
+.decl b020_name_ref(n: node, name: node)
 b020_name_ref(n, NAME) :- kind(n, "identifier"), node(_, n, _, _, _), NAME = n, !b020_alt_1(n).
 
 // mentions(n): the JSON util `mentions`, used where the JSON says `matches: "mentions"`
 //   NAME: metavariable this relation binds for the calling rule
-.decl b020_mentions(n: node, name: loc)
+.decl b020_mentions(n: node, name: node)
 b020_mentions(n, NAME) :- b020_demand_mentions(n), b020_name_ref(n, NAME).
 b020_mentions(n, NAME) :- b020_demand_mentions(n),
     ( kind(n, "list_comprehension")
@@ -37,7 +37,7 @@ b020_mentions(n, NAME) :- b020_demand_mentions(n), count : { kind(n, k18), b020_
 
 // lambda_body(n): the JSON util `lambda-body`, used where the JSON says `matches: "lambda-body"`
 //   NAME: metavariable this relation binds for the calling rule
-.decl b020_lambda_body(n: node, name: loc)
+.decl b020_lambda_body(n: node, name: node)
 b020_lambda_body(n, NAME) :- b020_demand_lambda_body(n), kind(n, "parenthesized_expression"),
     child(n, c1, _), b020_lambda_body(c1, NAME).
 b020_lambda_body(n, NAME) :- b020_demand_lambda_body(n), !kind(n, "parenthesized_expression"),
@@ -45,25 +45,25 @@ b020_lambda_body(n, NAME) :- b020_demand_lambda_body(n), !kind(n, "parenthesized
 
 // mentions_inside(n): the JSON util `mentions-inside`, used where the JSON says `matches: "mentions-inside"`
 //   NAME: metavariable this relation binds for the calling rule
-.decl b020_mentions_inside(n: node, name: loc)
+.decl b020_mentions_inside(n: node, name: node)
 b020_mentions_inside(n, NAME) :- b020_demand_mentions_inside(n), within_stop(c1, n, b020_stop_4),
     b020_alt_6(c1, NAME).
 
 // lambda_parameter(n): the JSON util `lambda-parameter`, used where the JSON says `matches: "lambda-parameter"`
 //   NAME: metavariable of the calling rule, passed in (bound by the caller)
-.decl b020_lambda_parameter(n: node, name: loc)
+.decl b020_lambda_parameter(n: node, name: node)
 b020_lambda_parameter(n, NAME) :- b020_demand_lambda_parameter(n, NAME), kind(n, "lambda"),
     child(n, c1, _), kind(c1, "lambda_parameters"), child(c1, c2, _), b020_alt_8(c2, NAME).
 
 // shadowing_lambda(n): the JSON util `shadowing-lambda`, used where the JSON says `matches: "shadowing-lambda"`
 //   NAME: metavariable of the calling rule, passed in (bound by the caller)
-.decl b020_shadowing_lambda(n: node, name: loc)
+.decl b020_shadowing_lambda(n: node, name: node)
 b020_shadowing_lambda(n, NAME) :- b020_demand_shadowing_lambda(n, NAME),
     b020_lambda_parameter(n, NAME), !b020_later_mention(n, NAME).
 
 // later_mention(n): the JSON util `later-mention`, used where the JSON says `matches: "later-mention"`
 //   NAME: metavariable this relation binds for the calling rule
-.decl b020_later_mention(n: node, name: loc)
+.decl b020_later_mention(n: node, name: node)
 b020_later_mention(n, NAME) :- b020_demand_later_mention(n), precedes(n, s1), b020_mentions(s1, NAME).
 b020_later_mention(n, NAME) :- b020_demand_later_mention(n), child(p2, n, _),
     count : { b020_tok_follows_3(p2), child(p10, p2, _), kind(p10, "for_statement") } = 0,
@@ -71,7 +71,7 @@ b020_later_mention(n, NAME) :- b020_demand_later_mention(n), child(p2, n, _),
 
 // in_target(n): the JSON util `in-target`, used where the JSON says `matches: "in-target"`
 //   NAME: metavariable this relation binds for the calling rule
-.decl b020_in_target(n: node, name: loc)
+.decl b020_in_target(n: node, name: node)
 b020_in_target(n, NAME) :- b020_tok_precedes_7(n), child(p8, n, _), kind(p8, "for_statement"),
     child(p8, c9, _), b020_tok_follows_8(c9), b020_mentions(c9, NAME), !b020_alt_9(c9, NAME).
 b020_in_target(n, NAME) :- child(p18, n, _), b020_in_target(p18, NAME).
@@ -157,21 +157,21 @@ b020_tok_follows_8(n) :- structural_before(n, g12),
     match("(?s)^(?:(?:.*\\W)?(?:in)\\s*)$", g12).
 
 // demand_alt_9: the rows of alt_9 its callers ask for (the metavariable columns they pass in)
-.decl b020_demand_alt_9(n: node, name: loc)
+.decl b020_demand_alt_9(n: node, name: node)
 b020_demand_alt_9(c9, NAME) :- b020_tok_precedes_7(n), child(p8, n, _),
     kind(p8, "for_statement"), child(p8, c9, _), b020_tok_follows_8(c9), b020_mentions(c9, NAME).
 
 // demand_shadowing_lambda: the rows of shadowing_lambda its callers ask for (the metavariable columns they pass in)
-.decl b020_demand_shadowing_lambda(n: node, name: loc)
+.decl b020_demand_shadowing_lambda(n: node, name: node)
 b020_demand_shadowing_lambda(n, NAME) :- b020_demand_alt_9(n, NAME).
 b020_demand_shadowing_lambda(c1, NAME) :- b020_demand_alt_9(n, NAME), within(c1, n).
 
 // demand_lambda_parameter: the rows of lambda_parameter its callers ask for (the metavariable columns they pass in)
-.decl b020_demand_lambda_parameter(n: node, name: loc)
+.decl b020_demand_lambda_parameter(n: node, name: node)
 b020_demand_lambda_parameter(n, NAME) :- b020_demand_shadowing_lambda(n, NAME).
 
 // demand_alt_8: the rows of alt_8 its callers ask for (the metavariable columns they pass in)
-.decl b020_demand_alt_8(n: node, name: loc)
+.decl b020_demand_alt_8(n: node, name: node)
 b020_demand_alt_8(c2, NAME) :- b020_demand_lambda_parameter(n, NAME), kind(n, "lambda"),
     child(n, c1, _), kind(c1, "lambda_parameters"), child(c1, c2, _).
 
@@ -233,20 +233,20 @@ b020_alt_1(n) :- b020_tok_precedes_2(n), child(p15, n, _), kind(p15, "keyword_ar
 
 // alt_3(n): the JSON `any`: n matches if any one of these rules does
 //   NAME: metavariable this relation binds for the calling rule
-.decl b020_alt_3(n: node, name: loc)
+.decl b020_alt_3(n: node, name: node)
 b020_alt_3(n, NAME) :- b020_demand_alt_3(n), b020_mentions(n, NAME).
 b020_alt_3(n, NAME) :- b020_demand_alt_3(n), (kind(n, "for_in_clause") ; kind(n, "if_clause")),
     child(n, c1, _), b020_mentions(c1, NAME).
 
 // alt_6(n): the JSON `any`: n matches if any one of these rules does
 //   NAME: metavariable this relation binds for the calling rule
-.decl b020_alt_6(n: node, name: loc)
+.decl b020_alt_6(n: node, name: node)
 b020_alt_6(n, NAME) :- b020_demand_alt_6(n), b020_name_ref(n, NAME).
 b020_alt_6(n, NAME) :- b020_demand_alt_6(n), kind(n, k1), b020_set_2(k1), b020_mentions(n, NAME).
 
 // alt_8(n): the JSON `any`: n matches if any one of these rules does
 //   NAME: metavariable of the calling rule, passed in (bound by the caller)
-.decl b020_alt_8(n: node, name: loc)
+.decl b020_alt_8(n: node, name: node)
 b020_alt_8(n, NAME) :- b020_demand_alt_8(n, NAME), kind(n, "identifier"),
     text(n, t_name1), text(NAME, t_name1), @doc(n) = @doc(NAME).
 b020_alt_8(n, NAME) :- b020_demand_alt_8(n, NAME), kind(n, "default_parameter"), child(n, c1, _),
@@ -254,6 +254,6 @@ b020_alt_8(n, NAME) :- b020_demand_alt_8(n, NAME), kind(n, "default_parameter"),
 
 // alt_9(n): the JSON `any`: n matches if any one of these rules does
 //   NAME: metavariable of the calling rule, passed in (bound by the caller)
-.decl b020_alt_9(n: node, name: loc)
+.decl b020_alt_9(n: node, name: node)
 b020_alt_9(n, NAME) :- b020_demand_alt_9(n, NAME), b020_shadowing_lambda(n, NAME).
 b020_alt_9(n, NAME) :- b020_demand_alt_9(n, NAME), within(c1, n), b020_shadowing_lambda(c1, NAME).

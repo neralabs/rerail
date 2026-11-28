@@ -339,6 +339,7 @@ mod tests {
         let store = Store {
             rels: Vec::new(),
             syms: symbols,
+            docs: Default::default(),
         };
         let j = parse_join(&db, "pos c0 v0\npos c1 v0\nhead v0", &mut syms).unwrap();
         let outer = InRel::kept(vec![b'i'], (0..16_384).collect(), 16_384);
@@ -365,7 +366,7 @@ mod tests {
         let db = rusqlite::Connection::open(&path).unwrap();
         let symbols = symbols(&db).unwrap();
         let mut syms = Interner::for_loading(&symbols);
-        let store = Store { rels: Vec::new(), syms: symbols };
+        let store = Store { rels: Vec::new(), syms: symbols, docs: Default::default() };
         let j = parse_join(&db, spec, &mut syms).unwrap();
         let mut rels = [(InRel::kept(vec![b'i'], (0..16_384).collect(), 16_384), &[][..]), (InRel::kept(vec![b'i'], (0..1659).collect(), 1659), &[0][..])].into_iter();
         let j = j.edited(|step| {
@@ -416,7 +417,7 @@ mod tests {
         let db = rusqlite::Connection::open(&path).unwrap();
         let symbols = symbols(&db).unwrap();
         let mut syms = Interner::for_loading(&symbols);
-        let store = Store { rels: Vec::new(), syms: symbols };
+        let store = Store { rels: Vec::new(), syms: symbols, docs: Default::default() };
         let j = parse_join(&db, "pos c0 v0\npos c1 v0\nhead v0", &mut syms).unwrap();
         let counted = Arc::new(Counted(std::sync::atomic::AtomicUsize::new(0)));
         let outer = InRel::kept(vec![b'i'], (0..10).collect(), 10);
@@ -499,7 +500,7 @@ mod tests {
         let db = rusqlite::Connection::open(&path).unwrap();
         let symbols = symbols(&db).unwrap();
         let mut syms = Interner::for_loading(&symbols);
-        let store = Store { rels: Vec::new(), syms: symbols };
+        let store = Store { rels: Vec::new(), syms: symbols, docs: Default::default() };
         let j = parse_join(&db, "pos c0 v0\npos c1 v0\nhead v0", &mut syms).unwrap();
         let keys: Vector<i64> = (0..1659).chain(100_000..138_341).collect();
         let mut inner = InRel::kept(vec![b'i'], keys.clone(), keys.len());

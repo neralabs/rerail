@@ -22,25 +22,25 @@ rai_class("_SqlVisibleAncestorsDefinition"). rai_class("_SqlCopyVisibleSparseAnc
 rai_class("_SparseRowVisibleAtRevisionCondition").
 
 // rai_text(d, sp): the whole file, when the plugin's source triggers let it run.
-.decl rai_text(d: number, sp: span)
-rai_text(d, sp) :- source(d, sp), text(sp, s), match("(?s).*(revision|ancestry).*", s).
+.decl rai_text(d: number, sp: line)
+rai_text(d, sp) :- document_source(d, sp), line_text(sp, s), match("(?s).*(revision|ancestry).*", s).
 
 // rai_class_at(d, x, k): `class x` starts line k. rai_chain_at(d, k): stmt_ancestry_chain occurs on line k.
 .decl rai_class_at(d: number, x: symbol, k: number)
-rai_class_at(d, x, k) :- rai_text(d, sp), match_all("(?m)^class\\s+(?<c>\\w+)\\b", sp), text(c, x), rai_class(x), line(c, k).
+rai_class_at(d, x, k) :- rai_text(d, sp), match_all("(?m)^class\\s+(?<c>\\w+)\\b", sp), text(c, x), rai_class(x), node_line_number(c, k).
 .decl rai_chain_at(d: number, k: number)
-rai_chain_at(d, k) :- rai_text(d, sp), match_all("(?<m>stmt_ancestry_chain)", sp), line(m, k).
+rai_chain_at(d, k) :- rai_text(d, sp), match_all("(?<m>stmt_ancestry_chain)", sp), node_line_number(m, k).
 
 // Both are reported once, at the first occurrence (re.search, str.find).
-.violation forbidden_descriptor(at: loc, name: symbol) "forbidden ancestry descriptor {name}"
+.violation forbidden_descriptor(at: node, name: symbol) "forbidden ancestry descriptor {name}"
 forbidden_descriptor(@place(p, l), x) :- rai_class_at(d, x, _), doc(d, p, _), l = min k : { rai_class_at(d, x, k) }.
 
-.violation removed_surface(at: loc) "imports removed stmt_ancestry_chain surface"
+.violation removed_surface(at: node) "imports removed stmt_ancestry_chain surface"
 removed_surface(@place(p, l)) :- rai_chain_at(d, _), doc(d, p, _), l = min k : { rai_chain_at(d, k) }.
 
 // TEXT_CAST_PATTERNS, case-insensitive, every match. A column may be followed by a closing quote, then up to 80
 // characters (newlines included) before `::text`, or inside CAST(… AS TEXT | CHAR(n)).
-.violation stored_revision_text_cast(at: loc) "stored revision column cast to text"
+.violation stored_revision_text_cast(at: node) "stored revision column cast to text"
 stored_revision_text_cast(m) :- rai_text(_, sp),
     match_all("(?i)(?<m>(?:revision_sys_id|parent_revision_sys_id|sys_valid_from_revision_id|sys_valid_to_revision_id)[\"'`]?[\\s\\S]{0,80}::\\s*text)", sp).
 stored_revision_text_cast(m) :- rai_text(_, sp),

@@ -27,6 +27,9 @@ use crate::program::Words;
 use ::bitlex::syntax::{Gram, Stmt, parse};
 use std::collections::HashMap;
 
+/// The cost of a sentence that cannot be derived: a refusal, or a rule with none.
+const FAR: usize = 1 << 20;
+
 /// A seeded xorshift: the corpus is the same on every run.
 pub struct Rng(pub u64);
 
@@ -236,7 +239,6 @@ impl Lang {
     }
 
     fn cost(&self, g: &Gram) -> usize {
-        const FAR: usize = 1 << 20;
         match g {
             Gram::Lit(_) => 1,
             Gram::Sym(s) => match self.rules.get(s) {
@@ -250,6 +252,7 @@ impl Lang {
             Gram::Wrap { body, .. } | Gram::Relabel { body, .. } | Gram::Fold { body, .. } | Gram::Reread { body, .. } => self.cost(body),
             Gram::Balanced { .. } => 2,
             Gram::Any(_) => 1,
+            Gram::Leaf { rule, .. } => self.cost(&Gram::Sym(rule.clone())),
         }
     }
 
@@ -263,8 +266,11 @@ impl Lang {
                 None => out.push(self.token(rng, s)),
             },
             Gram::Seq(gs) => gs.iter().for_each(|g| self.derive(rng, g, depth, out)),
+            // An arm that refuses (`refused`, no arms) derives no sentence: the others are picked from.
             Gram::Alt(gs) => {
-                let g = if deep { gs.iter().min_by_key(|g| self.cost(g)).unwrap() } else { rng.pick(gs) };
+                let arms: Vec<&Gram> = gs.iter().filter(|g| self.cost(g) < FAR).collect();
+                let Some(&least) = arms.iter().min_by_key(|g| self.cost(g)) else { return };
+                let g = if deep { least } else { *rng.pick(&arms) };
                 self.derive(rng, g, depth, out)
             }
             Gram::Opt(g) => {
@@ -283,6 +289,8 @@ impl Lang {
             Gram::Wrap { body, .. } | Gram::Relabel { body, .. } | Gram::Fold { body, .. } | Gram::Reread { body, .. } => self.derive(rng, body, depth, out),
             // A word: a token of most kinds.
             Gram::Any(_) => out.push(self.token(rng, "identifier")),
+            // The tokens of a sentence of its rule.
+            Gram::Leaf { rule, .. } => self.derive(rng, &Gram::Sym(rule.clone()), depth, out),
             // The opener, maybe a few tokens and a nested pair, the closer.
             Gram::Balanced { open, close, .. } => {
                 out.push(self.keyword(rng, open));
@@ -364,7 +372,7 @@ impl Lang {
             }
             Gram::Field(_, g) | Gram::Retag(_, g) | Gram::Merge(_, g) | Gram::As(_, g) | Gram::Flag { body: g, .. } | Gram::Unless { body: g, .. } => self.bytes(rng, g, long, out),
             Gram::Wrap { body, .. } | Gram::Relabel { body, .. } | Gram::Fold { body, .. } | Gram::Reread { body, .. } => self.bytes(rng, body, long, out),
-            Gram::Balanced { .. } | Gram::Any(_) => {}
+            Gram::Balanced { .. } | Gram::Any(_) | Gram::Leaf { .. } => {}
         }
     }
 }
@@ -858,7 +866,11 @@ pub fn check_documents(
             }
             return Some(format!("{}: tier 1 compiled differs from its interpreter", show()));
         }
-        if interp != want {
+        // A statement recovered (`recover`, decision 0650): an ERROR leaf where the reference, which does not
+        // recover, refuses. There the interpreter's tree is not the reference's; the compiled code's is checked against
+        // the interpreter's by its tape below, as everywhere. The lean parser's tape is the grammar's own tests'.
+        let recovered = want.is_none() && interp.as_ref().is_some_and(|n| n.iter().any(|x| x.0 == crate::stream_ir::ERROR_LEAF));
+        if !recovered && interp != want {
             let why = crate::stream::run(&c.program, &bytes, &run).err().map(|r| format!("word {}: {}", r.pc, r.why));
             let fell = run.totals.iter().any(|&t| t != 0);
             return Some(format!("{}:\n  reference {want:?}\n  interpreters {interp:?} ({why:?}, tier 1 falls back: {fell})", show()));

@@ -9,7 +9,7 @@
 // Each rule below is one way the JSON `rule` can match.
 // Columns after `at` are the metavariables the JSON's message, anchor or `each` names: one finding per distinct row.
 // The JSON `transform` computes ACRONYM from other metavariables' text; its literals end each rule.
-.violation N817(at: node, name: loc, asname: loc) "Import `{name}` under its own name, or a descriptive CamelCase alias, instead of the acronym `{asname}`, and update its uses; keep the alias if your project's convention requires it."
+.violation N817(at: node, name: node, asname: node) "Import `{name}` under its own name, or a descriptive CamelCase alias, instead of the acronym `{asname}`, and update its uses; keep the alias if your project's convention requires it."
     suppress noqa "N817"
 N817(n, NAME, ASNAME) :- kind(n, "aliased_import"), field(n, "name", c2),
     kind(c2, "dotted_name"), child(c2, c3, _), kind(c3, "identifier"),

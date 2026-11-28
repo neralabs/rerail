@@ -370,6 +370,8 @@ pub struct Programs {
     pub positions: Vec<(String, String)>,
     /// The split's undeclared crossings (`FileLocal::crossings`, decision 0652).
     pub crossings: std::collections::BTreeMap<String, String>,
+    /// The moved relations that are unions of one document's rows (`FileLocal::moved_unions`, decision 0680).
+    pub moved_unions: std::collections::BTreeSet<String>,
     /// The cross part's relations that hold or read a node id (decision 0677, `node_crossings`).
     pub nodes: Vec<NodeCrossing>,
 }
@@ -437,6 +439,7 @@ pub fn programs_of(version: std::sync::Arc<crate::code_rule_dsl::logic::program_
     let mut programs = assemble(version, local, constants, split.views(), split.locations.clone(), split.same_doc.clone())?;
     programs.causes = split.causes.clone();
     programs.crossings = split.crossings.clone();
+    programs.moved_unions = split.moved_unions.clone();
     crossings_under(&programs.program, &mut programs.nodes, &programs.causes);
     nodes_checked(&programs.nodes)?;
     Ok(programs)
@@ -496,7 +499,7 @@ pub fn assemble(
         let _step = crate::code_rule_dsl::logic::profile::span(|| "the cross-file part's node ids (decision 0677)".into());
         node_crossings(&version, &f, &versions.cross, &local)
     };
-    Ok(Programs { exports, base, locations, same_doc, file_local: local, constants, views, versions, program: version, causes: Default::default(), positions, crossings: Default::default(), nodes })
+    Ok(Programs { exports, base, locations, same_doc, file_local: local, constants, views, versions, program: version, causes: Default::default(), positions, crossings: Default::default(), moved_unions: Default::default(), nodes })
 }
 
 /// Whether the factorized store is on (decision 0099): it is, unless `RERAIL_FACTORIZE=off` or the run's option
@@ -567,7 +570,7 @@ pub fn semijoin_bases(cross: &crate::code_rule_dsl::logic::program_image::Versio
         // Another column of nodes: by its type, or by its name where the type is a number (`tape`'s parent `par`, an
         // ancestor `a`, `ast_match`'s pattern root `p`, `host_node`'s host `h`); a walk up `tape(p, par)` reaches
         // parents no export holds.
-        let others_nodes = types.iter().enumerate().any(|(i, t)| i != k && (matches!(*t, "node" | "loc" | "span") || matches!(columns[i], "par" | "a" | "p" | "h")));
+        let others_nodes = types.iter().enumerate().any(|(i, t)| i != k && (matches!(*t, "node" | "place") || matches!(columns[i], "par" | "a" | "p" | "h")));
         if !others_nodes && columns.len() == types.len() {
             key.insert(rel.clone(), k);
         }
@@ -593,7 +596,7 @@ pub fn semijoin_bases(cross: &crate::code_rule_dsl::logic::program_image::Versio
     }
     let root = |rel: &str| view_of.get(rel).cloned().unwrap_or_else(|| rel.to_owned());
     // A relation with no node column reaches no node.
-    let reaches_nodes = |rel: &str| types_of(rel).is_none_or(|ts| ts.iter().any(|t| matches!(*t, "node" | "loc" | "span")));
+    let reaches_nodes = |rel: &str| types_of(rel).is_none_or(|ts| ts.iter().any(|t| matches!(*t, "node" | "place")));
     let is_base = |rel: &str| base.iter().any(|b| b == rel);
     let about = crate::code_rule_dsl::logic::program_image::About::of(v);
     let natives = &about.natives;
@@ -673,6 +676,10 @@ pub const MOVED_CROSS_FILE: &str = "moved_cross_file";
 /// `FileLocal::path_keys` names) would place it in one file. Neither a declaration nor a move (0652).
 pub const READ_LOCATED: &str = "read_located";
 
+/// The qualifier `locate` gives each located form it makes, `q_at(d, …)` beside `q(…)` (decision 0680): its rows are
+/// `q`'s, each with its document. The split reads a read of it as holding `q`'s rows, a keyed family's key among them.
+pub const LOCATED_FORM: &str = "located_form";
+
 /// The qualifier of a relation whose rows choose how its readers are evaluated, not what they derive: a pair cache's
 /// guard (`rr_pair_cache_…_small`), a deferred join's hot endpoints (`rr_deferred_…_hot`). Its readers derive the
 /// same rows whatever it holds, so the split places it with its inputs and reads it as a test (decision 0652): in a
@@ -695,12 +702,22 @@ pub fn crossings_checked(p: &Programs) -> Result<(), String> {
     // deferred join's factor of a relation declared `cross_file`. A `@place` finding's relation (`rr_place_…`, a path
     // and a line) is about the corpus by what `@place` says, as 0290 moves it.
     let declared = |rel: &str| f.qualified(rel, CROSS_FILE) && !f.qualified(rel, MOVED_CROSS_FILE);
-    // A stage's probe (decision 0675 §3) found cross-file keys no entry: its export is read whole.
+    // A demand set (`magic_…`, the keys' demand, under a program's prefix too) is the engine's: the transform leaves
+    // a derived literal out of it to keep the program stratified, which only widens the demand, and can leave it
+    // joining documents its source rule joined through that literal (RUF034's `magic_unparen_bf`, `same_pair` left
+    // out). The author cannot declare it; it is cross-file as the engine made it, and an answer reading it is eager
+    // (#932, d7ec54c12f).
+    let demand = |rel: &str| {
+        let r = rel.split_once('_').filter(|(p, _)| p.len() > 1 && p.starts_with(['p', 'q']) && p[1..].bytes().all(|b| b.is_ascii_digit())).map_or(rel, |(_, r)| r);
+        r.starts_with("magic_")
+    };
+    // A stage's probe (decision 0709 §3) found cross-file keys no entry: its export is read whole.
     let meant = |rel: &str| {
         rel.starts_with(crate::code_rule_dsl::logic::plan::phased::PROBE)
             || lowering_source(v, rel).is_some_and(|s| s.starts_with(crate::code_rule_dsl::logic::plan::phased::PROBE))
             || (rel.starts_with("rr_place_") && placement_only(v, &f, rel))
             || declared(rel)
+            || demand(rel)
             || lowering_source(v, rel).is_some_and(|s| declared(&s))
     };
     // Each with why it is cross-file, read down the split's causes, as a node crossing is shown (`node_crossings`).
@@ -710,7 +727,9 @@ pub fn crossings_checked(p: &Programs) -> Result<(), String> {
     for rel in moved_in(&f) {
         // A function of strings (`match_all`) moved for a cross-file reader joins no documents.
         let functional = f.native(rel).is_some_and(|nat| matches!(nat.spec, crate::code_rule_dsl::logic::program_image::ArchivedNativeSpec::MatchAll { .. })) || f.qualified(rel, STRATEGY);
-        if !functional && !placement_only(v, &f, rel) && !meant(rel) {
+        // A union of one document's rows whose documents no read names (decision 0680) is where it was before: no
+        // crossing.
+        if !functional && !placement_only(v, &f, rel) && !meant(rel) && !p.moved_unions.contains(rel) {
             refused.push(crossing_shown(v, rel, "its rows name no document (moved by `locate`), and are read on"));
         }
     }

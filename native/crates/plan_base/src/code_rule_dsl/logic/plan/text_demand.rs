@@ -104,7 +104,7 @@ pub fn span_text_demand(v: &Version) -> (BTreeSet<SpanIn>, bool) {
     let mut requested = 0;
     for rule in v.rules() {
         let vars = span_vars(v, &columns, rule);
-        for atom in rule.body().filter_map(|l| l.atom()).filter(|a| v.rel_name(a.rel()) == "text") {
+        for atom in rule.body().filter_map(|l| l.atom()).filter(|a| crate::code_rule_dsl::facts::core::counterpart(v.rel_name(a.rel())) == "text") {
             if let Some(TermRef::Var(value)) = atom.args().next() {
                 requested |= vars.get(&value).copied().unwrap_or(0);
             }
@@ -176,7 +176,7 @@ fn bare(k: &str) -> String {
 }
 
 /// A matcher's root kind: its rule's own `kind`, or one of its top-level `all`'s.
-fn root_kind(text: &str) -> Option<String> {
+pub fn root_kind(text: &str) -> Option<String> {
     let rule = serde_json::from_str::<serde_json::Value>(text).ok()?.get("rule")?.clone();
     if let Some(k) = rule.get("kind").and_then(|k| k.as_str()) {
         return Some(k.to_owned());
@@ -765,7 +765,7 @@ pub fn node_anchors(v: &Version, settings: &[(String, String)], matchers: &Match
     }
     // An export's name is its item's first word: an asked phase writes its key after it (`asked_at by_path 1`).
     let exports: Vec<String> = setting("export").iter().flat_map(|x| x.split(',').filter_map(|e| e.trim().trim_end_matches('.').split_whitespace().next().map(str::to_owned)).collect::<Vec<_>>()).collect();
-    let is_node = |t: &str| t == "node" || t == "loc";
+    let is_node = |t: &str| t == "node" || t == "place";
     let ast = crate::code_rule_dsl::facts::core::ast_matches::PREFIX;
     let types = |rel: &str| -> Option<Vec<&str>> { v.decl_of(rel).map(|d| d.cols().map(|(_, t)| v.text(t)).collect()) };
     for e in &exports {
@@ -787,7 +787,7 @@ pub fn node_anchors(v: &Version, settings: &[(String, String)], matchers: &Match
         "field" => Some(2),
         _ => None,
     };
-    let tree = |rel: &str| LOCAL.contains(&rel) || down(rel).is_some();
+    let tree = |rel: &str| LOCAL.contains(&crate::code_rule_dsl::facts::core::counterpart(rel)) || down(rel).is_some();
     // A matcher's root kind, where it reaches only below its root.
     let roots: HashMap<&str, Option<String>> = matchers
         .iter()

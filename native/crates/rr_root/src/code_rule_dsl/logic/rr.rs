@@ -46,12 +46,31 @@ use from_tape::{RrFile, S, Statements, Stmt};
 /// text a program's keys are made of (`corpus::texts_digest`). Lowering reads a message's placeholders alone, and the
 /// writer puts its texts in (decision 0225 §3), so an edit of a message's words is no edit of the program.
 pub fn message_masked(src: &str) -> std::borrow::Cow<'_, str> {
+    message_masked_of(src, None)
+}
+
+/// The parse `file` gives, when it is of `src` (the run's, `base::Texts::files`): a text is parsed once a run, where
+/// masking it, and reading its templates and its seed, each parsed it again.
+fn parse_of<'f>(src: &str, file: Option<&'f std::sync::Arc<RrFile>>) -> Option<&'f std::sync::Arc<RrFile>> {
+    file.filter(|f| f.src() == src)
+}
+
+/// `message_masked`, off `file` when it is `src`'s parse.
+pub fn message_masked_of<'s>(src: &'s str, file: Option<&std::sync::Arc<RrFile>>) -> std::borrow::Cow<'s, str> {
     if !src.contains(".violation") {
         return std::borrow::Cow::Borrowed(src);
     }
     let message = tape::Field::Message as u16;
     // The messages' spans, read off the file's tape in place.
-    let Ok(file) = RrFile::parsed(src) else { return std::borrow::Cow::Borrowed(src) };
+    let parsed;
+    let file: &RrFile = match parse_of(src, file) {
+        Some(f) => f,
+        None => {
+            let Ok(f) = RrFile::parsed(src) else { return std::borrow::Cow::Borrowed(src) };
+            parsed = f;
+            &parsed
+        }
+    };
     let t = file.tape();
     let mut spans: Vec<(usize, usize)> = (0..t.len()).filter(|&i| t.field(i) == message && t.kind(i) != tape::ERROR).map(|i| (t.start(i), t.end(i))).collect();
     spans.sort();
@@ -72,10 +91,21 @@ pub fn message_masked(src: &str) -> std::borrow::Cow<'_, str> {
 /// settings a printed program keeps them in (`lower::findings::MESSAGE`). The policy is the `.policy` setting's name,
 /// as lowering names it in each finding.
 pub fn message_templates(src: &str) -> Vec<(String, String, String)> {
+    message_templates_of(src, None)
+}
+
+/// `message_templates`, off `file` when it is `src`'s parse.
+pub fn message_templates_of(src: &str, file: Option<&std::sync::Arc<RrFile>>) -> Vec<(String, String, String)> {
     if !src.contains(".violation") && !src.contains(".message") {
         return Vec::new();
     }
-    let Ok(file) = RrFile::read(src) else { return Vec::new() };
+    let file = match parse_of(src, file) {
+        Some(f) => std::sync::Arc::clone(f),
+        None => match RrFile::read(src) {
+            Ok(f) => f,
+            Err(_) => return Vec::new(),
+        },
+    };
     let statements = file.statements();
     let policy = policy_settings(&statements).next().unwrap_or_default();
     statements
@@ -163,7 +193,7 @@ pub fn core_node_columns() -> &'static std::collections::HashMap<String, Vec<usi
     NODES.get_or_init(|| std::fs::read_to_string(library().join("core.rerail")).map(|src| node_columns_declared(&src)).unwrap_or_default())
 }
 
-/// The columns of type `node` of each relation `.decl`ared in `src` (`.decl r(a: node, b: span)` gives `r: [0]`).
+/// The columns of type `node` of each relation `.decl`ared in `src` (`.decl r(a: node, b: place)` gives `r: [0]`).
 pub fn node_columns_declared(src: &str) -> std::collections::HashMap<String, Vec<usize>> {
     let mut out = std::collections::HashMap::new();
     for line in src.lines() {
@@ -597,9 +627,32 @@ impl Library {
 
     /// The modules a program whose library files are `files` reads: those all of whose files it includes, in order,
     /// with their keys.
+    /// Both lists spelled once (`one_spelling`): a pack's table beside the library is `lib/../packs/…` as phase 0
+    /// plans it and `packs/…` in a run's canonical list, and spelled two ways it was in no program's scope.
     pub fn scope(&self, files: &[PathBuf]) -> (Vec<&lower::Module>, Vec<crate::content_store::HashKey>) {
+        let files: BTreeSet<PathBuf> = files.iter().map(|f| one_spelling(f)).collect();
         self.modules.iter().zip(&self.files).zip(&self.keys).filter(|((_, fs), _)| fs.iter().all(|f| files.contains(f))).map(|((m, _), k)| (m, *k)).unzip()
     }
+}
+
+/// `path` spelled once: its `.` and `..` taken out by its text, as the library's directory is canonical and only an
+/// include's own `..` is left (`lib/../packs/…` is `packs/…`). A relative path is as written.
+pub fn one_spelling(path: &Path) -> PathBuf {
+    use std::path::Component;
+    if !path.is_absolute() || !path.components().any(|c| matches!(c, Component::CurDir | Component::ParentDir)) {
+        return path.to_path_buf();
+    }
+    let mut out = PathBuf::new();
+    for c in path.components() {
+        match c {
+            Component::CurDir => {}
+            Component::ParentDir => {
+                out.pop();
+            }
+            c => out.push(c),
+        }
+    }
+    out
 }
 
 /// The library files `paths` (canonical, includes first, as `Modules::files` lists them) as one program, lowered
@@ -692,8 +745,11 @@ fn declared_in(statements: &Statements) -> impl Iterator<Item = (String, bool)> 
 /// file declaring each and whether it is extensible.
 fn closed_heads(file: &str, statements: &Statements, open: &std::collections::HashMap<String, (&Path, bool)>) -> Result<(), Error> {
     let own: BTreeSet<String> = declared_in(statements).map(|(n, _)| n).collect();
+    // A relation `core.rerail` declares that one library file derives (`DERIVED_BY`, decision 0483:
+    // `python/references.rerail`'s `reference_edge`) is that file's to derive, as `check_names` allows it.
+    let derives = |h: &str| DERIVED_BY.iter().any(|(rel, by)| *rel == h && library().join(by).canonical().is_ok_and(|by| by == Path::new(file)));
     for s in statements {
-        for h in s.heads().into_iter().filter(|h| !own.contains(*h)) {
+        for h in s.heads().into_iter().filter(|h| !own.contains(*h) && !derives(h)) {
             if let Some((home, false)) = open.get(h) {
                 return Err(Error::Syntax(format!(
                     "{file}:{}: `{h}` is declared in {}, and not `extensible`: a file that includes it adds no rules or facts to it (decision 0263)",
@@ -729,7 +785,8 @@ pub fn library_modules_planned(paths: &[PathBuf]) -> Result<(Vec<lower::Module>,
     let mut keys = Vec::with_capacity(plan.len());
     for m in &plan {
         modules.push(m.module()?);
-        files.push(m.files.lines().map(PathBuf::from).collect());
+        // Spelled once, as `Library::scope` compares them.
+        files.push(m.files.lines().map(|f| one_spelling(Path::new(f))).collect());
         keys.push(planned_key(&m.key).ok_or_else(|| Error::Syntax(format!("{}: no module key", m.key)))?);
     }
     Ok((modules, files, keys))
@@ -739,7 +796,12 @@ pub fn library_modules_planned(paths: &[PathBuf]) -> Result<(Vec<lower::Module>,
 /// every file's graph, each once, in link order (by rank, then by name).
 pub fn planned_library(paths: &[PathBuf]) -> Result<Vec<PlannedModule>, Error> {
     use super::plan::corpus::phase0;
-    let seeds: Vec<phase0::Seed> = paths.iter().map(|p| phase0::Seed::File(p.canonical().unwrap_or_else(|_| p.clone()))).collect();
+    // Each a module: a file outside the library and the phase programs as the text that includes it (`module_seed`).
+    let dirs = phase0::Dirs::here();
+    let seeds: Vec<phase0::Seed> = paths.iter().map(|p| p.canonical().unwrap_or_else(|_| p.clone())).map(|p| match &dirs {
+        Some(dirs) => dirs.module_seed(p),
+        None => phase0::Seed::File(p),
+    }).collect();
     let graphs = phase0::graphs(&seeds).map_err(|e| Error::Syntax(format!("phase 0's plan of the library: {e}")))?;
     let mut whole = phase0::Graph::default();
     for g in &graphs {
@@ -866,7 +928,7 @@ pub fn interface_digest(path: &Path) -> Option<String> {
         h.update((s.text().len() as u64).to_le_bytes());
         h.update(s.text().as_bytes());
     }
-    Some(h.finalize().iter().map(|b| format!("{b:02x}")).collect())
+    Some(rerail_prof::code_rule_dsl::prof::lower_hex(&h.finalize()[..]))
 }
 pub const LOWERED: &str = "p0_module_lowered";
 
@@ -905,7 +967,7 @@ pub fn planned_key(key: &str) -> Option<crate::content_store::HashKey> {
 
 fn image_digest(bytes: &[u8]) -> String {
     use sha2::Digest as _;
-    sha2::Sha256::digest(bytes).iter().map(|b| format!("{b:02x}")).collect()
+    rerail_prof::code_rule_dsl::prof::lower_hex(&sha2::Sha256::digest(bytes)[..])
 }
 
 /// The module of plan key `key`, with its image's digest, as this process made or read it for the store the run
@@ -916,44 +978,48 @@ fn held_module(key: &str) -> Option<(lower::Module, String)> {
     held.0.lock().unwrap_or_else(std::sync::PoisonError::into_inner).get(&(image_store_path(), k)).map(|(m, d, _)| (m.clone(), d.clone()))
 }
 
-/// The module images the image store held when phase 0's run began, by the store's path and their alias, each where
-/// its bytes lie in the store's segments (`ContentStore::pinned_sources_placed`). Read before the run's first wave
-/// (decision 0104: no statement inside the waves), so its answer reads a module the process does not hold where the
-/// store's segment, a block, holds it (`module_in_waves`), and lowers only what the store does not hold (decision
-/// 0639 §3, §5: a copy of the template lowers no module).
+/// The image store's module images as a run of phase 0 found them before its first wave (`images_ahead`), by the
+/// store's path: each image's alias, with where it lies in its segment and its lease.
 #[derive(Default)]
-struct PlacedModules(std::sync::Mutex<std::collections::HashMap<Option<PathBuf>, std::sync::Arc<std::collections::HashMap<crate::content_store::HashKey, crate::content_store::SourcePlace>>>>);
+struct ImagesAhead(
+    std::sync::Mutex<std::collections::HashMap<Option<PathBuf>, (std::sync::Arc<crate::content_store::ContentStore>, std::sync::Arc<std::collections::HashMap<crate::content_store::HashKey, crate::content_store::SourcePlace>>)>>,
+);
 
-/// Reads the image store's index of the images it keeps (`PlacedModules`): one statement, before phase 0's run.
-pub fn read_placed_modules() {
+/// Before phase 0's first wave (decision 0104: one read before it), the images its store keeps, by alias: its waves'
+/// answers to `p0_lower_req` (`lower_planned_module`) read a module kept there in its segment, with no statement,
+/// rather than lower it again. Without it, a process that had not made a module itself lowered every module of its
+/// plan, though its store (a test's, copied from the template; a project's, from an earlier process) held them all.
+pub fn images_ahead() {
     let Some(store) = image_store() else { return };
-    let Ok(rows) = store.pinned_sources_placed(IMAGE_OWNER) else { return };
-    let placed = std::sync::Arc::new(rows.into_iter().collect());
-    crate::code_rule_dsl::logic::profile::shared::<PlacedModules>().0.lock().unwrap_or_else(std::sync::PoisonError::into_inner).insert(image_store_path(), placed);
+    let Ok(found) = store.pinned_sources_by_alias(IMAGE_OWNER) else { return };
+    crate::code_rule_dsl::logic::profile::shared::<ImagesAhead>().0.lock().unwrap_or_else(std::sync::PoisonError::into_inner).insert(image_store_path(), (store, std::sync::Arc::new(found)));
 }
 
-/// The module of plan key `key`, with its image's digest, inside phase 0's waves: as the process holds it, else read
-/// where the image store's segment holds it, found by the index read before the run (`PlacedModules`), with no
-/// statement; its lease renewed behind the run where it runs down. `None` where neither holds it.
-fn module_in_waves(key: &str) -> Option<(lower::Module, String)> {
+/// `held_module`, else the module the store keeps under `key`, as `images_ahead` found it (or the shipped bundle):
+/// read in its segment and decoded, and held for the process. No statement: what phase 0's waves read.
+fn held_or_ahead(key: &str) -> Option<(lower::Module, String)> {
     if let Some(found) = held_module(key) {
         return Some(found);
     }
     let k = planned_key(key)?;
     let at = image_store_path();
-    let place = {
-        let placed = crate::code_rule_dsl::logic::profile::shared::<PlacedModules>();
-        let placed = placed.0.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
-        *placed.get(&at)?.get(&k)?
+    let bytes: super::program_image::SharedBytes = match images::shipped_image(k) {
+        Some(b) => b,
+        None => {
+            let (store, place) = {
+                let ahead = crate::code_rule_dsl::logic::profile::shared::<ImagesAhead>();
+                let ahead = ahead.0.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+                let (store, found) = ahead.get(&at)?;
+                (std::sync::Arc::clone(store), *found.get(&k)?)
+            };
+            let b = store.source_at(&place)?;
+            renew_image_leased(&store, place.source, Some(place.lease_until));
+            std::sync::Arc::new(b)
+        }
     };
-    let store = image_store()?;
-    let bytes: super::program_image::SharedBytes = std::sync::Arc::new(store.source_at(&place)?);
     let digest = image_digest((*bytes).as_ref());
     let m = module_image::decode(bytes).ok()?;
-    if place.lease_until - (image_lease() - IMAGE_LEASE_SECS) <= IMAGE_LEASE_SECS / 2 {
-        queue_renewal(&store, place.id);
-    }
-    crate::code_rule_dsl::prof::count("rr.module_image_read_in_place", 1);
+    crate::code_rule_dsl::prof::count("rr.module_image_read", 1);
     crate::code_rule_dsl::logic::profile::shared::<PlannedModules>().0.lock().unwrap_or_else(std::sync::PoisonError::into_inner).insert((at, k), (m.clone(), digest.clone(), false));
     Some((m, digest))
 }
@@ -979,41 +1045,74 @@ fn planned_module(key: &str) -> Option<(lower::Module, String)> {
     Some((m, digest))
 }
 
+/// The modules of plan keys `keys` that the image store (or the shipped bundle) holds and this process does not, read
+/// in one read of the store and decoded, so that phase 0's run, which answers its lowering requests inside its waves
+/// and reads no store there, finds them held (`lower_planned_module`). Read before the run's first wave (decision
+/// 0104); a key no store holds is left for the run to lower.
+pub fn hold_planned_modules(keys: &[String]) {
+    let held = crate::code_rule_dsl::logic::profile::shared::<PlannedModules>();
+    let at = image_store_path();
+    let mut asked: Vec<crate::content_store::HashKey> = {
+        let map = held.0.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+        keys.iter().filter_map(|k| planned_key(k)).filter(|k| !map.contains_key(&(at.clone(), *k))).collect()
+    };
+    asked.sort_by_key(|k| k.sha256_bytes());
+    asked.dedup();
+    if asked.is_empty() {
+        return;
+    }
+    let store = image_store();
+    let found = images::read_images(store.as_deref(), &asked);
+    let mut read = Vec::new();
+    for (k, f) in asked.into_iter().zip(found) {
+        let Some((bytes, id)) = f else { continue };
+        if let (Some(store), Some(id)) = (store.as_deref(), id) {
+            renew_image(store, id);
+        }
+        let digest = image_digest((*bytes).as_ref());
+        let Ok(m) = module_image::decode(bytes) else { continue };
+        read.push(((at.clone(), k), (m, digest, false)));
+    }
+    crate::code_rule_dsl::prof::count("rr.module_image_read", read.len());
+    held.0.lock().unwrap_or_else(std::sync::PoisonError::into_inner).extend(read);
+}
+
 /// Whether the image plan key `key` names is held: made in this process for the store the run reads, or in that
 /// store (or the shipped bundle), mapped where it is and not decoded. What a reused run of phase 0 checks its answer
 /// by (`World::observation`), and a graph by (`Graph::holds`): a key names its image's content.
 pub fn planned_module_held(key: &str) -> bool {
-    let Some(k) = planned_key(key) else { return false };
-    if crate::code_rule_dsl::logic::profile::shared::<PlannedModules>().0.lock().unwrap_or_else(std::sync::PoisonError::into_inner).contains_key(&(image_store_path(), k)) {
-        return true;
-    }
-    // In the index read before phase 0's run (`PlacedModules`): no statement.
-    if crate::code_rule_dsl::logic::profile::shared::<PlacedModules>().0.lock().unwrap_or_else(std::sync::PoisonError::into_inner).get(&image_store_path()).is_some_and(|p| p.contains_key(&k)) {
-        return true;
-    }
-    images::read_image(image_store().as_deref(), k).is_some()
+    planned_modules_held(&[key])[0]
 }
 
-/// Phase 0's answer to a module's lowering (`p0_lower_req`): the module of plan key `key`, whose files are `files`
-/// (paths, one a line) and whose scope's keys are `scope` (comma-separated), lowered against its scope's images and
-/// kept under its key; or found held by the process. Its image's digest.
-///
-/// Answered inside the run's waves, so it reads no store (decision 0104: SQL only before the first wave, writes
-/// behind the run): a module the process does not hold is lowered (deterministic, and cheap: the library's 64 files
-/// in tens of milliseconds, decision 0639), and its image kept behind the run. Its scope's modules rank below it in
-/// the same wave's requests, answered first, so the process holds them.
-pub fn lower_planned_module(key: &str, files: &str, scope: &str, reached: &str) -> Result<String, Error> {
-    if let Some((_, digest)) = module_in_waves(key) {
-        return Ok(digest);
+/// `planned_module_held` of each of `keys`, in their order: the store asked once for those the process and the bundle
+/// do not hold, and only whether it holds each (its alias's source), not for the image mapped where it lies, which
+/// was most of a graph's check (`phase0::Looks`).
+pub fn planned_modules_held(keys: &[&str]) -> Vec<bool> {
+    let at = image_store_path();
+    let planned: Vec<Option<crate::content_store::HashKey>> = keys.iter().map(|k| planned_key(k)).collect();
+    let mut held: Vec<bool> = {
+        let made = crate::code_rule_dsl::logic::profile::shared::<PlannedModules>();
+        let made = made.0.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+        planned.iter().map(|k| k.is_some_and(|k| made.contains_key(&(at.clone(), k)) || images::shipped_image(k).is_some())).collect()
+    };
+    let asked: Vec<usize> = (0..keys.len()).filter(|&i| !held[i] && planned[i].is_some()).collect();
+    if asked.is_empty() {
+        return held;
     }
-    let k = planned_key(key).ok_or_else(|| Error::Syntax(format!("{key}: no module key")))?;
-    if std::env::var_os("RERAIL_PHASE0_TRACE").is_some() {
-        eprintln!("rerail: phase 0 lowers module {key}: {}", files.lines().collect::<Vec<_>>().join(", "));
+    let Some(store) = image_store() else { return held };
+    let aliases: Vec<crate::content_store::HashKey> = asked.iter().map(|&i| planned[i].expect("a planned key")).collect();
+    if let Ok(ids) = store.sources_by_aliases(&aliases) {
+        for (&i, id) in asked.iter().zip(ids) {
+            held[i] = id.is_some();
+        }
     }
-    let _s = crate::code_rule_dsl::logic::profile::span(|| "a module lowered for phase 0's plan".to_owned());
-    let scope: Vec<lower::Module> = scope.split(',').filter(|s| !s.is_empty()).map(|s| module_in_waves(s).map(|(m, _)| m).ok_or_else(|| Error::Syntax(format!("module {key}: its scope's module {s} is not lowered")))).collect::<Result<_, _>>()?;
-    // Each file adds to no relation of its scope's files but their `extensible` ones (decision 0263); files that include
-    // each other are one module, and write each other's relations.
+    held
+}
+
+/// The statements of a module's files (`files`, paths one a line), their includes left out, each file checked to add to
+/// no relation of the files its scope reaches (`reached`, one a line) but their `extensible` ones (decision 0263);
+/// files that include each other are one module, and write each other's relations. `lower_planned_module`'s.
+pub fn module_statements(files: &str, reached: &str) -> Result<Statements, Error> {
     let mut open = std::collections::HashMap::new();
     let reached: Vec<(PathBuf, Statements)> = reached.lines().filter(|f| !f.is_empty()).map(|f| Ok((PathBuf::from(f), read(Path::new(f))?.0))).collect::<Result<_, Error>>()?;
     for (path, statements) in &reached {
@@ -1027,6 +1126,28 @@ pub fn lower_planned_module(key: &str, files: &str, scope: &str, reached: &str) 
         closed_heads(f, &statements, &open)?;
         own.extend(statements.into_iter().filter(|s| !is_include(s)));
     }
+    Ok(own)
+}
+
+/// Phase 0's answer to a module's lowering (`p0_lower_req`): the module of plan key `key`, whose files are `files`
+/// (paths, one a line) and whose scope's keys are `scope` (comma-separated), lowered against its scope's images and
+/// kept under its key; or found held by the process or the store. Its image's digest.
+///
+/// Answered inside the run's waves, so it runs no statement (decision 0104: SQL only before the first wave, writes
+/// behind the run): a module the store keeps is read in its segment, where the run's read before its first wave
+/// found it (`images_ahead`), and a module neither the process nor the store holds is lowered, its image kept behind
+/// the run. Its scope's modules rank below it in the same wave's requests, answered first, so they are held.
+pub fn lower_planned_module(key: &str, files: &str, scope: &str, reached: &str) -> Result<String, Error> {
+    if let Some((_, digest)) = held_or_ahead(key) {
+        return Ok(digest);
+    }
+    let k = planned_key(key).ok_or_else(|| Error::Syntax(format!("{key}: no module key")))?;
+    if std::env::var_os("RERAIL_PHASE0_TRACE").is_some() {
+        eprintln!("rerail: phase 0 lowers module {key}: {}", files.lines().collect::<Vec<_>>().join(", "));
+    }
+    let _s = crate::code_rule_dsl::logic::profile::span(|| "a module lowered for phase 0's plan".to_owned());
+    let scope: Vec<lower::Module> = scope.split(',').filter(|s| !s.is_empty()).map(|s| held_or_ahead(s).map(|(m, _)| m).ok_or_else(|| Error::Syntax(format!("module {key}: its scope's module {s} is not lowered")))).collect::<Result<_, _>>()?;
+    let own = module_statements(files, reached)?;
     let refs: Vec<&lower::Module> = scope.iter().collect();
     let m = lower::lower_module_in_written(own, &refs).map_err(|e| match e {
         Error::Syntax(m) => Error::Syntax(format!("{}: {m}", files.lines().next().unwrap_or_default())),
@@ -1259,8 +1380,14 @@ pub(in crate::code_rule_dsl) fn renew_images(store: &crate::content_store::Conte
 }
 
 fn renew_image(store: &crate::content_store::ContentStore, id: crate::content_store::SourceId) {
+    renew_image_leased(store, id, store.source_lease(id, IMAGE_OWNER).ok().flatten());
+}
+
+/// `renew_image` of an image whose lease ends at `until`, read already: no statement here, the renewal queued behind
+/// the run.
+fn renew_image_leased(store: &crate::content_store::ContentStore, id: crate::content_store::SourceId, until: Option<i64>) {
     let now = image_lease() - IMAGE_LEASE_SECS;
-    if store.source_lease(id, IMAGE_OWNER).ok().flatten().is_some_and(|until| until - now > IMAGE_LEASE_SECS / 2) {
+    if until.is_some_and(|until| until - now > IMAGE_LEASE_SECS / 2) {
         return;
     }
     queue_renewal(store, id);
@@ -1460,6 +1587,8 @@ fn lowering_tail_on(start: std::sync::Arc<super::program_image::Version>, declar
         }
         p.program(&mut lowering_tail::OrderNodes);
         p.program(&mut lowering_tail::DeclareAxes);
+        // Each place read by its value's type (decision 0724 step 3), once the findings' and core's reads are written.
+        p.program(&mut lowering_tail::TypedReads);
         // `finish`'s checks, on the version.
         let _checks = crate::code_rule_dsl::logic::profile::span(|| "the lowering's tail: finish_checks_given".to_owned());
         super::front::finish_checks_given(p.current().map_err(Error::Syntax)?, library.map(|l| &*l.version))?;
@@ -1546,8 +1675,16 @@ pub struct TextNames {
 
 /// `src` parsed, and its seed (`TextRead`).
 pub fn read_seed(src: &str) -> Result<TextRead, Error> {
+    read_seed_of(src, None)
+}
+
+/// `read_seed`, off `file` when it is `src`'s parse (the text's read made it, `text_seed_read`).
+pub fn read_seed_of(src: &str, file: Option<&std::sync::Arc<RrFile>>) -> Result<TextRead, Error> {
     use super::plan::corpus::phase0;
-    let statements = RrFile::read(src)?.statements();
+    let statements = match parse_of(src, file) {
+        Some(f) => f.statements(),
+        None => RrFile::read(src)?.statements(),
+    };
     let includes: Vec<(i64, String)> = include_names(&statements).into_iter().enumerate().map(|(k, (n, _))| (k as i64, n)).collect();
     let seed = (!includes.is_empty() && !phase0::active()).then(|| {
         phase0::Seed::Text { t_shape: t_shape(&statements), includes, phases: phases_named(&statements) }
@@ -1556,6 +1693,11 @@ pub fn read_seed(src: &str) -> Result<TextRead, Error> {
 }
 
 impl TextRead {
+    /// The text's parse: what its masking and its templates read (`message_masked_of`), `None` for an empty text.
+    pub fn file(&self) -> Option<std::sync::Arc<RrFile>> {
+        self.statements.first_file().cloned()
+    }
+
     /// The text's library files, names and phase, its includes resolved in the graph phase 0 derived for its seed.
     pub fn resolved(self) -> Result<TextNames, Error> {
         let (files, own) = if self.statements.iter().any(|s| is_include(&s)) { resolve(self.statements)? } else { (Vec::new(), self.statements) };
@@ -1643,10 +1785,14 @@ fn resolve_shared(statements: Statements) -> Result<(SharedFiles, Statements, Ve
     let plan = plan_of(&g)?;
     // The plan holds every file the text reads, each in one module.
     let planned: BTreeSet<&Path> = plan.iter().flat_map(|m| m.files.lines().map(Path::new)).collect();
-    if let Some((path, _, _)) = files.iter().find(|(p, _, _)| !planned.contains(p.as_path())) {
-        let digest = g.digests.contains_key(path);
-        let sample: Vec<String> = planned.iter().take(3).map(|p| p.display().to_string()).collect();
-        return Err(Error::Syntax(format!("{}: in no module of phase 0's plan (decision 0639 §1): {} modules of {} files planned (such as {sample:?}); the file {} a digest in the graph", path.display(), plan.len(), planned.len(), if digest { "has" } else { "has no" })));
+    if let Some((path, digest, _)) = files.iter().find(|(p, _, _)| !planned.contains(p.as_path())) {
+        let hex: String = rerail_prof::code_rule_dsl::prof::lower_hex(&digest[..]);
+        let modules: Vec<String> = g.plan.iter().map(|(name, m)| format!("{name} (rank {})", m.rank)).collect();
+        return Err(Error::Syntax(format!(
+            "{}: in no module of phase 0's plan (decision 0639 §1): its digest {hex}, the plan's modules {modules:?}, their files {planned:?}, the graph's digests of {:?}",
+            path.display(),
+            g.digests.keys().collect::<Vec<_>>()
+        )));
     }
     Ok((files, own, plan))
 }
@@ -1676,7 +1822,7 @@ impl PlannedModule {
 /// Graph `g`'s modules in link order (decision 0639 §1: by rank, then by name), each as its lowering request names it.
 fn plan_of(g: &super::plan::corpus::phase0::Graph) -> Result<Vec<PlannedModule>, Error> {
     use super::plan::corpus::phase0::PlanModule;
-    let hex = |d: &[u8; 32]| d.iter().map(|b| format!("{b:02x}")).collect::<String>();
+    let hex = |d: &[u8; 32]| rerail_prof::code_rule_dsl::prof::lower_hex(&d[..]);
     // Each digest's files, by path: a module's name lists its files' digests.
     let mut at: std::collections::BTreeMap<String, Vec<&Path>> = std::collections::BTreeMap::new();
     for (p, d) in &g.digests {
@@ -1777,30 +1923,37 @@ pub fn engine_files() -> Vec<PathBuf> {
 /// The seed phase 0 starts from for a program text: whether it is in T's shape, and the names it includes. `None`
 /// for a text that includes nothing, or while phase 0 itself runs.
 pub fn text_seed(src: &str) -> Result<Option<super::plan::corpus::phase0::Seed>, Error> {
+    Ok(text_seed_read(src)?.0)
+}
+
+/// `text_seed`, and the text's parse where it made one: the run's read of the text takes it (`read_seed_of`), as its
+/// masking and its templates do (`message_masked_of`), where each parsed the text again.
+pub fn text_seed_read(src: &str) -> Result<(Option<super::plan::corpus::phase0::Seed>, Option<std::sync::Arc<RrFile>>), Error> {
     use super::plan::corpus::phase0;
     // An include is the lexer's `#include` (`syntax::Tok::Hash`): a text without those letters includes nothing.
     // A printed program, its includes resolved, is not read for it; its parse errors are its parse's to report.
     if phase0::active() || !src.contains("#include") {
-        return Ok(None);
+        return Ok((None, None));
     }
     // Read once a run: the run hands its texts' graph digests to its combines (`corpus::run_handed`).
     read_text_seed(src)
 }
 
-fn read_text_seed(src: &str) -> Result<Option<super::plan::corpus::phase0::Seed>, Error> {
+fn read_text_seed(src: &str) -> Result<(Option<super::plan::corpus::phase0::Seed>, Option<std::sync::Arc<RrFile>>), Error> {
     use super::plan::corpus::phase0;
     // The letters may stand in a string, a pattern or a comment, which are not directives: the lexer's tokens say,
     // before another syntax tree is made for a program without includes.
     let lexed = syntax::lex(src);
     if lexed.error.is_none() && !lexed.toks.iter().any(|(t,_,_)| matches!(t, syntax::Tok::Hash(_))) {
-        return Ok(None);
+        return Ok((None, None));
     }
-    let statements = RrFile::read(src)?.statements();
+    let file = RrFile::read(src)?;
+    let statements = file.statements();
     let names: Vec<(i64, String)> = include_names(&statements).into_iter().enumerate().map(|(k, (n, _))| (k as i64, n)).collect();
     if names.is_empty() || phase0::active() {
-        return Ok(None);
+        return Ok((None, Some(file)));
     }
-    Ok(Some(phase0::Seed::Text { t_shape: t_shape(&statements), includes: names, phases: phases_named(&statements) }))
+    Ok((Some(phase0::Seed::Text { t_shape: t_shape(&statements), includes: names, phases: phases_named(&statements) }), Some(file)))
 }
 
 /// A program file's names, each with its place as `bootstrap.rerail` gives a loaded file's (`p0_names`: the include's
@@ -1813,7 +1966,7 @@ pub(in crate::code_rule_dsl) fn includes_and_phases(src: &str) -> Result<(Vec<(i
     let mut names = Vec::new();
     for st in &statements {
         if let Some(S::Include(name)) = st.what() {
-            names.push((st.start() as i64, name));
+            names.push((st.start() as i64, include_switched(&name)));
         }
     }
     Ok((names, t_shape(&statements), phases_named(&statements)))
@@ -1921,7 +2074,7 @@ impl LibraryFile {
     #[allow(dead_code)]
     pub fn fact(&self) -> Option<String> {
         let hash = self.sha256?;
-        let hex = hash.iter().map(|b| format!("{b:02x}")).collect::<String>();
+        let hex = rerail_prof::code_rule_dsl::prof::lower_hex(&hash[..]);
         Some(format!("library_file({}, \"sha256:{hex}\").", quote(&self.path.to_string_lossy())))
     }
 }
@@ -1935,8 +2088,27 @@ impl LibraryFile {
 /// The relations `core.rerail` declares for libraries to derive for the engine to read: the documents they load (t21 E2).
 pub const LIBRARY_DERIVED: [&str; 1] = ["load"];
 /// The relations `core.rerail` declares that one library file derives, and that file (decision 0483: the reference graph).
-pub const DERIVED_BY: [(&str, &str); 3] =
-    [("reference_def", "python/references.rerail"), ("reference_edge", "python/references.rerail"), ("reference_open", "python/references.rerail")];
+/// `python/references_w.rerail` derives the graph from W's Rust graph instead, which the engine binds
+/// (`RERAIL_REFERENCES`); both take `reference_def` from `python/reference-defs.rerail`.
+pub const DERIVED_BY: [(&str, &str); 5] = [
+    ("reference_def", "python/reference-defs.rerail"),
+    ("reference_edge", "python/references.rerail"),
+    ("reference_open", "python/references.rerail"),
+    ("reference_edge", REFERENCES_W),
+    ("reference_open", REFERENCES_W),
+];
+
+/// The library file whose `reference_edge` and `reference_open` are W's Rust graph (`corpus::w_references`).
+pub const REFERENCES_W: &str = "python/references_w.rerail";
+
+/// An include's name as the run reads it: `python/references.rerail` is `REFERENCES_W` where `RERAIL_REFERENCES=rust`
+/// (the reference graph made by W's Rust, not the rules; for comparing the two on one program), else itself.
+pub(in crate::code_rule_dsl) fn include_switched(name: &str) -> String {
+    if name == "python/references.rerail" && std::env::var("RERAIL_REFERENCES").is_ok_and(|v| v == "rust") {
+        return REFERENCES_W.to_owned();
+    }
+    name.to_owned()
+}
 /// The library's programs the engine adds to a run itself (decision 0076's import components).
 const ENGINE_FILES: [&str; 1] = ["components.rerail"];
 
@@ -2505,7 +2677,7 @@ fn t_shape(statements: &Statements) -> bool {
 
 /// Each `#include`'s name and line, in order.
 fn include_names(statements: &Statements) -> Vec<(String, usize)> {
-    statements.iter().filter_map(|s| if let Some(S::Include(name)) = s.what() { Some((name.to_owned(), s.line())) } else { None }).collect()
+    statements.iter().filter_map(|s| if let Some(S::Include(name)) = s.what() { Some((include_switched(&name), s.line())) } else { None }).collect()
 }
 
 /// `path` and what it includes, each once (`seen`), includes first, added to `out`; every library file read or

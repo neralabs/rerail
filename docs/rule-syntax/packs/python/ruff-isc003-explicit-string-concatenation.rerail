@@ -20,7 +20,7 @@
     "Drop the `+` so the string literals concatenate implicitly inside parentheses; unwrap parenthesized operands first, and keep `+` if the result would become a docstring."
     suppress ruff "ISC003"
 ISC003(e) :- kind(e, "binary_operator"), op(e, "+"), field(e, "left", l), unparen(l, a), field(e, "right", r),
-    unparen(r, b), str_family(a, k), str_family(b, k2), concat_ok(k, k2), end_line(a, la), line(b, lb), la != lb,
+    unparen(r, b), str_family(a, k), str_family(b, k2), concat_ok(k, k2), node_end_line_number(a, la), node_line_number(b, lb), la != lb,
     !option("flake8-implicit-str-concat.allow-multiline", "false").
 // str_family(s, k): s is a literal of family k: "str" (str and f-strings), "bytes" or "tstr".
 .decl str_family(s: node, k: symbol)

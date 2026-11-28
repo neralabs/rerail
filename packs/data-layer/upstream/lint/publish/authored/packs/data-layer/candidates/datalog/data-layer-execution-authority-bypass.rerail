@@ -136,7 +136,7 @@ authority_innermost(r, s) :- authority_site_frame(r, _), s = max t : { rr_agg1(r
 authority_qualname(r, q) :- authority_site_frame(r, f), node(_, f, _, s, _), authority_innermost(r, s), authority_context(f, q, _).
 authority_qualname(r, "<module>") :- authority_site(r, _), !authority_site_frame(r, _).
 authority_signed_site(r) :- authority_qualname(r, q), node(d, r, _, _, _), doc(d, p, _), m = @rx_replace(@rx_replace(p, "\\.py$", ""), "/", "."), authority_signed(m, q).
-violation("data-layer-execution-authority-bypass", "authority-sites", "AUTH001", p, l) :- authority_site(r, "AUTH001"), authority_qualname(r, q), node(d, r, _, _, _), doc(d, p, _), p != "l2050_transaction/execution_boundary.py", !authority_private_exception(p, q), line(r, l).
-violation("data-layer-execution-authority-bypass", "authority-sites", "AUTH002", p, l) :- authority_site(r, "AUTH002"), authority_qualname(r, q), node(d, r, _, _, _), doc(d, p, _), !authority_signed_site(r), !authority_explicit_exception(p, q), line(r, l).
-violation("data-layer-execution-authority-bypass", "authority-sites", "AUTH003", p, l) :- authority_site(r, "AUTH003"), authority_qualname(r, q), node(d, r, _, _, _), doc(d, p, _), !authority_private_exception(p, q), line(r, l).
+violation("data-layer-execution-authority-bypass", "authority-sites", "AUTH001", p, l) :- authority_site(r, "AUTH001"), authority_qualname(r, q), node(d, r, _, _, _), doc(d, p, _), p != "l2050_transaction/execution_boundary.py", !authority_private_exception(p, q), node_line_number(r, l).
+violation("data-layer-execution-authority-bypass", "authority-sites", "AUTH002", p, l) :- authority_site(r, "AUTH002"), authority_qualname(r, q), node(d, r, _, _, _), doc(d, p, _), !authority_signed_site(r), !authority_explicit_exception(p, q), node_line_number(r, l).
+violation("data-layer-execution-authority-bypass", "authority-sites", "AUTH003", p, l) :- authority_site(r, "AUTH003"), authority_qualname(r, q), node(d, r, _, _, _), doc(d, p, _), !authority_private_exception(p, q), node_line_number(r, l).
 rr_demand_agg_rr_agg1(r) :- authority_site_frame(r, _).

@@ -690,6 +690,54 @@ So:
 
      A probe that reads the run after the call makes every shape pass: a G13 miscompile that follows the code's
      shape, as `clif_view_field`'s did. Still open.
+   **A hole in a call's arguments, taken whole** (2026-11-23). Boost's `seq.c` on the CPU backend: its runs that
+   stopped at a hole stopped mostly where a call's arguments are read through it (133, against 8 where a name looked
+   past one for `(`), and the holders those stops read again cascade (253). Such a hole is now taken whole into the
+   argument (`lp_collect_hole`) where the callee reads no parameter raw. Taking it whole is a guess that its result's
+   parentheses are balanced and that it has no comma at its depth 0 (unless the argument is the variadic rest).
+   The record carries the guess (`RQ_DELIM`, `RQ_NOCOMMA`). The record's result has a delimiters' summary
+   (`lp_entries_sum`, row 6's `pexp`), written with its live names before its `RQ_FIN`. A wrong guess reads its
+   holders again, as a wrong edge does. A guess made after the result is done is checked at once. A hole in a raw
+   argument keeps the call from being posted (`lp_raw_flat`), and a memo key spells a hole with its shift. The
+   stops in arguments went from 133 to 78. `seq.c` is still refused on the work bound: a piece read again posts
+   nothing, so one of its readings runs past 4 M steps.
+
+   Tried and not kept (`tmp/0613-rereads-post-wip.patch`): a result that acted with its holder marked
+   (`RQ_ACTED`), its key's calls read inline, and a piece read again posting again up to 8 times. That passed on
+   the CPU backend and CUDA, but turned the M3 red (arguments read empty); the delimiter guess alone passes there. It
+   would not have bounded `seq.c` either: 326 of its 816 posts have no key, so they act again on every reading.
+   What bounds it is a reading that waits for a result, then reads it in place.
+
+   **A hole read in place, the design** (2026-11-23). The reading of a piece again is what passes the work bound:
+   it posts nothing, and every hole that decided something made it. A hole decides something at four places:
+   - a name before it that looks for `(`;
+   - a call's arguments read through it where the callee reads a parameter raw, or where its delimiters guess
+     was wrong;
+   - a rescan passing a result with live names;
+   - a `(` after it.
+
+   Each of the four reads the hole's result in place, as a caller takes an argument's request (`lp_arg_take`,
+   `lp_arg_occ`). The pieces:
+   - **Done: read in place.** The run logs an occurrence with room for the request's rows (`LG_TAKE`). It then
+     pushes a node frame over the result's entries, with `xp` the room's base and `def` the hole's shift (a node
+     frame's `def` is unused). `lp_xin` adds the shift to a text token's `st` and to a nested hole's, and a nested
+     node's frame inherits it, as `lp_memo_emit` and `lp_leaves` shift a kept result's text tokens. The frame is
+     then read as any node's: a name's look for `(` goes into it, a call's arguments read through it, a live
+     name in it acts. The serial pass rescans the argument's expanded tokens, painted as they were, and these
+     are those tokens.
+   - **Not done, not started: claimed and read here.** The run claims the record (`pst` of row 6, as an
+     argument's request is claimed), pushes a dead-list frame (`FK_DEAD`) with the record's disabled macros
+     (`lp_dead_list`'s), then the call's raw entries, and reads them inline. The record's queue item is then
+     nothing to read. Its waiters wait on it, so a claimed record with waiters is read by its taker too (`DUP`,
+     as an argument another group reads).
+   - **Being read by another group: the run reads its piece again,** as now. That is no wait across groups.
+   - **The reading again of a piece posts.** Its holes' records are done by then, so each decision above reads in
+     place, and no hole makes it stop. Only an unkeyed record still being read stops it, and the reading after
+     that one posts nothing, which bounds it.
+
+   `seq.c` is the measure: its readings again have to stay under the work bound. The eval tests, the corpus and
+   Boost's other tests stay the serial pass's on the CPU backend, CUDA and the M3.
+
 3. **Measure the result.** The slowest piece's chain against today's 1.35 ms; the batch's GPU time against the
    serial pass on all cores.
 

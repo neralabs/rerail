@@ -45,7 +45,7 @@ d411_directive_hides_header(n) :- child(p1, n, _), kind(p1, "string"),
 // D411(n): findings from clauses `no-blank-line-before-section-numpy`, `no-blank-line-before-section-google`, which say the same.
 // Each rule is one way a JSON `rule` can match.
 // Columns after `at` are the metavariables the JSON's message, anchor or `each` names: one finding per distinct row.
-.violation D411(at: loc, n_mv: node) "Add a blank line before the `{n_mv}` section so it is separated from the text above."
+.violation D411(at: match, n_mv: node) "Add a blank line before the `{n_mv}` section so it is separated from the text above."
     suppress noqa "D411"
 D411(N, n) :- kind(n, "string_content"), child(p1, n, _), d411_docstring(p1), d411_alt_6(n, N),
     d411_numpy_mode(n), !d411_directive_hides_header(n).
@@ -85,7 +85,7 @@ d411_alt_4(n) :- match("(?m)(?s:.*)(?:(?:^[^\\S\\n]*|[,;.\\-\\\\/\\]})][^\\S\\n]
 
 // alt_6(n): the JSON `any`: n matches if any one of these rules does
 //   N: metavariable this relation binds for the calling rule
-.decl d411_alt_6(n: node, n_mv: loc)
+.decl d411_alt_6(n: node, n_mv: match)
 d411_alt_6(n, N) :- node(_, n, _, _, _),
     match("(?m)(?s:.*)[,;.\\-\\\\/\\]})][^\\S\\n]*\\n[^\\S\\n]*(?P<N>(?:A(?i:ttributes)|E(?i:x(?:amples|tended summary))|M(?i:ethods)|N(?i:otes)|O(?i:ther param(?:eters|s))|P(?i:arameters)|R(?i:(?:aises|e(?:ceives|ferences|turns)))|S(?i:(?:ee also|hort summary))|W(?i:arn(?:ings|s))|Y(?i:ields))):?[^\\S\\n]*$(?s:.*)", n).
 d411_alt_6(n, N) :- node(_, n, _, _, _),
@@ -95,7 +95,7 @@ d411_alt_6(n, N) :- node(_, n, _, _, _),
 
 // alt_7(n): the JSON `any`: n matches if any one of these rules does
 //   N: metavariable this relation binds for the calling rule
-.decl d411_alt_7(n: node, n_mv: loc)
+.decl d411_alt_7(n: node, n_mv: match)
 d411_alt_7(n, N) :- node(_, n, _, _, _),
     match("(?m)(?s:.*)[,;.\\-\\\\/\\]})][^\\S\\n]*\\n[^\\S\\n]*(?P<N>(?:A(?i:(?:rg(?:s|uments)|tt(?:ention|ributes)))|C(?i:aution)|D(?i:anger)|E(?i:(?:rror|xamples?))|H(?i:int)|I(?i:mportant)|K(?i:eyword arg(?:s|uments))|M(?i:ethods)|N(?i:otes?)|O(?i:ther arg(?:s|uments))|R(?i:(?:aises|e(?:ferences|turns?)))|S(?i:ee also)|T(?i:(?:ip|odo))|W(?i:arn(?:ings?|s))|Y(?i:ields?))):?[^\\S\\n]*$(?s:.*)", n).
 d411_alt_7(n, N) :- node(_, n, _, _, _),

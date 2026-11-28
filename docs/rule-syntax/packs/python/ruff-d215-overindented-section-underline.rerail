@@ -14,7 +14,7 @@
 //       """
 #include "python/docstrings-sections.rerail"
 
-.violation D215(at: span, k: symbol) code "D215"
+.violation D215(at: place, k: symbol) code "D215"
     "Dedent this section underline to the indentation of the docstring's opening quotes, directly under the section name."
     suppress ruff "D215"
 D215(at, v) :- doc_section(s, i, v, _, _, _), doc_after(s, i, f, _), doc_dashes(s, f, _), doc_lead(s, f, k),

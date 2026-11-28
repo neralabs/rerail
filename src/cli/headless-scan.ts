@@ -35,12 +35,14 @@ import { upsertLibraryRule } from "../engine/catalog/rule-library.js";
 import type { RuleDocument } from "../engine/catalog/rule-store.js";
 import { isWorktreePack, MAX_RULE_DOCUMENT_BYTES, rrPayloadHash, WORKTREE_PACK_ID, WORKTREE_RULES_FOLDER, worktreeRuleCatalog, worktreeScanCatalog } from "../engine/catalog/worktree-pack.js";
 import { CheckoutCodeRuleRouter } from "../engine/code-rule/checkout-code-rule-router.js";
+import { READS_LEFT_OUT_TOKEN_CODE } from "../engine/code-rule/code-rule-compile.js";
+import { clean } from "../harness/setup-screens.js";
 import { CheckoutCatalogs, type CheckoutEligibility, startingCheckout } from "../engine/code-rule/code-rule-dsl-catalog.js";
 import { loadNativeBinding, type GitPathIdentity, type GitPathSkipReason, type NativeAnalysisScopeRun, type NativeGitRevisionSource, type NativeLoadedRrPolicies } from "../engine/native/native.js";
 import { acquireDirectoryAnalysisRegistration, acquireNamedAnalysisRun, analysisScopeHome, finishNamedAnalysisRegistration, scanContentStore } from "../engine/native/analysis-scope.js";
 import { assertContentStoreOwner } from "../engine/native/main-instance.js";
 import { SOURCE_LANGUAGES, SOURCE_NAMES } from "../engine/code-rule/code-rule-languages.js";
-import { runGit, runGitBytes } from "../engine/git.js";
+import { runGit, runGitBytes, runGitWithoutBlockingBytes } from "../engine/git.js";
 import { isUtf8 } from "node:buffer";
 import { parseJsonWithoutDuplicateKeys } from "../engine/json-duplicate-keys.js";
 import { compareDeterministicStrings } from "../engine/stable-json.js";
@@ -135,7 +137,18 @@ export interface ScanReport {
   violations: ScanViolation[];
   failures: ScanFailure[];
   cacheWarnings?: string[];
+  /**
+   * The rules on in the checkouts scanned that this Rerail does not run: an installed pack writes them in a form it no
+   * longer runs (they test a token parsed files now leave out). Neither a violation nor a failure; the pack's next
+   * version runs them again.
+   */
+  notRun: ScanNotRun[];
   summary: { violations: number; failures: number };
+}
+
+export interface ScanNotRun {
+  ruleId: string;
+  reason: string;
 }
 
 export interface HeadlessScanOptions {
@@ -164,8 +177,19 @@ export interface HeadlessScanOptions {
   packStore?: (home: string) => PackStore;
 }
 
+const SCAN_GIT_BUFFER = 256 * 1024 * 1024;
+
 function gitBytes(cwd: string, args: readonly string[]): Buffer {
-  const result = runGitBytes(cwd, args, { maxBuffer: 256 * 1024 * 1024 });
+  return answered(args, runGitBytes(cwd, args, { maxBuffer: SCAN_GIT_BUFFER }));
+}
+
+/** {@link gitBytes} without blocking: a diff asks a checkout's submodules at once, within the call's one time limit. */
+async function gitBytesWithoutBlocking(cwd: string, args: readonly string[]): Promise<Buffer> {
+  return answered(args, await runGitWithoutBlockingBytes(cwd, args, { maxBuffer: SCAN_GIT_BUFFER }));
+}
+
+/** The stdout of Git's `args`, which gave `result`; throws how it failed. */
+function answered<T>(args: readonly string[], result: { status: number | null; stdout: T; stderr: string; error?: Error }): T {
   if (result.error !== undefined) throw result.error;
   if (result.status !== 0) throw new Error(`git ${args.join(" ")} failed: ${result.stderr.trim()}`);
   return result.stdout;
@@ -187,14 +211,14 @@ function checkoutRef(root: string): Pick<ScanReport["checkout"], "ref" | "refHex
  * Changed files against `against` (the working tree, staged changes included) plus untracked files, sorted. With
  * `--no-renames` a rename is its new path, and Git needs no blob it would fetch to detect one: lazy fetch is off.
  */
-function diffPaths(root: string, against: string): { paths: string[]; failures: ScanFailure[] } {
+async function diffPaths(root: string, against: string): Promise<{ paths: string[]; failures: ScanFailure[] }> {
   const paths = new Set<string>();
   const invalid = new Set<string>();
   for (const args of [
     ["diff", "--name-only", "--no-renames", "--relative", "--diff-filter=ACMRTUXB", "-z", against, "--"],
     ["ls-files", "--others", "--exclude-standard", "-z", "--"],
   ]) {
-    const bytes = gitBytes(root, args);
+    const bytes = await gitBytesWithoutBlocking(root, args);
     let start = 0;
     for (let end = bytes.indexOf(0); end >= 0; end = bytes.indexOf(0, start)) {
       const name = bytes.subarray(start, end);
@@ -517,7 +541,7 @@ function worktreeSelection(root: string, path: string, directory: boolean): stri
 }
 
 /** What the scan covers: the paths asked for, what differs from the base or HEAD, or null for the whole repository. */
-function scanTarget(options: HeadlessScanOptions, root: string, source: NativeGitRevisionSource | undefined): Pick<ScanReport, "base" | "paths" | "requestedPaths" | "skippedPaths" | "skippedPathDetails"> & { failures?: ScanFailure[] } {
+async function scanTarget(options: HeadlessScanOptions, root: string, source: NativeGitRevisionSource | undefined): Promise<Pick<ScanReport, "base" | "paths" | "requestedPaths" | "skippedPaths" | "skippedPathDetails"> & { failures?: ScanFailure[] }> {
   if (options.paths !== undefined) {
     const failures: ScanFailure[] = [];
     const skippedPaths: string[] = [];
@@ -562,11 +586,11 @@ function scanTarget(options: HeadlessScanOptions, root: string, source: NativeGi
   if (options.scope !== "git-diff") return { base: null, paths: null };
   if (options.base === undefined) {
     const against = gitMaybe(root, ["rev-parse", "--verify", "--quiet", "HEAD"]) ?? gitBytes(root, ["hash-object", "-t", "tree", "--stdin"]).toString("ascii").trim();
-    return { base: null, ...diffPaths(root, against) };
+    return { base: null, ...(await diffPaths(root, against)) };
   }
   const mergeBase = gitMaybe(root, ["merge-base", options.base, "HEAD"]);
   if (mergeBase === null) throw new Error(`--base ${options.base} has no merge base with HEAD in ${root}`);
-  return { base: { ref: options.base, mergeBase }, ...diffPaths(root, mergeBase) };
+  return { base: { ref: options.base, mergeBase }, ...(await diffPaths(root, mergeBase)) };
 }
 
 type ScanAudit = AuditInput & { result?: AuditResult };
@@ -580,7 +604,7 @@ async function runScanAudits(
   database: RerailDatabase, databasePath: string, root: string, sessionId: string, paths: readonly string[] | null,
   revisionSource: NativeGitRevisionSource | undefined, analysisStore: string, analysisRun: NativeAnalysisScopeRun | undefined,
   checkoutRules: (root: string) => RuleCatalog,
-): Promise<{ audits: ScanAudit[]; unaudited: ScanFailure[] }> {
+): Promise<{ audits: ScanAudit[]; unaudited: ScanFailure[]; notRun: ScanNotRun[] }> {
   const audits: ScanAudit[] = [];
   const recorder: AuditRecorder = {
     start(input) { audits.push({ ...input, paths: [...input.paths] }); return String(audits.length - 1); },
@@ -607,17 +631,31 @@ async function runScanAudits(
   try {
     if (revisionSource !== undefined) {
       const catalog = catalogs.catalog(root);
-      if (catalog.status.ruleCount === 0 && catalog.quarantined().length === 0) return { audits, unaudited: [] };
+      if (catalog.status.ruleCount === 0 && catalog.quarantined().length === 0) return { audits, unaudited: [], notRun: [] };
     }
     await router.openWorkspace(sessionId);
     if (paths === null) await router.audit(sessionId, { scope: "repository", mode: "log" });
     else if (paths.length > 0) await router.audit(sessionId, { scope: "touched-files", mode: "log", paths: [...paths] });
     const nothingRan = audits.length === 0 && paths?.length !== 0;
-    return { audits, unaudited: nothingRan ? unauditedCheckouts(router, start, paths) : [] };
+    return { audits, unaudited: nothingRan ? unauditedCheckouts(router, start, paths) : [], notRun: rulesNotRun(catalogs, start, audits) };
   } finally {
     await router.close();
     catalogs.close();
   }
+}
+
+/**
+ * The rules on that this Rerail does not run in the checkout the scan starts in and in each other checkout it audited (a
+ * submodule's own, say), each named once.
+ */
+function rulesNotRun(catalogs: CheckoutCatalogs, start: string, audits: readonly ScanAudit[]): ScanNotRun[] {
+  const notRun = new Map<string, ScanNotRun>();
+  for (const checkout of new Set([start, ...audits.map(audit => audit.workspaceRoot)])) {
+    for (const { ruleId, reason, code } of catalogs.catalog(checkout).quarantined()) {
+      if (code === READS_LEFT_OUT_TOKEN_CODE && !notRun.has(ruleId)) notRun.set(ruleId, { ruleId, reason });
+    }
+  }
+  return [...notRun.values()].sort((left, right) => left.ruleId.localeCompare(right.ruleId));
 }
 
 /**
@@ -801,16 +839,16 @@ async function scanReport(
   };
   const { useHome, refRuleIds, repository } = home === undefined ? readConfiguration() : home.$client.transaction(readConfiguration)();
   home?.$client.close();
-  const { failures: pathFailures = [], ...target } = scanTarget(options, root, source);
+  const { failures: pathFailures = [], ...target } = await scanTarget(options, root, source);
   const { paths } = target;
   if (source !== undefined && paths !== null) source.restrictPaths(paths);
-  let { audits, unaudited } = explicitRr ? { audits: [], unaudited: [] } : await runScanAudits(database, databasePath, root, `scan-${scanId}`, paths, source, analysisStore, analysisRun, checkoutRules);
+  let { audits, unaudited, notRun }: Awaited<ReturnType<typeof runScanAudits>> = explicitRr ? { audits: [], unaudited: [], notRun: [] } : await runScanAudits(database, databasePath, root, `scan-${scanId}`, paths, source, analysisStore, analysisRun, checkoutRules);
   const cacheFailure = audits.flatMap(audit => audit.result?.failures ?? []).find(failure => failure.code === "cache-unavailable");
   if (source !== undefined && analysisRun !== undefined && cacheFailure !== undefined) {
     analysisRun.warn(cacheFailure.message);
     analysisStore = ":memory:";
     analysisRun = undefined;
-    ({ audits, unaudited } = await runScanAudits(database, databasePath, root, `scan-${scanId}-retry`, paths, source, analysisStore, analysisRun, checkoutRules));
+    ({ audits, unaudited, notRun } = await runScanAudits(database, databasePath, root, `scan-${scanId}-retry`, paths, source, analysisStore, analysisRun, checkoutRules));
   }
   // `.rerail` policies are the checkout's rules too: a scan that runs them audited it.
   if (rr.length > 0) unaudited = [];
@@ -895,6 +933,7 @@ async function scanReport(
     rules: [...rules.values()].sort((left, right) => left.ruleId.localeCompare(right.ruleId)),
     violations,
     failures,
+    notRun,
     summary: { violations: violations.length, failures: failures.length },
   };
 }
@@ -990,7 +1029,7 @@ export async function runHeadlessScan(options: HeadlessScanOptions): Promise<Sca
   }
 }
 
-/** One line per violation, then a summary: the text `rerail scan` prints without `--json`. */
+/** One line per violation, failure and rule on that does not run, then a summary: the text `rerail scan` prints without `--json`. */
 export function describeScan(report: ScanReport): string {
   const lines = report.violations.map(violation => {
     if (violation.location) {
@@ -1004,6 +1043,8 @@ export function describeScan(report: ScanReport): string {
   if (report.cache?.publication === "released") lines.push("The analysis scope was released before publication.");
   if (report.cache?.publication === "unavailable") lines.push("Cache results could not be published.");
   for (const warning of report.cacheWarnings ?? []) lines.push(warning);
+  // A pack's name, in the reason, is what its pack.json says: no control characters reach the terminal.
+  for (const { ruleId, reason } of report.notRun) lines.push(`not run [${clean(ruleId)}]: ${clean(reason)}`);
   const scope = report.scope === "git-diff" ? `git-diff${report.base === null ? "" : ` against ${report.base.ref}`}` : "repository";
   if (report.source !== undefined) {
     lines.push(`Source ${report.source.commit === null ? "tree " + report.source.tree : "commit " + report.source.commit}`);

@@ -10,7 +10,7 @@
 // UP050(n): a finding at node n, from clause `useless-class-metaclass-type`.
 // Each rule below is one way the JSON `rule` can match.
 // Columns after `at` are the metavariables the JSON's message, anchor or `each` names: one finding per distinct row.
-.violation UP050(at: node, name: loc) "Remove `metaclass=type` from class `{name}`; `type` is already the default metaclass. If it is the only argument, drop the parentheses too."
+.violation UP050(at: node, name: node) "Remove `metaclass=type` from class `{name}`; `type` is already the default metaclass. If it is the only argument, drop the parentheses too."
     suppress noqa "UP050"
 UP050(n, NAME) :- kind(n, "keyword_argument"), up050_tok_has_1(n), field(n, "value", c9),
     up050_builtin_type(c9), child(p10, n, _), kind(p10, "argument_list"),

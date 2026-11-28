@@ -3,7 +3,7 @@
 Status: decided (2026-11-25), by the user's plan for the rules the position report flagged after 0665, step 4 ("E and
 F, read against the originals") and step 5 ("recount, push down what's left, and make item 5 an
 error"). It follows 0693, which left 16 flagged rules, and amends demand's magic rules (0145), the lowering of a
-negated conjunction (PR #508's contexts), staging's record of what it refused (0675), and makes 0652 item 5 an error.
+negated conjunction (PR #508's contexts), staging's record of what it refused (0709), and makes 0652 item 5 an error.
 
 ## Intro
 

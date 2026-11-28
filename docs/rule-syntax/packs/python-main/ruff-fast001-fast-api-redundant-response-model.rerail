@@ -12,7 +12,7 @@
 // Columns after `at` are the metavariables the JSON's message, anchor or `each` names: one finding per distinct row.
 // The JSON `transform` computes NRET, NRM, TRET, TRM from other metavariables' text; its literals end each rule.
 // `options` carries JSON settings that have no .rerail form yet.
-.violation FAST001(at: node, rm: loc) "Remove `response_model={rm}`: FastAPI 0.89 and newer already use the route's return annotation, which names the same type. Keep it on older versions."
+.violation FAST001(at: node, rm: node) "Remove `response_model={rm}`: FastAPI 0.89 and newer already use the route's return annotation, which names the same type. Keep it on older versions."
     suppress noqa "FAST001"
 // NRET, NRM: not bound by this rule, so empty (unset) here, as in ast-grep.
 // Not grounded: no positive atom binds t3_6.
@@ -88,7 +88,7 @@ fast001_type_shape(n) :- fast001_type_shape_u7(n).
 
 // decorator_host(n): the JSON util `decorator-host`, used where the JSON says `matches: "decorator-host"`
 //   RET, RETS: metavariables this relation binds for the calling rule
-.decl fast001_decorator_host(n: node, ret: loc, rets: loc)
+.decl fast001_decorator_host(n: node, ret: node, rets: node)
 fast001_decorator_host(n, RET, RETS) :- fast001_route_decorator(n), child(p1, n, _),
     kind(p1, "decorated_definition"), child(p1, c2, _),
     kind(c2, "function_definition"), node(_, c2, _, _, _), FN = c2, field(c2, "return_type", c3),
@@ -372,5 +372,5 @@ fast001_alt_8(n) :- kind(n, "aliased_import"), child(n, c1, _), kind(c1, "dotted
     glob("annotations", c1).
 
 // main's file condition {"notRegex": "\\.pyi$"}
-.decl FAST001_raw(at: node, rm: loc)
+.decl FAST001_raw(at: node, rm: node)
 FAST001(v0, v1) :- FAST001_raw(v0, v1), rr_d = @doc(v0), doc(rr_d, rr_p, _), !match("\\.pyi$", rr_p).

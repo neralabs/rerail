@@ -9,7 +9,7 @@
 // Each rule below is one way the JSON `rule` can match.
 // Columns after `at` are the metavariables the JSON's message, anchor or `each` names: one finding per distinct row.
 // The JSON `transform` computes T1, T10, T11, T12, T2, T3, T4, T5, T6, T7, T8, T9, TE from other metavariables' text; its literals end each rule.
-.violation PT019(at: node, n_mv: loc) "If the test never reads `{n_mv}`, remove the parameter and add `@pytest.mark.usefixtures(\"{n_mv}\")` to the test; if it reads the value, leave it as is."
+.violation PT019(at: node, n_mv: node) "If the test never reads `{n_mv}`, remove the parameter and add `@pytest.mark.usefixtures(\"{n_mv}\")` to the test; if it reads the value, leave it as is."
     suppress noqa "PT019"
 PT019(n, N) :- pt019_alt_1(n, N), pt019_alt_2(n), child(p16, n, _), kind(p16, "parameters"),
     child(p17, p16, _), kind(p17, "function_definition"), field(p17, "name", c18),
@@ -55,7 +55,7 @@ pt019_str_lit(n) :- kind(n, "parenthesized_expression"), child(n, c4, _), pt019_
 
 // pm_call(n): the JSON util `pm-call`, used where the JSON says `matches: "pm-call"`
 //   A: metavariable this relation binds for the calling rule
-.decl pt019_pm_call(n: node, a: loc)
+.decl pt019_pm_call(n: node, a: node)
 pt019_pm_call(n, A) :- kind(n, "call"), pt019_arg_argnames_1(n, a1), A = a1,
     field(n, "function", c2), pt019_pm_callee(c2).
 
@@ -149,7 +149,7 @@ pt019_arg_no_argnames_1(n) :- kind(n, "call"), field(n, "arguments", l),
 
 // alt_1(n): the JSON `any`: n matches if any one of these rules does
 //   N: metavariable this relation binds for the calling rule
-.decl pt019_alt_1(n: node, n_mv: loc)
+.decl pt019_alt_1(n: node, n_mv: node)
 pt019_alt_1(n, N) :- kind(n, "identifier"), prefix("_", n), node(_, n, _, _, _), N = n.
 pt019_alt_1(n, N) :- kind(n, "typed_parameter"), child(n, c1, _), kind(c1, "identifier"),
     prefix("_", c1), node(_, c1, _, _, _), N = c1.

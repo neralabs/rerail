@@ -163,12 +163,21 @@ class_anc_method(c, x) :- class_def(c, q), docof(c, d), doc(d, p, _), py_names__
         Service.logger.info(f"x {1}")
         ```
     .fixture "shop/__init__.py" ```
-        # package
+        from shop.base import Other
+        ```
+    .fixture "shop/views.py" ```
+        from shop import Other
+
+        e = Other.Meta
+        g = Other.Meta.Inner
         ```
     .fixture "shop/base.py" ```
         class Other:
             class Meta:
                 abstract = True
+
+                class Inner:
+                    pass
         ```
     .fixture "shop/models.py" ```
         from shop.base import Other
@@ -185,17 +194,19 @@ class_anc_method(c, x) :- class_def(c, q), docof(c, d), doc(d, p, _), py_names__
 // A def or class of a same-module class, read as its attribute, is its qualified name, as for an imported class.
 .test an_attribute_of_a_same_module_class_has_its_qualified_name uses class_attributes
     .decl rhs(p: symbol, l: number, q: symbol)
-    rhs(p, l, q) :- kind(a, "assignment"), field(a, "right", r), sym_of(r, q), line(r, l), docof(r, d), doc(d, p, _).
+    rhs(p, l, q) :- kind(a, "assignment"), field(a, "right", r), sym_of(r, q), node_line_number(r, l), docof(r, d), doc(d, p, _).
     .expect rhs("pkg/m.py", 11, "pkg.m.Base.Meta")
     .expect rhs("pkg/m.py", 12, "pkg.m.Base.f")
     .expect rhs("pkg/m.py", 14, "pkg.m.Base")
     .expect rhs("shop/models.py", 3, "shop.base.Other.Meta")
+    .expect rhs("shop/views.py", 3, "shop.base.Other.Meta")
+    .expect rhs("shop/views.py", 4, "shop.base.Other.Meta.Inner")
 .end
 
 // `class Meta(Base.Meta)`, Base of the same module, lists its base as an imported one's does (Django's Meta options).
 .test a_meta_based_on_a_same_module_class_meta_has_its_base uses class_attributes
     .decl base_at(p: symbol, l: number, q: symbol)
-    base_at(p, l, q) :- class_base(c, q), line(c, l), docof(c, d), doc(d, p, _).
+    base_at(p, l, q) :- class_base(c, q), node_line_number(c, l), docof(c, d), doc(d, p, _).
     .expect base_at("pkg/m.py", 17, "pkg.m.Base")
     .expect base_at("pkg/m.py", 18, "pkg.m.Base.Meta")
     .expect base_at("shop/models.py", 7, "shop.base.Other.Meta")
@@ -206,11 +217,11 @@ class_anc_method(c, x) :- class_def(c, q), docof(c, d), doc(d, p, _), py_names__
 // fallback for what does not resolve (the logging rules' `!sym_of(n, _)` over `Service.logger`) still reads them.
 .test an_assigned_attribute_or_one_of_a_function_has_no_qualified_name uses class_attributes
     .decl rhs_at(l: number)
-    rhs_at(l) :- kind(a, "assignment"), field(a, "right", r), sym_of(r, _), line(r, l), docof(r, d), doc(d, "pkg/m.py", _).
+    rhs_at(l) :- kind(a, "assignment"), field(a, "right", r), sym_of(r, _), node_line_number(r, l), docof(r, d), doc(d, "pkg/m.py", _).
     .decl logger_resolves(l: number)
-    logger_resolves(l) :- kind(n, "attribute"), text(n, "Service.logger"), sym_of(n, _), line(n, l).
+    logger_resolves(l) :- kind(n, "attribute"), text(n, "Service.logger"), sym_of(n, _), node_line_number(n, l).
     .decl logger_at(l: number)
-    logger_at(l) :- kind(n, "attribute"), text(n, "Service.logger"), line(n, l).
+    logger_at(l) :- kind(n, "attribute"), text(n, "Service.logger"), node_line_number(n, l).
     .expect no rhs_at(13)
     .expect no rhs_at(19)
     .expect no rhs_at(26)

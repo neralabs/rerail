@@ -8,10 +8,10 @@ import { join } from "node:path";
 import { parseJsonWithoutDuplicateKeys } from "../json-duplicate-keys.js";
 import { codeRuleSchema, CODE_RULE_FORMAT } from "../code-rule/code-rule-schema.js";
 import { conversationRuleSchema, reportedIssue } from "./rule-schema.js";
-import type { RuleDocument } from "./rule-store.js";
+import type { JsonRuleDocument } from "./rule-store.js";
 
 /** A code rule (`format` is the code rule format) or a conversation rule; `label` names the source in errors. */
-export function parseRuleDocument(value: unknown, label: string): RuleDocument {
+export function parseRuleDocument(value: unknown, label: string): JsonRuleDocument {
   const isCodeRule = typeof value === "object" && value !== null && "format" in value && value.format === CODE_RULE_FORMAT;
   if (isCodeRule) return { kind: "code", rule: codeRuleSchema.parse(value) };
   const conversationRule = conversationRuleSchema.safeParse(value);
@@ -26,16 +26,16 @@ export function readJsonDocument(path: string): unknown {
 }
 
 /** The rule document at `path`: a code rule or a conversation rule, JSON without duplicate keys. */
-export function readRuleDocument(path: string): RuleDocument {
+export function readRuleDocument(path: string): JsonRuleDocument {
   return parseRuleDocument(readJsonDocument(path), path);
 }
 
 /**
  * Every `*.json` rule document in each pack's `rules/` (in `packs` order, then by file name); ids must be unique across
- * all of them. The catalog reads only the documents a pack lists (`readRulePack`); this reads the directory, for the
+ * all of them. A `.rerail` document is read only through the pack that lists it (`readRulePack`). The catalog reads only the documents a pack lists (`readRulePack`); this reads the directory, for the
  * pack tests and for tools that look at a pack checkout.
  */
-export function loadPackRuleDocuments(packs: readonly string[]): RuleDocument[] {
+export function loadPackRuleDocuments(packs: readonly string[]): JsonRuleDocument[] {
   const seen = new Set<string>();
   return packs.flatMap(pack => {
     const directory = join(pack, "rules");

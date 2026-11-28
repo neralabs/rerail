@@ -13,7 +13,7 @@
 // Each rule below is one way the JSON `rule` can match.
 // Columns after `at` are the metavariables the JSON's message, anchor or `each` names: one finding per distinct row.
 // The JSON `transform` computes LAST, MODELTEXT, PATHTEXT from other metavariables' text; its literals end each rule.
-.violation N806(at: node, name: loc) "Rename `{name}` to lowercase snake_case and update its uses; keep the name if it holds a class."
+.violation N806(at: node, name: node) "Rename `{name}` to lowercase snake_case and update its uses; keep the name if it holds a class."
     suppress noqa "N806"
 N806(n, NAME) :- kind(n, "identifier"), node(_, n, _, _, _), NAME = n,
     match(".*[\\x{149}\\x{2E4}\\x{1D2C}-\\x{1D2E}\\x{1D30}-\\x{1D3A}\\x{1D3C}-\\x{1D42}\\x{1E9A}\\x{2C7D}\\x{A7F1}-\\x{A7F4}\\x{A7F8}\\x{107B6}-\\x{107B9}[\\p{Alphabetic}--\\p{Lowercase}--\\x{FF9E}--\\x{FF9F}]].*", n),
@@ -60,7 +60,7 @@ n806_in_comprehension(n) :- n806_demand_in_comprehension(n), n806_up_1(n, p1).
 
 // global_declared(n): the JSON util `global-declared`, used where the JSON says `matches: "global-declared"`
 //   NAME: metavariable of the calling rule, passed in (bound by the caller)
-.decl n806_global_declared(n: node, name: loc)
+.decl n806_global_declared(n: node, name: node)
 n806_global_declared(n, NAME) :- n806_demand_global_declared(n, NAME),
     within_stop(n, p1, "function_definition"), kind(p1, "function_definition"),
     within_stop(c2, p1, n806_stop_4), kind(c2, "global_statement"), child(c2, c3, _),
@@ -94,7 +94,7 @@ n806_positional(n) :- node(_, n, _, _, _), !n806_alt_5(n).
 
 // import_string_call(n): the JSON util `import-string-call`, used where the JSON says `matches: "import-string-call"`
 //   NAME: metavariable of the calling rule, passed in (bound by the caller)
-.decl n806_import_string_call(n: node, name: loc)
+.decl n806_import_string_call(n: node, name: node)
 n806_import_string_call(n, NAME) :- n806_demand_import_string_call(n, NAME), kind(n, "call"),
     field(n, "function", c1), (kind(c1, "identifier") ; kind(c1, "attribute")),
     sym_of(c1, "django.utils.module_loading.import_string"), field(n, "arguments", c2),
@@ -102,7 +102,7 @@ n806_import_string_call(n, NAME) :- n806_demand_import_string_call(n, NAME), kin
 
 // model_value(n): the JSON util `model-value`, used where the JSON says `matches: "model-value"`
 //   NAME: metavariable of the calling rule, passed in (bound by the caller)
-.decl n806_model_value(n: node, name: loc)
+.decl n806_model_value(n: node, name: node)
 n806_model_value(n, NAME) :- n806_demand_model_value(n, NAME),
     kind(n, "call"), field(n, "function", c1_6), n806_get_model_callee(c1_6), (field(n, "arguments", c2_6), kind(c2_6, "argument_list"), n806_alt_17(c2_6, NAME) ; field(n, "arguments", c3_6), kind(c3_6, "generator_expression")).
 n806_model_value(n, NAME) :- n806_demand_model_value(n, NAME), n806_import_string_call(n, NAME).
@@ -111,7 +111,7 @@ n806_model_value(n, NAME) :- n806_demand_model_value(n, NAME),
 
 // model_assign(n): the JSON util `model-assign`, used where the JSON says `matches: "model-assign"`
 //   NAME: metavariable of the calling rule, passed in (bound by the caller)
-.decl n806_model_assign(n: node, name: loc)
+.decl n806_model_assign(n: node, name: node)
 n806_model_assign(n, NAME) :- n806_demand_model_assign(n, NAME), kind(n, "assignment"),
     field(n, "right", c1), n806_alt_22(c1, NAME).
 
@@ -257,12 +257,12 @@ n806_tok_has_10(n) :- node_text(n, g16), !child(n, _, _),
     match("(?s)^(?:(?:.*\\W)?(?:dotted_path)(?:\\W.*)?)$", g16).
 
 // demand_alt_22: the rows of alt_22 its callers ask for (the metavariable columns they pass in)
-.decl n806_demand_alt_22(n: node, name: loc)
+.decl n806_demand_alt_22(n: node, name: node)
 n806_demand_alt_22(c1, NAME) :- n806_demand_model_assign(n, NAME), kind(n, "assignment"),
     field(n, "right", c1).
 
 // demand_model_assign: the rows of model_assign its callers ask for (the metavariable columns they pass in)
-.decl n806_demand_model_assign(n: node, name: loc)
+.decl n806_demand_model_assign(n: node, name: node)
 n806_demand_model_assign(p1_5, NAME) :- kind(n, "identifier"), node(_, n, _, _, _), NAME = n,
     match(".*[\\x{149}\\x{2E4}\\x{1D2C}-\\x{1D2E}\\x{1D30}-\\x{1D3A}\\x{1D3C}-\\x{1D42}\\x{1E9A}\\x{2C7D}\\x{A7F1}-\\x{A7F4}\\x{A7F8}\\x{107B6}-\\x{107B9}[\\p{Alphabetic}--\\p{Lowercase}--\\x{FF9E}--\\x{FF9F}]].*", n),
     bind_name(n, b3), main_form(b3, f4), n806_set_27(f4), site_scope(b3, "function"),
@@ -270,29 +270,29 @@ n806_demand_model_assign(p1_5, NAME) :- kind(n, "identifier"), node(_, n, _, _, 
 n806_demand_model_assign(n, NAME) :- n806_demand_alt_22(n, NAME), kind(n, "assignment").
 
 // demand_global_declared: the rows of global_declared its callers ask for (the metavariable columns they pass in)
-.decl n806_demand_global_declared(n: node, name: loc)
+.decl n806_demand_global_declared(n: node, name: node)
 n806_demand_global_declared(n, NAME) :- kind(n, "identifier"), node(_, n, _, _, _), NAME = n,
     match(".*[\\x{149}\\x{2E4}\\x{1D2C}-\\x{1D2E}\\x{1D30}-\\x{1D3A}\\x{1D3C}-\\x{1D42}\\x{1E9A}\\x{2C7D}\\x{A7F1}-\\x{A7F4}\\x{A7F8}\\x{107B6}-\\x{107B9}[\\p{Alphabetic}--\\p{Lowercase}--\\x{FF9E}--\\x{FF9F}]].*", n),
     bind_name(n, b3), main_form(b3, f4), n806_set_27(f4), site_scope(b3, "function").
 
 // demand_model_value: the rows of model_value its callers ask for (the metavariable columns they pass in)
-.decl n806_demand_model_value(n: node, name: loc)
+.decl n806_demand_model_value(n: node, name: node)
 n806_demand_model_value(c1, NAME) :- n806_demand_model_value(n, NAME),
     kind(n, "parenthesized_expression"), child(n, c1, _).
 n806_demand_model_value(n, NAME) :- n806_demand_alt_22(n, NAME).
 
 // demand_alt_17: the rows of alt_17 its callers ask for (the metavariable columns they pass in)
-.decl n806_demand_alt_17(n: node, name: loc)
+.decl n806_demand_alt_17(n: node, name: node)
 n806_demand_alt_17(c2_6, NAME) :- n806_demand_model_value(n, NAME), kind(n, "call"),
     field(n, "function", c1_6), n806_get_model_callee(c1_6), field(n, "arguments", c2_6),
     kind(c2_6, "argument_list").
 
 // demand_import_string_call: the rows of import_string_call its callers ask for (the metavariable columns they pass in)
-.decl n806_demand_import_string_call(n: node, name: loc)
+.decl n806_demand_import_string_call(n: node, name: node)
 n806_demand_import_string_call(n, NAME) :- n806_demand_model_value(n, NAME).
 
 // demand_alt_10: the rows of alt_10 its callers ask for (the metavariable columns they pass in)
-.decl n806_demand_alt_10(n: node, model: loc, name: loc)
+.decl n806_demand_alt_10(n: node, model: node, name: node)
 n806_demand_alt_10(c10, MODEL, NAME) :- n806_demand_alt_17(n, NAME), child(n, c1, _),
     kind(c1, "keyword_argument"), n806_tok_has_3(c1), field(c1, "value", c10),
     node(_, c10, _, _, _), MODEL = c10.
@@ -300,7 +300,7 @@ n806_demand_alt_10(c23, MODEL, NAME) :- n806_demand_alt_17(n, NAME), child(n, c2
     n806_positional(c23), node(_, c23, _, _, _), MODEL = c23.
 
 // demand_alt_21: the rows of alt_21 its callers ask for (the metavariable columns they pass in)
-.decl n806_demand_alt_21(n: node, name: loc)
+.decl n806_demand_alt_21(n: node, name: node)
 n806_demand_alt_21(c2, NAME) :- n806_demand_import_string_call(n, NAME), kind(n, "call"),
     field(n, "function", c1), (kind(c1, "identifier") ; kind(c1, "attribute")),
     sym_of(c1, "django.utils.module_loading.import_string"), field(n, "arguments", c2),
@@ -357,7 +357,7 @@ n806_alt_5(n) :- node(_, n, _, _, _), glob("[(),]", n).
 
 // alt_10(n): the JSON `any`: n matches if any one of these rules does
 //   MODEL, NAME: metavariables of the calling rule, passed in (bound by the caller)
-.decl n806_alt_10(n: node, model: loc, name: loc)
+.decl n806_alt_10(n: node, model: node, name: node)
 n806_alt_10(n, MODEL, NAME) :- n806_demand_alt_10(n, MODEL, NAME), !n806_plain_string(n).
 n806_alt_10(n, MODEL, NAME) :- n806_demand_alt_10(n, MODEL, NAME), text(NAME, MODELTEXT),
     text(MODEL, t1_td),
@@ -370,7 +370,7 @@ n806_alt_11(n) :- child(n, c10, _), kind(c10, "list_splat").
 
 // alt_17(n): the JSON `any`: n matches if any one of these rules does
 //   NAME: metavariable of the calling rule, passed in (bound by the caller)
-.decl n806_alt_17(n: node, name: loc)
+.decl n806_alt_17(n: node, name: node)
 n806_alt_17(n, NAME) :- n806_demand_alt_17(n, NAME), child(n, c1, _),
     kind(c1, "keyword_argument"), n806_tok_has_3(c1), field(c1, "value", c10),
     node(_, c10, _, _, _), MODEL = c10, n806_alt_10(c10, MODEL, NAME).
@@ -380,7 +380,7 @@ n806_alt_17(n, NAME) :- n806_demand_alt_17(n, NAME), !n806_alt_11(n), child(n, c
 
 // alt_21(n): the JSON `any`: n matches if any one of these rules does
 //   NAME: metavariable of the calling rule, passed in (bound by the caller)
-.decl n806_alt_21(n: node, name: loc)
+.decl n806_alt_21(n: node, name: node)
 n806_alt_21(n, NAME) :- n806_demand_alt_21(n, NAME), child(n, c1, _),
     kind(c1, "keyword_argument"), n806_tok_has_9(c1), field(c1, "value", c10),
     node(_, c10, _, _, _), PATH = c10, n806_plain_string(c10), text(NAME, LAST), text(PATH, t2_td),
@@ -396,7 +396,7 @@ n806_alt_21(n, NAME) :- n806_demand_alt_21(n, NAME),
 
 // alt_22(n): the JSON `any`: n matches if any one of these rules does
 //   NAME: metavariable of the calling rule, passed in (bound by the caller)
-.decl n806_alt_22(n: node, name: loc)
+.decl n806_alt_22(n: node, name: node)
 n806_alt_22(n, NAME) :- n806_demand_alt_22(n, NAME), n806_model_value(n, NAME).
 n806_alt_22(n, NAME) :- n806_demand_alt_22(n, NAME), kind(n, "assignment"),
     n806_model_assign(n, NAME).

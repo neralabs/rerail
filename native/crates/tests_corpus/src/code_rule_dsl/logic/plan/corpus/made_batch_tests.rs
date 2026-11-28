@@ -273,7 +273,7 @@ fn r7_a_run_after_an_edit_makes_no_document() {
 /// (decision 0083 §3), so `d` is computed from the node, never probed in the old version, which made each node's
 /// document (ep2's insert: a removal join over `future_annotations`'s gone row made 121 documents, 0.74 s). Here
 /// `called` is cross-file (an identifier naming a function any file defines, declared so: the definition's node is
-/// kept, so its names are no relation of names a stage takes, decision 0675; an output, so not inlined into its
+/// kept, so its names are no relation of names a stage takes, decision 0709; an output, so not inlined into its
 /// reader, decision 0099), so `late` is too, and an edit takes
 /// a.py's `__future__` import away: its `lead` row goes, and the removal join walks `called`, every file's, through
 /// `docof`. The walk computes each node's document (the decision says so), and the edit makes a.py's document alone:

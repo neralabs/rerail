@@ -11,7 +11,7 @@
 // Each rule below is one way the JSON `rule` can match.
 // Columns after `at` are the metavariables the JSON's message, anchor or `each` names: one finding per distinct row.
 // `options` carries JSON settings that have no .rerail form yet.
-.violation B905(at: loc, call: node) "Pass `strict=` explicitly: `strict=True` when lengths must match, `strict=False` when truncation is intended."
+.violation B905(at: node, call: node) "Pass `strict=` explicitly: `strict=True` when lengths must match, `strict=False` when truncation is intended."
     suppress noqa "B905"
 B905(CALL, n) :- kind(n, "call"), b905_arg_no_strict_1(n), b905_alt_4(n, CALL), child(n, c4, _),
     kind(c4, "argument_list"),
@@ -167,7 +167,7 @@ b905_alt_1(n) :- child(n, c8, _), kind(c8, "keyword_argument"), b905_tok_has_2(c
 
 // alt_4(n): the JSON `any`: n matches if any one of these rules does
 //   CALL: metavariable this relation binds for the calling rule
-.decl b905_alt_4(n: node, call: loc)
+.decl b905_alt_4(n: node, call: node)
 b905_alt_4(n, CALL) :- node(_, n, _, _, _), CALL = n, field(n, "function", c1), b905_callee_zip(c1).
 b905_alt_4(n, CALL) :- field(n, "function", c2), kind(c2, "list_splat"), child(c2, c3, _),
     b905_callee_zip(c3), node(_, c3, _, _, _), CALL = c3.

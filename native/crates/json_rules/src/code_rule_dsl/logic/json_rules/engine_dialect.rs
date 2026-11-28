@@ -105,8 +105,8 @@ fn slice(text: &str, a: usize, b: usize) -> &str {
 
 
 /// `anchor x` (a capture): the finding is at x, so x takes the `at` column and the witness n takes x's column. The
-/// `at` column is a `loc`: a capture is a node (`$X` of a pattern) or a span (a regex group, `(?P<COMMA>,)`), and a
-/// span in a column typed `node` gives no finding.
+/// `at` column is a `place`: a capture is a node (`$X` of a pattern) or a match (a regex group, `(?P<COMMA>,)`);
+/// `place_columns` narrows it to the one its rows hold.
 fn anchor_captures(px: &Patterns, mut text: String) -> String {
     let found: Vec<(String, String, String, String, String)> =
         captures(&px.engine_dialect_anchor, &text).iter().map(|m| (g(m, 0).to_owned(), g(m, 1).to_owned(), g(m, 2).to_owned(), g(m, 3).to_owned(), g(m, 4).to_owned())).collect();
@@ -114,7 +114,7 @@ fn anchor_captures(px: &Patterns, mut text: String) -> String {
         let raw_cols: Vec<&str> = cols.split(',').collect();
         let names: Vec<String> = raw_cols.iter().map(|c| c.split(':').next().unwrap_or("").trim().to_owned()).collect();
         let Some(k) = names.iter().position(|n| *n == anchor) else { continue };
-        let new_cols = names.iter().zip(&raw_cols).enumerate().map(|(i, (n, c))| if i == 0 { format!("{n}: loc") } else if i == k { format!("{n}: node") } else { c.trim().to_owned() }).collect::<Vec<_>>().join(", ");
+        let new_cols = names.iter().zip(&raw_cols).enumerate().map(|(i, (n, c))| if i == 0 { format!("{n}: place") } else if i == k { format!("{n}: node") } else { c.trim().to_owned() }).collect::<Vec<_>>().join(", ");
         text = text.replacen(&whole, &format!(".violation {rel}({new_cols}){rest}\n"), 1);
         let (mut out, mut pos) = (String::new(), 0usize);
         let heads = captures(&re(&format!(r"(?m)^{rel}\(")), &text).iter().map(|h| h.get(0).expect("a match").end()).collect::<Vec<_>>();
@@ -365,7 +365,7 @@ fn witness_anchor(px: &Patterns, mut text: String) -> String {
     for (whole, rel, cols, rest) in found {
         let raw: Vec<&str> = cols.split(',').collect();
         let names: Vec<String> = raw.iter().map(|c| c.split(':').next().unwrap_or("").trim().to_owned()).collect();
-        let new_cols = names.iter().zip(&raw).enumerate().map(|(i, (n, c))| if i == 0 { format!("{n}: loc") } else { c.trim().to_owned() }).collect::<Vec<_>>().join(", ");
+        let new_cols = names.iter().zip(&raw).enumerate().map(|(i, (n, c))| if i == 0 { format!("{n}: place") } else { c.trim().to_owned() }).collect::<Vec<_>>().join(", ");
         text = text.replacen(&whole, &format!(".violation {rel}({new_cols}){rest}\n    // anchor end: the finding is the point where the witness ends\n"), 1);
         let (mut out, mut pos) = (String::new(), 0usize);
         let heads = captures(&re(&format!(r"(?m)^{rel}\(")), &text).iter().map(|h| h.get(0).expect("a match").end()).collect::<Vec<_>>();
@@ -594,7 +594,7 @@ fn stop_axes_in_aggregates(px: &Patterns, text: String) -> String {
 }
 
 /// One translated rule's display text in the engine's dialect.
-pub fn engine_text(px: &Patterns, text: String, base: &str) -> R<String> {
+pub fn engine_text(px: &Patterns, text: String, base: &str, lib: &super::place_columns::NodeColumns) -> R<String> {
     let text = stop_axes_in_aggregates(px, text);
     let text = anchor_captures(px, text);
     let text = witness_anchor(px, text);
@@ -606,6 +606,6 @@ pub fn engine_text(px: &Patterns, text: String, base: &str) -> R<String> {
     let text = same_document_joins(px, text);
     let text = compare_pairs(px, text);
     let text = unbound_tests(px, text);
-    unset_unbound(px, text)
+    Ok(super::place_columns::place_columns(unset_unbound(px, text)?, lib))
 }
 

@@ -8,7 +8,7 @@
 // B025(n): a finding at node n, from clause `duplicate-try-block-exception`.
 // Each rule below is one way the JSON `rule` can match.
 // Columns after `at` are the metavariables the JSON's message, anchor or `each` names: one finding per distinct row.
-.violation B025(at: node, e: loc) "try-except block with duplicate exception `{e}`"
+.violation B025(at: node, e: node) "try-except block with duplicate exception `{e}`"
     suppress noqa "B025"
 B025(n, E) :- b025_dotted(n), node(_, n, _, _, _), E = n, b025_name_slot(n),
     count : { precedes(s1, n), node(_, s1, _, _, _), E = s1 } = 0, b025_up_1(n, p2), precedes(s3, p2),
@@ -39,7 +39,7 @@ b025_name_slot(n) :- child(p17, n, _), kind(p17, "parenthesized_expression"),
 
 // lists_e(n): the JSON util `lists-e`, used where the JSON says `matches: "lists-e"`
 //   E: metavariable of the calling rule, passed in (bound by the caller)
-.decl b025_lists_e(n: node, e: loc)
+.decl b025_lists_e(n: node, e: node)
 b025_lists_e(n, E) :- b025_demand_lists_e(n, E), kind(n, "except_clause"),
     within_stop(c1, n, "block"), text(c1, t_e1), text(E, t_e1), b025_dotted(c1),
     b025_name_slot(c1), @doc(c1) = @doc(E).
@@ -118,7 +118,7 @@ b025_tok_follows_8(n) :- structural_before(n, g10), match("\\s*", g10), child(p1
 b025_tok_follows_8(n) :- structural_before(n, g10), match("(?s)^(?:.*(?:,)\\s*)$", g10).
 
 // demand_lists_e: the rows of lists_e its callers ask for (the metavariable columns they pass in)
-.decl b025_demand_lists_e(n: node, e: loc)
+.decl b025_demand_lists_e(n: node, e: node)
 b025_demand_lists_e(s3, E) :- b025_dotted(n), node(_, n, _, _, _), E = n, b025_name_slot(n), b025_up_1(n, p2),
     precedes(s3, p2).
 

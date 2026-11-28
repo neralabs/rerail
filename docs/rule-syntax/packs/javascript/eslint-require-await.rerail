@@ -19,7 +19,7 @@
 //   async function* g() { yield 1; }            fine: async generators are out of scope
 // The suggestion removes `async`, writing `;` where the code after it would join the line before:
 //   foo⏎ async () => { return 0; }    →   foo⏎ ;() => { return 0; }
-.violation require_await(at: loc, name: symbol) code "require-await" "{name} has no 'await' expression."
+.violation require_await(at: place, name: symbol) code "require-await" "{name} has no 'await' expression."
     suppress eslint "require-await"
     suppress oxlint "require-await"
     suppress biome "lint/suspicious/useAwait"
@@ -38,16 +38,16 @@ awaits(f) :- kind(d, "using_declaration"), op(d, "await"), own_fn(d, f).
 // The suggestion. ESLint's nodeWithAsyncKeyword is the method for a method, else the function; its `async`
 // token goes, and `;` takes its place when a `(` or `[` follows and the line before would run on.
 drop_async(at, _) :- fn_head(f, at), async_token(f, t, h), semi(f, h, s) => replace(t, `$s`).
-.decl async_token(f: node, t: span, h: node)
-async_token(m, t, m) :- unawaited(m), kind(m, "method_definition"), holder_key(m, k), token_before(k, t),
-    text(t, "async").
-async_token(f, t, f) :- unawaited(f), !kind(f, "method_definition"), first_token(f, t), text(t, "async").
+.decl async_token(f: node, t: token, h: node)
+async_token(m, t, m) :- unawaited(m), kind(m, "method_definition"), holder_key(m, k), node_to_token_before(k, t),
+    token_text(t, "async").
+async_token(f, t, f) :- unawaited(f), !kind(f, "method_definition"), node_to_first_token(f, t), token_text(t, "async").
 .decl semi(f: node, h: node, s: symbol)
 semi(f, h, ";") :- async_token(f, t, h), opens(t), run_on(h).
 semi(f, h, "") :- async_token(f, t, h), !(opens(t), run_on(h)).
-.decl opens(t: span)  // the code after `async` starts with `(` or `[`
+.decl opens(t: token)  // the code after `async` starts with `(` or `[`
 .stored opens "after a stored `async`, the next stored child is the parameters or the computed key, whose text starts with the `(` or `[` the tape leaves out"
-opens(t) :- async_token(_, t, _), token_after(t, u), match("(?s)[(\\[].*", u).
+opens(t) :- async_token(_, t, _), token_next(t, u), match("(?s)[(\\[].*", u).
 .decl run_on(h: node)
 run_on(h) :- kind(h, "method_definition"), member_runs_on(h).
 run_on(h) :- !kind(h, "method_definition"), semi_needed(h).

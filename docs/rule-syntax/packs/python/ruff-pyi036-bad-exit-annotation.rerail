@@ -41,7 +41,7 @@ exit_method(f, "__exit__") :- class_member(_, f, "__exit__"), !is_async(f).
 exit_method(f, "__aexit__") :- class_member(_, f, "__aexit__"), is_async(f).
 // arg(f, p, i, a): p is the i-th positional parameter after self (from 1), annotated a. The rules add
 // `within(t, f)` for a's bare type t, which always holds: it places t in f's file for the engine (a is a loc).
-.decl arg(f: node, p: node, i: number, a: loc)
+.decl arg(f: node, p: node, i: number, a: node)
 arg(f, p, i, a) :- exit_method(f, _), first_param(f, _, _), sig_param(f, p, _, j, k, a, _), pos_kind(k),
     i = count : { sig_param(f, q, n, j2, k2, b, d), pos_kind(k2), j2 <= j } - 1, i > 0.
 // slot(i, nth, want): what the i-th argument receives.

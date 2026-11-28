@@ -677,11 +677,12 @@ pub const PRAGMA: &str = "cross-rounds";
 pub fn document_column(relation: &str) -> Option<usize> {
     match relation {
         "node" | "doc" | "pkg" | "unpackaged" | "tape_error" | "path_part" | "file_name" | "syntax_error" | "cpython_syntax_error" |
-        "source" | "src_line" | "line_count" | "parsed"
+        "source" | "src_line" | "line_count"
         // Decision 0055's: a guest and its host are one file (`corpus::guests` attributes its rows to the host).
-        | "tape_of" | "rr_program" | "doc_grammar" | "host_node" => Some(0),
-        // Decision 0431: a string's parsed nodes, by the string (its file's node).
-        "docof" | "guest_of" | "guest_place" => Some(1),
+        | "tape_of" | "rr_program" | "doc_grammar" => Some(0),
+        "docof" => Some(1),
+        // `parsed`, `host_node`, `guest_of` and `guest_place` hold nodes, not documents (decision 0724: a node's id is
+        // its batch's, not its document's key and low bits): a row of theirs is placed through its node's `docof`.
         // Decision 0597 rule 8: a pass's tape-local relations and their kept rows (`guests::TAPE`, `guests::KEPT`),
         // each row led by its tape value's document.
         _ if relation.ends_with("_rr_kept") || relation.ends_with("_rr_kd") => Some(0),

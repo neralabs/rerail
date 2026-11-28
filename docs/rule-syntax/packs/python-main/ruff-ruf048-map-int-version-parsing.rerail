@@ -10,7 +10,7 @@
 // RUF048(n): a finding at node n, from clause `map-int-version-parsing`.
 // Each rule below is one way the JSON `rule` can match.
 // Columns after `at` are the metavariables the JSON's message, anchor or `each` names: one finding per distinct row.
-.violation RUF048(at: loc, r: node) "`int` fails on non-numeric version parts such as `post1`; parse with `packaging.version.parse(...)` instead, unless the version is known to be purely numeric."
+.violation RUF048(at: place, r: node) "`int` fails on non-numeric version parts such as `post1`; parse with `packaging.version.parse(...)` instead, unless the version is known to be purely numeric."
     suppress noqa "RUF048"
 RUF048(R, n) :- ruf048_map_int_version(n),
     match("(?s)(?:\\*(?:[\\s\\\\]|#[^\\n]*)*)?(?P<R>.*)", n).
@@ -88,7 +88,7 @@ ruf048_map_int_version(n) :- kind(n, "call"), field(n, "function", c1),
 
 // check_in_string(n): the JSON util `check-in-string`, used where the JSON says `matches: "check-in-string"`
 //   R: metavariable this relation binds for the calling rule
-.decl ruf048_check_in_string(n: node, r: loc)
+.decl ruf048_check_in_string(n: node, r: node)
 ruf048_check_in_string(n, R) :- (kind(n, "string") ; kind(n, "concatenated_string")),
     parsed(n, "annotation", r1), within(c2, r1), ruf048_alt_13(c2, R).
 
@@ -103,6 +103,6 @@ ruf048_alt_11(n) :- node(_, n, _, _, _), glob("[(),]", n).
 
 // alt_13(n): the JSON `any`: n matches if any one of these rules does
 //   R: metavariable this relation binds for the calling rule
-.decl ruf048_alt_13(n: node, r: loc)
+.decl ruf048_alt_13(n: node, r: node)
 ruf048_alt_13(n, R) :- ruf048_map_int_version(n), node(_, n, _, _, _), R = n.
 ruf048_alt_13(n, R) :- ruf048_check_in_string(n, R).

@@ -116,7 +116,7 @@ fn source_lines_are_the_languages_lines() {
 #include "core.rerail"
 #include "data-layer/pub-lines.rerail"
 .decl lines(p: symbol, l: number, s: symbol)
-lines(p, l, s) :- doc(d, p, _), src_line(d, l, sp), text(sp, s), line(sp, l), end_line(sp, l), col(sp, 0).
+lines(p, l, s) :- doc(d, p, _), document_line(d, sp), line_number(sp, l), place_text(sp, s), place_line_number(sp, l), place_end_line_number(sp, l), place_start_column(sp, 0).
 .decl split(l: number, s: symbol)
 split(l, s) :- doc(d, "a.py", _), py_line(d, l, s).
 .decl count(p: symbol, k: number)
@@ -171,15 +171,15 @@ fn source_is_the_files_text() {
     let dir = corpus("source", &files);
     let program = r#"
 .decl doc(d: number, path: symbol, module: symbol)
-.decl source(d: number, sp: span)
-.decl text(n: loc, s: symbol)
-.decl line(n: loc, l: number)
-.decl end_line(n: loc, l: number)
+.decl source(d: number, sp: place)
+.decl text(n: place, s: symbol)
+.decl line(n: place, l: number)
+.decl end_line(n: place, l: number)
 .input doc, source, text, line, end_line
 .decl hit(p: symbol)
-hit(p) :- doc(d, p, _), source(d, sp), text(sp, s), match("(?s).*import os\n\\s+x = 1\r\n", s).
+hit(p) :- doc(d, p, _), document_source(d, sp), place_text(sp, s), match("(?s).*import os\n\\s+x = 1\r\n", s).
 .decl lines(p: symbol, l: number, e: number)
-lines(p, l, e) :- doc(d, p, _), source(d, sp), line(sp, l), end_line(sp, e).
+lines(p, l, e) :- doc(d, p, _), document_source(d, sp), place_line_number(sp, l), place_end_line_number(sp, e).
 .output hit, lines
 "#;
     let got = run(&dir, program, &["hit", "lines"]);
@@ -204,11 +204,11 @@ fn src_lines_are_the_line_table() {
     let source = "a = 1\r\nb = 2\rc = 3\x0cd = 4\n";
     let dir = corpus("tape-lines", &[("a.py", source)]);
     let program = r#"
-.decl src_line(d: number, l: number, sp: span)
-.decl text(n: loc, s: symbol)
+.decl src_line(d: number, l: number, sp: place)
+.decl text(n: place, s: symbol)
 .input src_line, text
 .decl lines(l: number, s: symbol)
-lines(l, s) :- src_line(_, l, sp), text(sp, s).
+lines(l, s) :- document_line(_, sp), line_number(sp, l), place_text(sp, s).
 .output lines
 "#;
     let got = run(&dir, program, &["lines"]);
@@ -234,14 +234,14 @@ fn node_text_and_positions_are_ws_spans() {
 .decl doc(d: number, path: symbol, module: symbol)
 .decl node(d: number, n: node, kind: symbol, start: number, end: number)
 .decl node_text(n: node, s: symbol)
-.decl line(n: loc, l: number)
-.decl end_line(n: loc, l: number)
-.decl col(n: loc, c: number)
+.decl line(n: place, l: number)
+.decl end_line(n: place, l: number)
+.decl col(n: place, c: number)
 .input doc, node, node_text, line, end_line, col
 .decl kinds(k: symbol)
 {}
 .decl spans(p: symbol, k: symbol, l: number, e: number, c: number, s: symbol)
-spans(p, k, l, e, c, s) :- doc(d, p, _), node(d, n, k, _, _), kinds(k), line(n, l), end_line(n, e), col(n, c), node_text(n, s).
+spans(p, k, l, e, c, s) :- doc(d, p, _), node(d, n, k, _, _), kinds(k), node_line_number(n, l), node_end_line_number(n, e), node_start_column(n, c), node_text(n, s).
 .output spans
 "#,
         kinds.iter().map(|k| format!("kinds({k:?}).")).collect::<Vec<_>>().join("\n")
@@ -271,7 +271,7 @@ fn without_spans_text_and_line_are_ts() {
 .decl line(n: node, l: number)
 .input text, line
 .decl t(s: symbol, l: number)
-t(s, l) :- text(n, s), line(n, l).
+t(s, l) :- text(n, s), node_line_number(n, l).
 .output t
 "#;
     assert_eq!(run(&dir, program, &["t"])[0], [["x", "1"], ["y", "2"]]);
@@ -291,7 +291,7 @@ fn a_tree_rooted_at_an_error_node_is_read() {
 .decl syntax_error(d: number)
 .input doc, node, line, syntax_error
 .decl errors(p: symbol, l: number, s: number, e: number)
-errors(p, l, s, e) :- doc(d, p, _), node(d, n, "ERROR", s, e), line(n, l).
+errors(p, l, s, e) :- doc(d, p, _), node(d, n, "ERROR", s, e), node_line_number(n, l).
 .decl invalid(p: symbol)
 invalid(p) :- doc(d, p, _), syntax_error(d).
 .output errors, invalid
@@ -316,16 +316,16 @@ fn base_relations_read_are_inputs() {
     let dir = corpus("span-text", &files);
     let program = r#"
 .decl doc(d: number, path: symbol, module: symbol)
-.decl source(d: number, sp: span)
-.decl text(n: loc, s: symbol)
+.decl source(d: number, sp: place)
+.decl text(n: place, s: symbol)
 .decl syntax_error(d: number)
 .input doc, syntax_error, source
 .decl hit(p: symbol)
-hit(p) :- doc(d, p, _), syntax_error(d), source(d, sp), text(sp, s), contains("ServerPlan", s).
+hit(p) :- doc(d, p, _), syntax_error(d), document_source(d, sp), place_text(sp, s), contains("ServerPlan", s).
 .decl plain(p: symbol)
-plain(p) :- doc(d, p, _), !syntax_error(d), source(d, sp), text(sp, s), contains("x = 1", s).
+plain(p) :- doc(d, p, _), !syntax_error(d), document_source(d, sp), place_text(sp, s), contains("x = 1", s).
 .decl same(p: symbol, q: symbol) cross_file
-same(p, q) :- doc(d, p, _), source(d, sp), text(sp, s), doc(e, q, _), source(e, sq), text(sq, s).
+same(p, q) :- doc(d, p, _), document_source(d, sp), place_text(sp, s), doc(e, q, _), document_source(e, sq), place_text(sq, s).
 .output hit, plain, same
 "#;
     let got = run(&dir, program, &["hit", "plain", "same"]);
@@ -342,14 +342,14 @@ fn no_documents_give_no_rows() {
     let program = r#"
 .decl doc(d: number, path: symbol, module: symbol)
 .decl node(d: number, n: node, kind: symbol, start: number, end: number)
-.decl source(d: number, sp: span)
-.decl src_line(d: number, l: number, sp: span)
-.decl text(n: loc, s: symbol)
+.decl source(d: number, sp: place)
+.decl src_line(d: number, l: number, sp: place)
+.decl text(n: place, s: symbol)
 .input doc, node, source, src_line, text
 .decl calls(p: symbol)
 calls(p) :- doc(d, p, _), node(d, _, "call", _, _).
 .decl lines(p: symbol, s: symbol)
-lines(p, s) :- doc(d, p, _), src_line(d, _, sp), text(sp, s).
+lines(p, s) :- doc(d, p, _), document_line(d, sp), place_text(sp, s).
 .output calls, lines
 "#;
     let empty = corpus("no-docs-empty", &[]);
@@ -373,23 +373,23 @@ fn match_all_is_ws_regex() {
     let dir = corpus("match-all", &files);
     let program = r#"
 .decl doc(d: number, path: symbol, module: symbol)
-.decl source(d: number, sp: span)
-.decl src_line(d: number, l: number, sp: span)
-.decl text(n: loc, s: symbol)
-.decl line(n: loc, l: number)
-.decl end_line(n: loc, l: number)
-.decl col(n: loc, c: number)
+.decl source(d: number, sp: place)
+.decl src_line(d: number, l: number, sp: place)
+.decl text(n: place, s: symbol)
+.decl line(n: place, l: number)
+.decl end_line(n: place, l: number)
+.decl col(n: place, c: number)
 .input doc, source, src_line, text, line, end_line, col
 .decl whole(p: symbol, l: number, e: number, c: number, s: symbol)
-whole(p, l, e, c, s) :- doc(d, p, _), source(d, sp), match_all("needle\\w*", sp, m), line(m, l), end_line(m, e), col(m, c), text(m, s).
+whole(p, l, e, c, s) :- doc(d, p, _), document_source(d, sp), line_regex_match("needle\\w*", sp, m), place_line_number(m, l), place_end_line_number(m, e), place_start_column(m, c), place_text(m, s).
 .decl across(p: symbol, l: number, e: number, c: number)
-across(p, l, e, c) :- doc(d, p, _), source(d, sp), match_all("(?s)needle.end", sp, m), line(m, l), end_line(m, e), col(m, c).
+across(p, l, e, c) :- doc(d, p, _), document_source(d, sp), line_regex_match("(?s)needle.end", sp, m), place_line_number(m, l), place_end_line_number(m, e), place_start_column(m, c).
 .decl lines(p: symbol, l: number, e: number, c: number, s: symbol)
-lines(p, l, e, c, s) :- doc(d, p, _), src_line(d, k, sp), match_all("needle\\w*", sp, m), line(m, l), end_line(m, e), col(m, c), text(m, s), l = k.
+lines(p, l, e, c, s) :- doc(d, p, _), document_line(d, sp), line_number(sp, k), line_regex_match("needle\\w*", sp, m), place_line_number(m, l), place_end_line_number(m, e), place_start_column(m, c), place_text(m, s), l = k.
 .decl pairs(p: symbol, l: number, e: number, c: number, s: symbol)
-pairs(p, l, e, c, s) :- doc(d, p, _), source(d, sp), match_all("aa", sp, m), line(m, l), end_line(m, e), col(m, c), text(m, s).
+pairs(p, l, e, c, s) :- doc(d, p, _), document_source(d, sp), line_regex_match("aa", sp, m), place_line_number(m, l), place_end_line_number(m, e), place_start_column(m, c), place_text(m, s).
 .decl none(p: symbol)
-none(p) :- doc(d, p, _), source(d, sp), !match_all("needle", sp, _).
+none(p) :- doc(d, p, _), document_source(d, sp), !line_regex_match("needle", sp, _).
 .output whole, across, lines, pairs, none
 "#;
     let got = run(&dir, program, &["whole", "across", "lines", "pairs", "none"]);
@@ -422,25 +422,25 @@ fn text_files_are_text_only_documents() {
 .scope text "**/*.md", "**/*.rst", "**/*.txt"
 .decl doc(d: number, path: symbol, module: symbol)
 .decl node(d: number, n: node, kind: symbol, start: number, end: number)
-.decl source(d: number, sp: span)
-.decl src_line(d: number, l: number, sp: span)
+.decl source(d: number, sp: place)
+.decl src_line(d: number, l: number, sp: place)
 .decl line_count(d: number, k: number)
-.decl text(n: loc, s: symbol)
-.decl line(n: loc, l: number)
-.decl end_line(n: loc, l: number)
-.decl col(n: loc, c: number)
+.decl text(n: place, s: symbol)
+.decl line(n: place, l: number)
+.decl end_line(n: place, l: number)
+.decl col(n: place, c: number)
 .decl docs(p: symbol)
 docs(p) :- doc(_, p, _).
 .decl treed(p: symbol)
 treed(p) :- doc(d, p, _), node(d, _, _, _, _).
 .decl advertised(p: symbol)
-advertised(p) :- doc(d, p, _), source(d, sp), text(sp, s), contains("graph_query_builder(", s).
+advertised(p) :- doc(d, p, _), document_source(d, sp), place_text(sp, s), contains("graph_query_builder(", s).
 .decl lines(p: symbol, l: number, s: symbol)
-lines(p, l, s) :- doc(d, p, _), src_line(d, l, sp), text(sp, s).
+lines(p, l, s) :- doc(d, p, _), document_line(d, sp), line_number(sp, l), place_text(sp, s).
 .decl counts(p: symbol, k: number)
 counts(p, k) :- doc(d, p, _), line_count(d, k).
 .decl hits(p: symbol, l: number, e: number, c: number, s: symbol)
-hits(p, l, e, c, s) :- doc(d, p, _), source(d, sp), match_all("needle", sp, m), line(m, l), end_line(m, e), col(m, c), text(m, s).
+hits(p, l, e, c, s) :- doc(d, p, _), document_source(d, sp), line_regex_match("needle", sp, m), place_line_number(m, l), place_end_line_number(m, e), place_start_column(m, c), place_text(m, s).
 .output docs, treed, advertised, lines, counts, hits
 "#;
     let got = run(&dir, program, &["docs", "treed", "advertised", "lines", "counts", "hits"]);
@@ -505,20 +505,20 @@ fn match_group_is_ws_capture() {
     let quoted = re.replace('\\', "\\\\").replace('"', "\\\"");
     let program = r#"
 .decl doc(d: number, path: symbol, module: symbol)
-.decl source(d: number, sp: span)
-.decl src_line(d: number, l: number, sp: span)
-.decl text(n: loc, s: symbol)
-.decl line(n: loc, l: number)
-.decl end_line(n: loc, l: number)
-.decl col(n: loc, c: number)
+.decl source(d: number, sp: place)
+.decl src_line(d: number, l: number, sp: place)
+.decl text(n: place, s: symbol)
+.decl line(n: place, l: number)
+.decl end_line(n: place, l: number)
+.decl col(n: place, c: number)
 .decl groups(p: symbol, g: symbol, l: number, e: number, c: number, s: symbol)
-groups(p, g, l, e, c, s) :- doc(d, p, _), source(d, sp), match_group("RE", sp, _, g, gsp), line(gsp, l), end_line(gsp, e), col(gsp, c), text(gsp, s).
+groups(p, g, l, e, c, s) :- doc(d, p, _), document_source(d, sp), line_regex_group("RE", sp, _, g, gsp), place_line_number(gsp, l), place_end_line_number(gsp, e), place_start_column(gsp, c), place_text(gsp, s).
 .decl lines(p: symbol, g: symbol, l: number, e: number, c: number, s: symbol)
-lines(p, g, l, e, c, s) :- doc(d, p, _), src_line(d, _, sp), match_group("RE", sp, _, g, gsp), line(gsp, l), end_line(gsp, e), col(gsp, c), text(gsp, s).
+lines(p, g, l, e, c, s) :- doc(d, p, _), document_line(d, sp), line_regex_group("RE", sp, _, g, gsp), place_line_number(gsp, l), place_end_line_number(gsp, e), place_start_column(gsp, c), place_text(gsp, s).
 .decl imports(p: symbol, l: number, s: symbol, a: symbol)
-imports(p, l, s, a) :- doc(d, p, _), source(d, sp), match_all("RE", sp, m), line(m, l), match_group("RE", sp, m, "module", ms), text(ms, s), match_group("RE", sp, m, "attr", asp), text(asp, a).
+imports(p, l, s, a) :- doc(d, p, _), document_source(d, sp), line_regex_match("RE", sp, m), place_line_number(m, l), line_regex_group("RE", sp, m, "module", ms), place_text(ms, s), line_regex_group("RE", sp, m, "attr", asp), place_text(asp, a).
 .decl bare(p: symbol, s: symbol)
-bare(p, s) :- doc(d, p, _), source(d, sp), match_group("RE", sp, m, "module", ms), text(ms, s), !match_group("RE", sp, m, "attr", _).
+bare(p, s) :- doc(d, p, _), document_source(d, sp), line_regex_group("RE", sp, m, "module", ms), place_text(ms, s), !line_regex_group("RE", sp, m, "attr", _).
 .output groups, lines, imports, bare
 "#
     .replace("RE", &quoted);
@@ -790,15 +790,8 @@ fn comments_are_ws_comment_nodes() {
     let python = "#!/usr/bin/env python\r\n# noqa: E501\nimport os  # type: ignore\ndef f():\n    #\n    return 1  #   trailing   \nx = \"# not a comment\"  # é\n";
     let dir = corpus("comments", &[("a.py", python)]);
     let program = r#"
-.decl comment(n: node, s: symbol)
-.decl line(n: loc, l: number)
-.decl end_line(n: loc, l: number)
-.decl col(n: loc, c: number)
-.decl node_text(n: node, s: symbol)
-.decl text(n: loc, s: symbol)
-.input comment, line, end_line, col, node_text, text
 .decl comments(l: number, e: number, c: number, t: symbol, s: symbol)
-comments(l, e, c, t, s) :- comment(n, s), line(n, l), end_line(n, e), col(n, c), node_text(n, t), text(n, t).
+comments(l, e, c, t, s) :- comment(n, s), node_line_number(n, l), node_end_line_number(n, e), node_start_column(n, c), node_text(n, t).
 .output comments
 "#;
     let got = run(&dir, program, &["comments"]);
@@ -809,15 +802,8 @@ comments(l, e, c, t, s) :- comment(n, s), line(n, l), end_line(n, e), col(n, c),
     let rust = "//! crate doc\n/// item doc\nfn f() { /* block */ let x = 1; // tail\n}\n/** outer block doc */\nfn g() {}\n";
     let dir = corpus("rust-comments", &[("src/lib.rs", rust)]);
     let program = r#"
-.decl node(d: number, n: node, kind: symbol, start: number, end: number)
-.decl comment(n: node, s: symbol)
-.decl line(n: loc, l: number)
-.decl end_line(n: loc, l: number)
-.decl col(n: loc, c: number)
-.decl node_text(n: node, s: symbol)
-.input node, comment, line, end_line, col, node_text
 .decl comments(l: number, e: number, c: number, t: symbol, s: symbol)
-comments(l, e, c, t, s) :- comment(n, s), node(_, n, _, _, _), line(n, l), end_line(n, e), col(n, c), node_text(n, t).
+comments(l, e, c, t, s) :- comment(n, s), node(_, n, _, _, _), node_line_number(n, l), node_end_line_number(n, e), node_start_column(n, c), node_text(n, t).
 .output comments
 "#;
     let got = run(&dir, program, &["comments"]);
@@ -855,7 +841,7 @@ fn tree_arithmetic_is_ws_relations() {
     let dir = corpus("tree-arithmetic", &files);
     let program = r#"
 .decl at(n: node, p: symbol, l: number, c: number)
-at(n, p, l, c) :- docof(n, d), doc(d, p, _), line(n, l), col(n, c).
+at(n, p, l, c) :- docof(n, d), doc(d, p, _), node_line_number(n, l), node_start_column(n, c).
 .decl kinds(p: symbol, l: number, c: number)
 kinds(p, l, c) :- kind(n, "call"), at(n, p, l, c).
 .decl within_def(p: symbol, l: number, c: number)
@@ -904,14 +890,14 @@ fn docof_and_unset() {
 empty(x) :- unset(x).
 .decl nodes_unset(n: node)
 nodes_unset(n) :- node(_, n, _, _, _), unset(n).
-.decl wrong(n: node)
+.decl wrong(n: place)
 wrong(n) :- node(d, n, _, _, _), docof(n, e), d != e.
-wrong(sp) :- src_line(d, _, sp), docof(sp, e), d != e.
-.decl undocumented(n: node)
+wrong(sp) :- document_line(d, sp), place_document(sp, e), d != e.
+.decl undocumented(n: place)
 undocumented(n) :- node(_, n, _, _, _), !docof(n, _).
-undocumented(sp) :- src_line(_, _, sp), !docof(sp, _).
+undocumented(sp) :- document_line(_, sp), !line_document(sp, _).
 .decl calls(p: symbol, l: number, c: number)
-calls(p, l, c) :- kind(n, "call"), docof(n, d), doc(d, p, _), line(n, l), col(n, c).
+calls(p, l, c) :- kind(n, "call"), docof(n, d), doc(d, p, _), node_line_number(n, l), node_start_column(n, c).
 .output empty, nodes_unset, wrong, undocumented, calls
 "#;
     let got = run(&dir, program, &["empty", "nodes_unset", "wrong", "undocumented", "calls"]);
@@ -931,7 +917,7 @@ fn op_at_is_the_operators_in_order() {
     let dir = corpus("op-at", &files);
     let program = r#"
 .decl ops(k: symbol, l: number, i: number, s: symbol)
-ops(k, l, i, s) :- op_at(n, i, s), kind(n, k), line(n, l).
+ops(k, l, i, s) :- op_at(n, i, s), kind(n, k), node_line_number(n, l).
 .output ops
 "#;
     let got = run(&dir, program, &["ops"]);
@@ -1077,10 +1063,10 @@ fn a_kind_disjunction_compares_kinds() {
     let dir = corpus("kind-disjunction", &files);
     let program = r#"
 .decl either(p: symbol, l: number, c: number)
-either(p, l, c) :- node(d, n, k, _, _), (k = "call" ; k = "attribute"), doc(d, p, _), line(n, l), col(n, c).
+either(p, l, c) :- node(d, n, k, _, _), (k = "call" ; k = "attribute"), doc(d, p, _), node_line_number(n, l), node_start_column(n, c).
 .decl neither(p: symbol, l: number, c: number)
 neither(p, l, c) :- node(d, n, "identifier", _, _), child(q, n, _), node(_, q, k, _, _), !(k = "call" ; k = "attribute"),
-    doc(d, p, _), line(n, l), col(n, c).
+    doc(d, p, _), node_line_number(n, l), node_start_column(n, c).
 .output either, neither
 "#;
     let got = run(&dir, program, &["either", "neither"]);
@@ -1123,12 +1109,13 @@ calls(n) :- later(n, _).
 
 /// A recursive relation with facts whose every rule joins an empty relation of a lower stratum keeps its facts: the
 /// stratum has no rule to run, but its relations are not held empty (`native_stratum_`; the data-layer pack's
-/// `conditional_derived`, a fact and a rule over the classes' bases, where no class has one).
+/// `conditional_derived`, a fact and a rule over the classes' bases, where no class has one). `e` pairs values of any
+/// two files: a crossing, declared (decisions 0652, 0680).
 #[test]
 fn a_stratum_whose_rules_join_nothing_keeps_its_facts() {
     let dir = corpus("facts-empty-joins", &[TREE]);
     let program = ".decl s(x: number)\ns(n) :- node(_, _, k, n, _), k = \"no_such_kind\".\n\
-                   .decl e(x: number, y: number)\ne(x, y) :- s(x), s(y).\n\
+                   .decl e(x: number, y: number) cross_file\ne(x, y) :- s(x), s(y).\n\
                    .decl d(x: number)\nd(7).\nd(y) :- d(x), e(x, y).\n\
                    .decl out(x: number)\nout(x) :- d(x).\n.output out\n";
     assert_eq!(run(&dir, program, &["out"]), [[["7"]]]);
@@ -1243,7 +1230,7 @@ fn as_is_a_variable() {
     let dir = corpus("as-variable", &files);
     let program = r#"
 .decl args(p: symbol, l: number, c: number)
-args(p, l, c) :- kind(call, "call"), field(call, "arguments", as), kind(as, "argument_list"), docof(as, d), doc(d, p, _), line(as, l), col(as, c).
+args(p, l, c) :- kind(call, "call"), field(call, "arguments", as), kind(as, "argument_list"), docof(as, d), doc(d, p, _), node_line_number(as, l), node_start_column(as, c).
 .output args
 "#;
     assert_eq!(run(&dir, program, &["args"])[0], sorted(w_at(json!({ "kind": "argument_list", "inside": { "kind": "call" } }), &files)));
@@ -1404,14 +1391,14 @@ fn match_group_joined_on_its_match_column() {
 .decl node(d: number, n: node, kind: symbol, start: number, end: number)
 .decl field(p: node, f: symbol, c: node)
 .decl child(p: node, c: node, i: number)
-.decl src_line(d: number, l: number, sp: span)
-.decl text(n: loc, s: symbol)
-.decl line(n: loc, l: number)
-.decl col(n: loc, c: number)
+.decl src_line(d: number, l: number, sp: place)
+.decl text(n: place, s: symbol)
+.decl line(n: place, l: number)
+.decl col(n: place, c: number)
 .decl deco_at(o: node, d: number, l: number, c: number)
-deco_at(o, d, l, c) :- node(d, dd, "decorated_definition", _, _), field(dd, "definition", o), child(dd, dc, _), node(_, dc, "decorator", _, _), line(dc, l), col(dc, c).
+deco_at(o, d, l, c) :- node(d, dd, "decorated_definition", _, _), field(dd, "definition", o), child(dd, dc, _), node(_, dc, "decorator", _, _), node_line_number(dc, l), node_start_column(dc, c).
 .decl deco(l: number, x: symbol)
-deco(l, x) :- deco_at(_, d, l, c), src_line(d, l, sp), match_all("@\\s*(?P<n>[^\\s(]+)", sp, m), match_group("@\\s*(?P<n>[^\\s(]+)", sp, m, "n", g), col(m, c), text(g, x).
+deco(l, x) :- deco_at(_, d, l, c), document_line(d, sp), line_number(sp, l), line_regex_match("@\\s*(?P<n>[^\\s(]+)", sp, m), line_regex_group("@\\s*(?P<n>[^\\s(]+)", sp, m, "n", g), place_start_column(m, c), place_text(g, x).
 .output deco
 "#;
     let got = run(&dir, program, &["deco"]);
@@ -1461,7 +1448,7 @@ fn a_demanded_relation_read_with_constants_alone() {
     let dir = corpus("demand-constants-alone", &[("a.py", source)]);
     let program = r#"
 .decl node(d: number, n: node, kind: symbol, start: number, end: number)
-.decl text(n: loc, s: symbol)
+.decl text(n: place, s: symbol)
 .decl ident(s: symbol)
 ident(s) :- node(_, n, "identifier", _, _), text(n, s).
 .decl other(s: symbol)
@@ -1487,14 +1474,14 @@ fn match_groups_of_one_match_and_a_disjunction() {
     let dir = corpus("match-groups-disjunction", &[("a.py", source)]);
     let quoted = re.replace('\\', "\\\\").replace('"', "\\\"");
     let program = r#"
-.decl source(d: number, sp: span)
-.decl text(n: loc, s: symbol)
-.decl line(n: loc, l: number)
-.decl col(n: loc, c: number)
+.decl source(d: number, sp: place)
+.decl text(n: place, s: symbol)
+.decl line(n: place, l: number)
+.decl col(n: place, c: number)
 .decl dyn_at(fq: symbol, l: number, c: number)
-dyn_at(fq, l, c) :- source(_, sp), match_group("RE", sp, m, "module", gm), match_group("RE", sp, m, "attr", ga), line(m, l), col(m, c), text(gm, mn), text(ga, an), fq = cat(mn, cat(".", an)).
+dyn_at(fq, l, c) :- document_source(_, sp), line_regex_group("RE", sp, m, "module", gm), line_regex_group("RE", sp, m, "attr", ga), place_line_number(m, l), place_start_column(m, c), place_text(gm, mn), place_text(ga, an), fq = cat(mn, cat(".", an)).
 .decl late(fq: symbol)
-late(fq) :- source(_, sp), match_all("RE", sp, m), match_group("RE", sp, m, "module", gm), text(gm, fq), (line(m, l), l > 2 ; col(m, c), c < 5).
+late(fq) :- document_source(_, sp), line_regex_match("RE", sp, m), line_regex_group("RE", sp, m, "module", gm), place_text(gm, fq), (place_line_number(m, l), l > 2 ; place_start_column(m, c), c < 5).
 .output dyn_at, late
 "#
     .replace("RE", &quoted);
@@ -1721,8 +1708,8 @@ calls(@ast_dump(n)) :- node(_, n, "call", _, _).
 fn a_text_test_reads_node_text_answered_on_request() {
     let dir = corpus("node-text-contains", &[("a.py", "class SqlAdminQuery:\n    pass\n"), ("b.py", "x = 1\n")]);
     let program = r#"
-.decl node(d: node, n: node, k: symbol, s: number, e: number)
-.decl doc(d: node, p: symbol, m: symbol)
+.decl node(d: number, n: node, k: symbol, s: number, e: number)
+.decl doc(d: number, p: symbol, m: symbol)
 .decl node_text(n: node, s: symbol)
 .input node, doc, node_text
 .decl gate(p: symbol)
@@ -1743,7 +1730,7 @@ pre(p) :- node(d, m, "module", _, _), doc(d, p, _), node_text(m, s), prefix("cla
 #[test]
 fn str_answered_on_request_holds_the_eager_rows() {
     let dir = corpus("str-on-request", &[("a.py", "x = 'a'\ny = b\"by\"\nz = r'\\\\d'\nw = f'k{x}'\nv = f'plain'\nu = 'p' 'q'\nt = \"\"\"doc\"\"\"\n")]);
-    let decls = ".decl node(d: node, n: node, k: symbol, s: number, e: number)\n.decl str(n: node, s: symbol)\n.input node, str\n.decl out(s: symbol)\n.output out\n";
+    let decls = ".decl node(d: number, n: node, k: symbol, s: number, e: number)\n.decl str(n: node, s: symbol)\n.input node, str\n.decl out(s: symbol)\n.output out\n";
     let asked = format!("{decls}out(s) :- node(_, n, \"string\", _, _), str(n, s).\n");
     let lowered = crate::code_rule_dsl::logic::rr::parse_version(&asked).unwrap();
     let inputs = crate::code_rule_dsl::logic::program_image::fields::ProgramFields::input_names(&*lowered);

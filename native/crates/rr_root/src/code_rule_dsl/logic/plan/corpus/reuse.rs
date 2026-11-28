@@ -126,7 +126,7 @@ fn key_parts(programs: &[&str], root: &Path, options: &serde_json::Value, typing
     if std::env::var_os("RERAIL_REUSE_TRACE").is_none() {
         return String::new();
     }
-    let short = |b: &[u8]| Sha256::digest(b).iter().take(3).map(|b| format!("{b:02x}")).collect::<String>();
+    let short = |b: &[u8]| rerail_prof::code_rule_dsl::prof::lower_hex(&Sha256::digest(b)[..3]);
     let texts: Vec<u8> = programs.iter().flat_map(|p| p.bytes()).collect();
     format!(
         "texts {}, root {} ({}), typing {}, handed down {}, switches {}, options {}",
@@ -178,7 +178,7 @@ fn graphs_line(graphs: &[Option<[u8; 32]>]) -> String {
             None => h.update([0]),
         }
     }
-    h.finalize().iter().map(|b| format!("{b:02x}")).collect()
+    rerail_prof::code_rule_dsl::prof::lower_hex(&h.finalize()[..])
 }
 
 /// The root's settings (`<root>/rerail.env`, the `env` option), as the rows the run adds (decision 0249).
@@ -410,7 +410,7 @@ pub fn record(given: &super::Texts<'_>, key: &[u8; 32], root: &Path, out: &Path,
     read.retain(|c| !(c.0 == "doc" && c.2.is_empty() && read_docs.contains(&c.1)));
     reads.extend(read);
     reads.push((GRAPHS.to_owned(), String::new(), graphs_line(&given.graphs)));
-    let Some(summary) = super::Summary::of(programs, &given.graphs, given.read, root, options)?.encode() else {
+    let Some(summary) = super::Summary::of(programs, &given.files, &given.graphs, given.read, root, options)?.encode() else {
         miss("not recorded: the program's summary does not encode");
         return Ok(());
     };

@@ -89,9 +89,15 @@ pub(super) fn run(db: &std::ffi::OsStr, sources: &[(String, Arc<dyn Source>, Kin
         let columns = source.columns();
         let by_key = columns.first().is_some_and(|c| c == "d");
         let mut docs: HashMap<Doc, Vec<Vector<i64>>> = HashMap::new();
+        // Each row's document as the source names it (`documents_of`: a node's by its page).
+        let mut of_row: Vec<i64> = Vec::with_capacity(source.len());
+        if by_key {
+            (0..source.len()).for_each(|row| of_row.push(source.value(row, 0)));
+        } else {
+            source.documents_of(0, &mut |_, d| of_row.push(d));
+        }
         for row in 0..source.len() {
-            let first = source.value(row, 0);
-            let doc = if by_key { first } else { first >> 32 };
+            let doc = of_row[row];
             let cols = docs.entry(doc).or_insert_with(|| vec![rerail_blocks::vector::Vector::new(); columns.len()]);
             for (c, col) in cols.iter_mut().enumerate() {
                 col.push(source.value(row, c));

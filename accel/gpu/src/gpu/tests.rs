@@ -112,7 +112,11 @@ fn closure_is_the_reference() {
     let n = 300u32;
     ks.push(Kernel::Closure { n, off: (0..=n).map(|v| v.min(n - 1)).collect::<rerail_blocks::vector::Vector<_>>().into(), dst: (1..n).collect::<rerail_blocks::vector::Vector<_>>().into() });
     ks.push(Kernel::Closure { n: 0, off: rerail_blocks::vector![0].into(), dst: rerail_blocks::vector::Vector::<u32>::new().into() });
-    check(&ks);
+    // Every closure, the chain's 300 levels too, is one launch: a work queue over their components together.
+    let s = check(&ks);
+    if gpu().is_some() {
+        assert_eq!(s.dispatches, 1);
+    }
 }
 
 #[test]
@@ -487,4 +491,27 @@ fn a_submissions_scratch_is_its_own_on_any_thread() {
     assert!(!Arc::ptr_eq(&x, &z), "x is in flight");
     assert_eq!(slot(Some(&z)), y_on_b, "the scratch y used, given to z");
     join::scratch_return();
+}
+/// Decision 0601: a batch of joins the lane begins (`start`) and reads later (`finish`) is charged to an evaluation of
+/// the launch budget though the thread that runs it has none of its own (the lanes' pool's): a sort past the small
+/// path (the radix sort) and a small one, each half its own evaluation. Before, a radix sort begun there was a launch
+/// outside any evaluation, the hard failure.
+#[test]
+fn a_started_batch_of_joins_is_charged_on_a_thread_with_no_evaluation() {
+    let Some(g) = gpu() else { return };
+    let keys = |v: Vec<i64>| -> rerail_accel::kernel::Keys { vec![rerail_accel::col::Col::from(Vector::from(&v[..]))].into() };
+    let n = super::join::SMALL + 1000;
+    let ks = [
+        Kernel::Join { left: keys((0..n as i64).map(|i| i % 977).collect()), right: keys((0..n as i64).rev().collect()), right_id: None, by: rerail_accel::kernel::JoinBy::Probe },
+        Kernel::Join { left: keys(vec![1, 2, 3, 2]), right: keys(vec![2, 3, 4]), right_id: None, by: rerail_accel::kernel::JoinBy::Probe },
+    ];
+    let want: Vec<Output> = ks.iter().map(rerail_accel::cpu::run).collect();
+    std::thread::scope(|sc| {
+        sc.spawn(|| {
+            assert_eq!(launch::available(), 0, "a new thread has no evaluation");
+            let refs: Vec<&Kernel> = ks.iter().collect();
+            let got = g.start(&refs).unwrap().finish().unwrap();
+            assert_eq!(got, want);
+        });
+    });
 }

@@ -8,7 +8,7 @@
 // F403(n): a finding at node n, from clause `undefined-local-with-import-star`.
 // Each rule below is one way the JSON `rule` can match.
 // Columns after `at` are the metavariables the JSON's message, anchor or `each` names: one finding per distinct row.
-.violation F403(at: node, module: loc) "`from {module} import *` used; unable to detect undefined names"
+.violation F403(at: node, module: node) "`from {module} import *` used; unable to detect undefined names"
     suppress noqa "F403"
 F403(n, MODULE) :- kind(n, "import_from_statement"), child(n, c1, _),
     kind(c1, "wildcard_import"), precedes(s2, c1),
