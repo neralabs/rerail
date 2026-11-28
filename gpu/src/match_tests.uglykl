@@ -284,3 +284,86 @@ DEFINE_KERNEL2(tests, sa_out,
         return;
     sa[rank[p] - 1u] = p;
 }
+
+// LZ4's long matches by the matrix units (decision 0727): every position of the pieces (`args.nq` of them from
+// `args.q0`, the dictionary's length) against every 32-byte window of the dictionary (`args.nr` bytes at 0) and every
+// earlier window of its own piece (the lookback), each query's nearest equal window (the greatest position) + 1 in
+// `out`. `starts`: the pieces' starts in the text, `args.r0` of them and the end. A query's piece is found by a binary
+// search, once a row; the lookback's tiles run from the owner's first piece start to its last query.
+DEFINE_KERNEL2(tests, m_lz,
+               ARGS,     MatchArgs, args,   ,
+               ROBUFFER, int8_t,    T,      "[1]",
+               ROBUFFER, int32_t,   P,      "[1]",
+               ROBUFFER, uint32_t,  starts, "[1]",
+               RWBUFFER, uint32_t,  out,    "[1]",
+               TGID0,    uint32_t,  tile,   ,
+               LID0,     uint32_t,  lid,    )
+{
+    UklMmaAt at = ukl_mma_at(lid);
+    const uint32_t M = UKL_MMA_M(i8), N = UKL_MMA_N(i8);
+    uint32_t q = tile * M * M_QT;
+    if (q >= args.nq)
+        return;
+    const uint32_t KS = UKL_MMA_K(i8), STEPS = M_W / UKL_MMA_K(i8);
+    uint32_t best[M_QT][UKL_MMA_RB], ps[M_QT][UKL_MMA_RB];
+    ukl_mma_a_i8 a[M_QT][M_W / UKL_MMA_K(i8)];
+    uint32_t jlo = 0xffffffffu, jhi = 0u;
+    for (uint32_t t = 0u; t < M_QT; t++) {
+        uint32_t qt = min(q + t * M, args.nq - M);
+        for (uint32_t i = 0u; i < UKL_MMA_RB; i++) {
+            best[t][i] = 0u;
+            uint32_t qa = args.q0 + qt + ukl_mma_row(i, at);
+            // The last start at or before qa.
+            uint32_t lo = 0u, hi = args.r0;
+            while (hi - lo > 1u) {
+                uint32_t mid = (lo + hi) >> 1;
+                if (starts[mid] <= qa)
+                    lo = mid;
+                else
+                    hi = mid;
+            }
+            ps[t][i] = starts[lo];
+        }
+        // The tile's first query's piece starts first of its rows'.
+        uint32_t qa0 = args.q0 + qt, lo = 0u, hi = args.r0;
+        while (hi - lo > 1u) {
+            uint32_t mid = (lo + hi) >> 1;
+            if (starts[mid] <= qa0)
+                lo = mid;
+            else
+                hi = mid;
+        }
+        jlo = min(jlo, starts[lo] & ~(N - 1u));
+        jhi = max(jhi, qa0 + M);
+        for (uint32_t s = 0u; s < STEPS; s++)
+            ukl_mma_load_a_i8(&a[t][s], T + args.q0 + qt + s * KS, 1u, UKL_ROW_MAJOR, at);
+    }
+    uint32_t nd = args.nr / N, no = (jhi - jlo + N - 1u) / N;
+    for (uint32_t u = 0u; u < nd + no; u++) {
+        uint32_t j = u < nd ? u * N : jlo + (u - nd) * N;
+        ukl_mma_b_i8 b[M_W / UKL_MMA_K(i8)];
+        for (uint32_t s = 0u; s < STEPS; s++)
+            ukl_mma_load_b_i8(&b[s], T + j + s * KS, 1u, UKL_ROW_MAJOR, at);
+        for (uint32_t t = 0u; t < M_QT; t++) {
+            uint32_t qt = min(q + t * M, args.nq - M);
+            ukl_mma_c_i32 c;
+            ukl_mma_fill_c_i32(&c, 0, at);
+            for (uint32_t s = 0u; s < STEPS; s++)
+                ukl_mma_i8(&c, &a[t][s], &b[s], at __UKL_ARGS);
+            for (uint32_t e = 0u; e < UKL_MMA_C_PER; e++) {
+                uint32_t r = e / UKL_MMA_CB, row = ukl_mma_row(r, at), jj = j + ukl_mma_col(e % UKL_MMA_CB, at);
+                uint32_t qa = args.q0 + qt + row;
+                bool ok = u < nd ? jj + M_W <= args.nr : jj >= ps[t][r] && jj < qa;
+                int32_t d = P[qa] + P[jj] - 2 * c.x[e];
+                if (ok && d == 0 && jj + 1u > best[t][r])
+                    best[t][r] = jj + 1u;
+            }
+        }
+    }
+    for (uint32_t t = 0u; t < M_QT; t++) {
+        uint32_t qt = min(q + t * M, args.nq - M);
+        for (uint32_t i = 0u; i < UKL_MMA_RB; i++)
+            if (best[t][i] != 0u)
+                ukl_atomic_max(out + qt + ukl_mma_row(i, at), best[t][i]);
+    }
+}

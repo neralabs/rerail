@@ -442,6 +442,205 @@ fn int8_window_join() {
     }
 }
 
+/// `m_lz`'s answer on the host: each query's nearest equal 32-byte window (+ 1, 0 for none) in the dictionary (`d`
+/// bytes at 0) or earlier in its own piece (`starts`).
+fn lz_host(t: &[u8], d: usize, starts: &[u32]) -> Vec<u32> {
+    let mut last: std::collections::HashMap<&[u8], u32> = std::collections::HashMap::new();
+    for j in 0..d.saturating_sub(31) {
+        last.insert(&t[j..j + 32], j as u32);
+    }
+    let mut out = vec![0u32; starts[starts.len() - 1] as usize - d];
+    for w in starts.windows(2) {
+        let mut mine: std::collections::HashMap<&[u8], u32> = std::collections::HashMap::new();
+        for qa in w[0] as usize..w[1] as usize {
+            let win = &t[qa..qa + 32];
+            out[qa - d] = mine.get(win).or_else(|| last.get(win)).map_or(0, |&j| j + 1);
+            mine.insert(win, qa as u32);
+        }
+    }
+    out
+}
+
+/// One piece as an LZ4 block against `dict`, its matches from `long` (each position's 32-byte window's nearest equal
+/// one, in the text of the dictionary then the pieces, + 1) and, where `short`, LZ4's own 4-byte hash of the earlier
+/// positions (the dictionary's and the piece's), the longer of the two taken, greedily. `at`: the piece's place in
+/// the text. LZ4's rules: the last 5 bytes literals, no match starting in the last 12.
+fn lz4_with(piece: &[u8], dict: &[u8], dict_table: &[u32], at: usize, long: Option<&[u32]>, short: bool) -> Vec<u8> {
+    let (n, d) = (piece.len(), dict.len());
+    // The virtual text the decoder sees: the dictionary, then the piece.
+    let byte = |v: usize| if v < d { dict[v] } else { piece[v - d] };
+    let extend = |from: usize, v: usize| {
+        let mut l = 0;
+        while from + l < n.saturating_sub(5) && byte(v + l) == piece[from + l] {
+            l += 1;
+        }
+        l
+    };
+    let hash = |k: usize| (u32::from_le_bytes([byte(k), byte(k + 1), byte(k + 2), byte(k + 3)]).wrapping_mul(2654435761) >> 20) as usize;
+    let mut table = dict_table.to_vec();
+    let mut out = Vec::new();
+    let (mut k, mut lit) = (0usize, 0usize);
+    let emit = |out: &mut Vec<u8>, lits: &[u8], m: Option<(usize, usize)>| {
+        let ll = lits.len();
+        let ml = m.map_or(0, |(_, l)| l - 4);
+        out.push(((ll.min(15) as u8) << 4) | if m.is_some() { ml.min(15) as u8 } else { 0 });
+        if ll >= 15 {
+            let mut r = ll - 15;
+            while r >= 255 {
+                out.push(255);
+                r -= 255;
+            }
+            out.push(r as u8);
+        }
+        out.extend_from_slice(lits);
+        if let Some((off, _)) = m {
+            out.extend_from_slice(&(off as u16).to_le_bytes());
+            if ml >= 15 {
+                let mut r = ml - 15;
+                while r >= 255 {
+                    out.push(255);
+                    r -= 255;
+                }
+                out.push(r as u8);
+            }
+        }
+    };
+    while k + 12 <= n {
+        let v = d + k;
+        let mut m: Option<(usize, usize)> = None;
+        if let Some(long) = long {
+            let j = long[at + k - d];
+            if j != 0 {
+                let j = j as usize - 1;
+                // The text's place as the decoder's: a dictionary byte, or the piece's own.
+                let jv = if j < d { j } else { d + (j - at) };
+                let l = extend(k, jv);
+                if l >= 4 && v - jv <= 65535 {
+                    m = Some((v - jv, l));
+                }
+            }
+        }
+        if short && k + 4 <= n {
+            let h = hash(v);
+            let c = table[h];
+            table[h] = v as u32;
+            if c != u32::MAX && v - c as usize <= 65535 {
+                let l = extend(k, c as usize);
+                if l >= 4 && m.is_none_or(|(_, ml)| l > ml) {
+                    m = Some((v - c as usize, l));
+                }
+            }
+        }
+        match m {
+            Some((off, l)) => {
+                emit(&mut out, &piece[lit..k], Some((off, l)));
+                for x in k + 1..(k + l).min(n.saturating_sub(4)) {
+                    if short {
+                        table[hash(d + x)] = (d + x) as u32;
+                    }
+                }
+                k += l;
+                lit = k;
+            }
+            None => k += 1,
+        }
+    }
+    emit(&mut out, &piece[lit..], None);
+    out
+}
+
+/// LZ4's matching in 16z's construction on the matrix units (decision 0727): `m_lz` finds each position's nearest
+/// equal 32-byte window in the dictionary and earlier in its own piece (the lookback) for every piece at once, and an
+/// LZ4 encoder takes those matches, alone or with LZ4's 4-byte hash for the short ones. Each piece is decoded again
+/// against the dictionary. Against LZ4's own fast and HC 12 with the same dictionary (zstd's trainer, 16 KB), sizes
+/// and times: the kernels' GPU time, the encoders' CPU time, one thread. The synthetic 2 MB file's tape, then (on a
+/// device, not the CPU backend) every input's. Run by name: `--ignored int8_lz4_matches`.
+#[test]
+#[ignore]
+fn int8_lz4_matches() {
+    use crate::kernels::{alloc, buffer_of, launch, program_with, read};
+    let Some(shared) = crate::shared::get() else { return };
+    let mut q = crate::device::ComputeQueue::new(&shared.queue);
+    let cpu = crate::device::backend() == "CPU";
+    let p = program_with("match_tests.uglykl", MATCH, &[("M_QT", "2u")]).unwrap_or_else(|e| panic!("{}: {e}", crate::device::backend()));
+    let cb = alloc::<u32>(6).unwrap();
+    launch(&q, p.function("m_consts").unwrap()).buffer("out", &cb).run(&[1], &[1]).unwrap();
+    q.flush().await_().unwrap();
+    let c: Vec<u32> = read(&cb, 6);
+    eprintln!("{} ({}): i8 {}", crate::device::backend(), shared.device.name(), if c[0] == 1 { "on the unit" } else { "emulated" });
+    let mut inputs = inputs();
+    if cpu {
+        inputs.truncate(1);
+    }
+    for (name, f) in inputs {
+        let Some(tape) = tape_of(&f) else { continue };
+        let mut ps = pieces(&tape);
+        if cpu {
+            ps.truncate(40);
+        }
+        let dict = zstd_dictionary(&ps, 16 << 10);
+        let d = dict.len() / 16 * 16;
+        let dict = dict[dict.len() - d..].to_vec();
+        let mut t = dict.clone();
+        let mut starts = Vec::new();
+        for pc in &ps {
+            starts.push(t.len() as u32);
+            t.extend_from_slice(pc);
+        }
+        starts.push(t.len() as u32);
+        let n = t.len();
+        let nq = n - d;
+        t.resize(n + 64, 0);
+        let tb = buffer_of(&t).unwrap();
+        let sb = buffer_of(&starts).unwrap();
+        let (pb, out) = (alloc::<i32>(n + 64).unwrap(), alloc::<u32>(nq).unwrap());
+        let mut gpu = f64::MAX;
+        for _ in 0..3 {
+            let none = vec![0u32; nq];
+            // SAFETY: the buffer holds nq words; no launch runs.
+            unsafe { std::ptr::copy_nonoverlapping(none.as_ptr(), out.contents().cast::<u32>(), nq) };
+            launch(&q, p.function("m_squares").unwrap()).value("args", &MatchArgs { nq: n as u32, qs: 1, q0: 0, nr: 0, r0: 0, pad: [0; 3] }).buffer("T", &tb).buffer("P", &pb).run(&[n.div_ceil(64) as u64], &[64]).unwrap();
+            let a = MatchArgs { nq: nq as u32, qs: 1, q0: d as u32, nr: d as u32, r0: ps.len() as u32, pad: [0; 3] };
+            launch(&q, p.function("m_lz").unwrap()).value("args", &a).buffer("T", &tb).buffer("P", &pb).buffer("starts", &sb).buffer("out", &out).run(&[nq.div_ceil(32) as u64], &[c[4] as u64]).unwrap();
+            let e = q.flush();
+            e.await_().unwrap();
+            gpu = gpu.min(e.gpu_seconds());
+        }
+        let long: Vec<u32> = read(&out, nq);
+        let want = lz_host(&t, d, &starts);
+        let bad = (0..nq).filter(|&i| long[i] != want[i]).count();
+        assert!(bad == 0, "{name}: {bad} of {nq} positions' nearest windows are not the host's (first {:?})", (0..nq).find(|&i| long[i] != want[i]).map(|i| (i, long[i], want[i])));
+        let found = long.iter().filter(|&&x| x != 0).count();
+        let raw: usize = ps.iter().map(Vec::len).sum();
+        let mut line = format!("{name}: {} pieces, {raw} bytes, {found} positions with a 32-byte match; m_lz {:.2} ms GPU;", ps.len(), gpu * 1e3);
+        let time = |f: &dyn Fn(&[u8], usize) -> Vec<u8>| {
+            let t0 = std::time::Instant::now();
+            let zs: Vec<Vec<u8>> = ps.iter().zip(&starts).map(|(pc, &s)| f(pc, s as usize)).collect();
+            let took = t0.elapsed().as_secs_f64();
+            for (z, pc) in zs.iter().zip(&ps) {
+                assert_eq!(&unlz4_dict(z, &dict, pc.len()), pc, "{name}: a piece did not decode");
+            }
+            (zs.iter().map(Vec::len).sum::<usize>(), took)
+        };
+        // The dictionary's 4-byte hash table, made once (LZ4_loadDict's).
+        let mut dict_table = vec![u32::MAX; 1 << 12];
+        for v in 0..d.saturating_sub(3) {
+            dict_table[(u32::from_le_bytes([dict[v], dict[v + 1], dict[v + 2], dict[v + 3]]).wrapping_mul(2654435761) >> 20) as usize] = v as u32;
+        }
+        let dt = &dict_table;
+        for (what, r) in [
+            ("LZ4 fast", time(&|pc, _| lz4_dict(pc, &dict, 0))),
+            ("LZ4 HC 12", time(&|pc, _| lz4_dict(pc, &dict, 12))),
+            ("hash only", time(&|pc, s| lz4_with(pc, &dict, dt, s, None, true))),
+            ("the units' matches only", time(&|pc, s| lz4_with(pc, &dict, dt, s, Some(&long), false))),
+            ("the units' and the hash's", time(&|pc, s| lz4_with(pc, &dict, dt, s, Some(&long), true))),
+        ] {
+            line += &format!(" {what} {} ({:.1}%) in {:.2} ms;", r.0, 100.0 * r.0 as f64 / raw as f64, r.1 * 1e3);
+        }
+        eprintln!("{line}");
+    }
+}
+
 #[repr(C)]
 #[derive(Clone, Copy)]
 struct SaArgs {
