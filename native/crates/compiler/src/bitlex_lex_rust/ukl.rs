@@ -1493,7 +1493,7 @@ fn print_fn(lines: &[&str], f: &str, name: &str, out_c: &str, p: &str, names: &H
     };
     let plist = params.iter().map(|(n, t)| format!("{} {n}", t.c(p))).collect::<Vec<_>>().join(", ");
     let _ = writeln!(out, "UKL_INLINE {cret} {name}({plist})\n{{");
-    let mut fx = Fx { p, names, returns, scopes: vec![params], consts: HashMap::new(), pre: Default::default(), tmp: Default::default(), known: out_c.ends_with("Sh"), out: out_c.to_string() };
+    let mut fx = Fx { p, names, returns, scopes: vec![params], consts: HashMap::new(), pre: Default::default(), tmp: Default::default(), known: out_c.ends_with("Sh") || out_c.ends_with("Ev"), out: out_c.to_string() };
     body(&mut fx, item(lines, at)?, kind, out).map_err(|e| format!("`{f}`: {e}"))?;
     // Past the walk's loop, which every way out of returns from.
     if kind == "stop" {
@@ -1704,6 +1704,85 @@ UKL_INLINE bool {p}Sh_known(UKL_PRIVATE {p}Sh* d, UKL_GLOBAL const uint32_t* sta
     return true;
 }}
 
+// The phases' walk's `Out` (`Walk`, P4 and P5): each writer event folded into the chunk's shape `s` (`SHAPE_W` words,
+// as `shape_merge` takes them: nodes, events, items, the frames' change and lowest, biased; the last node's start and
+// whether), and where `write` (P5b) each event (8 words: what, frame depth, node, nodes, start, last) written at its
+// number, with its items (level, event, head), from the chunk's sum `at`. It reads the token pass's answers.
+#define {p}D0 1073741824u
+typedef struct {p}Ev {{
+    UKL_GLOBAL const uint32_t* toks;
+    uint32_t ntoks;
+    UKL_PRIVATE uint32_t* s;
+    UKL_GLOBAL uint32_t* ev;
+    UKL_GLOBAL uint32_t* items;
+    UKL_COHERENT const uint32_t* at;
+    bool write;
+}} {p}Ev;
+UKL_INLINE void {p}Ev_event(UKL_PRIVATE {p}Ev* d, uint32_t what, uint32_t nodes, uint64_t start, uint64_t last)
+{{
+    UKL_PRIVATE uint32_t* s = d->s;
+    if (d->write) {{
+        uint32_t g = d->at[1] + s[1], f = d->at[3] + s[3] - 2u * {p}D0, k = d->at[2] + s[2];
+        UKL_GLOBAL uint32_t* e = d->ev + 8u * g;
+        e[0] = what;
+        e[1] = f;
+        e[2] = d->at[0] + s[0];
+        e[3] = nodes;
+        e[4] = (uint32_t)start;
+        e[5] = (uint32_t)(start >> 32);
+        e[6] = (uint32_t)last;
+        e[7] = (uint32_t)(last >> 32);
+        if (what != 3u) {{
+            d->items[3u * k] = f;
+            d->items[3u * k + 1u] = g;
+            d->items[3u * k + 2u] = 0u;
+        }}
+        if (what == 1u) {{
+            d->items[3u * k + 3u] = f + 1u;
+            d->items[3u * k + 4u] = g;
+            d->items[3u * k + 5u] = 1u;
+        }}
+    }}
+    s[1] += 1u;
+    if (what == 3u) {{
+        s[3] -= 1u;
+        if (s[3] < s[4])
+            s[4] = s[3];
+        return;
+    }}
+    s[0] += nodes;
+    s[2] += what == 1u ? 2u : 1u;
+    if (what == 1u)
+        s[3] += 1u;
+    s[5] = (uint32_t)last;
+    s[6] = (uint32_t)(last >> 32);
+    s[7] = 1u;
+}}
+UKL_INLINE void {p}Ev_open(UKL_PRIVATE {p}Ev* d, uint32_t number, uint64_t start) {{ {p}Ev_event(d, 1u, 1u, start, start); }}
+UKL_INLINE void {p}Ev_leaf(UKL_PRIVATE {p}Ev* d, uint32_t number, uint64_t start, uint64_t end) {{ {p}Ev_event(d, 2u, 1u, start, start); }}
+UKL_INLINE void {p}Ev_leaf_in(UKL_PRIVATE {p}Ev* d, uint32_t number, uint32_t child, uint64_t start, uint64_t cs, uint64_t ce, uint64_t end) {{ {p}Ev_event(d, 2u, 2u, start, cs); }}
+UKL_INLINE void {p}Ev_close(UKL_PRIVATE {p}Ev* d, uint64_t end) {{ {p}Ev_event(d, 3u, 0u, 0ull, 0ull); }}
+// The token pass's answer at record `*ip` (`known`, then `skip`): where it has one, the token's event (a child of its
+// nodes), the record past, and its end or the byte it is refused at in `*k`.
+UKL_INLINE bool {p}Ev_known(UKL_PRIVATE {p}Ev* d, UKL_GLOBAL const uint32_t* starts, UKL_PRIVATE uint32_t* ip, UKL_PRIVATE {p}R* k)
+{{
+    uint32_t i = *ip;
+    if (i >= d->ntoks)
+        return false;
+    UKL_GLOBAL const uint32_t* t = d->toks + 5u * i;
+    if (t[4] != {p}NONE) {{
+        *ip = i + 1u;
+        *k = {p}err(t[4]);
+        return true;
+    }}
+    if (t[1] == {p}NONE)
+        return false;
+    {p}Ev_event(d, 2u, t[2], (uint64_t)starts[i], (uint64_t)t[3]);
+    *ip = i + 1u;
+    *k = {p}ok(t[0]);
+    return true;
+}}
+
 // Tier 1's records: their starts (then the index's three last entries), their count, the file's length.
 typedef struct {p}Lx {{
     UKL_GLOBAL const uint32_t* starts;
@@ -1782,9 +1861,17 @@ UKL_INLINE {p}Stop {p}stop_err(uint32_t x) {{ return {p}stop_of(3u, 0u, 0u, 0u, 
     for f in walk.iter().chain(&["run_range"]) {
         print_fn(&lines, f, &format!("{p}{f}_Sh"), &format!("{p}Sh"), p, &sh, &returns, &mut out)?;
     }
+    // The phases' walk (P4, P5): the walk helpers and the walk from a place, on the phases' events.
+    let mut evn = names.clone();
+    for f in walk.iter().chain(&["run_step"]) {
+        evn.insert((*f).into(), format!("{p}{f}_Ev"));
+    }
+    for f in walk.iter().chain(&["run_step"]) {
+        print_fn(&lines, f, &format!("{p}{f}_Ev"), &format!("{p}Ev"), p, &evn, &returns, &mut out)?;
+    }
     // The places a chunk's first record can be at, those a level returns to, and each level kind's return place and
     // cycle place, as functions of their index.
-    for (name, c) in [("CYCLES", "cycles"), ("RETS", "rets"), ("CONT", "cont"), ("CYCLE", "cycle")] {
+    for (name, c) in [("CYCLES", "cycles"), ("RETS", "rets"), ("CONT", "cont"), ("CYCLE", "cycle"), ("STEP_CONT", "step_cont_t")] {
         let v: Vec<&str> = lines
             .iter()
             .find_map(|l| l.strip_prefix(&format!("pub const {name}: &[u8] = &[")).and_then(|r| r.strip_suffix("];")))
@@ -2036,10 +2123,18 @@ UKL_INLINE uint32_t ukl_run_cont(uint32_t k) {{ return {p}cont(k); }}
     ph.insert("NONE".into(), format!("{p}NONE"));
     ph.insert("D0".into(), format!("{p}D0"));
     ph.insert("KEYS".into(), format!("{p}KEYS"));
+    ph.insert("step_cont_t".into(), format!("{p}step_cont_t"));
+    for c in ["STEP_PLACES", "STEP_DEPTH", "STEP_REFUSED", "STEP_ENDS", "SHAPE_W", "ROOT"] {
+        ph.insert(c.into(), format!("{p}{c}"));
+    }
     for f in PHASE_FNS {
         ph.insert((*f).into(), format!("{p}{f}"));
     }
-    let _ = writeln!(out, "#define {p}D0 {}u\n#define {p}KEYS 256u", 1u32 << 30);
+    let places = lines
+        .iter()
+        .find_map(|l| l.strip_prefix("pub const STEP_PLACES: usize = ").and_then(|r| r.strip_suffix(';')))
+        .ok_or("as UKL: no STEP_PLACES")?;
+    let _ = writeln!(out, "#define {p}KEYS 256u\n#define {p}STEP_PLACES {places}u\n#define {p}STEP_DEPTH {p}DEPTH\n#define {p}STEP_REFUSED 255u\n#define {p}STEP_ENDS 254u\n#define {p}SHAPE_W 10u");
     for f in PHASE_FNS {
         print_fn(&lines, f, &format!("{p}{f}"), "", p, &ph, &returns, &mut out)?;
     }
@@ -2056,6 +2151,10 @@ UKL_INLINE uint32_t ukl_run_cont(uint32_t k) {{ return {p}cont(k); }}
         {p}p2_merge(a, b, out);
     else if (op == UKL_T2_OP_LAST)
         {p}last_merge(a, b, out);
+    else if (op == UKL_T2_OP_PLACES)
+        {p}places_merge_w(a, b, out);
+    else if (op == UKL_T2_OP_SHAPE)
+        {p}shape_merge(a, b, out);
 }}
 UKL_INLINE void ukl_ph_unit(uint32_t op, UKL_COHERENT uint32_t* out)
 {{
@@ -2067,12 +2166,62 @@ UKL_INLINE void ukl_ph_unit(uint32_t op, UKL_COHERENT uint32_t* out)
         {p}p2_unit(out);
     else if (op == UKL_T2_OP_LAST)
         {p}last_unit(out);
+    else if (op == UKL_T2_OP_PLACES)
+        {p}places_unit_w(out);
+    else if (op == UKL_T2_OP_SHAPE)
+        {p}shape_unit(out);
 }}
 UKL_INLINE void ukl_t2_p1_run(UKL_GLOBAL const uint8_t* src, UKL_GLOBAL const uint32_t* starts, uint32_t n, uint32_t a, uint32_t b, UKL_COHERENT uint32_t* out) {{ {p}p1_run(src, starts, n, a, b, out); }}
 UKL_INLINE void ukl_t2_p2_run(UKL_GLOBAL const uint32_t* items, uint32_t a, uint32_t b, uint32_t shift, UKL_COHERENT uint32_t* out) {{ {p}p2_run(items, a, b, shift, out); }}
 UKL_INLINE void ukl_t2_p2_write(UKL_GLOBAL const uint32_t* items, uint32_t a, uint32_t b, uint32_t shift, UKL_COHERENT uint32_t* sum, UKL_GLOBAL const uint32_t* keys, UKL_GLOBAL uint32_t* out) {{ {p}p2_write(items, a, b, shift, sum, keys, out); }}
 UKL_INLINE void ukl_t2_p3_run(UKL_GLOBAL const uint32_t* items, uint32_t a, uint32_t b, UKL_COHERENT uint32_t* out) {{ {p}p3_run(items, a, b, out); }}
 UKL_INLINE void ukl_t2_p3_write(UKL_GLOBAL const uint32_t* items, uint32_t a, uint32_t b, UKL_COHERENT const uint32_t* sum, UKL_GLOBAL uint32_t* container, UKL_GLOBAL uint32_t* head_at) {{ {p}p3_write(items, a, b, sum, container, head_at); }}
+UKL_INLINE uint32_t ukl_t2_places(void) {{ return {p}STEP_PLACES; }}
+UKL_INLINE uint32_t ukl_t2_depth(void) {{ return {p}DEPTH; }}
+UKL_INLINE uint32_t ukl_t2_walk_refused(void) {{ return {p}STEP_REFUSED; }}
+// P4 and P5: chunk `a..b` walked from place `pl` (`Phases::walk`), its known levels (`known_rets`, P1's lowest depth
+// `low`, P3's containers) in its row of levels `ret`, each event folded into its shape `s` (`SHAPE_W` words) and where
+// `write` written from its sum `at` (`<{p}Ev>`): its place past it, `STEP_REFUSED` or `STEP_ENDS`; the last token's
+// end in its shape where it stops at a place.
+UKL_INLINE uint32_t ukl_t2_walk(UKL_GLOBAL const uint8_t* src, UKL_GLOBAL const uint32_t* starts, uint32_t n, uint32_t len, UKL_GLOBAL const uint32_t* toks,
+                                UKL_GLOBAL const uint32_t* depth, UKL_GLOBAL const uint32_t* container, uint32_t low, uint32_t a, uint32_t b, uint32_t pl,
+                                UKL_GLOBAL uint8_t* ret, UKL_PRIVATE uint32_t* s, bool write, UKL_GLOBAL uint32_t* ev, UKL_GLOBAL uint32_t* items, UKL_COHERENT const uint32_t* at)
+{{
+    for (uint32_t k = 0u; k < {p}SHAPE_W; k++)
+        s[k] = 0u;
+    s[3] = {p}D0;
+    s[4] = {p}D0;
+    uint32_t wd = {p}walk_depth_at(src, starts, n, depth, a);
+    if (wd > {p}STEP_DEPTH)
+        return {p}STEP_REFUSED;
+    uint32_t known = {p}known_rets(src, starts, n, depth, container, low, a, ret);
+    {p}Lx lx;
+    lx.starts = starts;
+    lx.count = n;
+    lx.len = len;
+    {p}Ev d;
+    d.toks = toks;
+    d.ntoks = n;
+    d.s = s;
+    d.ev = ev;
+    d.items = items;
+    d.at = at;
+    d.write = write;
+    {p}Entry en;
+    en.i = a;
+    en.e = {p}NONE;
+    en.depth = wd;
+    en.st = pl;
+    {p}Stop x = {p}run_step_Ev(src, lx, &d, en, ret, wd - known, b);
+    if (x.kind == 0u && x.en.i >= b) {{
+        if (x.en.e != {p}NONE) {{
+            s[8] = x.en.e;
+            s[9] = 1u;
+        }}
+        return x.en.st;
+    }}
+    return x.kind == 2u ? {p}STEP_ENDS : {p}STEP_REFUSED;
+}}
 UKL_INLINE void ukl_t2_p1_write(UKL_GLOBAL const uint8_t* src, UKL_GLOBAL const uint32_t* starts, uint32_t n, uint32_t a, uint32_t b, UKL_COHERENT const uint32_t* sum, UKL_GLOBAL uint32_t* depth, UKL_GLOBAL uint32_t* items, UKL_GLOBAL uint32_t* head_at) {{ {p}p1_write(src, starts, n, a, b, sum, depth, items, head_at); }}
 "#
     );
@@ -2080,7 +2229,7 @@ UKL_INLINE void ukl_t2_p1_write(UKL_GLOBAL const uint8_t* src, UKL_GLOBAL const 
 }
 
 /// The phases' block operators the printer prints, in order (each after the ones it calls).
-const PHASE_FNS: &[&str] = &["bracket_code", "empty_close_at", "p1_unit", "p1_run", "p1_merge", "p1_write", "add1_unit", "add1_merge", "p2_unit", "p2_merge", "p2_run", "p2_write", "starts_level", "last_unit", "last_merge", "p3_run", "p3_write"];
+const PHASE_FNS: &[&str] = &["bracket_code", "empty_close_at", "p1_unit", "p1_run", "p1_merge", "p1_write", "add1_unit", "add1_merge", "p2_unit", "p2_merge", "p2_run", "p2_write", "starts_level", "last_unit", "last_merge", "p3_run", "p3_write", "step_cont", "walk_depth_at", "known_rets", "places_unit_w", "places_merge_w", "shape_unit", "shape_merge"];
 
 /// Tier 2's two programs as UKL kernels, launched a phase at a time in order (decision 0726). `<ukl/middle_run.h>`'s
 /// phases are three kernels, each its phases a constant mask, so it holds their code alone (its compile and its
@@ -2181,6 +2330,8 @@ DEFINE_KERNEL2(tier2, {p}phases,
                RWBUFFER, uint32_t, pool,    "[pool]",
                RWBUFFER, uint32_t, meet,    "[trees * ms]",
                RWBUFFER, uint32_t, arrays,  "[arrays]",
+               ROBUFFER, uint32_t, toks,    "[count * 5]",
+               RWBUFFER, uint8_t,  rets,    "[chunks * {p}DEPTH]",
                LANE,     uint16_t, lane,    )
 {{
     UklPh r;
@@ -2190,6 +2341,9 @@ DEFINE_KERNEL2(tier2, {p}phases,
     r.src = src;
     r.starts = starts;
     r.arrays = arrays;
+    r.toks = toks;
+    r.rets = rets;
+    r.len = lexed[UKL_LEX_LEN];
     r.n = lexed[UKL_LEX_COUNT];
     r.refused = lexed[UKL_LEX_REFUSED] != 0u || lexed[UKL_LEX_SHORT] != 0u;
     ukl_ph_worker(&r, lane __UKL_ARGS);

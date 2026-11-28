@@ -2271,8 +2271,10 @@ pub struct Phases {
     /// Records `0..=n`, the last the file's end.
     pub n: usize,
     pub size: usize,
-    /// Each record's depth before it (P1's), and its walk depth (an empty container's closer in its parent's level).
+    /// Each record's depth before it (P1's), and its walk depth (an empty container's closer in its parent's level);
+    /// the depths biased, as the operators take them.
     pub depth: Vec<i64>,
+    pub depth_w: Vec<u32>,
     /// Each chunk's P1 summary.
     pub p1: Vec<Depth>,
     /// The items in level order (P2), and each record's head item's place there (`NO`: none).
@@ -2564,6 +2566,131 @@ pub unsafe fn p3_write(items: &[u32], a: usize, b: usize, sum: &[Rec], container
     }
 }
 
+/// The return place of a level of kind `k` (`STEP_CONT`'s, as the printer's table).
+pub fn step_cont(k: usize) -> u32 {
+    step_cont_t(k)
+}
+
+/// `STEP_CONT`'s entry `k` (the printer prints the table as this function).
+fn step_cont_t(k: usize) -> u32 {
+    u32::from(STEP_CONT[k])
+}
+
+/// Record `r`'s walk depth: its depth (`depth`, biased) less an empty container's closer, at least 0.
+pub fn walk_depth_at(src: &[u8], starts: &[u32], n: usize, depth: &[u32], r: usize) -> usize {
+    let e = if empty_close_at(src, starts, n, r) { 1 } else { 0 };
+    if depth[r] >= D0 + e { (depth[r] - D0 - e) as usize } else { 0 }
+}
+
+/// Chunk `a..`'s known levels: the return places of the levels it closes below its start (`low`, its P1 lowest depth,
+/// biased), each from the kind of the container that holds it (P3's), at `ret[depth - len..depth]` (its walk depth's),
+/// innermost last; `len`. None past the walk's levels (it is refused there).
+pub fn known_rets(src: &[u8], starts: &[u32], n: usize, depth: &[u32], container: &[u32], low: u32, a: usize, ret: &mut [u8; DEPTH]) -> usize {
+    let wd = walk_depth_at(src, starts, n, depth, a);
+    if wd > STEP_DEPTH {
+        return 0;
+    }
+    let e = if empty_close_at(src, starts, n, a) { 1 } else { 0 };
+    let below = D0 - low;
+    let closes = if below >= e { (below - e) as usize } else { 0 };
+    let len = closes.min(wd);
+    // The open levels' openers, innermost first: the record's container, its container's, ...
+    let mut o = container[a];
+    for i in 1..len + 1 {
+        if o != NONE {
+            o = container[o as usize];
+        }
+        let k = if o != NONE { bracket_code(src, starts, n, o as usize) / 2 } else { ROOT as u32 };
+        ret[wd - i] = step_cont(k as usize) as u8;
+    }
+    len
+}
+
+/// The identity place map, a word a place.
+///
+/// # Safety
+/// `out` has room for `STEP_PLACES` words.
+pub unsafe fn places_unit_w(out: *mut Rec) {
+    for p in 0..STEP_PLACES {
+        unsafe { *out.add(p) = p as u32 };
+    }
+}
+
+/// `a · b`: each place through `a`, then `b` (`STEP_REFUSED`, `STEP_ENDS` kept).
+///
+/// # Safety
+/// `a` and `b` hold `STEP_PLACES` words each, `out` has room for as many.
+pub unsafe fn places_merge_w(a: &[Rec], b: &[Rec], out: *mut Rec) {
+    for p in 0..STEP_PLACES {
+        let x = a[p];
+        unsafe { *out.add(p) = if x < STEP_PLACES as u32 { b[x as usize] } else { x } };
+    }
+}
+
+/// A shape's words (`Shape`): nodes, events, items, the frames' change and lowest (biased), the last node's start
+/// (two words) and whether, the last token's end and whether.
+pub const SHAPE_W: usize = 10;
+
+/// No shape.
+///
+/// # Safety
+/// `out` has room for `SHAPE_W` words.
+pub unsafe fn shape_unit(out: *mut Rec) {
+    for k in 0..SHAPE_W {
+        unsafe { *out.add(k) = 0 };
+    }
+    unsafe { *out.add(3) = D0 };
+    unsafe { *out.add(4) = D0 };
+}
+
+/// `Shape::merge` in words.
+///
+/// # Safety
+/// `a` and `b` hold `SHAPE_W` words each, `out` has room for as many.
+pub unsafe fn shape_merge(a: &[Rec], b: &[Rec], out: *mut Rec) {
+    unsafe { *out.add(0) = a[0] + b[0] };
+    unsafe { *out.add(1) = a[1] + b[1] };
+    unsafe { *out.add(2) = a[2] + b[2] };
+    unsafe { *out.add(3) = a[3] + b[3] - D0 };
+    let lb = a[3] + b[4] - D0;
+    unsafe { *out.add(4) = if lb < a[4] { lb } else { a[4] } };
+    if b[7] != 0 {
+        unsafe { *out.add(5) = b[5] };
+        unsafe { *out.add(6) = b[6] };
+        unsafe { *out.add(7) = 1 };
+    } else {
+        unsafe { *out.add(5) = a[5] };
+        unsafe { *out.add(6) = a[6] };
+        unsafe { *out.add(7) = a[7] };
+    }
+    if b[9] != 0 {
+        unsafe { *out.add(8) = b[8] };
+        unsafe { *out.add(9) = 1 };
+    } else {
+        unsafe { *out.add(8) = a[8] };
+        unsafe { *out.add(9) = a[9] };
+    }
+}
+
+/// A shape as its words.
+pub fn shape_words(s: &Shape) -> [u32; SHAPE_W] {
+    let ls = s.last_start.unwrap_or(0);
+    [s.nodes, s.events, s.items, (i64::from(D0) + s.net) as u32, (i64::from(D0) + s.low) as u32, ls as u32, (ls >> 32) as u32, u32::from(s.last_start.is_some()), s.e.unwrap_or(0) as u32, u32::from(s.e.is_some())]
+}
+
+/// Words as a shape.
+pub fn shape_of_words(w: &[u32; SHAPE_W]) -> Shape {
+    Shape {
+        nodes: w[0],
+        events: w[1],
+        items: w[2],
+        net: i64::from(w[3]) - i64::from(D0),
+        low: i64::from(w[4]) - i64::from(D0),
+        last_start: (w[7] != 0).then_some(u64::from(w[5]) | (u64::from(w[6]) << 32)),
+        e: (w[9] != 0).then_some(w[8] as usize),
+    }
+}
+
 /// A record's bracket, by its first byte (`n`: the file's end, none).
 fn bracket_of(src: &[u8], lx: &crate::tier1::Lexed, r: usize) -> Option<(u8, bool)> {
     if r < lx.count { bracket(src[lx.starts[r] as usize]) } else { None }
@@ -2639,7 +2766,7 @@ impl Phases {
             // SAFETY: each record's item in one chunk only; its head in one.
             unsafe { p3_write(&iw, ic[c].0, ic[c].1, &p3_at[c], cp, hp) };
         });
-        let mut ph = Phases { n, size, depth, p1, items, head_at, container, place: Vec::new(), refused: None, shapes: Vec::new(), shape_at: Vec::new(), events: Vec::new(), eitems: Vec::new(), frame_of: Vec::new(), kids: Vec::new() };
+        let mut ph = Phases { n, size, depth, depth_w: dw, p1, items, head_at, container, place: Vec::new(), refused: None, shapes: Vec::new(), shape_at: Vec::new(), events: Vec::new(), eitems: Vec::new(), frame_of: Vec::new(), kids: Vec::new() };
         // P4: each chunk's place map, its pops below its start reading its containers' return places.
         let maps: Vec<Places> = each(rc.len(), order, |c| {
             let mut m = [STEP_REFUSED; 32];
@@ -2648,8 +2775,18 @@ impl Phases {
             }
             m
         });
-        let at = prefix(&maps, places_unit(), order, places_merge);
-        ph.place = each(rc.len(), order, |c| at[c][0]);
+        let maps_w: Vec<[u32; STEP_PLACES]> = maps.iter().map(|m| core::array::from_fn(|p| u32::from(m[p]))).collect();
+        let pmerge = |a: &[u32; STEP_PLACES], b: &[u32; STEP_PLACES]| {
+            let mut w = [0u32; STEP_PLACES];
+            // SAFETY: `STEP_PLACES` words each.
+            unsafe { places_merge_w(a, b, w.as_mut_ptr()) };
+            w
+        };
+        let mut punit = [0u32; STEP_PLACES];
+        // SAFETY: `STEP_PLACES` words.
+        unsafe { places_unit_w(punit.as_mut_ptr()) };
+        let at = prefix(&maps_w, punit, order, pmerge);
+        ph.place = each(rc.len(), order, |c| at[c][0] as u8);
         // The first chunk refused at its place: a min over the chunks.
         ph.refused = (0..rc.len()).filter(|&c| (ph.place[c] as usize) < STEP_PLACES && maps[c][ph.place[c] as usize] == STEP_REFUSED).min();
         if ph.refused.is_some() {
@@ -2661,24 +2798,30 @@ impl Phases {
             if ph.place[c] as usize >= STEP_PLACES {
                 return (Shape::UNIT, Vec::new());
             }
-            let mut w = Vec::new();
+            let mut w = (Vec::new(), None);
             ph.walk(src, lx, toks, rc[c], ph.place[c], Some(&mut w));
             let mut s = Shape::UNIT;
             let mut evs = Vec::new();
-            for (_, es, e) in w {
-                for ev in es {
-                    // Its frame depth and first node within the chunk.
-                    evs.push(Event { f: s.net as u32, node: s.nodes, ..ev });
-                    s = Shape::merge(&s, &Shape::of(&ev));
-                }
-                if e.is_some() {
-                    s.e = e;
-                }
+            for ev in w.0 {
+                // Its frame depth and first node within the chunk.
+                evs.push(Event { f: s.net as u32, node: s.nodes, ..ev });
+                s = Shape::merge(&s, &Shape::of(&ev));
             }
+            s.e = w.1;
             (s, evs)
         };
         let shapes: Vec<Shape> = each(rc.len(), order, |c| shape_of(c).0);
-        let shape_at = prefix(&shapes, Shape::UNIT, order, Shape::merge);
+        let smerge = |a: &[u32; SHAPE_W], b: &[u32; SHAPE_W]| {
+            let mut w = [0u32; SHAPE_W];
+            // SAFETY: `SHAPE_W` words each.
+            unsafe { shape_merge(a, b, w.as_mut_ptr()) };
+            w
+        };
+        let mut sunit = [0u32; SHAPE_W];
+        // SAFETY: `SHAPE_W` words.
+        unsafe { shape_unit(sunit.as_mut_ptr()) };
+        let shapes_w: Vec<[u32; SHAPE_W]> = shapes.iter().map(shape_words).collect();
+        let shape_at: Vec<Shape> = prefix(&shapes_w, sunit, order, smerge).iter().map(shape_of_words).collect();
         let total = Shape::merge(&shape_at[rc.len() - 1], &shapes[rc.len() - 1]);
         // P5b: each chunk again, its events written at their numbers, with the file's frame depths and nodes, and
         // their items.
@@ -2752,26 +2895,22 @@ impl Phases {
         (self.depth[r] - i64::from(r < lx.count && empty_close(src, lx, r))).max(0) as usize
     }
 
-    /// The return places of the levels chunk `(a, b)` closes below its start, innermost last (as `At::ret`), and its
-    /// walk depth: each from its containers' kinds (P3a), the root's `STEP_CONT` last.
+    /// The return places of the levels chunk `c` (first record `a`) closes below its start, innermost last (as
+    /// `At::ret`), and its walk depth: `known_rets`'s.
     fn rets(&self, src: &[u8], lx: &crate::tier1::Lexed, c: usize, a: usize) -> (Vec<u8>, usize) {
-        let depth = self.walk_depth(src, lx, a);
-        let closes = (-self.p1[c].m - i64::from(a < lx.count && empty_close(src, lx, a))).max(0) as usize;
-        let len = closes.min(depth);
-        // The open levels' openers, innermost first: the record's container, its container's, ...
-        let mut chain = Vec::with_capacity(len + 1);
-        let mut o = self.container[a];
-        while chain.len() <= len && o != NO {
-            chain.push(o);
-            o = self.container[o as usize];
-        }
-        let kind = |i: usize| chain.get(i).and_then(|&o| bracket_of(src, lx, o as usize)).map_or(ROOT, |k| k.0) as usize;
-        ((0..len).map(|t| STEP_CONT[kind(len - t)]).collect(), depth)
+        let dw = &self.depth_w;
+        let low = (i64::from(D0) + self.p1[c].m) as u32;
+        let mut ret = [0u8; DEPTH];
+        let len = known_rets(src, &lx.starts, lx.count, dw, &self.container, low, a, &mut ret);
+        let depth = walk_depth_at(src, &lx.starts, lx.count, dw, a);
+        let known = if depth > STEP_DEPTH { Vec::new() } else { ret[depth - len..depth].to_vec() };
+        (known, depth)
     }
 
     /// Chunk `(a, b)` walked from place `p` with its levels known: its place past it (or `STEP_REFUSED`,
-    /// `STEP_ENDS`). With `events`, a record at a time, each record's events and the last token's end it leaves.
-    fn walk(&self, src: &[u8], lx: &crate::tier1::Lexed, toks: &[Token], (a, b): (usize, usize), p: u8, mut events: Option<&mut Vec<(usize, Vec<Event>, Option<usize>)>>) -> u8 {
+    /// `STEP_ENDS`). With `events`, each event the walk makes, and the last token's end it leaves where it stops at a
+    /// place (none past the file's end: nothing reads it).
+    fn walk(&self, src: &[u8], lx: &crate::tier1::Lexed, toks: &[Token], (a, b): (usize, usize), p: u8, events: Option<&mut (Vec<Event>, Option<usize>)>) -> u8 {
         let c = a / self.size.max(1);
         let (known, depth) = self.rets(src, lx, c, a);
         // Deeper than the walk's levels: refused (the serial walk refuses at the bracket that passes them).
@@ -2781,27 +2920,19 @@ impl Phases {
         let mut ret = [0u8; STEP_DEPTH];
         let base = depth - known.len();
         ret[base..depth].copy_from_slice(&known);
-        let mut en = Entry { i: a, e: usize::MAX, depth, st: p };
+        let en = Entry { i: a, e: usize::MAX, depth, st: p };
         let mut d = Walk { toks, events: Vec::new(), nodes: 0 };
-        let by_record = events.is_some();
-        loop {
-            let stop = if by_record { en.i + 1 } else { b };
-            d.events.clear();
-            // SAFETY: `ret` holds the levels below `base` it reads; `d` writes nothing.
-            let s = unsafe { run_step(src, lx, &mut d, en, &mut ret, base, stop) };
-            let (next, out) = match s {
-                Stop::At(x) if x.i >= stop => (Some(x), x.st),
-                Stop::Done(Ok(())) => (None, STEP_ENDS),
-                _ => (None, STEP_REFUSED),
-            };
-            if let Some(ev) = events.as_deref_mut() {
-                ev.push((en.i, d.events.clone(), next.and_then(|x| (x.e != usize::MAX).then_some(x.e))));
-            }
-            match next {
-                Some(x) if x.i < b => en = Entry { e: usize::MAX, ..x },
-                _ => return out,
-            }
+        // SAFETY: `ret` holds the levels below `base` it reads; `d` writes nothing.
+        let s = unsafe { run_step(src, lx, &mut d, en, &mut ret, base, b) };
+        let (out, e) = match s {
+            Stop::At(x) if x.i >= b => (x.st, (x.e != usize::MAX).then_some(x.e)),
+            Stop::Done(Ok(())) => (STEP_ENDS, None),
+            _ => (STEP_REFUSED, None),
+        };
+        if let Some(ev) = events {
+            *ev = (d.events, e);
         }
+        out
     }
 
     /// Chunk `c`'s state at its start: its place, levels, first node, frames and the node before (P1-P5's sums).

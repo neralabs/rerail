@@ -1253,7 +1253,9 @@ const T2_H: usize = PH_H + 32;
 /// Tier 2 as phases on the device (`json_t2_phases`, `<ukl/t2_phases.h>`), P1 from tier 1's records on the device:
 /// the layout laid from the records the device found, each chunk's depth summary a leaf of P1's arrival tree, each
 /// chunk's records' depths and items written from its sum walked down, the items sorted by level (P2, two digits of
-/// keyed counts), each record's container and each head's place (P3). Each record's depth is the CPU phases' (`Phases::run`), and the items in level order are the CPU's, for the files and the nested
+/// keyed counts), each record's container and each head's place (P3), each chunk's place from its map of places
+/// and the chunk refused at its place (P4), each chunk's shape before it, the events and their items (P5). Each
+/// record's depth is the CPU phases' (`Phases::run`), and the items in level order are the CPU's, for the files and the nested
 /// trees, in chunks of 1, 7 and 64 records.
 #[test]
 fn json_tier2_phases_are_the_cpus() {
@@ -1267,7 +1269,7 @@ fn json_tier2_phases_are_the_cpus() {
     let p1 = program("json_tier1.uglykl", rerail_json_aot::TIER1_UKL).unwrap_or_else(|e| panic!("{}: {e}", crate::device::backend()));
     let p2 = program("json_tier2.uglykl", rerail_json_aot::TIER2_UKL).unwrap_or_else(|e| panic!("{}: {e}", crate::device::backend()));
     let f = p2.function("json_t2_phases").unwrap();
-    let (mut runs, mut records) = (0usize, 0usize);
+    let (mut runs, mut records, mut refusals, mut events) = (0usize, 0usize, 0usize, 0usize);
     for (k, file) in files().into_iter().chain(nested()).enumerate() {
         let buf = rerail_json_aot::padded(&file);
         let n = file.len();
@@ -1286,8 +1288,10 @@ fn json_tier2_phases_are_the_cpus() {
             let ichunks = (2 * (lex.records + 1)).div_ceil(size);
             let ms = 2 * ichunks + 40;
             let tree = |leaves: usize, w: usize| w * (2 * leaves + 40 + 2 * leaves);
-            let room = T2_H + tree(chunks, 3) + 2 * (tree(ichunks, 256) + tree(256, 1)) + tree(ichunks, 2);
-            let aroom = 15 * (lex.records + 1) + 512;
+            let room = T2_H + tree(chunks, 3) + 2 * (tree(ichunks, 256) + tree(256, 1)) + tree(ichunks, 2) + tree(chunks, 32) + tree(chunks, 10);
+            let most_ev = 2 * (lex.records + 1) + 2;
+            let aroom = 15 * (lex.records + 1) + 512 + 11 * chunks + 20 * most_ev;
+            let rb = kept.get("phases rets", 1024 * chunks);
             let pb = kept.get("phases pool", 4 * room);
             let ab = kept.get("phases arrays", 4 * aroom);
             let meet = kept.meet("phases meet", 12 * ms);
@@ -1298,7 +1302,7 @@ fn json_tier2_phases_are_the_cpus() {
                 (h[0], h[1]) = (epoch, ms as u32);
                 (h[PH_H], h[PH_H + 1], h[PH_H + 8]) = (size as u32, room as u32, aroom as u32);
             }
-            for phase in 0..13u32 {
+            for phase in 0..17u32 {
                 launch(&mut q, f)
                     .value("args", &T2PArgs { phase, pad: 0 })
                     .buffer("src", &lex.src)
@@ -1307,6 +1311,8 @@ fn json_tier2_phases_are_the_cpus() {
                     .buffer("pool", &pb)
                     .buffer("meet", &meet)
                     .buffer("arrays", &ab)
+                    .buffer("toks", &lex.tokens)
+                    .buffer("rets", &rb)
                     .run(&[groups()], &[64])
                     .unwrap();
                 q.barrier();
@@ -1334,9 +1340,41 @@ fn json_tier2_phases_are_the_cpus() {
                     panic!("{}", at(&format!("record {r}'s {what}: {}, the CPU's {}", arr[o + r], want[r])));
                 }
             }
+            // P4: each chunk's place, and the first refused.
+            let rc = (count + 1).div_ceil(size);
+            let op = m[PH_H + 14] as usize;
+            for c in 0..rc {
+                assert_eq!(arr[op + c], u32::from(ph.place[c]), "{}", at(&format!("chunk {c}'s place")));
+            }
+            let refused_at = m[PH_H + 18];
+            assert_eq!(refused_at, ph.refused.map_or(u32::MAX, |c| c as u32), "{}", at("the chunk refused"));
+            if ph.refused.is_some() {
+                refusals += 1;
+                runs += 1;
+                continue;
+            }
+            // P5: each chunk's sum, the events and their items (in frame order as P7 orders them).
+            let os = m[PH_H + 15] as usize;
+            for c in 0..rc {
+                let want = middle::phases::shape_words(&ph.shape_at[c]);
+                assert_eq!(&arr[os + 10 * c..os + 10 * c + 10], &want[..], "{}", at(&format!("chunk {c}'s shape before it")));
+            }
+            let (ne, nei) = (m[PH_H + 19] as usize, m[PH_H + 20] as usize);
+            assert_eq!(ne, ph.events.len(), "{}", at("the events"));
+            let oe = m[PH_H + 16] as usize;
+            for (g, w) in ph.events.iter().enumerate() {
+                let e = &arr[oe + 8 * g..oe + 8 * g + 8];
+                let have = (e[0] as u8, e[1], e[2], e[3], u64::from(e[4]) | (u64::from(e[5]) << 32), u64::from(e[6]) | (u64::from(e[7]) << 32));
+                assert_eq!(have, (w.what, w.f, w.node, w.nodes, w.start, w.last), "{}", at(&format!("event {g}")));
+            }
+            let oei = m[PH_H + 17] as usize;
+            let mut eitems: Vec<middle::phases::Item> = arr[oei..oei + 3 * nei].chunks_exact(3).map(|w| middle::phases::Item { level: w[0], record: w[1], head: w[2] != 0 }).collect();
+            eitems.sort_by_key(|x| x.level);
+            assert!(eitems == ph.eitems, "{}", at("the events' items"));
+            events += ne;
             runs += 1;
             records += count;
         }
     }
-    eprintln!("{}: tier 2 as phases, P1-P3 on the device: {runs} runs, {records} records' depths, items in level order, containers and heads the CPU phases'", crate::device::backend());
+    eprintln!("{}: tier 2 as phases, P1-P5 on the device: {runs} runs ({refusals} refused at a chunk's place), {records} records' depths, items in level order, containers, heads and places, {events} events and their items the CPU phases'", crate::device::backend());
 }
