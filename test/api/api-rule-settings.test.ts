@@ -123,6 +123,30 @@ describe("rule settings: suppressions and config", () => {
     expect(await ruleView()).toMatchObject({ mode: "steer", config: null, configError: null });
   });
 
+  // An attachments call writes its settings beside its attachments where the repository is set up, and in the set-up it
+  // records where it is not.
+  it.each([
+    { state: "set up", add: [] },
+    { state: "not set up yet", add: [{ sourceKind: "pack", sourceId: "typescript" }] },
+  ])("keeps a setting's stored options that are no JSON through an attachments call that names no options, repository $state", async ({ state, add }) => {
+    if (state === "not set up yet") {
+      // As a repository is before its set-up: no attachments and no set-up time; a person may give it settings then.
+      stores.database().$client.exec("DELETE FROM rule_attachments; UPDATE repositories SET configured_at = NULL");
+    }
+    expect(await setting({ mode: "log", config: { option: "type" } })).toMatchObject({ status: 200 });
+    const stored = stores.database().$client.prepare("SELECT config_json FROM rule_settings WHERE target_id = ?").pluck();
+    stores.database().$client.prepare("UPDATE rule_settings SET config_json = ? WHERE target_id = ?").run('{"option":"type"', RULE);
+    const log = vi.spyOn(process.stderr, "write").mockReturnValue(true);
+    try {
+      const settings = [{ targetKind: "rule", targetId: RULE, mode: "steer" }];
+      expect(await put("/api/repository/attachments", { repository: repositoryKey, add, settings })).toMatchObject({ status: 200, body: { repository: { setUp: true } } });
+      expect(stored.get(RULE)).toBe('{"option":"type"');
+      expect(await ruleView()).toMatchObject({ mode: "steer", config: null, configError: expect.stringMatching(/no JSON object/u) });
+    } finally {
+      log.mockRestore();
+    }
+  });
+
   it("answers a write that puts a rule on Block with the note that it steers in this release, and stores block", async () => {
     const blocked = await setting({ mode: "block" });
     expect(blocked).toMatchObject({ status: 200, body: { settings: [{ mode: "block" }], note: BLOCK_STEERS_NOTE } });
