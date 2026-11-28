@@ -276,6 +276,21 @@ describe("the daemon a session's runtime reaches", () => {
 
     expect(active).toEqual([]);
   });
+
+  it("closes a runtime whose start the host refused, and throws the host's failure", async () => {
+    daemonAnswers({ nativeToken: "private-token" });
+    const operations: string[] = [];
+    vi.stubGlobal("fetch", async (_url: URL, init: RequestInit) => {
+      const { operation } = readBody(init);
+      operations.push(operation);
+      return Response.json({ deliveries: operation === "initialize" ? [delivery("steer")] : [], entries: [] });
+    });
+    const refusing = { ...hostHolding([]), deliver() { throw new Error("host refused the delivery"); } };
+
+    await expect(createNativeSession(refusing, {}, session, false, {})).rejects.toThrow("host refused the delivery");
+
+    expect(operations).toEqual(["initialize", "close"]);
+  });
 });
 
 describe("daemon native client branch encoding", () => {
