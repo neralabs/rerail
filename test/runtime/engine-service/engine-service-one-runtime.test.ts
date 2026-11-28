@@ -163,4 +163,17 @@ describe("one session's runtime in the engine service", () => {
     expect(recorded(p.databasePath, "s")).toEqual(["s:start", "s:back"]);
     expect([p.engine.openRuntimes(), ownedLive(p.databasePath, "s")]).toEqual([2, true]);
   }, 30_000);
+
+  // The end of a quiet session whose runtime has closed makes the runtime its configuration names; one that cannot be
+  // made (its model folder will not load) failed before the session's end was handled, and the suspended session's
+  // record stayed open and owned until the daemon stopped.
+  it("ends a quiet session whose end names a model folder that cannot load, once the idle close let it go and its runtime closed", async () => {
+    const p = await service();
+    await p.start("s", p.configured());
+    p.clock.now += 60_000;
+    await p.engine.closeIdleSessions();
+    await p.engine.closeUnusedRuntimes();
+    await expect(p.end("s", p.configured({ modelPath: join(p.root, "removed-model") }))).rejects.toThrow();
+    expect([p.engine.openRuntimes(), ownedLive(p.databasePath, "s")]).toEqual([0, false]);
+  }, 30_000);
 });
