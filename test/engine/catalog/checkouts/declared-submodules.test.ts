@@ -162,7 +162,7 @@ describe("a checkout's declared submodules while Git runs past its time limit re
     const owners = new CheckoutOwners();
     expect([owners.declaredSubmodules(alpha), owners.declaredSubmodules(alpha)]).toEqual([[], []]);
     // The ask started its Git with the listing that began it.
-    expect(git.asks).toBe(1);
+    expect([git.asks, git.children.length]).toEqual([1, 1]);
     const held = await git.heldStarted.promise;
 
     await stopAskingSubmodules();
@@ -243,7 +243,7 @@ describe("a checkout's declared submodules while Git runs past its time limit re
     Object.assign(git, { onThread: "pastLimit", offThread: "held" });
     const owners = new CheckoutOwners();
     expect([owners.declaredSubmodules(alpha), owners.declaredSubmodules(alpha)]).toEqual([[], []]);
-    expect(git.asks).toBe(1);
+    expect([git.asks, git.children.length]).toEqual([1, 1]);
     const held = await git.heldStarted.promise;
 
     await daemon.close();
