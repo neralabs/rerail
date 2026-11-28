@@ -10,7 +10,7 @@ were left open:
 
 - **One launch a chunk.** Each matcher ran as its own pass, outside the accelerator's
   priced and placed launches, and Metal's passes recorded no device time.
-- **Captures.** The transducer returns only the matched root. An `ast` atom naming
+- **Captures.** The transducer's root programs returned only the matched root (as of 2026-11-10). An `ast` atom naming
   nodes (`$A`, `$B`) was refused, and a rule part that read a field's node again stayed
   a join.
 - **The data-layer programs.** The 142 data-layer checks, ported to `.rr` by hand,
@@ -38,7 +38,16 @@ places it on the CPU or on Metal like the rest.
 Measured: the matcher test pack runs in 2 Metal launches (0.138 ms of GPU time); the
 Python pack's output is identical, in 4 waves on the CPU and 6 on Metal.
 
-### 2. Captures: the transducer finds roots, W names the nodes
+### 2. Captures: the transducer finds roots; where nothing else binds them, W names the nodes
+
+This is how captures were first made to work, not a rule that W must bind them. When it was written the transducer's
+root programs captured only the root, and capture absorption cost about 0.25 s on the Python pack (0108 §5). Since
+then the transducer's outputs carry capture slots (targets labels, `Set::targets` images, 0365 §10), and a capture
+that is a root's single field child is read from the tape with no W (`field_captured_rows`, 53d0acdc04). On idc the
+re-match is now 5–10 s of CPU (2026-11-28). A capture may be bound by any means that gives W's rows exactly: W's
+binding where a name could bind several nodes, every node of a multi-capture, and equal text for a repeated name. W
+stays the binder for relaxed matchers (§3, whose roots it confirms anyway) and transforms (text, not nodes), and the
+reference every other means is checked against.
 
 An atom with captures reads `rr_ast_<k>_<m>(n, x1, …, xm)`:
 
