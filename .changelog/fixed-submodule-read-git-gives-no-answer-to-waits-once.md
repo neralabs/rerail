@@ -1,0 +1,1 @@
+While Git runs past its 10-second limit reading which submodules a repository declares, the daemon waits on it once, not again at each tool call: it treats the read as unanswered and asks Git again in the background, so hooks in that repository and in every other session no longer wait behind those reads.
