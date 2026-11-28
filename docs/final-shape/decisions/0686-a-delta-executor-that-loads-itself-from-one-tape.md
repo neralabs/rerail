@@ -1943,3 +1943,45 @@ world's leaves, answers and places, the want and the asks carry none. L1 is a si
 
 **Not reached.** D6 (no level of the boot negates an answer yet) and the self-reading check, P2 over l0 giving P2,
 which needs an executor of K-form.
+
+## The operations' work, validated: a validation mode, and the O(data) work it found (2026-11-28)
+
+A test that counts launches and rows says nothing about the work inside a launch: every phase is mostly one
+threadgroup item that loops. So the work is now measured inside each operation, and read by inspection where it
+cannot be measured.
+
+**The validation mode** (`Directory::validate`). On the CPU each operation runs as its twin. While the mode is on,
+every state a twin chains through its launch's descriptor table counts its reads into the table's counter
+(`gens::Table::counting`): rows, liveness words, kill searches and values (`trace::State::get`). A read of a block
+that is no trace's state counts through `Table::touch`: a cache lookup's probes. The executor keeps a ledger per
+operation and phase of launches, turns, items and state reads (`Directory::take_work`). A commit's δ pairs and a
+merge's rows in go into the ledger beside them. A kernel counts nothing: the device's work is read by inspection.
+
+**P1 by operation** (`laws::work_grows`, in `the_work_of_one_edit_does_not_grow_with_the_rest`). One edit among 4,
+8, 16, 32 and 64 unchanged modules. At every size each operation's phase runs the same launches and turns over the
+same items. Its state reads grow by at most the base's once a doubling: a kill search reads one layer more, as the
+geometric roll-up keeps O(log n) layers. The roll-up's merges run as layers fill, and they take in no more rows than
+the edit's own δ pairs once a doubling. They took in 4 rows beside 32 modules and 7 (two merges) beside 64. The
+edit's read asks the load answer of one document, and launches 5 times.
+
+**L9 as it runs** (`Instance::changed_within`). In the validation mode a per-partition operator's step changes, in
+every output, only the partitions its inputs' change or its demand's change names (the want's keys). A toy that
+writes into another partition is refused (`a_per_partition_step_changing_another_partition_is_refused_in_the_validation_mode`),
+and the same toy without the flaw passes. L1's steps are checked so in every P1 run.
+
+**What it found, fixed** (each was O(documents) an edit):
+
+| Where | What it did | Now |
+|---|---|---|
+| `DocSet::read_all` | asked `answer_load` an item per document, changed or not (N+1 items) | `DocSet::read_changed` asks the journal what changed since the last run (`World::changed`: the observer's `mark` at each run's start, `changed_since` at the next) and reads those documents alone. Where the journal cannot say (a first run, a lost cursor), every document is read as before. |
+| `DocSet::resident` | launched `named_blocks` over every row of the set whenever its head moved (reads 255 → 4748 as the set grew 4 → 64) | runs only when the residency retired or dropped a slab, the event that can make a document's block go. A read's new document is placed by its read. |
+| `BlobRows::forget_dead` | read every blob's row on each read and each residency pass | runs only when the residency's counts moved |
+| the runs cache (`sizes`, `forget`, `keep_sizes`, `order`; twin and kernels) | walked every entry to find one, an entry a document: room_of and k0_pass's keep, O(documents) | found by the cache's index: an entry of its own, an open-addressed table of the entries' places by their keys' hash, made again twice the size at the cursor past half full (amortized O(1) a key). A let-go sizes entry goes on a list through its unused columns' words. room_of reads 1 probe and keep 3 at every size. |
+| `semi_change`, `change_rows` (kernels) | walked every id of A's after state and of B's two states | walk the change's candidates (the ids past `before`'s end, then each upper layer's kills of rows below it) and, with B, A's kept rows of each key B's change flipped, as the twin does. A change read whole (∅ before, or a before that is no layer of after's state) walks every id, as before. |
+
+**By inspection, change-sized:** `replace_rows` (the rows given, a probe each), `drop_parts` (a gone partition's
+rows by the partition index), `docs_of`, `room_of` and `k0_pass` (the documents read), `intern` (a document's
+names), `consolidate` (its own layer; each kill a search of O(log n) layers), `merge` (the layers it takes in,
+amortized by the roll-up), `cache_open` and `cache_commit` (the header). **O(data) by meaning:** a cold run's every
+id; `named_blocks` and `forget_dead` after an eviction (the residency's event, not an edit's); a consolidate's kill
+search in a layer whose shape declares no index (`own_row` scans its rows).
