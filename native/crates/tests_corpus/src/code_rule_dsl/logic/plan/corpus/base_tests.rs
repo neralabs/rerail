@@ -1873,6 +1873,8 @@ targets(p, l) :- assigned(a), field(a, "left", n), docof(n, d), doc(d, p, _), li
     use rerail_device_metal::code_rule_dsl::device_metal::{index_builds_for_tests, stratum_index_builds_for_tests};
     // Profiled, so each build is named by its stratum (the profile's path).
     crate::code_rule_dsl::logic::profile::set(true);
+    // The join program on the host (the CPU binding's scalar joins build no index ahead).
+    let _program = crate::code_rule_dsl::logic::plan::placement::set_host_joins(true);
     let (before, had) = (index_builds_for_tests(), stratum_index_builds_for_tests().len());
     let out = dir.join(".out");
     super::run(program, &dir, None, &out, "program", Binding::Cpu, 8).unwrap();
@@ -2147,4 +2149,26 @@ children(n, a, c) :- nearest(n, a, scope, c).
     assert_eq!(set(&got[6]), set(&got[2]), "parameters and return type, by the field");
     // Each node below a member's child has a row, and the child's parent is the member.
     assert!(got[4].len() > got[0].len(), "every scope's children: {}", got[4].len());
+}
+
+/// A document's nodes probed by its id (`docof(a, d)` by `d`) are every row of the document, not one: an index's
+/// measure that its key names one row (`Csr::at_most_one`) is made again as its relation grows. Measured at a
+/// relation's first row and kept, the step was a one-row lookup, and each document of several assignments gave none.
+#[test]
+fn a_documents_nodes_probed_by_its_id_are_all_its_rows() {
+    let sources: Vec<(String, String)> = (0..40).map(|i| (format!("g{i:02}.py"), (0..(i % 4 + 1)).map(|k| format!("a{k} = b{k} + c{k}\n")).collect())).collect();
+    let files: Vec<(&str, &str)> = sources.iter().map(|(p, s)| (p.as_str(), s.as_str())).collect();
+    let dir = corpus("docof-by-doc", &files);
+    // Both orders: the kind scanned first (docof by the node, doc by its id), and doc scanned first (docof by `d`).
+    let programs = [
+        ("by node", ".decl t(p: symbol, a: node)\nt(p, a) :- kind(a, \"assignment\"), docof(a, d), doc(d, p, _).\n.output t\n"),
+        ("by doc", ".decl t(p: symbol, a: node)\nt(p, a) :- doc(d, p, _), docof(a, d), kind(a, \"assignment\").\n.output t\n"),
+    ];
+    let want: usize = (0..40).map(|i| i % 4 + 1).sum();
+    for (what, program) in programs {
+        let out = dir.join(format!(".out-{}", what.replace(' ', "-")));
+        super::run(program, &dir, None, &out, "program", Binding::Cpu, 8).unwrap();
+        let got = shown_of(&Outputs::open(&out).unwrap(), &["t"]);
+        assert_eq!(got[0].len(), want, "{what}: every assignment with its file");
+    }
 }

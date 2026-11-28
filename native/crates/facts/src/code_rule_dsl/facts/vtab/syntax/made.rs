@@ -2566,14 +2566,15 @@ impl Source for MadeRows {
         let (_, rows) = self.rows_at(keys.into_iter().collect(), columns[lead], &values[lead..=lead], |r, row| columns.iter().zip(values).all(|(&c, &v)| Source::value(r, row, c) == v))?;
         Some(rows)
     }
+    /// A key column of the made rows (`Relation::keys_rows`: as many distinct values as rows). Before the rows are
+    /// made, none: the template holds none of them, and an empty or one-row table has every column a key, so a plan
+    /// made then (`setfix::at_most_one`) took `docof` by its document for a one-row lookup and kept one node a
+    /// document.
     fn keys_rows(&self, _column: usize) -> bool {
-        match self.done() {
-            Some(t) => t.keys_rows(_column),
-            None => self.template().keys_rows(_column),
-        }
+        self.done().is_some_and(|t| t.keys_rows(_column))
     }
-    /// A key column's row. `keys_rows` answers from the template before the rows are made, and a key's values are one
-    /// row each in any order of the rows: but a measure's sample makes its documents' groups first
+    /// A key column's row. `keys_rows` answers from the made rows, and a key's values are one row each in any order of
+    /// the rows: but a measure's sample makes its documents' groups first
     /// (`Batch::sample_groups`), so the made relation's rows may not be in the order of its ids, and its column then
     /// not a key it searches (`Relation::key_row`). Then the row is its index's (`sorted_rows`), nothing allocated.
     fn key_row(&self, _column: usize, _value: i64) -> Option<usize> {
