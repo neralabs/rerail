@@ -1191,8 +1191,8 @@ statements and blocks end.
       drops the files whose records go wrong, so it lexes fewer bytes. One such toggle seemed to put 74% of the
       walk in the interpolations' code starts; they were about 10%.
     - **Interpolations where a block may hold one:** a window holds an interpolation only where the block has a
-      `{`, or one or its format spec is open into it, or the block before had interpolations' code. That is 11%
-      of the corpus's blocks (26820 of 241179). The loop over blocks picks `walk_block`'s instance by it, a
+      `{`, or one or its format spec is open into it, or the block before had interpolations' code. About 11%
+      of the corpus's blocks (26820 of 241239, counted before the open format spec was added to the test). The loop over blocks picks `walk_block`'s instance by it, a
       choice as `walk_more`'s (item 117). Without it, the rounds and the interpolations' starts are not read:
       they find none. The tests' builds run the rounds there anyway and assert that they found none.
     - **The byte classes once a block:** a byte's classes are of it and the two after it. So the classes at the
