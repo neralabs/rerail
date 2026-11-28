@@ -9,6 +9,7 @@
 //! read serially by variant A (`Chunked::NotB`), as `lex_with` reads it.
 
 use super::{B, Masks, RB, S1, Stack, Text, Walk, classes_in};
+use rerail_simd::prelude::*;
 use super::{Variant, b_reads, lex_with};
 use crate::lex::{Extra, Lexed, Refusal, Tok};
 
@@ -297,6 +298,176 @@ pub fn summary(src: &[u8], from: usize, to: usize) -> Summary {
         let d = t.b[r0 - c0..r1 - c0].iter().fold(Depth::default(), |d, b| Depth::then(d, Depth::of_block(b.ob & b.code, b.cb & b.code)));
         Some((rb_lane(c)? as u8, d))
     })
+}
+
+/// The lane a carries' reading B finds wrong goes to: it stays there (pass 1 superposed).
+const WRONG: usize = LANES;
+
+/// A block's map over every lane of B's carries at once: the lane each leaves in (`WRONG` where B's reading from it
+/// is wrong) and its depth's run. Every lane of it is written by the block's lanes, none cleared first.
+#[derive(Clone, Copy)]
+pub struct BlockMap {
+    exit: [u8; LANES],
+    depth: [Depth; LANES],
+}
+
+impl Depth {
+    /// A block's brackets in code by masks: the prefix sums over its 64 bytes (`depth_lanes`'), their prefix
+    /// minimum from 0, and the reductions, with no branch.
+    #[inline(always)]
+    fn of_masks(up: u64, down: u64) -> Depth {
+        let (u, d) = (super::lanes(up), super::lanes(down));
+        let (mut c, mut m) = (super::D::splat(0), super::D::splat(0));
+        let (mut lo, mut hi, mut k) = (super::D::splat(0), super::D::splat(0), super::D::splat(0));
+        for r in 0..4 {
+            let s = super::prefix_sum(d[r] - u[r]) + c;
+            c = super::D::splat(s[15]);
+            let pm = super::prefix_min(s).simd_min(m);
+            m = super::D::splat(pm[15]);
+            lo = lo.simd_min(s);
+            hi = hi.simd_max(s);
+            k = k.simd_max(s - pm);
+        }
+        Depth { net: i32::from(c[0]), min: i32::from(lo.reduce_min()), max: i32::from(hi.reduce_max()), k: i32::from(k.reduce_max()) }
+    }
+}
+
+/// `$body` once for each value of `$v` in the list, unrolled: the lanes' layers are each a constant, not a loop.
+macro_rules! each_of {
+    ($v:ident in [$($x:expr),*] $body:block) => {
+        $( { let $v = $x; $body } )*
+    };
+}
+
+/// A block's map over every lane (pass 1 superposed), from the block below it (`prev`, a zero block below the
+/// text's start), the block and the one after it: B's layers for every value of their carries, each layer once for
+/// each state of the layers it reads (the triples' machine once and from each of its 3 states, the strings' machine
+/// for each of the triples' 12, the comments' addition for each of the strings' 36), B's checks as masks, and each
+/// lane's depth by masks. No branch and no loop: the lanes are unrolled, and where B's reading is wrong the lane's
+/// exit is selected as `WRONG`.
+#[inline(never)]
+pub(super) fn block_map(prev: &B, blk: &B, b1: &B) -> BlockMap {
+    let (pqs, pqd) = (prev.sq & !prev.esc, prev.dq & !prev.esc);
+    let (qs, qd) = (blk.sq & !blk.esc, blk.dq & !blk.esc);
+    let runs = |q: u64, nq: u64, pq: u64| {
+        let (q1, q2, q3) = (q >> 1 | nq << 63, q >> 2 | nq << 62, q >> 3 | nq << 61);
+        (q & q1 & q2 & !(q << 1 | pq >> 63) & !q3, q & q1 & q2 & q3)
+    };
+    let (r3s, r4s) = runs(qs, b1.sq & !b1.esc, pqs);
+    let (r3d, r4d) = runs(qd, b1.dq & !b1.esc, pqd);
+    let all_wrong = (r4s | r4d) != 0;
+    let r3 = r3s | r3d;
+    let m3 = super::machine(r3s, r3d, 0);
+    // The prefixes' window: a run of prefix letters below an opener that reaches the window's bottom is B's
+    // refusal of the reading (`prefixes_b`'s none).
+    let x = super::win(prev.pfx, blk.pfx).reverse_bits();
+    let mut exit_of = [0u8; LANES];
+    let mut depth: [Depth; LANES] = [Depth::default(); LANES];
+    each_of!(t0 in [0u8, 1, 2] {
+        let (tl, th, t1) = super::run_from(&m3, t0);
+        let ta = tl | th;
+        let tb = ta << 1 | u64::from(t0 != 0);
+        let t_close = r3 & tb & !ta;
+        let t_open = r3 & !tb;
+        let tr_out = (t_close >> 62 | t_close >> 63) as usize;
+        each_of!(tr_taken in [0u64, 1, 2, 3] {
+            let tr = tb | ta | t_close << 1 | t_close << 2 | tr_taken;
+            let ms = super::machine(qs & !tr, qd & !tr, blk.bare_lf);
+            each_of!(s0 in [0u8, 1, 2] {
+                let (sl, sh, s1) = super::run_from(&ms, s0);
+                let sa = sl | sh;
+                let sb = sa << 1 | u64::from(s0 != 0);
+                let g = blk.hash & !tr & !sb;
+                let a = !blk.eol | g;
+                each_of!(ccarry in [0u64, 1] {
+                    let (y, o1) = a.overflowing_add(g);
+                    let (y, o2) = y.overflowing_add(ccarry);
+                    let cc_out = usize::from(o1 | o2);
+                    let comment = g | (a & (y ^ a ^ g));
+                    each_of!(cext_prev in [0u64, 1] {
+                        let cext = comment | (blk.eol & !blk.lf & (comment << 1 | cext_prev));
+                        let lend = cext << 1 | cext_prev;
+                        let wrong = (t_open & (sb | comment)) | (blk.bare_lf & sb & !tr & !lend) | (blk.lf & blk.esc & sb & lend) | (blk.bt & !blk.esc & !tr & !sb & !comment);
+                        let s_open = (qs | qd) & !tr & !sb & !comment;
+                        let o = super::win(0, s_open | t_open);
+                        let (_, over) = x.overflowing_add((o.reverse_bits() << 1) & x);
+                        let code = !(comment | ((sb | sa) & !comment & !tr) | tr);
+                        let l = usize::from(t0) * 48 + usize::from(s0) * 16 + ccarry as usize * 8 + cext_prev as usize * 4 + tr_taken as usize;
+                        let exit = usize::from(t1) * 48 + usize::from(s1) * 16 + cc_out * 8 + (cext >> 63) as usize * 4 + tr_out;
+                        let bad = u8::from(all_wrong | (wrong != 0) | over);
+                        // A select by mask: `WRONG` where bad.
+                        let keep = bad.wrapping_sub(1);
+                        exit_of[l] = (exit as u8 & keep) | (WRONG as u8 & !keep);
+                        depth[l] = Depth::of_masks(blk.ob & code, blk.cb & code);
+                    });
+                });
+            });
+        });
+    });
+    BlockMap { exit: exit_of, depth }
+}
+
+/// The lanes' runs through the blocks so far (`exit`, `dep`, from each lane of the chunk's entry), on through block
+/// map `m`: each lane on in the lane it left the block before in, by gathers, unrolled over the lanes. A lane at
+/// `WRONG` stays there (its index clamped for the gather, its exit selected by mask).
+#[inline(never)]
+fn then_block(exit: &mut [u8; LANES], dep: &mut [Depth; LANES], m: &BlockMap) {
+    each_of!(hi in [0usize, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11] {
+        each_of!(lo in [0usize, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11] {
+            let l = hi * 12 + lo;
+            let e = exit[l];
+            let wrong = u8::from(usize::from(e) == WRONG);
+            let at = usize::from(e.min(LANES as u8 - 1));
+            dep[l] = Depth::then(dep[l], m.depth[at]);
+            let keep = wrong.wrapping_sub(1);
+            exit[l] = (m.exit[at] & keep) | (WRONG as u8 & !keep);
+        });
+    });
+}
+
+/// Pass 1 superposed: chunk `from..to`'s summary from every lane at once, its blocks' maps composed in the outer
+/// block loop by gathers (each lane on in the lane it left the block before in), with no branch.
+pub fn summary_superposed(src: &[u8], from: usize, to: usize) -> Summary {
+    let blocks = src.len().div_ceil(64);
+    let to = to.min(blocks);
+    let (c0, _) = firsts(from);
+    let (r0, r1) = region_range(from, to, blocks);
+    // A zero block below the text's start: the block below every block of the range is in `b`.
+    let lead = usize::from(r0 == c0);
+    let mut b: Vec<B> = Vec::with_capacity(r1 + 3 - c0);
+    b.resize(lead, B::default());
+    classes_in(src, c0, (r1 + 1).min(blocks), &mut s1_at(src, c0), &mut b, usize::MAX, &mut S1::default());
+    if r1 == blocks {
+        b.push(B::default());
+    }
+    let mut exit: [u8; LANES] = core::array::from_fn(|l| l as u8);
+    let mut dep = [Depth::default(); LANES];
+    for w in b[r0 + lead - c0 - 1..r1 + lead - c0 + 1].windows(3) {
+        then_block(&mut exit, &mut dep, &block_map(&w[0], &w[1], &w[2]));
+    }
+    // At the text's end, a string open is B's reading wrong.
+    let at_end = r1 == blocks;
+    core::array::from_fn(|l| {
+        let e = usize::from(exit[l]);
+        let open = e != WRONG && (lane_rb(e).t0 != 0 || lane_rb(e).s0 != 0);
+        (e != WRONG && !(at_end && open)).then_some((e as u8, dep[l]))
+    })
+}
+
+/// Pass 1 superposed against B run from each lane, chunk by chunk of `blocks` blocks: the same summary, or the first
+/// lane that differs.
+pub fn superposed_is_per_lane(src: &[u8], blocks: usize) -> Result<(), String> {
+    let n = src.len().div_ceil(64);
+    let mut from = 0;
+    while from < n.max(1) {
+        let to = from + blocks;
+        let (a, b) = (summary_superposed(src, from, to), summary(src, from, to));
+        if let Some(l) = (0..LANES).find(|&l| a[l] != b[l]) {
+            return Err(format!("chunk {from}..{to}, lane {l} ({:?}): superposed {:?}, per lane {:?}", lane_rb(l), a[l], b[l]));
+        }
+        from = to;
+    }
+    Ok(())
 }
 
 /// The order a pass runs its chunks in: a permutation of `0..n`, asked each time a pass runs them (0726's `Order`).
@@ -631,7 +802,7 @@ impl core::fmt::Debug for Middle {
 }
 
 /// `src` lexed from the middle in chunks of `blocks` blocks: every pass's chunks each on their own, in `order`'s order.
-/// 1. Strata 2 and 3: each chunk's summary from every lane (`summary`), and each chunk's entry by the scan
+/// 1. Strata 2 and 3: each chunk's summary from every lane, superposed (`summary_superposed`), and each chunk's entry by the scan
 ///    (`entries_in`).
 /// 2. The walk's entry place in each chunk (`probe`).
 /// 3. The walk: each chunk's summary from every `open` and `header` with indents it does not know (`walk_summary`),
@@ -644,7 +815,7 @@ pub fn lex_middle(src: &[u8], blocks: usize, order: Order<'_>) -> Result<Middle,
     let blocks = blocks.max(1);
     let k = n.div_ceil(blocks).max(1);
     let range = |c: usize| (c * blocks, (c + 1) * blocks);
-    let sums = each(k, order, |c| summary(src, range(c).0, range(c).1));
+    let sums = each(k, order, |c| summary_superposed(src, range(c).0, range(c).1));
     let strata = entries_in(&sums, order);
     let Some(strata) = strata.into_iter().collect::<Option<Vec<_>>>() else { return Ok(Middle::NotB) };
     // A chunk's place from its own strata entry, else from the entries of chunks further back.
@@ -909,5 +1080,38 @@ mod tests {
             }
         }
         assert!(same > unknown, "{same} the serial lexer's, {unknown} not entered");
+    }
+
+    fn superposed_is_per_lane(src: &[u8], blocks: usize) -> Result<(), String> {
+        super::superposed_is_per_lane(src, blocks)
+    }
+
+    #[test]
+    fn pass_1_superposed_is_b_from_every_lane() {
+        for (i, t) in texts().iter().enumerate() {
+            for blocks in [1, 2, 3, 16] {
+                if let Err(e) = superposed_is_per_lane(t.as_bytes(), blocks) {
+                    panic!("text {i}: {e}");
+                }
+            }
+        }
+        let mut x = 0x2545_f491_4f6c_dd1du64;
+        for len in [65usize, 130, 400] {
+            for _ in 0..100 {
+                let src: Vec<u8> = (0..len)
+                    .map(|_| {
+                        x ^= x << 13;
+                        x ^= x >> 7;
+                        x ^= x << 17;
+                        b"''\\\"\"#\n\n  ab(rf{}x)\n\r[]`"[(x >> 8) as usize % 24]
+                    })
+                    .collect();
+                for blocks in [1, 2] {
+                    if let Err(e) = superposed_is_per_lane(&src, blocks) {
+                        panic!("{e}: {:?}", String::from_utf8_lossy(&src));
+                    }
+                }
+            }
+        }
     }
 }

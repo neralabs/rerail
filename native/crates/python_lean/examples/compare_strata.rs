@@ -78,6 +78,16 @@ fn main() {
                     None => {}
                 }
             }
+            let mut s_bad = 0;
+            for (p, b) in &all {
+                if let Err(e) = strata::middle::superposed_is_per_lane(b, blocks) {
+                    s_bad += 1;
+                    if s_bad <= 3 {
+                        println!("{} :: pass 1 superposed: {e}", p.strip_prefix(dir).unwrap_or(p).display());
+                    }
+                }
+            }
+            println!("chunks of {blocks} blocks: pass 1 superposed is B from every lane in {} files, not in {s_bad}", all.len() - s_bad);
             let (mut m_ok, mut m_unknown, mut m_bad) = (0, 0, 0);
             for (p, b) in &all {
                 match strata::middle::middle_is_serial(b, blocks, &strata::middle::in_order) {

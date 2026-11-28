@@ -763,4 +763,25 @@ statements and blocks end.
       (quotes, f-strings, comments, escapes, brackets and indents across blocks' edges) were run with each pass in
       seeded random orders.
     - **What these passes are, as built:** each chunk's summary runs B and the walk from every lane, one lane after
-      another; they are not yet the superposed form (all lanes at once by masks, no branches).
+      another. Item 100 makes strata 2 and 3's pass 1 the superposed form.
+100. **Pass 1 superposed for strata 2 and 3: every lane at once, no branch** (as built: `block_map`,
+    `then_block`, `summary_superposed`, the pass 1 `lex_middle` runs).
+    - **B's layers each read only the ones below them,** so a block's map over the 144 lanes is made one layer at
+      a time. The triples' machine is made once and run from each of its 3 states. The strings' machine is made
+      for each of the triples' 12 states (`t0` and the closer's taken bits). The comments' addition is made for
+      each of the strings' 36. B's checks are masks; where one fails, the lane's exit is selected as `WRONG`, a
+      lane that stays itself.
+    - **The depth's run by masks** (`Depth::of_masks`): the prefix sums of stratum 3, their prefix minimum from 0,
+      and the reductions give net, lowest, highest and the largest rise, with neither of `depth_lanes`' two
+      tests.
+    - **The prefixes' refusal** (a run of prefix letters below an opener that reaches the window's bottom) is one
+      addition per lane. It reads `pfx`, a stratum 1 mask made from the block's bytes where they are loaded.
+    - **The block loop is the only loop.** The lanes are unrolled, a zero block below the text's start stands in
+      for a test of it, and each block's map is composed onto the lanes' runs so far by gathers (`then_block`),
+      also unrolled.
+    - **As compiled** (`crates/python_lean/scripts/check_pass1_branch_free.sh`, aarch64): `block_map` is 28831
+      instructions and `then_block` 4532, with no conditional branch and no call; the selections are `csel`s.
+    - **As tested:** the superposed summary is B run lane by lane, on every lane of every chunk: the test texts and
+      600 random texts at 1, 2, 3 and 16 blocks a chunk, and the corpus at 1, 2, 3 and 16 (1644 of 1644 files).
+      `lex_middle` with it gives 1644 of 1644 files the serial lexer's. The serial lexer's speed is unchanged with
+      `pfx` made in stratum 1: B 1.02× the lean lexer.

@@ -74,6 +74,9 @@ struct B {
     sstart: u64,
     /// Stratum 2: a string's closer's first byte (in variant B, of the strings in code only).
     send: u64,
+    /// A string prefix's letters (`rRbBfFtTuU`): what the superposed pass 1 reads of the prefixes (a run of them
+    /// below an opener that reaches the window's bottom is B's refusal of the reading).
+    pfx: u64,
 }
 
 /// A quote's mask.
@@ -224,6 +227,10 @@ fn block(v: V, vn: V) -> B {
         depth0: 0,
         sstart: 0,
         send: 0,
+        pfx: {
+            let low = v | s(0x20);
+            (low.simd_eq(s(b'f')) | low.simd_eq(s(b't')) | low.simd_eq(s(b'r')) | low.simd_eq(s(b'b')) | low.simd_eq(s(b'u'))).to_bitmask()
+        },
     }
 }
 
@@ -446,7 +453,7 @@ impl<'a> Masks<'a> {
     /// Block `bi`, at most the one past the text's end.
     #[inline(always)]
     fn blk(&self, bi: usize) -> &'a B {
-        static NONE: B = B { word: 0, space: 0, sptab: 0, skip: 0, eol: 0, lf: 0, bare_lf: 0, sq: 0, dq: 0, bt: 0, bs: 0, esc: 0, hash: 0, ob: 0, cb: 0, lb: 0, rb: 0, lbu: 0, slow: 0, code: 0, depth0: 0, sstart: 0, send: 0 };
+        static NONE: B = B { word: 0, space: 0, sptab: 0, skip: 0, eol: 0, lf: 0, bare_lf: 0, sq: 0, dq: 0, bt: 0, bs: 0, esc: 0, hash: 0, ob: 0, cb: 0, lb: 0, rb: 0, lbu: 0, slow: 0, code: 0, depth0: 0, sstart: 0, send: 0, pfx: 0 };
         // The whole text's blocks hold every block a read asks for (`classes` makes one for each 64 bytes and one
         // more); a window may not, and a read past it is made again over a longer one.
         match self.b.get(bi.wrapping_sub(self.first)) {
