@@ -109,6 +109,26 @@ fn main() {
         println!("loop tops by masks: {files} files, {same} blocks the walk's, {differ} files with a block that differs");
         return;
     }
+    if only == Some("rare") {
+        // The blocks whose starts are rare, by cause.
+        let (mut code, mut strs, mut blocks) = ([0usize; 6], [0usize; 8], 0);
+        for (_, b) in &all {
+            if let Some((c, q)) = strata::starts::rare_causes(b) {
+                blocks += b.len().div_ceil(64);
+                code.iter_mut().zip(c).for_each(|(x, y)| *x += y);
+                strs.iter_mut().zip(q).for_each(|(x, y)| *x += y);
+            }
+        }
+        println!("{blocks} blocks; rare in code, by cause:");
+        for (n, c) in strata::starts::CODE_NAMES.iter().zip(code) {
+            println!("  {n:<14} {c:>6}");
+        }
+        println!("rare in strings, by cause:");
+        for (n, c) in strata::starts::STR_NAMES.iter().zip(strs) {
+            println!("  {n:<14} {c:>6}");
+        }
+        return;
+    }
     if only == Some("why") {
         // Why pass 1 by masks does not know lanes: per reason, the lanes among its reasons, and those it alone marks.
         for blocks in [1, 3, 16] {

@@ -1210,7 +1210,7 @@ fn walk_block<const S: bool>(r: &Win<'_, S>, lo: usize, hi: usize, far: Far, acc
     let (ss, r2) = super::starts::string_starts_w(r, &mut acc.carry);
     let (xs, r3) = super::starts::extra_starts_w(r);
     let some = range != 0;
-    acc.bad |= why(r1 & some, WHY_CODE) | why(r2 & some, WHY_STRINGS) | why(r3 & some, WHY_EXTRAS);
+    acc.bad |= why((r1 != 0) & some, WHY_CODE) | why((r2 != 0) & some, WHY_STRINGS) | why(r3 & some, WHY_EXTRAS);
     let tk = (cs | ss) & range;
     acc.toks += tk.count_ones() as usize;
     acc.extras += (xs & range).count_ones() as usize;
@@ -1772,6 +1772,10 @@ mod tests {
             "if a:\n    b\n    # c\nd\n",
             "if a:\n    b\n    # one\n    # ------------------------------------------------------------\n# two ----------------------------------------------------------\n  # three -------------------------------------------------------\n\n# four -----------------------------------------------------------\nc\n",
             "f'a{b!r:>{w}}c'\n",
+            "x = f\"{d['k']} and {x.get('a')} {', '.join(a)} {''}\"\n",
+            "y = f'{\"x\"}' + f\"{d['a:b']}\" + f\"{r'a'}\" + f\"{a['x'] + b['y']}\"\n",
+            "z = f\"\"\"{a['x'] + b[\"y\"]}\"\"\"\n",
+            "w = f\"{d['a long key that crosses the edge of a block, well past it, to the next one']}\"\n",
             "x = 'a # b' # c ( \ny = [1, # ]\n 2]\n",
             "t = '''a\n'' b ( '''\nu = \"\"\"a\\\"\"\" b\"\"\"\n",
             "def f():\n    return [\n        1,\n    ]\n\nclass C:\n    pass\n",

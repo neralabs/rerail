@@ -1027,3 +1027,25 @@ statements and blocks end.
       At 3 blocks 3618 (23148 before), at 16 blocks 2487 (13713). No lane differs from the walk's. The scan in
       fixed size knows 143215 entries at 1 block a chunk (59840 before). From the middle is still the serial
       lexer's in 1644 of 1644 files. `far_block` has 0 conditional branches and 0 calls on AArch64 and x86-64.
+112. **Rare starts by cause; a run's name start, and strings in an interpolation** (as built: `starts::CODE_*`,
+    `STR_*`, `rare_causes`, `compare_strata … rare`).
+    - **The causes:** the starts in code and in strings give why a block is rare as bits. Over the corpus's
+      228283 blocks, 404 were rare in code because the run of non-blank code the window starts in reaches the
+      block. 523 were rare in strings because an interpolation's code held a string: its quote is a byte of code
+      with no operator. 474 more carried that along their open string.
+    - **A run's name start:** a word run whose first byte is no digit, after no `.`, is a name's start, whatever
+      is below the window. An operator ends at a word byte, and no number goes on into such a run. So a run that
+      reaches the block holds a name start below it, and the choices from there are the window's own. Only a run
+      with none is rare.
+    - **A string in an interpolation's code:** B reads it by its quotes (`Walk::string` at a depth). Its quotes
+      pair by a prefix XOR from the one the block before left open (`StrCarry::iq`, and its kind, `idq`). Its
+      records come by masks: its start at its opener, its text after it where it has some, its end at its closer.
+      Its bytes leave the interpolation's code. A block stays rare where such a string has both kinds of quote, a
+      prefix or a triple quote, or holds a byte the rounds read (a brace, a bracket, `:`, `!`), a backslash, `#`
+      or a line end.
+    - **As tested:** the test texts gain strings in interpolations: plain, empty, one past a block's edge, one
+      with the other quote, one with a prefix, one holding a `:`. Over the corpus: rare in code 104 blocks (396
+      before), rare in strings 101 (780), and no block's starts differ from the walk's. At 1 block a chunk, 1263
+      lanes not known of 685017 (4521 before), at 16 blocks 735 (2487). The scan in fixed size knows 191939
+      entries at 1 block a chunk (143215 before). From the middle is still the serial lexer's in 1644 of 1644
+      files. The block functions keep 0 conditional branches and 0 calls on AArch64 and x86-64.

@@ -238,13 +238,13 @@ pub(super) fn reaching(hit: u128, through: u128) -> u128 {
 
 /// Block `bi`'s token starts in code (the serial walk's, its layout tokens and a string's aside), and whether the
 /// block is rare (its starts not known by masks).
-pub(super) fn code_starts(t: &Masks<'_>, bi: usize) -> (u64, bool) {
+pub(super) fn code_starts(t: &Masks<'_>, bi: usize) -> (u64, u32) {
     by_len!(t, bi, |r| code_starts_w(&r))
 }
 
 /// `code_starts` from the block's reads.
 #[inline(always)]
-pub(super) fn code_starts_w<const S: bool>(r: &Win<'_, S>) -> (u64, bool) {
+pub(super) fn code_starts_w<const S: bool>(r: &Win<'_, S>) -> (u64, u32) {
     starts_in(r, w(r.pb.code, r.b.code), false)
 }
 
@@ -321,7 +321,7 @@ fn numbers_from(cx: &NumCx, ds: u128) -> (u128, u128, u128, u128, u128) {
 /// block is rare. In an interpolation (`one_by_one`) the walk reads a token at a time, so a number's rest of a word
 /// run is always a name.
 #[inline(always)]
-fn starts_in<const S: bool>(r: &Win<'_, S>, code: u128, one_by_one: bool) -> (u64, bool) {
+fn starts_in<const S: bool>(r: &Win<'_, S>, code: u128, one_by_one: bool) -> (u64, u32) {
     let (src, bi) = (r.src, r.bi);
     // The block below (none below the text's start: masked).
     let (pb, b) = (r.pb, r.b);
@@ -400,7 +400,11 @@ fn starts_in<const S: bool>(r: &Win<'_, S>, code: u128, one_by_one: bool) -> (u6
     // the block (what it starts with is below the window); a number's rest of a word run that reaches a block's
     // end, or whose walk to a stop or a start leaves the window.
     let first_run = run_ends(nb & 1, nb);
-    let reaches = first_run >= (1u128 << 64);
+    // A name's start in that run below the block (a word run of no digit first, after no `.`) is the walk's
+    // whatever is below the window: an operator ends at a word byte, and no number goes on into such a run. From it
+    // the run's choices are the window's own.
+    let sync = run_start & !digit & !(dot << 1) & (u128::from(u64::MAX) & !1) & first_run.wrapping_sub(1);
+    let reaches = (first_run >= (1u128 << 64)) & (sync == 0);
     let rest_word = rest | ((word.wrapping_add((rest << 1) & word) ^ word) & word);
     let crosses = ((rest_word >> 63) & 3 == 3) | (rest_word >> 127 != 0);
     let rest_far = crosses | ((reaching(starts | stop, through) & rest & !(1u128 << 64) & !all) != rest & !(1u128 << 64) & !all);
@@ -411,8 +415,62 @@ fn starts_in<const S: bool>(r: &Win<'_, S>, code: u128, one_by_one: bool) -> (u6
     // A fraction's `.` before another `.`: the operators' machine reads the dots from the fraction's.
     // A rest that starts with a digit is a number again, with a rest of its own.
     let frac_dots = (frac & dot1 != 0) | exp_again | (rest & digit != 0);
-    let rare = (((refused | high) >> 64) != 0) | ((nb & 1 != 0) & reaches) | rest_far | dot_edge | frac_dots;
+    let why = |c: bool, w: u32| u32::from(c) * w;
+    let rare = why((refused >> 64) != 0, CODE_REFUSED)
+        | why((high >> 64) != 0, CODE_HIGH)
+        | why((nb & 1 != 0) & reaches, CODE_REACHES)
+        | why(rest_far, CODE_REST_FAR)
+        | why(dot_edge, CODE_DOT_EDGE)
+        | why(frac_dots, CODE_FRAC_DOTS);
     ((starts >> 64) as u64, rare)
+}
+
+/// Why a block's starts in code are rare (bits; none: known): a byte the walk refuses; a byte past ASCII; the run of
+/// non-blank code the window starts in reaches the block; a number's rest of a word run that leaves the window; a
+/// `.` at a block's last byte before a digit; a fraction's `.` before a `.`, an exponent again, or a rest of a digit.
+pub const CODE_REFUSED: u32 = 1;
+pub const CODE_HIGH: u32 = 2;
+pub const CODE_REACHES: u32 = 4;
+pub const CODE_REST_FAR: u32 = 8;
+pub const CODE_DOT_EDGE: u32 = 16;
+pub const CODE_FRAC_DOTS: u32 = 32;
+pub const CODE_NAMES: [&str; 6] = ["refused", "past ASCII", "run reaches", "rest far", "dot at edge", "fraction dots"];
+
+/// Why a block's starts in strings are rare (bits): the carry says so; `\U` or `\N{`; a lone `}`; a raw string's
+/// quirks; an interpolation the masks do not read; more interpolations than the rounds; an interpolation's code
+/// rare; a string in an interpolation the masks do not read.
+pub const STR_CARRY: u32 = 1;
+pub const STR_LONG: u32 = 2;
+pub const STR_LONE_RB: u32 = 4;
+pub const STR_RAW: u32 = 8;
+pub const STR_INTERP: u32 = 16;
+pub const STR_MORE: u32 = 32;
+pub const STR_CODE: u32 = 64;
+pub const STR_NESTED: u32 = 128;
+pub const STR_NAMES: [&str; 8] = ["carried", "long escape", "lone }", "raw quirk", "interpolation", "more rounds", "interp code", "nested string"];
+
+/// The blocks whose starts are rare, by cause: in code (`CODE_NAMES`) and in strings (`STR_NAMES`), each the blocks
+/// it is among the causes of. None where B does not read the text.
+pub fn rare_causes(src: &[u8]) -> Option<([usize; 6], [usize; 8])> {
+    let mut t = super::Text { src, b: super::classes(src), first: 0 };
+    if !t.regions_b() || t.depth().is_err() {
+        return None;
+    }
+    let short = core::cell::Cell::new(false);
+    let m = t.m(&short);
+    let (mut code, mut strs) = ([0; 6], [0; 8]);
+    let mut c = StrCarry::default();
+    for bi in 0..src.len().div_ceil(64) {
+        let (_, r) = code_starts(&m, bi);
+        let (_, q) = string_starts(&m, bi, &mut c);
+        for (i, x) in code.iter_mut().enumerate() {
+            *x += usize::from(r >> i & 1 == 1);
+        }
+        for (i, x) in strs.iter_mut().enumerate() {
+            *x += usize::from(q >> i & 1 == 1);
+        }
+    }
+    Some((code, strs))
 }
 
 /// The token starts by masks against the serial walk's (variant B's), block by block on `src`: the blocks whose starts
@@ -436,7 +494,7 @@ pub fn starts_are_the_walks(src: &[u8]) -> Option<(usize, usize, Option<String>)
     let (mut same, mut rare, mut first) = (0, 0, None);
     for (bi, &w) in want.iter().enumerate().take(n) {
         let (got, r) = code_starts(&m, bi);
-        if r {
+        if r != 0 {
             rare += 1;
         } else if got == w {
             same += 1;
@@ -473,7 +531,7 @@ pub fn string_starts_are_the_walks(src: &[u8]) -> Option<(usize, usize, Option<S
         let in_code = m.blk(bi).code;
         let (got, r) = string_starts(&m, bi, &mut c);
         let got = got & !in_code;
-        if r {
+        if r != 0 {
             rare += 1;
         } else if got == w {
             same += 1;
@@ -579,6 +637,11 @@ pub(super) struct StrCarry {
     rcode: u64,
     /// A conversion's `!` is the block before's last byte: its letter is the block's first.
     cv: bool,
+    /// A string in an interpolation's code open past the block, and its text there.
+    iq: bool,
+    itext: bool,
+    /// The open one's quote is `"`.
+    idq: bool,
 }
 
 /// From each of `seeds` forward through `through` (each seed in it): the run to its end.
@@ -590,13 +653,13 @@ pub(super) fn fill(seeds: u128, through: u128) -> u128 {
 
 /// Block `bi`'s token starts in its strings (a string's start, its text, escapes and brace pairs, its end) from the
 /// carry `c` into it (left as the carry out), and whether the block is rare.
-pub(super) fn string_starts(t: &Masks<'_>, bi: usize, c: &mut StrCarry) -> (u64, bool) {
+pub(super) fn string_starts(t: &Masks<'_>, bi: usize, c: &mut StrCarry) -> (u64, u32) {
     by_len!(t, bi, |r| string_starts_w(&r, c))
 }
 
 /// `string_starts` from the block's reads.
 #[inline(always)]
-pub(super) fn string_starts_w<const S: bool>(win: &Win<'_, S>, c: &mut StrCarry) -> (u64, bool) {
+pub(super) fn string_starts_w<const S: bool>(win: &Win<'_, S>, c: &mut StrCarry) -> (u64, u32) {
     let (b, bi) = (win.b, win.bi);
     let at = 64 * bi;
     let n: [SBytes; 6] = [sclasses(win, at), sclasses(win, at + 1), sclasses(win, at + 2), sclasses(win, at + 3), sclasses(win, at + 4), sclasses(win, at + 5)];
@@ -730,10 +793,27 @@ pub(super) fn string_starts_w<const S: bool>(win: &Win<'_, S>, c: &mut StrCarry)
     let r4 = round!(r3);
     let r = round!(r4);
     let r = Round { code: r.code & !u64::from(c.cv), ..r };
+    // A string in an interpolation's code (B reads it by its quotes, `Walk::string` at a depth): its quotes pair by
+    // a prefix XOR, from the one the block before left open. Its records: its start at its opener, its text after
+    // it where it has some, its end at its closer. The masks read one of a single kind of quote, no prefix, no
+    // triple, and none of the bytes the rounds read (braces, brackets, `:`, `!`) nor a backslash, `#` or line end
+    // in it: else rare.
+    let iq = (b.sq | b.dq) & r.code;
+    let ix = super::prefix_xor(iq) ^ 0u64.wrapping_sub(u64::from(c.iq));
+    let (iopen, iclose, iinner) = (iq & ix, iq & !ix, ix & !iq);
+    let istr = ix | iq;
+    let itext = iinner & !((iinner << 1) | u64::from(c.itext));
+    let (isq, idq) = ((b.sq & r.code) != 0, (b.dq & r.code) != 0);
+    let kinds = (isq & idq) | (c.iq & pick(c.idq, isq, idq));
+    let itriple = iq & ((n[1].sq & n[2].sq) | (n[1].dq & n[2].dq)) != 0;
+    let iprefix = iopen & ((b.word << 1) | (win.pb.word >> 63)) != 0;
+    let iheld = iinner & (b.lb | b.rb | b.ob | b.cb | n[0].colon | n[0].bang | b.bs | b.hash | b.eol) != 0;
+    let nested_rare = kinds | itriple | iprefix | iheld;
+    let icode = r.code & !istr;
     // More interpolations than the rounds read: rare.
     let more = r.reg;
     let ibytes_all = hi(r.bytes);
-    let (rcode, rare_code) = starts_in(win, w(c.rcode, r.code), true);
+    let (rcode, rare_code) = starts_in(win, w(c.rcode, icode), true);
     let lb_pair = lb & !ibytes_all & hi(b.lbu) & hi(n[1].lbrace);
     let rb_t = rb & !ibytes_all;
     let rbu = rb_t & !hi(super::escaped(rb_t as u64, &mut c.rb));
@@ -744,7 +824,7 @@ pub(super) fn string_starts_w<const S: bool>(win: &Win<'_, S>, c: &mut StrCarry)
     // interpolation's.
     let text = inner & !covered & !lb & !rb & !closer & !ibytes_all;
     let text_starts = text & !((text << 1) | bool128(c.text));
-    let starts = s | text_starts | (e & !ibytes_all) | lb_pair | rb_pair | (closer & mask) | hi(r.marks) | hi(rcode & r.code);
+    let starts = s | text_starts | (e & !ibytes_all) | lb_pair | rb_pair | (closer & mask) | hi(r.marks) | hi(rcode & icode) | hi(iopen | itext | iclose);
     // Rare: `\U` or `\N{` (long escapes); a lone `}`; a raw string's backslash where its text has not begun, or a
     // raw f-string's (the walk's quirks there); an interpolation the masks do not read (a string, a comment, a
     // backslash or a line's end in it; a bracket it does not open closed in it; a conversion of no letter; a `{`
@@ -752,8 +832,17 @@ pub(super) fn string_starts_w<const S: bool>(win: &Win<'_, S>, c: &mut StrCarry)
     let long = e & hi(n[1].big_u | (n[1].big_n & n[2].lbrace)) != 0;
     let raw_first = oe | (bool128(c.open & !c.text) & !hi(c.covered) & 1);
     let raw_quirk = (hi(b.bs) & inner & iraw & (raw_first | ifmt)) != 0;
-    let rare_interp = r.bad | more | (rare_code & ((r.code | c.rcode) != 0));
-    let rare_here = c.rare | long | (lone_rb != 0) | raw_quirk | rare_interp;
+    let interp_code = (rare_code != 0) & ((icode | c.rcode) != 0);
+    let rare_interp = r.bad | more | interp_code;
+    let why = |c: bool, w: u32| u32::from(c) * w;
+    let rare_here = why(c.rare, STR_CARRY)
+        | why(long, STR_LONG)
+        | why(lone_rb != 0, STR_LONE_RB)
+        | why(raw_quirk, STR_RAW)
+        | why(r.bad, STR_INTERP)
+        | why(more, STR_MORE)
+        | why(interp_code, STR_CODE)
+        | why(nested_rare, STR_NESTED);
     let depth_end = g[3][15];
     // The carry out.
     let open = interior >> 64 & 1 == 1;
@@ -781,8 +870,11 @@ pub(super) fn string_starts_w<const S: bool>(win: &Win<'_, S>, c: &mut StrCarry)
         reg: r.cont_reg,
         spec: r.cont_spec,
         idepth: depth_end.wrapping_sub(r.cont_gv),
-        rcode: r.code,
+        rcode: icode,
         cv: r.convs >> 63 != 0,
+        iq: (ix >> 63 == 1) & r.cont_reg,
+        itext: (iinner >> 63 == 1) & r.cont_reg,
+        idq: pick(iopen != 0, (b.dq >> (63u32.wrapping_sub(iopen.leading_zeros()) & 63)) & 1 == 1, c.idq),
     };
     (starts as u64, rare_here)
 }
