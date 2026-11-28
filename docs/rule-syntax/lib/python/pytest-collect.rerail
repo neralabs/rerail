@@ -103,7 +103,7 @@ pyc_mod_off(q) :- kind(a, "assignment"), field(a, "left", t), attr_of(t, o, "__t
 .decl pyc_test_off(q: symbol)
 pyc_test_off(q) :- pyc_mod_off(q).
 pyc_test_off(q) :- pyc_test_set(q, 0), !pyc_mod_off(q).
-pyc_test_off(q) :- class_def(c, q), !pyc_mod_off(q), !pyc_test_set(q, _), pyc_base(c, b), pyc_test_off(b).
+pyc_test_off(q) :- pyc_extends(q, b), !pyc_mod_off(q), !pyc_test_set(q, _), pyc_test_off(b).
 // pyc_wrapper(g): def g returns one of its own nested defs by name, so what it decorates becomes a function.
 .decl pyc_returns_inner(g: node, h: node)
 pyc_returns_inner(g, h) :- kind(g, "function_definition"), field(g, "body", b), body_stmt(b, r, _),
@@ -139,8 +139,8 @@ pyc_own(q, x, f) :- method(q, x, f), pyc_test_name(x), !pyc_later(q, x, f).
 .decl pyc_later(q: symbol, x: symbol, f: node)
 pyc_later(q, x, f) :- method(q, x, f), method(q, x, g), g > f.
 .decl pyc_anc(q: symbol, b: symbol, n: number)
-pyc_anc(q, b, 1) :- class_def(c, q), pyc_base(c, b), class_def(_, b).
-pyc_anc(q, b, n + 1) :- pyc_anc(q, m, n), n < 12, class_def(c, m), pyc_base(c, b), class_def(_, b).
+pyc_anc(q, b, 1) :- pyc_extends(q, b), class_named(b).
+pyc_anc(q, b, n + 1) :- pyc_anc(q, m, n), n < 12, pyc_extends(m, b), class_named(b).
 .decl pyc_mro(q: symbol, x: symbol, f: node)
 pyc_mro(q, x, f) :- pyc_own(q, x, f).
 pyc_mro(q, x, f) :- pyc_anc(q, b, n), pyc_own(b, x, f), !method(q, x, _),
@@ -408,3 +408,7 @@ pyc_modfrom(mq, x) :- modname(m, mq), ifrom(m, x, _, _).
 // pyc_base(c, b): class c's base b, by name.
 .decl pyc_base(c: node, b: symbol)
 pyc_base(c, b) :- kind(c, "class_definition"), field(c, "superclasses", al), child(al, e, _), pyc_sym(e, b).
+// pyc_extends(q, b): pyc_base by the class's symbol, stated in its file: the walks over classes of several files read
+// it, and hold no node (decision 0727).
+.decl pyc_extends(q: symbol, b: symbol)
+pyc_extends(q, b) :- class_def(c, q), pyc_base(c, b).

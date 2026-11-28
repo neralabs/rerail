@@ -107,14 +107,14 @@ ghw_wrote(hq, y, what, w) :- ghw_write(_, h, _), o = min v : { ghw_write(v, h, _
 // ghw_safe_action(kq, x): view class kq answers a safe method with its method x: get and head on any view, list and
 // retrieve on a DRF class only (its viewsets route GET to them; Django's View.dispatch never does).
 .decl ghw_safe_action(kq: symbol, x: symbol)
-ghw_safe_action(kq, x) :- class_def(_, kq), (x = "get" ; x = "head").
+ghw_safe_action(kq, x) :- class_named(kq), (x = "get" ; x = "head").
 ghw_safe_action(kq, x) :- ghw_drf_q(kq), (x = "list" ; x = "retrieve").
 // ghw_drf_q(q): q is a rest_framework class, a vendored copy's `ViewSetMixin` (taiga's taiga.base.api), or a class of
 // the run deriving from one (a linear closure).
 .decl ghw_drf_q(q: symbol)
-ghw_drf_q(q) :- class_base(_, q), prefix("rest_framework.", q).
-ghw_drf_q(q) :- class_base(_, q), split_dot(q, _, "ViewSetMixin").
-ghw_drf_q(q) :- class_def(c, q), class_base(c, b), ghw_drf_q(b).
+ghw_drf_q(q) :- class_extends(_, q), prefix("rest_framework.", q).
+ghw_drf_q(q) :- class_extends(_, q), split_dot(q, _, "ViewSetMixin").
+ghw_drf_q(q) :- class_extends(q, b), ghw_drf_q(b).
 .decl ghw_safe_decorator(e: node)
 ghw_safe_decorator(e) :- sym_of(e, q), (q = "django.views.decorators.http.require_GET" ;
     q = "django.views.decorators.http.require_safe").
