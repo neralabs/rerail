@@ -672,27 +672,39 @@ UKL_INLINE void phase_freeze(Src s, Blk out) {
     rel_seal(out, gone_rel(out), 0u, 0u);
 }
 
-// `sketch`: column `c`'s sketch of the state the layer ends: the layer below's, its rows added and its kills taken,
-// worked in the scratch slot's region of the column, settled into the layer's block.
-UKL_INLINE void phase_sketch(Src s, Work w, Blk out, Blk scratch, uint32_t c, UKL_GLOBAL uint32_t* meter) {
-    if (U32(w.b, W_REFUSED) != 0u) return;
-    Sk k = (Sk)(scratch + ((BODY_AT + 63u) & ~63u) + c * SKETCH_WORK);
-    sk_clear(k);
+// `sketch`, a column a threadgroup: its sketch of the state the layer ends, the layer below's with its rows added and
+// its kills taken, worked in the scratch slot's region of the column, settled into the layer's block. The arrays its
+// kept bytes decode into are cleared, and its bytes counted and written, across the group; one thread decodes them and
+// adds and takes the rows in their order (the twin's, `layer_write::sketch_change`).
+UKL_INLINE void phase_sketch(Src s, Blk out, Blk scratch_blk, uint32_t c, uint32_t lid, uint32_t lsz, UKL_LOCAL uint32_t* scratch, UKL_LOCAL uint32_t* sh, UKL_GLOBAL uint32_t* meter __UKL_PARAMS) {
+    Sk k = (Sk)(scratch_blk + ((BODY_AT + 63u) & ~63u) + c * SKETCH_WORK);
+    CBlk bb = 0;
+    uint32_t from = NONE, end = 0u;
     if (s.below != NONE) {
-        CBlk bb = blk(s.t, s.below);
+        bb = blk(s.t, s.below);
         uint32_t rel = (uint32_t)U64(bb, LAYER_ROWS_AT), dir = span_at(bb, rel + REL_SKETCHES_AT, 1u);
         if (span_len(bb, rel + REL_SKETCHES_AT) > 8u * c && span_len(bb, dir + 8u * c) > 0u) {
-            uint32_t at = span_at(bb, dir + 8u * c, 1u);
-            sk_decode(k, bb, at, at + span_len(bb, dir + 8u * c));
+            from = span_at(bb, dir + 8u * c, 1u);
+            end = from + span_len(bb, dir + 8u * c);
         }
     }
-    uint32_t rows = (uint32_t)U64(out, LAYER_ROWS_AT), gone = (uint32_t)U64(out, LAYER_GONE_AT);
-    for (uint32_t i = 0u, n = rel_own_len(out, rows); i < n; i++) sk_add(k, rel_own(out, rows, i, c), 1u);
-    for (uint32_t j = 0u, n = rel_own_len(out, gone); j < n; j++) sk_remove(k, state_get(s.t, s.below, (uint32_t)rel_own(out, gone, j, 1u), c), 1u);
-    uint32_t len = 0u, at = sk_settle(k, out, meter, T_OUT, &len);
+    if (from != NONE) sk_clear_form(k, bb, from, end, lid, lsz);
+    ukl_tg_barrier();
+    uint32_t rows = rows_rel(out), gone = gone_rel(out);
+    if (lid == 0u) {
+        sk_clear(k);
+        if (from != NONE && !sk_decode_cleared(k, bb, from, end)) sk_clear(k);
+        for (uint32_t i = 0u, n = rel_own_len(out, rows); i < n; i++) sk_add(k, rel_own(out, rows, i, c), 1u);
+        for (uint32_t j = 0u, n = rel_own_len(out, gone); j < n; j++) sk_remove(k, state_get(s.t, s.below, (uint32_t)rel_own(out, gone, j, 1u), c), 1u);
+    }
+    ukl_tg_barrier();
+    uint32_t len = sk_group_emit(k, 0, 0u, lid, lsz, scratch __UKL_ARGS);
+    if (lid == 0u) sh[0] = claim(meter, T_OUT, len, 8u);
+    ukl_tg_barrier();
+    uint32_t at = sh[0];
     if (at == NONE) return;
-    uint32_t dir = span_at(out, rows + REL_SKETCHES_AT, 1u);
-    span_set(out, dir + 8u * c, at, len, 1u);
+    sk_group_emit(k, out, at, lid, lsz, scratch __UKL_ARGS);
+    if (lid == 0u) span_set(out, span_at(out, rows + REL_SKETCHES_AT, 1u) + 8u * c, at, len, 1u);
 }
 
 // The newest layers due to merge after one of `size` rows and kills over `below` (`trace::due_to_merge`).
@@ -759,6 +771,10 @@ UKL_INLINE void phase_seal(Src s, Work w, Blk out, Blk ctl) {
 #define GATE(n) (refused(w) ? 0u : (n))
 #define KC(w) kctx(w)
 
+// A fused phase's parts, each over its own items (the phase over the most of them).
+UKL_INLINE uint32_t umax(uint32_t a, uint32_t b) { return a > b ? a : b; }
+#define NX (keys_of(s).n * n_add(w))
+
 #define TRACE_KERNELS(op)                                                                                           \
     ITEMS(op##_sort) TR; return sort_items(s, w, meter); }                                                          \
     DELTA_LANES(op##_sort) { DELTA_ITEM(k); TR; W(w, pa, src_rank(s, s.n, k)) = k; }                                 \
@@ -777,64 +793,91 @@ UKL_INLINE void phase_seal(Src s, Work w, Blk out, Blk ctl) {
         uint32_t pos = ukl_tg_sum(v > 0 ? 1u : 0u, lid, lsz, scratch __UKL_ARGS);                                   \
         if (lid == 0u) { W(w, cc, k) = nz; W(w, ac, k) = pos; }                                                     \
     }                                                                                                               \
-    ITEMS(op##_scan) return 1u; }                                                                                   \
-    DELTA_GROUPS(op##_scan) { DELTA_GROUP_ITEM(k); TR; phase_scan(w, lid, lsz, scratch __UKL_ARGS); }               \
-    ITEMS(op##_open) TR; return GATE(1u); }                                                                         \
-    DELTA_LANES(op##_open) { DELTA_ITEM(k); TRX; phase_open(s, w, out, x, SCRATCH, meter); }                         \
+    /* the counts scanned (one group), then the layer opened and its indexes' entries (one thread) */               \
+    ITEMS(op##_open) return 1u; }                                                                                   \
+    DELTA_GROUPS(op##_open) {                                                                                       \
+        DELTA_GROUP_ITEM(k);                                                                                        \
+        TR;                                                                                                         \
+        phase_scan(w, lid, lsz, scratch __UKL_ARGS);                                                                \
+        if (lid != 0u || refused(w)) return;                                                                        \
+        Sw x = sw_of(SLOT(SCRATCH), s.n, NX);                                                                       \
+        phase_open(s, w, out, x, SCRATCH, meter);                                                                   \
+        if (!DELTA_STOPPED) phase_ixopen(out, ix_of(s, out), meter);                                                \
+    }                                                                                                               \
     ITEMS(op##_place) TR; return GATE(w.ch); }                                                                      \
     DELTA_GROUPS(op##_place) { DELTA_GROUP_ITEM(k); TR; phase_place(s, w, out, k, lid, lsz, scratch __UKL_ARGS); }  \
-    ITEMS(op##_kills) TR; return GATE(n_out(w)); }                                                                  \
-    DELTA_LANES(op##_kills) { DELTA_ITEM(o); TR; phase_kill(s, w, o); }                                              \
-    ITEMS(op##_pstarts) TR; return GATE(n_out(w)); }                                                                \
-    DELTA_LANES(op##_pstarts) { DELTA_ITEM(o); TR; phase_pstarts(s, w, o); }                                         \
-    ITEMS(op##_pscan) TR; return GATE(1u); }                                                                        \
-    DELTA_GROUPS(op##_pscan) { DELTA_GROUP_ITEM(k); TR; phase_pscan(w, out, lid, lsz, scratch, meter __UKL_ARGS); } \
+    /* each row out's kill and partition start; each index element's hash */                                        \
+    ITEMS(op##_rowsout) TR; return GATE(umax(n_out(w), NX)); }                                                      \
+    DELTA_LANES(op##_rowsout) {                                                                                     \
+        DELTA_ITEM(k);                                                                                              \
+        TRX;                                                                                                        \
+        if (k < n_out(w)) { phase_kill(s, w, k); phase_pstarts(s, w, k); }                                          \
+        if (k < NX) phase_ixhash(out, x, ix_of(s, out), k);                                                         \
+    }                                                                                                               \
     ITEMS(op##_digests) TR; return GATE((n_out(w) + DELTA_CHUNK - 1u) / DELTA_CHUNK); }                             \
     DELTA_GROUPS(op##_digests) { DELTA_GROUP_ITEM(k); TRX; phase_digests(s, w, x, k, lid, lsz, sh __UKL_ARGS); }    \
-    ITEMS(op##_dscan) TR; return GATE(1u); }                                                                        \
-    DELTA_GROUPS(op##_dscan) { DELTA_GROUP_ITEM(k); TRX; phase_dscan(w, x, lid, lsz, sh __UKL_ARGS); }              \
-    ITEMS(op##_parts) TR; return GATE(U32(w.b, W_NPART)); }                                                         \
-    DELTA_LANES(op##_parts) { DELTA_ITEM(q); TRX; phase_parts(s, w, x, out, q); }                                    \
-    ITEMS(op##_ksort) TR; return GATE(n_out(w)); }                                                                  \
-    DELTA_LANES(op##_ksort) { DELTA_ITEM(o); TR; W(w, pa, kill_rank(KC(w), n_out(w), o)) = o; }                      \
-    ITEMS(op##_kpasses) TR; return GATE(delta_sort_items(w.b, W_KSORT, n_out(w))); }                                \
-    DELTA_LANES(op##_kpasses) { DELTA_ITEM(o); TR; kill_place_pass(KC(w), w.b, W_KSORT, w.b, w.pa, w.pb, n_out(w), o); } \
-    DELTA_AGAIN(op##_kpasses) { TR; return !refused(w) && delta_sort_again(w.b, W_KSORT, n_out(w)); }              \
-    ITEMS(op##_gone) TR; return GATE(n_out(w)); }                                                                   \
-    DELTA_LANES(op##_gone) { DELTA_ITEM(q); TR; phase_gone(s, w, out, q); }                                          \
-    ITEMS(op##_stats) TR; return GATE(stat_items(stats_of(out, src_arity(s)))); }                                  \
+    /* the partitions numbered, the digests' chunks scanned (one group) */                                          \
+    ITEMS(op##_pscan) TR; return GATE(1u); }                                                                        \
+    DELTA_GROUPS(op##_pscan) {                                                                                      \
+        DELTA_GROUP_ITEM(k);                                                                                        \
+        TRX;                                                                                                        \
+        phase_pscan(w, out, lid, lsz, scratch, meter __UKL_ARGS);                                                   \
+        phase_dscan(w, x, lid, lsz, sh __UKL_ARGS);                                                                 \
+    }                                                                                                               \
+    /* each partition's change; each row out and index element placed in its chunk of its sort */                   \
+    ITEMS(op##_ranks) TR; return GATE(umax(umax(U32(w.b, W_NPART), n_out(w)), NX)); }                               \
+    DELTA_LANES(op##_ranks) {                                                                                       \
+        DELTA_ITEM(k);                                                                                              \
+        TRX;                                                                                                        \
+        if (k < U32(w.b, W_NPART)) phase_parts(s, w, x, out, k);                                                    \
+        if (k < n_out(w)) W(w, pa, kill_rank(KC(w), n_out(w), k)) = k;                                              \
+        if (k < NX) U32(x.b, x.xa + 4u * ix_rank(xctx(x, ix_of(s, out)), NX, k)) = k;                               \
+    }                                                                                                               \
+    /* the kills' and the indexes' merge passes, a lane an element of either */                                      \
+    ITEMS(op##_xpasses) TR; return GATE(delta_sort_items(w.b, W_KSORT, n_out(w)) + delta_sort_items(w.b, W_XSORT, NX)); } \
+    DELTA_LANES(op##_xpasses) {                                                                                     \
+        DELTA_ITEM(k);                                                                                              \
+        TRX;                                                                                                        \
+        uint32_t kc = delta_sort_items(w.b, W_KSORT, n_out(w));                                                     \
+        if (k < kc) kill_place_pass(KC(w), w.b, W_KSORT, w.b, w.pa, w.pb, n_out(w), k);                             \
+        else ix_place_pass(xctx(x, ix_of(s, out)), w.b, W_XSORT, x.b, x.xa, x.xb, NX, k - kc);                      \
+    }                                                                                                               \
+    DELTA_AGAIN(op##_xpasses) {                                                                                     \
+        TR;                                                                                                         \
+        if (refused(w)) return false;                                                                               \
+        bool kills = delta_sort_again(w.b, W_KSORT, n_out(w)), ixs = delta_sort_again(w.b, W_XSORT, NX);            \
+        return kills || ixs;                                                                                        \
+    }                                                                                                               \
+    /* the kills placed; each index's rows and marks placed, its buckets' starts */                                  \
+    ITEMS(op##_places) TR; return GATE(umax(umax(n_out(w), NX), keys_of(s).n * (ix_of(s, out).cap + 1u))); }       \
+    DELTA_LANES(op##_places) {                                                                                      \
+        DELTA_ITEM(k);                                                                                              \
+        TRX;                                                                                                        \
+        uint32_t sorted = delta_sort_from(w.b, W_XSORT, x.xa, x.xb);                                                \
+        if (k < n_out(w)) phase_gone(s, w, out, k);                                                                 \
+        if (k < NX) phase_ixplace(out, x, ix_of(s, out), sorted, k);                                                \
+        if (k < keys_of(s).n * (ix_of(s, out).cap + 1u)) phase_ixoffs(out, x, ix_of(s, out), sorted, k);            \
+    }                                                                                                               \
+    ITEMS(op##_stats) TR; return GATE(stat_items(stats_of(out, src_arity(s)))); }                                   \
     DELTA_GROUPS(op##_stats) { DELTA_GROUP_ITEM(k); TRX; phase_stats(out, x, stats_of(out, src_arity(s)), k, lid, lsz, sh __UKL_ARGS); } \
-    ITEMS(op##_ranges) TR; return GATE(src_arity(s) + 8u); }                                                        \
-    DELTA_LANES(op##_ranges) { DELTA_ITEM(c); TRX; phase_ranges(out, x, stats_of(out, src_arity(s)), c); }           \
-    ITEMS(op##_ixopen) TR; return GATE(1u); }                                                                       \
-    DELTA_LANES(op##_ixopen) { DELTA_ITEM(k); TR; phase_ixopen(out, ix_of(s, out), meter); }                         \
-    ITEMS(op##_ixhash) TR; return GATE(keys_of(s).n * n_add(w)); }                                                  \
-    DELTA_LANES(op##_ixhash) { DELTA_ITEM(e); TRX; phase_ixhash(out, x, ix_of(s, out), e); }                         \
-    ITEMS(op##_ixsort) TR; return GATE(keys_of(s).n * n_add(w)); }                                                  \
-    DELTA_LANES(op##_ixsort) {                                                                                      \
-        DELTA_ITEM(e);                                                                                              \
+    /* each column's range; each index place's mark */                                                              \
+    ITEMS(op##_ranges) TR; return GATE(umax(src_arity(s) + 8u, NX)); }                                              \
+    DELTA_LANES(op##_ranges) {                                                                                      \
+        DELTA_ITEM(k);                                                                                              \
         TRX;                                                                                                        \
-        U32(x.b, x.xa + 4u * ix_rank(xctx(x, ix_of(s, out)), keys_of(s).n * n_add(w), e)) = e;                      \
+        if (k < src_arity(s) + 8u) phase_ranges(out, x, stats_of(out, src_arity(s)), k);                            \
+        if (k < NX) phase_ixmarks(out, x, ix_of(s, out), delta_sort_from(w.b, W_XSORT, x.xa, x.xb), k);             \
     }                                                                                                               \
-    ITEMS(op##_ixpasses) TR; return GATE(delta_sort_items(w.b, W_XSORT, keys_of(s).n * n_add(w))); }                \
-    DELTA_LANES(op##_ixpasses) {                                                                                    \
-        DELTA_ITEM(e);                                                                                              \
-        TRX;                                                                                                        \
-        ix_place_pass(xctx(x, ix_of(s, out)), w.b, W_XSORT, x.b, x.xa, x.xb, keys_of(s).n * n_add(w), e);           \
-    }                                                                                                               \
-    DELTA_AGAIN(op##_ixpasses) { TR; return !refused(w) && delta_sort_again(w.b, W_XSORT, keys_of(s).n * n_add(w)); } \
-    ITEMS(op##_ixplace) TR; return GATE(keys_of(s).n * n_add(w)); }                                                 \
-    DELTA_LANES(op##_ixplace) { DELTA_ITEM(q); TRX; phase_ixplace(out, x, ix_of(s, out), delta_sort_from(w.b, W_XSORT, x.xa, x.xb), q); } \
-    ITEMS(op##_ixoffs) TR; return GATE(keys_of(s).n * (ix_of(s, out).cap + 1u)); }                                 \
-    DELTA_LANES(op##_ixoffs) { DELTA_ITEM(q); TRX; phase_ixoffs(out, x, ix_of(s, out), delta_sort_from(w.b, W_XSORT, x.xa, x.xb), q); } \
-    ITEMS(op##_ixmarks) TR; return GATE(keys_of(s).n * n_add(w)); }                                                 \
-    DELTA_LANES(op##_ixmarks) { DELTA_ITEM(q); TRX; phase_ixmarks(out, x, ix_of(s, out), delta_sort_from(w.b, W_XSORT, x.xa, x.xb), q); } \
-    ITEMS(op##_freeze) TR; return GATE(1u); }                                                                       \
-    DELTA_LANES(op##_freeze) { DELTA_ITEM(k); TR; phase_freeze(s, out); }                                            \
     ITEMS(op##_sketch) TR; return GATE(src_arity(s)); }                                                             \
-    DELTA_LANES(op##_sketch) { DELTA_ITEM(c); TR; phase_sketch(s, w, out, SLOT(SCRATCH), c, meter); }                \
+    DELTA_GROUPS(op##_sketch) { DELTA_GROUP_ITEM(c); TR; phase_sketch(s, out, SLOT(SCRATCH), c, lid, lsz, scratch, sh, meter __UKL_ARGS); } \
+    /* the freeze, the header */                                                                                    \
     ITEMS(op##_seal) return 1u; }                                                                                   \
-    DELTA_LANES(op##_seal) { DELTA_ITEM(k); TR; phase_seal(s, w, out, CONTROL); }
+    DELTA_LANES(op##_seal) {                                                                                        \
+        DELTA_ITEM(k);                                                                                              \
+        TR;                                                                                                         \
+        if (!refused(w)) phase_freeze(s, out);                                                                      \
+        phase_seal(s, w, out, CONTROL);                                                                             \
+    }
 
 #define CONS true
 #define SCRATCH 3u

@@ -315,8 +315,8 @@ UKL_INLINE int64_t sk_unzigzag(uint64_t v) { return (int64_t)(v >> 1) ^ -(int64_
 UKL_INLINE uint64_t sk_zigzag(int64_t v) { return (uint64_t)((v << 1) ^ (v >> 63)); }
 
 // The sketch whose kept bytes are `b[at..end]` (`SketchW::decode`): false, and cleared, when they are not a sketch's of
-// this format.
-UKL_INLINE bool sk_decode_in(Sk w, CBlk b, uint32_t at, uint32_t end) {
+// this format. With `cleared`, its form's page or rank counts are already 0 (a group cleared them, `sk_clear_form`).
+UKL_INLINE bool sk_decode_in(Sk w, CBlk b, uint32_t at, uint32_t end, bool cleared) {
     SkIn in = {b, at, end, true};
     if (sk_byte(&in) != SKETCH_FORMAT) return false;
     uint32_t form = sk_byte(&in);
@@ -335,7 +335,8 @@ UKL_INLINE bool sk_decode_in(Sk w, CBlk b, uint32_t at, uint32_t end) {
         }
     } else if (form == SK_PAGE_FORM) {
         w->page_base = sk_unzigzag(sk_varint(&in));
-        for (uint32_t i = 0u; i < SKETCH_DENSE_WIDTH; i++) w->page[i] = 0u;
+        if (!cleared)
+            for (uint32_t i = 0u; i < SKETCH_DENSE_WIDTH; i++) w->page[i] = 0u;
         w->page_ndv = w->page_sq = 0u;
         uint64_t i = 0u;
         for (uint64_t e = 0u; e < count; e++) {
@@ -364,7 +365,7 @@ UKL_INLINE bool sk_decode_in(Sk w, CBlk b, uint32_t at, uint32_t end) {
             sk_label_put(w, v, sk_varint(&from));
         }
     } else if (form == SK_RANKS_FORM) {
-        sk_ranks_begin(w);
+        if (!cleared) sk_ranks_begin(w);
         uint64_t i = 0u;
         for (uint64_t e = 0u; e < count; e++) {
             uint64_t step = sk_varint(&in);
@@ -380,7 +381,12 @@ UKL_INLINE bool sk_decode_in(Sk w, CBlk b, uint32_t at, uint32_t end) {
     return in.ok && in.at == end;
 }
 UKL_INLINE bool sk_decode(Sk w, CBlk b, uint32_t at, uint32_t end) {
-    bool ok = sk_decode_in(w, b, at, end);
+    bool ok = sk_decode_in(w, b, at, end, false);
+    if (!ok) sk_clear(w);
+    return ok;
+}
+UKL_INLINE bool sk_decode_cleared(Sk w, CBlk b, uint32_t at, uint32_t end) {
+    bool ok = sk_decode_in(w, b, at, end, true);
     if (!ok) sk_clear(w);
     return ok;
 }
@@ -456,3 +462,103 @@ UKL_INLINE uint32_t sk_settle(Sk w, Blk b, UKL_GLOBAL uint32_t* meter, uint32_t 
     *len = count.n;
     return at;
 }
+
+// ---- by a threadgroup -----------------------------------------------------------------------------------------------
+//
+// What a sketch's work does across its arrays, by the threads of a group (every one calls each, holding barriers): the
+// arrays a kept form decodes into cleared, and its kept bytes counted and written, each entry at its place by a scan
+// of the entries' lengths (the same bytes `sk_emit` writes).
+
+// The page or rank counts the kept bytes `b[at..end]` decode into, cleared (`sk_decode_cleared` reads them so).
+UKL_INLINE void sk_clear_form(Sk w, CBlk b, uint32_t at, uint32_t end, uint32_t lid, uint32_t lsz) {
+    uint32_t form = end - at >= 2u ? b[at + 1u] : NONE;
+    if (form == SK_PAGE_FORM)
+        for (uint32_t i = lid; i < SKETCH_DENSE_WIDTH; i += lsz) w->page[i] = 0u;
+    if (form == SK_RANKS_FORM)
+        for (uint32_t i = lid; i < SKETCH_REGISTERS * SKETCH_RANKS; i += lsz) w->ranks[i] = 0u;
+}
+
+UKL_INLINE uint32_t sk_vlen(uint64_t v) {
+    uint32_t n = 1u;
+    for (; v >= 0x80u; v >>= 7) n++;
+    return n;
+}
+// `v` as a varint at `at` of `b`: where it ends.
+UKL_INLINE uint32_t sk_vput(Blk b, uint32_t at, uint64_t v) {
+    for (; v >= 0x80u; v >>= 7) b[at++] = (uint8_t)(v | 0x80u);
+    b[at++] = (uint8_t)v;
+    return at;
+}
+
+// The `n` counts' entries that are not 0, each its index's step from the one before it (from 0) and its count: their
+// bytes from `pos`, written at `at + pos` of `b` when `b` is set; where they end.
+UKL_INLINE uint32_t sk_group_steps(CLIF_BLOCK_SPACE const uint32_t* counts, uint32_t n, Blk b, uint32_t at, uint32_t pos, uint32_t lid, uint32_t lsz, UKL_LOCAL uint32_t* scratch __UKL_PARAMS) {
+    uint32_t last = 0u;
+    for (uint32_t base = 0u; base < n; base += lsz) {
+        uint32_t i = base + lid, k = i < n ? counts[i] : 0u;
+        UklScan m = ukl_tg_exclusive_max(k != 0u ? i + 1u : 0u, lid, lsz, scratch __UKL_ARGS);
+        uint32_t prev = m.exclusive != 0u ? m.exclusive - 1u : last;
+        UklScan o = ukl_tg_exclusive_sum(k != 0u ? sk_vlen(i - prev) + sk_vlen(k) : 0u, lid, lsz, scratch __UKL_ARGS);
+        if (b != 0 && k != 0u) sk_vput(b, sk_vput(b, at + pos + o.exclusive, i - prev), k);
+        pos += o.total;
+        if (m.total != 0u) last = m.total - 1u;
+    }
+    return pos;
+}
+
+// Its kept bytes (`sk_emit`'s), by the group: their length; written at `at` of `b` when `b` is set.
+UKL_INLINE uint32_t sk_group_emit(Sk w, Blk b, uint32_t at, uint32_t lid, uint32_t lsz, UKL_LOCAL uint32_t* scratch __UKL_PARAMS) {
+    uint32_t form = (uint32_t)w->form, pos = 2u + sk_vlen(w->rows);
+    if (b != 0 && lid == 0u) {
+        b[at] = SKETCH_FORMAT;
+        b[at + 1u] = (uint8_t)form;
+        sk_vput(b, at + 2u, w->rows);
+    }
+    if (b != 0)
+        for (uint32_t r = lid; r < SKETCH_REGISTERS; r += lsz) b[at + pos + r] = w->registers[r];
+    pos += SKETCH_REGISTERS;
+    for (uint32_t base = 0u; base < SKETCH_BUCKETS; base += lsz) {
+        uint32_t k = base + lid;
+        uint64_t z = k < SKETCH_BUCKETS ? sk_zigzag(w->counters[k]) : 0u;
+        UklScan o = ukl_tg_exclusive_sum(k < SKETCH_BUCKETS ? sk_vlen(z) : 0u, lid, lsz, scratch __UKL_ARGS);
+        if (b != 0 && k < SKETCH_BUCKETS) sk_vput(b, at + pos + o.exclusive, z);
+        pos += o.total;
+    }
+    if (form == SK_FEW_FORM) {
+        // At most `FEW` entries: each thread counts them, one writes them.
+        uint32_t n = (uint32_t)w->few_len, len = sk_vlen(n);
+        for (uint32_t i = 0u; i < n; i++) len += sk_vlen(sk_zigzag(w->few[i][0])) + sk_vlen((uint64_t)w->few[i][1]);
+        if (b != 0 && lid == 0u) {
+            uint32_t q = sk_vput(b, at + pos, n);
+            for (uint32_t i = 0u; i < n; i++) q = sk_vput(b, sk_vput(b, q, sk_zigzag(w->few[i][0])), (uint64_t)w->few[i][1]);
+        }
+        return pos + len;
+    }
+    if (form == SK_LABELS_FORM) {
+        uint32_t cap = (uint32_t)w->label_cap, n = 0u;
+        for (uint32_t i = lid; i < cap; i += lsz) n += w->labels[i][0] != SK_NO_VALUE && w->labels[i][1] > 0 ? 1u : 0u;
+        n = ukl_tg_sum(n, lid, lsz, scratch __UKL_ARGS);
+        if (b != 0 && lid == 0u) sk_vput(b, at + pos, n);
+        pos += sk_vlen(n);
+        for (uint32_t base = 0u; base < cap; base += lsz) {
+            uint32_t i = base + lid;
+            bool f = i < cap && w->labels[i][0] != SK_NO_VALUE && w->labels[i][1] > 0;
+            UklScan o = ukl_tg_exclusive_sum(f ? sk_vlen((uint64_t)w->labels[i][0]) + sk_vlen((uint64_t)w->labels[i][1]) : 0u, lid, lsz, scratch __UKL_ARGS);
+            if (b != 0 && f) sk_vput(b, sk_vput(b, at + pos + o.exclusive, (uint64_t)w->labels[i][0]), (uint64_t)w->labels[i][1]);
+            pos += o.total;
+        }
+        return pos;
+    }
+    bool page = form == SK_PAGE_FORM;
+    CLIF_BLOCK_SPACE const uint32_t* counts = page ? (CLIF_BLOCK_SPACE const uint32_t*)w->page : (CLIF_BLOCK_SPACE const uint32_t*)w->ranks;
+    uint32_t len = page ? SKETCH_DENSE_WIDTH : SKETCH_REGISTERS * SKETCH_RANKS, n = 0u;
+    for (uint32_t i = lid; i < len; i += lsz) n += counts[i] != 0u ? 1u : 0u;
+    n = ukl_tg_sum(n, lid, lsz, scratch __UKL_ARGS);
+    if (b != 0 && lid == 0u) {
+        uint32_t q = sk_vput(b, at + pos, n);
+        if (page) sk_vput(b, q, sk_zigzag(w->page_base));
+    }
+    pos += sk_vlen(n) + (page ? sk_vlen(sk_zigzag(w->page_base)) : 0u);
+    return sk_group_steps(counts, len, b, at, pos, lid, lsz, scratch __UKL_ARGS);
+}
+

@@ -186,3 +186,35 @@ UKL_INLINE UklScan64 ukl_tg_exclusive_sum_u64(uint64_t v, uint32_t lid, uint32_t
     r.total = total;
     return r;
 }
+
+// The exclusive maximum of `v` over the group's threads in order (0 for the first), and the group's maximum: a
+// compaction's previous set index, as `index + 1` (0: none). `scratch`: `UKL_TG_SCRATCH` words.
+UKL_INLINE UklScan ukl_tg_exclusive_max(uint32_t v, uint32_t lid, uint32_t lsz, UKL_LOCAL uint32_t* scratch __UKL_PARAMS)
+{
+    uint32_t lane = lid % UKL_SIMD_WIDTH, sg = lid / UKL_SIMD_WIDTH, groups = lsz / UKL_SIMD_WIDTH;
+    uint32_t inc = v;
+    for (uint32_t d = 1u; d < UKL_SIMD_WIDTH; d <<= 1u) {
+        uint32_t u = ukl_sg_shuffle_up(inc, d __UKL_ARGS);
+        if (lane >= d && u > inc)
+            inc = u;
+    }
+    uint32_t below = ukl_sg_shuffle_up(inc, 1u __UKL_ARGS);
+    if (lane == 0u)
+        below = 0u;
+    if (lane == UKL_SIMD_WIDTH - 1u)
+        scratch[sg] = inc;
+    ukl_tg_barrier();
+    uint32_t before = 0u, total = 0u;
+    for (uint32_t k = 0u; k < groups; k++) {
+        uint32_t x = scratch[k];
+        if (k < sg && x > before)
+            before = x;
+        if (x > total)
+            total = x;
+    }
+    ukl_tg_barrier();
+    UklScan r;
+    r.exclusive = before > below ? before : below;
+    r.total = total;
+    return r;
+}
