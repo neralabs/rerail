@@ -109,7 +109,7 @@ describe("an OMP or Pi session with RERAIL_AUTOSTART=0", () => {
     await runThenClose(session, "session_start", async () => await session.commands.get("rerail-start")?.("", session.context));
     expect({ daemon: daemonOf(place), shown: session.shown }).toEqual({
       daemon: "none",
-      shown: [`● Rerail is on in app. 0 rules are on, as you left them.\n  ${NOT_RUNNING}`, NOT_RUNNING],
+      shown: [`● Rerail is on in app. 0 rules are on, as you left them.\n  △ ${NOT_RUNNING}`, NOT_RUNNING],
     });
   }, TEST_TIMEOUT_MS);
 

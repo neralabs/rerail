@@ -112,6 +112,7 @@ export interface RerailDaemonOptions {
   /**
    * The port a daemon started in place of another tries first: the one that daemon held, so a dashboard link shown for
    * it still answers. When it cannot be had, the start goes on as `port` says; an explicit `port` other than 0 wins.
+   * Taken, it is not written to `portFile`: it stays the port of the daemon this one replaced.
    */
   preferredPort?: number;
   /** Where the port the daemon listens on is remembered, so dashboard links outlive a restart. */
@@ -349,6 +350,17 @@ function foundInstead(text: string | undefined): string {
  * thrown, else its message. An error a worker thread threw arrives with the stack it had in that thread.
  */
 const errorStack = (error: unknown): string => (error instanceof Error ? error.stack ?? error.message : String(error));
+
+/**
+ * Whether a started daemon writes the port it listens on (`port`) as the one links point at, in place of `remembered`.
+ * Not after a start that asked for any free port (`0`), which takes a throwaway one, nor for the port it tried first
+ * (`preferredPort`), which was the replaced daemon's: a later start keeps the port the person or the default made the
+ * home's. A port given as `port`, and one a start went on to past the port it tried first, are written as before.
+ */
+function remembersPort(options: Pick<RerailDaemonOptions, "port" | "preferredPort">, port: number, remembered: number | undefined): boolean {
+  if (options.port === 0 || port === remembered) return false;
+  return options.port !== undefined || port !== options.preferredPort;
+}
 
 /** Remembering the port is a convenience: a failed write leaves the daemon running and is only reported. */
 async function rememberPort(portFile: string, port: number): Promise<void> {
@@ -760,8 +772,7 @@ export class RerailDaemon {
     const options = this.#options;
     if (options.stateFile !== undefined) await this.#record(options.stateFile);
     this.#startRemoteSink();
-    // A start that asked for any free port (`0`) takes a throwaway one; it does not replace the port links point at.
-    if (options.portFile !== undefined && options.port !== 0 && this.port !== remembered) await rememberPort(options.portFile, this.port);
+    if (options.portFile !== undefined && remembersPort(options, this.port, remembered)) await rememberPort(options.portFile, this.port);
   }
 
   /** Once nothing can fail the start: checkouts whose folder is gone stop costing every read of their repository. */
@@ -1683,7 +1694,7 @@ function daemonPage(arguments_: DaemonArguments): { dev: boolean; uiRoot: string
   return { dev, uiRoot };
 }
 
-/** The daemon options its arguments set only when given: its port, its state file and its TLS material. */
+/** The daemon options its arguments set only when given: its port, the port it tries first, its state file and its TLS material. */
 function optionalDaemonOptions(arguments_: DaemonArguments, tls: DaemonTlsMaterial | undefined): Pick<RerailDaemonOptions, "port" | "preferredPort" | "stateFile" | "tls"> {
   return {
     ...(arguments_.port === undefined ? {} : { port: arguments_.port }),

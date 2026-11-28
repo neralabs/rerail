@@ -1,6 +1,7 @@
 import { existsSync, watch } from "node:fs";
 import { on } from "node:events";
 import { createServer, request as httpRequest, type IncomingMessage } from "node:http";
+import { Server as NetServer } from "node:net";
 import { chmod, lstat, mkdtemp, mkdir, readdir, readFile, realpath, rename, stat, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
@@ -1006,35 +1007,50 @@ describe("Rerail daemon", () => {
     return ports;
   }
 
-  // A daemon started in place of another (a hook's replacement, its own restart) tries the port that one held first, so
-  // a dashboard link shown for it still answers, whether it was asked for any port or named none; where another program
-  // took that port in between, it goes on as it would without one, and its start does not fail.
+  // A daemon started in place of another tries that daemon's port first, so a dashboard link shown for it still answers:
+  // OMP's and Pi's attach asks for any free port, a hook's replacement and the daemon's own restart for none. Where
+  // another program holds that port it goes on as it would without one, and its start does not fail. Either way that
+  // port stays the other daemon's, so later starts keep the port the home remembers.
   it.each([
     { asked: "any free port", port: 0, then: "a free one" },
     { asked: "no port", port: undefined, then: "the remembered one" },
-  ])("asked for $asked in place of another daemon, goes on to $then where that daemon's port is held, and comes back on it when free", async ({ port }) => {
+  ])("asked for $asked in place of another daemon, takes that daemon's port or else $then, and remembers neither", async ({ port }) => {
     root = await mkdtemp(join(tmpdir(), "rerail-daemon-"));
     process.env.RERAIL_HOME = join(root, "home");
     const portFile = join(root, "daemon-port.json");
-    const options = { version: "0.0.0-test", databasePath: join(root, "rerail.sqlite"), workspaceRoot: root, nativeHealth: healthyNative, portFile, ...(port === undefined ? {} : { port }) };
+    const stateFile = join(root, "daemon.json");
     const [old = 0, remembered = 0] = await freePorts(2);
     await writeFile(portFile, `${JSON.stringify({ port: remembered })}\n`);
+    const options = { version: "0.0.0-test", databasePath: join(root, "rerail.sqlite"), workspaceRoot: root, nativeHealth: healthyNative, portFile, stateFile, preferredPort: old, ...(port === undefined ? {} : { port }) };
 
     const blocker = createServer();
     await new Promise<void>((resolveListening) => blocker.listen(old, "127.0.0.1", () => resolveListening()));
     try {
-      const moved = await RerailDaemon.start({ ...options, preferredPort: old });
+      const moved = await RerailDaemon.start(options);
       daemons.push(moved);
-      expect(moved.port).not.toBe(old);
       if (port === undefined) expect(moved.port).toBe(remembered);
+      else expect([old, remembered]).not.toContain(moved.port);
+      // Every link Rerail shows comes from the state file.
+      expect((JSON.parse(await readFile(stateFile, "utf8")) as DaemonState).url).toBe(`http://127.0.0.1:${moved.port}/`);
       await moved.close();
     } finally {
       await new Promise<void>((resolveClosed) => blocker.close(() => resolveClosed()));
     }
 
-    const back = await RerailDaemon.start({ ...options, preferredPort: old });
+    const back = await RerailDaemon.start(options);
     daemons.push(back);
     expect(back.port).toBe(old);
+    expect(JSON.parse(await readFile(portFile, "utf8"))).toEqual({ port: remembered });
+  });
+
+  // A daemon started on a port the person named restarts with that port and the same one to try first; it is theirs.
+  it("remembers a port it was given, even where it is also the port to try first", async () => {
+    root = await mkdtemp(join(tmpdir(), "rerail-daemon-"));
+    const portFile = join(root, "daemon-port.json");
+    const [named = 0] = await freePorts(1);
+    const daemon = await start({ port: named, preferredPort: named, portFile });
+    expect(daemon.port).toBe(named);
+    expect(JSON.parse(await readFile(portFile, "utf8"))).toEqual({ port: named });
   });
 
   it("restarts itself trying first the port it listens on, in place of any it was given to try", () => {
@@ -1058,6 +1074,44 @@ describe("Rerail daemon", () => {
     const daemon = await RerailDaemon.start({ version: "0.0.0-test", databasePath: join(root, "rerail.sqlite"), workspaceRoot: root, nativeHealth: healthyNative, portFile });
     daemons.push(daemon);
     expect(daemon.port).not.toBe(1);
+  });
+
+  /**
+   * Runs `body` while a listen on `port` fails as on an address the machine cannot bind (EADDRNOTAVAIL), an error that
+   * is neither held nor refused; a listen on any other port goes through. No socket binds `port`, so every system
+   * gives the same error.
+   */
+  async function withPortUnbindable<T>(port: number, body: () => Promise<T>): Promise<T> {
+    const listen = NetServer.prototype.listen;
+    const unbindable = vi.spyOn(NetServer.prototype, "listen").mockImplementation(function (this: NetServer, ...args: Parameters<NetServer["listen"]>) {
+      if (args[0] !== port) return listen.apply(this, args);
+      const error = Object.assign(new Error(`listen EADDRNOTAVAIL: address not available 127.0.0.1:${port}`), { code: "EADDRNOTAVAIL" });
+      process.nextTick(() => this.emit("error", error));
+      return this;
+    });
+    try {
+      return await body();
+    } finally {
+      unbindable.mockRestore();
+    }
+  }
+
+  // The port a daemon started in place of another tries first is only a first try: where it cannot be had for any
+  // reason, the start goes on as `port` says, as from the remembered port, so the person still has a daemon.
+  it("moves on from the port it tries first whatever the error, and runs on a free port", async () => {
+    root = await mkdtemp(join(tmpdir(), "rerail-daemon-"));
+    const tried = DEFAULT_DAEMON_PORT + 1;
+    const daemon = await withPortUnbindable(tried, async () => await start({ preferredPort: tried, portFile: join(root, "daemon-port.json") }));
+    expect(daemon.port).not.toBe(tried);
+    expect((await getJson(daemon, "/healthz")).status).toBe(200);
+  });
+
+  // The default port is no wish: an error on it that is neither held nor refused fails the start.
+  it("fails the start on an error on the default port that is neither held nor refused", async () => {
+    root = await mkdtemp(join(tmpdir(), "rerail-daemon-"));
+    process.env.RERAIL_HOME = join(root, "home");
+    const options = { version: "0.0.0-test", databasePath: join(root, "rerail.sqlite"), workspaceRoot: root, nativeHealth: healthyNative, portFile: join(root, "daemon-port.json") };
+    await expect(withPortUnbindable(DEFAULT_DAEMON_PORT, async () => await RerailDaemon.start(options))).rejects.toMatchObject({ code: "EADDRNOTAVAIL" });
   });
 
   it("records the engine pipe it listens on when another process holds the default one", async () => {

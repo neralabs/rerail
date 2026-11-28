@@ -646,7 +646,7 @@ describe("record writes while another process holds the write lock", () => {
   it.each([
     {
       write: "a session's settings change",
-      act: (controls: SqliteAuditControlStore): unknown => controls.updateSettings(session.sessionId, { mode: "log" }).settings.mode,
+      act: (controls: SqliteAuditControlStore): unknown => controls.updateSettings(session.sessionId, { mode: "log" }).mode,
       made: "log",
     },
     {

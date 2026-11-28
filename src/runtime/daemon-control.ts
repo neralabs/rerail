@@ -1605,7 +1605,9 @@ export async function startDaemonForPackage(
  * replaced by one launched from it: always for a daemon of a release before the engine's proof ({@link OlderDaemon}).
  * The replacement tries the port `found` had first ({@link DaemonLaunchOptions.preferredPort}), so a dashboard link
  * shown for `found` still answers: `rerail start` shows one before a coding agent's hook, and `/rerail-start` just
- * before the extension attaches again. Where that port cannot be had, it goes on as the caller's `port` says.
+ * before the extension attaches again. Where that port cannot be had, it goes on as the caller's `port` says (a free
+ * one for OMP's and Pi's `port: 0`). It never remembers `found`'s port, so later starts keep the port the person or the
+ * default made theirs.
  */
 async function keptOrReplaced(
   control: DaemonControl,

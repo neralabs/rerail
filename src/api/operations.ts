@@ -22,7 +22,7 @@ import { approvalKey, packSubject, readApprovals } from "../engine/catalog/rule-
 import { rulePackListSchema } from "./rule-pack-contracts.js";
 import { SESSION_EVENT_PAGE_LIMIT, type DeclinedViolations, type DeclineNote, type StoredSessionSummary } from "../runtime/session-store.js";
 import type { ApiCaller } from "../engine/catalog/repository-model.js";
-import { ApiError, defineOperation, experimentalSummary, type Operation, type RerailApiStores } from "./operation.js";
+import { ApiError, defineOperation, experimentalSummary, writtenWhenFree, type Operation, type RerailApiStores } from "./operation.js";
 import { mergeAssistOperations } from "./merge-assist-operations.js";
 import { activityRules, callerRepositoryKey, checkoutAt, checkoutRuleCatalog, historyScope, repositoryOperations, within } from "./repository-operations.js";
 import { inactiveField, inactiveOf, targetShape } from "./repository-contracts.js";
@@ -596,13 +596,15 @@ export const operations: readonly Operation[] = [
     params: sessionId,
     body: auditSettingsPatchSchema,
     output: auditControlsResponseSchema,
-    handler: (stores, input, caller) => {
+    handler: async (stores, input, caller) => {
       if (caller.kind === "agent") {
         throw new ApiError(403, "agent-not-permitted", "only a person changes a checkout's ongoing audit settings, with rerail settings --session <id>");
       }
       requireSession(stores, caller, input.sessionId);
       const { sessionId, ...patch } = input;
-      stores.auditControls().updateSettings(sessionId, patch);
+      const controls = stores.auditControls();
+      // Merged over the settings as the database holds them once the write lock is free, and saved in that transaction.
+      await writtenWhenFree(stores, database => controls.updateSettings(sessionId, patch, database));
       return auditControlsResponse(stores, sessionId);
     },
   }),

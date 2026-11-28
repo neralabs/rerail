@@ -1288,7 +1288,7 @@ export function setupEnvironment(context: SetupContext, port?: number): SetupEnv
  * take, and when `RERAIL_AUTOSTART` kept it from a daemon, the line a session's start says then ({@link DashboardLink}).
  */
 function linkWithoutDaemon(url: string, error: unknown): DashboardLink {
-  const reason = `the dashboard did not start: ${error instanceof Error ? error.message : String(error)}`;
+  const reason = `The dashboard did not start: ${error instanceof Error ? error.message : String(error)}`;
   const notRunning = autostartOffLine(error);
   return { url, browserOpened: false, noBrowserReason: reason, ...(notRunning === undefined ? {} : { notRunning }) };
 }

@@ -15,6 +15,8 @@ const run = promisify(execFile);
 export const PACKAGE_ROOT = realpathSync.native(process.cwd());
 const CLI = join("dist", "cli", "cli.js");
 const places: Place[] = [];
+/** Every folder a place was made in, removed even where making the place failed part way. */
+const roots: string[] = [];
 
 /** A Rerail home and user home of their own, and the repository `app` set up there with no rules. */
 export interface Place {
@@ -35,6 +37,7 @@ export interface PlaceOptions {
 /** A new place, removed by {@link removePlaces}. */
 export function makePlace({ started = true, autostart = "on" }: PlaceOptions = {}): Place {
   const root = realpathSync.native(mkdtempSync(join(tmpdir(), "rerail-start-link-")));
+  roots.push(root);
   const user = join(root, "user-home");
   const home = join(root, "rerail-home");
   const repo = join(root, "app");
@@ -52,12 +55,13 @@ export function makePlace({ started = true, autostart = "on" }: PlaceOptions = {
   return place;
 }
 
-/** Stops whichever daemon each place made since the last call runs, this package's or the other's, then removes it. */
+/**
+ * Stops whichever daemon each place made since the last call runs, this package's or the other's, since it holds files
+ * under the place's folder until it ends; then removes every folder made since, a place's that failed part way too.
+ */
 export async function removePlaces(): Promise<void> {
-  for (const place of places.splice(0)) {
-    await rerail(PACKAGE_ROOT, place, ["daemon", "stop"]);
-    await removeFolder(place.root);
-  }
+  for (const place of places.splice(0)) await rerail(PACKAGE_ROOT, place, ["daemon", "stop"]);
+  for (const root of roots.splice(0)) await removeFolder(root);
 }
 
 /** `rerail <args>` in the repository, from the package at `packageRoot`: its exit code and stdout. */

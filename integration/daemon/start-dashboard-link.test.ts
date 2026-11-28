@@ -1,12 +1,13 @@
 /**
  * `rerail start` and `rerail start --json` in a repository set up and started before, through the built CLI and a real
- * daemon, as a person runs them: autostart on, a Rerail home and a user home of their own, no browser. `--json` changes
- * the form of the answer only: each form ends on the dashboard's link and leaves the daemon as the other does. In OMP
- * and Pi the extension attaches its session again right after `/rerail-start`, and a coding agent's hook may replace
- * another package's daemon after `rerail start`: the link shown before still answers afterwards.
+ * daemon, as a person runs them: autostart on unless a case turns it off, a Rerail home and a user home of their own, no
+ * browser. `--json` changes the form of the answer only: each form ends on the dashboard's link and leaves the daemon as
+ * the other does. In OMP and Pi the extension attaches its session again right after `/rerail-start`, and a coding
+ * agent's hook may replace another package's daemon after `rerail start`: the link shown before still answers afterwards.
  */
 import { spawn } from "node:child_process";
 import { once } from "node:events";
+import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { text } from "node:stream/consumers";
 import { afterEach, describe, expect, test, vi } from "vitest";
@@ -50,9 +51,18 @@ async function start(place: Place, json: boolean): Promise<Outcome> {
   return { code, lines: lines.map(line => line.replace(daemon.url, "<daemon>/")), daemon: `${whose} package's, pid ${daemon.pid}` };
 }
 
-/** The rules page's link as a start shows it, scoped to the repository and its checkout. */
-function rulesLink(place: Place): string {
-  return `  <daemon>/?${new URLSearchParams({ repository: place.repositoryKey, checkout: place.repo })}#rules`;
+/** The rules page's link as a start shows it, scoped to the repository and its checkout, on `origin`. */
+function rulesLink(place: Place, origin = "<daemon>/"): string {
+  return `  ${origin}?${new URLSearchParams({ repository: place.repositoryKey, checkout: place.repo })}#rules`;
+}
+
+/** What daemon-port.json, the port a start without `--port` comes back on, holds in the place's Rerail home. */
+function rememberedPort(place: Place): string {
+  try {
+    return readFileSync(join(place.home, "daemon-port.json"), "utf8").trim();
+  } catch {
+    return "no file";
+  }
 }
 
 /**
@@ -120,25 +130,38 @@ describe("rerail start in a repository set up before, with and without --json", 
   }, TEST_TIMEOUT_MS);
 
   // OMP's and Pi's `/rerail-start` runs `rerail start --json` from the extension's package, then the extension attaches
-  // its session again, which replaces a daemon of another package with its own. The person opens the link next.
+  // its session again, which replaces a daemon of another package with its own. The person opens the link next. The
+  // replacement only tries the old daemon's port, a throwaway one, so later starts keep the port the home remembers.
   test("in OMP and Pi, the link /rerail-start shows still answers once the extension attaches again", async () => {
     const place = makePlace();
     expect((await rerail(otherPackage(place), place, ["daemon", "start", "--port", "0"])).code).toBe(0);
     const step = await rerail(PACKAGE_ROOT, place, ["start", "--json"]);
     const link = linkIn(shownLines(step.stdout, true));
+    const remembered = rememberedPort(place);
     await attachAsTheExtension(place);
-    expect({ link: await answerOf(link), daemon: daemonServing(place, link) })
-      .toEqual({ link: "answers", daemon: "this package's, on the link's origin" });
+    expect({ link: await answerOf(link), daemon: daemonServing(place, link), remembered: rememberedPort(place) })
+      .toEqual({ link: "answers", daemon: "this package's, on the link's origin", remembered });
+  }, TEST_TIMEOUT_MS);
+
+  // A person who starts the daemon themselves: no daemon serves a link until they start one, so each form says that,
+  // and how, in place of the link.
+  test("with RERAIL_AUTOSTART=0 and none running, ends on the line that none runs and how to start one, in place of the link", async () => {
+    const place = makePlace({ autostart: "0" });
+    const notRunning = "  △ The Rerail daemon is not running, and RERAIL_AUTOSTART=0 keeps hooks from starting it, so nothing is recorded until it runs. Start it with rerail daemon start.";
+    const ended = { code: 0, lines: [ALREADY_ON, notRunning], daemon: "none" };
+    expect(await start(place, false)).toEqual(ended);
+    expect(await start(place, true)).toEqual(ended);
   }, TEST_TIMEOUT_MS);
 
   // Another package's daemon on a free port, as its OMP or Pi extension starts one: the home remembers no port for it. A
-  // Claude Code, Codex or Cursor session of this package then replaces it with this package's.
+  // Claude Code, Codex or Cursor session of this package then replaces it with this package's, on that port, which the
+  // home still does not remember: it was the other daemon's.
   test("the link rerail start showed still answers once a coding agent's hook replaces another package's daemon on a free port", async () => {
     const place = makePlace();
     expect((await rerail(otherPackage(place), place, ["daemon", "start", "--port", "0"])).code).toBe(0);
     const link = linkIn(shownLines((await rerail(PACKAGE_ROOT, place, ["start"])).stdout, false));
     await claudeSessionStart(place);
-    expect({ link: await answerOf(link), daemon: daemonServing(place, link) })
-      .toEqual({ link: "answers", daemon: "this package's, on the link's origin" });
+    expect({ link: await answerOf(link), daemon: daemonServing(place, link), remembered: rememberedPort(place) })
+      .toEqual({ link: "answers", daemon: "this package's, on the link's origin", remembered: "no file" });
   }, TEST_TIMEOUT_MS);
 });
