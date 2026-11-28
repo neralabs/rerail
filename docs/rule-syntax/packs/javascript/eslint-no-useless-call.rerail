@@ -3,8 +3,8 @@
 .language typescript
 .mode steer
 .scope include "**/*"
-#include "tsx/eslint-b-objects.rerail"
-//   forwarding, natural_this, call_arg_count, call_arg, dotted_member, deparen
+#include "tsx/javascript-03.rerail"
+//   same_this; through tsx/eslint-b-objects: forwarding, call_arg_count, call_arg, dotted_member, deparen
 
 // ESLint's no-useless-call: `f.call(t, …)` or `f.apply(t, [ … ])` where t is the `this` f gets anyway:
 //   foo.call(undefined, 1, 2)    foo.apply(null, [1, 2])     → reported: foo(1, 2) is the same
@@ -16,5 +16,5 @@
 .violation no_useless_call(at: node, x: symbol) code "no-useless-call" "Unnecessary '.{x}()'."
     suppress eslint "no-useless-call"
     suppress oxlint "no-useless-call"
-no_useless_call(c, x) :- forwarding(c, _, x, _), natural_this(c), field(c, "function", e), deparen(e, m),
+no_useless_call(c, x) :- forwarding(c, _, x, _), same_this(c), field(c, "function", e), deparen(e, m),
     dotted_member(m, _, _), (x = "call" ; x = "apply", call_arg_count(c, 2), call_arg(c, l, 1), deparen(l, r), kind(r, "array")).

@@ -11,13 +11,19 @@
 //   raise RuntimeError(b"bytes")                          ← EM101
 //   msg = "hello"; raise RuntimeError(msg)                not reported
 //   raise cast(RuntimeError, "not a message")            not reported
-#include "python/misc2-messages.rerail"
+#include "python/python-30.rerail"
 
 .violation EM101(at: node) code "EM101"
     "Assign this string literal to a new variable such as `msg` before the `raise`, then pass that variable to the exception instead."
     suppress ruff "EM101"
-EM101(a) :- msg_raised_call(_, c), field(c, "function", f), !msg_typing_cast(f), msg_arg(c, 0, a),
-    (msg_form(a, "str") ; msg_form(a, "bytes")), msg_len(a, n), em101_min(k), n >= k.
+EM101(a) :- em_ruff_raised_call(_, c), field(c, "function", f), !msg_typing_cast(f), msg_arg(c, 0, a),
+    (msg_form(a, "str") ; msg_form(a, "bytes")), em101_len(a, n), em101_min(k), n >= k.
 .decl em101_min(k: number)
 em101_min(to_number(v)) :- option("flake8-errmsg.max-string-length", v).
 em101_min(0) :- !option("flake8-errmsg.max-string-length", _).
+.decl em101_len(a: node, n: number)
+em101_len(a, n) :- msg_len(a, n).
+// Bytes have decoded `str` rows but deliberately no scalar `value` rows.
+em101_len(a, n) :- kind(a, "string"), bytes_lit(a), str(a, v), n = strlen(v).
+em101_len(a, n) :- kind(a, "concatenated_string"), bytes_lit(a),
+    n = sum strlen(v) : { child(a, s, _), kind(s, "string"), str(s, v) }.

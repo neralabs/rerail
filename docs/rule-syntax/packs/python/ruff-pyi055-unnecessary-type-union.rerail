@@ -7,13 +7,38 @@
 // Ruff PYI055 (flake8-pyi): a union with two or more builtin `type[…]` members, which can be one `type[A | B]`,
 // in code Python never evaluates (python/typing-context): an annotation in a stub, under `from __future__ import
 // annotations`, at Python 3.14+ (the `pythonVersion` option; Ruff's default is 3.10), or of a local variable
-// (not a nested def's parameters); a `type X = …` value; an `if TYPE_CHECKING:` body. `typing.Type[…]` and the
-// invalid `type[A, B]` are not counted.
+// (not a nested def's parameters); a `type X = …` value; an `if TYPE_CHECKING:` body; the tree of any string
+// type definition (`x: "…"`, `cast("…", y)`, `list["…"]`). `typing.Type[…]` and the invalid `type[A, B]` are not
+// counted. In a string with escapes or adjacent pieces Ruff finds no binding for `Union`
+// (python/type-string-places): only its `|` unions count there.
 //   def f(x: type[int] | type[str]): ...     ← PYI055 in a stub: write `type[int | str]`
 //   X: TypeAlias = type[int] | type[str]     fine: the value runs, in a stub too
+//   y: "Union[type[int], type[str]]" ""      fine: no union to Ruff
 #include "python/typing-context.rerail"
+#include "python/type-string-places.rerail"
 
 .violation PYI055(at: node, msg: symbol) code "PYI055" "{msg}"
     suppress ruff "PYI055"
-PYI055(u, "Merge the `type[X]` members of this union into one `type[...]`, e.g. `type[int | str]` instead of `type[int] | type[str]`; the meaning is the same.") :-
-    union_top(u), typing_only_ctx(u), count : { union_leaf(u, m), builtin_sub(m, "type"), tsub_n(m, 1) } >= 2.
+PYI055(u, m) :- union_top(u), typing_only_ctx(u), count : { union_leaf(u, l), builtin_sub(l, "type"), tsub_n(l, 1) } >= 2,
+    says(m).
+PYI055(u, m) :- fwd_union(u), !fwd_nested(u), count : { fwd_leaf(u, l), fwd_type(l) } >= 2, says(m).
+.decl says(m: symbol)
+says("Merge the `type[X]` members of this union into one `type[...]`, e.g. `type[int | str]` instead of `type[int] | type[str]`; the meaning is the same.").
+// A string type definition's tree, reached through str_tree: python/typing's unions, written over its nodes.
+.decl fwd_union(u: node)
+fwd_union(u) :- str_tree(_, u), kind(u, "binary_operator"), op(u, "|").
+fwd_union(u) :- str_tree(_, u), typing_subscript(u, "Union"), !unplaced(u).
+.decl fwd_part(u: node, m: node)
+fwd_part(u, m) :- fwd_union(u), kind(u, "binary_operator"), field(u, "left", x), type_bare(x, m).
+fwd_part(u, m) :- fwd_union(u), kind(u, "binary_operator"), field(u, "right", x), type_bare(x, m).
+fwd_part(u, m) :- fwd_union(u), typing_subscript(u, "Union"), tsub(u, _, _, m).
+.decl fwd_nested(u: node)
+fwd_nested(u) :- fwd_part(_, u), fwd_union(u).
+.decl fwd_leaf(u: node, m: node)
+fwd_leaf(u, m) :- fwd_union(u), !fwd_nested(u), fwd_part(u, x), fwd_down(x, m).
+.decl fwd_down(x: node, m: node)
+fwd_down(x, x) :- fwd_part(_, x), !fwd_union(x).
+fwd_down(x, m) :- fwd_part(_, x), fwd_union(x), fwd_part(x, y), fwd_down(y, m).
+// fwd_type(l): `type[X]`, the builtin, with one argument (tsub counts a guest's arguments as one: decision 0058 §1).
+.decl fwd_type(l: node)
+fwd_type(l) :- fwd_leaf(_, l), tsub(l, h, 0, _), tsub_n(l, 1), fwd_builtin(h, "type").

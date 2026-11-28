@@ -1,19 +1,66 @@
-.policy "ruff-slot000-no-slots-in-str-subclass" revision 2
+.policy "ruff-slot000-no-slots-in-str-subclass" revision 3
 .description "Define __slots__ in subclasses of str (enums excepted); without it every instance carries its own attribute dict and uses more memory."
 .language python
 .mode steer
 .scope include "**/*"
 
 // Ruff SLOT000 (flake8-slots): a class with the builtin `str` among its bases and no `__slots__` in its body.
-// Enums (`class E(str, Enum)`) and stub files are exempt.
+// Enums (`class E(str, Enum)`) and stub files are exempt. A base read as a member of a class of the file
+// (`Outer.Inner`) is what that class's body binds to the name last, as Ruff's lookup reads it; a type parameter
+// named `str` does not hide the builtin from the class's bases (python/slots-bases).
 //   class Foo(str):              ← SLOT000
 //       pass
 //   class Bar(str):              not reported
 //       __slots__ = ("foo",)
 //   class Color(str, Enum): ...  not reported
-#include "python/misc2-slots.rerail"
+//   class Outer:
+//       class Gone(Enum): ...
+//       Gone = 1
+//   class Rebound(str, Outer.Gone): ...   ← SLOT000: Outer's Gone is 1, no enum
+#include "python/slots-bases.rerail"   // slots_unsub, slots_tp_builtin; python/misc2-slots
 
 .violation SLOT000(at: node) code "SLOT000"
     "Add `__slots__ = ()` to this `str` subclass so instances skip the per-instance `__dict__`; if it assigns instance attributes, list their names in `__slots__` instead."
     suppress ruff "SLOT000"
-SLOT000(nm) :- slots_missing(c, nm), slots_base(c, b), sym_of(b, "builtins.str"), !slots_enum(c).
+SLOT000(nm) :- slots_missing(c, nm), slot000_str(c), !slot000_enum(c).
+.decl slot000_str(c: node)
+slot000_str(c) :- slots_base(c, b), sym_of(b, "builtins.str").
+slot000_str(c) :- slots_tp_builtin(c, _, "str").
+
+// slot000_enum(c): a base of c (one subscript off) is one of enum's classes or derives from one (Ruff's
+// is_enumeration). A base naming a class of the file is followed to that definition, the one the class body binds
+// the name to last, and its own bases; any other base by its name's ancestry, as misc2-slots' slots_enum.
+.decl slot000_enum(c: node)
+slot000_enum(c) :- slots_base(c, b), slots_unsub(b, e), !slot000_stale(e), slot000_enum_ref(e).
+.decl slot000_enum_ref(e: node)
+slot000_enum_ref(e) :- slot000_class(e, k), slot000_enum(k).
+slot000_enum_ref(e) :- slot000_ref(e), !slot000_class(e, _), sym_of(e, q), slot000_enum_name(q).
+slot000_enum_ref(e) :- slot000_ref(e), !slot000_class(e, _), sym_of(e, q), docof(e, d), doc(d, p, _),
+    py_names__reads_at(p, m), py_names__ancestor(m, q, a), slot000_enum_name(a).
+.decl slot000_enum_name(q: symbol)
+slot000_enum_name("enum.Enum"). slot000_enum_name("enum.Flag"). slot000_enum_name("enum.IntEnum").
+slot000_enum_name("enum.IntFlag"). slot000_enum_name("enum.StrEnum"). slot000_enum_name("enum.ReprEnum").
+slot000_enum_name("enum.CheckEnum").
+// slot000_ref(e): a base, one subscript off, or an object in its attribute chain (`Outer.Deep` and `Outer` in
+// `Outer.Deep.Deeper`).
+.decl slot000_ref(e: node)
+slot000_ref(e) :- slots_base(_, b), slots_unsub(b, e).
+slot000_ref(o) :- slot000_ref(e), attr_of(e, o, _).
+// slot000_class(o, k): o names class definition k of the file: a name whose binding just before it (Ruff resolves
+// a base where the class statement is) is k, or the member of such a class whose last binding in the class's body
+// is k. A name whose binding before it is an import or an assignment is left to its symbol (slot000_enum_ref).
+.decl slot000_class(o: node, k: node)
+slot000_class(o, k) :- slot000_ref(o), look(o, x, s), binding(s, x, k, "class"), k < o,
+    count : { binding(s, x, z, _), z > k, z < o } = 0.
+slot000_class(o, k) :- slot000_ref(o), attr_of(o, p, a), slot000_class(p, kp), slot000_last(kp, a, k),
+    kind(k, "class_definition").
+// slot000_last(k, a, site): site is the last binding of a in class k's body (Ruff's scope keeps the latest).
+.decl slot000_last(k: node, a: symbol, site: node)
+slot000_last(k, a, site) :- kind(k, "class_definition"), binding(k, a, site, _),
+    count : { binding(k, a, o, _), o > site } = 0.
+// slot000_stale(e): e is `O.a`, or an attribute of such, where O is a class of the file whose body binds a last
+// to something other than a class.
+.decl slot000_stale(e: node)
+slot000_stale(e) :- slot000_ref(e), attr_of(e, o, a), slot000_class(o, k), slot000_last(k, a, site),
+    !kind(site, "class_definition").
+slot000_stale(e) :- slot000_ref(e), attr_of(e, o, _), slot000_stale(o).

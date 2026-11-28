@@ -1,76 +1,12 @@
 {
   "format": "rerail.translation-equivalence/v1",
   "pack": "php",
-  "equivalent": false,
+  "equivalent": true,
   "untranslated": {},
   "different": {
-    "phpcs-generic-code-analysis-empty-statement": {
-      "reason": "recorded by the suite, not yet explained",
-      "right": "unknown",
-      "counts": {
-        "samples-php": {
-          "originalOnly": 0,
-          "translationOnly": 5
-        }
-      }
-    },
-    "phpcs-generic-php-lower-case-constant": {
-      "reason": "recorded by the suite, not yet explained",
-      "right": "unknown",
-      "counts": {
-        "fixtures": {
-          "originalOnly": 0,
-          "translationOnly": 1
-        }
-      }
-    },
-    "phpcs-generic-php-no-silenced-errors": {
-      "reason": "recorded by the suite, not yet explained",
-      "right": "unknown",
-      "counts": {
-        "samples-php": {
-          "originalOnly": 0,
-          "translationOnly": 76
-        }
-      }
-    },
-    "phpcs-squiz-php-eval": {
-      "reason": "recorded by the suite, not yet explained",
-      "right": "unknown",
-      "counts": {
-        "samples-php": {
-          "originalOnly": 0,
-          "translationOnly": 8
-        }
-      }
-    },
-    "phpstan-argument-sprintf": {
-      "reason": "recorded by the suite, not yet explained",
-      "right": "unknown",
-      "counts": {
-        "fixtures": {
-          "originalOnly": 0,
-          "translationOnly": 5
-        },
-        "samples-php": {
-          "originalOnly": 3,
-          "translationOnly": 1
-        }
-      }
-    },
-    "phpstan-argument-sscanf": {
-      "reason": "recorded by the suite, not yet explained",
-      "right": "unknown",
-      "counts": {
-        "fixtures": {
-          "originalOnly": 0,
-          "translationOnly": 3
-        }
-      }
-    },
     "phpstan-array-duplicate-key": {
-      "reason": "recorded by the suite, not yet explained",
-      "right": "unknown",
+      "reason": "The 11 fixtures keys only the translation reports (bug-15244.php:49, bug-15247-php81.php:14 and 19, bug-15247.php:19 and 34, duplicate-keys.php:32, 63, 67, 69, 76 and 105) are all in PHPStan 2.2.16's recording of array.duplicateKey. The original compares written keys as text; the translation numbers implicit keys, unpacks literal spreads and follows constants and one-write variables as PHP does (php/arrays), e.g. ['x', 0 => 'y'] repeats key 0.",
+      "right": "translation",
       "counts": {
         "fixtures": {
           "originalOnly": 0,
@@ -78,33 +14,9 @@
         }
       }
     },
-    "phpstan-if-always-false": {
-      "reason": "recorded by the suite, not yet explained",
-      "right": "unknown",
-      "counts": {
-        "samples-php": {
-          "originalOnly": 1,
-          "translationOnly": 0
-        }
-      }
-    },
-    "phpstan-missing-function-return-type": {
-      "reason": "recorded by the suite, not yet explained",
-      "right": "unknown",
-      "counts": {
-        "fixtures": {
-          "originalOnly": 0,
-          "translationOnly": 10
-        },
-        "samples-php": {
-          "originalOnly": 2,
-          "translationOnly": 0
-        }
-      }
-    },
     "phpstan-random-int-parameters": {
-      "reason": "recorded by the suite, not yet explained",
-      "right": "unknown",
+      "reason": "The 7 fixtures keys only the translation reports (random-int.php:11, 12, 15, 16, 19, 20 and 31) are all in PHPStan 2.2.16's recording of argument.type. The original compares the two arguments' values only; the translation also reads a nested random_int(a, b) as the range int<a, b>, as PHPStan does: random_int(0, random_int(-10, 10)) is reported because $max may be -10.",
+      "right": "translation",
       "counts": {
         "fixtures": {
           "originalOnly": 0,
@@ -113,16 +25,12 @@
       }
     },
     "psalm-forbidden-code": {
-      "reason": "recorded by the suite, not yet explained",
-      "right": "unknown",
+      "reason": "fixtures, 1 translation-only key: phpcs/Generic/PHP/LowerCaseConstantUnitTest.1.inc.php:79, a var_dump(...) in a file with syntax errors, which the product skips (source-incomplete); Psalm reports ParseError and still analyses the statements PHP-Parser recovers (StatementsProvider::parseStatements), so it reports the var_dump, as the translation does. The calls under @psalm-suppress ForbiddenCode on samples-php are suppressed on both sides now (the engine applies the translation's declared suppress lines). php-02.result.json, NOTES-php-02.md.",
+      "right": "translation",
       "counts": {
         "fixtures": {
           "originalOnly": 0,
           "translationOnly": 1
-        },
-        "samples-php": {
-          "originalOnly": 0,
-          "translationOnly": 15
         }
       }
     }

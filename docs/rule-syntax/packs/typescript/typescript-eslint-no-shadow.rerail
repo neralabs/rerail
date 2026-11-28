@@ -60,9 +60,14 @@ declaring("abstract_class_declaration"). declaring("enum_declaration"). declarin
 // program's own declarations only meet the globals).
 .decl seek(s: node, x: symbol, q: node)
 seek(s, x, q) :- checked(s, x, _), scope_up(s, q).
-seek(s, x, q) :- seek(s, x, o), !variable(o, x, _, _), scope_up(o, q).
+seek(s, x, q) :- seek(s, x, o), (!variable(o, x, _, _) ; blind(s, o)), scope_up(o, q).
 .decl shadowed(s: node, x: symbol, p: node)
-shadowed(s, x, p) :- seek(s, x, p), variable(p, x, _, _).
+shadowed(s, x, p) :- seek(s, x, p), variable(p, x, _, _), !blind(s, p).
+// blind(s, c): s is in conditional type c's check type or false branch, which the scope manager visits outside
+// c's scope: `F extends (a: infer T) => 0 ? T : F extends (...a: infer T) => 0 ? T : never` has two T, unnested.
+.decl blind(s: node, c: node)
+blind(s, c) :- checked(s, _, _), (a = s ; within(s, a)), field(c, k, a), (k = "left" ; k = "alternative"),
+    kind(c, "conditional_type").
 .decl global_hit(s: node, x: symbol)
 global_hit(s, x) :- checked(s, x, id), (seek(s, x, p), !variable(p, x, _, _), kind(p, "program") ; kind(s, "program")),
     docof(id, d), (es_builtin(x) ; global_item(c, x, v, _), v != "off", docof(c, d)).

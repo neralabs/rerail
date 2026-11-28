@@ -10,12 +10,40 @@
 //   if sys.version_info >= (3, 8) and sys.platform == "linux":   fine
 //   if sys.platform.startswith("linux"):                         ← PYI002: a call
 //   if a and (b or c):                                           ← PYI002 at `b or c`: nested and/or
-#include "python/typing.rerail"
+#include "python/stub-version-checks.rerail"
 
 .violation PYI002(at: node) code "PYI002" "Rewrite this stub `if` test as unchained comparisons of `sys.version_info` or `sys.platform` joined by `and`/`or`, or keep only one branch; type checkers cannot evaluate other tests."
     suppress ruff "PYI002"
-PYI002(v) :- if_test(_, t), in_stub(t), test_part(t, v), !simple_test(v).
-// simple_test(v): `L op R` with L a subscript (any: PYI003 judges it) or sys.version_info / sys.platform.
+PYI002(v) :- if_test(_, t), in_stub(t), pyi_test_part(t, v), !simple_test(v).
+// simple_test(v): `L op R` with L a subscript (any: PYI003 judges it) or sys.version_info / sys.platform. Comments
+// and `\` line continuations inside the comparison are not operands: `(sys.version_info >=  # c` / `(3, 8))` is
+// simple, and so is `sys.version_info >= \` / `(3, 8, 1)`; a `\` after an `and` is no operand of it either.
 .decl simple_test(v: node)
-simple_test(v) :- cmp(v, _, l0, _), unparen(l0, l), (kind(l, "subscript") ; sys_attr(l, "version_info") ;
-    sys_attr(l, "platform")).
+simple_test(v) :- one_cmp(v, _, l, _), (kind(l, "subscript") ; sys_attr(l, "version_info") ; sys_attr(l, "platform")).
+
+// Ruff 0.17.6: nothing. Before: PYI002 at lines 2, 4, 6 and 8 (each `\` an operand).
+.test line_continuations_are_no_operands
+    .fixture "a.pyi" ```
+        import sys
+        if sys.version_info >= (3, 8) and \
+                sys.platform == "linux": ...
+        if sys.version_info >= \
+                (3, 8, 1): ...
+        if sys.version_info[:2] \
+                == (3,): ...
+        if sys.version_info[:2] == (3, 8) or \
+                sys.version_info[0] == "3": ...
+        ```
+    .expect no PYI002
+.end
+
+// Ruff 0.17.6: PYI002 at line 2 only (a call).
+.test a_call_is_complex exactly
+    .fixture "b.pyi" ```
+        import sys
+        if sys.platform.startswith("linux"): ...
+        if (sys.version_info >=  # c
+            (3, 8)): ...
+        ```
+    .expect PYI002 at "b.pyi":2
+.end

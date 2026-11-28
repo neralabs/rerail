@@ -1,17 +1,19 @@
-.policy "ruff-c413-unnecessary-call-around-sorted" revision 2
+.policy "ruff-c413-unnecessary-call-around-sorted" revision 3
 .description "Remove a list or reversed call wrapped around sorted; sorted already returns a new list and can sort in reverse order itself."
 .language python
 .mode steer
 .scope include "**/*"
 
 // Ruff C413 (flake8-comprehensions): the builtin list or reversed (by name or as `builtins.list`) whose
-// first argument is a call of the builtin sorted. `sorted` already returns a new list, and sorts in reverse
-// with `reverse=True`. Ruff's fix for list is safe: here it is offered for `list(sorted(…))` alone.
-// Its fix for reversed is unsafe (equal items come out in another order); none here.
+// first argument is a call of the builtin sorted; in the file and in string type definitions. `sorted` already
+// returns a new list, and sorts in reverse with `reverse=True`. Ruff's fix for list is safe: here it is offered
+// for `list(sorted(…))` in the file alone. Its fix for reversed is unsafe (equal items come out in another
+// order); none here.
 //   list(sorted(x))        ← C413: sorted(x)        list(sorted\n (x))   ← C413: (sorted\n (x))
 //   reversed(sorted(x))    ← C413: sorted(x, reverse=True)
-#include "python/comprehensions.rerail"
-//   c4_builtin(c, x), c4_first(c, a), c4_only(c, a)
+//   [reversed(sorted(x)) for reversed in y]       not reported: the element reads the target
+#include "python/python-15.rerail"
+//   lookup_builtin_call(c, x), lookup_str_call(c, x), lookup_first(c, a); call_only(c, a) (python/ruff)
 
 .violation C413(at: node, outer: symbol, id: symbol, msg: symbol) code "C413" "{msg}"
     suppress ruff "C413"
@@ -22,7 +24,9 @@ C413(c, "reversed", "reversed-call-around-sorted",
     "Pass `reverse=True` (or flip the existing `reverse=`) to `sorted()` instead of wrapping it in `reversed()`; keep `reversed()` if equal elements must come out in reverse input order.") :-
     around_sorted(c, "reversed", _).
 .decl around_sorted(c: node, outer: symbol, s: node)
-around_sorted(c, x, s) :- c4_builtin(c, x), (x = "list" ; x = "reversed"), c4_first(c, s), c4_builtin(s, "sorted").
+around_sorted(c, x, s) :- (lookup_builtin_call(c, x) ; lookup_str_call(c, x)), (x = "list" ; x = "reversed"),
+    lookup_first(c, s), (lookup_builtin_call(s, "sorted") ; lookup_str_call(s, "sorted")).
+lookup_name("list"). lookup_name("reversed"). lookup_name("sorted").
 // The argument as written, parentheses kept; a call over several lines gets parentheses, so it stays valid.
 unwrap(c, "list", _, _) :- call_only(c, a), around_sorted(c, "list", _), one_line(c) => replace(c, `$a`).
 unwrap(c, "list", _, _) :- call_only(c, a), around_sorted(c, "list", _), !one_line(c) => replace(c, `($a)`).

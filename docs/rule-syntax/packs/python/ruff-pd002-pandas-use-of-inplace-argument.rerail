@@ -1,24 +1,24 @@
-.policy "ruff-pd002-pandas-use-of-inplace-argument" revision 2
+.policy "ruff-pd002-pandas-use-of-inplace-argument" revision 3
 .description "Avoid passing True for the inplace argument of pandas methods; assign the returned object instead, which keeps chaining and avoids hidden mutation."
 .language python
 .mode steer
 .scope include "**/*"
 
 // Ruff PD002 (pandas-vet): `inplace=True` passed to a pandas method that takes it (`drop`, `fillna`,
-// `sort_values`, …). The method is known by its name alone, called on anything, in a file that imports pandas.
-// When `inplace=` is given twice the last one decides. Reported at the keyword. (Ruff's fix, assigning the
-// result, is unsafe; none here.)
+// `sort_values`, …). The method is known by its name alone, called on anything, in a file that imports pandas
+// (`from pandas import *` too). When `inplace=` is given twice the last one decides. Reported at the keyword.
+// (Ruff's fix, assigning the result, is unsafe; none here.)
 //   x.drop(["a"], axis=1, inplace=True)        ← PD002
 //   x.drop(["a"], axis=1, inplace=False)       not reported
 //   x.rotate_z(45, inplace=True)               not reported: not a pandas method
-#include "python/ruff.rerail"
-#include "python/misc-seen.rerail"
+#include "python/type-string-names.rerail"
+//   seen_module_or_star(d, m), seen_ask(m); python/ruff through it
 
 .violation PD002(at: node) code "PD002"
     "Remove `inplace=True` and assign the returned object back, e.g. `df = df.sort_values(\"a\")`; leave it if this isn't a pandas object."
     suppress ruff "PD002"
 PD002(k) :- last_inplace(c, k), field(k, "value", v), unparen(v, m), kind(m, "true"), docof(c, d),
-    seen_module(d, "pandas").
+    seen_module_or_star(d, "pandas").
 seen_ask("pandas").
 
 // last_inplace(c, k): k is the last `inplace=` keyword of call c, a call of a method that takes one.

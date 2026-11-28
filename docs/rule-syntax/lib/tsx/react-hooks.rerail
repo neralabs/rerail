@@ -281,10 +281,10 @@ deps_used(c, k, r) :- deps_visit(c, v), deps_ref(v, r, site), !field(site, "valu
 // isStableKnownHookValue: values React keeps the same across renders.
 //   const ref = useRef();  const [s, setS] = useState();  const [st, dispatch] = useReducer(…);
 //   const [pending, startTransition] = useTransition();  const onTick = useEffectEvent(…);  const N = 10;
-// A useState setter that is reassigned elsewhere is not stable.
+// A useState setter that is reassigned elsewhere is not stable. A bigint literal (`10n`) is no string or number.
 .decl deps_stable_site(site: node)
 deps_stable_site(d) :- kind(d, "variable_declarator"), child(l, d, _), kind(l, "lexical_declaration"), op(l, "const"),
-    field(d, "value", w), deps_bare(w, v), (kind(v, "string") ; kind(v, "number") ; kind(v, "null")).
+    field(d, "value", w), deps_bare(w, v), (kind(v, "string") ; kind(v, "number"), !suffix("n", v) ; kind(v, "null")).
 deps_stable_site(d) :- kind(d, "variable_declarator"), field(d, "name", n), kind(n, "identifier"),
     deps_init_hook(d, x), (x = "useRef" ; x = "useEffectEvent").
 deps_stable_site(p) :- kind(d, "variable_declarator"), field(d, "name", ap), deps_second(ap, p), deps_init_hook(d, x),
@@ -299,11 +299,13 @@ deps_init_hook(d, x) :- field(d, "value", w), deps_bare(w, v), kind(v, "call_exp
 deps_rewritten(p) :- (kind(a, "assignment_expression") ; kind(a, "augmented_assignment_expression")),
     field(a, "left", r), ref_site(r, p).
 // isFunctionWithoutCapturedValues: a function declared directly in the component whose free variables are all
-// outside the pure scopes, or stable: `function log(x) { console.log(x); }` never needs listing.
+// outside the pure scopes, or stable: `function log(x) { console.log(x); }` never needs listing. The plugin finds the
+// function as the scope whose node's parent is the declarator, so parentheses do not matter (ESTree has none) and
+// a cast does: `const log = (() => …)` is such a function, `const log = (() => …) as Fn` is not.
 .decl deps_fn_site(site: node, f: node)  // site declares function f in the component's own scope
 deps_fn_site(f, f) :- kind(f, "function_declaration").
-deps_fn_site(d, f) :- kind(d, "variable_declarator"), field(d, "name", n), kind(n, "identifier"), field(d, "value", f),
-    deps_fn(f).
+deps_fn_site(d, f) :- kind(d, "variable_declarator"), field(d, "name", n), kind(n, "identifier"), field(d, "value", v),
+    deparen(v, f), deps_fn(f).
 .decl deps_fn_pure(v: node, site: node)
 deps_fn_pure(v, site) :- deps_ref(v, _, site), deps_fn_site(site, f), decl_site(s, _, site, _, "value"),
     deps_component(v, cf), (s = cf ; field(cf, "body", s)), !deps_captures(v, f).
@@ -321,8 +323,11 @@ deps_stable(c, k) :- deps_used(c, k, r), deps_visit(c, v), ref_site(r, site),
 deps_array(c, arr) :- deps_visit(c, _), deps_list(c, a), deps_bare(a, arr), kind(arr, "array").
 .decl deps_elem(c: node, e: node)
 deps_elem(c, e) :- deps_array(c, arr), child(arr, e, _), !kind(e, "comment").
+// `undefined` is an identifier in ESTree, a global the component does not declare: keyed "undefined", it is an
+// outer value, so an unnecessary dependency.
 .decl deps_dkey(n: node, k: symbol)
 deps_dkey(n, k) :- deps_elem(_, e), deps_bare(e, n), kind(n, "identifier"), text(n, k).
+deps_dkey(n, "undefined") :- deps_elem(_, e), deps_bare(e, n), kind(n, "undefined").
 deps_dkey(n, cat(k, ".", p)) :- deps_elem(_, e), deps_bare(e, n), deps_dchain(n, k, p).
 deps_dkey(o, k) :- deps_dobj(o), deps_bare(o, n), kind(n, "identifier"), text(n, k).
 deps_dkey(o, cat(k, ".", p)) :- deps_dobj(o), deps_bare(o, n), deps_dchain(n, k, p).
@@ -339,7 +344,7 @@ deps_declared(c, k, e) :- deps_elem(c, e), deps_bare(e, n), deps_dkey(n, k).
 deps_external(c, k) :- deps_declared(c, k, e), deps_root(e, o), deps_visit(c, v), deps_component(v, cf),
     !deps_inside(o, cf).
 .decl deps_root(e: node, o: node)  // the identifier a declared chain starts from
-deps_root(e, n) :- deps_elem(_, e), deps_bare(e, n), kind(n, "identifier").
+deps_root(e, n) :- deps_elem(_, e), deps_bare(e, n), (kind(n, "identifier") ; kind(n, "undefined")).
 deps_root(e, n) :- deps_elem(_, e), deps_bare(e, m), kind(m, "member_expression"), deps_root_of(m, n).
 .decl deps_root_of(m: node, n: node)
 deps_root_of(m, n) :- field(m, "object", o), deps_bare(o, n), kind(n, "identifier"), deps_dobj(o).

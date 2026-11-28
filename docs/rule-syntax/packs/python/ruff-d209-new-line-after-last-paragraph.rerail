@@ -1,4 +1,4 @@
-.policy "ruff-d209-new-line-after-last-paragraph" revision 2
+.policy "ruff-d209-new-line-after-last-paragraph" revision 3
 .description "Put the closing quotes of a multi-line docstring on their own line."
 .language python
 .mode steer
@@ -14,5 +14,6 @@
 .violation D209(at: node) code "D209"
     "Move this docstring's closing quotes onto a new line after its last line of text."
     suppress ruff "D209"
-// A non-blank line, a later line break, and text on the last line (the one ending at the closing quotes).
-D209(s) :- doc_checked(s), doc_triple(s), doc_body(s, b), match("\\s*\\S[\\s\\S]*\\n[^\\n]*\\S[^\\n]*", b).
+// The last body line has text, and an earlier line does too. doc_line treats LF, CRLF and bare CR alike.
+D209(s) :- doc_checked(s), doc_triple(s), doc_nlines(s, n), n > 1, i = n - 1, !doc_blank(s, i),
+    doc_line(s, j, _), j < i, !doc_blank(s, j).

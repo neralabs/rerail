@@ -1,0 +1,172 @@
+.policy "react-practice-hoist-static-value" revision 2
+.guests off
+.description "Move objects, arrays and functions that read nothing from a component or hook to module scope when they are passed to child components, custom hooks or dependency arrays."
+.language typescript
+.mode steer
+.scope include "**/*.ts", "**/*.mts", "**/*.cts", "**/*.tsx", "**/*.js", "**/*.jsx", "**/*.mjs", "**/*.cjs"
+.scope exclude "**/*.test.*", "**/*.spec.*", "**/*.cy.*", "**/__tests__/**", "**/test/**", "**/tests/**", "**/e2e/**", "**/__mocks__/**", "**/*.stories.*", "**/*.story.*", "**/__stories__/**", "**/__fixtures__/**", "**/fixtures/**", "**/node_modules/**", "**/dist/**", "**/build/**", "**/out/**", "**/.next/**", "**/coverage/**", "**/vendor/**", "**/.venv/**", "**/.yarn/**", "**/generated/**", "**/__generated__/**", "**/*.generated.*", "**/*.gen.*", "**/*.min.js", "**/*.d.ts"
+#include "tsx/react-practice-a.rerail"
+#include "tsx/react.rerail"
+
+// Rerail's practice rule: in a top-level component or Hook, a value built on every render that reads nothing of the
+// component, and is handed on by identity: a prop of a component element, an argument of a custom Hook, or an
+// element of a Hook call's later array argument (a dependency list).
+//   const columns = [{ key: 'name' }];  return <Table columns={columns} />;    HOIST_STATIC_VALUE
+//   function format(v) { return v.trim(); }  useThing(format);                 HOIST_STATIC_FUNCTION
+// A value: a `const` in the component's body of an object or array literal (in parentheses or a cast or not) that
+// does no work (no call, `new`, await, `this`, yield, browser global or module `let`/`var` outside functions) and
+// reads no import other than a capitalised name used plainly; or of a function or arrow, unless the const is
+// capitalised. A function: a declaration with a lower-case name. Not reported: what reads a name the component
+// declares (in its own scope: its parameters, its variables, its functions, its type parameters), what the
+// component mutates by name (`x.a = 1`, `x.push()`, `Object.assign(x, …)`, `delete x.a`, `x.n++`), and async
+// components. Components and Hooks are named (capitalised; `use`, `useX`, `Foo.useX`) or passed to memo or
+// forwardRef unnamed.
+
+// top(f): f is a component or Hook, not async and not inside another function.
+.decl top(f: node)
+top(f) :- function_node(f), named_component_or_hook(f), !inside(f, _, function_kind), !op(f, "async").
+.decl named_component_or_hook(f: node)
+named_component_or_hook(f) :- pr_fn_name(f, n), pr_ident(n), glob("[A-Z]**", n).
+named_component_or_hook(f) :- pr_fn_name(f, n), hook_name(n).
+named_component_or_hook(f) :- function_node(f), !pr_fn_name(f, _), child(a, f, _), kind(a, "arguments"), child(c, a, _),
+    kind(c, "call_expression"), field(c, "function", w),
+    (kind(w, "identifier"), text(w, t) ;
+     kind(w, "member_expression"), field(w, "object", o), kind(o, "identifier"), text(o, "React"), field(w, "property", p),
+     text(p, t)),
+    (t = "memo" ; t = "forwardRef").
+.decl hook_name(n: node)  // use, useX, Foo.useX
+hook_name(n) :- pr_ident(n), match("use([A-Z0-9].*)?", n).
+hook_name(n) :- kind(n, "member_expression"), field(n, "object", o), kind(o, "identifier"), glob("[A-Z]**", o),
+    field(n, "property", p), match("use([A-Z0-9].*)?", p).
+
+// in_body(n, f): n is in top function f's own body, not in a function nested in it.
+.decl in_body(n: node, f: node)
+in_body(n, f) :- (kind(n, "lexical_declaration") ; kind(n, "function_declaration")), nearest(n, f, function_kind),
+    top(f), field(f, "body", b), kind(b, "statement_block"), within(n, b).
+// own(site, f): the declaration at site belongs to top function f's own scope: its nearest function is f.
+.decl own(site: node, f: node)
+own(site, f) :- ref_site(_, site), nearest(site, f, function_kind), top(f).
+// reads_component(v, f): v reads a name of f's own scope (a type name too).
+.decl reads_component(v: node, f: node)
+reads_component(v, f) :- candidate(v, f), has(v, r, read_kind), ref_site(r, site), own(site, f).
+.decl read_kind(k: symbol)
+read_kind("identifier"). read_kind("shorthand_property_identifier"). read_kind("type_identifier").
+
+// candidate(v, f): the value of a const, or a function declaration, in top function f's body.
+.decl candidate(v: node, f: node)
+candidate(v, f) :- static_const(_, v, f).
+candidate(g, f) :- static_function(g, f).
+// static_const(d, v, f): `const name = v`, v a static literal that reads no import, or a function of a lower-case const.
+.decl static_const(d: node, v: node, f: node)
+static_const(d, v, f) :- const_value(d, n, v, f),
+    (static_literal(v), !reads_import(v) ; (kind(v, "arrow_function") ; kind(v, "function_expression")),
+     !glob("[A-Z]**", n)),
+    !typed_by_component(d).
+.decl const_value(d: node, n: node, v: node, f: node)  // `const n = v` in top function f's body
+const_value(d, n, v, f) :- kind(d, "variable_declarator"), field(d, "name", n), kind(n, "identifier"), child(l, d, _),
+    kind(l, "lexical_declaration"), op(l, "const"), in_body(l, f), field(d, "value", v).
+.decl static_function(g: node, f: node)
+static_function(g, f) :- kind(g, "function_declaration"), field(g, "name", n), kind(n, "identifier"),
+    !glob("[A-Z]**", n), in_body(g, f).
+
+// static_literal(v): an object or array (in parentheses or a cast or not) that does no work, functions inside aside.
+.decl static_literal(v: node)
+static_literal(v) :- literal(v), !works(v).
+.decl literal(v: node)
+literal(v) :- const_value(_, _, v, _), shape(v).
+.decl shape(v: node)
+shape(v) :- kind(v, "object") ; kind(v, "array").
+shape(v) :- (kind(v, "as_expression") ; kind(v, "satisfies_expression") ; kind(v, "parenthesized_expression")),
+    child(v, w, 0), shape(w).
+.decl works(v: node)
+works(v) :- literal(v), outside_fn(v, e), eager(e).
+// outside_fn(v, e): e is in v, and no function lies between them (e may be one).
+.decl outside_fn(v: node, e: node)
+outside_fn(v, e) :- literal(v), child(v, e, _).
+outside_fn(v, e) :- outside_fn(v, x), !function_node(x), child(x, e, _).
+.decl eager(e: node)
+eager(e) :- outside_fn(_, e), kind(e, k), (k = "call_expression" ; k = "new_expression" ; k = "await_expression" ;
+    k = "this" ; k = "yield_expression").
+eager(e) :- outside_fn(_, e), pr_global(e, x), (x = "window" ; x = "document" ; x = "navigator" ; x = "location" ;
+    x = "localStorage" ; x = "sessionStorage" ; x = "history" ; x = "screen" ; x = "globalThis" ; x = "self").
+eager(e) :- outside_fn(_, e), kind(e, "identifier"), ref_site(e, site), !inside(site, _, function_kind),
+    (inside(site, l, "lexical_declaration"), op(l, "let") ; inside(site, _, "variable_declaration")).
+// reads_import(v): v reads an imported name, other than a capitalised one used plainly (`icon: Icon`).
+.decl reads_import(v: node)
+reads_import(v) :- static_literal(v), outside_fn(v, r), (kind(r, "identifier") ; kind(r, "shorthand_property_identifier")),
+    ref_site(r, site), inside(site, _, "import_statement"), !plain_component(r).
+.decl plain_component(r: node)
+plain_component(r) :- outside_fn(_, r), match("[A-Z][A-Za-z0-9]*[a-z][A-Za-z0-9]*", r), !member_object(r), !invoked(r).
+.decl member_object(r: node)
+member_object(r) :- field(m, "object", r), kind(m, "member_expression").
+.decl invoked(r: node)
+invoked(r) :- field(c, "function", r), kind(c, "call_expression").
+invoked(r) :- field(c, "constructor", r), kind(c, "new_expression").
+// `const x: Box<T> = …` with T a type parameter of the component.
+.decl typed_by_component(d: node)
+typed_by_component(d) :- field(d, "type", a), has(a, t, "type_identifier"), ref_site(t, site),
+    inside(site, ps, "type_parameters"), child(f, ps, _), top(f).
+
+// escape(f, x): a name x declared in f's own scope is passed on by identity in f.
+.decl escape(f: node, x: symbol)
+escape(f, x) :- top(f), has(f, i, "identifier"), text(i, x), ref_site(i, site), own(site, f), passed(i).
+.decl passed(i: node)
+passed(i) :- through(i, j), kind(j, "jsx_expression"), child(a, j, _), kind(a, "jsx_attribute"), child(o, a, _),
+    (kind(o, "jsx_opening_element") ; kind(o, "jsx_self_closing_element")), field(o, "name", t),
+    (kind(t, "identifier"), glob("[A-Z]**", t) ; kind(t, "member_expression") ; kind(t, "nested_identifier")).
+passed(i) :- kind(i, "identifier"), child(a, i, _), kind(a, "arguments"), child(c, a, _), hook_call(c), !react_hook_call(c).
+passed(i) :- kind(i, "identifier"), child(l, i, _), kind(l, "array"), child(a, l, k), k != 0, kind(a, "arguments"),
+    child(c, a, _), hook_call(c).
+// through(i, j): j is i, or holds it through ?:, ??, ||, &&, casts and parentheses only.
+.decl through(i: node, j: node)
+through(i, p) :- kind(i, "identifier"), child(p, i, _).
+through(i, p) :- through(i, j), pass_kind(j), child(p, j, _).
+.decl pass_kind(j: node)
+pass_kind(j) :- kind(j, k), (k = "ternary_expression" ; k = "as_expression" ; k = "satisfies_expression" ;
+    k = "parenthesized_expression" ; k = "non_null_expression").
+pass_kind(j) :- kind(j, "binary_expression"), (op(j, "??") ; op(j, "||") ; op(j, "&&")).
+// Hook calls: any `useX(…)` or `a.useX(…)`, or a name imported as `useX`. React's own are named or imported from react.
+.decl hook_call(c: node)
+hook_call(c) :- kind(c, "call_expression"), field(c, "function", f), (kind(f, "identifier"), glob("use[A-Z0-9]**", f) ;
+    kind(f, "member_expression"), field(f, "property", p), kind(p, "property_identifier"), glob("use[A-Z0-9]**", p) ;
+    kind(f, "identifier"), ref_site(f, sp), kind(sp, "import_specifier"), field(sp, "name", n), glob("use[A-Z0-9]**", n)).
+.decl react_hook_call(c: node)
+react_hook_call(c) :- hook_call(c), field(c, "function", f), (kind(f, "identifier"), text(f, x), react_hook(x) ;
+    kind(f, "member_expression"), field(f, "property", p), kind(p, "property_identifier"), text(p, x), react_hook(x) ;
+    kind(f, "identifier"), pr_import(f, s, x), react_hook(x), iglob("react", s)).
+.decl react_hook(x: symbol)
+react_hook("useState"). react_hook("useRef"). react_hook("useReducer"). react_hook("useEffect").
+react_hook("useLayoutEffect"). react_hook("useInsertionEffect"). react_hook("useMemo"). react_hook("useCallback").
+react_hook("useImperativeHandle"). react_hook("useContext"). react_hook("useDebugValue").
+react_hook("useDeferredValue"). react_hook("useOptimistic"). react_hook("useActionState"). react_hook("useTransition").
+react_hook("useId").
+
+// mutated(f, x): f changes the value named x in place.
+.decl mutated(f: node, x: symbol)
+mutated(f, x) :- top(f), has(f, a, mutating_kind), mutation(a, x).
+.decl mutating_kind(k: symbol)
+mutating_kind("assignment_expression"). mutating_kind("augmented_assignment_expression").
+mutating_kind("update_expression"). mutating_kind("unary_expression"). mutating_kind("call_expression").
+.decl mutation(a: node, x: symbol)
+mutation(a, x) :- (kind(a, "assignment_expression") ; kind(a, "augmented_assignment_expression")), field(a, "left", l),
+    (kind(l, "member_expression") ; kind(l, "subscript_expression")), has(l, i, "identifier"), text(i, x).
+mutation(a, x) :- kind(a, "update_expression"), has(a, i, "identifier"), text(i, x).
+mutation(a, x) :- kind(a, "unary_expression"), op(a, "delete"), has(a, i, "identifier"), text(i, x).
+mutation(a, x) :- kind(a, "call_expression"), field(a, "function", m), kind(m, "member_expression"),
+    field(m, "property", p), glob("{push,pop,shift,unshift,splice,sort,reverse,fill,copyWithin,set,add,delete,clear}", p),
+    field(m, "object", o), (kind(o, "identifier"), text(o, x) ;
+    (kind(o, "member_expression") ; kind(o, "subscript_expression")), !has(o, _, builds_kind), has(o, i, "identifier"),
+    text(i, x)).
+mutation(a, x) :- kind(a, "call_expression"), field(a, "function", m), text(m, "Object.assign"), call_arg(a, o, 0),
+    kind(o, "identifier"), text(o, x).
+.decl builds_kind(k: symbol)
+builds_kind("call_expression"). builds_kind("array"). builds_kind("spread_element").
+
+.violation HOIST_STATIC_VALUE(at: node, name: symbol)
+    "{name} reads nothing from this component or hook, yet it is rebuilt every render and passed on by identity; move it to module scope unless each instance needs its own copy."
+HOIST_STATIC_VALUE(d, x) :- static_const(d, v, f), !reads_component(v, f), field(d, "name", n), text(n, x),
+    escape(f, x), !mutated(f, x), docof(d, doc), react_doc(doc).
+.violation HOIST_STATIC_FUNCTION(at: node, name: symbol)
+    "Function {name} reads nothing from this component or hook, yet it is recreated every render and passed on by identity; move it to module scope."
+HOIST_STATIC_FUNCTION(g, x) :- static_function(g, f), !reads_component(g, f), field(g, "name", n), text(n, x),
+    escape(f, x), !mutated(f, x), docof(g, doc), react_doc(doc).

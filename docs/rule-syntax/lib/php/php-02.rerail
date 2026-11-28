@@ -1,0 +1,15 @@
+// php/php-02: the files PHPStan analyses.
+//
+// PHPStan parses a file before any rule sees it, and a file its parser rejects gets only the parse error
+// (phpstan.parse, FileAnalyser's ParserErrorsException): no rule runs on any of its lines. A syntax error here is
+// what tree-sitter-php finds, an ERROR node, as the product's own path skips such a file ("file has syntax errors").
+//   function f() {}  class True {}      no missingType.return at f: the file does not parse
+// Psalm is not so: it reports ParseError and analyses the statements its parser recovers.
+//
+// What a rule gets from this library:
+//   php_parse_error(d)   document d has a syntax error
+//
+// Builds on core only.
+
+.decl php_parse_error(d: number)
+php_parse_error(d) :- kind(e, "ERROR"), docof(e, d).

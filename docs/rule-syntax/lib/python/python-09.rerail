@@ -1,0 +1,62 @@
+// python/python-09: a subscript's slice as Ruff's AST holds it, and the members of a `Literal[…]` as Ruff's
+// traverse_literal walks them (PYI061, PYI062, PYI064).
+//
+// Interface
+//   slice_comma(s)          s's brackets hold a comma of their own: `X[a, b]`, `X[a,]`
+//   slice_one(s, a)         s's slice is the one expression a, not a tuple: `X[a]`, `X[(a)]`; not `X[a,]`, `X[(a,)]`
+//   lit_elem(l, e)          e is an element of Literal l's slice: `Literal[1, 2]`, `Literal[(1, 2)]` and
+//                           `Literal[1, 2,]` all give 1 and 2; `Literal[(1, 2),]` gives the tuple
+//   lit_top_ruff(l)         Literal l is checked on its own: no Literal's slice element, and not in a string that
+//                           Ruff reads as a value (a string inside a Literal is a value, not an annotation)
+//   lit_member(l, m)        m is a member of top Literal l, nested Literals flattened, in source order by node id
+//   lit_member_key(m, k)    a non-scalar member's tree key
+//
+// Python background
+//   - Ruff's AST has no parentheses: `X[(a, b)]` and `X[a, b]` are one Subscript whose slice is the tuple (a, b),
+//     and `X[a,]` is the tuple (a,). tree-sitter writes the brackets' items as children, and the comma as a token
+//     of the subscript (or of a generic_type's type_parameter).
+//   - Ruff checks a Literal unless its parent is a Literal, or a tuple that is a Literal's slice
+//     (in_nested_literal): in `Literal[1, (Literal[None], 2)]` the inner Literal is checked on its own.
+//   - A string annotation's tree is a guest document of the string. A string inside `Literal[…]` is a value;
+//     the engine may parse it too, but Ruff never reads it as code.
+//
+//   x: Literal[(None, 1)]            lit_member: None and 1 (PYI061)
+//   y: Literal[(1, 1),]              one member, the tuple (PYI062: no duplicate)
+//   z: Final[Literal[1,]] = 1        no slice_one: the slice is the tuple (1,) (PYI064: not reported)
+//   w: "Literal['Literal[1, 1]']"    the inner Literal is a value string, never a lit_top_ruff
+#include "python/typing.rerail"
+#include "layout.rerail"
+
+.decl slice_arg(s: node, a: node)  // the sole written argument, with its type wrapper where one exists
+slice_arg(s, a) :- kind(s, "subscript"), field(s, "subscript", a),
+    count : { field(s, "subscript", _) } = 1.
+slice_arg(s, a) :- kind(s, "generic_type"), child(s, tp, 1), kind(tp, "type_parameter"),
+    child(tp, a, _), !kind(a, "comment"), count : { child(tp, x, _), !kind(x, "comment") } = 1.
+layout_at(a) :- slice_arg(_, a).
+.decl slice_comma(s: node)
+slice_comma(s) :- tsub_n(s, k), k > 1.
+slice_comma(s) :- slice_arg(s, a), next_code(a, g), match("(?s)\\s*,.*", g).
+.decl slice_one(s: node, a: node)
+slice_one(s, a) :- tsub_n(s, 1), !slice_comma(s), tsub(s, _, 0, a), !kind(a, "tuple").
+.decl lone_tuple(s: node, t: node)  // `X[(a, b)]`: the written tuple is the slice
+lone_tuple(s, t) :- tsub_n(s, 1), !slice_comma(s), tsub(s, _, 0, t), kind(t, "tuple").
+
+.decl lit_elem(l: node, e: node)
+lit_elem(l, e) :- typing_subscript(l, "Literal"), slice_one(l, e).
+lit_elem(l, e) :- typing_subscript(l, "Literal"), slice_comma(l), tsub(l, _, _, e).
+lit_elem(l, e) :- typing_subscript(l, "Literal"), lone_tuple(l, t), child(t, c, _), !kind(c, "comment"),
+    unparen(c, e).
+.decl lit_top_ruff(l: node)
+lit_top_ruff(l) :- typing_subscript(l, "Literal"), !lit_nested_ruff(l), !value_guest(l).
+.decl lit_nested_ruff(l: node)
+lit_nested_ruff(l) :- lit_elem(p, l), typing_subscript(l, "Literal").
+// value_guest(l): l is in the tree of a string that is not in a type context.
+.decl value_guest(l: node)
+value_guest(l) :- docof(l, g), guest(g, _, s, "annotation"), !type_ctx(s).
+.decl lit_member(l: node, m: node)
+lit_member(l, m) :- lit_top_ruff(l), lit_down_ruff(l, m).
+.decl lit_down_ruff(l: node, m: node)
+lit_down_ruff(l, m) :- lit_elem(l, x), (typing_subscript(x, "Literal"), lit_down_ruff(x, m) ;
+    !typing_subscript(x, "Literal"), m = x).
+.decl lit_member_key(m: node, k: symbol)
+lit_member_key(m, @tree_digest(m)) :- lit_member(_, m), !value(m, _).

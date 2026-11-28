@@ -19,6 +19,9 @@
 //   def shadow():
 //       print(len)              ← F823: a builtin counts as an outer binding
 //       len = 1
+//   def annotated():
+//       counter: int            not reported: Ruff takes the annotation as the local's binding
+//       print(counter)
 #include "python/pyflakes.rerail"
 //   run_scope(n, s, k)  the scope n runs in (a comprehension is a scope of its own; its first iterable is not)
 
@@ -30,12 +33,13 @@ F823(r, x) :- early_read(f, x, _), k = min i : { early_read(f, x, i) }, read(r, 
 .decl read(r: node, x: symbol, f: node, i: number)
 read(r, x, f, r) :- ast_name(r, x), expr_ctx(r, "load"), run_scope(r, f, "function").
 read(r, x, f, r) :- kind(a, "augmented_assignment"), field(a, "left", r), text(r, x), run_scope(r, f, "function").
-// early_read(f, x, i): read i comes before every binding of x in f (a bare annotation binds nothing: a read after
-// `x: int` is early too), f binds or annotates x other than by `except E as x` (Ruff does not report those), and
-// x is bound or annotated outside f (classes skipped, as lookup skips them) or is a builtin. Bindings moved out by `global`/`nonlocal` are not f's.
+// early_read(f, x, i): read i comes before every binding and bare annotation of x in f (Ruff 0.17: `x: int` then
+// `print(x)` is not F823, `print(x)` then `x: int` is), f binds or annotates x other than by `except E as x` (Ruff
+// does not report those), and x is bound or annotated outside f (classes skipped, as lookup skips them) or is a
+// builtin. Bindings moved out by `global`/`nonlocal` are not f's.
 .decl early_read(f: node, x: symbol, i: number)
 early_read(f, x, i) :- read(r, x, f, i), local_in(f, x), count : { binding(f, x, b, _), b < r, !within(r, b) } = 0,
-    outer(f, x).
+    count : { bare_annotation(a, _, x, f), a < r } = 0, outer(f, x).
 .decl local_in(f: node, x: symbol)
 local_in(f, x) :- binding(f, x, _, form), form != "except".
 local_in(f, x) :- bare_annotation(_, _, x, f).

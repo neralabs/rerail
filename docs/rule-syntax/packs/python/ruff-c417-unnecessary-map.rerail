@@ -14,8 +14,11 @@
 //   list(map(lambda x: x * 2, xs))      ← C417: [x * 2 for x in xs]
 //   dict(map(lambda v: (v, v**2), xs))  ← C417: {v: v**2 for v in xs}
 //   map(lambda x=1: x, xs)    map(lambda x, y: x, xs, ys)    map(f, xs)      not reported
-#include "python/comprehensions.rerail"
-//   c4_builtin(c, x), c4_only(c, a), call_nkwargs(c, 0), list_like(e, k); ast_parent, param from python/ast, names
+//   dict(a=map(lambda x: x, y))    list(**map(lambda x: x, y))     not reported: a keyword is no expression, so
+//                                  the map's parent is the dict or list call
+#include "python/python-15.rerail"
+//   lookup_builtin_call(c, x); c4_only(c, a), call_nkwargs(c, 0), list_like(e, k); ast_parent, param from python/ast,
+//   names
 
 .violation C417(at: node, id: symbol, msg: symbol) code "C417" "{msg}"
     suppress ruff "C417"
@@ -31,7 +34,8 @@ C417(c, "dict", "Replace this `dict(map(...))` of a lambda with a dict comprehen
 
 // map_lambda(m, l): m is `map(lambda …, …)` of the builtin map, with no keywords.
 .decl map_lambda(m: node, l: node)
-map_lambda(m, l) :- c4_builtin(m, "map"), call_nkwargs(m, 0), ruff_arg(m, 0, a), unparen(a, l), kind(l, "lambda").
+map_lambda(m, l) :- lookup_builtin_call(m, "map"), call_nkwargs(m, 0), ruff_arg(m, 0, a), unparen(a, l), kind(l, "lambda").
+lookup_name("map"). lookup_name("list"). lookup_name("set"). lookup_name("dict").
 // rewritable(m): the lambda has one plain parameter, read only where the comprehension would bind it, and no
 // yield; no iterable is `*xs` or has a walrus.
 .decl rewritable(m: node)
@@ -46,10 +50,15 @@ walrus(e) :- has(e, _, "named_expression").
 // late_bound(l): `lambda x: lambda: x`: a lambda inside reads l's parameter.
 .decl late_bound(l: node)
 late_bound(l) :- map_lambda(_, l), param(l, x, _), has(l, l2, "lambda"), within(n, l2), look(n, x, l).
-// in_collection_call(m): m is an argument of a call of list, set or dict (or `builtins.list`, …).
+// in_collection_call(m): m's parent expression (Ruff's current_expression_parent: no parentheses, and a
+// keyword or `**` is no expression) is a call of list, set or dict (or `builtins.list`, …).
 .decl in_collection_call(m: node)
-in_collection_call(m) :- map_lambda(m, _), ast_parent(m, c), kind(c, "call"), field(c, "function", f),
-    ruff_qual(f, q), (q = "builtins.list" ; q = "builtins.set" ; q = "builtins.dict").
+in_collection_call(m) :- map_lambda(m, _), ast_parent(m, c), coll_call(c).
+in_collection_call(m) :- map_lambda(m, _), ast_parent(m, k), (kind(k, "keyword_argument") ; kind(k, "dictionary_splat")),
+    ast_parent(k, c), coll_call(c).
+.decl coll_call(c: node)
+coll_call(c) :- kind(c, "call"), field(c, "function", f), ruff_qual(f, q),
+    (q = "builtins.list" ; q = "builtins.set" ; q = "builtins.dict").
 // outer(c, k, m): `list(map(…))`: the builtin k called with the one argument m, a map call.
 .decl outer(c: node, k: symbol, m: node)
-outer(c, k, m) :- c4_builtin(c, k), (k = "list" ; k = "set" ; k = "dict"), c4_only(c, m), map_lambda(m, _).
+outer(c, k, m) :- lookup_builtin_call(c, k), (k = "list" ; k = "set" ; k = "dict"), c4_only(c, m), map_lambda(m, _).

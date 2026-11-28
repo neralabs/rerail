@@ -1,0 +1,109 @@
+// python/python-20: names as Ruff's pep8-naming rules N813-N818 read them. Ruff's parser NFKC-normalises every
+// identifier, as CPython does, and its case tests (ruff_python_stdlib::str, pep8_naming::helpers) ask Unicode's
+// Uppercase and Lowercase properties (char::is_uppercase / is_lowercase), not ASCII ranges. python/naming tests the
+// raw text with [A-Z]: `ǅx` (a titlecase letter, NFKC "Džx") is camel case here and cased lowercase there.
+//
+// Interface (each name at the node that names it: a table keyed by the name alone would hold every file's names, and
+// join them in the cross-file part, decision 0677)
+//   1. Names:   ruff_word(n, y)          the names the tests below run over, NFKC-normalised as Ruff reads them
+//                                        (`ｍixedCase` is "mixedCase", `ﬁle` "file"): an aliased import's name and
+//                                        alias (at the aliased_import), a stored name (at its identifier) and a
+//                                        class's name (at its identifier)
+//   2. Case:    ruff_cased_lower(n, y)   a Lowercase letter and no Uppercase one (str::is_cased_lowercase)
+//               ruff_cased_upper(n, y)   an Uppercase letter and no Lowercase one (str::is_cased_uppercase)
+//               ruff_camel(n, y)         neither, and no `_` (helpers::is_camelcase): "Camel", "日本"
+//               ruff_mixed(n, y)         not ruff_cased_lower, and its first letter after one `_` is Lowercase
+//                                        (helpers::is_mixed_case): "mixedCase", "_mixed_Case", "džX"
+//               ruff_acronym(a, x, l)    aliased import a's alias l is its name x's Uppercase letters in order
+//                                        (helpers::is_acronym)
+//               ruff_ignored(n, y)       y matches `pep8-naming.ignore-names` (Ruff's unittest names when unset) or
+//                                        `pep8-naming.extend-ignore-names`
+//   3. Imports: ruff_alias_import(a, x, l)   aliased import at node a: x the imported name's last segment, l the alias
+//               ruff_import_full(a, q)       the name Ruff looks up in flake8-import-conventions for a: `import q as l`
+//                                            gives alias.name, `from m import x as l` gives "m.x" (absolute only)
+//   4. Stores:  ruff_store(n, y, s)      identifier n stores y (normalised) and Ruff visits it with s, a module,
+//                                        class, def, lambda or comprehension node, as its current scope
+//   5. Classes: ruff_class_name(nm, x)   class name identifier nm reads as x (normalised)
+//
+//   from mod import ǅx as dzx          N813: "Džx" is camel case
+//   from m import Camel as Ⅻ            N814: the alias is "XII", three characters
+//   import xml.\
+//       etree.cElementTree as ET       N817: the name is "cElementTree", whatever the spacing
+//   class A(Ｅxception): ...           N818: the base is `Exception`
+//   gs = {k: v for k, v in (fooB := {}).items()}   N816: the first iterable is visited at module level
+#include "python/naming.rerail"
+
+// ---- 1. names ----------------------------------------------------------------------------------------------------
+.decl ruff_word(n: node, y: symbol)
+ruff_word(a, x) :- ruff_alias_import(a, x, _).
+ruff_word(a, l) :- ruff_alias_import(a, _, l).
+ruff_word(n, y) :- ruff_store(n, y, _).
+ruff_word(nm, x) :- ruff_class_name(nm, x).
+
+// ---- 2. case -----------------------------------------------------------------------------------------------------
+.decl ruff_cased_lower(n: node, y: symbol)
+ruff_cased_lower(n, y) :- ruff_word(n, y), match("\\P{Uppercase}*\\p{Lowercase}\\P{Uppercase}*", y).
+.decl ruff_cased_upper(n: node, y: symbol)
+ruff_cased_upper(n, y) :- ruff_word(n, y), match("\\P{Lowercase}*\\p{Uppercase}\\P{Lowercase}*", y).
+.decl ruff_camel(n: node, y: symbol)
+ruff_camel(n, y) :- ruff_word(n, y), !ruff_cased_lower(n, y), !ruff_cased_upper(n, y), !contains("_", y).
+.decl ruff_mixed(n: node, y: symbol)
+ruff_mixed(n, y) :- ruff_word(n, y), !ruff_cased_lower(n, y), match("_?\\p{Lowercase}.*", y).
+.decl ruff_acronym(a: node, x: symbol, l: symbol)
+ruff_acronym(a, x, l) :- ruff_alias_import(a, x, l), l = @replace_all(x, "\\P{Uppercase}", "").
+.decl ruff_ignored(n: node, y: symbol)
+ruff_ignored(n, y) :- ruff_word(n, y), option_item("pep8-naming.ignore-names", _, g), glob(g, y).
+ruff_ignored(n, y) :- ruff_word(n, y), !option_item("pep8-naming.ignore-names", _, _), naming_default_ignore(y).
+ruff_ignored(n, y) :- ruff_word(n, y), option_item("pep8-naming.extend-ignore-names", _, g), glob(g, y).
+
+// ---- 3. imports --------------------------------------------------------------------------------------------------
+// A dotted name reads as its identifiers joined by `.`: spaces and line continuations go (`xml . etree`).
+//   import pkg.sub.CamelCase as cc     ruff_alias_import(a, "CamelCase", "cc"), ruff_import_full(a, "pkg.sub.CamelCase")
+.decl ruff_dotted(d: node, q: symbol)
+ruff_dotted(d, @nfkc(@replace_all(t, "[\\s\\\\]+", ""))) :- kind(d, "dotted_name"), text(d, t).
+.decl ruff_alias_import(a: node, x: symbol, l: symbol)
+ruff_alias_import(a, x, l) :- ruff_alias(a, d, l), ruff_dotted(d, q), x = @replace_all(q, "^.*\\.", "").
+.decl ruff_alias(a: node, d: node, l: symbol)
+ruff_alias(a, d, @nfkc(t)) :- (kind(i, "import_statement") ; kind(i, "import_from_statement")), field(i, "name", a),
+    kind(a, "aliased_import"), field(a, "name", d), field(a, "alias", al), text(al, t).
+.decl ruff_import_full(a: node, q: symbol)
+ruff_import_full(a, q) :- ruff_alias(a, d, _), child(i, a, _), kind(i, "import_statement"), ruff_dotted(d, q).
+ruff_import_full(a, @dot(m, x)) :- ruff_alias(a, d, _), child(i, a, _), kind(i, "import_from_statement"),
+    field(i, "module_name", mn), ruff_dotted(mn, m), ruff_dotted(d, x).
+
+// ---- 4. stores ---------------------------------------------------------------------------------------------------
+// The names Ruff's N815/N816 see stored: python/naming's store_name, `case` captures (python/ast's py_capture:
+// `case [x, *rest]`, `case P(a=px)`, `{**more}`, `case p as q`), and a starred name in a `with … as (a, *b)` target.
+.decl ruff_store_site(n: node)
+ruff_store_site(n) :- store_name(n, _, _).
+ruff_store_site(n) :- py_capture(n).
+ruff_store_site(n) :- kind(s, "list_splat"), child(s, n, _), kind(n, "identifier"), inside(s, t, "as_pattern_target"),
+    child(w, t, _), kind(w, "as_pattern"), child(wi, w, _), kind(wi, "with_item").
+.decl ruff_store(n: node, y: symbol, s: node)
+ruff_store(n, @nfkc(x), s) :- ruff_store_site(n), text(n, x), ruff_at(n, s).
+// ruff_at(n, s): Ruff visits n with scope s current. Most nodes are in their nearest scope; a parameter default and
+// a comprehension's first iterable are visited in the scope around it. A class's bases, a PEP 695 type parameter
+// and a `type` alias's value are visited in a type scope, neither the class nor the module: no row.
+//   class C:
+//       def f(self, x=(aB := 1)): ...    aB is visited in C
+//       ys = [y for y in (cD := xs)]     cD is visited in C
+//       class K((eF := object)): ...     eF is in neither
+.decl ruff_at(n: node, s: node)
+ruff_at(n, c) :- ruff_want(n), nearest(n, c, lscope), !ruff_outer(n, c), !ruff_typed(n, c).
+ruff_at(n, s) :- ruff_want(n), nearest(n, c, lscope), ruff_outer(n, c), ruff_at(c, s).
+.decl ruff_want(n: node)
+ruff_want(n) :- ruff_store_site(n).
+ruff_want(c) :- ruff_want(n), nearest(n, c, lscope), ruff_outer(n, c).
+.decl ruff_outer(n: node, c: node)  // n is in a part of scope node c that runs in the scope around c
+ruff_outer(n, c) :- ruff_want(n), nearest(n, c, lscope), first_for(c, fc), field(fc, "right", r), (n = r ; within(n, r)).
+ruff_outer(n, c) :- ruff_want(n), nearest(n, c, lscope), field(c, "parameters", ps), child(ps, p, _),
+    field(p, "value", v), (n = v ; within(n, v)).
+.decl ruff_typed(n: node, c: node)
+ruff_typed(n, c) :- ruff_want(n), nearest(n, c, lscope), field(c, "superclasses", al), within(n, al).
+ruff_typed(n, c) :- ruff_want(n), nearest(n, c, lscope), inside(n, _, "type_parameter").
+ruff_typed(n, c) :- ruff_want(n), nearest(n, c, lscope), inside(n, t, "type_alias_statement"), field(t, "right", r),
+    (n = r ; within(n, r)).
+
+// ---- 5. classes --------------------------------------------------------------------------------------------------
+.decl ruff_class_name(nm: node, x: symbol)
+ruff_class_name(nm, @nfkc(t)) :- kind(c, "class_definition"), field(c, "name", nm), text(nm, t).

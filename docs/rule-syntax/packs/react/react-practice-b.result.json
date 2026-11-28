@@ -1,0 +1,7 @@
+[
+  { "id": "react-practice-mounted-ref-never-reset", "status": "same" },
+  { "id": "react-practice-request-beside-data-library", "status": "same" },
+  { "id": "react-practice-selector-returns-new-collection", "status": "same" },
+  { "id": "react-practice-side-effect-in-render", "status": "same" },
+  { "id": "react-practice-then-without-stale-guard", "status": "same" }
+]

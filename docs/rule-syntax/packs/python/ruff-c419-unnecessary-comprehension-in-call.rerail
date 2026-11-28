@@ -1,21 +1,25 @@
-.policy "ruff-c419-unnecessary-comprehension-in-call" revision 2
+.policy "ruff-c419-unnecessary-comprehension-in-call" revision 3
 .description "Pass a generator expression to any() and all() instead of a list or set comprehension; it saves memory and lets them stop early."
 .language python
 .mode steer
 .scope include "**/*"
 
 // Ruff C419 (flake8-comprehensions): the builtin any or all (by name or as `builtins.any`) called with no
-// keywords, whose first argument is a list or set comprehension that does not await. The finding is at the
-// comprehension. Ruff's preview also takes sum, min and max; this is the stable rule. Its fix is unsafe;
-// none here.
+// keywords, whose first argument is a list or set comprehension that does not await; in the file and in string
+// type definitions. The finding is at the comprehension. Ruff's preview also takes sum, min and max; this is the
+// stable rule. Its fix is unsafe; none here.
 //   any([x.ok for x in xs])     all({x for x in xs})     ← C419: any(x.ok for x in xs)
+//   a: "any([x for x in y])" = 1                         ← C419: a string type definition is code
 //   any(x.ok for x in xs)    any([await f(x) for x in xs])    sum([x for x in xs])    not reported
-#include "python/comprehensions.rerail"
-//   c4_builtin(c, x), c4_first(c, a), call_nkwargs(c, 0), c4_comp(e, k), c4_elt(e, x)
+#include "python/python-15.rerail"
+//   lookup_builtin_call(c, x), lookup_str_call(c, x), lookup_nkw0(c), lookup_first(c, a); c4_comp(e, k)
 
 .violation C419(at: node, kind: symbol) code "C419"
     "Drop the comprehension's brackets or braces to pass a generator expression so the call can stop early; keep the comprehension only if every element must be evaluated for its side effects."
     suppress ruff "C419"
-C419(e, k) :- c4_builtin(c, f), (f = "any" ; f = "all"), call_nkwargs(c, 0), c4_first(c, e), c4_comp(e, k),
-    (k = "list" ; k = "set"), field(e, "body", b), !kind(b, "await"), !has(b, _, "await"),
-    count : { child(e, fc, _), kind(fc, "for_in_clause"), op(fc, "async") } = 0.
+C419(e, k) :- (lookup_builtin_call(c, f) ; lookup_str_call(c, f)), (f = "any" ; f = "all"), lookup_nkw0(c), lookup_first(c, e),
+    c4_comp(e, k), (k = "list" ; k = "set"), field(e, "body", b), !kind(b, "await"), !has(b, _, "await"),
+    !async_for(e).
+lookup_name("any"). lookup_name("all").
+.decl async_for(e: node)  // `[x async for x in xs]`
+async_for(e) :- lookup_first(_, e), child(e, fc, _), kind(fc, "for_in_clause"), op(fc, "async").

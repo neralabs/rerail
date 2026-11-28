@@ -1,0 +1,109 @@
+.policy "react-practice-cache-update-in-mutate-call" revision 2
+.guests off
+.description "Update the query cache in a mutation's own options, not in callbacks passed to mutate(); those are dropped if the component unmounts before the mutation finishes."
+.language typescript
+.mode steer
+.scope include "**/*.ts", "**/*.mts", "**/*.cts", "**/*.tsx", "**/*.js", "**/*.jsx", "**/*.mjs", "**/*.cjs"
+.scope exclude "**/*.test.*", "**/*.spec.*", "**/*.cy.*", "**/__tests__/**", "**/test/**", "**/tests/**", "**/e2e/**", "**/__mocks__/**", "**/*.stories.*", "**/*.story.*", "**/__stories__/**", "**/__fixtures__/**", "**/fixtures/**", "**/node_modules/**", "**/dist/**", "**/build/**", "**/out/**", "**/.next/**", "**/coverage/**", "**/vendor/**", "**/.venv/**", "**/.yarn/**", "**/generated/**", "**/__generated__/**", "**/*.generated.*", "**/*.gen.*", "**/*.min.js", "**/*.d.ts"
+#include "tsx/react-practice-a.rerail"
+#include "tsx/react.rerail"
+
+// Rerail's practice rule (TanStack Query, tRPC): a cache update in an onSuccess, onSettled or onError passed to
+// mutate() or mutateAsync() runs only if the component is still mounted when the mutation ends.
+//   mutation.mutate(vars, { onSuccess: () => queryClient.invalidateQueries(['todos']) });     reported
+//   useMutation({ mutationFn, onSuccess: () => queryClient.invalidateQueries(['todos']) });   not: the mutation's own
+// The per-call options are mutate's second argument (in parentheses or a cast or not), a variable whose name is
+// passed as some mutate's second argument in the file, or what a useMemo factory stored in such a variable returns.
+// The cache calls: invalidateQueries, setQueryData, setQueriesData, resetQueries, removeQueries; refetchQueries in a
+// file importing TanStack Query, react-query or tRPC, or on a queryClient/qc; and tRPC's invalidate, refetch, reset,
+// setData, setInfiniteData on a chain from useUtils() or useContext(). The finding sits on the cache call, in the
+// callback itself (not in a function nested in it).
+
+// mutate_call(c): mutate(…), mutateAsync(…), x.mutate(…), or a name destructured from `mutate`:
+//   const { mutate: save } = useMutation(…)      const { mutateAsync: run = noop } = …
+.decl mutate_call(c: node)
+mutate_call(c) :- kind(c, "call_expression"), field(c, "function", f), mutate_callee(f).
+.decl mutate_callee(f: node)
+mutate_callee(f) :- kind(f, "member_expression"), field(f, "property", p), kind(p, "property_identifier"),
+    (text(p, "mutate") ; text(p, "mutateAsync")).
+mutate_callee(f) :- kind(f, "identifier"), (text(f, "mutate") ; text(f, "mutateAsync")).
+mutate_callee(f) :- kind(f, "identifier"), ref_site(f, p), (field(pp, "value", p) ;
+    field(pp, "value", a), kind(a, "assignment_pattern"), field(a, "left", p)), kind(pp, "pair_pattern"),
+    field(pp, "key", k), (text(k, "mutate") ; text(k, "mutateAsync")), child(pat, pp, _), field(d, "name", pat),
+    kind(d, "variable_declarator").
+
+// unwrapped(o, w): w is o, or a parenthesis, `as` or `satisfies` around it, with only those between.
+.decl unwrapped(o: node, w: node)
+unwrapped(o, o) :- kind(o, "object").
+unwrapped(o, w) :- unwrapped(o, x), child(w, x, _), (kind(w, "parenthesized_expression") ; kind(w, "as_expression") ;
+    kind(w, "satisfies_expression")).
+// second_arg(x, c): x is call c's second argument.
+.decl second_arg(x: node, c: node)
+second_arg(x, c) :- call_arg(c, x, 1).
+
+// options(o): object o holds per-call options.
+.decl options(o: node)
+options(o) :- unwrapped(o, w), second_arg(w, c), mutate_call(c).   // mutate(vars, { … } as Options)
+options(o) :- unwrapped(o, w), field(d, "value", w), opts_var(d).  // const opts = { … }; mutate(vars, opts)
+// const opts = useMemo(() => ({ … }), […]); mutate(vars, opts)
+options(o) :- unwrapped(o, w), factory_result(w, a), call_arg(m, a, 0), kind(a, "arrow_function"),
+    field(m, "function", f), react_api(f, "useMemo", s, _), (s = "" ; iglob("react", s)), unwrapped_call(m, v),
+    field(d, "value", v), opts_var(d).
+// factory_result(w, a): arrow a returns w: its body, or a `return w` of its block.
+.decl factory_result(w: node, a: node)
+factory_result(w, a) :- kind(a, "arrow_function"), field(a, "body", w).
+factory_result(w, a) :- kind(a, "arrow_function"), field(a, "body", b), kind(b, "statement_block"), child(b, r, _),
+    kind(r, "return_statement"), child(r, w, _).
+.decl unwrapped_call(m: node, w: node)  // the useMemo call, in parentheses or a cast or not
+unwrapped_call(m, m) :- kind(m, "call_expression").
+unwrapped_call(m, w) :- unwrapped_call(m, x), child(w, x, _), (kind(w, "parenthesized_expression") ;
+    kind(w, "as_expression") ; kind(w, "satisfies_expression")).
+// opts_var(d): `const opts = …` where some mutate call in the file passes a name `opts` as its second argument.
+.decl opts_var(d: node)
+opts_var(d) :- kind(d, "variable_declarator"), field(d, "name", n), kind(n, "identifier"), text(n, x), docof(d, doc),
+    passed_opts(doc, x).
+.decl passed_opts(doc: number, x: symbol)
+passed_opts(doc, x) :- mutate_call(c), second_arg(a, c), kind(a, "identifier"), text(a, x), docof(c, doc).
+
+// callback(f): f is an onSuccess, onSettled or onError of per-call options: a property's value or a method.
+.decl callback(f: node)
+callback(f) :- function_node(f), field(p, "value", f), kind(p, "pair"), field(p, "key", k), callback_key(k),
+    child(o, p, _), options(o).
+callback(f) :- kind(f, "method_definition"), field(f, "name", k), callback_key(k), child(o, f, _), options(o).
+.decl callback_key(k: node)  // onSuccess, 'onSuccess' or "onSuccess", as written
+callback_key(k) :- text(k, t), glob("{onSuccess,onSettled,onError,'on{Success,Settled,Error}',\"on{Success,Settled,Error}\"}", t).
+
+// cache_call(c, m): c updates the cache through method m.
+.decl cache_call(c: node, m: node)
+cache_call(c, p) :- callee_member(c, f, p, x), glob("{invalidateQueries,setQueryData,setQueriesData,resetQueries,removeQueries}", x).
+cache_call(c, p) :- callee_member(c, f, p, "refetchQueries"), (query_file(f) ; field(f, "object", o), text(o, t),
+    match("(?i)(.*\\.)?(query_?client|qc)", t)).
+cache_call(c, p) :- callee_member(c, f, p, x), glob("{invalidate,refetch,reset,setData,setInfiniteData}", x),
+    trpc_receiver(f).
+.decl callee_member(c: node, f: node, p: node, x: symbol)
+callee_member(c, f, p, x) :- kind(c, "call_expression"), field(c, "function", f), kind(f, "member_expression"),
+    field(f, "property", p), text(p, x).
+.decl query_file(f: node)  // the file imports TanStack Query, react-query or tRPC at its top level
+query_file(f) :- callee_member(_, f, _, "refetchQueries"), inside(f, prog, "program"), child(prog, i, _),
+    kind(i, "import_statement"), field(i, "source", s), str(s, m),
+    match("(@tanstack/[^/]*query[^/]*|react-query|@trpc/[^/]+)(/.*)?", m).
+// trpc_receiver(f): f's object is a plain chain (`utils.post`, `trpc.useUtils().post`) that holds a useUtils() or
+// useContext() call, or a name declared from one.
+.decl trpc_receiver(f: node)
+trpc_receiver(f) :- callee_member(_, f, _, _), field(f, "object", o), text(o, t),
+    match("([\\w$]+|\\(\\))(\\??\\.[\\w$]+|\\(\\))*", t), (utils_ref(o) ; has(o, x, utils_kind), utils_ref(x)).
+.decl utils_kind(k: symbol)
+utils_kind("call_expression"). utils_kind("identifier").
+.decl utils_ref(x: node)
+utils_ref(x) :- utils_call(x).
+utils_ref(x) :- kind(x, "identifier"), ref_site(x, site), binding_value(site, v), utils_call(v).
+utils_ref(x) :- kind(x, "identifier"), ref_site(x, site), (d = site ; inside(site, d, "variable_declarator")),
+    kind(d, "variable_declarator"), field(d, "value", v), utils_call(v).
+.decl utils_call(c: node)
+utils_call(c) :- kind(c, "call_expression"), field(c, "function", f), text(f, t),
+    match("([\\w$]+\\.)+use(Utils|Context)|use(Utils|TRPCUtils|TrpcUtils)", t).
+
+.violation CACHE_UPDATE_IN_MUTATE_CALL(at: node, m: symbol)
+    "Move this {m} call into the mutation's own options: callbacks passed to mutate() are dropped if the component unmounts first. Keep toasts here."
+CACHE_UPDATE_IN_MUTATE_CALL(c, x) :- cache_call(c, p), nearest(c, f, function_kind), callback(f), text(p, x),
+    docof(c, d), react_doc(d).

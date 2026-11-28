@@ -1,0 +1,84 @@
+// python/python-22: imported calls inside string type definitions, for Ruff's PTH201-PTH205 checks.
+//
+// Interface
+//   tdef_call(c, q, f)                c calls imported qualified name q; f is the callee without parentheses
+//   tdef_call_only(c, a)              c has one positional argument a and no keywords
+//   tdef_single_arg(c, q, x, f, a)    tdef_call for q with exactly one argument a, positional or keyword x
+//   tdef_unparen(e, m)                m is parsed-tree expression e without parentheses
+//   tdef_plain_str(e, v)              e is a plain str literal in a parsed tree, with decoded value v
+//
+// Ruff parses strings used as types and checks their expressions as code. Relations that enumerate a file tree do
+// not enumerate these fragment trees, so each relation below stays rooted in typedef_node. For example:
+//   a: "List['Path(\".\")']"                    tdef_call(<Path(".")>, "pathlib.Path", <Path>)
+//   b: "List['os.path.getsize(p)']"             tdef_single_arg(..., "filename", ..., <p>)
+//   c: "List['os.path.getatime(p)']"            tdef_single_arg(...)
+//   d: "List['os.path.getmtime(p)']"            tdef_single_arg(...)
+//   e: "List['os.path.getctime(p)']"            tdef_single_arg(...)
+#include "python/python-01.rerail"   // typedef_node
+
+// Parentheses in a fragment tree cannot use file-tree unparen rows.
+.decl tdef_unparen(e: node, m: node)
+tdef_unparen(e, e) :- typedef_node(e), kind(e, k), k != "parenthesized_expression".
+tdef_unparen(e, m) :- typedef_node(e), kind(e, "parenthesized_expression"), child(e, i, _),
+    !kind(i, "comment"), tdef_unparen(i, m).
+
+// Resolve an imported identifier from the scope containing the outermost annotation string, then carry its
+// qualified name through an attribute chain. A non-import binding before the string shadows the import, as it does
+// for an ordinary expression.
+.decl tdef_name(n: node, x: symbol)
+tdef_name(n, x) :- typedef_node(n), kind(n, "identifier"), text(n, x), !field(_, "attribute", n), !field(_, "name", n).
+.decl tdef_start(n: node, s: node)
+tdef_start(n, s) :- tdef_name(n, _), parsed_in(n, h), nearest(h, s, lscope), kind(s, k), scope(k).
+tdef_start(n, c) :- tdef_name(n, _), parsed_in(n, h), nearest(h, c, lscope), kind(c, k), comp_scope(k).
+.decl tdef_walk(n: node, x: symbol, s: node)
+tdef_walk(n, x, s) :- tdef_name(n, x), tdef_start(n, s).
+tdef_walk(n, x, p) :- tdef_walk(n, x, s), !bound_in(s, x), nearest(s, p, lfscope).
+.decl tdef_look(n: node, x: symbol, s: node)
+tdef_look(n, x, s) :- tdef_walk(n, x, s), bound_in(s, x).
+.decl tdef_qn(n: node, q: symbol)
+tdef_qn(n, q) :- tdef_look(n, x, s), ibind(s, x, q).
+tdef_qn(n, @dot(q, a)) :- typedef_node(n), kind(n, "attribute"), field(n, "object", o),
+    field(n, "attribute", at), text(at, a), tdef_qn(o, q).
+.decl tdef_root(n: node, r: node)
+tdef_root(n, n) :- typedef_node(n), kind(n, "identifier").
+tdef_root(n, r) :- typedef_node(n), kind(n, "attribute"), field(n, "object", o), tdef_root(o, r).
+.decl tdef_rebound(r: node)
+tdef_rebound(r) :- tdef_look(r, x, s), parsed_in(r, h), binding(s, x, b, form), form != "import", b < h,
+    count : { binding(s, x, a, "import"), b < a, a < h } = 0.
+.decl tdef_qual(e: node, q: symbol)
+tdef_qual(e, q) :- tdef_unparen(e, m), tdef_qn(m, q), tdef_root(m, r), !tdef_rebound(r).
+
+.decl tdef_call(c: node, q: symbol, f: node)
+tdef_call(c, q, f) :- typedef_node(c), kind(c, "call"), field(c, "function", g), tdef_unparen(g, f), tdef_qual(f, q).
+
+// One written argument. Comments and line continuations do not count. A splat counts toward the length but cannot
+// supply the named parameter, matching Ruff's Arguments::find_argument_value.
+.decl tdef_item(c: node, a: node, j: number)
+tdef_item(c, a, j) :- typedef_node(c), kind(c, "call"), field(c, "arguments", al), child(al, a, j),
+    kind(a, k), k != "comment", k != "line_continuation".
+.decl tdef_one_pos(c: node, a: node)
+tdef_one_pos(c, a) :- tdef_item(c, a, _), kind(a, k), k != "keyword_argument", k != "list_splat",
+    k != "dictionary_splat", count : { tdef_item(c, _, _) } = 1.
+.decl tdef_one_kw(c: node, x: symbol, a: node)
+tdef_one_kw(c, x, a) :- tdef_item(c, k, _), kind(k, "keyword_argument"), field(k, "name", n), text(n, x),
+    field(k, "value", a), count : { tdef_item(c, _, _) } = 1.
+.decl tdef_one_gen(c: node, a: node)
+tdef_one_gen(c, a) :- typedef_node(c), kind(c, "call"), field(c, "arguments", a), kind(a, "generator_expression").
+.decl tdef_call_only(c: node, a: node)
+tdef_call_only(c, a) :- tdef_one_pos(c, a).
+tdef_call_only(c, a) :- tdef_one_gen(c, a).
+.decl tdef_single_arg(c: node, q: symbol, x: symbol, f: node, a: node)
+tdef_single_arg(c, q, x, f, a) :- x = "filename", tdef_call(c, q, f), tdef_one_pos(c, v), tdef_unparen(v, a).
+tdef_single_arg(c, q, x, f, a) :- tdef_call(c, q, f), tdef_one_kw(c, x, v), tdef_unparen(v, a).
+tdef_single_arg(c, q, x, f, a) :- x = "filename", tdef_call(c, q, f), tdef_one_gen(c, a).
+
+.decl tdef_str_piece(e: node, v: symbol)
+tdef_str_piece(e, v) :- typedef_node(e), kind(e, "string"), str(e, v), strprefix(e, p),
+    (p = "" ; p = "r" ; p = "u" ; p = "ru" ; p = "ur").
+.decl tdef_bad_str_part(e: node)
+tdef_bad_str_part(e) :- typedef_node(e), kind(e, "concatenated_string"), child(e, p, _), !kind(p, "comment"),
+    !tdef_str_piece(p, _).
+.decl tdef_plain_str(e: node, v: symbol)
+tdef_plain_str(e, v) :- tdef_str_piece(e, v).
+tdef_plain_str(e, v) :- typedef_node(e), kind(e, "concatenated_string"), !tdef_bad_str_part(e),
+    v = join x by i sep "" : { child(e, s, i), tdef_str_piece(s, x) }.

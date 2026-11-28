@@ -1,0 +1,9 @@
+[
+  { "id": "ruff-try002-raise-vanilla-class", "status": "same" },
+  { "id": "ruff-try003-raise-vanilla-args", "status": "same" },
+  { "id": "ruff-try401-verbose-log-message", "status": "same" },
+  { "id": "ruff-b030-except-with-non-exception-classes", "status": "same" },
+  { "id": "ruff-b905-zip-without-explicit-strict", "status": "same" },
+  { "id": "ruff-int001-f-string-in-get-text-func-call", "status": "same" },
+  { "id": "ruff-int002-format-in-get-text-func-call", "status": "same" }
+]

@@ -1,0 +1,10 @@
+[
+  { "id": "ruff-ruf017-quadratic-list-summation", "status": "same" },
+  { "id": "ruff-ruf018-assignment-in-assert", "status": "same" },
+  { "id": "ruff-ruf019-unnecessary-key-check", "status": "same" },
+  { "id": "ruff-ruf020-never-union", "status": "same" },
+  { "id": "ruff-ruf021-parenthesize-chained-operators", "status": "same" },
+  { "id": "ruff-ruf022-unsorted-dunder-all", "status": "same" },
+  { "id": "ruff-ruf026-default-factory-kwarg", "status": "same" },
+  { "id": "ruff-ruf028-invalid-formatter-suppression-comment", "status": "same" }
+]

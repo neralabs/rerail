@@ -5,13 +5,20 @@
 .scope include "**/*"
 
 // Ruff D418 (pydocstyle): an `@overload` signature with a (non-empty) docstring. `.pyi` stubs are not checked.
+// The decorator is `overload` of `typing`, `typing_extensions` or `_typeshed`, parentheses aside.
 //   @overload
 //   def f(x: int) -> int:
 //       """Doc."""               ← D418 at `f`
 #include "python/docstrings.rerail"
+#include "python/docstrings-ruff-reads.rerail"
 
 .violation D418(at: node) code "D418"
     "Remove the docstring from this `@overload` signature and document the function on its implementation instead."
     suppress ruff "D418"
-D418(nm) :- doc_of(f, s), doc_checked(s), kind(f, "function_definition"), typing_dec(f, "overload"),
+D418(nm) :- doc_of(f, s), ruff_doc(s), doc_checked(s), kind(f, "function_definition"), overload_dec(f),
     doc_name(f, nm, _), docof(f, d), !stub_file(d).
+// overload_dec(f): python/naming's typing_dec reads `typing` and `typing_extensions`; Ruff's typing members are
+// `_typeshed`'s too (`from _typeshed import overload as ov`).
+.decl overload_dec(f: node)
+overload_dec(f) :- typing_dec(f, "overload").
+overload_dec(f) :- decorator(f, e0), unparen(e0, e), sym_of(e, "_typeshed.overload").

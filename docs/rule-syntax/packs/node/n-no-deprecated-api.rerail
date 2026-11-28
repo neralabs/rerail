@@ -27,7 +27,16 @@ base(at, g, how, "ignoreGlobalItems", g) :- api_use(at, g, how), how != "load", 
 // GLOBAL, root and COUNTER_*: no environment declares them, so ReferenceTracker sees them only where a
 // `/* global GLOBAL */` comment does. (values.rerail's env_global asks node_global for those too.)
 base(r, g, "read", "ignoreGlobalItems", g) :- dep(g, "read", _, _), !contains("#", g), !node_global(g),
-    ref(r, g, "value"), !ref_site(r, _), docof(r, d), directive_global(d, g).
+    ref(r, g, "value"), !ref_site(r, _), docof(r, d), global_comment(d, g).
+// global_comment(d, x): names' directive_global, read from the directive's text: the engine gives the
+// eslintDirective tree's nodes no value, so directive_global holds for no comment (NOTES-node-01). An item's text
+// is its name and its setting:  /*globals GLOBAL*/  /* global root: readonly */;  `GLOBAL: off` declares nothing.
+.decl global_comment(d: number, x: symbol)
+global_comment(d, x) :- kind(c, "comment"), text(c, t), match("(?s)/\\*\\s*globals?\\s.*", t),
+    parsed(c, "eslintDirective", r), child(r, i, _), kind(i, "item"), text(i, s),
+    match("(?s)(?<x>[^\\s:]+).*", s), !item_off(i), docof(c, d).
+.decl item_off(i: node)
+item_off(i) :- child(i, s, _), kind(s, "setting"), text(s, "off").
 .decl form_how(f: symbol, how: symbol)
 form_how("call", "call"). form_how("new", "new"). form_how("member", "read"). form_how("destructured", "read").
 form_how("specifier", "read"). form_how("export_all", "read").

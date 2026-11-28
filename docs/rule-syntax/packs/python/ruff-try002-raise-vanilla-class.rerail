@@ -1,20 +1,24 @@
-.policy "ruff-try002-raise-vanilla-class" revision 2
+.policy "ruff-try002-raise-vanilla-class" revision 3
 .description "Raise a specific built-in or custom exception instead of the generic base exception classes; callers can then catch it without capturing unrelated errors."
 .language python
 .mode steer
 .scope include "**/*"
 
 // Ruff TRY002 (tryceratops): raising the generic `Exception` or `BaseException`, as a class or an instance, so
-// callers cannot catch it without catching everything else too.
+// callers cannot catch it without catching everything else too. The name is resolved where Ruff's visit reads it: a
+// later binding in the same function does not hide the builtin yet; one in an enclosing function, read from a
+// nested def (which Ruff visits after it), does.
 //   raise Exception("boom")        ← TRY002
 //   raise BaseException            ← TRY002
+//   raise \
+//       Exception("boom")          ← TRY002
 //   raise ValueError("boom")       not reported
 //   raise X from Exception()       not reported: only the raised exception counts, not the cause
-#include "python/exceptions.rerail"
-//   exc_raise(r, e), exc_class(e, c), exc_qual(e, q)
+#include "python/raise-and-gettext.rerail"
+//   raise_value(r, e), raised_class(e, c); python/upgrade: sym_at(e, q), the name in Ruff's order
 
 .violation TRY002(at: node) code "TRY002"
     "Raise a specific built-in exception such as `ValueError` or `RuntimeError`, or define a subclass, instead of `Exception`/`BaseException`, so callers can catch it precisely."
     suppress ruff "TRY002"
-TRY002(e) :- exc_raise(_, e), exc_class(e, c), exc_qual(c, q),
+TRY002(e) :- raise_value(_, e), raised_class(e, c), sym_at(c, q),
     (q = "builtins.Exception" ; q = "builtins.BaseException").

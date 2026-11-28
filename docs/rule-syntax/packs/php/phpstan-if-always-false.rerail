@@ -7,6 +7,8 @@
 
 #include "php/values.rerail"
 //   php_if_const(i, c, b)   `if (c)` is always b: literals, class constants, variables with one write
+#include "php/php-02.rerail"
+//   php_parse_error(d)      document d has a syntax error: PHPStan runs no rule on it
 
 // PHPStan's IfConstantConditionRule (if.alwaysFalse, level 4): an if whose condition is always false.
 //   if (false) {}     $zero = 0; if ($zero) {}     $a = []; if ($a) {}      reported, at the condition
@@ -15,9 +17,36 @@
 // reads values only (NOTES). Two more cases are kept, as the pack does:
 //   trait T { function f() { if (false) {} } }      a trait's body is analysed per using class
 //   if (false) { class Stub {} class_alias(…); }    a declaration stub for autoloaders and IDEs (divergences.json)
+// Not in a file with a syntax error, which PHPStan reports as such and analyses no further.
 .violation if_always_false(at: node) code "if.alwaysFalse" "If condition is always false."
     suppress phpstan "if.alwaysFalse"
-if_always_false(c) :- php_if_const(i, c, "false"), !inside(i, _, "trait_declaration"), !stub(i).
+if_always_false(c) :- (php_if_const(i, c, "false") ; reaching(i, c, e), php_truthy(e, "false"), !php_var_doc_above(i)),
+    !inside(i, _, "trait_declaration"), !stub(i), docof(i, d), !php_parse_error(d).
+
+// php_if_const follows a variable with one write. PHPStan follows the value that reaches the if, so a write that
+// cannot reach it does not count: one in a catch whose block ends by throwing or returning.
+//   $e = null; try { f(); } catch (\Exception $e) { throw $e; }  if ($e) {}      reported
+//   $e = null; try { f(); } catch (\Exception $e) { log($e); }   if ($e) {}      not reported
+// reaching(i, c, e): if i's condition c is variable x, and `x = e;` is a statement st before the statement a that
+// holds i, in one block, so every path to i passes st; no write of x from st to the end of a reaches i, and x is
+// never a reference, global or static (a call could change it).
+.decl reaching(i: node, c: node, e: node)
+reaching(i, c, e) :- assigned(i, c, st, a, o, e), !live_write(c, st, a, o).
+.decl assigned(i: node, c: node, st: node, a: node, o: node, e: node)
+assigned(i, c, st, a, o, e) :- kind(i, "if_statement"), field(i, "condition", p), child(p, c, 0), php_occ(s, x, c),
+    !php_dynamic(s), !aliased(s, x), php_occ(s, x, o), field(w, "left", o), kind(w, "assignment_expression"),
+    field(w, "right", e), child(st, w, 0), kind(st, "expression_statement"), precedes(st, a), (a = i ; within(i, a)).
+.decl aliased(s: node, x: symbol)
+aliased(s, x) :- php_occ(s, x, o), php_referenced(o).
+aliased(s, x) :- php_occ(s, x, o), child(g, o, _), (kind(g, "global_declaration") ; kind(g, "static_variable_declaration")).
+.decl live_write(c: node, st: node, a: node, o: node)
+live_write(c, st, a, o) :- assigned(_, c, st, a, o, _), php_occ(s, x, c), php_occ(s, x, v), php_write(v), v != o,
+    node(_, st, _, from, _), node(_, a, _, _, to), node(_, v, _, at, _), at > from, at < to, !dead_write(v, c).
+// dead_write(v, c): v is in a catch whose block ends in throw or return, and c is not in that catch.
+.decl dead_write(v: node, c: node)
+dead_write(v, c) :- php_occ(_, _, c), inside(v, k, "catch_clause"), !within(c, k), field(k, "body", b), child(b, z, n),
+    !child(b, _, n + 1), (kind(z, "return_statement") ; kind(z, "expression_statement"), child(z, t, 0),
+    kind(t, "throw_expression")).
 // stub(i): i's block holds declarations and class_alias() calls, at least one, and nothing else but comments.
 .decl stub(i: node)
 stub(i) :- field(i, "body", b), kind(b, "compound_statement"), child(b, _, _),

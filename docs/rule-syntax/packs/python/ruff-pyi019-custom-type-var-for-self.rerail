@@ -6,19 +6,48 @@
 
 // Ruff PYI019 (flake8-pyi), every file: a method whose first parameter is annotated with a type variable
 // standing for the class: `self: _S` in an instance method, `cls: type[_S]` in a class method or `__new__`.
-// `Self` says the same. Any TypeVar counts, private or not, assigned in the file or a PEP 695 parameter of the
-// def itself (not of its class); the return annotation does not matter. Static, abstract and overloaded
+// `Self` says the same. Any TypeVar counts, private or not: one a plain assignment binds in the file (not an
+// annotated one), or a PEP 695 parameter of the def itself (not of its class); the return annotation does not
+// matter. Outside stubs, a written annotation is resolved where the def stands, so a TypeVar assigned below the
+// def does not count there (unless `from __future__ import annotations`). Static, abstract and overloaded
 // methods are skipped, and so are definite metaclasses (`class M(type)`; a maybe-metaclass is checked).
 // Reported where the signature starts: the `[` of PEP 695 parameters, else the `(`.
 //   def m(self: _S) -> _S: ...                  ← PYI019
 //   @classmethod
-//   def make(cls: type[_S]) -> _S: ...          ← PYI019 (typing.Type[_S] and builtins.type[_S] are not checked)
+//   def make(cls: type[_S]) -> _S: ...          ← PYI019 (typing.Type[_S], builtins.type[_S] and type[_S,] are not
+//                                                 checked)
+//   def m[S](cls: "type[S]") -> "type[S]": ...  ← PYI019 in a class method: a string annotation is read as the type
+//                                                 it parses to, once (`self: "'_S'"` and `cls: type["_S"]` are not)
 #include "python/typing.rerail"
+#include "python/upgrade.rerail"   // future_annotations, targets
 
 .violation PYI019(at: node, x: symbol) code "PYI019" "Replace the custom type variable `{x}` with `Self` (from `typing`, or `typing_extensions` before 3.11): drop the first parameter's annotation and use `Self` for `{x}` here."
     suppress ruff "PYI019"
-PYI019(at, x) :- receiver(f, k, t), sig_at(f, at), (k = "instance", self_var(t, x) ; k != "instance", builtin_sub(t, "type"),
-    tsub(t, h, 0, e), kind(h, "identifier"), tsub_n(t, 1), self_var(e, x)).
+PYI019(at, x) :- cand(f, t, e), sig_at(f, at), tvar(f, t, e, x).
+// cand(f, t, e): the name e that would be a type variable: the receiver's type itself in an instance method, the
+// argument of `type[e]` in a class method or `__new__`. t is the annotation as written, e is in t or in the tree
+// t's string parses to (Ruff parses the annotation if it is a string, then matches a Name or `type[Name]`).
+// `type[_S,]`'s slice is a tuple to Ruff, no Name: tree-sitter gives it one argument and a bare `,`.
+.decl cand(f: node, t: node, e: node)
+cand(f, t, m) :- receiver(f, "instance", t), recv_type(t, m).
+cand(f, t, e) :- receiver(f, k, t), k != "instance", recv_type(t, m), tsub(m, h, 0, e), kind(h, "identifier"),
+    tsub_n(m, 1), !sub_comma(m), builtin_type(f, t, h).
+// sub_comma(m): subscript m, or the type_parameter of generic_type m, ends in a `,`: python/stub-version-checks'
+// bracket_comma test, asked of m here. A relation that ranges over node kinds has no rows for a string's parsed
+// tree (`cls: "type[_S,]"`), so the library's cannot be read.
+.decl sub_comma(m: node)
+sub_comma(m) :- recv_type(_, m), (p = m ; child(m, p, _), kind(p, "type_parameter")), node_text(p, s),
+    match("([\\s\\S]*\\n)?[^#\\n]*,(\\s|\\\\|#[^\\n]*\\n)*\\]", s).
+// builtin_type(f, t, h): h is the builtin `type`. Names in a string's parsed tree do not resolve (pyi_sym gives
+// them nothing), so there h is the name `type` and nothing binds `type` where Ruff looks it up
+// (has_builtin_binding_in_scope): f's class, or a module or def around it.
+.decl builtin_type(f: node, t: node, h: node)
+builtin_type(f, t, h) :- receiver(f, _, t), !str_node(t), pyi_sym(h, "builtins.type"), within(h, t).
+builtin_type(f, t, h) :- receiver(f, _, t), str_node(t), recv_type(t, m), tsub(m, h, 0, _), text(h, "type"),
+    !type_bound(f).
+.decl type_bound(f: node)
+type_bound(f) :- receiver(f, _, _), pyi_method(c, f, _), (binding(c, "type", _, _) ; within(c, s),
+    (kind(s, "module") ; kind(s, "function_definition")), binding(s, "type", _, _)).
 // receiver(f, k, t): method f of kind k (not static) has its first parameter annotated t, bare. `within(t, f)` is
 // true of every row; it tells the engine that t is in f's file (first_param's annotation column is a loc), so the
 // rule runs file by file.
@@ -28,7 +57,94 @@ receiver(f, k, t) :- method_kind(f, k), k != "static", pyi_method(c, f, _), !met
 .decl sig_at(f: node, at: node)
 sig_at(f, at) :- receiver(f, _, _), (field(f, "type_parameters", at) ; !field(f, "type_parameters", _),
     field(f, "parameters", at)).
-// self_var(t, x): t is a type variable x, or a string annotation that parses to one.
-.decl self_var(t: node, x: symbol)
-self_var(t, x) :- typevar_name(t, x).
-self_var(t, x) :- str_node(t), parsed(t, "annotation", r0), type_bare(r0, r), typevar_name(r, x).
+// recv_type(t, m): annotation t, or the type its string parses to, bare.
+.decl recv_type(t: node, m: node)
+recv_type(t, t) :- receiver(_, _, t), !str_node(t).
+recv_type(t, m) :- receiver(_, _, t), str_node(t), parsed(t, "annotation", r0), type_bare(r0, m).
+// tvar(f, t, e, x): e names a type variable x: a PEP 695 type parameter of f, or a name bound by a plain assignment
+// of a TypeVar call (Ruff's custom_typevar: `statement.as_assign_stmt()?.value.as_call_expr()?`), not an annotated
+// one (`_A: TypeVar = TypeVar("_A")`) or a walrus. A string's parsed tree has no ancestors, so typevar_name cannot
+// find the def around a name in it; f's own parameters are asked directly (`def m[S](cls: "type[S]")`), and a name
+// that f's type parameter binds resolves to it wherever it stands in f's signature.
+.decl tvar(f: node, t: node, e: node, x: symbol)
+tvar(f, t, e, x) :- cand(f, t, e), kind(e, "identifier"), text(e, x), tparam_named(f, x, "typevar").
+tvar(f, t, e, x) :- tv_site(f, t, e, x, _), deferred(f, t).
+tvar(f, t, e, x) :- tv_site(f, t, e, x, a), node(_, a, _, sa, _), node(_, f, _, sf, _), sa < sf.
+.decl tv_site(f: node, t: node, e: node, x: symbol, a: node)
+tv_site(f, t, e, x, a) :- cand(f, t, e), kind(e, "identifier"), text(e, x), ref_site(e, a), kind(a, "assignment"),
+    !field(a, "type", _), tv_stored(a, v0), unparen(v0, v), typevar_call(v, "TypeVar").
+// tv_stored(a, v): the value a plain assignment stores; `_C = _D = TypeVar("_C")` stores the call in both.
+.decl tv_stored(a: node, v: node)
+tv_stored(a, v) :- kind(a, "assignment"), field(a, "right", v), !kind(v, "assignment").
+tv_stored(a, v) :- kind(a, "assignment"), field(a, "right", b), kind(b, "assignment"), tv_stored(b, v).
+// deferred(f, t): Ruff resolves annotation t of f at the end of the module, when every module binding is made: in
+// a stub, in a string, under `from __future__ import annotations`, or from Python 3.14. Otherwise it resolves t
+// where the def stands, and a TypeVar assigned below the def is unbound there (tvar's last clause).
+.decl deferred(f: node, t: node)
+deferred(f, t) :- receiver(f, _, t), (in_stub(f) ; str_node(t) ; targets(14) ; docof(f, d), future_annotations(d)).
+
+// Ruff 0.17.6: PYI019 at line 14 only (a `,` in a comment is none). Before: PYI019 at lines 6, 9 and 11
+// (`type[_S,]`'s slice is a tuple), 7 (an annotated assignment) and 14.
+.test a_tuple_slice_and_an_annotated_typevar exactly
+    .fixture "a.pyi" ```
+        from typing import TypeVar
+        _S = TypeVar("_S")
+        _A: TypeVar = TypeVar("_A")
+        class C:
+            @classmethod
+            def m1(cls: type[_S,]) -> _S: ...
+            def m2(self: _A) -> _A: ...
+            @classmethod
+            def m3(cls: "type[_S,]") -> _S: ...
+            @classmethod
+            def m4(cls: type[_S,  # c
+                ]) -> _S: ...
+            @classmethod
+            def m5(cls: type[_S  # a, b
+                ]) -> _S: ...
+        ```
+    .expect PYI019 at "a.pyi":14
+.end
+
+// Ruff 0.17.6: PYI019 at lines 5, 6 and 8 (`(` of each signature; a chained assignment binds both names).
+.test plain_assignments exactly
+    .fixture "b.pyi" ```
+        from typing import TypeVar
+        _S = TypeVar("_S")
+        _C = _D = TypeVar("_C")
+        class C:
+            def m1(self: _C) -> _C: ...
+            def m2(self: _D) -> _D: ...
+            @classmethod
+            def m3(cls: type[_S]) -> _S: ...
+        ```
+    .expect PYI019 at "b.pyi":5
+    .expect PYI019 at "b.pyi":6
+    .expect PYI019 at "b.pyi":8
+.end
+
+// Ruff 0.17.6 (target 3.10): nothing in late.py, where `_L` is unbound where the def stands; PYI019 at line 3 of
+// late.pyi and of future.py, whose annotations are resolved at the end of the module. Before: PYI019 in all three.
+.test a_typevar_assigned_after_the_def exactly
+    .fixture "late.py" ```
+        from typing import TypeVar
+        class C:
+            def m(self: _L) -> _L: ...
+        _L = TypeVar("_L")
+        ```
+    .fixture "late.pyi" ```
+        from typing import TypeVar
+        class C:
+            def m(self: _L) -> _L: ...
+        _L = TypeVar("_L")
+        ```
+    .fixture "future.py" ```
+        from __future__ import annotations
+        from typing import TypeVar
+        class C:
+            def m(self: _L) -> _L: ...
+        _L = TypeVar("_L")
+        ```
+    .expect PYI019 at "late.pyi":3
+    .expect PYI019 at "future.py":4
+.end

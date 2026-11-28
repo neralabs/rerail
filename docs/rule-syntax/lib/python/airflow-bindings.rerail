@@ -1,0 +1,133 @@
+// python/airflow-bindings: Airflow references by the binding Ruff sees at each read, for AIR001, AIR302, AIR311 and
+// AIR312. python/misc-airflow's air_ref, air_call and air_guarded read python/ruff's ruff_qual, which takes the scope
+// Python's lookup ends in and every import of the name there, wherever it sits; Ruff takes the one binding its walk
+// has reached, in the innermost scope that has one by then.
+//
+// Interface
+//   air_q(e, q)              expression e resolves to q, an `airflow…` name, through the binding Ruff's walk sees
+//                            at e (below), in a file that imports airflow
+//                              from airflow.operators.python import PythonOperator
+//                              from airflow.providers.standard.operators.python import PythonOperator
+//                              PythonOperator()      the provider's name only
+//                            Parentheses anywhere in an attribute chain are read through (Ruff's AST has none):
+//                              (airflow.providers.google).operators.bq.Op    "airflow.providers.google.operators.bq.Op"
+//   air_at(e, at, q)         air_ref through air_q: e reads q, a Name in load context or an Attribute; at is where
+//                            Ruff reports (the name, or the attribute's last part). A string annotation's code too:
+//                              def f(a: "S3Hook"): ...   air_at(<S3Hook>, <S3Hook>, "airflow.hooks.S3_hook.S3Hook")
+//   air_callq(c, q)          call c's callee, through air_q
+//   air_dag_at(c)            c calls `airflow.….DAG` or `airflow.….dag` (misc-airflow's air_dag, through air_callq)
+//   air_kind_at(c, m, s)     misc-airflow's air_kind for a call, through air_callq; the pairs are air_kind_ask's
+//   air_safe(e, m, x)        Ruff's is_guarded_by_try_except for reference e and `x` in module m (misc-airflow's
+//                            air_guarded, for the binding Ruff sees, with Ruff's handler types); asked by the rows a
+//                            rule adds to air_needs_guard
+//
+// Ruff background
+//   - Ruff visits module and class bodies in order, and defers function and lambda bodies, and string annotations,
+//     until the module is done. So a read in module code sees the latest binding above it, and a read in a function
+//     body sees the enclosing scope's last binding:
+//       from airflow.decorators import task
+//       from airflow.sdk import task
+//       @task                  airflow.sdk.task: AIR311 is quiet
+//   - A string annotation's names are looked up in the module scope, wherever the string is (a Ruff quirk):
+//       from airflow.operators.python import PythonOperator
+//       def load():
+//           try: from airflow.providers.standard.operators.python import PythonOperator
+//           except ImportError: from airflow.operators.python import PythonOperator
+//           hint: "PythonOperator" = PythonOperator()     the string is AIR312 (the module's import), the call is not
+//   - A handler's types are its Name, or a tuple's elements; a tuple nested in the tuple names nothing:
+//       except (ValueError, (ImportError,)):            not an ImportError handler
+#include "python/misc-airflow.rerail"
+
+// ---- 1. the binding at a read -------------------------------------------------------------------------------------
+// air_seed(e): a Name or an attribute chain (or a parenthesized callee) in a file that imports airflow; a string
+// annotation's code is its host's file's.
+.decl air_seed(e: node)
+air_seed(e) :- (ast_name(e, _) ; kind(e, "attribute")), air_file(e).
+air_seed(f) :- kind(c, "call"), field(c, "function", f), kind(f, "parenthesized_expression"), air_file(f).
+.decl air_file(e: node)
+air_file(e) :- docof(e, d), seen_module(d, "airflow").
+air_file(e) :- parsed_in(e, s), docof(s, d), seen_module(d, "airflow").
+// air_root(e, r, t): r is the name e's chain starts from (e itself, or its innermost object), and t the chain's
+// attributes after it, through parentheses: `(airflow.hooks).S3_hook` gives (<airflow>, ".hooks.S3_hook").
+.decl air_tail(e: node, o: node, t: symbol)
+air_tail(e, e, "") :- air_seed(e).
+air_tail(e, o, cat(".", cat(x, t))) :- air_tail(e, p, t), unparen(p, m), kind(m, "attribute"), field(m, "object", o),
+    field(m, "attribute", a), text(a, x).
+.decl air_root(e: node, r: node, t: symbol)
+air_root(e, r, t) :- air_tail(e, o, t), unparen(o, r), kind(r, "identifier").
+// air_cur(r, b): b is the binding of name r that Ruff's walk sees at r (any form; an import's site is its alias):
+// in the innermost scope around r that has one by then. A scope with no binding of r yet is passed over, as Ruff's
+// lookup does, though Python would raise UnboundLocalError there:
+//   from airflow.operators.bash import BashOperator
+//   class K:
+//       BashOperator()        the module's import (the class binds the name only on the next line)
+//       from airflow.providers.standard.operators.bash import BashOperator
+.decl air_cur(r: node, b: node)
+air_cur(r, b) :- air_vis(r, s, b), !air_hidden(r, s).
+air_cur(r, b) :- air_root(_, r, _), parsed_in(r, h), ast_name(r, y), nearest(h, s, "module"), binding(s, y, b, _),
+    count : { binding(s, y, c, _), b < c } = 0.
+// air_chain(r, y, s): s is a scope r's lookup of y passes, innermost first (python/scopes' walk, not stopping
+// where the name is bound). air_vis(r, s, b): b is the binding of r's name in s that Ruff sees at r.
+// air_hidden(r, s): a scope inside s has one.
+.decl air_chain(r: node, y: symbol, s: node)
+air_chain(r, y, s) :- air_root(_, r, _), !parsed_in(r, _), ast_name(r, y), wstart(r, s).
+air_chain(r, y, p) :- air_chain(r, y, s), nearest(s, p, lfscope).
+.decl air_vis(r: node, s: node, b: node)
+air_vis(r, s, b) :- air_chain(r, y, s), !air_late(r, s), binding(s, y, b, _), b < r,
+    count : { binding(s, y, c, _), b < c, c < r } = 0.
+air_vis(r, s, b) :- air_chain(r, y, s), air_late(r, s), binding(s, y, b, _), count : { binding(s, y, c, _), b < c } = 0.
+.decl air_hidden(r: node, s: node)
+air_hidden(r, s) :- air_vis(r, s, _), air_vis(r, s2, _), within(s2, s).
+// air_late(r, s): r is in the body of a function or lambda inside scope s, which Ruff visits once s is done: any such
+// function around r, not only the innermost (a default of a def in an outer def's body is read with that body):
+//   def outer():
+//       def inner(op=BashOperator()): ...     read after the module: its later import
+.decl air_late(r: node, s: node)
+air_late(r, s) :- air_chain(r, _, s), inside(r, f, air_fn), within(f, s), field(f, "body", b), (r = b ; within(r, b)).
+.decl air_fn(k: symbol)
+air_fn("function_definition"). air_fn("lambda").
+// air_site(b, base): import site b binds its name to base (`import a.b` "a", `import a.b as c` "a.b",
+// `from m import x` "m.x").
+.decl air_site(b: node, base: symbol)
+air_site(b, l) :- import_alias(_, b, _, "", l), kind(b, "dotted_name").
+air_site(b, m) :- import_alias(_, b, m, "", _), kind(b, "aliased_import").
+air_site(b, @dot(m, x)) :- import_alias(_, b, m, x, _), x != "".
+
+// air_q(e, q): the binding Ruff sees is an import: its base, then the chain's attributes.
+.decl air_q(e: node, q: symbol)
+air_q(e, q) :- air_root(e, r, t), air_cur(r, b), air_site(b, base), q = cat(base, t), prefix("airflow", q).
+
+// ---- 2. references and calls --------------------------------------------------------------------------------------
+.decl air_at(e: node, at: node, q: symbol)
+air_at(e, e, q) :- ast_name(e, _), expr_ctx(e, "load"), air_q(e, q).
+air_at(e, a, q) :- kind(e, "attribute"), field(e, "attribute", a), air_q(e, q).
+.decl air_callq(c: node, q: symbol)
+air_callq(c, q) :- kind(c, "call"), field(c, "function", f), air_q(f, q), prefix("airflow.", q).
+.decl air_dag_at(c: node)
+air_dag_at(c) :- air_callq(c, q), split_dot(q, m, x), m != "", (x = "DAG" ; x = "dag").
+.decl air_kind_at(c: node, m: symbol, s: symbol)
+air_kind_at(c, m, s) :- air_kind_ask(m, s), air_callq(c, q),
+    match(cat("airflow\\.(providers\\.([^.]+\\.)*)?", cat(m, cat("\\.([^.]+\\.)*[^.]*", s))), q).
+
+// ---- 3. the compatibility guard -----------------------------------------------------------------------------------
+// A name: the binding Ruff sees is an import in an `except ImportError` (or ModuleNotFoundError) handler, and that
+// try's body does `from m import x`. An attribute: it sits in an `except AttributeError` handler, and that try's
+// body reads `m.x`.
+.decl air_safe(e: node, m: symbol, x: symbol)
+air_safe(e, m, x) :- air_needs_guard(e, m, x), ast_name(e, _), air_cur(e, b), import_alias(i, b, _, _, _),
+    air_in_handler(i, t), (air_flat_catches(t, "ImportError") ; air_flat_catches(t, "ModuleNotFoundError")),
+    field(t, "body", bd), within(i2, bd), kind(i2, "import_from_statement"), import_alias(i2, _, m, x, _).
+air_safe(e, m, x) :- air_needs_guard(e, m, x), kind(e, "attribute"), air_in_handler(e, t),
+    air_flat_catches(t, "AttributeError"), field(t, "body", bd), within(a, bd), kind(a, "attribute"),
+    ruff_qual(a, @dot(m, x)).
+// air_flat_catches(t, x): a handler of try t names the builtin exception x, alone or in a tuple (`as e` or not).
+.decl air_flat_catches(t: node, x: symbol)
+air_flat_catches(t, x) :- child(t, h, _), kind(h, "except_clause"), field(h, "value", v), air_type_of(v, ty),
+    air_type(ty, e), ruff_qual(e, q), split_dot(q, "builtins", x).
+.decl air_type_of(v: node, ty: node)  // `except T as e` holds T in an as_pattern
+air_type_of(v, ty) :- kind(h, "except_clause"), field(h, "value", v), unparen(v, m), kind(m, "as_pattern"),
+    child(m, c, 0), unparen(c, ty).
+air_type_of(v, ty) :- kind(h, "except_clause"), field(h, "value", v), unparen(v, ty), !kind(ty, "as_pattern").
+.decl air_type(ty: node, e: node)
+air_type(ty, ty) :- air_type_of(_, ty), !kind(ty, "tuple").
+air_type(ty, e) :- air_type_of(_, ty), kind(ty, "tuple"), child(ty, c, _), unparen(c, e).

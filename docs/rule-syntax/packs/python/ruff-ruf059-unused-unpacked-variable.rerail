@@ -5,39 +5,49 @@
 .scope include "**/*"
 
 // Ruff RUF059 (F841's twin for unpacking): a function's local bound by unpacking that nothing reads. Unpacking
-// is a tuple or list target of `with … as (a, b)`, or of an assignment whose value is not a tuple, list or set
-// display, or that has a plain-name target too (Ruff's is_unpacking_assignment):
+// is a tuple target of `with … as (a, b)` (not a list), or a tuple or list target of an assignment whose value
+// is not a tuple, list or set display, or that has a plain-name target too (Ruff's is_unpacking_assignment). A
+// walrus anywhere inside such a target binds by unpacking too. Ruff checks the name's latest binding in the
+// function only, which carries the reads of the earlier ones:
 //   x, y = tup                  ← RUF059 at x and y, if neither is read
 //   (x, y) = coords = 1, 2      ← RUF059: coords is a plain target
 //   (x, y) = (1, 2)             not reported: each name takes one element (F841's case)
+//   (x) = tup                   not reported: x in parentheses, no tuple
+//   x, y = a; x, y = b          ← RUF059 at the second y only
 // Not reported: dummy names (`_`, `_x`), `global` / `nonlocal` names, and functions that call `locals()`.
-#include "python/ruff.rerail"
+#include "python/python-04.rerail"
 
 .violation RUF059(at: node, n: symbol) code "RUF059"
     "Unpacked variable `{n}` is never used; rename it to `_{n}` or `_` to mark it unused, or use it."
     suppress ruff "RUF059"
 RUF059(n, x) :- unpack_root(t), unpack_name(t, n), text(n, x), scope_node(n, f), kind(f, "function_definition"),
-    !match("_+|_+[a-zA-Z0-9_]*[a-zA-Z0-9]", x), !decl(f, x, _), !calls_locals(f), !read_in_fn(f, x).
+    !match("_+|_+[a-zA-Z0-9_]*[a-zA-Z0-9]", x), !decl(f, x, _), !calls_locals(f), !read_in_fn(f, x),
+    count : { binding(f, x, b, _), b > n } = 0.
 
 // unpack_root(t): a tuple or list target that unpacks.
 .decl unpack_root(t: node)
 unpack_root(t) :- assign_target(a, t), tuple_like(t), assign_value(a, v), !value_tuple(v).
 unpack_root(t) :- assign_target(a, t), tuple_like(t), assign_target(a, o), !tuple_like(o).
-unpack_root(t) :- kind(p, "as_pattern"), child(p, g, _), kind(g, "as_pattern_target"), child(g, t, 0), tuple_like(t).
+unpack_root(t) :- kind(p, "as_pattern"), child(p, g, _), kind(g, "as_pattern_target"), child(g, t, 0), unparen(t, m),
+    (kind(m, "tuple") ; kind(m, "tuple_pattern"), !paren_pattern(m)).
 .decl tuple_like(t: node)
 tuple_like(t) :- unparen(t, m), kind(m, k), (k = "pattern_list" ; k = "tuple_pattern" ; k = "list_pattern" ;
-    k = "tuple" ; k = "list").
+    k = "tuple" ; k = "list"), !paren_pattern(m).
 .decl value_tuple(v: node)
 value_tuple(v) :- unparen(v, m), kind(m, k), (k = "expression_list" ; k = "tuple" ; k = "list" ; k = "set").
-// unpack_name(t, n): the name n is bound inside target t, through nested tuples, lists, parentheses and `*`.
+// unpack_name(t, n): the name n is bound inside target t, through nested tuples, lists, parentheses and `*`,
+// or by a walrus anywhere inside it: `a, d[(y := 1)] = t` binds y.
 .decl unpack_name(t: node, n: node)
-unpack_name(t, n) :- unpack_root(t), unparen(t, n), kind(n, "identifier").
 unpack_name(t, n) :- unpack_root(t), unpack_part(t, n), kind(n, "identifier").
+unpack_name(t, n) :- unpack_root(t), has(t, w, walrus_kind), field(w, "name", n).
+.decl walrus_kind(k: symbol)
+walrus_kind("named_expression").
 .decl unpack_part(t: node, n: node)
 unpack_part(t, c) :- unpack_root(t), unparen(t, m), child(m, c, _).
 unpack_part(t, c) :- unpack_part(t, p), tuple_like(p), unparen(p, m), child(m, c, _).
 unpack_part(t, c) :- unpack_part(t, p), (kind(p, "list_splat_pattern") ; kind(p, "list_splat")), child(p, c, _).
 unpack_part(t, c) :- unpack_part(t, p), kind(p, "parenthesized_expression"), unparen(p, c).
+unpack_part(t, c) :- unpack_part(t, p), paren_pattern(p), child(p, i, 0), unparen(i, c).
 
 .decl calls_locals(f: node)
 calls_locals(f) :- call_q(c, "builtins.locals"), scope_node(c, f).

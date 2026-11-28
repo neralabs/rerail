@@ -20,3 +20,50 @@
     suppress eslint "react/no-did-mount-set-state"
     suppress oxlint "no-did-mount-set-state"
 no_did_mount_set_state(f) :- set_state_in(f, "componentDidMount"), docof(f, d), react_doc(d).
+
+// The review's counterexamples (react-03.review.md), each checked against ESLint 9.39.5 and eslint-plugin-react
+// 7.37.5: parentheses around `this` or the callee, a shorthand default in a pattern, an `accessor` field (skipped),
+// a parenthesised computed key.
+.test review_cases exactly
+    .fixture "sm-paren.jsx" ```
+        class A extends React.Component {
+          componentDidMount() { (this.setState)({ a: 1 }); }
+          componentDidUpdate() { (this).setState({ a: 1 }); }
+        }
+        ```
+    .fixture "sm-default.jsx" ```
+        class A extends React.Component {
+          load() { const { componentDidMount = this.setState({}) } = this.props; }
+          save() { const { componentDidUpdate = this.setState({}) } = this.props; }
+        }
+        ```
+    .fixture "sm-accessor.tsx" ```
+        import React from "react";
+        class B extends React.Component {
+          accessor componentDidMount = this.setState({ a: 1 });
+          accessor componentDidUpdate = () => { this.setState({ a: 1 }); };
+        }
+        ```
+    .fixture "sm-computed-paren.jsx" ```
+        class A extends React.Component {
+          m() { const o = { [(componentDidMount)]: this.setState({}) }; }
+        }
+        ```
+    .fixture "sm-extra.jsx" ```
+        class A extends React.Component {
+          m(o) { const f = ({ componentDidMount = this.setState({}) }) => 1; }
+          n() { const { componentDidMount: c = this.setState({}) } = this.props; }
+          o() { const { componentDidUpdate = () => this.setState({}) } = this.props; }
+          p() { const [componentDidMount = this.setState({})] = []; }
+          componentDidMount() { ((this)).setState({}); }
+          componentDidUpdate() { ((this.setState))({}); }
+          q() { const o = { [((componentDidUpdate))]: this.setState({}) }; }
+        }
+        ```
+    .expect "react/no-did-mount-set-state" at "sm-paren.jsx":2
+    .expect "react/no-did-mount-set-state" at "sm-default.jsx":2
+    .expect "react/no-did-mount-set-state" at "sm-computed-paren.jsx":2
+    .expect "react/no-did-mount-set-state" at "sm-extra.jsx":2
+    .expect "react/no-did-mount-set-state" at "sm-extra.jsx":3
+    .expect "react/no-did-mount-set-state" at "sm-extra.jsx":6
+.end

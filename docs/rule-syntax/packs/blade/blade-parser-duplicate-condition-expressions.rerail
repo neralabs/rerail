@@ -5,18 +5,62 @@
 .scope include "**/*.blade.php"
 
 #include "blade/syntax.rerail"
-//   blade_code(n)   n is in the PHP the template compiles to
+//   blade_directive(d, x)   d is directive @x
 
-// stillat/blade-parser's DuplicateConditionExpressionsValidator: an @elseif whose condition repeats the @if's or an
-// earlier @elseif's in the same chain; its branch can never run. Read on the compiled PHP, where the chain is one
-// if_statement and its else_if_clauses, each condition the template's own bytes:
+// stillat/blade-parser's DuplicateConditionExpressionsValidator: in a condition chain (@if, @unless, @isset, @can,
+// @auth, … and their @elseif/@else… branches), the first branch whose condition text repeats an earlier branch's;
+// that branch can never run. A branch's text is its arguments with outer parentheses stripped while it both starts
+// with `(` and ends with `)`, then trimmed (ConditionalBranch::getText); a branch without one (@else) is skipped.
 //   @if($a) … @elseif($b) … @elseif($a) … @endif      reported at the second @elseif
-//   @if($a) … @elseif( $a ) … @endif                  not reported: the text differs (as the validator compares)
-.violation duplicate_condition(at: node, c: node) code "DuplicateConditionExpressionsValidator"
-    "Change or remove this @elseif; its condition ({c}) already appears earlier in the chain, so the branch never runs."
-duplicate_condition(d, c) :- branch(i, d, c), text(c, t), (field(i, "condition", p), child(p, e, 0), text(e, t) ;
-    branch(i, d0, e), d0 != d, precedes(d0, d), text(e, t)).
-// branch(i, d, c): else_if_clause d of the chain of if_statement i has condition c.
-.decl branch(i: node, d: node, c: node)
-branch(i, d, c) :- kind(i, "if_statement"), blade_code(i), child(i, d, _), kind(d, "else_if_clause"),
-    field(d, "condition", p), child(p, c, 0).
+//   @if($a) … @elseif($a) … @elseif($a) … @endif      reported at the first @elseif only
+//   @if(($a)) … @elseif( $a ) … @endif                reported: both texts are `$a`
+//   @unless($a) … @elseif($a) … @endunless            reported: the texts compare, not what they mean
+//   @if($a == 1) … @elseif($a==1) … @endif            not reported: the texts differ
+// Read on the template's tree: a chain is a directive_block's start and its branch directives, or, in an attribute
+// value (where Forte pairs nothing), an opener and the else… directives after it up to the next opener or end.
+.violation duplicate_condition(at: node, x: symbol, c: symbol) code "DuplicateConditionExpressionsValidator"
+    "Change or remove this @{x}; its condition ({c}) already appears earlier in the chain, so the branch never runs."
+duplicate_condition(d, x, c) :- repeat(s, d, c), !later(s, d), blade_directive(d, x).
+
+// The condition directives blade-parser pairs into chains (StructurePairAnalyzer::getDefaultSpeculativeConditions).
+.decl cond(x: symbol)
+cond("if"). cond("unless"). cond("isset"). cond("can"). cond("cannot"). cond("canany"). cond("auth"). cond("guest").
+cond("env"). cond("production"). cond("hassection"). cond("sectionmissing").
+.decl opener(s: node)
+opener(s) :- blade_directive(s, x), cond(@lower(x)).
+
+// branch(s, d): d is a branch of the chain s opens, s itself included.
+.decl branch(s: node, d: node)
+branch(s, d) :- opener(s), field(b, "start", s), child(b, d, _), kind(d, "directive"), !field(b, "end", d).
+branch(s, s) :- opener(s), child(v, s, _), kind(v, "attribute_value").
+branch(s, d) :- depth(s, d, 0), blade_directive(d, x), match("else.*", @lower(x)), !closed(s, d).
+// In an attribute value: depth(s, x, k), k blocks are open between opener s and its later sibling directive x;
+// closed(s, d), an end at depth 0 closes s before d. A block opens at a condition directive or one whose @end… follows.
+.decl depth(s: node, x: node, k: number)
+depth(s, x, k) :- opener(s), child(v, s, _), kind(v, "attribute_value"), precedes(s, x), kind(x, "directive"),
+    k = count : { opens(o), precedes(s, o), precedes(o, x) } - count : { ends(e), precedes(s, e), precedes(e, x) }.
+.decl closed(s: node, d: node)
+closed(s, d) :- depth(s, d, _), depth(s, e, 0), ends(e), precedes(e, d).
+.decl opens(o: node)
+opens(o) :- opener(o).
+opens(o) :- blade_directive(o, x), precedes(o, e), blade_directive(e, y), match("end(?<z>.*)", @lower(y)), z = @lower(x).
+.decl ends(e: node)
+ends(e) :- blade_directive(e, y), match("end.*", @lower(y)).
+
+// text_of(d, c): branch d's condition text. Its arguments are unwrapped only where `(` and `)` touch them: Forte's
+// `php` leaf is trimmed, and blade-parser unwraps the untrimmed text, which a space at either end leaves as it is.
+.decl text_of(d: node, c: symbol)
+text_of(d, c) :- unwrapped(d, u), !match("\\([\\s\\S]*\\)", u), c = @rx_replace(u, "^\\s+|\\s+$", ""), c != "".
+text_of(d, c) :- field(d, "arguments", p), !tight(d), text(p, c), c != "".
+.decl unwrapped(d: node, u: symbol)
+unwrapped(d, t) :- field(d, "arguments", p), tight(d), text(p, t).
+unwrapped(d, u) :- unwrapped(d, t), match("\\((?<u>[\\s\\S]*)\\)", t).
+.decl tight(d: node)
+tight(d) :- field(d, "arguments", p), node(_, p, _, a, b), token(d, _, "(", _, a), token(d, _, ")", b, _).
+
+// repeat(s, d, c): branch d of chain s has the condition text c of an earlier branch; later(s, d): an earlier
+// branch of s repeats one too, so d is not the first (the validator stops at the first).
+.decl repeat(s: node, d: node, c: symbol)
+repeat(s, d, c) :- branch(s, d), text_of(d, c), branch(s, e), precedes(e, d), text_of(e, c).
+.decl later(s: node, d: node)
+later(s, d) :- repeat(s, d, _), repeat(s, e, _), precedes(e, d).

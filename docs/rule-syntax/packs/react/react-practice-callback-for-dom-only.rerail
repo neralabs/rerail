@@ -1,0 +1,89 @@
+.policy "react-practice-callback-for-dom-only" revision 2
+.guests off
+.description "Don't wrap a function in useCallback when it is only called or passed to built-in elements' event props; nothing reads its identity, so the memo is wasted work."
+.language typescript
+.mode steer
+.scope include "**/*.ts", "**/*.mts", "**/*.cts", "**/*.tsx", "**/*.js", "**/*.jsx", "**/*.mjs", "**/*.cjs"
+.scope exclude "**/*.test.*", "**/*.spec.*", "**/*.cy.*", "**/__tests__/**", "**/test/**", "**/tests/**", "**/e2e/**", "**/__mocks__/**", "**/*.stories.*", "**/*.story.*", "**/__stories__/**", "**/__fixtures__/**", "**/fixtures/**", "**/node_modules/**", "**/dist/**", "**/build/**", "**/out/**", "**/.next/**", "**/coverage/**", "**/vendor/**", "**/.venv/**", "**/.yarn/**", "**/generated/**", "**/__generated__/**", "**/*.generated.*", "**/*.gen.*", "**/*.min.js", "**/*.d.ts"
+#include "tsx/react-practice-a.rerail"
+#include "tsx/react.rerail"
+
+// Rerail's practice rule: `const x = useCallback(fn, deps)` in a component or Hook, where every use of x is a call
+// `x()` (or `x!()`) or an event prop of a built-in element (`<button onClick={x}>`, also behind ?:, &&, ||, ??, a
+// cast or parentheses). Nothing compares x's identity, so the memo buys nothing.
+//   const save = useCallback(() => submit(form), [form]);  return <button onClick={save}>Save</button>;   reported
+//   …  return <Toolbar onSave={save} />;                    not: a component may compare it
+// An unused x is not reported. A component is a function named with a capital (declared, or stored in a capitalised
+// const, or wrapped in a call so stored), an `export default` function, or one passed to memo or forwardRef; a Hook
+// one named `use` and a capital or digit. React's useCallback is a global, one imported from react or react-dom (any
+// case), React.useCallback, or `const { useCallback } = React` (or `= require("react")`).
+
+// memoized(x, d): x is the name of declarator d, whose value is a useCallback(fn, …) call (in parentheses, a cast or
+// `!`, or not), fn a function expression or arrow.
+.decl memoized(x: node, d: node)
+memoized(x, d) :- kind(d, "variable_declarator"), field(d, "name", x), kind(x, "identifier"), field(d, "value", v),
+    callback_value(v).
+.decl callback_value(v: node)
+callback_value(v) :- kind(v, "call_expression"), field(v, "function", f), use_callback(f), call_arg(v, a, 0),
+    (kind(a, "arrow_function") ; kind(a, "function_expression")).
+callback_value(v) :- (kind(v, "as_expression") ; kind(v, "satisfies_expression") ; kind(v, "non_null_expression") ;
+    kind(v, "parenthesized_expression")), child(v, w, 0), callback_value(w).
+.decl use_callback(f: node)
+use_callback(f) :- react_api(f, "useCallback", s, form), (s = "" ; iglob("{react,react-dom}", s)), form != "alias".
+use_callback(f) :- kind(f, "identifier"), text(f, "useCallback"), ref_site(f, p),
+    kind(p, "shorthand_property_identifier_pattern"), pr_destructured(p, o), kind(o, "call_expression"),
+    field(o, "function", r), kind(r, "identifier"), text(r, "require"), call_arg(o, s, 0), str(s, m),
+    iglob("{react,react-dom}", m).
+
+// component_or_hook(f)
+.decl component_or_hook(f: node)
+component_or_hook(f) :- fn_named(f, n), (glob("use[A-Z0-9]**", n) ; glob("[A-Z]**", n)).
+component_or_hook(f) :- kind(f, k), function_kind(k), k != "method_definition", child(e, f, _),
+    kind(e, "export_statement"), op(e, "default").
+component_or_hook(f) :- (kind(f, "function_expression") ; kind(f, "arrow_function")), child(a, f, _),
+    kind(a, "arguments"), child(c, a, _), hoc_call(c).
+component_or_hook(f) :- (kind(f, "function_expression") ; kind(f, "arrow_function")), child(a, f, _),
+    kind(a, "arguments"), child(c, a, _), kind(c, "call_expression"), field(c, "function", w),
+    (kind(w, "identifier"), text(w, t) ;
+     kind(w, "member_expression"), field(w, "object", o), kind(o, "identifier"), text(o, "React"),
+     field(w, "property", p), text(p, t)),
+    (t = "memo" ; t = "forwardRef").
+// fn_named(f, n): f is `function n` or `const n = function/arrow`.
+.decl fn_named(f: node, n: symbol)
+fn_named(f, n) :- (kind(f, "function_declaration") ; kind(f, "generator_function_declaration")), field(f, "name", i),
+    kind(i, "identifier"), text(i, n).
+fn_named(f, n) :- (kind(f, "function_expression") ; kind(f, "generator_function") ; kind(f, "arrow_function")),
+    field(d, "value", f), kind(d, "variable_declarator"), field(d, "name", i), kind(i, "identifier"), text(i, n).
+// hoc_call(c): a call stored as a component: `const Card = styled(…)(…)`, `export default connect(…)(…)`.
+.decl hoc_call(c: node)
+hoc_call(c) :- kind(c, "call_expression"), field(d, "value", c), kind(d, "variable_declarator"), field(d, "name", i),
+    kind(i, "identifier"), glob("[A-Z]**", i).
+hoc_call(c) :- kind(c, "call_expression"), child(e, c, _), kind(e, "export_statement"), op(e, "default").
+hoc_call(c) :- kind(c, "call_expression"), child(a, c, _), kind(a, "arguments"), child(o, a, _), hoc_call(o).
+
+// harmless(o): an occurrence that does not read the function's identity: its declared name, a call, a DOM event prop.
+.decl harmless(o: node)
+harmless(o) :- field(d, "name", o), kind(d, "variable_declarator").
+harmless(o) :- kind(o, "identifier"), field(c, "function", o), kind(c, "call_expression").
+harmless(o) :- kind(o, "identifier"), child(n, o, _), kind(n, "non_null_expression"), field(c, "function", n),
+    kind(c, "call_expression").
+harmless(o) :- kind(o, "identifier"), handler_slot(o).
+// handler_slot(e): e is the value of an `on…` prop of a DOM element, or a branch of one: ?:, &&, ||, ??, a cast.
+.decl handler_slot(e: node)
+handler_slot(e) :- child(j, e, _), kind(j, "jsx_expression"), child(a, j, _), kind(a, "jsx_attribute"),
+    child(a, n, _), kind(n, "property_identifier"), glob("on[A-Z]**", n), child(o, a, _),
+    (kind(o, "jsx_opening_element") ; kind(o, "jsx_self_closing_element")), field(o, "name", t), kind(t, "identifier"),
+    match("[a-z][A-Za-z0-9]*", t).
+handler_slot(e) :- child(w, e, _), (kind(w, "parenthesized_expression") ; kind(w, "as_expression") ;
+    kind(w, "satisfies_expression") ; kind(w, "non_null_expression")), handler_slot(w).
+handler_slot(e) :- (field(t, "consequence", e) ; field(t, "alternative", e)), kind(t, "ternary_expression"),
+    handler_slot(t).
+handler_slot(e) :- field(b, "right", e), kind(b, "binary_expression"), (op(b, "&&") ; op(b, "||") ; op(b, "??")),
+    handler_slot(b).
+
+.violation CALLBACK_FOR_DOM_ONLY(at: node, x: symbol)
+    "Declare {x} as a plain function, not in useCallback: it is only called or passed to built-in element event props, so nothing reads its identity."
+CALLBACK_FOR_DOM_ONLY(x, t) :- memoized(x, d), nearest(x, f, function_kind), component_or_hook(f), bind_name(x, site),
+    site_used(site), !identity_read(site), text(x, t), docof(x, doc), react_doc(doc).
+.decl identity_read(site: node)
+identity_read(site) :- memoized(x, _), bind_name(x, site), site_occurrence(site, o), !harmless(o).

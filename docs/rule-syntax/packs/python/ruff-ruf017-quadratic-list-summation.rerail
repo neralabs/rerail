@@ -1,4 +1,4 @@
-.policy "ruff-ruf017-quadratic-list-summation" revision 3
+.policy "ruff-ruf017-quadratic-list-summation" revision 4
 .description "Avoid flattening lists by summing them onto an empty list; it is quadratic, so chain them with itertools instead."
 .language python
 .mode steer
@@ -6,16 +6,25 @@
 
 // Ruff RUF017: `sum(lists, [])` flattens by adding lists one at a time, copying the total at each step:
 // quadratic. The builtin sum, a positional iterable, and an empty list, `[]` or `list()`, as `start` (second
-// or `start=`).
+// or `start=`). Strings Ruff parses as types (annotations, `cast("…", x)`, …) are checked too.
 //   sum([x, y], [])              ← RUF017  `list(itertools.chain.from_iterable([x, y]))`
 //   sum([x, y], start=[])        ← RUF017
 //   sum(x, list())               ← RUF017
+//   a: "list[sum(x, [])]" = 1    ← RUF017
 //   sum([x, y])                  not reported
 //   sum(iterable=x, start=[])    not reported: Ruff wants the iterable positional
 #include "python/ruff.rerail"
+#include "python/python-02.rerail"
 param_slot("builtins.sum", "iterable", 0). param_slot("builtins.sum", "start", 1).
 
 .violation RUF017(at: node) code "RUF017"
     "Replace `sum(lists, [])` with `list(itertools.chain.from_iterable(lists))`; summing onto a list copies it at every step (quadratic). Leave it when the input is only a few short lists."
     suppress ruff "RUF017"
 RUF017(c) :- ruff_arg(c, 0, _), call_param(c, "start", s), empty_literal(s, "list").
+RUF017(c) :- tstr_node(c, _), kind(c, "call"), child(c, f, 0), tstr_qual(f, "builtins.sum"), tstr_arg(c, 0, _),
+    (tstr_arg(c, 1, s) ; tstr_kwarg(c, "start", s)), tstr_empty_list(s).
+// tstr_empty_list(s): `[]` or `list()` in a type string.
+.decl tstr_empty_list(s: node)
+tstr_empty_list(s) :- unparen(s, m), kind(m, "list"), count : { child(m, x, _), !kind(x, "comment") } = 0.
+tstr_empty_list(s) :- unparen(s, m), kind(m, "call"), count : { tstr_item(m, _, _) } = 0, child(m, f, 0),
+    tstr_qual(f, "builtins.list").

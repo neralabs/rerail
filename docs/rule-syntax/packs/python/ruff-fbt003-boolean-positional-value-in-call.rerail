@@ -1,4 +1,4 @@
-.policy "ruff-fbt003-boolean-positional-value-in-call" revision 2
+.policy "ruff-fbt003-boolean-positional-value-in-call" revision 3
 .description "Pass True and False to Python calls as keyword arguments rather than positionally; a bare boolean does not say what it switches."
 .language python
 .mode steer
@@ -13,11 +13,30 @@
 //   {}.get("hello", False)                not reported: an allowed name
 //   set_visible(True)                     not reported: a setter
 #include "python/ruff.rerail"
+#include "python/python-31.rerail"
 
 .violation FBT003(at: node) code "FBT003"
     "Pass this boolean by keyword (`name=True`) so the call says what it switches; leave it when the callee only accepts it positionally, such as a builtin or C-extension function."
     suppress ruff "FBT003"
 FBT003(b) :- call_item(c, a, _), pos_item(a), unparen(a, b), (kind(b, "true") ; kind(b, "false")), !trap_allowed(c).
+FBT003(b) :- texpr_bool(c, b), !texpr_trap_allowed(c).
+
+.decl texpr_bool(c: node, b: node)
+texpr_bool(c, a) :- texpr_call_item(c, a, _), texpr_pos_item(a),
+    (kind(a, "true") ; kind(a, "false")).
+texpr_bool(c, b) :- texpr_call_item(c, a, _), texpr_pos_item(a),
+    kind(a, "parenthesized_expression"), child(a, x, 0), texpr_bool_inner(x, b).
+.decl texpr_bool_inner(x: node, b: node)
+texpr_bool_inner(x, x) :- texpr_node(x), (kind(x, "true") ; kind(x, "false")).
+texpr_bool_inner(x, b) :- texpr_node(x), kind(x, "parenthesized_expression"), child(x, y, 0),
+    texpr_bool_inner(y, b).
+
+.decl texpr_trap_allowed(c: node)
+texpr_trap_allowed(c) :- texpr_callee_word(c, x), allowed_word(x).
+texpr_trap_allowed(c) :- texpr_callee_word(c, x), texpr_call_nargs(c, 1),
+    (x = "set" ; match("set[_A-Z].*", x)).
+texpr_trap_allowed(c) :- texpr_call_q(c, "multiprocessing.Value").
+texpr_trap_allowed(c) :- texpr_call_q(c, q), option_item("flake8-boolean-trap.extend-allowed-calls", _, q).
 
 .decl trap_allowed(c: node)
 trap_allowed(c) :- callee_word(c, x), allowed_word(x).

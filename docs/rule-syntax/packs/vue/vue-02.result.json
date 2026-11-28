@@ -1,0 +1,7 @@
+[
+  { "id": "eslint-plugin-vue-no-setup-props-reactivity-loss", "status": "same" },
+  { "id": "eslint-plugin-vue-no-side-effects-in-computed-properties", "status": "same" },
+  { "id": "eslint-plugin-vue-no-template-shadow", "status": "same" },
+  { "id": "eslint-plugin-vue-no-unused-refs", "status": "same" },
+  { "id": "eslint-plugin-vue-no-unused-vars", "status": "same" }
+]

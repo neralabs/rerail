@@ -106,7 +106,7 @@ doc_listed(d, x) :- all_entry(s, x), docof(s, d), !doc_all_call(s).
 .decl doc_all_call(s: node)  // entry s sits in `__all__.extend(…)` / `__all__.append(…)`
 doc_all_call(s) :- all_entry(s, _), inside(s, c, "call"), field(c, "function", f), attr_of(f, o, meth),
     (meth = "extend" ; meth = "append"), text(o, "__all__").
-.decl doc_accessor(f: node, x: symbol)  // `@x.setter` or `@x.deleter` on def x
+.decl doc_accessor(f: node, x: symbol) extensible  // `@x.setter` or `@x.deleter` on def x (python/python-17 adds)
 doc_accessor(f, x) :- doc_name(f, _, x), decorator(f, e), dotted_expr(e, q), (q = cat(x, ".setter") ; q = cat(x, ".deleter")).
 
 // doc_ignored(f): `pydocstyle.ignore-decorators` lists a decorator of def f (by qualified name; a call's callee).

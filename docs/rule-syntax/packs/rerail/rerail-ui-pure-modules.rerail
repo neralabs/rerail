@@ -64,9 +64,15 @@ rebinds(a, "document") :- binds(a, "document").
 rebinds(a, "window") :- binds(a, x), glob("{window,globalThis,self}", x).
 rebinds(a, "location") :- binds(a, "location").
 rebinds(a, "history") :- binds(a, "history").
-// rebound(n, g): a use under something that rebinds its group, which is then no global.
+// rebound(n, g): a use under something that rebinds its group, which is then no global. The binders' kinds: every node
+// binds above is one of these (in JavaScript only functions have a `parameters` field). Read through `inside` rather than
+// `within`: run together with another JavaScript policy, `within` here made run-policies panic ("no declaration of
+// within", plan/fields.rs; NOTES-rerail.md).
+.decl binder(k: symbol)
+binder("arrow_function"). binder("function_declaration"). binder("function_expression"). binder("generator_function").
+binder("generator_function_declaration"). binder("method_definition"). binder("statement_block"). binder("program").
 .decl rebound(n: node, g: symbol)
-rebound(n, g) :- io_ref(n, g), rebinds(a, g), within(n, a).
+rebound(n, g) :- io_ref(n, g), inside(n, a, binder), rebinds(a, g).
 
 .violation UI_PURE_MODULE_IO_GLOBAL(at: node) "Keep network, storage and DOM access out of this pure module: do it in poll.js, a writes module or a view, and pass the result in as an argument."
 UI_PURE_MODULE_IO_GLOBAL(n) :- io_ref(n, g), !rebound(n, g).

@@ -14,10 +14,15 @@
 #include "python/pyflakes.rerail"
 //   cmp_pair(c, i, op, l, r)   link i of a comparison (python/ast)
 //   const_non_singleton(e), mutable_literal(e)
+#include "python/annotation-code.rerail"
+//   ann_tree_node(n)           n is in the parsed tree of a string annotation: Ruff checks `x: "1 is y"` too
 
 .violation F632(at: node, msg: symbol) code "F632" "{msg}"
     suppress ruff "F632"
-F632(c, m) :- cmp_pair(c, _, op, l, r), (op = "is" ; op = "is not"),
+F632(c, m) :- identity_literal(c, m).
+F632(c, m) :- ann_tree_node(c), identity_literal(c, m).
+.decl identity_literal(c: node, m: symbol)
+identity_literal(c, m) :- cmp_pair(c, _, op, l, r), (op = "is" ; op = "is not"),
     (literal_operand(l) ; literal_operand(r)), msg(op, m).
 .decl literal_operand(e: node)
 literal_operand(e) :- const_non_singleton(e).

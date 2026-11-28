@@ -1,0 +1,85 @@
+// python/type-string-names: names and arguments in the code Ruff parses from string type definitions, as the
+// flake8-print (T201, T203) and flake8-type-checking (TC006) rules read them; and whether a file imports a module,
+// star imports included, as its pandas-vet rules (PD002, PD101) ask.
+//
+// Interface
+//   fwdref_call_q(c, q)        call c's callee resolves to q: python/ruff's call_q in the file, the forward-reference
+//                              lookup below in a type string's tree (python-04's in_ann_tree)
+//   fwdref_qual(e, q)          e resolves to q, likewise (ruff_qual in the file)
+//   fwdref_lookup(e, q)        the forward-reference lookup alone, for e in a type string's tree
+//   fwdref_kwarg(c, x, v)      call c passes keyword x with value v, parentheses off, in the file or a type string's
+//                              tree
+//   fwdref_arg0(c, a)          a is the first positional argument of call c in a type string's tree, parentheses off
+//   stdio_value(v)             v is None, sys.stdout or sys.stderr
+//   seen_module_or_star(d, m)  misc-seen's seen_module(d, m), or document d has `from m import *` (or of a
+//                              submodule of m); m is one a rule lists in seen_ask
+//
+// Python and Ruff background
+//   - Ruff visits the code it parses from a string type definition (`x: "T"`, `cast("T", v)`, a TypeVar's bound or
+//     constraints, a string nested in one) like any other, so an expression rule reports there, at the string's line.
+//   - A name in such a tree is a forward reference (PEP 563): Ruff's resolve_load looks it up in the module scope
+//     first, where the builtins are bound too, and only when that fails from where the string stands. So a local
+//     binding of the name does not hide the module's, or the builtin:
+//       import pprint as pp
+//       def g(pp, print):
+//           q: "pp.pprint(print(1))" = 1      pprint.pprint and builtins.print, not the parameters
+//       def print(x): ...                     a module binding: `print` in a type string is this def from now on
+//   - python/names resolves the trees of annotations' strings from the string's place (parsed_in), as code there;
+//     python-04's guest_q takes a builtin only when the file binds the name nowhere. Neither is Ruff's order.
+//   - Ruff's seen_module flag is set by every `from m import …`, `from m import *` too; misc-seen reads import_alias,
+//     which has no row for a star import. Ruff visits deferred code (def bodies, then annotations under `from
+//     __future__ import annotations`) after the module: a star import in a def gates those, not the module's code;
+//     here, as in misc-seen, the whole file sees it.
+//       def g(): from pandas import *
+//       def f(x: frame.drop(inplace=True)): ...     PD002, with the future import
+//
+//   from typing import cast
+//   import sys
+//   w = cast("print(1, file=sys.stderr)", 1)   fwdref_call_q(<print(…)>, "builtins.print"),
+//                                              fwdref_kwarg(<print(…)>, "file", <sys.stderr>),
+//                                              stdio_value(<sys.stderr>)
+//   v = cast("cast(int, 1)", 2)                fwdref_call_q(<cast(int, 1)>, "typing.cast"),
+//                                              fwdref_arg0(<…>, <int>)
+#include "python/python-04.rerail"   // in_ann_tree, guest_file; python/ruff's arguments work in parsed trees too
+#include "python/misc-seen.rerail"   // seen_module, seen_ask; module_text (python/imports)
+
+// ---- names -------------------------------------------------------------------------------------------------------
+.decl fwdref_call_q(c: node, q: symbol)
+fwdref_call_q(c, q) :- call_q(c, q), !in_ann_tree(c).
+fwdref_call_q(c, q) :- in_ann_tree(c), kind(c, "call"), field(c, "function", f), unparen(f, g), fwdref_lookup(g, q).
+.decl fwdref_qual(e: node, q: symbol)
+fwdref_qual(e, q) :- ruff_qual(e, q), !in_ann_tree(e).
+fwdref_qual(e, q) :- unparen(e, m), fwdref_lookup(m, q).
+// fwdref_lookup(e, q): the module's binding of the name first (here: its imports, when the module binds the name no
+// other way), else the builtin when the module does not bind the name, else the lookup from the string's place.
+.decl fwdref_lookup(e: node, q: symbol)
+fwdref_lookup(e, q) :- in_ann_tree(e), kind(e, "identifier"), text(e, x), fwdref_module(e, m),
+    fwdref_mod_import(m, x, q).
+fwdref_lookup(e, cat("builtins.", x)) :- in_ann_tree(e), kind(e, "identifier"), text(e, x), builtin(x),
+    fwdref_module(e, m), !bound_in(m, x).
+fwdref_lookup(e, q) :- in_ann_tree(e), kind(e, "identifier"), text(e, x), !builtin(x), fwdref_module(e, m),
+    !bound_in(m, x), ruff_qual(e, q).
+fwdref_lookup(e, @dot(q, a)) :- in_ann_tree(e), kind(e, "attribute"), field(e, "object", o), unparen(o, p),
+    fwdref_lookup(p, q), field(e, "attribute", n), text(n, a).
+// fwdref_module(e, m): m is the module node of the file guest node e stands in.
+.decl fwdref_module(e: node, m: node)
+fwdref_module(e, m) :- guest_file(e, d), modnode(d, m).
+// fwdref_mod_import(m, x, q): module m binds x by imports alone, the import naming q.
+.decl fwdref_mod_import(m: node, x: symbol, q: symbol)
+fwdref_mod_import(m, x, q) :- ibind(m, x, q), count : { binding(m, x, _, f), f != "import" } = 0.
+
+// ---- arguments ---------------------------------------------------------------------------------------------------
+.decl fwdref_kwarg(c: node, x: symbol, v: node)
+fwdref_kwarg(c, x, v) :- call_kwarg(c, x, v0), !in_ann_tree(c), unparen(v0, v).
+fwdref_kwarg(c, x, v) :- in_ann_tree(c), call_kwarg(c, x, v0), unparen(v0, v).
+.decl fwdref_arg0(c: node, a: node)
+fwdref_arg0(c, a) :- in_ann_tree(c), ruff_arg(c, 0, a0), unparen(a0, a).
+.decl stdio_value(v: node)
+stdio_value(v) :- kind(v, "none").
+stdio_value(v) :- fwdref_qual(v, q), (q = "sys.stdout" ; q = "sys.stderr").
+
+// ---- modules a file imports --------------------------------------------------------------------------------------
+.decl seen_module_or_star(d: number, m: symbol)
+seen_module_or_star(d, m) :- seen_module(d, m).
+seen_module_or_star(d, m) :- seen_ask(m), kind(i, "import_from_statement"), child(i, w, _), kind(w, "wildcard_import"),
+    module_text(i, q), (q = m ; prefix(cat(m, "."), q)), docof(i, d).

@@ -1,0 +1,119 @@
+// python/python-26: shared flake8-annotations vocabulary for the python-26 batch.
+//
+// Interface
+//   ann_ruff_param(f, nm, x, k, a)  ANN parameter, with static/class decorators resolved after expired
+//                                      exception targets and module/class bare annotations
+//   ann_ruff_missing_return(f, code) missing return annotation and Ruff's ANN201/202/204/205/206 code
+//
+// These cases are shared by ANN001 and ANN401 (receiver selection) and by all five return rules below.
+//
+//   staticmethod: object
+//   try: ...
+//   except Exception as staticmethod: ...
+//   class C:
+//       @staticmethod
+//       def make(x): ...                ann_ruff_param includes x; return code ANN205
+//
+// Visibility uses Ruff's evaluated __all__ shapes and parenthesized property accessor decorators:
+//
+//   __all__ = "C", ("make")
+//   class C:
+//       @((value)).setter
+//       def value(self, x): ...         return code ANN202
+#include "python/annotations.rerail"
+
+// ---- builtin decorators ------------------------------------------------------------------------------------------
+// Bare annotations bind no runtime value in modules and classes. An exception target there is deleted when its
+// handler ends. Re-walk lookup with those two cases removed; every ordinary binding in the scope still shadows the
+// builtin, even when written later. Function-local annotations and exception targets make the name local too.
+.decl ann_ruff_decorator_name(n: node, x: symbol)
+ann_ruff_decorator_name(n, x) :- decorator(_, e), unparen(e, n), kind(n, "identifier"), text(n, x),
+    (x = "staticmethod" ; x = "classmethod").
+.decl ann_ruff_active_binding(n: node, s: node, x: symbol)
+ann_ruff_active_binding(n, s, x) :- ann_ruff_decorator_name(n, x), binding(s, x, _, f),
+    (kind(s, "function_definition") ; kind(s, "lambda")), f != "except".
+ann_ruff_active_binding(n, s, x) :- ann_ruff_decorator_name(n, x), binding(s, x, _, "except"),
+    (kind(s, "function_definition") ; kind(s, "lambda")).
+ann_ruff_active_binding(n, s, x) :- ann_ruff_decorator_name(n, x), binding(s, x, _, f), !kind(s, "function_definition"),
+    !kind(s, "lambda"), f != "except".
+ann_ruff_active_binding(n, s, x) :- ann_ruff_decorator_name(n, x), binding(s, x, b, "except"),
+    !kind(s, "function_definition"), !kind(s, "lambda"), nearest(b, h, "except_clause"), within(n, h).
+ann_ruff_active_binding(n, s, x) :- ann_ruff_decorator_name(n, x), bare_annotation(_, _, x, s),
+    (kind(s, "function_definition") ; kind(s, "lambda")).
+.decl ann_ruff_walk(n: node, x: symbol, s: node)
+ann_ruff_walk(n, x, s) :- ann_ruff_decorator_name(n, x), wstart(n, s), !tp_ref(n, x).
+ann_ruff_walk(n, x, p) :- ann_ruff_walk(n, x, s), !ann_ruff_active_binding(n, s, x), nearest(s, p, lfscope).
+.decl ann_ruff_builtin(n: node, x: symbol)
+ann_ruff_builtin(n, x) :- ann_ruff_walk(n, x, m), kind(m, "module"), !ann_ruff_active_binding(n, m, x), builtin(x).
+
+.decl ann_ruff_static(f: node)
+ann_ruff_static(f) :- ann_static(f).
+ann_ruff_static(f) :- decorator(f, e), ann_ruff_builtin(e, "staticmethod").
+.decl ann_ruff_classmethod(f: node)
+ann_ruff_classmethod(f) :- ann_classmethod(f).
+ann_ruff_classmethod(f) :- decorator(f, e), ann_ruff_builtin(e, "classmethod").
+
+// ---- parameters --------------------------------------------------------------------------------------------------
+.decl ann_ruff_skipped(f: node, i: number)
+ann_ruff_skipped(f, i) :- ann_method(f), !ann_ruff_static(f),
+    i = min j : { sig_param(f, _, _, j, k, _, _), annt_fixed(k) }.
+.decl ann_ruff_param(f: node, nm: node, x: symbol, k: symbol, a: loc)
+ann_ruff_param(f, nm, x, k, a) :- kind(f, "function_definition"), sig_param(f, _, nm, i, k, a, _), text(nm, x),
+    !ann_ruff_skipped(f, i).
+
+// ---- __all__ and visibility --------------------------------------------------------------------------------------
+// ann_ruff_all_value is deliberately stricter than the older all_value: list()/tuple() must have exactly one
+// positional argument, parenthesized entries are opened, set displays are accepted as constructor inputs, and a
+// chained assignment such as `x = __all__ = ["x"]` is not a definition Ruff evaluates.
+.decl ann_ruff_nested_assignment(a: node)
+ann_ruff_nested_assignment(a) :- kind(a, "assignment"), nearest(a, _, "assignment").
+.decl ann_ruff_all_root(m: node, v: node)
+ann_ruff_all_root(m, v) :- kind(a, k), (k = "assignment" ; k = "augmented_assignment"), field(a, "left", l),
+    kind(l, "identifier"), text(l, "__all__"), field(a, "right", v), nearest(a, m, scope), kind(m, "module"),
+    !ann_ruff_nested_assignment(a).
+.decl ann_ruff_all_call(m: node, c: node, v: node)
+ann_ruff_all_call(m, c, v) :- kind(st, "expression_statement"), child(st, e, 0), unparen(e, c), kind(c, "call"),
+    field(c, "function", f), attr_of(f, o, meth), (meth = "extend" ; meth = "append"), text(o, "__all__"),
+    call_only(c, v), nearest(st, m, scope), kind(m, "module").
+.decl ann_ruff_all_value(m: node, v: node)
+ann_ruff_all_value(m, v) :- ann_ruff_all_root(m, v).
+ann_ruff_all_value(m, v) :- ann_ruff_all_call(m, _, v).
+ann_ruff_all_value(m, v) :- ann_ruff_all_value(m, b), unparen(b, e), kind(e, "binary_operator"), op(e, "+"),
+    child(e, v, _).
+ann_ruff_all_value(m, v) :- ann_ruff_all_value(m, c), unparen(c, e), kind(e, "call"), call_q(e, q),
+    (q = "builtins.list" ; q = "builtins.tuple"), call_only(e, v).
+.decl ann_ruff_all_entry(m: node, s: node, x: symbol)
+ann_ruff_all_entry(m, s, x) :- ann_ruff_all_value(m, v), unparen(v, e),
+    (kind(e, "list") ; kind(e, "tuple") ; kind(e, "expression_list") ; kind(e, "set")),
+    child(e, a, _), unparen(a, s), str(s, x).
+ann_ruff_all_entry(m, s, x) :- ann_ruff_all_value(m, v), unparen(v, s), str(s, x).
+.decl ann_ruff_has_all(m: node)
+ann_ruff_has_all(m) :- ann_ruff_all_root(m, _).
+ann_ruff_has_all(m) :- ann_ruff_all_call(m, _, _).
+
+.decl ann_ruff_private(g: node)
+ann_ruff_private(g) :- annt_parent(g, m), kind(m, "module"), docof(g, d), annt_private_module(d).
+ann_ruff_private(g) :- annt_parent(g, m), kind(m, "module"), ann_ruff_has_all(m), def_name(g, x),
+    !ann_ruff_all_entry(m, _, x).
+ann_ruff_private(g) :- annt_parent(g, m), kind(m, "module"), def_name(g, x), prefix("_", x).
+ann_ruff_private(g) :- annt_parent(g, p), kind(p, "function_definition").
+ann_ruff_private(g) :- annt_parent(g, c), kind(c, "class_definition"), ann_ruff_private(c).
+ann_ruff_private(g) :- annt_parent(g, c), kind(c, "class_definition"), kind(g, "class_definition"), def_name(g, x),
+    prefix("_", x).
+ann_ruff_private(f) :- ann_method(f), def_name(f, x), prefix("_", x), !glob("__*__", x).
+ann_ruff_private(f) :- ann_method(f), def_name(f, x), decorator(f, e), unparen(e, m), attr_of(m, o, meth),
+    unparen(o, b), kind(b, "identifier"), text(b, x), (meth = "setter" ; meth = "deleter").
+
+// ---- returns -----------------------------------------------------------------------------------------------------
+.decl ann_ruff_missing_return(f: node, code: symbol)
+ann_ruff_missing_return(f, c) :- ann_def(f), !field(f, "return_type", _), ann_ruff_return_code(f, c).
+.decl ann_ruff_return_code(f: node, code: symbol)
+ann_ruff_return_code(f, "ANN206") :- ann_method(f), ann_ruff_classmethod(f).
+ann_ruff_return_code(f, "ANN205") :- ann_method(f), !ann_ruff_classmethod(f), ann_ruff_static(f).
+ann_ruff_return_code(f, "ANN204") :- ann_method(f), !ann_ruff_classmethod(f), !ann_ruff_static(f), def_name(f, x),
+    glob("__*__", x).
+ann_ruff_return_code(f, c) :- kind(f, "function_definition"), !ann_ruff_special(f),
+    (ann_ruff_private(f), c = "ANN202" ; !ann_ruff_private(f), c = "ANN201").
+.decl ann_ruff_special(f: node)
+ann_ruff_special(f) :- ann_method(f), (ann_ruff_classmethod(f) ; ann_ruff_static(f)).
+ann_ruff_special(f) :- ann_method(f), def_name(f, x), glob("__*__", x).

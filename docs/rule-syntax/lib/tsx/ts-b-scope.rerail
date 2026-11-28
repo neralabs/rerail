@@ -127,7 +127,7 @@ var_home(k) :- fn_scope(k).
 var_home("internal_module"). var_home("module").
 
 // ---- variables ---------------------------------------------------------------------------------------------------
-.decl variable(s: node, x: symbol, id: node, k: symbol)
+.decl variable(s: node, x: symbol, id: node, k: symbol) extensible   // tsx/typescript-03 adds `using` declarations
 // Declarations: `var a`, `let [b, { c }] = o`, `for (const d of ds)`.
 variable(s, x, id, "var") :- kind(v, "variable_declaration"), child(v, d, _), declarator_name(d, id, x),
     nearest(v, s, var_home).

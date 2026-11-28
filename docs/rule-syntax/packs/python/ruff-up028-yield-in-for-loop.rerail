@@ -7,8 +7,11 @@
 // Ruff UP028 (pyupgrade): `for x in it: yield x`, which is `yield from it`. The loop's body is that one yield,
 // the loop has no `else`, its function is not `async` (where `yield from` is a SyntaxError), and the yield
 // gives back the target unchanged: the same name, or the same names in the same order (`for a, b in z:
-// yield a, b`). The loop variables must not be read anywhere else in the scope, before or after the loop,
-// nested functions included (`yield from` does not bind them); `del x` reads x too. The finding is at the loop.
+// yield a, b`). The loop variables must not be read anywhere else in the scope, nested functions included
+// (`yield from` does not bind them); `del x` reads x too. The finding is at the loop.
+// "Read" is Ruff's: the scope's latest real binding of x carries the reads of every binding it replaced, back to
+// the last unconditional `del x` before it (one not under an if, while, match, except or else). So a read before
+// such a `del`, or one that the `del` leaves unbound, does not count.
 //   for x in y:
 //       yield x                 ← UP028: yield from y
 //   for x, y in z:
@@ -16,6 +19,9 @@
 //   for x in y:
 //       yield x
 //   print(x)                    not reported: x is read after the loop
+//   for x in y:
+//       yield x
+//   print(x); del x; x = 1      ← UP028: the latest binding, x = 1, starts after the `del`
 #include "python/upgrade.rerail"
 //   body_stmt(b, s, i), body_len(b, k), run_scope(n, s, k), is_async(f), look(n, x, s), expr_ctx(n, c)
 
@@ -43,7 +49,43 @@ name_at(e, i, x) :- tuple_kind(e), child(e, c, i), kind(c, "identifier"), text(c
 names_of(e, n) :- tuple_kind(e), n = count : { child(e, _, _) }, n = count : { name_at(e, _, _) }.
 .decl tuple_kind(e: node)
 tuple_kind(e) :- kind(e, k), (k = "pattern_list" ; k = "tuple_pattern" ; k = "tuple" ; k = "expression_list").
-// read_elsewhere(l): a target name of loop l is read (or deleted) outside l, from the scope that binds it.
+// read_elsewhere(l): a target name x of loop l, bound in scope s, has a read other than the yield's own that Ruff
+// counts (up_counts).
 .decl read_elsewhere(l: node)
-read_elsewhere(l) :- field(l, "left", t), (kind(t, "identifier"), x0 = t ; child(t, x0, _)), text(x0, x),
-    look(x0, x, s), ast_name(n, x), expr_ctx(n, c), c != "store", look(n, x, s), !within(n, l).
+read_elsewhere(l) :- up_target(l, x, s), ast_name(n, x), expr_ctx(n, c), c != "store", look(n, x, s),
+    !yield_name(l, n), up_counts(s, x, n).
+.decl up_target(l: node, x: symbol, s: node)
+up_target(l, x, s) :- kind(l, "for_statement"), field(l, "left", t), (kind(t, "identifier"), x0 = t ; child(t, x0, _)),
+    text(x0, x), look(x0, x, s).
+.decl yield_name(l: node, n: node)
+yield_name(l, n) :- yield_pair(t, v), field(l, "left", t), (n = v ; within(n, v)).
+// Events of x in s by offset: a binding takes effect at the end of its site, an unconditional `del x` at the end
+// of its name (its own read sees what came before). up_last: the latest binding, the one Ruff checks.
+.decl up_bind(s: node, x: symbol, p: number)
+up_bind(s, x, p) :- up_target(_, x, s), binding(s, x, site, _), node(_, site, _, _, p).
+.decl up_last(s: node, x: symbol, b: number)
+up_last(s, x, b) :- up_target(_, x, s), b = max p : { up_bind(s, x, p) }.
+.decl up_del(s: node, x: symbol, p: number)
+up_del(s, x, p) :- up_target(_, x, s), del_name(st, n), kind(n, "identifier"), text(n, x), nearest(st, s, scope),
+    !cond_del(st), node(_, n, _, _, p).
+// del_name(st, n): n is a target of `del` statement st, through tuples, lists and parentheses (`del (x), [y]`).
+.decl del_name(st: node, n: node)
+del_name(st, n) :- kind(st, "delete_statement"), child(st, n, _).
+del_name(st, n) :- del_name(st, m), kind(m, k), (k = "expression_list" ; k = "parenthesized_expression" ;
+    k = "tuple" ; k = "list"), child(m, n, _).
+// cond_del(st): Ruff makes no deletion binding for a `del` on a conditional branch, in a handler or an else.
+.decl cond_del(st: node)
+cond_del(st) :- kind(st, "delete_statement"), within(st, a), kind(a, k), (k = "if_statement" ; k = "while_statement" ;
+    k = "match_statement" ; k = "except_clause" ; k = "except_group_clause" ; k = "else_clause" ;
+    k = "conditional_expression").
+// up_counts(s, x, n): read n reaches the latest binding's chain. Read in s's own walk, n sees the latest event
+// above it, which must be a binding with no `del` between it and the latest binding (or n, if n is later). Read
+// from a nested function, n sees s's final state: the latest binding, unless a `del` follows it.
+.decl up_counts(s: node, x: symbol, n: node)
+up_counts(s, x, n) :- up_target(_, x, s), look(n, x, s), up_direct(n, s), node(_, n, _, r, _),
+    q0 = max q : { up_bind(s, x, q), q <= r }, up_last(s, x, b), count : { up_del(s, x, q), q > q0, q < max(r, b) } = 0.
+up_counts(s, x, n) :- up_target(_, x, s), look(n, x, s), !up_direct(n, s), up_last(s, x, b),
+    count : { up_del(s, x, q), q > b } = 0.
+.decl up_direct(n: node, s: node)
+up_direct(n, s) :- look(n, _, s), up_fn_of(n, s).
+up_direct(n, s) :- look(n, _, s), kind(s, "module"), !up_fn_of(n, _).

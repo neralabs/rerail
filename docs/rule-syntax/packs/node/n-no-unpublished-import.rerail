@@ -1,4 +1,4 @@
-.policy "n-no-unpublished-import" revision 2
+.policy "n-no-unpublished-import" revision 3
 .description "In a file npm publishes, do not import files npm leaves out of the package or packages listed only in devDependencies; the published package cannot load them."
 .language typescript
 .mode steer
@@ -8,14 +8,11 @@
 //   import h from "./test/helper.js"   reported when npm does not publish the file (a private file)
 //   import { it } from "mocha"         reported when mocha is a devDependency and not a dependency, peer or optional one
 // The same check as n/no-unpublished-require, on import, export … from and import(). Options: ignorePrivate (default
-// true: skip a "private": true package), allowModules, ignoreTypeImport (skip `import type`). Not read: convertPath.
+// true: skip a "private": true package), allowModules, ignoreTypeImport (skip `import type`). What npm publishes
+// and what a name resolves to are node-npm-01.rerail's, read from the files on disk. Not read: convertPath.
 
-#include "tsx/node-resolve.rerail"   // spec_publish_file, spec_publish_dep, pkg_unpublished_file, pkg_dev_only, spec_type_skipped
+#include "tsx/node-npm-01.rerail"   // npm01_unpublished; node-resolve's spec_type_skipped
 
 .violation unpublished_import(at: node, msg: symbol) code "n/no-unpublished-import" "{msg}"
     suppress eslint "n/no-unpublished-import"
-// Each target as its file names it, joined with what npm publishes (decision 0677: that is other files' facts).
-unpublished_import(n, m) :- spec_publish_file(n, st, d, f), st != "require", !spec_type_skipped(n), pkg_unpublished_file(d, f),
-    spec_unpublished_says("file", m).
-unpublished_import(n, m) :- spec_publish_dep(n, st, d, p), st != "require", !spec_type_skipped(n), pkg_dev_only(d, p),
-    spec_unpublished_says("dev", m).
+unpublished_import(n, m) :- npm01_unpublished(n, st, m), st != "require", !spec_type_skipped(n).

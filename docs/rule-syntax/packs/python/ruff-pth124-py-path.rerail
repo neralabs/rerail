@@ -1,4 +1,4 @@
-.policy "ruff-pth124-py-path" revision 2
+.policy "ruff-pth124-py-path" revision 3
 .description "Use pathlib instead of py.path.local; the py library's path API is in maintenance mode."
 .language python
 .mode steer
@@ -9,10 +9,10 @@
 //   py.path.local("../foo")                       ← PTH124
 //   from py.path import local as path; path("x")  ← PTH124
 //   f = py.path.local                             not reported
-#include "python/pathlib.rerail"
-//   pth_call(c, q, f)   c calls q; f the callee (python/pathlib)
+#include "python/python-21.rerail"
+//   pth_checked_call(c, q, f)   c calls q in code Ruff checks; f the callee
 
 .violation PTH124(at: node) code "PTH124"
     "Use `pathlib.Path(...)` instead of `py.path.local(...)` and port the py.path methods called on it (`join`, `ensure`, `check`, `read`); keep it where an API still requires a `py.path.local`."
     suppress ruff "PTH124"
-PTH124(f) :- pth_call(_, "py.path.local", f).
+PTH124(f) :- pth_checked_call(_, "py.path.local", f).

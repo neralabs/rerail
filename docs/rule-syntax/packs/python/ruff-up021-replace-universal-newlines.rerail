@@ -1,4 +1,4 @@
-.policy "ruff-up021-replace-universal-newlines" revision 2
+.policy "ruff-up021-replace-universal-newlines" revision 3
 .description "Use the text keyword instead of universal_newlines in subprocess.run(); text is the current name for the same option."
 .language python
 .mode steer
@@ -6,24 +6,33 @@
 
 // Ruff UP021 (pyupgrade): `subprocess.run(…, universal_newlines=…)` on Python 3.7 or later, where the keyword
 // was renamed `text`. The finding is at the keyword. Other subprocess functions are not checked (Ruff's own
-// scope). With `text=` there too, the keyword is a duplicate to remove instead.
+// scope). With `text=` there too, the keyword is a duplicate to remove instead. Ruff also checks the calls inside
+// a string it reads as a type.
 //   subprocess.run(["ls"], universal_newlines=True)                ← UP021: write text=True
 //   subprocess.run(["ls"], universal_newlines=True, text=True)     ← UP021: drop universal_newlines
+//   x: "subprocess.run('ls', universal_newlines=True)"             ← UP021
 //   subprocess.Popen(["ls"], universal_newlines=True)              not reported
 #include "python/upgrade.rerail"
 //   targets(m), sym_at(e, q)
 #include "python/upgrade-format.rerail"
 //   up_kwarg(c, k, ka)
+#include "python/python-11.rerail"
+//   td_call(c, f), td_sym(e, q), td_kwarg(c, k, ka): calls in string type definitions
 
-.decl run_call(c: node)
-run_call(c) :- targets(7), kind(c, "call"), field(c, "function", f), sym_at(f, "subprocess.run").
+// un_kw(c, k): c calls subprocess.run, and k is its `universal_newlines=…`. has_text(c): c passes `text=` too.
+.decl un_kw(c: node, k: node)
+un_kw(c, k) :- targets(7), kind(c, "call"), field(c, "function", f), sym_at(f, "subprocess.run"),
+    up_kwarg(c, "universal_newlines", k).
+un_kw(c, k) :- targets(7), td_call(c, f), td_sym(f, "subprocess.run"), td_kwarg(c, "universal_newlines", k).
+.decl has_text(c: node)
+has_text(c) :- un_kw(c, _), (up_kwarg(c, "text", _) ; td_kwarg(c, "text", _)).
 
 .violation rename_to_text(at: node) code "UP021"
     "Rename the `universal_newlines` keyword to `text`; it is the same option under its current name."
     suppress ruff "UP021"
-rename_to_text(k) :- run_call(c), up_kwarg(c, "universal_newlines", k), !up_kwarg(c, "text", _).
+rename_to_text(k) :- un_kw(c, k), !has_text(c).
 
 .violation drop_duplicate(at: node) code "UP021"
     "Remove the `universal_newlines` keyword; `text` is already passed and sets the same option, so keep the value you meant on `text`."
     suppress ruff "UP021"
-drop_duplicate(k) :- run_call(c), up_kwarg(c, "universal_newlines", k), up_kwarg(c, "text", _).
+drop_duplicate(k) :- un_kw(c, k), has_text(c).

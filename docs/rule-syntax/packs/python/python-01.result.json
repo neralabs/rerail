@@ -1,0 +1,50 @@
+[
+  {
+    "id": "ruff-ruf001-ambiguous-unicode-character-string",
+    "status": "same"
+  },
+  {
+    "id": "ruff-ruf002-ambiguous-unicode-character-docstring",
+    "status": "same"
+  },
+  {
+    "id": "ruff-ruf005-collection-literal-concatenation",
+    "status": "same"
+  },
+  {
+    "id": "ruff-ruf006-asyncio-dangling-task",
+    "status": "same"
+  },
+  {
+    "id": "ruff-ruf008-mutable-dataclass-default",
+    "status": "same"
+  },
+  {
+    "id": "ruff-ruf012-mutable-class-default",
+    "status": "same"
+  },
+  {
+    "id": "ruff-ruf013-implicit-optional",
+    "status": "different",
+    "reason": "ruff/modin-modin-pandas-series.py-049dcbbeb196/modin/pandas/series.py:1514 `method: str = None` sits in a method of `class Series`, which binds `str = CachedAccessor(\"str\", StringMethods)` later, at line 1821, and the file has `from __future__ import annotations`. Ruff 0.17.6 reports RUF013 at 1514:17, and so does the translation. The original does not; it seems to resolve `str` to the class attribute. Minimal case, which Ruff reports: `from __future__ import annotations` / `class S:` / `    def f(self, method: str = None): ...` / `    str = 1`.",
+    "right": "translation",
+    "counts": {
+      "examples": {
+        "originalOnly": 0,
+        "translationOnly": 0
+      },
+      "fixtures": {
+        "originalOnly": 0,
+        "translationOnly": 0
+      },
+      "samples-python": {
+        "originalOnly": 0,
+        "translationOnly": 1
+      }
+    }
+  },
+  {
+    "id": "ruff-ruf016-invalid-index-type",
+    "status": "same"
+  }
+]

@@ -11,8 +11,11 @@
 //   "{0} {1}".format(a, b)        ← UP030: "{} {}".format(a, b)
 //   "{1} {0}".format(a, b)        ← UP030: "{} {}".format(b, a)
 //   "{0} {0}".format(a)   "{1} {0}".format(*args)   "{0:<{1}}".format(a, 4)     not reported
+//   x: "'{1} {0}'.format(a, b)"   ← UP030: Ruff checks a string annotation's code too
 #include "python/pyflakes-format.rerail"
 //   format_call(c, v), brace_ok(c), brace_name, brace_arg, brace_nested; call_pos, call_kw, call_kwsplat
+#include "python/python-12.rerail"
+//   plain_str rows for the literals of string annotations
 
 .violation UP030(at: node) code "UP030"
     "Replace the explicit indices (`{{0}}`, `{{1}}`) with automatic `{{}}` fields; if they are out of order, also reorder the arguments to match, unless that would change the order of side effects."

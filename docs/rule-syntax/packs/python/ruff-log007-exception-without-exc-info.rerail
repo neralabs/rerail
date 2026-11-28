@@ -1,4 +1,4 @@
-.policy "ruff-log007-exception-without-exc-info" revision 2
+.policy "ruff-log007-exception-without-exc-info" revision 3
 .description "Use error instead of exception when a logging call sets exc_info to a falsy value; it logs the same message and states the intent plainly."
 .language python
 .mode steer
@@ -12,8 +12,34 @@
 //   logger.exception("foo", exc_info=flag)        not reported: unknown
 #include "python/logging.rerail"
 #include "python/ruff-classes.rerail"
+#include "python/python-31.rerail"
 
 .violation LOG007(at: node) code "LOG007"
     "Call `error` instead of `exception` and drop the falsy `exc_info` argument: the log output is the same and the intent is clearer."
     suppress ruff "LOG007"
-LOG007(c) :- log_call(c, "exception", _, _), log_kw(c, "exc_info", _, v), truth_of(v, t), (t = "false" ; t = "none").
+.decl log007_empty_fconcat(x: node)
+log007_empty_fconcat(x) :- kind(x, "concatenated_string"), child(x, s, _), fstring(s),
+    count : { child(x, z, _), fstring(z), !empty_string(z) } = 0.
+.decl log007_empty_interp(i: node)
+log007_empty_interp(i) :- kind(i, "interpolation"), !op(i, "="), !field(i, "type_conversion", _),
+    !field(i, "format_specifier", _), field(i, "expression", x), unparen(x, y), log007_empty_fconcat(y).
+log007_empty_interp(i) :- kind(i, "interpolation"), !op(i, "="), !field(i, "type_conversion", _),
+    !field(i, "format_specifier", _), field(i, "expression", x), unparen(x, y), empty_string(y),
+    string_type(y, "str"), !tstring_lit(y).
+.decl log007_concat_falsy(v: node)
+log007_concat_falsy(v) :- unparen(v, m), fstring(m), has(m, i, "interpolation"), !fstring_inner_field(i, m),
+    log007_empty_interp(i), count : { has(m, j, "interpolation"), !fstring_inner_field(j, m) } = 1,
+    count : { has(m, c, "string_content"), !fstring_field_text(c, m) } = 0,
+    count : { has(m, e, "escape_sequence"), !fstring_field_text(e, m) } = 0.
+.decl log007_falsy(v: node)
+log007_falsy(v) :- truth_of(v, t), (t = "false" ; t = "none").
+log007_falsy(v) :- log007_concat_falsy(v).
+LOG007(c) :- log_call(c, "exception", _, _), log_kw(c, "exc_info", _, v), log007_falsy(v).
+LOG007(c) :- texpr_log_call(c, "exception", _), texpr_call_item(c, k, _), kind(k, "keyword_argument"),
+    has(k, n, "identifier"), text(n, "exc_info"), has(k, _, "false").
+LOG007(c) :- texpr_log_call(c, "exception", _), texpr_call_item(c, k, _), kind(k, "keyword_argument"),
+    has(k, n, "identifier"), text(n, "exc_info"), has(k, _, "none").
+LOG007(c) :- texpr_log_call(c, "exception", _), texpr_call_item(c, k, _), kind(k, "keyword_argument"),
+    has(k, n, "identifier"), text(n, "exc_info"), has(k, v, "integer"), text(v, "0").
+LOG007(c) :- texpr_log_call(c, "exception", _), texpr_call_item(c, k, _), kind(k, "keyword_argument"),
+    has(k, n, "identifier"), text(n, "exc_info"), has(k, v, "float"), value(v, "0").

@@ -1,0 +1,20 @@
+[
+  { "id": "ruff-up001-useless-metaclass-type", "status": "same" },
+  { "id": "ruff-up003-type-of-primitive", "status": "same" },
+  { "id": "ruff-up004-useless-object-inheritance", "status": "same" },
+  {
+    "id": "ruff-up006-non-pep585-annotation",
+    "status": "different",
+    "reason": "Ruff 0.17.6 (py310) reports pyflakes/F401_0.py 44, 59 and 60 (Type[\"NamedTuple\"] in a class body; TypeVar bound=\"Dict\"; TypeVar constraints \"List\", \"Set\"): the translation does, the JSON original does not. flake8_pyi/PYI036.pyi:82 (`Type[BaseException]` in a stub method inside a function that does `from builtins import type as Type`) is reported by both now: python/upgrade's sym_at and python-10's str_sym read a forward reference (a typing-only deferred annotation, or a string type) through the module's binding first, as Ruff's resolve_load does (PEP 563).",
+    "right": "translation",
+    "counts": {
+      "examples": { "originalOnly": 0, "translationOnly": 0 },
+      "fixtures": { "originalOnly": 0, "translationOnly": 3 },
+      "samples-python": { "originalOnly": 0, "translationOnly": 0 }
+    }
+  },
+  { "id": "ruff-up007-non-pep604-annotation-union", "status": "same" },
+  { "id": "ruff-up010-unnecessary-future-import", "status": "same" },
+  { "id": "ruff-up011-lru-cache-without-parameters", "status": "same" },
+  { "id": "ruff-up012-unnecessary-encode-utf8", "status": "same" }
+]

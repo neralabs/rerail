@@ -9,9 +9,12 @@
 //   assert (x, "x is set")    ← F631
 //   assert x, "x is set"      not reported
 //   assert ()                 not reported: the empty tuple is false
+//   assert \
+//       (1, 2)                ← F631: the test is the first child after the `\` continuation (an extra node)
 #include "python/pyflakes.rerail"
 //   nonempty_tuple(e)  e, through parentheses, is a tuple with at least one element
 
 .violation F631(at: node) code "F631" "Assert test is a non-empty tuple, which is always `True`"
     suppress ruff "F631"
-F631(a) :- kind(a, "assert_statement"), child(a, t, 0), nonempty_tuple(t).
+F631(a) :- kind(a, "assert_statement"), child(a, t, i), nonempty_tuple(t),
+    count : { child(a, o, j), j < i, !kind(o, "line_continuation"), !kind(o, "comment") } = 0.

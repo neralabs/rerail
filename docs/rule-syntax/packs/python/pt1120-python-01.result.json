@@ -1,0 +1,50 @@
+[
+  {
+    "id": "ruff-pyi002-complex-if-statement-in-stub",
+    "status": "same"
+  },
+  {
+    "id": "ruff-pyi003-unrecognized-version-info-check",
+    "status": "same"
+  },
+  {
+    "id": "ruff-pyi004-patch-version-comparison",
+    "status": "same"
+  },
+  {
+    "id": "ruff-pyi005-wrong-tuple-length-version-comparison",
+    "status": "same"
+  },
+  {
+    "id": "ruff-pyi013-ellipsis-in-non-empty-class-body",
+    "status": "same"
+  },
+  {
+    "id": "ruff-pyi014-argument-default-in-stub",
+    "status": "same"
+  },
+  {
+    "id": "ruff-pyi019-custom-type-var-for-self",
+    "status": "same"
+  },
+  {
+    "id": "ruff-pyi020-quoted-annotation-in-stub",
+    "status": "different",
+    "reason": "Ruff 0.17.6 reports pyupgrade/UP037_2.pyi:32 (`a: '''\\\\` newline `list[int]''' = [42]`), the escaped multiline type string whose decoded value is a line continuation before list[int]; the translation does, the JSON original does not. pyupgrade/UP037_2.pyi:41 (`Foo['''` newline `    Bar` … `    ]  # Comment''']`) is reported by both now: the annotation wrapper puts its closing parenthesis on its own line, so the string's trailing comment no longer hides it.",
+    "right": "translation",
+    "counts": {
+      "examples": {
+        "originalOnly": 0,
+        "translationOnly": 0
+      },
+      "fixtures": {
+        "originalOnly": 0,
+        "translationOnly": 1
+      },
+      "samples-python": {
+        "originalOnly": 0,
+        "translationOnly": 0
+      }
+    }
+  }
+]

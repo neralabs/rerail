@@ -1,0 +1,10 @@
+[
+  { "id": "ruff-n801-invalid-class-name", "status": "same" },
+  { "id": "ruff-n803-invalid-argument-name", "status": "same" },
+  { "id": "ruff-n804-invalid-first-argument-name-for-class-method", "status": "same" },
+  { "id": "ruff-n805-invalid-first-argument-name-for-method", "status": "same" },
+  { "id": "ruff-n806-non-lowercase-variable-in-function", "status": "same" },
+  { "id": "ruff-n807-dunder-function-name", "status": "same" },
+  { "id": "ruff-n811-constant-imported-as-non-constant", "status": "same" },
+  { "id": "ruff-n812-lowercase-imported-as-non-lowercase", "status": "same" }
+]

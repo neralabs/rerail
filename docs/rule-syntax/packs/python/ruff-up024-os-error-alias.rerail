@@ -10,6 +10,8 @@
 // the tuple is reported once.
 //   except IOError:                       ← UP024 at IOError
 //   except (OSError, socket.error):       ← UP024 at the tuple
+//   except KeyError, IOError:             ← UP024 at KeyError, where the tuple starts (Python 3.14, PEP 758)
+//   except (IOError, KeyError), e:        not reported: the elements are a tuple and `e`
 //   raise mmap.error(1)                   ← UP024 at mmap.error
 //   from .mmap import error; raise error  not reported: a local module's error
 #include "python/upgrade-imports.rerail"
@@ -19,8 +21,17 @@
 .violation UP024(at: node) code "UP024"
     "Replace `{at}` with the builtin `OSError`; since Python 3.3 it is the same class. Leave it only if `OSError` is rebound to something else in this scope."
     suppress ruff "UP024"
-UP024(e) :- exc_site(e, _), os_alias(e).
-UP024(t) :- handler_tuple(t, e), os_alias(e).
+UP024(e) :- exc_site(e, how), how != "handler", os_alias(e).
+UP024(t) :- up_handler_type(x, t), one_type(x), !kind(t, "tuple"), os_alias(t).
+UP024(t) :- handler_tuple(t, e), up_handler_type(x, t), one_type(x), os_alias(e).
+UP024(t) :- bare_tuple(t, e), os_alias(e).
+// `except A, B:` is Python 3.14's unparenthesized tuple; tree-sitter gives the clause one `value` per element.
+// Ruff's type is the tuple, whose elements are checked unparenthesized but not unpacked further.
+.decl one_type(x: node)
+one_type(x) :- kind(x, "except_clause"), count : { field(x, "value", _) } = 1.
+.decl bare_tuple(t: node, e: node)  // t the first element of the bare tuple, e one of them
+bare_tuple(t, e) :- kind(x, "except_clause"), count : { field(x, "value", _) } > 1, field(x, "value", t),
+    child(x, t, i), count : { field(x, "value", u), child(x, u, j), j < i } = 0, field(x, "value", v), unparen(v, e).
 .decl os_alias(e: node)
 os_alias(e) :- builtin_at(e, x), old_name(x).
 os_alias(e) :- up_qual(e, q), split_dot(q, m, "error"), error_module(m).

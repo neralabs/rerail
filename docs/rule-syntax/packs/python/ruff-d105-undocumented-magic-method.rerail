@@ -1,4 +1,4 @@
-.policy "ruff-d105-undocumented-magic-method" revision 2
+.policy "ruff-d105-undocumented-magic-method" revision 3
 .description "Add a docstring to each magic method of a public class, describing what the operation does and returns."
 .language python
 .mode steer
@@ -10,9 +10,13 @@
 //   class C:
 //       """Doc."""
 //       def __eq__(self, o): …   ← D105 at `__eq__`
-#include "python/docstrings.rerail"
+#include "python/python-17.rerail"
 
 .violation D105(at: node, x: symbol) code "D105"
     "Add a docstring to magic method `{x}` describing its behavior, arguments and return value."
     suppress ruff "D105"
-D105(nm, x) :- doc_missing(_, "method", nm, x), dunder(nm, x), x != "__init__", x != "__new__", x != "__call__".
+D105(nm, x) :- doc_missing(_, "method", nm, x), dunder(nm, x),
+    x != "__init__", x != "__new__", x != "__call__".
+D105(nm, x) :- doc_def(o, "method"), doc_public(o), tuple_pseudodoc(o), !doc_ignored(o),
+    docof(o, d), !stub_file(d), doc_name(o, nm, x), !typing_dec(o, "overload"), !typing_dec(o, "override"),
+    dunder(nm, x), x != "__init__", x != "__new__", x != "__call__".

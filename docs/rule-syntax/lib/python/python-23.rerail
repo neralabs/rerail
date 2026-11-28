@@ -1,0 +1,52 @@
+// python/python-23: pytest calls as Ruff reads them (PT010, PT011), in the file and in the trees parsed from its
+// string annotations: a call's positional arguments as Ruff's find_positional counts them, and the broad
+// exceptions of `raises-require-match-for` with builtins resolved in those trees too.
+//
+// Interface
+//   pt_arg(c, i, a)           a is call c's i-th positional argument: none at or after the first `*args`;
+//                             parentheses off; `f(x for x in y)` has the generator as argument 0
+//   pt_argument(c, k, i, a)   Ruff's find_argument_value(k, i): keyword k, else positional i (the (k, i) pairs of
+//                             python/exceptions' exc_argname)
+//   pt_qual(e, q)             python/exceptions' exc_qual, plus a builtin read in a tree parsed from a string
+//                             annotation: `ValueError` there gives "builtins.ValueError"
+//   pt_broad(c, e, s)         python/pytest's pytest_broad over pt_qual
+//
+// Why not python/exceptions' exc_arg / exc_argument (proposed: they become these)
+//   - A line continuation inside the parentheses is a child of tree-sitter's argument_list, and exc_item counts it
+//     as an argument; Ruff's parser drops it as whitespace.
+//   e.g.  with pytest.raises(Exception, \          exc_arg(c, 1, <\>): read as the callable form, so PT011 is
+//         ):                                       missed; pt_arg has Exception only, and PT011 reports it
+//         with pytest.raises(\                     exc_arg(c, 0, <\>): PT010 is missed; pt_arg has none
+//         ): ...
+//   - exc_item asks kind(l, "argument_list") of the argument list, and that kind lookup finds no node in a tree
+//     parsed from a string annotation, which Ruff's expression rules check too; pt_item tells the argument list
+//     from a generator argument by negation instead.
+//   e.g.  w: "pytest.raises(ValueError)" = 1     exc_arg finds nothing: PT010 is reported; pt_arg(c, 0,
+//                                                <ValueError>): no PT010, as Ruff
+// Why not python/names' builtin_ref (proposed: it does this)
+//   - It asks for the module of the name's own document, and a tree parsed from a string is a document of its own
+//     with no module node, so no builtin resolves there; pt_qual takes the module of the string it was parsed from.
+//   e.g.  w: "pytest.raises(ValueError)" = 1     pt_qual(<ValueError>, "builtins.ValueError"): PT011, as Ruff
+#include "python/pytest.rerail"
+
+// pt_item(c, a, j): the j-th child of c's argument list is positional (`x` or `*xs`).
+.decl pt_item(c: node, a: node, j: number)
+pt_item(c, a, j) :- kind(c, "call"), field(c, "arguments", l), !kind(l, "generator_expression"), child(l, a, j),
+    kind(a, k), k != "keyword_argument", k != "dictionary_splat", k != "comment", k != "line_continuation".
+.decl pt_splat_by(c: node, j: number)  // a `*xs` at or before position j
+pt_splat_by(c, j) :- pt_item(c, _, j), pt_item(c, s, k), kind(s, "list_splat"), k <= j.
+.decl pt_arg(c: node, i: number, a: node)
+pt_arg(c, i, a) :- pt_item(c, a0, j), !pt_splat_by(c, j), i = count : { pt_item(c, _, k), k < j }, unparen(a0, a).
+pt_arg(c, 0, g) :- kind(c, "call"), field(c, "arguments", g), kind(g, "generator_expression").
+.decl pt_argument(c: node, k: symbol, i: number, a: node)
+pt_argument(c, k, i, a) :- exc_argname(k, i), kwarg(c, k, a).
+pt_argument(c, k, i, a) :- exc_argname(k, i), pt_arg(c, i, a), !kwarg(c, k, _).
+
+// A name in a parsed tree that nothing binds is a builtin when the module holding the string has no star import.
+.decl pt_qual(e: node, q: symbol)
+pt_qual(e, q) :- exc_qual(e, q).
+pt_qual(e, q) :- unparen(e, m), miss(m, x), builtin(x), parsed_in(m, s), docof(s, d), modnode(d, md), !star(md),
+    q = @dot("builtins", x).
+.decl pt_broad(c: symbol, e: node, s: symbol)
+pt_broad(c, e, s) :- pt_qual(e, q), (match("builtins\\.(?<x>.*)", q), s = x ; !prefix("builtins.", q), s = q),
+    pytest_match_for(c, p), glob(p, s).

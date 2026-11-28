@@ -1,0 +1,7 @@
+[
+  { "id": "eslint-plugin-vue-no-async-in-computed-properties", "status": "same" },
+  { "id": "eslint-plugin-vue-no-dupe-keys", "status": "same" },
+  { "id": "eslint-plugin-vue-no-export-in-script-setup", "status": "same" },
+  { "id": "eslint-plugin-vue-no-mutating-props", "status": "same" },
+  { "id": "eslint-plugin-vue-no-ref-as-operand", "status": "same" }
+]

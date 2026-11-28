@@ -1,0 +1,11 @@
+// python/python-12: opts Ruff's formatting rules (UP030–UP032) into string values inside parsed type definitions.
+//
+// Interface: python/ast's plain_str(e, v) gains an explicit parsed_in seed. Annotation documents are hidden from
+// ordinary syntax queries; this opt-in preserves the formatting rules' coverage without widening other policies.
+// Values use the same native reader as a file's literals, not a source-text fallback or a separate decoder.
+#include "python/ast.rerail"
+
+plain_str(e, v) :- parsed_in(e, _), string_form(e, "str"), !fstring(e), value(e, v).
+plain_str(e, v) :- parsed_in(e, _), kind(e, "concatenated_string"),
+    count : { child(e, s0, _), !kind(s0, "comment"), !string_form(s0, "str") } = 0,
+    v = join x by i sep "" : { child(e, s, i), kind(s, "string"), value(s, x) }.

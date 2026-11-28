@@ -1,4 +1,4 @@
-.policy "ruff-n804-invalid-first-argument-name-for-class-method" revision 2
+.policy "ruff-n804-invalid-first-argument-name-for-class-method" revision 3
 .description "Name the first parameter of class methods cls, as PEP 8 recommends, so it reads as the class and not as an instance."
 .language python
 .mode steer
@@ -6,16 +6,19 @@
 
 // Ruff N804 (pep8-naming): a class method whose first positional parameter is not named `cls`. Class methods
 // are those decorated @classmethod or @abc.abstractclassmethod (or a `pep8-naming.classmethod-decorators`
-// entry), `__init_subclass__` and `__class_getitem__`, and every plain method of a metaclass (a class deriving
-// from type, abc.ABCMeta or enum.EnumMeta). Names matching `pep8-naming.ignore-names` are exempt.
+// entry), resolved as Ruff resolves them (`@(classmethod)` is one; a `classmethod` the module rebinds is not),
+// `__init_subclass__` and `__class_getitem__`, and every plain method of a metaclass (a class deriving, through
+// the classes of the file, subscripted ones too, from type, abc.ABCMeta or enum.EnumMeta). Names are read
+// NFKC-normalised; those matching `pep8-naming.ignore-names` are exempt.
 //   class C:
 //       @classmethod
 //       def make(self): ...          ← N804 at `self`
-//   class Meta(type):
-//       def m(cls): ...              not reported
-#include "python/naming.rerail"
+//   class Meta(type, Generic[T]): ...
+//   class M(Meta[int]):
+//       def m(self): ...             ← N804 at `self`
+#include "python/python-19.rerail"
 
 .violation N804(at: node, x: symbol) code "N804"
     "Rename this class method's first parameter `{x}` to `cls` and update its uses in the body, unless another parameter already has that name; keep it if the project follows another convention."
     suppress ruff "N804"
-N804(nm, x) :- naming_method_kind(f, "classmethod"), naming_first_param(f, nm, x), x != "cls", !naming_ignored(nm, x).
+N804(nm, x) :- pep8_method_kind(f, "classmethod"), pep8_first_param(f, nm, x), x != "cls", !pep8_ignored(nm, x).

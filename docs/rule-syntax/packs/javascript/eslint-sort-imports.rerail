@@ -5,10 +5,30 @@
 .scope include "**/*"
 
 #include "tsx/modules.rerail"
+//   import_decl(i)             i is an ESTree ImportDeclaration (not `import x = require(…)`)
 //   import_member(i, m, k, x)  m is the k-th name import i binds; x is its local name (`a as b` binds b)
-//   first_local(i, x)          x is the first of them
-//   import_syntax(i, s)        "none" (import "m"), "all" (* as ns), "multiple" or "single"
-//   import_prev(i, p, gap)     p is the import just before i in the file, with gap lines between
+
+// member(i, m, x): the names import i binds, as ESTree's `specifiers` lists them, x the local name. tsx/modules'
+// import_member misses `{ default as foo }` (names.rerail's import_binding wants a `name` field, and tree-sitter
+// keeps `default` as no node), so the specifiers are read here; the default and namespace names come from it.
+//   import D, { default as foo, b as c } from "m"      D, foo, c
+.decl member(i: node, m: node, x: symbol)
+member(i, m, x) :- import_member(i, m, _, x), !kind(m, "import_specifier").
+member(i, m, x) :- import_decl(i), kind(m, "import_specifier"), nearest(m, i, "import_statement"),
+    (field(m, "alias", a), text(a, x) ; !field(m, "alias", _), field(m, "name", n), text(n, x)).
+.decl member_at(i: node, m: node, k: number)  // m is i's k-th name
+member_at(i, m, k) :- member(i, m, _), k = count : { member(i, o, _), o < m }.
+// first_member(i, m, x): sort-imports sorts declarations by their first local name, x of member m. member_syntax(i,
+// s): ESLint's usedMemberSyntax: "none" (import "m"), "all" (`* as ns` first; `import D, * as NS` is "multiple"),
+// "multiple" or "single", over this rule's members (`{ default as foo }` is one); tsx/modules' import_syntax reads
+// import_member.
+.decl first_member(i: node, m: node, x: symbol)
+first_member(i, m, x) :- member_at(i, m, 0), member(i, m, x).
+.decl member_syntax(i: node, s: symbol)
+member_syntax(i, "none") :- import_decl(i), !member(i, _, _).
+member_syntax(i, "all") :- member_at(i, m, 0), kind(m, "namespace_import").
+member_syntax(i, s) :- member_at(i, m, 0), !kind(m, "namespace_import"), n = count : { member(i, _, _) },
+    (n = 1, s = "single" ; n > 1, s = "multiple").
 
 // Options, all off by default: ignoreCase, ignoreDeclarationSort, ignoreMemberSort and allowSeparatedGroups
 // are "true" or unset. memberSyntaxSortOrder lists the four syntaxes; option_item keeps its order, one row
@@ -22,15 +42,20 @@ default_order("none", 0). default_order("all", 1). default_order("multiple", 2).
 // member, not the name (decision 0677). `<` on symbols is Soufflé's, code point order, as JavaScript's `<` on
 // strings (it uses UTF-16 units: same order below U+E000).
 .decl key(m: node, k: symbol)
-key(m, x) :- import_member(_, m, _, x), !option("ignoreCase", "true").
-key(m, @lower(x)) :- import_member(_, m, _, x), option("ignoreCase", "true").
+key(m, x) :- member(_, m, x), !option("ignoreCase", "true").
+key(m, @lower(x)) :- member(_, m, x), option("ignoreCase", "true").
 
 // ---- declarations ----
-// prev(i, p): ESLint compares each import with the one just before it (in traversal order). Under
-// allowSeparatedGroups any line between two imports (blank, comment, code) starts a new group.
+// prev(i, p): ESLint compares each import with the one just before it (in traversal order, which for imports is
+// source order: `declare module "m" { import … }` too). Under allowSeparatedGroups any line between two imports
+// (blank, comment, code) starts a new group. By start offset, not tsx/modules' import_prev: the engine gives no
+// visit_index for TypeScript, so import_prev has no rows (NOTES-javascript-03).
 .decl prev(i: node, p: node)
-prev(i, p) :- !option("ignoreDeclarationSort", "true"), import_prev(i, p, g),
-    (g = 0 ; !option("allowSeparatedGroups", "true")).
+prev(i, p) :- !option("ignoreDeclarationSort", "true"), before(i, p), line(i, a), end_line(p, b),
+    (a - b - 1 <= 0 ; !option("allowSeparatedGroups", "true")).
+.decl before(i: node, p: node)  // p is the import declaration just before i in its file
+before(i, p) :- import_decl(i), node(d, i, _, si, _), j = max s : { import_decl(o), node(d, o, _, s, _), s < si },
+    import_decl(p), node(d, p, _, j, _).
 
 // Different syntaxes: i's must not come earlier in memberSyntaxSortOrder than p's.
 //   import { a, b } from "m";
@@ -39,7 +64,7 @@ prev(i, p) :- !option("ignoreDeclarationSort", "true"), import_prev(i, p, g),
     "Expected '{a}' syntax before '{b}' syntax: move this import above the one on line {p.line}."
     suppress eslint "sort-imports"
     suppress oxlint "sort-imports"
-sort_syntax(i, a, b, p) :- prev(i, p), import_syntax(i, a), import_syntax(p, b),
+sort_syntax(i, a, b, p) :- prev(i, p), member_syntax(i, a), member_syntax(p, b),
     syntax_pos(a, x), syntax_pos(b, y), x < y.
 
 // The same syntax: by first local name.
@@ -49,15 +74,16 @@ sort_syntax(i, a, b, p) :- prev(i, p), import_syntax(i, a), import_syntax(p, b),
     "Imports should be sorted alphabetically: '{x}' goes before '{y}' (line {p.line})."
     suppress eslint "sort-imports"
     suppress oxlint "sort-imports"
-sort_alpha(i, x, y, p) :- prev(i, p), import_syntax(i, s), import_syntax(p, s),
-    import_member(i, a, 0, x), import_member(p, b, 0, y), key(a, kx), key(b, ky), kx < ky.
+sort_alpha(i, x, y, p) :- prev(i, p), member_syntax(i, s), member_syntax(p, s),
+    first_member(i, a, x), first_member(p, b, y), key(a, kx), key(b, ky), kx < ky.
 
 // ---- members ----
 // named(i, m, k, x): the names in braces only. ESLint sorts the ImportSpecifiers; a default or namespace
 // name stays where it is. The finding is at the first name that sorts before its left neighbour:
 //   import { b, a, c } from "m";  reported at a
 .decl named(i: node, m: node, k: number, x: symbol)
-named(i, m, k, x) :- !option("ignoreMemberSort", "true"), import_member(i, m, k, x), kind(m, "import_specifier").
+named(i, m, k, x) :- !option("ignoreMemberSort", "true"), member_at(i, m, k), member(i, m, x),
+    kind(m, "import_specifier").
 .decl unsorted(i: node, k: number)
 unsorted(i, k) :- named(i, a, k, _), named(i, b, k - 1, _), key(a, kx), key(b, ky), kx < ky.
 .violation sort_member(at: node, x: symbol) code "sort-imports"

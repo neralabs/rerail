@@ -5,9 +5,9 @@
 .scope include "**/*"
 
 // Ruff PERF403 (perflint): a for loop whose body is only `d[k] = v`, or only `if test: d[k] = v`, where d is a
-// dict (its only binding is one, python/misc2-perf) and the key and the value are each the loop target or one of
-// its elements: `for k, v in pairs: d[k] = v`. Not when the test reads d, or the target is read after the loop.
-// Reported at the assignment.
+// dict (its only binding is one, python/misc2-perf, or `with dict() as d`, or a def annotated `-> dict`, as Ruff's
+// is_dict) and the key and the value are each the loop target or one of its elements: `for k, v in pairs: d[k] = v`.
+// Not when the test reads d, or the target is read after the loop. Reported at the assignment.
 //   result = {}
 //   for k, v in pairs:
 //       if v: result[k] = v            ← PERF403: `result = {k: v for k, v in pairs if v}`
@@ -20,7 +20,32 @@
     suppress ruff "PERF403"
 PERF403(a, o) :- perf_for(f, t, _), perf_body(f, st, test), store(st, a, o, key, value), from_target(t, key),
     from_target(t, value), kind(o, "identifier"), text(o, l), !perf_mentions(test, l),
-    perf_only_binding(o, site), perf_dict_site(site), !perf_used_after(f, t).
+    perf_only_binding(o, site), dict_site(site), !perf_used_after(f, t), !nonlocal_after(f, t).
+// nonlocal_after(f, t): a `nonlocal x` after loop f, in a function nested in the loop's scope, names a name x the
+// target t binds, and t's binding is the last one written in that scope. Ruff counts the declaration as a read of
+// that binding (its nonlocal resolves to the scope's last binding), so the target is read after the loop. A
+// `global x` is no read; `b = 0` after the `nonlocal b` binds in the nested function, not in the loop's scope.
+//   for a, b in items: acc[a] = b
+//   def g():
+//       nonlocal b            the loop is not reported
+.decl nonlocal_after(f: node, t: node)
+nonlocal_after(f, t) :- perf_for(f, t, _), perf_target_name(t, n, x), scope_node(n, s), node(_, f, _, _, e),
+    kind(d, "nonlocal_statement"), child(d, i, _), kind(i, "identifier"), text(i, x), node(_, d, _, ds, _), ds >= e,
+    nearest(d, g, scope), decl(g, x, s), count : { binding(s, x, b, _), written_in(b, s), b > n } = 0.
+.decl written_in(b: node, s: node)  // binding site b is written in scope s itself, not moved there by `nonlocal`
+written_in(b, s) :- binding(s, _, b, _), nearest(b, s, scope).
+// dict_site(site): binding site gives a dict. Beyond python/misc2-perf's assignments and parameters, Ruff's
+// check_type reads a `with` item's value (`with dict() as d`, `with {} as d`; a tuple target is not matched) and
+// a def's return annotation (`def d() -> dict: …`, `-> Dict[str, int]`; a string annotation is not).
+.decl dict_site(site: node)
+dict_site(s) :- perf_dict_site(s).
+dict_site(s) :- kind(s, "function_definition"), field(s, "return_type", t), perf_ann_head(t, h),
+    (ruff_qual(h, "builtins.dict") ; perf_typing_name(h, "Dict")).
+dict_site(t) :- binding(_, _, t, "with"), kind(t, "identifier"), child(p, t, _), kind(p, "as_pattern_target"),
+    child(ap, p, _), kind(ap, "as_pattern"), child(ap, v0, 0), unparen(v0, v), dict_value(v).
+.decl dict_value(v: node)
+dict_value(v) :- kind(v, "dictionary") ; kind(v, "dictionary_comprehension").
+dict_value(v) :- kind(v, "call"), field(v, "function", f), ruff_qual(f, "builtins.dict").
 // store(st, a, o, key, value): statement st is the plain assignment a, `o[…] = value`, with one target; key is
 // the subscript (`d[x,]` and `d[a, b]` have a tuple key with no node of its own: flat reads it off the text).
 .decl store(st: node, a: node, o: node, key: node, value: node)
@@ -45,3 +70,60 @@ flat(e, x) :- loop_store(_, e, "key"), text(e, z), match("[^\\[]*\\[(?<y>[\\s\\S
     x = @replace_all(@replace_all(y, "#[^\\n]*", ""), "[\\s()]", "").
 flat(c, x) :- loop_store(t, _, _), child(t, c, _), text(c, y), x = @replace_all(@replace_all(y, "#[^\\n]*", ""), "[\\s()]", "").
 flat(t, y) :- loop_store(t, _, _), kind(t, "identifier"), text(t, y).
+
+// Ruff 0.17.6: PERF403 at lines 4, 10, 13 and 19. Before: none (a `with` target and a def's return annotation
+// were no dicts). `as (d2, z)` is not matched; `-> "dict"` is a string.
+.test with_items_and_annotated_defs_are_dicts exactly
+    .fixture "a.py" ```
+        def f(items):
+            with open(x) as fh, dict() as res:
+                for k, v in items:
+                    res[k] = v
+            with dict() as (d2, z):
+                for k, v in items:
+                    d2[k] = v
+            with {} as d3:
+                for k, v in items:
+                    d3[k] = v
+            with dict(a=1) as d4:
+                for k, v in items:
+                    d4[k] = v
+        from typing import Dict
+        def m1() -> Dict[str, int]: ...
+        def m2() -> "dict": ...
+        def g(items):
+            for k, v in items:
+                m1[k] = v
+            for k, v in items:
+                m2[k] = v
+        ```
+    .expect PERF403 at "a.py":4
+    .expect PERF403 at "a.py":10
+    .expect PERF403 at "a.py":13
+    .expect PERF403 at "a.py":19
+.end
+
+// Ruff 0.17.6: PERF403 at lines 4 and 16. Before: also at line 9, where `nonlocal d` after the loop reads the
+// target's binding. At line 4, `b = 1` is the binding the `nonlocal` reads; at 16 the `nonlocal` is before the loop.
+.test a_nonlocal_after_the_loop_reads_the_target exactly
+    .fixture "b.py" ```
+        def f(items):
+            acc = {}
+            for a, b in items:
+                acc[a] = b
+            b = 1
+            def g():
+                nonlocal b
+            for c, d in items:
+                acc[c] = d
+            def h():
+                nonlocal d
+                d = 0
+            def i():
+                nonlocal e
+            for x, e in items:
+                acc[x] = e
+        ```
+    .expect PERF403 at "b.py":4
+    .expect PERF403 at "b.py":16
+.end

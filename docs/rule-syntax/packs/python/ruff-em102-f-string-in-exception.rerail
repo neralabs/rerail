@@ -10,10 +10,10 @@
 //   raise RuntimeError(f"This is an {example} exception")   ← EM102
 //   raise RuntimeError(t"{x}")                              not reported: a Template, not a str
 //   msg = f"bad {x}"; raise RuntimeError(msg)               not reported
-#include "python/misc2-messages.rerail"
+#include "python/python-30.rerail"
 
 .violation EM102(at: node) code "EM102"
     "Assign this f-string to a new variable such as `msg` before the `raise`, then pass that variable to the exception instead."
     suppress ruff "EM102"
-EM102(a) :- msg_raised_call(_, c), field(c, "function", f), !msg_typing_cast(f), msg_arg(c, 0, a),
+EM102(a) :- em_ruff_raised_call(_, c), field(c, "function", f), !msg_typing_cast(f), msg_arg(c, 0, a),
     msg_form(a, "fstr").

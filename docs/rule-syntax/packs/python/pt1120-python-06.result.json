@@ -1,0 +1,58 @@
+[
+ {
+  "id": "bandit-b103-set-bad-file-permissions",
+  "status": "same"
+ },
+ {
+  "id": "bandit-b110-try-except-pass",
+  "status": "different",
+  "reason": "Bandit reports all 9 handlers: the translation matches Bandit on all 56 fixture findings (and all 36 in samples-python). The JSON's patterns miss them; the sampled ones are handlers with a comment on the except line (`except:  # noqa`, E722.py 8/13/18/23) and B012.py:22's `except Exception: pass` inside a finally.",
+  "right": "translation",
+  "counts": {
+   "fixtures": {
+    "originalOnly": 0,
+    "translationOnly": 9
+   }
+  }
+ },
+ {
+  "id": "bandit-b405-import-xml-etree",
+  "status": "different",
+  "reason": "Bandit reads imported names from `ast`, without spaces or line continuations: `import xml.etree\\` / `.ElementTree` and `import xml.\\` / `etree.cElementTree` are B405. The JSON's regex allows spaces but not continuations; the translation strips both and matches Bandit on all 46 fixture findings.",
+  "right": "translation",
+  "counts": {
+   "fixtures": {
+    "originalOnly": 0,
+    "translationOnly": 5
+   }
+  }
+ },
+ {
+  "id": "bandit-b406-import-xml-sax",
+  "status": "different",
+  "reason": "`from xml.sax.saxutils import XMLGenerator` is B406 in Bandit (\"xml.sax.saxutils\" starts with \"xml.sax\"); the JSON exempts saxutils. The translation matches Bandit on all 3 samples-python findings.",
+  "right": "translation",
+  "counts": {
+   "samples-python": {
+    "originalOnly": 0,
+    "translationOnly": 1
+   }
+  }
+ },
+ {
+  "id": "ruff-air001-airflow-variable-name-task-id-mismatch",
+  "status": "same"
+ },
+ {
+  "id": "ruff-air302-airflow3-moved-to-provider",
+  "status": "same"
+ },
+ {
+  "id": "ruff-air311-airflow3-suggested-update",
+  "status": "same"
+ },
+ {
+  "id": "ruff-air312-airflow3-suggested-to-move-to-provider",
+  "status": "same"
+ }
+]

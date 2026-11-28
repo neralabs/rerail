@@ -1,0 +1,68 @@
+// python/python-27: Python syntax and Ruff compatibility needed by the python-27 YTT translations.
+//
+// Interface
+//   ytt_ruff_sys(e, x)               ytt_sys, including an import visible again after an `except ... as` target
+//   ytt_ruff_version_index(v, k)     ytt_version_index, including a subscript parsed inside a one-element splat
+//                                    display
+//   ytt_ruff_version_upto(v, k)      ytt_version_upto with the same splat handling and tuple subscripts excluded
+//   ytt_ruff_single_cmp(c, l, o, r)  one comparison, with comments between operands ignored
+//   ytt_ruff_one_byte_str(n)         plain str literal n has exactly one UTF-8 byte, as Ruff's YTT302 tests it
+//
+// `[*sys.version[2]]` makes tree-sitter put the splat inside the subscript's value, while Ruff sees the
+// expression as `sys.version[2]`. `sys.version[:1,]` is a tuple subscript; its comma survives only in source text.
+// Comments are named children of comparisons, but not operands in Ruff's AST.
+#include "python/misc2-version.rerail"
+
+.decl ytt_ruff_after_except_import(e: node)
+ytt_ruff_after_except_import(e) :- unparen(e, m), chain_root(m, r), kind(r, "identifier"), text(r, x), look(r, x, s),
+    binding(s, x, imp, "import"), binding(s, x, b, "except"), imp < b, b < r, nearest(b, h, "except_clause"),
+    node(d, h, _, _, he), node(d, r, _, rs, _), he <= rs,
+    count : { binding(s, x, o, _), b < o, o < r } = 0.
+
+.decl ytt_ruff_sys(e: node, x: symbol)
+ytt_ruff_sys(e, x) :- ytt_sys(e, x).
+ytt_ruff_sys(e, x) :- unparen(e, m), sym_of(m, q), split_dot(q, "sys", x), ytt_ruff_after_except_import(m).
+// In `[*sys.version[:3]]`, tree-sitter makes `*sys` the attribute's object. Return the root so a comment after
+// the star does not move the finding from `sys.version`'s line to the star's line.
+.decl ytt_ruff_splat_sys_attr(e: node, root: node, x: symbol)
+ytt_ruff_splat_sys_attr(e, root, x) :- kind(e, "attribute"), field(e, "object", splat), kind(splat, "list_splat"),
+    child(splat, root, _), !kind(root, "comment"), ruff_qual(root, "sys"),
+    field(e, "attribute", attr), text(attr, x).
+
+.decl ytt_ruff_tuple_subscript(s: node)
+ytt_ruff_tuple_subscript(s) :- kind(s, "subscript"), node_text(s, src), match("(?s).*,\\s*\\]", src).
+
+.decl ytt_ruff_subscript(s: node, v: node, i: node)
+ytt_ruff_subscript(s, v, i) :- ytt_subscript(s, v, i), !kind(v, "list_splat"), !ytt_ruff_tuple_subscript(s).
+ytt_ruff_subscript(s, v, i) :- ytt_subscript(s, splat, i), kind(splat, "list_splat"), child(splat, v0, _),
+    unparen(v0, v), !ytt_ruff_tuple_subscript(s).
+
+.decl ytt_ruff_version_index(v: node, k: symbol)
+ytt_ruff_version_index(v, k) :- ytt_ruff_subscript(_, v, i), ytt_ruff_sys(v, "version"), ruff_int(i, k).
+ytt_ruff_version_index(root, k) :- ytt_ruff_subscript(_, e, i), ytt_ruff_splat_sys_attr(e, root, "version"),
+    ruff_int(i, k).
+
+.decl ytt_ruff_version_upto(v: node, k: symbol)
+ytt_ruff_version_upto(v, k) :- ytt_ruff_subscript(_, v, sl), kind(sl, "slice"), ytt_ruff_sys(v, "version"),
+    slice_part(sl, "upper", u), ruff_int(u, k), !slice_part(sl, "lower", _), !slice_part(sl, "step", _).
+ytt_ruff_version_upto(root, k) :- ytt_ruff_subscript(_, e, sl), ytt_ruff_splat_sys_attr(e, root, "version"),
+    kind(sl, "slice"), slice_part(sl, "upper", u), ruff_int(u, k),
+    !slice_part(sl, "lower", _), !slice_part(sl, "step", _).
+
+.decl ytt_ruff_cmp_operand(c: node, e: node, i: number)
+ytt_ruff_cmp_operand(c, e, i) :- kind(c, "comparison_operator"), child(c, e, _), !kind(e, "comment"),
+    i = count : { child(c, other, _), !kind(other, "comment"), other < e }.
+
+.decl ytt_ruff_single_cmp(c: node, l: node, o: symbol, r: node)
+ytt_ruff_single_cmp(c, l, o, r) :- ytt_ruff_cmp_operand(c, l0, 0), ytt_ruff_cmp_operand(c, r0, 1),
+    !ytt_ruff_cmp_operand(c, _, 2), op_at(c, 0, o), unparen(l0, l), unparen(r0, r).
+
+.decl ytt_ruff_raw_crlf_piece(s: node)
+ytt_ruff_raw_crlf_piece(s) :- kind(s, "string"), node_text(s, src),
+    match("(?s:.*)(?:^|[^\\\\])(?:\\\\\\\\)*\\r\\n(?s:.*)", src).
+.decl ytt_ruff_raw_crlf_str(n: node)
+ytt_ruff_raw_crlf_str(n) :- ytt_ruff_raw_crlf_piece(n).
+ytt_ruff_raw_crlf_str(n) :- kind(n, "concatenated_string"), has(n, s, "string"), ytt_ruff_raw_crlf_piece(s).
+
+.decl ytt_ruff_one_byte_str(n: node)
+ytt_ruff_one_byte_str(n) :- plain_str(n, v), match("[\\x00-\\x7f]", v), !ytt_ruff_raw_crlf_str(n).

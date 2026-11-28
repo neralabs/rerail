@@ -1,4 +1,4 @@
-.policy "ruff-ruf028-invalid-formatter-suppression-comment" revision 1
+.policy "ruff-ruf028-invalid-formatter-suppression-comment" revision 2
 .description "Place formatter suppression comments between statements, not inside expressions or after decorators, keeping skip comments at a line's end and on comments on their own line."
 .language python
 .mode steer
@@ -12,8 +12,19 @@
 //   @dec  / # fmt: off /  def f(): …   ← off or on after a decorator
 //   # fmt: off      (just above `else:`, at its indent)   ← directly above else, elif, except or finally
 //   off as the first line of the else or finally block of a try with except clauses
-// Not modelled: Ruff's "attached to the statement above" case (another formatter comment inside the
-// statement above's brackets).
+// Where a comment stands is Ruff's enclosing node, as its comment visitor finds it on Ruff's tree, which has no
+// parentheses: in `x = (  # fmt: off` the comment is in the assignment, not in an expression. A comment right
+// after a node, with only blanks between, is that node's when Ruff walked into the node's parent (it does where
+// the parent holds a formatter comment) and, on a line of its own, when it is indented deeper than the line the
+// node starts on (a node after other text on its line counts as column 0):
+//   def f():
+//       x = [  # fmt: off
+//           1
+//       ]
+//       # fmt: on        ← in an expression: it follows the list, which Ruff entered for the first comment
+//   x = a + (  # fmt: off
+//       b
+//   )  # fmt: skip       ← in an expression: it follows `a + (b)`
 #include "python/ruff.rerail"
 
 .violation RUF028(at: node, msg: symbol) code "RUF028" "{msg}"
@@ -41,12 +52,58 @@ fmt_word("fmt", "off", "off"). fmt_word("fmt", "on", "on"). fmt_word("fmt", "ski
 fmt_word("yapf", "disable", "off"). fmt_word("yapf", "enable", "on").
 // own_line(c): nothing comes before c on its line.
 .decl own_line(c: node)
-own_line(c) :- kind(c, "comment"), !token_before(c, _).
-own_line(c) :- kind(c, "comment"), token_before(c, t), end_line(t, l), line(c, m), l < m.
+own_line(c) :- fmt_comment(c, _), line_start(c).
+// line_start(n): only whitespace comes before n on its line. The tape's tokens would not say: it leaves out tokens
+// the grammar implies (the `)` of `x = (\n1\n)  # fmt: skip`).
+.decl line_start(n: node)
+line_start(n) :- (fmt_comment(n, _) ; entered(n)), docof(n, d), line(n, l), col(n, k), tape_line(d, l, sp), text(sp, s),
+    match("[ \t\f]*", @slice(s, 0, k)).
 // in_expr(c): c sits in an expression, brackets or a statement's header, not between statements.
 .decl in_expr(c: node)
-in_expr(c) :- kind(c, "comment"), child(p, c, _), !stmt_level(p).
+in_expr(c) :- trail_expr(c).
+in_expr(c) :- kind(c, "comment"), child(q, c, _), !kind(q, "parenthesized_expression"), !stmt_level(q).
+in_expr(c) :- kind(c, "comment"), child(q, c, _), kind(q, "parenthesized_expression"), ast_up(q, p), !stmt_level(p).
+// trail_expr(c): formatter comment c follows an expression e, with only blanks and comments between, that Ruff
+// entered, and, on a line of its own, is indented deeper than e's line.
+.decl trail_expr(c: node)
+trail_expr(c) :- cand(c, e), !stmt_level(e), !kind(e, "parenthesized_expression"), !kind(e, "comment"), entered(e),
+    (!own_line(c) ; own_line(c), indent(e, i), col(c, k), i < k).
+// after(c, s): comment c comes right after its sibling s, or after comments that do, with only blanks between:
+// no `,`, bracket or `:` (read from the lines' text: the tape leaves out tokens the grammar implies).
+.decl after(c: node, s: node)
+after(c, s) :- kind(c, "comment"), child(q, c, j), child(q, s, i), j = i + 1, blank_gap(s, c).
+// blank_gap(s, c): only blanks come between the end of s and comment c, on s's last line and on any line between.
+.decl blank_gap(s: node, c: node)
+blank_gap(s, c) :- kind(c, "comment"), child(q, c, j), child(q, s, i), j = i + 1, docof(c, d), end_point(s, p),
+    line(p, l), col(p, k1), tape_line(d, l, sp), text(sp, t), line(c, m),
+    (m = l, col(c, k2), match("[ \t\f]*", @slice(t, k1, k2)) ;
+     m > l, match("[ \t\f\r\\\\]*", @slice(t, k1, strlen(t))), col(c, k2), tape_line(d, m, sc), text(sc, tc),
+     match("[ \t\f]*", @slice(tc, 0, k2)),
+     count : { tape_line(d, l2, s2), l2 > l, l2 < m, text(s2, t2), !match("[ \t\f\r]*(#.*)?", t2) } = 0).
+.decl after_comments(c: node, s: node)
+after_comments(c, s) :- fmt_comment(c, _), after(c, s), !kind(s, "comment").
+after_comments(c, s) :- fmt_comment(c, _), after(c, c0), kind(c0, "comment"), after_any(c0, s).
+.decl after_any(c: node, s: node)
+after_any(c, s) :- after(c, s), !kind(s, "comment").
+after_any(c, s) :- after(c, c0), kind(c0, "comment"), after_any(c0, s).
+// cand(c, e): e ends where the sibling before c ends: s itself or a last descendant of it.
+.decl cand(c: node, e: node)
+cand(c, e) :- after_comments(c, s), node(_, s, _, _, se), (e = s ; within(e, s)), node(_, e, _, _, se).
+// entered(e): Ruff's visitor walks into e's parent (parentheses aside): a formatter comment of the same file starts
+// in it. Some text must follow the comment in the parent: tree-sitter takes a comment after a decorator's `)` into the
+// decorator, where Ruff's range of it ends at the `)`.
+.decl entered(e: node)
+entered(e) :- cand(_, e), ast_up(e, p), node(d, p, _, ps, pe), fmt_comment(c2, _), node(d, c2, _, s2, ce2), s2 >= ps,
+    ce2 < pe.
+// indent(e, i): the indentation of e's line when e starts it, else 0 (Ruff's indentation_at_offset).
+.decl indent(e: node, i: number)
+indent(e, i) :- entered(e), line_start(e), col(e, i).
+indent(e, 0) :- entered(e), !line_start(e).
+// stmt_level(p): p is (part of) a statement in Ruff's tree. tree-sitter wraps an assignment in an
+// expression_statement; Ruff's Assign, AugAssign and AnnAssign are statements themselves.
 .decl stmt_level(p: node)
+stmt_level(p) :- kind(p, "assignment").
+stmt_level(p) :- kind(p, "augmented_assignment").
 stmt_level(p) :- kind(p, "module").
 stmt_level(p) :- kind(p, "block").
 stmt_level(p) :- kind(p, "decorator").

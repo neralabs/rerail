@@ -11,20 +11,51 @@
 // strings, which are not Python (`Float[Array, "batch dim"]`).
 //   def g() -> "///": ...                 ← F722
 //   X: """List[int]"""'☃' = []            ← F722: the parts join into one invalid annotation
+//   def f(a: "'' and 'b'"): ...           ← F722: the inner '' is an annotation too, and empty
+//   w: "\tNoReturn"                       ← F722: Ruff parses the value as it is, so the tab is an indent
 //   def f() -> "A": ...                   not reported
+//   def f() -> "Literal[0]#": ...         not reported: a comment ends it
 #include "python/pyflakes.rerail"
-//   annotation(n)              n is in a type annotation, or in a string annotation's parsed tree (python/names)
-//   string_annotation(s)       s is a string Ruff reads as a type: cast("T", x), TypeVar bound=… (core)
-//   parsed(s, "annotation", r) r is the tree of s's contents (core)
+//   string_annotation(s)       s is a string Ruff reads as a type, nested ones included (core)
+//   str(s, v), value(s, v)     a string's, a concatenated string's decoded value (core)
+//   parse_of(x, "python", t)   x parsed as a module, tape t: a text that does not parse has no doc_root (core)
 
 .violation F722(at: node) code "F722" "Syntax error in forward annotation"
     suppress ruff "F722"
-F722(s) :- ann_string(s), parsed(s, "annotation", r), (kind(r, "ERROR") ; has(r, _, "ERROR")), !no_type_check(s),
-    !not_a_type(s).
-// ann_string(s): a whole string literal (adjacent parts together) in an annotation position.
+F722(s) :- ann_parse(s, t), !one_expression(t), !no_type_check(s), !not_a_type(s).
+// How Ruff's parser reads a string annotation (`ruff_python_parser::typing::parse_type_annotation`): a single
+// triple-quoted string whose source contents are its value, in parentheses (its lines may break and indent); any
+// other, its value as it is, so a leading space is an indent and a line break ends it. The engine's own guest
+// (`parsed(s, "annotation", r)`) wraps every string as `( … )`, which accepts those and refuses
+// `"Literal[0]#"` (its comment swallows the `)`), and reads `''` as `()`: it is not Ruff's verdict.
+.decl ann_parse(s: node, t: tape)
+ann_parse(s, t) :- ann_text(s, x), parse_of(x, "python", t).
+.decl ann_text(s: node, x: symbol)
+ann_text(s, cat("(", cat(v, "\n)"))) :- ann_string(s), kind(s, "string"), str(s, v), parenthesized(s, v).
+ann_text(s, v) :- ann_string(s), kind(s, "string"), str(s, v), !parenthesized(s, v).
+ann_text(s, v) :- ann_string(s), kind(s, "concatenated_string"), value(s, v).
+.decl parenthesized(s: node, v: symbol)
+parenthesized(s, v) :- str(s, v), text(s, t), strprefix(s, p), k = strlen(p), q = @slice(t, k, k + 3),
+    (q = "\"\"\"" ; q = "'''"), v = @slice(t, k + 3, -3).
+// one_expression(t): tape t's module is one expression statement, not an assignment (CPython's `eval` mode accepts
+// it). Equal texts share a tape, so the engine's own annotation guest of `"x"` (`(x)`, a fragment) is a document of
+// the tape `@parse("python", "(x)")` makes too: only the module counts. The value document's rows are read in this
+// one rule: a separate relation over its nodes (`statement_form(e)`) was found empty. `syntax_error` is not read:
+// a text that does not parse is withheld (no doc_root), and a policy that reads it is not given the files CPython
+// 3.13 refuses, such as those with t-strings, which Ruff reads.
+.decl one_expression(t: tape)
+one_expression(t) :- tape_of(d, t), doc_root(d, m), kind(m, "module"), child(m, e, _),
+    kind(e, "expression_statement"), count : { child(m, c, _), kind(c, k1), !extra(k1) } = 1,
+    count : { child(e, a, _), kind(a, k2), statement_form(k2) } = 0.
+.decl extra(k: symbol)
+extra("comment"). extra("line_continuation").
+.decl statement_form(k: symbol)
+statement_form("assignment"). statement_form("augmented_assignment"). statement_form("yield").
+// ann_string(s): a whole string literal (adjacent parts together) Ruff reads as a type. Its guest is asked
+// (`sub_tape`, which a guest that does not parse has too): the strings nested in it are annotations only once it is
+// a document (`def f(a: "'' and 'b'")`: the '' is F722).
 .decl ann_string(s: node)
-ann_string(s) :- (annotation(s) ; string_annotation(s)), (kind(s, "string") ; kind(s, "concatenated_string")),
-    !piece(s).
+ann_string(s) :- string_annotation(s), !piece(s), sub_tape(s, "annotation", _).
 .decl piece(s: node)  // one part of adjacent literals
 piece(s) :- kind(c, "concatenated_string"), child(c, s, _).
 // no_type_check(s): s is in a def decorated with typing's no_type_check.

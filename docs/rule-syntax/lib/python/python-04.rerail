@@ -1,0 +1,126 @@
+// python/python-04: the value a name is bound to, as Ruff's typing::check_type finds it (RUF051, RUF057), and an
+// argument by name or position as Ruff's find_argument finds it (RUF057, RUF061).
+//
+// Interface
+//   bound_value(n, v)    identifier n is a target that takes expression v (Ruff's match_value): `n = v`, `a = n = v`,
+//                        `n, m = v, w` and `[n, m] = (v, w)` element by element (zipped, so `n, = v, w` too),
+//                        `with v as n`, `with (v, w) as (n, m)`. Not `*n`, not `n: T = v` (its annotation decides).
+//   checked_type(e, t)   name e's only binding is a t, "int" or "dict" (Ruff's typing::is_int, is_dict): typed_as
+//                        (python/ruff), and the bindings it does not follow: chained and unpacking assignments,
+//                        with items, and a dict by its form (ResolvedPythonType): `{} if c else {}`, `{} or {}`.
+//   arg_of(c, x, v)      v is what call c passes for parameter x (listed in param_slot, python/ruff): the keyword
+//                        x if c has one, else the positional argument at x's slot. call_param has both rows.
+//                          round(2, number=1.5)     arg_of(c, "number", <1.5>)
+//
+// Ruff background
+//   check_type looks at the one binding of the name. An assignment or a with item gives its value, paired with the
+//   name through tuples and lists of the target and the value positionally (zip: extra elements on either side are
+//   dropped, a starred target matches nothing). The value is the type when its ResolvedPythonType is (a display,
+//   a comprehension, an if-expression or `and`/`or` whose every branch is) or it is a call of the builtin itself:
+//     a = b = 1            b and a are ints              d, e = {}, 1        d is a dict
+//     with dict() as d:    d is a dict                   d = {} if c else {}  a dict
+//     d = {} | {}          unknown                       d = {} or dict()     unknown: dict() only counts alone
+#include "python/ruff.rerail"   // typed_as, one_binding, init_type, int_expr
+
+// bound_pair(t, v): target t (an identifier, tuple, list or parenthesised target) takes value v.
+.decl bound_pair(t: node, v: node)
+bound_pair(l, r) :- kind(a, "assignment"), !field(a, "type", _), field(a, "left", l), field(a, "right", r0),
+    chain_end(r0, r).
+bound_pair(t, v) :- kind(p, "as_pattern"), nearest(p, _, with_item_kind), child(p, v, 0), child(p, g, _),
+    kind(g, "as_pattern_target"), child(g, t, 0).
+bound_pair(tc, vc) :- bound_pair(t, v), bare_target(t, tm), unparen(v, vm), seq_elt(tm, "target", tc, i),
+    seq_elt(vm, "value", vc, i).
+// bare_target(t, m): target t without its parentheses. tree-sitter reads the target `(d) = v` as a one-element
+// tuple_pattern; with no comma (the tape keeps none: its text has none) it is d in parentheses.
+.decl bare_target(t: node, m: node)
+bare_target(t, m) :- bound_pair(t, _), unparen(t, m), !paren_pattern(m).
+bare_target(t, m) :- bound_pair(t, _), unparen(t, p), paren_pattern(p), child(p, i, 0), unparen(i, m).
+.decl paren_pattern(p: node)
+paren_pattern(p) :- kind(p, "tuple_pattern"), count : { child(p, c, _), !trivia(c) } = 1, text(p, t), !contains(",", t).
+// chain_end(r0, r): the value of `a = b = r`: the right side of the last assignment in the chain.
+.decl chain_end(r0: node, r: node)
+chain_end(r, r) :- kind(a, "assignment"), field(a, "right", r), !kind(r, "assignment").
+chain_end(r0, r) :- kind(a, "assignment"), field(a, "right", r0), kind(r0, "assignment"), field(r0, "right", r1),
+    chain_end(r1, r).
+.decl with_item_kind(k: symbol)
+with_item_kind("with_item").
+// seq_elt(s, side, e, i): e is the i-th element of the target or value sequence s, comments not counted.
+.decl seq_elt(s: node, side: symbol, e: node, i: number)
+seq_elt(s, side, e, i) :- kind(s, k), seq_kind(k, side), child(s, e, j), !trivia(e),
+    i = count : { child(s, c, k2), k2 < j, !trivia(c) }.
+.decl trivia(c: node)
+trivia(c) :- kind(c, "comment").
+trivia(c) :- kind(c, "line_continuation").
+.decl seq_kind(k: symbol, side: symbol)
+seq_kind("pattern_list", "target"). seq_kind("tuple_pattern", "target"). seq_kind("list_pattern", "target").
+seq_kind("tuple", "target"). seq_kind("list", "target").
+seq_kind("expression_list", "value"). seq_kind("tuple", "value"). seq_kind("list", "value"). seq_kind("set", "value").
+
+.decl bound_value(n: node, v: node)
+bound_value(n, v) :- bound_pair(t, v), bare_target(t, n), kind(n, "identifier").
+
+// checked_type(e, t): see the interface.
+.decl checked_type(e: node, t: symbol)
+checked_type(e, t) :- typed_as(e, t).
+checked_type(e, t) :- one_binding(e, _, _, b, f), (f = "assign" ; f = "with"), site_name(b, n), bound_value(n, v),
+    resolved_type(v, t).
+checked_type(e, "dict") :- one_binding(e, _, _, g, "walrus"), child(w, g, 0), kind(w, "named_expression"),
+    field(w, "value", r), dict_expr(r).
+.decl site_name(b: node, n: node)
+site_name(b, n) :- kind(b, "assignment"), field(b, "left", n), kind(n, "identifier").
+site_name(b, b) :- kind(b, "identifier").
+.decl resolved_type(v: node, t: symbol)
+resolved_type(v, t) :- init_type(v, t).
+resolved_type(v, "dict") :- dict_expr(v).
+// dict_expr(e): a dict by its form alone: a display or comprehension, an if-expression or `and`/`or` of two, or
+// `(x := d)` of one.
+.decl dict_expr(e: node)
+dict_expr(e) :- unparen(e, m), (kind(m, "dictionary") ; kind(m, "dictionary_comprehension")).
+dict_expr(e) :- unparen(e, m), kind(m, "conditional_expression"), cond_part(m, a, 0), dict_expr(a), cond_part(m, b, 2),
+    dict_expr(b).
+dict_expr(e) :- unparen(e, m), kind(m, "boolean_operator"), field(m, "left", l), dict_expr(l), field(m, "right", r),
+    dict_expr(r).
+dict_expr(e) :- unparen(e, m), kind(m, "named_expression"), field(m, "value", v), dict_expr(v).
+// cond_part(m, e, i): e is part i of the if-expression m, `body if test else orelse` (0, 1, 2); a `\` between
+// them is a child too, and is not counted.
+.decl cond_part(m: node, e: node, i: number)
+cond_part(m, e, i) :- kind(m, "conditional_expression"), child(m, e, j), !trivia(e),
+    i = count : { child(m, c, k), k < j, !trivia(c) }.
+
+// arg_of(c, x, v): see the interface. Ruff's Arguments::find_argument looks for the keyword first. The callee
+// resolves as ann_call_q has it, so in a string annotation too.
+.decl arg_of(c: node, x: symbol, v: node)
+arg_of(c, x, v) :- ann_call_q(c, q), param_slot(q, x, _), call_kwarg(c, x, v).
+arg_of(c, x, v) :- ann_call_q(c, q), param_slot(q, x, i), !call_kwarg(c, x, _), ruff_arg(c, i, v).
+
+// ---- string annotations ------------------------------------------------------------------------------------------
+// ann_tree(r): r is the root of the parsed tree of a string Ruff reads as a type (core's string_annotation:
+// `x: "T"`, `cast("T", y)`, a TypeVar's bound), or of a string nested in one (`x: "list['T']"`). Ruff checks
+// the code in them as any other: RUF060, RUF061, RUF063 report there, at the string's line.
+.decl ann_tree(r: node)
+ann_tree(r) :- string_annotation(s), parsed(s, "annotation", r).
+ann_tree(r) :- ann_tree(t), within(s, t), str_node(s), parsed(s, "annotation", r).
+.decl in_ann_tree(e: node)
+in_ann_tree(e) :- ann_tree(e).
+in_ann_tree(e) :- ann_tree(t), within(e, t).
+// ann_call_q(c, q): call c's callee resolves to q (call_q), or, in an ann_tree outside an annotation, where
+// python/names opens no scope (`cast("pytest.raises(E, f)", x)`), through the file's module-level imports, or
+// to a builtin the file binds nowhere.
+.decl ann_call_q(c: node, q: symbol)
+ann_call_q(c, q) :- call_q(c, q).
+ann_call_q(c, q) :- in_ann_tree(c), kind(c, "call"), field(c, "function", f), !ruff_qual(f, _), guest_q(f, q).
+.decl guest_q(e: node, q: symbol)
+guest_q(e, q) :- in_ann_tree(e), kind(e, "identifier"), text(e, x), guest_file(e, d), modnode(d, m), ibind(m, x, q).
+guest_q(e, cat("builtins.", x)) :- in_ann_tree(e), kind(e, "identifier"), text(e, x), builtin(x), guest_file(e, d),
+    !file_binds(d, x).
+guest_q(e, @dot(q, a)) :- in_ann_tree(e), kind(e, "attribute"), field(e, "object", o), guest_q(o, q),
+    field(e, "attribute", n), text(n, a).
+// guest_file(e, d): guest node e stands in file d, through guests of guests: the host nodes over e, up to one that
+// is no guest's, and its document. Read by node (host_node), not by joining two documents' guest rows (decision 0652).
+.decl guest_file(e: node, d: number)
+guest_file(e, d) :- ann_host_up(e, h), !host_node(h, _), docof(h, d).
+.decl ann_host_up(e: node, h: node)
+ann_host_up(e, h) :- in_ann_tree(e), host_node(e, h).
+ann_host_up(e, h) :- ann_host_up(e, m), host_node(m, h).
+.decl file_binds(d: number, x: symbol)
+file_binds(d, x) :- bound_in(s, x), docof(s, d).

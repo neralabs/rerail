@@ -4,12 +4,15 @@
 .mode steer
 .scope include "**/*"
 
-// Ruff RUF057: `round(x)`, `round(x, None)` or `round(x, n)` with n a non-negative int literal, where x is
-// an int: an int expression, or a name bound once to one. A negative n rounds to tens or hundreds, so stays.
+// Ruff RUF057: `round(x)`, `round(x, None)` or `round(x, n)` with n a non-negative int literal that fits in an
+// i64, where x is an int: an int expression, or a name bound once to one (`a = b = 1`, `c, d = 1, 2` too). A
+// keyword wins over the position (Ruff's find_argument): `round(2, number=1.5)` rounds 1.5. A negative n rounds
+// to tens or hundreds, so stays.
 //   round(42)          ← RUF057  `42`
 //   round(42, -2)      not reported: 4200 → 0
 //   round(42.)         not reported: a float
-#include "python/ruff.rerail"
+//   round(1, 2**63)    not reported: ndigits past i64 (Ruff's as_i64)
+#include "python/python-04.rerail"
 
 param_slot("builtins.round", "number", 0).
 param_slot("builtins.round", "ndigits", 1).
@@ -18,9 +21,13 @@ param_slot("builtins.round", "ndigits", 1).
     "Use the value directly instead of `round(...)`; it is already an integer. Keep `round` if the value may not truly be an `int`, e.g. a wrong annotation or a subclass overriding `__round__`."
     suppress ruff "RUF057"
 RUF057(c) :- call_q(c, "builtins.round"), !call_splat(c), call_nargs(c, n), call_nkwargs(c, k), n + k <= 2,
-    call_param(c, "number", x), int_typed(x), whole_digits(c).
-// whole_digits(c): round's ndigits is absent, None or an int literal ≥ 0.
+    arg_of(c, "number", x), (int_expr(x) ; checked_type(x, "int")), whole_digits(c).
+// whole_digits(c): round's ndigits is absent, None or an int literal from 0 to 2**63 - 1.
 .decl whole_digits(c: node)
-whole_digits(c) :- call_q(c, "builtins.round"), !call_param(c, "ndigits", _).
-whole_digits(c) :- call_param(c, "ndigits", d), unparen(d, m), kind(m, "none").
-whole_digits(c) :- call_param(c, "ndigits", d), ruff_int(d, _).
+whole_digits(c) :- call_q(c, "builtins.round"), !arg_of(c, "ndigits", _).
+whole_digits(c) :- arg_of(c, "ndigits", d), unparen(d, m), kind(m, "none").
+whole_digits(c) :- arg_of(c, "ndigits", d), i64_digits(d).
+// i64_digits(d): d is an int literal whose decimal value is at most 9223372036854775807. Keyed by the literal, not
+// its digits: a table of every file's digits put c in the cross-file part (decision 0677).
+.decl i64_digits(d: node)
+i64_digits(d) :- ruff_int(d, v), match("[0-9]{1,18}|[0-8][0-9]{18}|9[01][0-9]{17}|92[01][0-9]{16}|922[0-2][0-9]{15}|9223[0-2][0-9]{14}|92233[0-6][0-9]{13}|922337[01][0-9]{12}|92233720[0-2][0-9]{10}|922337203[0-5][0-9]{9}|9223372036[0-7][0-9]{8}|92233720368[0-4][0-9]{7}|922337203685[0-3][0-9]{6}|9223372036854[0-6][0-9]{5}|92233720368547[0-6][0-9]{4}|922337203685477[0-4][0-9]{3}|9223372036854775[0-7][0-9]{2}|922337203685477580[0-7]", v).

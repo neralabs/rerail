@@ -1,0 +1,5 @@
+[
+  { "id": "next-no-async-client-component", "status": "same" },
+  { "id": "next-no-duplicate-head", "status": "same" },
+  { "id": "next-no-location-assign-relative-destination", "status": "same" }
+]

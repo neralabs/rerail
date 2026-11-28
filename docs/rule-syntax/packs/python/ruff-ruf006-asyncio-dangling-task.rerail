@@ -10,6 +10,7 @@
 // `new_event_loop()`. Reported where the result is dropped:
 //   asyncio.create_task(main())                  ← RUF006: an expression statement
 //   task = asyncio.create_task(main())           ← RUF006: a name that is never read (any scope)
+//   t = asyncio.create_task(g(*[f() for _ in x])) ← RUF006 (Ruff): `_` is unused, and its statement is the task's
 //   tasks.append(asyncio.create_task(main()))    not reported: the reference is kept
 #include "python/ruff.rerail"
 
@@ -32,3 +33,11 @@ RUF006(c, cat(cat("`", x), "` is never read, so the task is only weakly referenc
     rasg(f, x, r, a), !decl(f, x, _), asgstmt(a, _), unparen(r, c), task_call(c), !read_in(f, x).
 .decl read_in(f: node, x: symbol)
 read_in(f, x) :- asg(f, x, _, _), look(n, x, f), expr_ctx(n, c), c != "store".
+// Ruff checks every unused binding whose statement is `… = <task call>` (one target) or `…: T = <task call>`, and a
+// comprehension variable's statement is the one around the comprehension: an unread `for` target of a
+// comprehension anywhere in that statement reports the task, whatever happens to the name assigned.
+RUF006(c, cat(cat("The comprehension variable `", x), "` is never read, so Ruff takes this task as unreferenced. Read the variable, or add the task to a set and discard it in `add_done_callback`.")) :-
+    asgstmt(a, _), field(a, "right", r), unparen(r, c), task_call(c), within(k, a), kind(k, ck), comp_scope(ck),
+    tscope(t, k), kind(t, "identifier"), text(t, x), !comp_read(k, x).
+.decl comp_read(k: node, x: symbol)
+comp_read(k, x) :- look(n, x, k), kind(k, ck), comp_scope(ck), expr_ctx(n, c), c != "store".

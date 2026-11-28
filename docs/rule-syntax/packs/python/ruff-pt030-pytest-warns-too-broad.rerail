@@ -1,4 +1,4 @@
-.policy "ruff-pt030-pytest-warns-too-broad" revision 2
+.policy "ruff-pt030-pytest-warns-too-broad" revision 3
 .description "Pass a match pattern to pytest.warns for Warning, UserWarning or DeprecationWarning, or expect a more specific warning; a generic warning also catches unrelated ones."
 .language python
 .mode steer
@@ -6,22 +6,93 @@
 
 // Ruff PT030 (flake8-pytest-style): `pytest.warns(W)` for a broad W with no `match=`, or an empty one. Broad is
 // option `warns-require-match-for` (default Warning, UserWarning, DeprecationWarning) plus
-// `warns-extend-require-match-for`, globs over the qualified name. Unlike PT011, the callable form
-// `pytest.warns(W, func)` is reported too; it ignores `match=`.
+// `warns-extend-require-match-for`, globs over the name Ruff shows: a builtin read by its bare name shows as
+// "UserWarning", one imported from `builtins` as "builtins.UserWarning". Unlike PT011, the callable form
+// `pytest.warns(W, func)` is reported too. Empty is Ruff's is_empty_or_null_string, to any depth: "", None, or an
+// f-string with no literal text whose fields are all empty (a field's conversion and format spec do not count).
+// A call inside a string type definition is checked too, as Ruff visits its parsed tree, but only where every string
+// around it is "simple": one literal whose text is its value (Ruff's parse_type_annotation). Ruff reports nothing in
+// a complex one, an implicit concatenation or a non-raw string with a backslash, nor in a string nested in one.
 //   with pytest.warns(UserWarning): …                 ← PT030
 //   pytest.warns(UserWarning, func)                   ← PT030
+//   pytest.warns(Warning, match=f"{f'{None}'}")       ← PT030: the match is empty
+//   x: "pytest.warns(UserWarning)" = 1                ← PT030
+//   x: "pytest.warns(UserWarning)" "" = 1             not reported: a complex string
 //   with pytest.warns(UserWarning, match="x"): …      not reported
+//   pytest.warns(Warning, match=f"{{{''}}}")          not reported: `{{` is literal text
 #include "python/pytest.rerail"
-//   exc_call(c, q), exc_argument(c, k, i, a), exc_arg(c, i, a), kwarg(c, k, v), pytest_empty_or_null(e),
-//   pytest_broad(c, e, s)
+//   exc_call(c, q), exc_qual(e, q), kwarg(c, k, v), pytest_match_for(c, p)
+#include "python/python-01.rerail"
+//   typedef_node(n); python/names' parsed_in(e, s), miss(n, x), builtin(x)
 
 .violation PT030(at: node, id: symbol) code "PT030" "{id}"
     suppress ruff "PT030"
 PT030(w, cat("Give `pytest.warns(", x, ")` a non-empty `match=` regex, or expect a more specific warning, so an unrelated warning cannot satisfy it.")) :-
-    broad_warn(c, w), !exc_arg(c, 1, _), text(w, x).
-PT030(w, cat("`pytest.warns(", x, ", func)` ignores `match=`; call the function inside `with pytest.warns(", x,
-        ", match=...):` instead, or expect a more specific warning class.")) :- broad_warn(c, w), exc_arg(c, 1, _), text(w, x).
+    broad_warn(c, w), form(c, "with"), text(w, x).
+PT030(w, cat("`pytest.warns(", x, ", func)` checks no message; call the function inside `with pytest.warns(", x,
+        ", match=...):` instead, or expect a more specific warning class.")) :- broad_warn(c, w), form(c, "func"), text(w, x).
 
 .decl broad_warn(c: node, w: node)
-broad_warn(c, w) :- exc_call(c, "pytest.warns"), exc_argument(c, "expected_warning", 0, w), pytest_broad("warns", w, _),
-    (!kwarg(c, "match", _) ; kwarg(c, "match", m), pytest_empty_or_null(m)).
+broad_warn(c, w) :- exc_call(c, "pytest.warns"), !untyped(c), warning(c, w), shown(w, s),
+    pytest_match_for("warns", p), glob(p, s), loose(c).
+// untyped(c): c is in a tree parsed from a string that Ruff does not read as a type (one in `Literal[...]`, or one
+// whose text starts with a space: F722), or from a complex one, or from a string inside a complex one.
+.decl untyped(c: node)
+untyped(c) :- parsed_in(c, _), !typedef_node(c).
+untyped(c) :- deep_complex(c).
+.decl host(n: node, s: node)  // n is in the tree parsed from type string s
+host(n, s) :- type_ctx(s), str_node(s), parsed(s, "annotation", r), (n = r ; within(n, r)).
+.decl complex(s: node)
+complex(s) :- kind(s, "concatenated_string").
+complex(s) :- kind(s, "string"), strprefix(s, p), !contains("r", p), text(s, t), contains("\\", t).
+.decl deep_complex(n: node)
+deep_complex(n) :- host(n, s), complex(s).
+deep_complex(n) :- host(n, s), deep_complex(s).
+
+// The arguments as Ruff's find_argument_value("expected_warning", 0) and find_positional count them: none at or
+// after the first `*args`, parentheses off. Not python/exceptions' exc_arg: in a tree parsed from a string,
+// kind(l, "argument_list") does not hold (NOTES-python-05, gap 2).
+.decl item(c: node, a: node, j: number)
+item(c, a, j) :- kind(c, "call"), field(c, "arguments", l), !kind(l, "generator_expression"), child(l, a, j),
+    kind(a, k), k != "keyword_argument", k != "dictionary_splat", k != "comment".
+.decl splat_by(c: node, j: number)  // a `*xs` at or before position j
+splat_by(c, j) :- item(c, _, j), item(c, s, k), kind(s, "list_splat"), k <= j.
+.decl arg(c: node, i: number, a: node)
+arg(c, i, a) :- item(c, a0, j), !splat_by(c, j), i = count : { item(c, _, k), k < j }, unparen(a0, a).
+.decl warning(c: node, w: node)
+warning(c, w) :- kwarg(c, "expected_warning", w).
+warning(c, w) :- arg(c, 0, w), !kwarg(c, "expected_warning", _).
+// form(c, f): "func" when c passes a callable, `pytest.warns(W, func)`, else "with". loose(c): c has no `match=`, or
+// an empty one. Relations of their own, which read no parse: a negation of arg in broad_warn's rules, which read
+// one, also holds on a tree parsed from a string where arg has the row (NOTES-python-24, engine gap 1).
+.decl form(c: node, f: symbol)
+form(c, "func") :- arg(c, 1, _).
+form(c, "with") :- kind(c, "call"), !arg(c, 1, _).
+.decl loose(c: node)
+loose(c) :- kind(c, "call"), !kwarg(c, "match", _).
+loose(c) :- kwarg(c, "match", m), !full(m).
+
+// shown(w, s): the name Ruff matches the option's globs against: a builtin read by its bare name without
+// "builtins.", even in a module with a star import, which python/names' builtin_ref leaves out. miss, not
+// builtin_ref, also holds in a tree parsed from a string (builtin_ref asks for the module of the fragment's document).
+.decl shown(w: node, s: symbol)
+shown(w, x) :- unparen(w, m), miss(m, x), builtin(x).
+shown(w, q) :- exc_qual(w, q), unparen(w, m), !miss(m, _).
+
+// full(e): e, a match= value or a field of an f-string in one, is not empty.
+.decl looked(e: node)  // the expressions Ruff's check looks at
+looked(m) :- exc_call(c, "pytest.warns"), kwarg(c, "match", m).
+looked(x) :- looked(e), piece(e, p), child(p, i, _), kind(i, "interpolation"), field(i, "expression", x0), unparen(x0, x).
+.decl piece(e: node, p: node)
+piece(e, e) :- looked(e), kind(e, "string").
+piece(e, p) :- looked(e), kind(e, "concatenated_string"), child(e, p, _), kind(p, "string").
+// blank(p): a str literal with nothing between its quotes. Read from the text: value() has no rows in a tree parsed
+// from a string (NOTES-python-05, gap 1).
+.decl blank(p: node)
+blank(p) :- piece(_, p), text(p, t), match("[rRuU]?(\"\"|''|\"\"\"\"\"\"|'''''')", t).
+.decl full(e: node)
+full(e) :- looked(e), kind(e, k), k != "none", k != "string", k != "concatenated_string".
+full(e) :- piece(e, p), strprefix(p, x), !contains("f", x), !blank(p).   // bytes, a t-string, "a"
+full(e) :- piece(e, p), strprefix(p, x), contains("f", x), child(p, s, _), kind(s, "string_content").
+full(e) :- piece(e, p), strprefix(p, x), contains("f", x), child(p, i, _), kind(i, "interpolation"),
+    field(i, "expression", x0), unparen(x0, m), full(m).

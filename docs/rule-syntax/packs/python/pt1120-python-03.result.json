@@ -1,0 +1,34 @@
+[
+  {
+    "id": "ruff-f541-f-string-missing-placeholders",
+    "status": "same"
+  },
+  {
+    "id": "ruff-f601-multi-value-repeated-key-literal",
+    "status": "same"
+  },
+  {
+    "id": "ruff-f631-assert-tuple",
+    "status": "same"
+  },
+  {
+    "id": "ruff-f632-is-literal",
+    "status": "same"
+  },
+  {
+    "id": "ruff-f701-break-outside-loop",
+    "status": "same"
+  },
+  {
+    "id": "ruff-f722-forward-annotation-syntax-error",
+    "status": "same"
+  },
+  {
+    "id": "ruff-f822-undefined-export",
+    "status": "same"
+  },
+  {
+    "id": "ruff-f823-undefined-local",
+    "status": "same"
+  }
+]

@@ -86,9 +86,19 @@ base(q, b) :- base_name(q, q0), split_dot(q0, m, x), exports(m, x, b).
 base(q, q0) :- base_name(q, q0), count : { split_dot(q0, m, x), exported(m, x) } = 0.
 // A class of the run read as an attribute of a class (`class Meta(Named.Meta)`), as python/names' sym_of rule 3 reads
 // it: the object resolved by the file's own binding or through an import, the base its qualname where some module
-// defines it.
+// defines it. An object that is itself a chain of the file's nested classes (`Outer.Deep` in `Outer.Deep.Deeper`) is
+// followed class by class, as sym_of rule 3 recurses, within the file (base_obj_class).
 .decl base_attr_here(q: symbol, c: symbol, a: symbol)
-base_attr_here(q, c, a) :- base_expr(q, e), attr_of(e, o, a), sym_of(o, c).
+base_attr_here(q, c, a) :- base_expr(q, e), attr_of(e, o, a), base_obj_class(o, c).
+// base_obj(o): an object in a base's attribute chain: `Outer.Deep` and `Outer` in `Outer.Deep.Deeper`.
+.decl base_obj(o: node)
+base_obj(o) :- base_expr(_, e), attr_of(e, o, _).
+base_obj(o) :- base_obj(e), attr_of(e, o, _).
+// base_obj_class(o, c): o names c: by the file's own binding, or as a class nested in such a class, of the same file.
+.decl base_obj_class(o: node, c: symbol)
+base_obj_class(o, c) :- base_obj(o), sym_of(o, c).
+base_obj_class(o, c) :- base_obj(o), attr_of(o, o2, a), base_obj_class(o2, c2), c = @dot(c2, a), class_def(k, c),
+    docof(k, d), docof(o, d).
 .decl base_attr_name(q: symbol, c0: symbol, a: symbol)
 base_attr_name(q, c0, a) :- base_expr(q, e), attr_of(e, o, a), qn(o, c0).
 base(q, b) :- base_attr_here(q, c, a), b = @dot(c, a), defined(_, b).

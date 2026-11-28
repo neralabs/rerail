@@ -1,4 +1,4 @@
-.policy "ruff-arg004-unused-static-method-argument" revision 2
+.policy "ruff-arg004-unused-static-method-argument" revision 3
 .description "Remove static method parameters the body never reads, or prefix them with an underscore when the signature must stay and no caller passes them by keyword."
 .language python
 .mode steer
@@ -12,10 +12,10 @@
 //       @staticmethod
 //       def f(x): print(1)              ← ARG004 at x
 //       def __new__(cls, x): print(1)   ← ARG004 at x
-#include "python/misc2-args.rerail"
+#include "python/visit-order-bindings.rerail"
 //   options: dummy-variable-rgx, flake8-unused-arguments.ignore-variadic-names (see the library)
 
 .violation ARG004(at: node, name: symbol) code "ARG004"
     "Remove `{name}` if no caller passes it. If the signature must stay, such as to match a base class, prefix it with an underscore, but keep the name when callers pass it by keyword."
     suppress ruff "ARG004"
-ARG004(nm, x) :- arg_unused(_, nm, x, "ARG004").
+ARG004(nm, x) :- visit_unused(_, nm, x, "ARG004").

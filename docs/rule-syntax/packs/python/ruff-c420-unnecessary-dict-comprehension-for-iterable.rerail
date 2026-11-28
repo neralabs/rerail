@@ -1,4 +1,4 @@
-.policy "ruff-c420-unnecessary-dict-comprehension-for-iterable" revision 2
+.policy "ruff-c420-unnecessary-dict-comprehension-for-iterable" revision 3
 .description "Use dict.fromkeys(iterable, value) instead of a dict comprehension that maps each item to the same constant value; it is clearer and faster."
 .language python
 .mode steer
@@ -7,13 +7,17 @@
 // Ruff C420 (flake8-comprehensions): a dict comprehension with one plain `for` and no `if`, whose key is its
 // target and whose value is the same for every item. The target holds no attribute, subscript or slice; the
 // value has no call, lambda, display, comprehension, await, yield or walrus in it, and reads no name the
-// comprehension binds. Ruff's fix is safe when dict is the builtin and the comprehension has no comment:
-// then it is offered here.
-//   {x: 0 for x in xs}       ← C420: dict.fromkeys(xs, 0)
-//   {x: None for x in xs}    ← C420: dict.fromkeys(xs)
+// comprehension binds. Parentheses around the target do not matter. A string in a type context is parsed
+// and checked too, as Ruff does. Ruff's fix is safe when dict is the builtin and the comprehension has no
+// comment: then it is offered here, outside strings.
+//   {x: 0 for x in xs}            ← C420: dict.fromkeys(xs, 0)
+//   {x: None for x in xs}         ← C420: dict.fromkeys(xs)
+//   {x: 1 for ((x)) in xs}        ← C420
+//   a: "{x: 1 for x in xs}" = 1   ← C420, at the string
 //   {x: [] for x in xs}    {x: x for x in xs}    {x: f() for x in xs}    not reported
 #include "python/comprehensions.rerail"
-//   c4_comp(e, k), c4_simple(e, fc), cmp_same(x, t) (python/compare), c4_builtin_here(n, x)
+//   c4_comp(e, k), c4_simple(e, fc), c4_clause(k), cmp_same(x, t) (python/compare), c4_builtin_here(n, x)
+#include "python/python-01.rerail"     // typedef_node
 
 .violation C420(at: node) code "C420"
     "Replace this comprehension with `dict.fromkeys(iterable, value)`, omitting the value when it is None; if the loop unpacks its items, do this only when they are already tuples."
@@ -21,32 +25,58 @@
     fix safe fromkeys "Replace with `dict.fromkeys(iterable, value)`"
 C420(e) :- same_value(e, _, _, _).
 .decl same_value(e: node, t: node, i: node, v: node)
-same_value(e, t, i, v) :- c4_comp(e, "dict"), c4_simple(e, fc), field(fc, "left", t), field(fc, "right", i),
-    field(e, "body", p), field(p, "key", k), cmp_same(k, t), field(p, "value", v), !impure_target(t),
-    !varying(v), !reads_own(e, v).
-cmp_same_ask(k, t) :- c4_comp(e, "dict"), c4_simple(e, fc), field(fc, "left", t), field(e, "body", p),
-    field(p, "key", k).
+same_value(e, t, i, v) :- dict_comp(e, fc), target(fc, t), field(fc, "right", i), field(e, "body", p),
+    field(p, "key", k), cmp_same(k, t), field(p, "value", v), !impure_target(t), !varying(v), !reads_own(e, v).
+cmp_same_ask(k, t) :- dict_comp(e, fc), target(fc, t), field(e, "body", p), field(p, "key", k).
+
+// dict_comp(e, fc): dict comprehension e has one `for` clause fc, not `async for`, and no `if`; in the file, or
+// in the tree parsed from a string type definition (typedef_node). A relation over every node does not reach
+// that tree, and a count does not see it (NOTES-python-01, engine gaps 1 and 4); so every relation below that
+// is negated starts from the nodes it is asked about (NOTES-python-16).
+.decl dict_comp(e: node, fc: node)
+dict_comp(e, fc) :- c4_comp(e, "dict"), c4_simple(e, fc).
+dict_comp(e, fc) :- typedef_node(e), kind(e, "dictionary_comprehension"), child(e, fc, _), kind(fc, "for_in_clause"),
+    !op(fc, "async"), !other_clause(e, fc).
+.decl other_clause(e: node, fc: node)
+other_clause(e, fc) :- typedef_node(e), child(e, fc, _), child(e, o, _), o != fc, kind(o, k), c4_clause(k).
+// target(fc, t): fc's target, parentheses off. tree-sitter reads `for ((a, b)) in …` as a one-element
+// tuple_pattern with no comma around `(a, b)`; Ruff's target is the tuple. `(a,)` is a real tuple.
+.decl target(fc: node, t: node)
+target(fc, t) :- dict_comp(_, fc), field(fc, "left", t0), bare(t0, t), !paren_target(t, _).
+.decl bare(t0: node, t: node)
+bare(t, t) :- dict_comp(_, fc), field(fc, "left", t).
+bare(t0, u) :- bare(t0, t), paren_target(t, u).
+.stored paren_target "a one-element tuple_pattern's comma is its trailing comma, which the tape stores"
+.decl paren_target(t: node, u: node)
+paren_target(t, u) :- bare(_, t), kind(t, "tuple_pattern"), !op(t, ","), child(t, u, 0), !child(t, _, 1).
+
 .decl impure_target(t: node)
-impure_target(t) :- kind(t, k), place_kind(k).
-impure_target(t) :- has(t, _, place_kind).
+impure_target(t) :- target(_, t), kind(t, k), place_kind(k).
+impure_target(t) :- target(_, t), has(t, _, place_kind).
 .decl place_kind(k: symbol)
 place_kind("attribute"). place_kind("subscript"). place_kind("slice").
-// varying(v): v, or something in it, may give a new object or a new value each time.
+// varying(v): value v, or something in it, may give a new object or a new value each time.
+.decl value_of(e: node, v: node)
+value_of(e, v) :- dict_comp(e, _), field(e, "body", p), field(p, "value", v).
 .decl varying(v: node)
-varying(v) :- kind(v, k), varying_kind(k).
-varying(v) :- has(v, _, varying_kind).
+varying(v) :- value_of(_, v), kind(v, k), varying_kind(k).
+varying(v) :- value_of(_, v), has(v, _, varying_kind).
 .decl varying_kind(k: symbol)
 varying_kind("lambda"). varying_kind("list"). varying_kind("dictionary"). varying_kind("set").
 varying_kind("list_comprehension"). varying_kind("set_comprehension"). varying_kind("dictionary_comprehension").
 varying_kind("generator_expression"). varying_kind("await"). varying_kind("yield"). varying_kind("call").
 varying_kind("named_expression").
-// reads_own(e, v): v reads a name bound inside e: `{x: y for x, y in z}`.
+// reads_own(e, v): v reads a name e's target binds: `{x: y for x, y in z}`. v holds no scope (varying), so a
+// name there with the text of one in the target reads the target's binding (Ruff: the binding's range is inside
+// e; a walrus in a comprehension's iterable is a syntax error). By text: names in a tree parsed from a string
+// are not resolved here.
 .decl reads_own(e: node, v: node)
-reads_own(e, v) :- c4_comp(e, "dict"), field(e, "body", p), field(p, "value", v), (n = v ; within(n, v)), ast_name(n, x), look(n, x, s),
-    binding(s, x, site, _), within(site, e).
+reads_own(e, v) :- dict_comp(e, fc), field(e, "body", p), field(p, "value", v), (n = v ; within(n, v)),
+    kind(n, "identifier"), !field(_, "attribute", n), text(n, x), target(fc, t), (m = t ; within(m, t)),
+    kind(m, "identifier"), text(m, x).
 
-fromkeys(e) :- same_value(e, _, i, v), c4_builtin_here(e, "dict"), !has(e, _, "comment"), unparen(v, n),
-    kind(n, "none") => replace(e, `dict.fromkeys($i)`).
-fromkeys(e) :- same_value(e, _, i, v), c4_builtin_here(e, "dict"), !has(e, _, "comment"), unparen(v, n),
-    !kind(n, "none") => replace(e, `dict.fromkeys($i, $v)`).
-c4_builtin_ask(e, "dict") :- same_value(e, _, _, _).
+fromkeys(e) :- same_value(e, _, i, v), !typedef_node(e), c4_builtin_here(e, "dict"), !has(e, _, "comment"),
+    unparen(v, n), kind(n, "none") => replace(e, `dict.fromkeys($i)`).
+fromkeys(e) :- same_value(e, _, i, v), !typedef_node(e), c4_builtin_here(e, "dict"), !has(e, _, "comment"),
+    unparen(v, n), !kind(n, "none") => replace(e, `dict.fromkeys($i, $v)`).
+c4_builtin_ask(e, "dict") :- same_value(e, _, _, _), !typedef_node(e).

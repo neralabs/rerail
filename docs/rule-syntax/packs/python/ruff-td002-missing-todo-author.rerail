@@ -18,3 +18,22 @@ TD002(t, D, cat(cat(cat(cat("Add the author after `", D), "`, as `"), D), "(name
     todo_item(c, D, _), todo_author(c, "no", a), !prefix("@", a), todo_at(c, t).
 TD002(t, D, cat(cat("Follow the author with a colon and the description, as `", D), " @name: description`, adding the name if the `@` is empty; if nobody is known, leave it and tell the user.")) :-
     todo_item(c, D, _), todo_author(c, "no", a), prefix("@", a), todo_at(c, t).
+
+// Ruff's first word (TodoDirective::from_comment) is a run of `char::is_alphanumeric` characters, Unicode letters
+// and numbers: `→`, `：`, `_` and `€` end it, so those are tags; `é`, `²` and `Ⅻ` continue it, so those are not. A
+// later `#` piece is read the same way, after Unicode whitespace (here a no-break space).
+.test the_tag_ends_at_any_non_alphanumeric exactly
+    .fixture "app/todo.py" ```
+        # TODO→ arrow
+        # TODO：wide colon
+        # TODOé not a tag
+        # TODO² not a tag
+        # TODO_x underscore
+        # TODOⅫ roman
+        # see #  FIXME€ euro
+        ```
+    .expect TD002 at "app/todo.py":1
+    .expect TD002 at "app/todo.py":2
+    .expect TD002 at "app/todo.py":5
+    .expect TD002 at "app/todo.py":7
+.end

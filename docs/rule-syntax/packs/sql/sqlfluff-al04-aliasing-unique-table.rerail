@@ -12,10 +12,11 @@
 // UNNEST and generate_series calls take no part. Names compare as written, "x" and x alike.
 
 #include "sql/syntax.rerail"
+#include "sql/sql-01.rerail"
 
 .violation AL04(at: node, x: symbol) code "AL04" "Duplicate table alias '{x}'. Table aliases should be unique."
     suppress sqlfluff "AL04", "L020", "aliasing", "aliasing.unique", "aliasing.unique.table", "all", "core"
-AL04(a, x) :- named(f, r, a, x), named(f, s, _, x), earlier(s, r).
+AL04(a, x) :- named(f, r, a, x), named(f, s, _, x), src_before(s, r).
 AL04(a, x) :- named(f, r, a, x), child(b, f, _), within_stop(q, b, "subquery"), kind(q, "subquery"),
     !child(r, q, _), child(q, g, _), named(g, _, _, x).
 

@@ -1780,6 +1780,43 @@ mod settings_tests {
     }
 
     #[test]
+    fn python_ast_matchers_do_not_read_a_sql_value_tape() {
+        let report = guest_policy(
+            "host_name = 1\nsql = \"SELECT guest_only FROM users\"\n",
+            "a.py",
+            r#".policy "foreign-grammar" revision 1
+.language python
+.decl sql_guest(d: number)
+sql_guest(d) :- kind(s, "string"), value(s, q), t = @parse("sql", q), tape_of(d, t).
+.violation Parsed(at: span) code "sql" "parsed"
+Parsed(@place("a.py", 1)) :- sql_guest(d), node(d, n, "identifier", _, _), text(n, "guest_only").
+.violation Host(at: node) code "host" "host"
+Host(n) :- ast(n, {"language":"python","rule":{"kind":"identifier"}}), text(n, "host_name").
+.violation Foreign(at: span) code "foreign" "foreign"
+Foreign(@place("a.py", 1)) :- sql_guest(d), ast(d, n, {"language":"python","rule":{"kind":"identifier"}}).
+"#,
+        );
+        let mut found: Vec<_> = report["diagnostics"].as_array().unwrap().iter().map(|d| (d["code"].as_str().unwrap(), d["line"].as_u64().unwrap())).collect();
+        found.sort_unstable();
+        assert_eq!(found, [("host", 1), ("sql", 1)], "the SQL identifier exists but is not a Python AST match: {report:#}");
+    }
+
+    #[test]
+    fn python_consecutive_names_functor_distinguishes_prose_from_tokens() {
+        let report = guest_policy(
+            "",
+            "a.py",
+            ".policy \"tokenizer-functor\" revision 1\n.language python\n.decl sample(s: symbol)\n\
+             sample(\"two names\"). sample(\"exceptions we've seen\"). sample(\"this is code\"). sample(\"b'x'\"). sample(\"call(x)\").\n\
+             .violation Prose(at: node, s: symbol) code \"prose\" \"{s}\"\n\
+             Prose(n, s) :- kind(n, \"module\"), sample(s), @py_consecutive_names(s) = 1.\n",
+        );
+        let mut found: Vec<_> = report["diagnostics"].as_array().unwrap().iter().map(|d| d["message"].as_str().unwrap()).collect();
+        found.sort_unstable();
+        assert_eq!(found, ["exceptions we've seen", "two names"], "{report:#}");
+    }
+
+    #[test]
     fn blade_library_values_do_not_need_a_redundant_reader() {
         let report = guest_policy(
             "@if (1 === 1) x @endif",

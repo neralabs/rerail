@@ -1,0 +1,43 @@
+// python/python-30: shared vocabulary for the python-30 PERF and EM translations.
+//
+// Interface
+//   perf_ruff_for(f, t, it)      f is a for statement with target t and iterable it, opening any number of
+//                                 redundant parentheses around a plain-name target
+//   perf_ruff_list_receiver(o)    identifier o has Ruff's one binding, and that binding is list-valued even when
+//                                 it comes from `with list() as o` or a function with a list return annotation
+//   em_ruff_raised_call(r, c)      raise statement r raises call c, including after a backslash continuation
+//
+//   for ((x)) in xs: result.append(x)              perf_ruff_for(<for>, <x>, <xs>)
+//   with list() as result: result.append(x)         perf_ruff_list_receiver(<result>)
+//   def made() -> list[int]: ...; made.append(x)    perf_ruff_list_receiver(<made>)
+//   raise \
+//       ValueError(f"bad {x}")                      em_ruff_raised_call(<raise>, <ValueError(...)>)
+#include "python/misc2-perf.rerail"
+#include "python/misc2-messages.rerail"
+
+.decl perf_ruff_list_receiver(o: node)
+.decl perf_ruff_for(f: node, t: node, it: node)
+perf_ruff_for(f, t, it) :- perf_for(f, t, it).
+perf_ruff_for(f, t, it) :- kind(f, "for_statement"), field(f, "left", l), perf_ruff_target(l, t),
+    field(f, "right", r), unparen(r, it).
+.stored perf_ruff_target "a one-element tuple_pattern's comma is its trailing comma, which the tape stores"
+.decl perf_ruff_target(l: node, t: node)
+perf_ruff_target(l, t) :- unparen(l, t), kind(t, "identifier").
+perf_ruff_target(l, t) :- kind(l, "tuple_pattern"), !op(l, ","),
+    count : { child(l, c, _), !kind(c, "comment") } = 1,
+    child(l, c, _), !kind(c, "comment"), perf_ruff_target(c, t).
+
+perf_ruff_list_receiver(o) :- perf_only_binding(o, site), perf_list_site(site).
+// A with binding's site is the identifier inside the as_pattern_target.
+perf_ruff_list_receiver(o) :- perf_only_binding(o, site), kind(site, "identifier"),
+    child(pt, site, _), kind(pt, "as_pattern_target"), field(ap, "alias", pt), kind(ap, "as_pattern"),
+    child(ap, v0, 0), unparen(v0, v), kind(v, "call"), field(v, "function", f),
+    ruff_qual(f, "builtins.list").
+perf_ruff_list_receiver(o) :- perf_only_binding(o, site), kind(site, "function_definition"),
+    field(site, "return_type", t), perf_ann_head(t, h),
+    (ruff_qual(h, "builtins.list") ; perf_typing_name(h, "List")).
+
+.decl em_ruff_raised_call(r: node, c: node)
+em_ruff_raised_call(r, c) :- msg_raised_call(r, c).
+em_ruff_raised_call(r, c) :- kind(r, "raise_statement"), child(r, lc, i), kind(lc, "line_continuation"),
+    child(r, e0, j), i < j, !field(r, "cause", e0), unparen(e0, c), kind(c, "call").

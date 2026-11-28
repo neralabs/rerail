@@ -4,8 +4,8 @@
 .mode steer
 .scope include "**/*"
 
-// Ruff PYI013 (flake8-pyi), every file: a `...` statement in a class body that has other statements, a
-// docstring included.
+// Ruff PYI013 (flake8-pyi), every file: a `...` statement (or `(...)`) in a class body that has other statements,
+// a docstring included. `...,` is a tuple, not an ellipsis.
 //   class C:
 //       """Doc."""
 //       ...                ← PYI013
@@ -13,4 +13,10 @@
 
 .violation PYI013(at: node) code "PYI013" "Remove this `...` from the class body; it is redundant because the body has other statements."
     suppress ruff "PYI013"
-PYI013(s) :- class_body(_, b), body_len(b, k), k > 1, body_stmt(b, s, _), ellipsis_stmt(s).
+PYI013(s) :- class_body(_, b), body_len(b, k), k > 1, body_stmt(b, s, _), ellipsis_expr_stmt(s).
+// ellipsis_expr_stmt(s): a statement that is the expression `...` to Ruff, parenthesised or not: `(...)` is one,
+// `...,` (a tuple; tree-sitter gives the statement an ellipsis child and a bare `,`) is not. The tape keeps no `,`
+// token there, so the comma is read from the statement's text.
+.decl ellipsis_expr_stmt(s: node)
+ellipsis_expr_stmt(s) :- kind(s, "expression_statement"), child(s, e, 0), !child(s, _, 1), unparen(e, m),
+    kind(m, "ellipsis"), !match("[\\s\\S]*,\\s*", s).

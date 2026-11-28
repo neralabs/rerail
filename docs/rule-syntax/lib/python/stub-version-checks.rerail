@@ -1,0 +1,82 @@
+// python/stub-version-checks: one comparison as Ruff's AST has it, and the `sys.version_info` checks of stub `if`
+// tests as Ruff's flake8-pyi reads them (PYI002, PYI003, PYI004, PYI005).
+//
+// Interface
+//   one_cmp(c, op, l, r)      c is one comparison `l op r`, not a chain; comments and `\` line continuations are not
+//                             operands, and l and r are unparenthesised
+//   vi_cmp(c, form, op, r)    one_cmp whose left side is sys.version_info or one subscript of it (Ruff's
+//                             ExpectedComparator): form "whole" (no subscript), "major" `[0]`, "slice1" `[:1]`,
+//                             "slice2" `[:2]`, or "other" (any other index or slice)
+//   vi_tuple_len(e, k)        e is a tuple of k elements, comments and line continuations not counted
+//   vi_int_tuple(e, k)        vi_tuple_len, every element an int literal (maybe parenthesised)
+//   pyi_test_part(t, v)       python/typing's test_part without the line continuations: each operand of the `if`
+//                             test's top-level `and`/`or`, or the test itself
+//   bracket_comma(n)          subscript or type_parameter n ends in a `,` before its `]`: `x[0,]`, `x[0,  # c`
+//                             / `]`; a `,` in a comment is none. No rows for a string's parsed tree.
+//
+// Python and Ruff background
+//   - Ruff's AST has no comments and no parentheses. `(sys.version_info >=  # c` / `(3, 8))` is one comparison of
+//     two operands; tree-sitter makes the comment a named child of the comparison, so python/scopes' cmp (children
+//     0 and 1, and no child 2) does not see a comparison there.
+//   - Ruff reads a slice's bounds, not its text: `[:  # a:b` / `2]` is `[:2]`, `[:(1)]` is `[:1]`, `[:2:]` has no
+//     step. python/typing's version_cmp reads the slice's text for its colons; here python/ruff's slice_part counts
+//     the slice's `:` tokens, and ruff_int reads the bound through parentheses.
+//   - A tuple index, `sys.version_info[0,]` or `[0,  # c` / `]`, is neither `[0]` nor a slice: "other".
+//   - A `\` line continuation is a named child in tree-sitter wherever it stands: in a comparison, a boolean
+//     operator, a tuple or a slice. Ruff's AST has nothing there, so it is skipped like a comment:
+//     `sys.version_info >= \` / `(3, 8, 1)` is one comparison, `(3, \` / `8)` has two elements.
+//
+//   if (sys.version_info[:  # a:b
+//       2] >= (3, 8, 1)): ...            vi_cmp(<cmp>, "slice2", ">=", <(3, 8, 1)>)   (PYI004)
+//   if sys.version_info[:(1)] == (2, 7): ...   vi_cmp(<cmp>, "slice1", "==", <(2, 7)>)   (PYI005)
+#include "python/typing.rerail"
+#include "python/ruff.rerail"
+
+// pyi_trivia(c): a child Ruff's AST has nothing for.
+.decl pyi_trivia(c: node)
+pyi_trivia(c) :- kind(c, "comment").
+pyi_trivia(c) :- kind(c, "line_continuation").
+// cmp_operand(c, e, i): e is comparison c's i-th operand, comments and line continuations not counted.
+.decl cmp_operand(c: node, e: node, i: number)
+cmp_operand(c, e, i) :- kind(c, "comparison_operator"), child(c, e, j), !pyi_trivia(e),
+    i = count : { child(c, o, k), k < j, !pyi_trivia(o) }.
+.decl one_cmp(c: node, op: symbol, l: node, r: node)
+one_cmp(c, o, l, r) :- cmp_operand(c, l0, 0), cmp_operand(c, r0, 1), !cmp_operand(c, _, 2), op_at(c, 0, o),
+    unparen(l0, l), unparen(r0, r).
+.decl pyi_test_part(t: node, v: node)
+pyi_test_part(t, v) :- test_part(t, v), !pyi_trivia(v).
+.decl vi_tuple_len(e: node, k: number)
+vi_tuple_len(e, k) :- kind(e, "tuple"), k = count : { child(e, x, _), !pyi_trivia(x) }.
+.decl vi_int_tuple(e: node, k: number)
+vi_int_tuple(e, k) :- vi_tuple_len(e, k), count : { child(e, x, _), !pyi_trivia(x), !vi_int_elem(x) } = 0.
+.decl vi_int_elem(x: node)
+vi_int_elem(x) :- unparen(x, m), pyi_int(m).
+
+.decl vi_cmp(c: node, form: symbol, op: symbol, r: node)
+vi_cmp(c, "whole", o, r) :- one_cmp(c, o, l, r), sys_attr(l, "version_info").
+vi_cmp(c, f, o, r) :- one_cmp(c, o, l, r), kind(l, "subscript"), field(l, "value", v0), unparen(v0, v),
+    sys_attr(v, "version_info"), vi_index(l, f).
+// vi_index(l, f): the form of subscript l's index.
+.decl vi_index(l: node, f: symbol)
+vi_index(l, f) :- vi_known(l, f).
+vi_index(l, "other") :- kind(l, "subscript"), !vi_recognised(l).
+.decl vi_known(l: node, f: symbol)
+vi_known(l, "major") :- vi_one(l, s), ruff_int(s, "0").
+vi_known(l, f) :- vi_one(l, s), kind(s, "slice"), vi_bound(s, "upper", u), !vi_bound(s, "lower", _),
+    !vi_bound(s, "step", _), ruff_int(u, n), vi_slice(n, f).
+.decl vi_bound(s: node, which: symbol, e: node)
+vi_bound(s, w, e) :- slice_part(s, w, e), !pyi_trivia(e).
+.decl vi_recognised(l: node)
+vi_recognised(l) :- vi_known(l, _).
+.decl vi_slice(n: symbol, f: symbol)
+vi_slice("1", "slice1"). vi_slice("2", "slice2").
+// vi_one(l, s): s is subscript l's only index, with no trailing comma.
+.decl vi_one(l: node, s: node)
+vi_one(l, s) :- kind(l, "subscript"), field(l, "subscript", s), count : { field(l, "subscript", x) } = 1,
+    !bracket_comma(l).
+// bracket_comma(n): the engine refuses to read a `,` token in a subscript or a type_parameter ("the tape leaves it
+// out"), so the comma is read from n's text: a `,` outside a comment (no `#` before it on its line), then only
+// whitespace, `\` continuations and whole comments up to the closing `]`.
+.decl bracket_comma(n: node)
+bracket_comma(n) :- (kind(n, "subscript") ; kind(n, "type_parameter")), node_text(n, t),
+    match("([\\s\\S]*\\n)?[^#\\n]*,(\\s|\\\\|#[^\\n]*\\n)*\\]", t).

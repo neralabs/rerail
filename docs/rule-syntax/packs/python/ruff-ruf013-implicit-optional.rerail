@@ -14,28 +14,27 @@
 //   def f(arg: Annotated[int, ...] = None): ...   ← RUF013 at `int`
 //   def f(arg: int | None = None): ...            not reported
 //   def f(arg: MyAlias = None): ...               not reported: unknown type
-#include "python/ruff-classes.rerail"
+#include "python/python-01.rerail"     // rt_app, rt_strip, rt_q, rt_head_q: Ruff's view of `X[(a, b)]`
 #include "../packs/python/ruff-ruf013-implicit-optional.stdlib.rerail"   // stdlib_module(m), stdlib_module_in(m, minor)
 
 .violation RUF013(at: node) code "RUF013"
     "Allow `None` explicitly: write `T | None` here (`Optional[T]` before Python 3.10), or give the parameter a default other than `None`."
     suppress ruff "RUF013"
 RUF013(at) :- kind(p, "typed_default_parameter"), field(p, "value", v), unparen(v, n), kind(n, "none"),
-    field(p, "type", t), !allows(t), !ann_q(t, "typing.Annotated"), shown(t, at).
+    field(p, "type", t), !allows(t), !rt_q(t, "typing.Annotated"), shown(t, at).
 
 // allows(t): annotation t admits None, or Ruff cannot tell.
 .decl allows(t: node)
-allows(t) :- ann_strip(t, m), kind(m, "none").
-allows(t) :- ann_strip(t, m), (kind(m, "identifier") ; kind(m, "attribute")), (!known(m) ; ann_q(t, q), takes_none(q)).
-allows(t) :- head_q(t, "typing.Optional").
-allows(t) :- head_q(t, "typing.Literal"), lit_none(t).
-allows(t) :- head_q(t, "typing.Union"), type_app(t, _, _, a), allows(a).
-allows(t) :- head_q(t, "typing.Annotated"), type_app(t, _, 0, a), allows(a).
-allows(t) :- type_app(t, h, 0, _), !known(h).
-allows(t) :- ann_strip(t, m), (kind(m, "binary_operator"), op(m, "|") ; kind(m, "union_type")), child(m, x, _), allows(x).
-allows(t) :- ann_strip(t, s), (kind(s, "string") ; kind(s, "concatenated_string")), (!parsed(s, "annotation", _) ;
-    parsed(s, "annotation", r), allows(r)).
-allows(t) :- ann_strip(t, m), kind(m, k), !typed_kind(k).
+allows(t) :- rt_strip(t, m), kind(m, "none").
+allows(t) :- rt_strip(t, m), (kind(m, "identifier") ; kind(m, "attribute")), (!known(m) ; rt_q(t, q), takes_none(q)).
+allows(t) :- rt_head_q(t, "typing.Optional").
+allows(t) :- rt_head_q(t, "typing.Literal"), lit_none(t).
+allows(t) :- rt_head_q(t, "typing.Union"), rt_app(t, _, _, a), allows(a).
+allows(t) :- rt_head_q(t, "typing.Annotated"), rt_app(t, _, 0, a), allows(a).
+allows(t) :- rt_app(t, h, 0, _), !known(h).
+allows(t) :- rt_strip(t, m), (kind(m, "binary_operator"), op(m, "|") ; kind(m, "union_type")), child(m, x, _), allows(x).
+allows(t) :- rt_strip(t, s), str_node(s), (!ann_parsed(s) ; parsed(s, "annotation", r), allows(r)).
+allows(t) :- rt_strip(t, m), kind(m, k), !typed_kind(k).
 .decl typed_kind(k: symbol)
 typed_kind("none"). typed_kind("identifier"). typed_kind("attribute"). typed_kind("subscript"). typed_kind("generic_type").
 typed_kind("binary_operator"). typed_kind("union_type"). typed_kind("string"). typed_kind("concatenated_string").
@@ -46,8 +45,8 @@ takes_none("typing.Optional"). takes_none("typing.Any").
 takes_none("typing.Hashable"). takes_none("collections.abc.Hashable"). takes_none("builtins.object").
 // lit_none(t): Literal t lists None, directly or in a nested Literal.
 .decl lit_none(t: node)
-lit_none(t) :- type_app(t, _, _, a), ann_strip(a, m), kind(m, "none").
-lit_none(t) :- type_app(t, _, _, a), head_q(a, "typing.Literal"), lit_none(a).
+lit_none(t) :- rt_app(t, _, _, a), rt_strip(a, m), kind(m, "none").
+lit_none(t) :- rt_app(t, _, _, a), rt_head_q(a, "typing.Literal"), lit_none(a).
 // known(m): a builtin, or a name from typing_extensions or the standard library of the target version (option
 // pythonVersion: `tomllib` from 3.11, `annotationlib` from 3.14, `distutils` up to 3.11).
 .decl known(m: node)
@@ -58,6 +57,11 @@ stdlib_known(m) :- target_minor(t), stdlib_module_in(m, t).
 
 // shown(t, at): where Ruff reports: inside Annotated[…], at its type; in a string, at the type it parses to.
 .decl shown(t: node, at: node)
-shown(t, m) :- ann_strip(t, m), !head_q(t, "typing.Annotated"), !parsed(m, "annotation", _).
-shown(t, at) :- head_q(t, "typing.Annotated"), type_app(t, _, 0, a), shown(a, at).
-shown(t, at) :- ann_strip(t, s), str_node(s), parsed(s, "annotation", r), shown(r, at).
+shown(t, m) :- rt_strip(t, m), !rt_head_q(t, "typing.Annotated"), !ann_parsed(m).
+shown(t, at) :- rt_head_q(t, "typing.Annotated"), rt_app(t, _, 0, a), shown(a, at).
+shown(t, at) :- rt_strip(t, s), typedef_str(s), parsed(s, "annotation", r), shown(r, at).
+// ann_parsed(s): s is a string Ruff parses as an annotation (`"  int"` is F722 in Ruff, and admits anything here).
+// `!parsed(m, "annotation", _)` on a node that is not a string never holds in the engine, so the negations go
+// through this guard.
+.decl ann_parsed(s: node)
+ann_parsed(s) :- typedef_str(s), parsed(s, "annotation", _).

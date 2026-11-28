@@ -1,4 +1,4 @@
-.policy "ruff-log004-log-exception-outside-except-handler" revision 2
+.policy "ruff-log004-log-exception-outside-except-handler" revision 3
 .description "Use error instead of exception for logging calls made outside an except handler; there is no active exception to record there."
 .language python
 .mode steer
@@ -11,8 +11,10 @@
 //   def _(): logging.exception("")                ← LOG004
 //   except ...: logging.exception("")             not reported
 #include "python/logging.rerail"
+#include "python/python-31.rerail"
 
 .violation LOG004(at: node) code "LOG004"
     "Call `error` instead of `exception` here: outside an except block there is no exception to attach. Leave it if this code only ever runs while an exception is being handled."
     suppress ruff "LOG004"
 LOG004(c) :- log_call(c, "exception", _, _), !log_in_handler(c).
+LOG004(c) :- texpr_log_call(c, "exception", _), !texpr_log_in_handler(c).

@@ -1,11 +1,11 @@
-.policy "eslint-no-empty-function" revision 5
+.policy "eslint-no-empty-function" revision 6
 .description "Avoid empty function, method and arrow function bodies in JavaScript; add a comment when a body is intentionally empty."
 .language typescript
 .mode steer
 .scope include "**/*.js", "**/*.jsx", "**/*.mjs", "**/*.cjs"
 
 #include "tsx/eslint-a-functions.rerail"
-//   function_node, fn_block, empty_block, fn_holder, member_kind, fn_words, generator
+//   function_node, fn_block, fn_holder, member_kind, fn_words, generator
 
 // ESLint's no-empty-function: a function whose `{ }` body holds no statement and no comment.
 //   function foo() {}                  → Unexpected empty function 'foo'.
@@ -21,8 +21,18 @@
     suppress oxlint "no-empty-function"
     suppress biome "lint/suspicious/noEmptyBlockStatements"
     fix explain "Add comment inside empty {name}."
-no_empty_function(b, s) :- fn_block(f, b), empty_block(b), sort(f, k), !allowed(f, k), fn_words(f, s).
-explain(b, _) => replace(b, `{ /* empty */ }`).
+no_empty_function(b, s) :- fn_block(f, b), empty_body(b), sort(f, k), !allowed(f, k), fn_words(f, s).
+// The fix rewrites the whole block, so only one with no comment hung in it (below), which it would drop.
+explain(b, _) :- count : { child(b, _, _) } = 0 => replace(b, `{ /* empty */ }`).
+
+// empty_body(b): nothing but comments after the `}` in b. tree-sitter hangs a line comment that follows the `}` of a
+// function declaration inside its block (`function f() {} // why`: the block's text runs to the line's end), where
+// the library's empty_block counts it. The `}` is in the gap after the last child before it; comments are nodes, so
+// no gap holds a comment's text.
+.decl empty_body(b: node)
+empty_body(b) :- fn_block(_, b), count : { before_brace(b, _) } = 0.
+.decl before_brace(b: node, x: node)  // child x of b starts before its `}`
+before_brace(b, x) :- fn_block(_, b), child(b, x, i), child(b, y, j), j >= i, structural_after(y, g), contains("}", g).
 
 // sort(f, k): ESLint's getKind. A method, getter, setter or constructor is its own kind; any other function,
 // an object or class property's value too, is a function. Then a generator or async prefix:

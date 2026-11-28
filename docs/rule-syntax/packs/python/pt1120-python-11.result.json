@@ -1,0 +1,34 @@
+[
+  {
+    "id": "ruff-perf403-manual-dict-comprehension",
+    "status": "same"
+  },
+  {
+    "id": "ruff-rse102-unnecessary-paren-on-raise-exception",
+    "status": "same"
+  },
+  {
+    "id": "ruff-sim102-collapsible-if",
+    "status": "different",
+    "reason": "bandit/django-django-urls-resolvers.py-ed87b99ee423/django/urls/resolvers.py:341: an `if` with two `elif`s, the first (`elif self._is_endpoint:`) holding a lone `if`, the last (`elif path.startswith(...)`) a `return`. Ruff 0.17.6 looks at the last branch only and reports no SIM102 in the file; the original reports the first `elif`, the translation follows Ruff.",
+    "right": "translation",
+    "counts": {
+      "examples": {
+        "originalOnly": 0,
+        "translationOnly": 0
+      },
+      "fixtures": {
+        "originalOnly": 0,
+        "translationOnly": 0
+      },
+      "samples-python": {
+        "originalOnly": 1,
+        "translationOnly": 0
+      }
+    }
+  },
+  {
+    "id": "ruff-slf001-private-member-access",
+    "status": "same"
+  }
+]

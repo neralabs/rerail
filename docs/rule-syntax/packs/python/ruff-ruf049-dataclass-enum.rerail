@@ -9,16 +9,38 @@
 // Reported at the decorator. attrs decorators are not checked.
 //   @dataclass                ← RUF049
 //   class E(Enum): ...
-#include "python/ruff-classes.rerail"
+// A base read as a class of this file is looked up as Ruff's lookup_attribute does when it checks the class,
+// after binding it: the class's own name is the class itself, so `class E(E)` over an enum E is not one; other
+// names in walk order (python/upgrade's up_site), `Outer.Inner` by Outer's last binding of Inner.
+//   class Outer:
+//       class Inner(Enum): ...
+//   @dataclass                ← RUF049
+//   class V(Outer.Inner): ...
+#include "python/python-03.rerail"
 
 .violation RUF049(at: node) code "RUF049"
     "Don't decorate an Enum with `@dataclass`: the generated `__eq__` can make distinct members equal. Remove it, or move the fields into a dataclass mixin listed before `Enum`."
     suppress ruff "RUF049"
-RUF049(d) :- dataclass_of(c, "stdlib", e), enum_class(c), kind(d, "decorator"), child(d, e, 0).
+RUF049(d) :- ruff_dataclass(c, e), enum_class(c), kind(d, "decorator"), child(d, e, 0).
 
 .decl enum_class(c: node)
 enum_class(c) :- class_base_expr(c, b), base_head(b, h), ruff_qual(h, q), enum_base(q).
-enum_class(c) :- class_base_expr(c, b), base_head(b, h), local_class(h, k), enum_class(k).
+enum_class(c) :- class_base_expr(c, b), base_head(b, h), unparen(h, m), ref_class(c, m, k), enum_class(k).
+// base_ref(c, m): m is a base of c (subscript off), or an object in its attribute chain.
+.decl base_ref(c: node, m: node)
+base_ref(c, m) :- class_base_expr(c, b), base_head(b, h), unparen(h, m).
+base_ref(c, o) :- base_ref(c, m), attr_of(m, o0, _), unparen(o0, o).
+// ref_class(c, m, k): m, read when Ruff checks c, is class k of this file.
+.decl ref_class(c: node, m: node, k: node)
+ref_class(c, m, c) :- base_ref(c, m), ast_name(m, x), field(c, "name", n), text(n, x).
+ref_class(c, m, k) :- base_ref(c, m), ast_name(m, x), field(c, "name", n), !text(n, x), up_site(m, k),
+    kind(k, "class_definition").
+ref_class(c, m, k) :- base_ref(c, m), attr_of(m, o0, a), unparen(o0, o), ref_class(c, o, k0), last_bind(k0, a, k),
+    kind(k, "class_definition").
+// last_bind(s, x, site): the last binding of x in scope s (a class body, read after it is done).
+.decl last_bind(s: node, x: symbol, site: node)
+last_bind(s, x, site) :- ref_class(_, _, s), binding(s, x, site, _), visit_index(site, i),
+    i = max j : { binding(s, x, s2, _), visit_index(s2, j) }.
 .decl enum_base(q: symbol)
 enum_base(cat("enum.", x)) :- (x = "Enum" ; x = "Flag" ; x = "IntEnum" ; x = "IntFlag" ; x = "StrEnum" ; x = "ReprEnum" ;
     x = "CheckEnum").

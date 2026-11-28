@@ -1,0 +1,50 @@
+// python/python-21: calls that Ruff's expression rules inspect in ordinary Python and in strings used as types.
+//
+// Interface
+//   pth_checked_call(c, q, f)              c calls qualified name q; f is the callee. Calls parsed from strings
+//                                          count only when the string is in a type context.
+//   pth_checked_single_arg(c, q, x, f, a)  the checked call has exactly one argument a for parameter x.
+//
+// Ruff parses strings in annotations and other type positions as Python expressions and runs expression rules on
+// them recursively. It does not run those rules on strings outside type positions, including Annotated metadata.
+//   x: "os.remove(path)"                         checked
+//   x: Annotated[int, "os.remove(path)"]         not checked
+//   x: "list['os.remove(path)']"                 checked recursively
+#include "python/pathlib.rerail"
+#include "python/python-01.rerail"
+// pth_type_source keeps only calls Ruff can map back to one source string piece. Ruff does not report a call whose
+// callee and opening parenthesis cross an implicit-concatenation boundary, or one created by decoding an escape.
+.decl pth_escape(s: node)
+pth_escape(s) :- child(s, e, _), kind(e, "escape_sequence").
+pth_escape(s) :- kind(s, "string"), contains("\\", s).
+.decl pth_type_source(c: node, f: node)
+pth_type_source(c, f) :- typedef_node(c), parsed_in(c, s), kind(s, "string"), !pth_escape(s),
+    field(c, "function", g), unparen(g, f).
+pth_type_source(c, f) :- typedef_node(c), parsed_in(c, s), kind(s, "concatenated_string"),
+    field(c, "function", g), unparen(g, f), name(f, n), child(s, p, _), kind(p, "string"), !pth_escape(p),
+    str(p, x), contains(n, x), contains("(", x).
+
+.decl pth_checked_call(c: node, q: symbol, f: node)
+pth_checked_call(c, q, f) :- pth_call(c, q, f), !in_string_ann(c).
+// Relations that range over a file do not enter a parsed string. Keep the typedef_node anchor in the clause that
+// recognizes the call rather than joining it to pth_call afterward.
+pth_checked_call(c, q, f) :- pth_type_source(c, f), ruff_qual(f, q).
+
+// Argument helpers for calls in parsed strings. Aggregates do not range over those trees, so `pth_type_many`
+// detects a second argument explicitly.
+.decl pth_type_item(al: node, i: node)
+pth_type_item(al, i) :- typedef_node(al), kind(al, "argument_list"), child(al, i, _),
+    !kind(i, "comment"), !kind(i, "line_continuation").
+.decl pth_type_many(al: node)
+pth_type_many(al) :- pth_type_item(al, a), pth_type_item(al, b), a != b.
+.decl pth_type_arg(al: node, x: symbol, a: node)
+pth_type_arg(al, x, a) :- pth_slot(x, 0), pth_type_item(al, i), !pth_type_many(al),
+    !kind(i, "keyword_argument"), !kind(i, "list_splat"), !kind(i, "dictionary_splat"), unparen(i, a).
+pth_type_arg(al, x, a) :- pth_type_item(al, i), !pth_type_many(al), kind(i, "keyword_argument"),
+    field(i, "name", n), text(n, x), field(i, "value", v), unparen(v, a).
+pth_type_arg(g, x, g) :- pth_slot(x, 0), typedef_node(g), kind(g, "generator_expression").
+
+.decl pth_checked_single_arg(c: node, q: symbol, x: symbol, f: node, a: node)
+pth_checked_single_arg(c, q, x, f, a) :- single_arg(c, q, x, f, a), !in_string_ann(c).
+pth_checked_single_arg(c, q, x, f, a) :- pth_checked_call(c, q, f), typedef_node(c),
+    field(c, "arguments", al), typedef_node(al), pth_type_arg(al, x, a).

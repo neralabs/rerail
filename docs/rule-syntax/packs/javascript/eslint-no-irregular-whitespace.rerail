@@ -1,4 +1,4 @@
-.policy "eslint-no-irregular-whitespace" revision 15
+.policy "eslint-no-irregular-whitespace" revision 16
 .description "Remove irregular whitespace such as non-breaking, zero-width or line-separator characters outside strings; they are invisible and can break parsing."
 .language typescript
 .mode steer
@@ -12,12 +12,24 @@
 //   skipStrings   (default true)    "a b"  in a string literal is allowed
 //   skipComments, skipRegExps, skipTemplates, skipJSXText  (default false)
 //   var a = 1;   ← reported: a no-break space before `=`        // a b   ← reported, unless skipComments
-// A BOM that starts the file is not part of its text, as in ESLint.
-.violation no_irregular_whitespace(at: span) code "no-irregular-whitespace" "Irregular whitespace not allowed."
+// A BOM that starts the file is not part of its text, as in ESLint. ESLint's lines end at U+2028 and U+2029 too:
+//   foo<LS><LS>    → two findings, the second on line 2
+.violation no_irregular_whitespace(at: loc) code "no-irregular-whitespace" "Irregular whitespace not allowed."
     suppress eslint "no-irregular-whitespace"
     suppress oxlint "no-irregular-whitespace"
     suppress biome "lint/suspicious/noIrregularWhitespace"
-no_irregular_whitespace(W) :- found(W), !skipped(W).
+no_irregular_whitespace(W) :- reported(W), es_line(W, l), line(W, l).
+no_irregular_whitespace(@place(f, m)) :- reported(W), es_line(W, m), line(W, l), m > l, docof(W, d), doc(d, f, _).
+.decl reported(w: span)
+reported(W) :- found(W), !skipped(W).
+
+// es_line(W, m): W's line as ESLint numbers it. The tape's lines end at \n; each U+2028 or U+2029 before W, on its
+// line or an earlier one, starts one more. W is then at a place on that line (its column is not kept).
+.decl es_line(w: span, m: number)
+es_line(W, l + k) :- reported(W), docof(W, d), line(W, l), col(W, c),
+    k = count : { separator(d, a, x), (a < l ; a = l, x < c) }.
+.decl separator(d: number, l: number, c: number)  // a U+2028 or U+2029 at line l, byte column c of document d
+separator(d, l, c) :- run(W), match("[\\x{2028}\\x{2029}]", W), docof(W, d), line(W, l), col(W, c).
 
 // found(W): W is a run of irregular whitespace, or one line separator, on a physical line. match_all gives one row
 // per run, reading each line once, left to right; W is the run itself, so the finding is at its first character.
@@ -37,8 +49,13 @@ bom(W) :- run(W), line(W, 1), col(W, 0), match("\\x{FEFF}", W).
 
 // skipped(W): W starts inside a node the options skip.
 .decl skipped(w: span)
-skipped(W) :- found(W), docof(W, d), line(W, l), col(W, c), skip(n), docof(n, d), line(n, a), end_line(n, b),
-    a <= l, l <= b, (a < l ; col(n, x), x <= c), (l < b ; end_col(n, y), c < y).
+skipped(W) :- found(W), docof(W, d), line(W, l), col(W, c), skip(n), docof(n, d), line(n, a), stops(n, b, y),
+    a <= l, l <= b, (a < l ; col(n, x), x <= c), (l < b ; c < y).
+// stops(n, b, y): n ends on line b before column y, its lines counted at \n as W's are. end_line counts a U+2028 in
+// the node too, so `'<LS>'; y<NBSP>` would put y's space inside the string.
+.decl stops(n: node, b: number, y: number)
+stops(n, a + k, y) :- skip(n), line(n, a), node_text(n, s), k = @count_matches("\\n", s),
+    (k = 0, col(n, x), y = x + strlen(s) ; k > 0, y = strlen(@replace_all(s, "^[\\s\\S]*\\n", ""))).
 .decl skip(n: node)
 skip(n) :- kind(n, "string"), !option("skipStrings", "false").
 skip(n) :- kind(n, "comment"), option("skipComments", "true").

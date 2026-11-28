@@ -1,23 +1,30 @@
-.policy "ruff-slot001-no-slots-in-tuple-subclass" revision 2
+.policy "ruff-slot001-no-slots-in-tuple-subclass" revision 3
 .description "Define __slots__ in subclasses of tuple; without it every instance carries its own attribute dict and uses more memory."
 .language python
 .mode steer
 .scope include "**/*"
 
-// Ruff SLOT001 (flake8-slots): a class with `tuple` or `typing.Tuple` (bare or subscripted) among its bases
-// and no `__slots__` in its body. Stub files are exempt.
+// Ruff SLOT001 (flake8-slots): a class with `tuple` or `typing.Tuple` (bare or subscripted once) among its bases
+// and no `__slots__` in its body. Stub files are exempt. A type parameter named `tuple` does not hide the builtin
+// from the class's bases (python/slots-bases); one named `Tuple` hides typing's.
 //   class Bad(tuple):            ← SLOT001
 //       pass
 //   class Bad(Tuple[str, int]):  ← SLOT001
 //       pass
+//   class A[tuple](tuple):       ← SLOT001
+//       pass
 //   class Good(tuple):           not reported
 //       __slots__ = ()
-#include "python/misc2-slots.rerail"
+//   class D(Tuple[int][0]):      not reported: one subscript level only
+//       pass
+#include "python/slots-bases.rerail"   // slots_unsub, slots_tp_builtin; python/misc2-slots
 
 .violation SLOT001(at: node) code "SLOT001"
     "Add `__slots__ = ()` to this `tuple` subclass so instances skip the per-instance `__dict__`; leave it if the class assigns instance attributes, which an empty `__slots__` forbids."
     suppress ruff "SLOT001"
-SLOT001(nm) :- slots_missing(c, nm), slots_base(c, b), slot001_tuple(b).
-.decl slot001_tuple(b: node)
-slot001_tuple(b) :- (sym_of(b, "builtins.tuple") ; sym_of(b, "typing.Tuple") ; sym_of(b, "typing_extensions.Tuple")).
-slot001_tuple(b) :- kind(b, "subscript"), field(b, "value", v), slot001_tuple(v).
+SLOT001(nm) :- slots_missing(c, nm), slot001_tuple(c).
+// slot001_tuple(c): a base of c, one subscript off, is the builtin tuple or typing's Tuple.
+.decl slot001_tuple(c: node)
+slot001_tuple(c) :- slots_base(c, b), slots_unsub(b, e),
+    (sym_of(e, "builtins.tuple") ; sym_of(e, "typing.Tuple") ; sym_of(e, "typing_extensions.Tuple")).
+slot001_tuple(c) :- slots_tp_builtin(c, _, "tuple").

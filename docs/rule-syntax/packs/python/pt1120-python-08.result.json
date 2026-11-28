@@ -1,0 +1,26 @@
+[
+  {
+    "id": "ruff-slot000-no-slots-in-str-subclass",
+    "status": "same"
+  },
+  {
+    "id": "ruff-slot001-no-slots-in-tuple-subclass",
+    "status": "same"
+  },
+  {
+    "id": "ruff-slot002-no-slots-in-namedtuple-subclass",
+    "status": "same"
+  },
+  {
+    "id": "ruff-td002-missing-todo-author",
+    "status": "same"
+  },
+  {
+    "id": "ruff-td003-missing-todo-link",
+    "status": "same"
+  },
+  {
+    "id": "ruff-td004-missing-todo-colon",
+    "status": "same"
+  }
+]

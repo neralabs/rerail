@@ -6,11 +6,12 @@
 
 // Ruff PYI047 (flake8-pyi), every file: a private type alias, `_A: TypeAlias = …` or `type _A = …`, that nothing
 // in the file reads. Class bodies are checked only in stubs (python/typing's unused_private). In a stub Ruff
-// also checks the scopes of comprehensions in the alias's value: an unread private loop variable is reported
-// there, with the alias.
+// also checks the scopes of comprehensions in an alias statement, `X: TypeAlias = …` or `type X = …`: an unread
+// private loop variable there is reported as an unused private alias (named for the statement's alias), whether
+// or not the alias itself is private.
 //   _A: TypeAlias = int                              ← PYI047 at the statement when nothing mentions _A
 //   type _B = int                                    ← PYI047 at `_B` (and `type _B[T] = list[T]`)
-//   _C: TypeAlias = list[[0 for _y in range(3)]]     ← PYI047 at `_y` too, in a stub
+//   C: TypeAlias = list[[0 for _y in range(3)]]      ← PYI047 at `_y`, in a stub
 #include "python/typing.rerail"
 
 .violation PYI047(at: node, msg: symbol) code "PYI047" "{msg}"
@@ -22,11 +23,16 @@ PYI047(n, cat("Nothing in this file uses the private type alias `", x, "`. Use i
     (kind(b, "identifier"), n = b ; kind(b, "generic_type"), child(b, n, 0)), text(n, x),
     prefix("_", x), nearest(st, s, scope), checked_scope(s), !type_alias_read(st, x).
 PYI047(v, cat("The comprehension variable `", y, "` in this stub type alias is never read. Replace the comprehension with a plain type expression; stubs only declare types.")) :-
-    alias_decl(a, x), prefix("_", x), unread_comp_var(a, v, y).
+    alias_stmt(a), unread_comp_var(a, v, y).
 // alias_decl(a, x): `x: TypeAlias = …`.
 .decl alias_decl(a: node, x: symbol)
 alias_decl(a, x) :- kind(a, "assignment"), field(a, "type", t0), type_bare(t0, t), typing_sym(t, "TypeAlias"),
     field(a, "left", l), plain_target(l, x), field(a, "right", _).
+// alias_stmt(a): `x: TypeAlias = …` with a name target, parenthesised or not (`(X): TypeAlias = …`), or `type X = …`.
+.decl alias_stmt(a: node)
+alias_stmt(a) :- kind(a, "assignment"), field(a, "type", t0), type_bare(t0, t), typing_sym(t, "TypeAlias"),
+    field(a, "left", l0), unparen(l0, l), plain_target(l, _), field(a, "right", _).
+alias_stmt(st) :- kind(st, "type_alias_statement").
 // type_alias_read(st, x): another identifier of the file reads x (python/names does not bind `type` statements).
 .decl type_alias_read(st: node, x: symbol)
 type_alias_read(st, x) :- kind(st, "type_alias_statement"), docof(st, d), ast_name(r, x), docof(r, d), !within(r, st).

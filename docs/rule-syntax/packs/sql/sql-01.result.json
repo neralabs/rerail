@@ -1,0 +1,25 @@
+[
+  { "id": "sqlfluff-al04-aliasing-unique-table", "status": "same" },
+  { "id": "sqlfluff-al05-aliasing-unused", "status": "same" },
+  {
+    "id": "sqlfluff-al08-aliasing-unique-column",
+    "status": "different",
+    "reason": "The one difference is in a file tree-sitter-sql cannot parse whole (sqlite/AL05/test_pass_sqlite_different_escaped_quotes.sql:3), which the original refuses (source-incomplete); sqlfluff (sqlite) parses it and reports AL08 'id' at line 3, as the translation does.",
+    "right": "translation",
+    "counts": { "fixtures": { "originalOnly": 0, "translationOnly": 1 } }
+  },
+  {
+    "id": "sqlfluff-rf01-references-from",
+    "status": "different",
+    "reason": "All four are in files tree-sitter-sql cannot parse whole, which the original refuses (source-incomplete); sqlfluff parses them and reports RF01 at each: b.bar and b.thing against the alias 'B' (ansi/AL05/test_pass_quoted_case_insensitive.sql:3,6, names match as written), z.x (ansi/RF01/test_fail_redundantly_bracketed_join_target_unknown_table.sql:1), and the qualifier at sqlite/AL05/test_pass_sqlite_different_escaped_quotes.sql:2.",
+    "right": "translation",
+    "counts": { "fixtures": { "originalOnly": 0, "translationOnly": 4 } }
+  },
+  {
+    "id": "sqlfluff-rf05-references-special-chars",
+    "status": "different",
+    "reason": "Both are in sqlite/AL05/test_pass_sqlite_different_escaped_quotes.sql, which tree-sitter-sql cannot parse whole and the original refuses (source-incomplete); sqlfluff (sqlite) reports RF05 at lines 2, 3 and 4. The translation reports 2 and 4; line 3's '…' qualifier is lost to tree-sitter, so neither side reports it.",
+    "right": "translation",
+    "counts": { "fixtures": { "originalOnly": 0, "translationOnly": 2 } }
+  }
+]

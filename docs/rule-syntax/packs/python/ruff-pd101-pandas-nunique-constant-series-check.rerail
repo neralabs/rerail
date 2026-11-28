@@ -1,4 +1,4 @@
-.policy "ruff-pd101-pandas-nunique-constant-series-check" revision 2
+.policy "ruff-pd101-pandas-nunique-constant-series-check" revision 3
 .description "Avoid comparing nunique() with 1 to check whether a pandas Series is constant; compare its values with the first one instead, which stops at the first difference."
 .language python
 .mode steer
@@ -7,20 +7,21 @@
 // Ruff PD101 (pandas-vet): `s.nunique()` compared with 1 by `<=`, `==`, `!=` or `>`, to test whether a series is
 // constant. nunique counts every distinct value; comparing the array with its first element is cheaper. The
 // receiver must look like a local value: a parameter (not self or cls), an assigned name, or any expression
-// that is not a literal or display. Reported at the comparison, in a file that imports pandas.
+// that is not a literal or display. Reported at the comparison, in a file that imports pandas (`from pandas
+// import *` too).
 //   data.nunique() <= 1                  ← PD101
 //   data.dropna().nunique() == 1         ← PD101
 //   data.nunique() >= 1                  not reported: tests non-empty
 //   {"hello": "world"}.nunique() == 1    not reported: not a series
-#include "python/ruff.rerail"
-#include "python/misc-seen.rerail"
+#include "python/type-string-names.rerail"
+//   seen_module_or_star(d, m), seen_ask(m); python/ruff and python/names through it
 
 .violation PD101(at: node, alt: symbol) code "PD101"
     "Check a NumPy array, not `nunique()`, which scans every value: `a = s.to_numpy()`, then `{alt}`. Keep nunique if NaN handling matters or `s` isn't a pandas Series."
     suppress ruff "PD101"
 PD101(e, alt) :- kind(e, "comparison_operator"), op_at(e, 0, o), !op_at(e, 1, _), nunique_alt(o, alt),
     child(e, l, 0), unparen(l, c), field(c, "function", f), unparen(f, g), attr_of(g, v, "nunique"),
-    child(e, r, 1), ruff_int(r, "1"), series_like(v), docof(e, d), seen_module(d, "pandas").
+    child(e, r, 1), ruff_int(r, "1"), series_like(v), docof(e, d), seen_module_or_star(d, "pandas").
 seen_ask("pandas").
 .decl nunique_alt(o: symbol, alt: symbol)
 nunique_alt("<=", "a.shape[0] == 0 or (a[0] == a).all()"). nunique_alt("==", "a.shape[0] > 0 and (a[0] == a).all()").
@@ -28,15 +29,35 @@ nunique_alt("!=", "a.shape[0] == 0 or not (a[0] == a).all()").
 nunique_alt(">", "a.shape[0] > 0 and not (a[0] == a).all()").
 
 // series_like(v): Ruff's RelevantLocal. A name must be bound by an assignment, loop or parameter; any other
-// expression counts unless it is a literal, a display or a comprehension.
+// expression counts unless it is a literal, a display or a comprehension. Ruff names a binding's kind by the
+// statement it is made in, so two bindings that look local are not: every name a module-level `__all__ = …`
+// assigns is an Export (`__all__ = x = pd.Series()`: x too), and a comprehension's variable in a `with` header is a
+// WithItemVar (`with ctx([s.nunique() == 1 for s in fs]):` is not reported; in the body it is).
 .decl series_like(v: node)
 series_like(v) :- unparen(v, m), !kind(m, "identifier"), kind(m, k), !not_series_kind(k), !py_literal(m).
 series_like(v) :- unparen(v, m), kind(m, "identifier"), ref_site(m, s), site_form(s, f), local_form(f),
-    !self_param(s).
+    !self_param(s), !export_site(s), !with_header_site(s).
 .decl local_form(f: symbol)
 local_form("assign"). local_form("param"). local_form("augassign"). local_form("for"). local_form("walrus").
 .decl self_param(s: node)
 self_param(s) :- site_form(s, "param"), binding(_, x, s, _), (x = "self" ; x = "cls").
+// export_site(s): s binds in a module-level assignment whose first target is `__all__` (Ruff's
+// in_dunder_all_assignment): `__all__ = x = v`, `__all__: list = v`, `__all__ += v`.
+.decl export_site(s: node)
+export_site(a) :- site_form(a, "assign"), site_scope(a, "module"), kind(a, "assignment"), asg_head(a, h),
+    field(h, "left", l), kind(l, "identifier"), text(l, "__all__").
+export_site(t) :- site_form(t, "augassign"), site_scope(t, "module"), kind(t, "identifier"), text(t, "__all__").
+// asg_head(a, h): h is the first assignment of the chain `h = … = a = v` that a is in (a itself when first).
+.decl asg_head(a: node, h: node)
+asg_head(a, a) :- kind(a, "assignment"), !inner_asg(a).
+asg_head(a, h) :- kind(p, "assignment"), field(p, "right", a), kind(a, "assignment"), asg_head(p, h).
+.decl inner_asg(a: node)
+inner_asg(a) :- kind(p, "assignment"), field(p, "right", a), kind(a, "assignment").
+// with_header_site(t): t is a comprehension's variable inside a `with` statement's items (a lambda's there too).
+.decl with_header_site(t: node)
+with_header_site(t) :- site_form(t, "for"), nearest(t, _, with_clause_kind).
+.decl with_clause_kind(k: symbol)
+with_clause_kind("with_clause").
 .decl not_series_kind(k: symbol)
 not_series_kind("tuple"). not_series_kind("list"). not_series_kind("set"). not_series_kind("dictionary").
 not_series_kind("list_comprehension"). not_series_kind("set_comprehension").

@@ -1,0 +1,8 @@
+[
+  { "id": "phpcs-generic-code-analysis-empty-statement", "status": "same" },
+  { "id": "phpcs-generic-php-lower-case-constant", "status": "same" },
+  { "id": "phpcs-generic-php-no-silenced-errors", "status": "same" },
+  { "id": "phpcs-squiz-php-eval", "status": "same" },
+  { "id": "phpstan-argument-sprintf", "status": "same" },
+  { "id": "phpstan-argument-sscanf", "status": "same" }
+]

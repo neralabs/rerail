@@ -6,13 +6,58 @@
 
 // Ruff PYI045 (flake8-pyi), every file: a method `__iter__` annotated to return `Iterable` (or `__aiter__`,
 // `AsyncIterable`), from typing or collections.abc, subscripted or not. `iter()` needs an iterator back.
-// Reported at the return annotation.
+// Reported at the return annotation. Ruff reads through two subscripts (`Iterable[int][str]`, not three), and
+// resolves the name as it was bound when it read the annotation (below).
 //   def __iter__(self) -> Iterable[int]: ...     ← PYI045: write `Iterator[int]`
-#include "python/typing.rerail"
+#include "python/typing-context.rerail"   // deferred_ann
 
 .violation PYI045(at: node, msg: symbol) code "PYI045" "{msg}"
     suppress ruff "PYI045"
-PYI045(t, m) :- pyi_method(_, f, x), returns(f, t), says(x, i, m), abc_head(t, i).
+PYI045(t, m) :- pyi_method(_, f, x), returns(f, t), says(x, i, m), mapped(t, h), ruff_q(h, q), split_dot(q, md, i),
+    (md = "typing" ; md = "collections.abc").
 .decl says(x: symbol, iterable: symbol, msg: symbol)
 says("__iter__", "Iterable", "Annotate `__iter__` as returning `Iterator` (from `collections.abc`) instead of `Iterable`; if the body returns a list or similar, return `iter(...)` of it.").
 says("__aiter__", "AsyncIterable", "Annotate `__aiter__` as returning `AsyncIterator` (from `collections.abc`) instead of `AsyncIterable`; the result must support `__anext__`.").
+// mapped(t, h): h is annotation t, its subscript's head, or that head's own subscript's head.
+.decl mapped(t: node, h: node)
+mapped(t, t) :- returns(_, t).
+mapped(t, h) :- returns(_, t), tsub(t, h, 0, _).
+mapped(t, h) :- returns(_, t), tsub(t, m, 0, _), tsub(m, h, 0, _).
+// ruff_q(n, q): name or attribute n of a method's return annotation names q, through imports and definitions.
+.decl ruff_q(n: node, q: symbol)
+ruff_q(n, q) :- ret_name(n, _), text(n, x), ruff_site(n, x, a), site_q(a, q).
+ruff_q(n, @dot(q, y)) :- attr_of(n, o, y), ruff_q(o, q).
+.decl ret_name(n: node, f: node)
+ret_name(n, f) :- pyi_method(_, f, _), returns(f, t), (n = t ; within(n, t)), kind(n, "identifier").
+.decl site_q(a: node, q: symbol)
+site_q(a, q) :- import_alias(_, a, m, "", l), (kind(a, "dotted_name"), q = l ; kind(a, "aliased_import"), q = m).
+site_q(a, @dot(m, y)) :- import_alias(_, a, m, y, _), y != "".
+site_q(a, q) :- (kind(a, "function_definition") ; kind(a, "class_definition")), qualname(a, q).
+// Which binding Ruff reads. A runtime annotation is read where the def runs: from the method's class body, then
+// the defs and module around it, the first scope that has bound the name by then, at its latest binding. A scope
+// past a def boundary is read once complete (Ruff visits a def's body after its module), and so is every scope for
+// an annotation that is never evaluated (a stub, `from __future__ import annotations`). A name bound nowhere yet is
+// read once the module is complete.
+//   from collections.abc import Iterable as R
+//   class A:
+//       def __iter__(self) -> R[int]: ...     ← PYI045: R is the import here
+//   R = list
+.decl chain(n: node, s: node)  // the scopes looked up from n, innermost first by within
+chain(n, c) :- ret_name(n, f), nearest(f, c, scope).
+chain(n, s) :- ret_name(n, f), within(f, s), (kind(s, "module") ; kind(s, "function_definition") ; kind(s, "lambda")).
+.decl late(n: node, s: node)  // s is read complete from n
+late(n, s) :- chain(n, s), ret_name(n, f), within(n, f), field(f, "return_type", r), deferred_ann(r).
+late(n, s) :- chain(n, s), ret_name(n, f), kind(g, "function_definition"), within(f, g), within(g, s).
+// seen(n, s, a, w): binding a of n's name in s counts when n is read now (w "now") or once the module is done ("end").
+.decl seen(n: node, s: node, a: node, w: symbol)
+seen(n, s, a, "now") :- chain(n, s), text(n, x), binding(s, x, a, _), (late(n, s) ; a < n).
+seen(n, s, a, "end") :- chain(n, s), text(n, x), binding(s, x, a, _).
+.decl seen_now(n: node)
+seen_now(n) :- seen(n, _, _, "now").
+.decl seen_in(n: node, s: node, w: symbol)
+seen_in(n, s, w) :- seen(n, s, _, w).
+.decl inner_seen(n: node, s: node, w: symbol)  // a scope inside s has a binding n reads
+inner_seen(n, s, w) :- seen_in(n, s, w), seen_in(n, s2, w), within(s2, s).
+.decl ruff_site(n: node, x: symbol, a: node)
+ruff_site(n, x, a) :- text(n, x), seen(n, s, a, w), (w = "now" ; w = "end", !seen_now(n)), !inner_seen(n, s, w),
+    count : { seen(n, s, o, w), o > a } = 0.

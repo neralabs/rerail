@@ -1,4 +1,4 @@
-.policy "ruff-ruf022-unsorted-dunder-all" revision 3
+.policy "ruff-ruf022-unsorted-dunder-all" revision 4
 .description "Keep the names in __all__ sorted: SCREAMING_CASE constants first, then CamelCase classes, then everything else, each group in natural order."
 .language python
 .mode steer
@@ -8,15 +8,37 @@
 // constants, then CamelCase classes, then the rest, each in natural order (digit runs by number). Checked:
 // `__all__ = …` (one target), `__all__: T = …`, `__all__ += …` and `__all__.extend(…)` at module level (in an
 // `if` too), when every element is a string and there are two or more. Reported at the sequence.
+// "At module level" is Ruff's current scope: a `.extend(…)` call in a default, a decorator, a lambda's default
+// or a comprehension's first iterable counts; one in a def's annotations or type parameters, a class's bases or
+// keywords, a `type` statement, a class body or a comprehension's own code does not.
 //   __all__ = ["b", "a"]                ← RUF022
+//   def f(x=__all__.extend(["b", "a"])): ...        ← RUF022
 //   __all__ = ["APRIL", "Day", "f"]     not reported
 //   __all__ = ["a01", "a1"]             not reported: a run starting with 0 compares digit by digit
 //   __all__ = {"b", "a"}                not reported: a set has no order
+//   [x for y in z for x in __all__.extend(["b", "a"])]   not reported: the comprehension's scope
 #include "python/ruff-sorting.rerail"
 
 .violation RUF022(at: node) code "RUF022"
     "Sort `__all__`: SCREAMING_CASE constants first, then CamelCase classes, then the rest, each in natural order (digit runs by number). Leave it if other code relies on the current order."
     suppress ruff "RUF022"
-RUF022(m) :- all_seq(v), unsorted(v, "isort"), unparen(v, m).
+RUF022(m) :- all_checked(v), unsorted(v, "isort"), unparen(v, m).
 
-sort_ask(v, "isort") :- all_seq(v).
+sort_ask(v, "isort") :- all_checked(v).
+// all_checked(v): ruff-sorting's all_seq, with its `.extend(…)` calls taken at Ruff's module scope instead.
+.decl all_checked(v: node)
+all_checked(v) :- all_seq(v), !extend_arg(v).
+all_checked(v) :- extend_arg(v), extend_call(c, v), run_scope(c, _, "module"), !type_scope(c), ordered(v).
+.decl extend_call(c: node, v: node)
+extend_call(c, v) :- kind(c, "call"), field(c, "function", f), attr_of(f, o, "extend"), text(o, "__all__"), call_only(c, v).
+.decl extend_arg(v: node)
+extend_arg(v) :- extend_call(_, v).
+// type_scope(c): c is where Ruff visits in a scope of type parameters: a def's annotations and type parameters,
+// a class's type parameters and argument list, a `type` statement.
+.decl type_scope(c: node)
+type_scope(c) :- extend_call(c, _), within(c, a), type_part(a).
+.decl type_part(a: node)
+type_part(t) :- (kind(p, "typed_parameter") ; kind(p, "typed_default_parameter")), field(p, "type", t).
+type_part(t) :- kind(f, "function_definition"), (field(f, "return_type", t) ; field(f, "type_parameters", t)).
+type_part(t) :- kind(c, "class_definition"), (field(c, "superclasses", t) ; field(c, "type_parameters", t)).
+type_part(s) :- kind(s, "type_alias_statement").

@@ -1,321 +1,36 @@
 {
   "format": "rerail.translation-equivalence/v1",
   "pack": "react",
-  "equivalent": false,
-  "untranslated": {
-    "react-button-has-type": "failed: examples, fixtures, samples-react: the translation failed: rerail-engine: docs/rule-syntax/packs/react/react-button-has-type.rerail: tsconfig_for is read, and nothing derives it or binds it: the corpus runner has no producer of it (the relations it binds: candidates/datalog/authored/README.md) (exit 1)",
-    "react-iframe-missing-sandbox": "failed: examples, fixtures, samples-react: the translation failed: rerail-engine: docs/rule-syntax/packs/react/react-iframe-missing-sandbox.rerail: tsconfig_for is read, and nothing derives it or binds it: the corpus runner has no producer of it (the relations it binds: candidates/datalog/authored/README.md) (exit 1)",
-    "react-jsx-no-constructed-context-values": "failed: examples, fixtures, samples-react: the translation failed: rerail-engine: docs/rule-syntax/packs/react/react-jsx-no-constructed-context-values.rerail: tsconfig_for is read, and nothing derives it or binds it: the corpus runner has no producer of it (the relations it binds: candidates/datalog/authored/README.md) (exit 1)",
-    "react-no-array-index-key": "failed: examples, fixtures, samples-react: the translation failed: rerail-engine: docs/rule-syntax/packs/react/react-no-array-index-key.rerail: tsconfig_for is read, and nothing derives it or binds it: the corpus runner has no producer of it (the relations it binds: candidates/datalog/authored/README.md) (exit 1)",
-    "react-no-children-prop": "failed: examples, fixtures, samples-react: the translation failed: rerail-engine: docs/rule-syntax/packs/react/react-no-children-prop.rerail: tsconfig_for is read, and nothing derives it or binds it: the corpus runner has no producer of it (the relations it binds: candidates/datalog/authored/README.md) (exit 1)",
-    "react-no-direct-mutation-state": "failed: examples, fixtures, samples-react: the translation failed: rerail-engine: docs/rule-syntax/packs/react/react-no-direct-mutation-state.rerail: tsconfig_for is read, and nothing derives it or binds it: the corpus runner has no producer of it (the relations it binds: candidates/datalog/authored/README.md) (exit 1)",
-    "react-no-object-type-as-default-prop": "failed: examples, fixtures, samples-react: the translation failed: rerail-engine: docs/rule-syntax/packs/react/react-no-object-type-as-default-prop.rerail: tsconfig_for is read, and nothing derives it or binds it: the corpus runner has no producer of it (the relations it binds: candidates/datalog/authored/README.md) (exit 1)",
-    "react-no-unstable-nested-components": "failed: examples, fixtures, samples-react: the translation failed: rerail-engine: docs/rule-syntax/packs/react/react-no-unstable-nested-components.rerail: tsconfig_for is read, and nothing derives it or binds it: the corpus runner has no producer of it (the relations it binds: candidates/datalog/authored/README.md) (exit 1)",
-    "react-practice-cache-update-in-mutate-call": "no .rerail translation; recorded by the suite, not yet explained",
-    "react-practice-callback-for-dom-only": "no .rerail translation; recorded by the suite, not yet explained",
-    "react-practice-fresh-dependency": "no .rerail translation; recorded by the suite, not yet explained",
-    "react-practice-hoist-static-value": "no .rerail translation; recorded by the suite, not yet explained",
-    "react-practice-lifecycle-hook": "no .rerail translation; recorded by the suite, not yet explained",
-    "react-practice-memo-trivial-expression": "no .rerail translation; recorded by the suite, not yet explained",
-    "react-practice-mounted-ref-never-reset": "no .rerail translation; recorded by the suite, not yet explained",
-    "react-practice-request-beside-data-library": "no .rerail translation; recorded by the suite, not yet explained",
-    "react-practice-selector-returns-new-collection": "no .rerail translation; recorded by the suite, not yet explained",
-    "react-practice-side-effect-in-render": "no .rerail translation; recorded by the suite, not yet explained",
-    "react-practice-then-without-stale-guard": "no .rerail translation; recorded by the suite, not yet explained",
-    "react-void-dom-elements-no-children": "failed: examples, fixtures, samples-react: the translation failed: rerail-engine: docs/rule-syntax/packs/react/react-void-dom-elements-no-children.rerail: tsconfig_for is read, and nothing derives it or binds it: the corpus runner has no producer of it (the relations it binds: candidates/datalog/authored/README.md) (exit 1)"
-  },
+  "equivalent": true,
+  "untranslated": {},
   "different": {
-    "react-hooks-error-boundaries": {
-      "reason": "recorded by the suite, not yet explained",
-      "right": "unknown",
-      "counts": {
-        "samples-react": {
-          "originalOnly": 6,
-          "translationOnly": 0
-        }
-      }
-    },
-    "react-hooks-exhaustive-deps": {
-      "reason": "recorded by the suite, not yet explained",
-      "right": "unknown",
-      "counts": {
-        "fixtures": {
-          "originalOnly": 7,
-          "translationOnly": 2
-        },
-        "samples-react": {
-          "originalOnly": 0,
-          "translationOnly": 33
-        }
-      }
-    },
-    "react-hooks-globals": {
-      "reason": "recorded by the suite, not yet explained",
-      "right": "unknown",
-      "counts": {
-        "samples-react": {
-          "originalOnly": 0,
-          "translationOnly": 3
-        }
-      }
-    },
     "react-hooks-immutability": {
-      "reason": "recorded by the suite, not yet explained",
-      "right": "unknown",
+      "reason": "samples-react, 2 original-only keys: useResizeObserver.test.tsx:71 and :73 (two copies of streamlit's test), `elementRef.current = node` in a useCallback whose dependencies list elementRef. They come from the original's deps-frozen-mutation clause; ESLint (eslint-plugin-react-hooks) does not report them, nor does the translation. The suppressed DataFrame.tsx:445 that react-01 recorded is gone: the engine applies the translation's declared suppress lines now. react-01.result.json, NOTES-react-01.md.",
+      "right": "translation",
       "counts": {
-        "fixtures": {
-          "originalOnly": 5,
+        "samples-react": {
+          "originalOnly": 2,
           "translationOnly": 0
-        },
-        "samples-react": {
-          "originalOnly": 23,
-          "translationOnly": 68
-        }
-      }
-    },
-    "react-hooks-purity": {
-      "reason": "recorded by the suite, not yet explained",
-      "right": "unknown",
-      "counts": {
-        "samples-react": {
-          "originalOnly": 4,
-          "translationOnly": 4
         }
       }
     },
     "react-hooks-refs": {
-      "reason": "recorded by the suite, not yet explained",
-      "right": "unknown",
+      "reason": "samples-react: the 5 translation-only keys are reported by ESLint (inline comments honoured) and missed by the original (translation right): mui Ad.tsx:131, 135 and 139 (`const { current: randomAdblock } = React.useRef(…)`, then the value used in render) and react-bootstrap Offcanvas.tsx:341 and its other copy's :344 (`manager={getModalManager()}`, a render-time call of a function that uses a ref). react-aria-components Modal.tsx:335 (`let modalRef = props.modalRef`, then the shorthand `modalRef` in a context value after `ref={props.overlayRef}`) is reported by both now: the translation folds a local holding a member of a ref holder into the holder, as the compiler's temporaries sidemap does.",
+      "right": "translation",
       "counts": {
         "samples-react": {
-          "originalOnly": 98,
-          "translationOnly": 16
+          "originalOnly": 0,
+          "translationOnly": 5
         }
       }
     },
     "react-hooks-rules-of-hooks": {
-      "reason": "recorded by the suite, not yet explained",
-      "right": "unknown",
-      "counts": {
-        "samples-react": {
-          "originalOnly": 0,
-          "translationOnly": 23
-        }
-      }
-    },
-    "react-hooks-set-state-in-effect": {
-      "reason": "recorded by the suite, not yet explained",
-      "right": "unknown",
-      "counts": {
-        "examples": {
-          "originalOnly": 2,
-          "translationOnly": 0
-        },
-        "fixtures": {
-          "originalOnly": 8,
-          "translationOnly": 0
-        },
-        "samples-react": {
-          "originalOnly": 155,
-          "translationOnly": 0
-        }
-      }
-    },
-    "react-hooks-set-state-in-render": {
-      "reason": "recorded by the suite, not yet explained",
-      "right": "unknown",
-      "counts": {
-        "samples-react": {
-          "originalOnly": 1,
-          "translationOnly": 2
-        }
-      }
-    },
-    "react-hooks-static-components": {
-      "reason": "recorded by the suite, not yet explained",
-      "right": "unknown",
-      "counts": {
-        "examples": {
-          "originalOnly": 0,
-          "translationOnly": 1
-        },
-        "fixtures": {
-          "originalOnly": 0,
-          "translationOnly": 2
-        },
-        "samples-react": {
-          "originalOnly": 4,
-          "translationOnly": 40
-        }
-      }
-    },
-    "react-jsx-key": {
-      "reason": "recorded by the suite, not yet explained",
-      "right": "unknown",
-      "counts": {
-        "samples-react": {
-          "originalOnly": 0,
-          "translationOnly": 36
-        }
-      }
-    },
-    "react-jsx-no-comment-textnodes": {
-      "reason": "recorded by the suite, not yet explained",
-      "right": "unknown",
-      "counts": {
-        "samples-react": {
-          "originalOnly": 0,
-          "translationOnly": 1
-        }
-      }
-    },
-    "react-jsx-no-target-blank": {
-      "reason": "recorded by the suite, not yet explained",
-      "right": "unknown",
-      "counts": {
-        "fixtures": {
-          "originalOnly": 0,
-          "translationOnly": 5
-        },
-        "samples-react": {
-          "originalOnly": 0,
-          "translationOnly": 1
-        }
-      }
-    },
-    "react-jsx-no-undef": {
-      "reason": "recorded by the suite, not yet explained",
-      "right": "unknown",
-      "counts": {
-        "samples-react": {
-          "originalOnly": 0,
-          "translationOnly": 3
-        }
-      }
-    },
-    "react-no-access-state-in-setstate": {
-      "reason": "recorded by the suite, not yet explained",
-      "right": "unknown",
-      "counts": {
-        "fixtures": {
-          "originalOnly": 1,
-          "translationOnly": 0
-        },
-        "samples-react": {
-          "originalOnly": 39,
-          "translationOnly": 2
-        }
-      }
-    },
-    "react-no-danger": {
-      "reason": "recorded by the suite, not yet explained",
-      "right": "unknown",
-      "counts": {
-        "samples-react": {
-          "originalOnly": 0,
-          "translationOnly": 8
-        }
-      }
-    },
-    "react-no-deprecated": {
-      "reason": "recorded by the suite, not yet explained",
-      "right": "unknown",
-      "counts": {
-        "fixtures": {
-          "originalOnly": 1,
-          "translationOnly": 0
-        },
-        "samples-react": {
-          "originalOnly": 0,
-          "translationOnly": 6
-        }
-      }
-    },
-    "react-no-did-mount-set-state": {
-      "reason": "recorded by the suite, not yet explained",
-      "right": "unknown",
+      "reason": "5 keys, all translation-only on samples-react, are calls ESLint reports and the original misses: a top-level `use(chaiAsPromised)` imported from chai (cypress parse-changelog-spec.ts:6), a top-level `Md.use(...)` (lepton markdown/index.js:13), and Playwright fixtures calling `use` in async functions (polar e2e/utils/test.ts:48, 54, 57). NOTES-react-02.md. (The 23 keys under suppression comments that react-02 recorded are gone: the suite now applies the suppressions the translation declares.)",
+      "right": "translation",
       "counts": {
         "samples-react": {
           "originalOnly": 0,
           "translationOnly": 5
-        }
-      }
-    },
-    "react-no-did-update-set-state": {
-      "reason": "recorded by the suite, not yet explained",
-      "right": "unknown",
-      "counts": {
-        "samples-react": {
-          "originalOnly": 0,
-          "translationOnly": 15
-        }
-      }
-    },
-    "react-no-find-dom-node": {
-      "reason": "recorded by the suite, not yet explained",
-      "right": "unknown",
-      "counts": {
-        "samples-react": {
-          "originalOnly": 0,
-          "translationOnly": 11
-        }
-      }
-    },
-    "react-no-render-return-value": {
-      "reason": "recorded by the suite, not yet explained",
-      "right": "unknown",
-      "counts": {
-        "samples-react": {
-          "originalOnly": 0,
-          "translationOnly": 3
-        }
-      }
-    },
-    "react-no-string-refs": {
-      "reason": "recorded by the suite, not yet explained",
-      "right": "unknown",
-      "counts": {
-        "samples-react": {
-          "originalOnly": 0,
-          "translationOnly": 5
-        }
-      }
-    },
-    "react-no-unescaped-entities": {
-      "reason": "recorded by the suite, not yet explained",
-      "right": "unknown",
-      "counts": {
-        "samples-react": {
-          "originalOnly": 0,
-          "translationOnly": 20
-        }
-      }
-    },
-    "react-no-unknown-property": {
-      "reason": "recorded by the suite, not yet explained",
-      "right": "unknown",
-      "counts": {
-        "samples-react": {
-          "originalOnly": 0,
-          "translationOnly": 24
-        }
-      }
-    },
-    "react-no-unsafe": {
-      "reason": "recorded by the suite, not yet explained",
-      "right": "unknown",
-      "counts": {
-        "examples": {
-          "originalOnly": 1,
-          "translationOnly": 0
-        },
-        "fixtures": {
-          "originalOnly": 12,
-          "translationOnly": 0
-        },
-        "samples-react": {
-          "originalOnly": 21,
-          "translationOnly": 0
         }
       }
     }

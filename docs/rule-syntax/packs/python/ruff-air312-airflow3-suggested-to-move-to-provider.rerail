@@ -6,20 +6,37 @@
 
 // Ruff AIR312 (Airflow): a read of an Airflow operator, sensor, hook or trigger that Airflow 3 still ships but
 // deprecated in favour of the same name in the standard provider (apache-airflow-providers-standard). Each read is
-// reported, at the name or the attribute's last part; a fallback import in an `except ImportError` handler, whose
-// try imports the provider's name, is fine.
+// reported, by the import Ruff sees there, at the name or the attribute's last part, a string annotation's names
+// too; a fallback import in an `except ImportError` handler, whose try imports the provider's name, is fine.
 //   from airflow.operators.bash import BashOperator
 //   BashOperator()                 ← AIR312: import it from `airflow.providers.standard.operators.bash`
+//   from airflow.providers.standard.operators.bash import BashOperator
+//   BashOperator()                 not reported: the provider's name now
 //   try:
 //       from airflow.providers.standard.triggers.file import FileTrigger
 //   except ModuleNotFoundError:
 //       from airflow.triggers.file import FileTrigger
 //   FileTrigger()                  not reported: the fallback is guarded
-#include "python/misc-airflow.rerail"
+#include "python/airflow-bindings.rerail"   // air_at, air_safe: by the binding Ruff sees
 #include "../packs/python/ruff-air312-airflow3-suggested-to-move-to-provider.moved.rerail"   // air312_moved(old, m, x)
 
 .violation AIR312(at: node, q: symbol, m: symbol) code "AIR312"
     "`{q}` moved to apache-airflow-providers-standard in Airflow 3.0; import it from `{m}`, keeping the old import only as an `except ImportError` fallback."
     suppress ruff "AIR312"
-AIR312(at, q, m) :- air_ref(e, at, q), air312_moved(q, m, x), !air_guarded(e, m, x).
-air_needs_guard(e, m, x) :- air_ref(e, _, q), air312_moved(q, m, x).
+AIR312(at, q, m) :- air_at(e, at, q), air312_moved(q, m, x), !air_safe(e, m, x).
+air_needs_guard(e, m, x) :- air_at(e, _, q), air312_moved(q, m, x).
+
+// Ruff 0.17.6: a module-level read sees the import above it; a read in a def nested in another def's body is read
+// once the module is done, so it sees the later provider import, a default of the inner def too.
+.test a_nested_defs_default_reads_the_later_import exactly
+    .fixture "a.py" ```
+        from airflow.operators.bash import BashOperator
+        BashOperator()
+        def outer():
+            def inner(op=BashOperator()):
+                pass
+            return inner
+        from airflow.providers.standard.operators.bash import BashOperator
+        ```
+    .expect AIR312 at "a.py":2
+.end

@@ -1,0 +1,30 @@
+// python/python-17: docstring vocabulary shared by the python-17 D-rule translations.
+//
+// Interface
+//   tuple_pseudodoc(o)           o's apparent docstring is a one-string tuple statement such as `"x",`
+//
+// This file also extends the included libraries' all_entry, typing_dec and doc_accessor relations for syntax
+// those interfaces intend to cover: bare/set __all__ sequences and parentheses inside decorators.
+//
+//   __all__ = "C", ("f")              all_entry for C and f (D101-D103, D105)
+//   @((method)).setter def method(...): doc_accessor (D102)
+//   @(typing.override) def f(...):      typing_dec (D102, D107)
+//   def f(): "not a docstring",        tuple_pseudodoc (D103, D105)
+#include "python/docstrings.rerail"
+
+// Ruff reads bare tuples (tree-sitter expression_list), set arguments to tuple/list, and parenthesized entries in
+// __all__. The shared pyflakes relation currently handles only direct children of list and tuple displays.
+.decl all_seq_kind(k: symbol)
+all_seq_kind("list"). all_seq_kind("tuple"). all_seq_kind("expression_list"). all_seq_kind("set").
+all_entry(s, x) :- all_value(v), unparen(v, m), kind(m, k), all_seq_kind(k), child(m, e, _), unparen(e, s), str(s, x).
+
+// Parentheses are transparent in Ruff's decorator expressions, including around an accessor's receiver.
+typing_dec(f, x) :- decorator(f, e0), unparen(e0, e), sym_of(e, q), split_dot(q, m, x),
+    (m = "typing" ; m = "typing_extensions").
+doc_accessor(f, x) :- doc_name(f, _, x), decorator(f, e0), unparen(e0, e), attr_of(e, o, meth),
+    unparen(o, b), dotted_expr(b, x), (meth = "setter" ; meth = "deleter").
+
+// python/ast's docstring currently accepts a one-element bare tuple because its comma is not a named child of the
+// expression statement. Ruff does not: `"text",` is an ordinary tuple expression.
+.decl tuple_pseudodoc(o: node)
+tuple_pseudodoc(o) :- docstring(o, e), doc_stmt(st, e), text(st, t), match("[\\s\\S]*,\\s*", t).

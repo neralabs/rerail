@@ -3442,6 +3442,103 @@ reach(a, c) :- reach(a, b), edge(b, c).
     ]);
 }
 
+/// `tsx/project.rerail`'s `tsconfig`, `tsconfig_for` and `tsconfig_path` are the repository's, read by ECMAScript's
+/// adapter (`import_target::project`, decision 0710), so a `.rerail` policy that reads them runs: each folder's
+/// `tsconfig.json` (before its `jsconfig.json`), read with comments and trailing commas, its `extends` chain merged
+/// beneath it (`.json` added), `baseUrl` from the root and `paths` targets as written; a document's nearest
+/// configuration governs it.
+#[test]
+fn tsconfig_inputs_are_the_repositorys() {
+    let policy = r##".policy "t:tsconfig-inputs" revision 1
+.language typescript
+.scope include "**/*"
+#include "tsx/project.rerail"
+
+.violation Governed(at: node) code "governed" "a tsconfig governs this file"
+Governed(n) :- doc(d, p, _), tsconfig_for(p, _), doc_root(d, n).
+
+.test configurations_are_read
+    .fixture "web/tsconfig.base.json" ```
+        { "compilerOptions": { "baseUrl": "src", "paths": { "@/*": ["./*"] } } }
+        ```
+    .fixture "web/tsconfig.json" ```
+        {
+          // comments and trailing commas, as TypeScript allows
+          "extends": "./tsconfig.base",
+          "compilerOptions": { "strict": true, },
+        }
+        ```
+    .fixture "web/jsconfig.json" ```
+        { "compilerOptions": { "baseUrl": "other" } }
+        ```
+    .fixture "web/src/a.ts" ```
+        export const a = 1;
+        ```
+    .fixture "pkg/jsconfig.json" ```
+        { "compilerOptions": {} }
+        ```
+    .fixture "pkg/c.ts" ```
+        export const c = 1;
+        ```
+    .fixture "lib/b.ts" ```
+        export const b = 1;
+        ```
+    .decl base(d: symbol, b: symbol)
+    base(d, b) :- tsconfig(d, b).
+    .decl alias(d: symbol, pat: symbol, t: symbol)
+    alias(d, pat, t) :- tsconfig_path(d, pat, t).
+    .decl governs(p: symbol, d: symbol)
+    governs(p, d) :- tsconfig_for(p, d).
+    .expect only base("web", "web/src")
+    .expect only base("pkg", "pkg")
+    .expect only alias("web", "@/*", "./*")
+    .expect governs("web/src/a.ts", "web")
+    .expect governs("pkg/c.ts", "pkg")
+    .expect no governs("lib/b.ts", _)
+    .expect "governed" at "web/src/a.ts":1
+    .expect "governed" at "pkg/c.ts":1
+.end
+"##;
+    assert_eq!(run_tests_of("rr-tsconfig-inputs", policy), [("configurations_are_read".to_owned(), Ok(vec![]))]);
+}
+
+/// `tsx/node-resolve.rerail`'s `spec_resolved` is the phase node_resolve's answer (decision 0710: the library's phase,
+/// read at the file's path): a relative target resolves to its file, one that does not resolve fails and is the path
+/// it names, and one the resolver answers with no file (a built-in's fallback, `domain/`) neither fails nor has a file,
+/// as eslint-plugin-n's `filePath`.
+#[test]
+fn node_resolves_targets_through_its_phase() {
+    let policy = r##".policy "t:node-resolve-phase" revision 1
+.language typescript
+.scope include "**/*"
+#include "tsx/node-resolve.rerail"
+
+.violation Target(at: node) code "target" "a module this file requires"
+Target(n) :- node_target(n, _, "require"), node_target_file(n, _).
+
+.test targets_resolve
+    .fixture "src/a.js" ```
+        const u = require("./util");
+        const n = require("./nope");
+        const d = require("domain/");
+        ```
+    .fixture "src/util.js" ```
+        module.exports = 1;
+        ```
+    .decl failed(x: symbol)
+    failed(x) :- spec_failed(n), node_target(n, x, _).
+    .decl file_of(x: symbol, f: symbol)
+    file_of(x, f) :- node_target(n, x, _), node_target_file(n, f).
+    .expect only failed("./nope")
+    .expect only file_of("./util", "src/util.js")
+    .expect only file_of("./nope", "src/nope")
+    .expect "target" at "src/a.js":1
+    .expect "target" at "src/a.js":2
+.end
+"##;
+    assert_eq!(run_tests_of("rr-node-resolve-phase", policy), [("targets_resolve".to_owned(), Ok(vec![]))]);
+}
+
 /// A tool call is a test's input (`.tool_call`, `docs/rule-syntax/tool-calls.md`): the run is given the test's calls,
 /// "1", "2", … in order, and a `.scope tool_calls` policy's finding is at the call (path "", line 0, `at` its id). A
 /// call of another tool, a `--dry-run`, or the command in another argument is no finding.

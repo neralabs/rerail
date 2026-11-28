@@ -35,7 +35,9 @@
 .decl php_format_arg(c: node, f: node, style: symbol)  // f is call c's format argument, style "printf" or "scanf"
 php_format_arg(c, f, "printf") :- (php_call(c, "sprintf") ; php_call(c, "printf")), php_arg(c, 0, f).
 php_format_arg(c, f, "scanf") :- php_call(c, "sscanf"), php_arg(c, 1, f).
-.decl php_format(f: node, s: symbol, style: symbol)  // the format arguments the relations below are computed for
+// php_format(f, s, style): the format arguments the relations below are computed for. `extensible`: php/php-01 adds
+// the strings it follows through heredocs, concatenations and last writes (decision 0263).
+.decl php_format(f: node, s: symbol, style: symbol) extensible
 php_format(f, s, style) :- php_format_arg(_, f, style), php_value(f, "string", s).
 
 // ---- printf ----------------------------------------------------------------------------------------------------

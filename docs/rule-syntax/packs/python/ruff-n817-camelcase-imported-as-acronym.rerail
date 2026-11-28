@@ -4,22 +4,18 @@
 .mode steer
 .scope include "**/*"
 
-// Ruff N817 (pep8-naming): a CamelCase name imported under the acronym of its capitals. Exempt when the name
-// or the alias matches `pep8-naming.ignore-names`, and when the alias is the import convention for the module:
-// Ruff's default flake8-import-conventions aliases have one such entry, `xml.etree.ElementTree as ET` (absolute
-// imports only; a relative `from ..xml.etree import ElementTree as ET` is reported).
+// Ruff N817 (pep8-naming): a CamelCase name imported under the acronym of its capitals. Names are read as Ruff's
+// parser reads them, NFKC-normalised, dotted names without their spacing. Exempt when the name or the alias matches
+// `pep8-naming.ignore-names`, and when the alias is the import convention for the module: Ruff's default
+// flake8-import-conventions aliases have one such entry, `xml.etree.ElementTree as ET` (absolute imports only; a
+// relative `from ..xml.etree import ElementTree as ET` is reported).
 //   from mod import CamelCase as CC          ← N817
 //   import xml.etree.ElementTree as ET       not reported
-#include "python/naming.rerail"
+//   from xml . etree import ElementTree as ET   not reported: the module is "xml.etree"
+#include "python/python-20.rerail"
 
 .violation N817(at: node, x: symbol, a: symbol) code "N817"
     "Import `{x}` under its own name, or a descriptive CamelCase alias, instead of the acronym `{a}`, and update its uses; keep the alias if your project's convention requires it."
     suppress ruff "N817"
-N817(i, x, a) :- alias_import(i, x, a), camel_name(i, x), cased_upper(i, a), acronym_of(i, x, a), !conventional(i, a),
-    !naming_ignored(i, x), !naming_ignored(i, a).
-// conventional(i, a): the import's full name and alias are a convention entry.
-.decl conventional(i: node, a: symbol)
-conventional(i, "ET") :- import_alias(s, i, m, x, "ET"), !relative_from(s),
-    (x = "", m = "xml.etree.ElementTree" ; x = "ElementTree", m = "xml.etree").
-.decl relative_from(s: node)
-relative_from(s) :- field(s, "module_name", mn), kind(mn, "relative_import").
+N817(i, x, a) :- ruff_alias_import(i, x, a), ruff_camel(i, x), ruff_cased_upper(i, a), ruff_acronym(i, x, a),
+    !ruff_import_full(i, "xml.etree.ElementTree"), !ruff_ignored(i, x), !ruff_ignored(i, a).

@@ -5,9 +5,10 @@
 .scope include "**/*.php"
 .scope exclude "**/*.blade.php"
 
-#include "php/format.rerail"
-//   scanf_assigns(f, k), scanf_invalid(f)    what format argument f assigns, as PHP 8 parses it
-//   (php/names) php_call, php_arg, php_arg_count, php_spread_call; (php/values) php_value
+#include "php/php-01.rerail"
+//   php_fmt_string(f, s)                     format argument f holds s (literals, heredocs, `.`, a variable's last write)
+//   (php/format) format_re("scanf", re)      a scanf placeholder, after its `%`
+//   (php/names) php_call, php_arg, php_arg_count, php_spread_call
 
 // PHPStan's PrintfParametersRule, sscanf half (argument.sscanf, level 0): sscanf($str, $format, &$vars…) with
 // output variables, whose format is a known string, and the variables do not match what it assigns.
@@ -15,15 +16,26 @@
 //   sscanf($s, '%d', $a, $b);         one variable too many
 //   sscanf($s, '%.E', $n);            an invalid conversion
 //   sscanf($s, '%d%d');               not reported: without variables sscanf returns an array
+//   sscanf($s, "%d\0%d", $a);         not reported: scanf.c reads the format as a C string, up to its first NUL
 .violation argument_sscanf(at: node, msg: symbol) code "argument.sscanf" "{msg}"
     suppress phpstan "argument.sscanf"
 argument_sscanf(c, "Pass sscanf() one output variable for each placeholder in its format, or remove the extra placeholders.") :-
-    sscanf_format(c, f, n), scanf_assigns(f, k), k > n.
+    sscanf_format(c, f, _, n), cut_assigns(f, k), k > n.
 argument_sscanf(c, "Remove the extra output variables passed to sscanf(), or add placeholders to fill them.") :-
-    sscanf_format(c, f, n), scanf_assigns(f, k), k < n.
+    sscanf_format(c, f, _, n), cut_assigns(f, k), k < n.
 argument_sscanf(c, "Fix the invalid placeholder in this sscanf() format, or write a literal percent sign as %%.") :-
-    sscanf_format(c, f, _), scanf_invalid(f).
-// sscanf_format(c, f, n): sscanf call c has format argument f, of a known string, and n > 0 output variables.
-.decl sscanf_format(c: node, f: node, n: number)
-sscanf_format(c, f, k - 2) :- php_call(c, "sscanf"), php_arg(c, 1, f), php_value(f, "string", _),
-    php_arg_count(c, k), k > 2, !php_spread_call(c).
+    sscanf_format(c, f, _, _), cut_invalid(f).
+// sscanf_format(c, f, s, n): sscanf call c has format argument f, whose string cut at its first NUL is s, and n > 0
+// output variables. Core decodes the `\0` of an octal escape as NUL and keeps its other digits ("\033" gives NUL
+// "33"), so a NUL counts only where the digits after it complete a zero escape ("\0", "\00", "\000"), not in "\033"
+// (ESC).
+.decl sscanf_format(c: node, f: node, s: symbol, n: number)
+sscanf_format(c, f, @replace_all(s, "\\x00(?:00|0(?:[^0-7]|$)|[^0-7]|$)[\\s\\S]*", ""), k - 2) :- php_call(c, "sscanf"),
+    php_arg(c, 1, f), php_fmt_string(f, s), php_arg_count(c, k), k > 2, !php_spread_call(c).
+// cut_assigns(f, k), cut_invalid(f): php/format's scanf_assigns and scanf_invalid over the cut string. php/format's
+// own are keyed by the argument over its whole string (decision 0677), so the cut one is read here.
+.decl cut_invalid(f: node)
+cut_invalid(f) :- sscanf_format(_, f, s, _), format_re("scanf", ph), contains("%", @replace_all(s, cat("%%|%", ph), "")).
+.decl cut_assigns(f: node, k: number)
+cut_assigns(f, @count_matches("<>", @replace_all(@replace_all(s, cat("(%%|%", ph, ")|[\\s\\S]"), "${1}"),
+    cat("%(?:(%)|", ph, ")"), "<${1}${2}>"))) :- sscanf_format(_, f, s, _), !cut_invalid(f), format_re("scanf", ph).

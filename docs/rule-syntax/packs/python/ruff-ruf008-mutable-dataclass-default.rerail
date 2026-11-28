@@ -13,12 +13,12 @@
 //       shared: ClassVar[list[int]] = []       not reported
 //       view: Sequence[int] = []               not reported: an immutable annotation
 //       untyped = []                           not reported: not a field (RUF012 covers it)
-#include "python/ruff-classes.rerail"
+#include "python/python-01.rerail"     // rt_immutable: `Union[(int, str)]` reads as `Union[int, str]`
 
 .violation RUF008(at: node, msg: symbol) code "RUF008" "{msg}"
     suppress ruff "RUF008"
 RUF008(v, m) :- dataclass_of(c, k, _), class_field(c, a, _, v), mutable_value(v), field(a, "type", t),
-    !class_var_ann(t), !immutable_ann(t), says(k, m).
+    !class_var_ann(t), !rt_immutable(t), says(k, m).
 .decl says(k: symbol, m: symbol)
 says("stdlib", "Use `field(default_factory=...)` for this mutable default, or annotate it `ClassVar` if one shared object is intended; a dataclass rejects or shares a plain mutable default.").
 says("attrs", "Use `attrs.field(factory=...)` for this mutable default, or annotate it `ClassVar` if one shared object is intended; a plain default is shared by every instance.").

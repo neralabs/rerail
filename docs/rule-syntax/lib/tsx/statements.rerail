@@ -193,7 +193,8 @@ require_call(v) :- init_of(v, c), kind(c, "call_expression"), field(c, "function
     kind(f, "identifier"), text(f, "require").
 // Scopes, as ESLint's one-var keeps them. `var` belongs to the enclosing function (or program, or static block);
 // let, const and using to the nearest block, which includes a for statement's head and a switch. One quirk:
-// a TypeScript namespace body opens no scope there, so `let a; namespace N { let b; }` share one.
+// a TypeScript namespace body (ESTree's TSModuleBlock) opens no scope there, so `let a; namespace N { let b; }`
+// share one, and so do `const x = 1; declare global { const y: number; }`.
 // var_scope is tsx/names' fn_scope (the kinds are the same: functions, the program, static blocks); the block
 // scopes below follow ESLint's one-var stack instead of names' block_scope.
 .decl var_scope(k: symbol)
@@ -203,8 +204,11 @@ lexical_scope("program"). lexical_scope("statement_block"). lexical_scope("for_s
 lexical_scope("for_in_statement"). lexical_scope("switch_statement").
 .decl block_scope_at(n: node)
 block_scope_at(n) :- kind(n, k), lexical_scope(k), !namespace_body(n).
-.decl namespace_body(n: node)  // `namespace N { … }`, `module M { … }`, `declare module "m" { … }`
+// namespace_body(n): `namespace N { … }`, `module M { … }`, `declare module "m" { … }`, and `declare global { … }`,
+// whose block tree-sitter puts straight in the ambient_declaration, with no module node.
+.decl namespace_body(n: node)
 namespace_body(n) :- field(m, "body", n), (kind(m, "internal_module") ; kind(m, "module")).
+namespace_body(n) :- kind(n, "statement_block"), child(a, n, _), kind(a, "ambient_declaration").
 // decl_scope(d, s). A for-in/of head's let or const belongs to the loop itself: two loops never share it.
 .decl decl_scope(d: node, s: node)
 decl_scope(d, s) :- var_decl(d, "var"), nearest(d, s, var_scope).

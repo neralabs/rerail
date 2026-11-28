@@ -1,4 +1,4 @@
-.policy "ruff-try401-verbose-log-message" revision 2
+.policy "ruff-try401-verbose-log-message" revision 3
 .description "Don't include the caught exception object in an exception log message; the exception call already records it with its traceback."
 .language python
 .mode steer
@@ -19,9 +19,11 @@
     suppress ruff "TRY401"
 TRY401(n, e) :- exc_handler_log(_, c, "exception"), positional(c, a), (n = a ; has(a, n, "identifier")),
     ast_name(n, e), expr_ctx(n, "load"), !under_attribute(n, a), ref_site(n, s), site_form(s, "except").
-// positional(c, a): an argument of `call.args`, `*xs` included (Ruff's visitor reads them all).
+// positional(c, a): an argument of `call.args`, `*xs` included (Ruff's visitor reads them all), and the lone
+// generator of `logger.exception(e for _ in y)`, which tree-sitter puts in place of the argument list.
 .decl positional(c: node, a: node)
 positional(c, a) :- exc_item(c, a, _).
+positional(c, g) :- kind(c, "call"), field(c, "arguments", g), kind(g, "generator_expression").
 // under_attribute(n, a): n is inside an attribute expression within argument a: `e.args`, `f(e).x`.
 .decl under_attribute(n: node, a: node)
 under_attribute(n, a) :- positional(_, a), has(a, n, "identifier"), inside(n, t, "attribute"), within(t, a).

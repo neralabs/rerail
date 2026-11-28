@@ -28,8 +28,9 @@ FLY002_fstring(c) :- static_join(c, _, a), joinee(a, _, _), !joined_str(a, _), !
 
 // static_join(c, j, a): c is `j.join(a)`, j a plain string's value, a a list or tuple display without `*x`.
 .decl static_join(c: node, j: symbol, a: node)
-static_join(c, j, a) :- kind(c, "call"), field(c, "function", f), attr_of(f, o, "join"), unparen(o, s), plain_str(s, j),
-    call_only(c, x), unparen(x, a), (kind(a, "list") ; kind(a, "tuple")), !has_star(a).
+static_join(c, j, a) :- (kind(c, "call") ; annotation(c), kind(c, "call")), field(c, "function", f),
+    attr_of(f, o, "join"), unparen(o, s), plain_str(s, j), call_only(c, x), unparen(x, a),
+    (kind(a, "list") ; kind(a, "tuple")), !has_star(a).
 .decl has_star(a: node)
 has_star(a) :- child(a, e, _), kind(e, "list_splat").
 .decl joinee(a: node, i: number, e: node)
@@ -58,3 +59,21 @@ fmt_atom(e) :- kind(e, "call"), call_nargs(e, 0), call_nkwargs(e, 0), field(e, "
 // join_quote(c, q): quote character q appears in the joiner or in a string element.
 .decl join_quote(c: node, q: symbol)
 join_quote(c, q) :- static_join(c, j, a), (v = j ; joinee(a, _, e), plain_str(e, v)), (q = "'" ; q = "\""), contains(q, v).
+
+// Ruff visits calls in parsed type strings too, but not Literal values or ordinary strings.
+.test joins_in_string_type_definitions exactly
+    .fixture "app/joins.py" ```
+        from typing import List, Literal, cast
+        a = b = None
+        x: "''.join([a, b])" = None
+        y: List["'-'.join((a, 'x'))"] = []
+        z = cast("''.join(['p', 'q'])", a)
+        literal: Literal["''.join([a, b])"] = None
+        ordinary = "''.join([a, b])"
+        joined: "''.join(" "[a, b])" = None
+        ```
+    .expect FLY002 at "app/joins.py":3
+    .expect FLY002 at "app/joins.py":4
+    .expect FLY002 at "app/joins.py":5
+    .expect FLY002 at "app/joins.py":8
+.end

@@ -21,30 +21,39 @@
 .violation UP008(at: node) code "UP008"
     "Drop the arguments and call `super()`; inside a method it already uses the enclosing class and the method's first parameter."
     suppress ruff "UP008"
-UP008(al) :- kind(c, "call"), field(c, "function", fn), sym_at(fn, "builtins.super"), field(c, "arguments", al),
+UP008(al) :- super_call(c, fn), field(c, "arguments", al),
     pos_arg(al, 0, a), pos_arg(al, 1, b), !pos_arg(al, 2, _), run_scope(c, f, k), (k = "function" ; k = "lambda"),
     sig_param(f, _, nm, 0, pk, _, _), (pk = "pos" ; pk = "posonly"), text(nm, x), kind(b, "identifier"), text(b, x),
     names_class(a, f), (kind(fn, "identifier") ; class_cell(f)).
-// pos_arg(al, i, a): a is the i-th positional argument (keywords and `**` are not counted).
+// super_call(c, fn): c calls the builtin super, fn its function with parentheses off (`(super)(C, self)`).
+.decl super_call(c: node, fn: node)
+super_call(c, fn) :- kind(c, "call"), field(c, "function", fn0), unparen(fn0, fn), sym_at(fn, "builtins.super").
+// pos_arg(al, i, a): a is the i-th positional argument, parentheses off (keywords and `**` are not counted): Ruff's
+// AST has no parentheses, so `super(((C)), (self))` is `super(C, self)`.
 .decl pos_arg(al: node, i: number, a: node)
-pos_arg(al, i, a) :- kind(al, "argument_list"), child(al, a, j), !kind(a, "keyword_argument"),
-    !kind(a, "dictionary_splat"), !kind(a, "comment"),
+pos_arg(al, i, a) :- kind(al, "argument_list"), child(al, a0, j), !kind(a0, "keyword_argument"),
+    !kind(a0, "dictionary_splat"), !kind(a0, "comment"), unparen(a0, a),
     i = count : { child(al, o, j2), j2 < j, !kind(o, "keyword_argument"), !kind(o, "dictionary_splat"),
         !kind(o, "comment") }.
 // names_class(a, f): a, super's first argument in a call that runs in f, names the class around f: `__class__`
 // when f does not rebind it, or the class path (`Outer.Inner`) whose head is that outermost class, not a local of
-// the same name (`C = B; super(C, self)`). Asked only of super's first argument: matched by text alone, a class
-// path paired each method with every same-named identifier in the corpus.
+// the same name (`C = B; super(C, self)`) nor a name a scope on the way declares `nonlocal` or `global` (Ruff
+// binds it there: `nonlocal C; super(C, self)` is not reported). Asked only of super's first argument: matched by
+// text alone, a class path paired each method with every same-named identifier in the corpus.
 .decl names_class(a: node, f: node)
 names_class(a, f) :- super_first(a, f), text(a, "__class__"), kind(a, "identifier"), run_scope(a, f, _),
     !local_class(f).
 // f's file is a's (decision 0652: a request for super_first's rows, made of the rest, paired every name with every
 // class path of the corpus).
 names_class(a, f) :- super_first(a, f), docof(a, d), docof(f, d), class_path(f, p), text(a, p),
-    (kind(a, "identifier") ; kind(a, "attribute")), head_ref(a, h, x), look(h, x, s), binding(s, x, _, "class").
+    (kind(a, "identifier") ; kind(a, "attribute")), head_ref(a, h, x), look(h, x, s), binding(s, x, _, "class"),
+    !redeclared(h, x).
 .decl super_first(a: node, f: node)
-super_first(a, f) :- kind(c, "call"), field(c, "function", fn), sym_at(fn, "builtins.super"),
-    field(c, "arguments", al), pos_arg(al, 0, a), run_scope(c, f, _).
+super_first(a, f) :- super_call(c, _), field(c, "arguments", al), pos_arg(al, 0, a), run_scope(c, f, _).
+// redeclared(h, x): a scope the lookup of name h passes before its binding declares x `global` or `nonlocal`.
+.decl redeclared(h: node, x: symbol)
+redeclared(h, x) :- super_first(a, _), head_ref(a, h, x), walk(h, x, w),
+    (kind(g, "global_statement") ; kind(g, "nonlocal_statement")), nearest(g, w, scope), child(g, i, _), text(i, x).
 // class_cell(f): CPython gives f a `__class__` cell.
 .decl class_cell(f: node)
 class_cell(f) :- cell_user(g, f), !local_class(f), !local_class(g).

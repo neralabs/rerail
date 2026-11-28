@@ -1,0 +1,66 @@
+[
+  {
+    "id": "ruff-com818-trailing-comma-on-bare-tuple",
+    "status": "same"
+  },
+  {
+    "id": "ruff-era001-commented-out-code",
+    "status": "different",
+    "reason": "The translation uses Ruff's Python parser (`py_parses`) and its trivia-skipping tokenizer (`py_consecutive_names`) instead of the old bounded regex grammar, so the prose comments it accepted (`# SIM103 (but not fixable)`, `# (See: http://example.test/revision)`) are gone: fixtures 82 shared findings, none on one side only. Its 238 samples-python findings equal Ruff 0.17.6's exactly. The 6 translation-only keys are the quoted-attribute annotation comment `'month'. Eg: \"Title must be unique for pub_date year\"` in six Django samples (fields/__init__.py:150), which Ruff reports and the JSON original misses.",
+    "right": "translation",
+    "counts": {
+      "examples": {
+        "originalOnly": 0,
+        "translationOnly": 0
+      },
+      "fixtures": {
+        "originalOnly": 0,
+        "translationOnly": 0
+      },
+      "samples-python": {
+        "originalOnly": 0,
+        "translationOnly": 6
+      }
+    }
+  },
+  {
+    "id": "ruff-fast001-fast-api-redundant-response-model",
+    "status": "different",
+    "reason": "For `response_model=List[Item,]` versus `-> List[Item]`, Ruff reports FAST001 and so does the translation; the JSON original does not. Ruff treats the trailing subscript comma as insignificant when comparing these types.",
+    "right": "translation",
+    "counts": {
+      "examples": {
+        "originalOnly": 0,
+        "translationOnly": 0
+      },
+      "fixtures": {
+        "originalOnly": 0,
+        "translationOnly": 1
+      },
+      "samples-python": {
+        "originalOnly": 0,
+        "translationOnly": 0
+      }
+    }
+  },
+  {
+    "id": "ruff-fix002-line-contains-todo",
+    "status": "same"
+  },
+  {
+    "id": "ruff-fly002-static-join-to-f-string",
+    "status": "same"
+  },
+  {
+    "id": "ruff-icn001-unconventional-import-alias",
+    "status": "same"
+  },
+  {
+    "id": "ruff-pgh005-invalid-mock-access",
+    "status": "same"
+  },
+  {
+    "id": "ruff-pie794-duplicate-class-field-definition",
+    "status": "same"
+  }
+]

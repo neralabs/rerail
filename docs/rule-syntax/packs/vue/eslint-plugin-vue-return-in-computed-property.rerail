@@ -1,11 +1,11 @@
-.policy "eslint-plugin-vue-return-in-computed-property" revision 2
+.policy "eslint-plugin-vue-return-in-computed-property" revision 3
 .description "Return a value on every path of a Vue computed property getter; a getter that can end without returning yields undefined."
 .language vue
 .mode steer
 .scope include "**/*.vue"
-#include "vue/component.rerail"
+#include "vue/vue-01.rerail"
 #include "vue/flow.rerail"
-//   vcomputed(o, x, f), vcomputed_fn(c, f), vfalls_off(f), vlast_return(f, r)
+//   vcomputed(o, x, f), vcomputed_fn(c, f), vfalls_off(f), vfn_kind(k), vjs(n), vts(n)
 
 // eslint-plugin-vue's return-in-computed-property: a computed getter, of the Options API or of computed() imported
 // from Vue, that can end without returning. With treatUndefinedAsUnspecified (the default true), a getter whose last
@@ -14,21 +14,105 @@
 //   computed: { foo() { if (a) return 1 } }               reported: "foo" can end without a value
 //   const c = computed(() => { list.sort() })              reported
 //   computed: { foo() { return a ? 1 : 2 } }   computed(() => a)                     not reported
+// The component's code is its view (vue/vue-01): a relation read with a seeded node is copied for the view's grammar,
+// with every relation it reads, so the search is seeded once per grammar, here.
 .violation no_return(at: node, msg: symbol) code "vue/return-in-computed-property" "{msg}"
     suppress eslint "vue/return-in-computed-property"
-no_return(at, cat("Expected to return a value in \"", x, "\" computed property.")) :- vcomputed(_, x, f),
-    lacks_return(f), report_at(f, at).
-no_return(at, "Expected to return a value in computed function.") :- vcomputed_fn(_, f), lacks_return(f),
-    report_at(f, at).
+no_return(at, m) :- getter(f, m), vjs(f), lacks_return(f), report_at(f, at).
+no_return(at, m) :- getter(f, m), vts(f), lacks_return(f), report_at(f, at).
+// getter(f, m): f is a computed getter, m the message for it.
+.decl getter(f: node, m: symbol)
+getter(f, cat("Expected to return a value in \"", x, "\" computed property.")) :- vcomputed(_, x, f), vjs(f).
+getter(f, cat("Expected to return a value in \"", x, "\" computed property.")) :- vcomputed(_, x, f), vts(f).
+getter(f, "Expected to return a value in computed function.") :- vcomputed_fn(_, f), vjs(f).
+getter(f, "Expected to return a value in computed function.") :- vcomputed_fn(_, f), vts(f).
 .decl lacks_return(f: node)
-lacks_return(f) :- getter(f), vfalls_off(f).
-lacks_return(f) :- getter(f), !option("treatUndefinedAsUnspecified", "false"), field(f, "body", b),
+lacks_return(f) :- getter(f, _), vfalls_off(f).
+lacks_return(f) :- getter(f, _), !option("treatUndefinedAsUnspecified", "false"), field(f, "body", b),
     kind(b, "statement_block"), !valued_last(f).
-.decl valued_last(f: node)  // the last return of f's own code has a value
-valued_last(f) :- vlast_return(f, r), child(r, _, 0).
-.decl getter(f: node)
-getter(f) :- vcomputed(_, _, f) ; vcomputed_fn(_, f).
+// valued_last(f): the last return of f's own code has a value (ESLint keeps the last return it visits). By line and
+// column: flow's vlast_return orders by visit_index, which has no row over the view.
+.decl valued_last(f: node)
+valued_last(f) :- vown_return(f, r), child(r, _, 0), !later_return(f, r).
+.decl later_return(f: node, r: node)
+later_return(f, r) :- vown_return(f, r), vown_return(f, q), line(r, lr), line(q, lq),
+    (lq > lr ; lq = lr, col(r, cr), col(q, cq), cq > cr).
 // ESLint reports the FunctionExpression, which for a method starts at its parameters.
 .decl report_at(f: node, at: node)
-report_at(f, f) :- getter(f), !kind(f, "method_definition").
-report_at(f, p) :- getter(f), kind(f, "method_definition"), field(f, "parameters", p).
+report_at(f, f) :- getter(f, _), !kind(f, "method_definition").
+report_at(f, p) :- getter(f, _), kind(f, "method_definition"), field(f, "parameters", p).
+
+// ESLint 9.39.5, eslint-plugin-vue 10.11.1: each expected line is ESLint's. Paths: a switch with a
+// default, try/finally, while (true), do-while return on every path; `return;` last, a throw only, a nested
+// function's return, `for (;;)` with a break, a labelled break do not. A setter beside a getter is reported too.
+.test getters_and_paths exactly
+    .fixture "r1.vue" ```
+        <script lang="ts">
+        export default {
+          computed: {
+            a(): number { if (x) return 1 },
+            b() { switch (x) { case 1: return 1; default: return 2 } },
+            c() { try { return 1 } finally { log() } },
+            d() { if (x) return 1; return },
+            e() { throw new Error('x') },
+            f() { const g = () => { return 1 }; g() },
+            g() { while (true) { if (x) return 1 } },
+            h() { for (;;) { if (x) break } },
+            i: function () { return },
+            j: { get() { if (a) { return 1 } else { return 2 } } },
+            k: () => {},
+            l() { lbl: { if (x) break lbl; return 1 } },
+            m() { do { return 1 } while (x) },
+          }
+        }
+        </script>
+        ```
+    .fixture "r2.vue" ```
+        <script setup lang="ts">
+        import { computed } from 'vue'
+        const a = computed(() => { if (x) return 1 })
+        const b = computed({ get: () => {}, set: (v) => {} })
+        const c = computed(() => 1)
+        const d = computed(function () { return })
+        const e = computed({ get() { return 1 } })
+        const f = computed(async () => { await x })
+        </script>
+        ```
+    .fixture "r3.vue" ```
+        <script>
+        import { computed as c2 } from 'vue'
+        export default {
+          setup() {
+            const a = c2(() => {
+              try { if (x) return 1 } catch (e) { throw e }
+            })
+            const b = c2(() => {
+              if (x) { return 1 }
+              else if (y) { return 2 }
+            })
+            return { a, b }
+          },
+          computed: {
+            get z() { if (x) return 1 },
+            set z(v) { this.q = v },
+            w() { return 1; foo() },
+          }
+        }
+        </script>
+        ```
+    .expect "vue/return-in-computed-property" at "r1.vue":4
+    .expect "vue/return-in-computed-property" at "r1.vue":7
+    .expect "vue/return-in-computed-property" at "r1.vue":8
+    .expect "vue/return-in-computed-property" at "r1.vue":9
+    .expect "vue/return-in-computed-property" at "r1.vue":11
+    .expect "vue/return-in-computed-property" at "r1.vue":12
+    .expect "vue/return-in-computed-property" at "r1.vue":15
+    .expect "vue/return-in-computed-property" at "r2.vue":3
+    .expect "vue/return-in-computed-property" at "r2.vue":4
+    .expect "vue/return-in-computed-property" at "r2.vue":6
+    .expect "vue/return-in-computed-property" at "r2.vue":8
+    .expect "vue/return-in-computed-property" at "r3.vue":5
+    .expect "vue/return-in-computed-property" at "r3.vue":8
+    .expect "vue/return-in-computed-property" at "r3.vue":15
+    .expect "vue/return-in-computed-property" at "r3.vue":16
+.end

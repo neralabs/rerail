@@ -19,10 +19,11 @@ mode_fn(q, 1) :- (q = "os.chmod" ; q = "os.fchmod" ; q = "os.lchmod" ; q = "os.m
     q = "os.mkfifo" ; q = "os.mknod").
 mode_fn(q, 2) :- (q = "os.open" ; q = "dbm.open" ; q = "dbm.gnu.open" ; q = "dbm.ndbm.open").
 
-// mode_call(c, i, m): call c takes a mode at slot i; m is the method name for a Path method, else "".
+// mode_call(c, i, m): call c takes a mode at slot i; m is the method name for a Path method, else "". The
+// callee may be parenthesised: `(p.mkdir)(755)`.
 .decl mode_call(c: node, i: number, m: symbol)
 mode_call(c, i, "") :- call_q(c, q), mode_fn(q, i).
-mode_call(c, 0, m) :- kind(c, "call"), field(c, "function", f), attr_of(f, o, m),
+mode_call(c, 0, m) :- kind(c, "call"), field(c, "function", f0), unparen(f0, f), attr_of(f, o, m),
     (m = "chmod" ; m = "lchmod" ; m = "mkdir" ; m = "touch"), path_object(o).
 // path_object(o): `Path(…)`, or a name assigned one or bound by `with Path(…) as name`.
 .decl path_object(o: node)

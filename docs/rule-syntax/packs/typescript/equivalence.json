@@ -1,224 +1,70 @@
 {
   "format": "rerail.translation-equivalence/v1",
   "pack": "typescript",
-  "equivalent": false,
-  "untranslated": {
-    "typescript-eslint-triple-slash-reference": "failed: examples, fixtures, rerail-typescript: the translation failed: rerail-engine: docs/rule-syntax/packs/typescript/typescript-eslint-triple-slash-reference.rerail: rule for triple_slash_reference($c, @concat(@concat(\"Remove this triple-slash types reference to \", $m), \"; the file already imports it.\")): the string \"types\" stands where an integer goes (exit 1)"
-  },
+  "equivalent": true,
+  "untranslated": {},
   "different": {
-    "typescript-eslint-class-literal-property-style": {
-      "reason": "recorded by the suite, not yet explained",
-      "right": "unknown",
+    "typescript-eslint-consistent-indexed-object-style": {
+      "reason": "fixtures, 1 translation-only key: typescript-eslint/consistent-indexed-object-style/088.ts:2, `interface Foo { [key: string]: Bar; }` beside `interface Bar { [key: string]; }`. typescript-eslint 8.74.0 reports Foo at 2:1 (A record is preferred over an index signature). The file has a syntax error to tree-sitter (Bar's index signature has no type), so the original skips it (source-incomplete); the translation reads the rest of the file and reports Foo, which refers to Bar, not to itself.",
+      "right": "translation",
       "counts": {
         "fixtures": {
           "originalOnly": 0,
           "translationOnly": 1
-        }
-      }
-    },
-    "typescript-eslint-class-methods-use-this": {
-      "reason": "recorded by the suite, not yet explained",
-      "right": "unknown",
-      "counts": {
-        "fixtures": {
-          "originalOnly": 2,
-          "translationOnly": 0
-        }
-      }
-    },
-    "typescript-eslint-consistent-indexed-object-style": {
-      "reason": "recorded by the suite, not yet explained",
-      "right": "unknown",
-      "counts": {
-        "fixtures": {
-          "originalOnly": 5,
-          "translationOnly": 0
         }
       }
     },
     "typescript-eslint-consistent-type-definitions": {
-      "reason": "recorded by the suite, not yet explained",
-      "right": "unknown",
+      "reason": "fixtures, 2 translation-only keys: typescript-eslint/consistent-indexed-object-style/037.ts:1 `type Foo = { [key: string] };` and 038.ts:1 `type Foo = { [] };`. typescript-eslint 8.74.0 reports both at 1:6 (Use an `interface` instead of a `type`): TypeScript parses each as a type literal. tree-sitter gives each an ERROR node, so the original skips the files (source-partial / source-incomplete); the translation still sees an object type alias.",
+      "right": "translation",
       "counts": {
         "fixtures": {
           "originalOnly": 0,
-          "translationOnly": 3
+          "translationOnly": 2
         }
       }
     },
-    "typescript-eslint-explicit-member-accessibility": {
-      "reason": "recorded by the suite, not yet explained",
-      "right": "unknown",
-      "counts": {
-        "fixtures": {
-          "originalOnly": 0,
-          "translationOnly": 229
-        },
-        "rerail-typescript": {
-          "originalOnly": 0,
-          "translationOnly": 58
-        }
-      }
-    },
-    "typescript-eslint-explicit-module-boundary-types": {
-      "reason": "recorded by the suite, not yet explained",
-      "right": "unknown",
-      "counts": {
-        "fixtures": {
-          "originalOnly": 0,
-          "translationOnly": 383
-        }
-      }
-    },
-    "typescript-eslint-max-params": {
-      "reason": "recorded by the suite, not yet explained",
-      "right": "unknown",
+    "typescript-eslint-no-invalid-void-type": {
+      "reason": "fixtures no-invalid-void-type/041.ts:1 (`functionGeneric<void>(undefined);`) and 113 keys on rerail-typescript, all translation-only: The original misses void as a call's type argument (functionGeneric<void>(undefined), Promise.withResolvers<void>()); typescript-eslint 8.74 reports it with the default allowInGenericTypeArguments: a call's typeArguments are no type reference. The translation reports it, and matches ESLint's 114 findings on rerail-typescript line for line. NOTES-typescript-02.md.",
+      "right": "translation",
       "counts": {
         "fixtures": {
           "originalOnly": 0,
           "translationOnly": 1
-        }
-      }
-    },
-    "typescript-eslint-no-confusing-non-null-assertion": {
-      "reason": "recorded by the suite, not yet explained",
-      "right": "unknown",
-      "counts": {
-        "fixtures": {
-          "originalOnly": 3,
-          "translationOnly": 0
-        }
-      }
-    },
-    "typescript-eslint-no-magic-numbers": {
-      "reason": "recorded by the suite, not yet explained",
-      "right": "unknown",
-      "counts": {
-        "fixtures": {
-          "originalOnly": 0,
-          "translationOnly": 184
         },
         "rerail-typescript": {
           "originalOnly": 0,
-          "translationOnly": 2553
-        }
-      }
-    },
-    "typescript-eslint-no-shadow": {
-      "reason": "recorded by the suite, not yet explained",
-      "right": "unknown",
-      "counts": {
-        "fixtures": {
-          "originalOnly": 0,
-          "translationOnly": 1
-        }
-      }
-    },
-    "typescript-eslint-no-unnecessary-parameter-property-assignment": {
-      "reason": "recorded by the suite, not yet explained",
-      "right": "unknown",
-      "counts": {
-        "fixtures": {
-          "originalOnly": 0,
-          "translationOnly": 7
-        }
-      }
-    },
-    "typescript-eslint-no-unused-private-class-members": {
-      "reason": "recorded by the suite, not yet explained",
-      "right": "unknown",
-      "counts": {
-        "fixtures": {
-          "originalOnly": 0,
-          "translationOnly": 7
+          "translationOnly": 113
         }
       }
     },
     "typescript-eslint-no-unused-vars": {
-      "reason": "recorded by the suite, not yet explained",
-      "right": "unknown",
+      "reason": "Every translation-only key is one ESLint (typescript-eslint 8.74.0, default options) reports. fixtures, 6: consistent-indexed-object-style 037:1, 038:1, 039:2, 040:2, 088:2, 089:2, \"'Foo' is defined but never used\" in files with an index signature without a type (`type Foo = { [key: string] };`, `{ [] }`), which TypeScript's parser accepts and tree-sitter does not; the original refuses those files (source-incomplete: file has syntax errors). The translation's scope is now the original's (.ts, .tsx, .mts, .cts), so rerail-typescript has no difference left (NOTES-typescript-03.md).",
+      "right": "translation",
       "counts": {
         "fixtures": {
-          "originalOnly": 2,
-          "translationOnly": 16
-        },
-        "rerail-typescript": {
           "originalOnly": 0,
-          "translationOnly": 320
-        }
-      }
-    },
-    "typescript-eslint-no-use-before-define": {
-      "reason": "recorded by the suite, not yet explained",
-      "right": "unknown",
-      "counts": {
-        "fixtures": {
-          "originalOnly": 2,
-          "translationOnly": 1
-        },
-        "rerail-typescript": {
-          "originalOnly": 0,
-          "translationOnly": 9
+          "translationOnly": 6
         }
       }
     },
     "typescript-eslint-parameter-properties": {
-      "reason": "recorded by the suite, not yet explained",
-      "right": "unknown",
+      "reason": "The original reports src/engine/storage/database.ts:35 and :267, `function connectSqlite(path: string, readonly: boolean)` and `function openChecked(path: string, readonly: boolean, …)`: a parameter named `readonly` in a plain function, which is no parameter property. ESLint (typescript-eslint 8.74.0) reports neither; the translation reports exactly ESLint's keys on both corpora (NOTES-typescript-03.md).",
+      "right": "translation",
       "counts": {
         "rerail-typescript": {
           "originalOnly": 2,
-          "translationOnly": 0
-        }
-      }
-    },
-    "typescript-eslint-prefer-for-of": {
-      "reason": "recorded by the suite, not yet explained",
-      "right": "unknown",
-      "counts": {
-        "fixtures": {
-          "originalOnly": 0,
-          "translationOnly": 1
-        }
-      }
-    },
-    "typescript-eslint-prefer-function-type": {
-      "reason": "recorded by the suite, not yet explained",
-      "right": "unknown",
-      "counts": {
-        "fixtures": {
-          "originalOnly": 1,
-          "translationOnly": 0
-        }
-      }
-    },
-    "typescript-eslint-unified-signatures": {
-      "reason": "recorded by the suite, not yet explained",
-      "right": "unknown",
-      "counts": {
-        "fixtures": {
-          "originalOnly": 129,
           "translationOnly": 0
         }
       }
     },
     "vitest-no-disabled-tests": {
-      "reason": "recorded by the suite, not yet explained",
-      "right": "unknown",
+      "reason": "Every translation-only key is a test context's `context.skip()` inside a test callback (`it(\"…\", async context => { … context.skip(); })`): test/api/api-mcp-caller.test.ts:141, test/daemon/daemon.test.ts:798, test/engine/catalog/checkouts/checkout-spelling.test.ts:43, test/engine/no-follow.test.ts:35 and :53. @vitest/eslint-plugin 1.6.27's resolveScope takes any plain-named parameter of a function passed to an it/test call as a test context, and no-disabled-tests reports its `skip` member: ESLint 9.39.5 reports all five (disabledTest at `skip`). The original only takes a context root named `it`, so it misses them. On the whole rerail-typescript corpus ESLint's keys equal the translation's (NOTES-typescript-04.md).",
+      "right": "translation",
       "counts": {
-        "fixtures": {
+        "rerail-typescript": {
           "originalOnly": 0,
-          "translationOnly": 1
-        }
-      }
-    },
-    "vitest-no-focused-tests": {
-      "reason": "recorded by the suite, not yet explained",
-      "right": "unknown",
-      "counts": {
-        "fixtures": {
-          "originalOnly": 0,
-          "translationOnly": 1
+          "translationOnly": 5
         }
       }
     }

@@ -1,0 +1,68 @@
+// php/php-01: the string a printf or scanf format argument holds, as PHPStan reads its constant string type at the
+// call, beyond what php/values knows. For PHPStan's argument.sprintf and argument.sscanf.
+//
+// On top of php_value's strings (literals, self::C, a variable with one write), a format is known for:
+//   heredocs, nowdocs   <<<EOT / <<<'EOT' without $x in them, closing indentation removed (core's value: php_value
+//                       reads core's str, which has no row for them)
+//   parentheses         ('%s')
+//   concatenation       '%s' . ' %s',  $one . ' %d',  '%s ' . 3     (strings and ints; a variable operand only as
+//                       php_value follows it, through its one write)
+//   a variable at its last write, when that write is a statement `$f = e;` of a block holding the use, no write of
+//                       $f comes between them, and no loop around the use that starts after the write writes $f:
+//     $f = '%s'; …; $f = '%s %s'; sprintf($f, $a);       '%s %s': PHPStan's type of $f at the call
+//     $two = '%s %s'; $alias = $two; sprintf($alias, $a)  '%s %s'
+//     $f = '%s'; if ($c) { $f = '%d'; } sprintf($f, $a);  unknown: the value differs by path
+//     $f = '%s'; $f .= ' %s'; sprintf($f, $a);             unknown (a compound write comes between)
+// "Write" is php/values' php_write (assignments, references, by-reference arguments, …); a variable with a `&`
+// reference anywhere in its scope, or a scope with $$x, extract() or eval, is not followed.
+//
+// What a rule gets from this library:
+//   php_fmt_string(n, s)   n is a string expression whose value is s at n
+// And php/format's relations (printf_needs, scanf_assigns, …) hold for these format arguments too: php_format gets a
+// row for each format argument php_fmt_string knows, keyed by the argument.
+//
+// Builds on php/format.rerail (php_format, php_format_arg) and php/values.rerail (php_value, php_occ, php_write).
+
+#include "php/format.rerail"
+
+.decl php_fmt_string(n: node, s: symbol)
+php_fmt_string(n, s) :- php_fmt_literal(n, s).
+php_fmt_string(u, s) :- php_last_write(u, e), e < u, php_fmt_string(e, s).
+// php_fmt_literal(n, s): n's value without following a variable past php_value's one write. Kept apart from the
+// following above so each recursion moves one way through the tree (down here, back in source there), which the
+// engine needs to see that a concatenation makes finitely many values.
+.decl php_fmt_literal(n: node, s: symbol)
+php_fmt_literal(n, s) :- php_value(n, "string", s).
+php_fmt_literal(n, s) :- (kind(n, "heredoc") ; kind(n, "nowdoc")), value(n, s), !php_interpolated(n).
+php_fmt_literal(n, s) :- kind(n, "parenthesized_expression"), child(n, e, 0), php_fmt_literal(e, s).
+php_fmt_literal(n, cat(a, b)) :- kind(n, "binary_expression"), op(n, "."), field(n, "left", l), field(n, "right", r),
+    php_fmt_piece(l, a), php_fmt_piece(r, b).
+.decl php_fmt_piece(n: node, s: symbol)  // an operand of `.`: a known string, or an int as its decimal text
+php_fmt_piece(n, s) :- php_fmt_literal(n, s).
+php_fmt_piece(n, s) :- php_value(n, "int", s).
+
+php_format(f, s, style) :- php_format_arg(_, f, style), php_fmt_string(f, s).
+
+// php_last_write(u, e): u reads a variable whose last write, `$x = e;` (statement st), dominates u.
+.decl php_last_write(u: node, e: node)
+php_last_write(u, e) :- php_occ(s, x, u), !php_write(u), !php_dynamic(s), !php_aliased(s, x), php_occ(s, x, o),
+    field(w, "left", o), kind(w, "assignment_expression"), field(w, "right", e), child(st, w, 0),
+    kind(st, "expression_statement"), precedes(st, a), (a = u ; within(u, a)),
+    node(_, st, _, ss, _), node(_, u, _, su, _), !php_written_between(s, x, o, ss, su), !php_written_in_loop(s, x, u, ss).
+.decl php_aliased(s: node, x: symbol)  // some occurrence of x in s is taken by reference
+php_aliased(s, x) :- php_occ(s, x, o), php_referenced(o).
+// A write of x in s, other than o, starting after byte a and before byte b.
+.decl php_written_between(s: node, x: symbol, o: node, a: number, b: number)
+php_written_between(s, x, o, a, b) :- php_last_candidate(s, x, o, a, b), php_occ(s, x, o2), o2 != o, php_write(o2),
+    node(_, o2, _, p, _), p > a, p < b.
+.decl php_last_candidate(s: node, x: symbol, o: node, a: number, b: number)  // the ranges php_last_write tests
+php_last_candidate(s, x, o, ss, su) :- php_occ(s, x, u), !php_write(u), php_occ(s, x, o), field(w, "left", o),
+    kind(w, "assignment_expression"), child(st, w, 0), kind(st, "expression_statement"), precedes(st, a),
+    (a = u ; within(u, a)), node(_, st, _, ss, _), node(_, u, _, su, _).
+// A loop around u that starts after byte a writes x: its later iterations reach u with that value.
+.decl php_written_in_loop(s: node, x: symbol, u: node, a: number)
+php_written_in_loop(s, x, u, a) :- php_last_candidate(s, x, _, a, su), php_occ(s, x, u), node(_, u, _, su, _),
+    inside(u, l, php_loop_kind), node(_, l, _, sl, _), sl > a, php_occ(s, x, o2), php_write(o2), within(o2, l).
+.decl php_loop_kind(k: symbol)
+php_loop_kind("for_statement"). php_loop_kind("foreach_statement"). php_loop_kind("while_statement").
+php_loop_kind("do_statement").

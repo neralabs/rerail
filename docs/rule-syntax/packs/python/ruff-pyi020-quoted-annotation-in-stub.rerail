@@ -5,22 +5,90 @@
 .scope include "**/*.pyi"
 
 // Ruff PYI020 (flake8-pyi), stubs only: a quoted type. Stubs resolve forward references, so quotes are never
-// needed. Every type context counts (annotations, `X: TypeAlias = …`, cast, TypeVar bounds, a generic's
-// arguments anywhere), but not `Literal["x"]` or `Annotated[T, "meta"]`'s metadata. A quote inside a quoted
-// annotation is reported too.
+// needed. Every string Ruff's semantic model reads as a type definition counts (core's string_annotation: annotations,
+// `X: TypeAlias = …`, cast, TypeVar bounds, a generic's arguments, NamedTuple and TypedDict field types,
+// mypy_extensions' `Arg(T)`), but not `Literal["x"]`, `Annotated[T, "meta"]`'s metadata, or the arguments of any
+// other call inside a type (`x: F(subtype="a")`). A string is reported only when it parses as a type, in the mode
+// Ruff parses it in (parse_type_annotation): a triple-quoted string without escapes in parentheses, any other
+// string as a bare expression, where a leading space or a line break outside brackets is a syntax error. A quote
+// inside a quoted annotation is reported too.
 //   def f(x: "int") -> list["str"]: ...     ← PYI020 twice
 //   x: Literal["a"]                          fine
+//   def f(x: "a)b"): ...                     fine: not a type (Ruff reports F722)
+//   def f(x: " int"): ...                    fine: not a bare expression (F722); `""" int"""` is reported
 #include "python/typing.rerail"
 
 .violation PYI020(at: node) code "PYI020" "Remove the quotes from this annotation and write the type directly; a stub resolves forward references, so quoting adds nothing."
     suppress ruff "PYI020"
-PYI020(s) :- quoted(s), type_ctx(s), in_stub(s).
-// The parsed contents of a string annotation (`"list['int']"`): its quoted parts, at any depth.
-PYI020(q) :- quoted(s), type_ctx(s), in_stub(s), parsed_within(s, q), quoted(q).
-.decl quoted(s: node)  // a str literal, adjacent pieces counted once at the whole
-quoted(s) :- plain_str(s, _), !inside_concat(s).
+PYI020(s) :- quoted(s), in_stub(s), parses(s).
+// The parsed contents of a string annotation (`"list['int']"`): its quoted types, at any depth.
+PYI020(q) :- quoted(s), in_stub(s), parses(s), parsed_within(s, q), quoted(q), parses(q).
+// quoted(s): a string type definition, adjacent pieces counted once at the whole (Ruff's StringLiteral). A string
+// of a parsed annotation has no plain_str row; it is a string literal (not an f-string or bytes: `"a"`, `r'a'`,
+// `u"""a"""`) by its prefix.
+.decl quoted(s: node)
+quoted(s) :- string_annotation(s), !inside_concat(s), (plain_str(s, _) ; kind(s, "string"), node_text(s, t),
+    match("[uUrR]?[\"'][\\s\\S]*", t)).
 .decl inside_concat(s: node)
 inside_concat(s) :- child(c, s, _), kind(c, "concatenated_string").
 .decl parsed_within(s: node, q: node)
-parsed_within(s, q) :- str_node(s), parsed(s, "annotation", r), (q = r ; within(q, r)).
+parsed_within(s, q) :- quoted(s), parsed(s, "annotation", r), (q = r ; within(q, r)).
 parsed_within(s, q) :- parsed_within(s, p), quoted(p), parsed_within(p, q).
+// parses(s): Ruff parses the string as a type expression. Ruff parses a triple-quoted string whose source is its
+// value in parentheses, and any other string (single-quoted, with an escape, or implicitly concatenated) as a bare
+// expression: `" int"`, `"\tint"`, `" " "int"` and `"int |\nstr"` are syntax errors (F722), `""" int"""` is not.
+//   - Parenthesised: the engine's "annotation" guest parses `( value )`. A trailing comment (`'''int  # c'''`)
+//     hides the `)` and the guest is refused, but such a string parses as one expression statement (below). The
+//     guest takes a blank string, which Ruff refuses.
+//   - Bare: the "python" guest parses the value as a module, which refuses a leading indent and two lines; one
+//     expression statement, comments and `\` line continuations aside, is what Ruff's expression mode takes
+//     (`'''\\` / `list[int]'''`: the value is a continuation, then `list[int]`).
+.decl parses(s: node)
+parses(s) :- quoted(s), triple(s), !escaped(s), parsed(s, "annotation", _), !blank_triple(s).
+parses(s) :- quoted(s), parsed(s, "python", m),
+    count : { child(m, x, _), !kind(x, "comment"), !kind(x, "line_continuation") } = 1,
+    child(m, e, _), kind(e, "expression_statement"), child(e, v, 0), !kind(v, "assignment"),
+    !kind(v, "augmented_assignment"), !kind(v, "yield").
+.decl triple(s: node)
+triple(s) :- quoted(s), kind(s, "string"), node_text(s, t), match("[uUrR]?(\"\"\"|''')[\\s\\S]*", t).
+.decl blank_triple(s: node)
+blank_triple(s) :- triple(s), node_text(s, t), match("[uUrR]?(\"\"\"|''')\\s*(\"\"\"|''')", t).
+// escaped(s): triple-quoted s's value differs from its source (Ruff's AnnotationKind::Complex, parsed bare): not raw,
+// and holding an escape (`\q` is none: it stays as written).
+.decl escaped(s: node)
+escaped(s) :- triple(s), node_text(s, t), !match("[uU]?[rR][\\s\\S]*", t),
+    match("[\\s\\S]*\\\\([\\\\'\"abfnrtv0-7xNuU\\n]|\\r)[\\s\\S]*", t).
+
+// Ruff 0.17.6: PYI020 at 1:4, 1:10, 2:9 and 2:15: the outer string and the one inside it. Before: one finding a line
+// (a string of a parsed annotation had no plain_str row, so it was not quoted).
+.test a_quote_inside_a_quoted_annotation exactly
+    .fixture "a.pyi" ```
+        a: "list['int']"
+        b: list["list['int']"]
+        c: "list[' int']"
+        ```
+    .expect PYI020 at "a.pyi":1
+    .expect PYI020 at "a.pyi":1
+    .expect PYI020 at "a.pyi":2
+    .expect PYI020 at "a.pyi":2
+    .expect PYI020 at "a.pyi":3
+.end
+
+// Ruff 0.17.6: F722 at lines 1-4 and no PYI020 there (a bare expression); PYI020 at lines 5, 6 and 7 (parenthesised,
+// a line break inside brackets, and an escaped value that starts with a `\` continuation, as UP037_2.pyi:32). Before:
+// PYI020 at every line.
+.test a_bare_expression_has_no_leading_space_or_line_break exactly
+    .fixture "b.pyi" ```
+        a: " int"
+        b: "\tint"
+        c: " " "int"
+        d: "int |\nstr"
+        e: """ int"""
+        f: "list[\nint]"
+        g: '''\\
+        list[int]'''
+        ```
+    .expect PYI020 at "b.pyi":5
+    .expect PYI020 at "b.pyi":6
+    .expect PYI020 at "b.pyi":7
+.end

@@ -1,0 +1,22 @@
+[
+  {
+    "id": "bandit-b105-hardcoded-password-string",
+    "status": "different",
+    "reason": "bandit/rerail/nosec/B105.py lines 3, 5, 7, 9 carry `# nosec`, `# nosec B105`, `# nosec: B105` and `# nosec hardcoded_password_string`, which Bandit 1.9.4 and the original honour. The translation declares `suppress nosec \"B105\"` as the JSON does, but `rerail-engine run-policies` reports findings without applying suppression comments (its diagnostics carry no suppressed state), so the suite sees them. Every Bandit translation of the pack shows the same 4 keys on its nosec fixture (bandit-b101: 4, bandit-b113: 6). An engine/harness gap, not the rule's logic.",
+    "right": "original",
+    "counts": {
+      "examples": {
+        "originalOnly": 0,
+        "translationOnly": 0
+      },
+      "fixtures": {
+        "originalOnly": 0,
+        "translationOnly": 4
+      },
+      "samples-python": {
+        "originalOnly": 0,
+        "translationOnly": 0
+      }
+    }
+  }
+]

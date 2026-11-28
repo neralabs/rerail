@@ -1,4 +1,4 @@
-.policy "ruff-int001-f-string-in-get-text-func-call" revision 2
+.policy "ruff-int001-f-string-in-get-text-func-call" revision 3
 .description "Pass a constant template to a gettext call and format the translated result; an f-string is evaluated before the catalog lookup."
 .language python
 .mode steer
@@ -13,9 +13,11 @@
 //   gettext_mod.gettext(f"{x}")            ← INT001, after `import gettext as gettext_mod`
 //   _(t"{x}")                              not reported: a t-string
 //   _gettext(f"{x}")                       not reported: not a translation name
-#include "python/misc2-messages.rerail"
+//   x: "_(f'{a}')" = 1                     ← INT001: Ruff checks the code of string type definitions too
+#include "python/raise-and-gettext.rerail"
+//   gettext_arg(c, a); python/misc2-messages: msg_form(a, k)
 
 .violation INT001(at: node) code "INT001"
     "Translate a constant template, then format the result: `_(\"Hello, %s!\") % name`, not `_(f\"Hello, {{name}}!\")`. Leave it if the callee is not a translation function or the text is a computed catalog key."
     suppress ruff "INT001"
-INT001(a) :- msg_gettext(c), msg_arg(c, 0, a), msg_form(a, "fstr").
+INT001(a) :- gettext_arg(_, a), msg_form(a, "fstr").
