@@ -14,6 +14,8 @@
 typedef struct Layer {
     CBlk rows, parts, gone, order;
     uint32_t start, end, below, arity, pcol;
+    // Where its reads are counted (`delta_work`; 0: nowhere): a value, and each step of a kill search, as the twins'.
+    CLIF_BLOCK_SPACE uint32_t* work;
 } Layer;
 
 // Ids `lo..hi`.
@@ -39,11 +41,15 @@ UKL_INLINE Layer layer_of(CBlk t, uint32_t id) {
     l.arity = U32(b, LAYER_SHAPE_AT + SHAPE_ARITY_AT);
     l.pcol = U32(b, LAYER_SHAPE_AT + SHAPE_PARTITION_AT);
     l.order = b + LAYER_SHAPE_AT + SHAPE_ORDER_AT;
+    l.work = delta_work(t);
     return l;
 }
 
 // Own row `id`'s value in column `c`.
-UKL_INLINE int64_t layer_get(Layer l, uint32_t id, uint32_t c) { return rel_get(l.rows, id, c); }
+UKL_INLINE int64_t layer_get(Layer l, uint32_t id, uint32_t c) {
+    delta_touch(l.work, 1u);
+    return rel_get(l.rows, id, c);
+}
 
 // Partition `p`'s entry in the layer's `parts`, or NONE when the layer did not change it.
 UKL_INLINE uint32_t layer_part(Layer l, int64_t p) {
@@ -74,6 +80,7 @@ UKL_INLINE bool layer_kills(Layer l, int64_t p, uint32_t id) {
     uint32_t lo = at, hi = at + n;
     while (lo < hi) {
         uint32_t m = (lo + hi) / 2u;
+        delta_touch(l.work, 1u);
         if ((uint32_t)rel_get(l.gone, m, 1u) < id) lo = m + 1u; else hi = m;
     }
     return lo < at + n && (uint32_t)rel_get(l.gone, lo, 1u) == id;

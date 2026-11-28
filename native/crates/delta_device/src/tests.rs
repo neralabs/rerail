@@ -377,3 +377,100 @@ fn the_boot_run_on_the_device_repeated() {
     }
     eprintln!("{n} boot runs: {:?} each", t.elapsed() / n.max(1) as u32);
 }
+
+/// The tests' device's runner, and a mixed one of seed `seed`: the benches the device's law tests compare with the
+/// CPU's.
+fn benches(seed: u64) -> [(&'static str, rerail_delta_exec::contract::Bench); 2] {
+    use rerail_delta_exec::contract::Bench;
+    [
+        ("the device", Bench::on(Runner::on(Box::new(Gpu::host().expect("the tests' device"))).unwrap_or_else(|e| panic!("{e}")))),
+        ("mixed", Bench::on(Runner::mixed(Box::new(Gpu::host().expect("the tests' device")), seed).unwrap_or_else(|e| panic!("{e}")))),
+    ]
+}
+
+fn laws_dir(name: &str) -> std::path::PathBuf {
+    std::env::temp_dir().join(format!("rerail-laws-dev-{}-{name}", std::process::id()))
+}
+
+/// L6 on the device and a mixed runner: the toys' chain and diamond, and the engine's own pipeline (the tape into L1,
+/// its atoms a global, into `Heads`), each stage its composed function's at every state and cut off where its inputs
+/// are the identity, as on the CPU.
+#[test]
+fn pipelines_on_the_device_or_mixed_are_the_cpus() {
+    use rerail_delta_exec::contract::{Bench, Piped, Stage, Staged, Wire};
+    use rerail_delta_exec::toys::{Back, TOY, Union2, piped};
+    use rerail_delta_exec::dir::Directory;
+    device();
+    fn staged<O: rerail_delta_exec::contract::DeltaOp>(op: &'static O, d: &mut Directory) -> Box<dyn Stage + 'static> {
+        Box::new(Staged::new(op, d).unwrap())
+    }
+    let chain = [vec![Wire::Input(0)], vec![Wire::Stage(0, 0)], vec![Wire::Stage(1, 0)]];
+    let diamond = [vec![Wire::Input(0)], vec![Wire::Stage(0, 0)], vec![Wire::Input(0), Wire::Stage(1, 0)]];
+    let runs = |bench: &mut Bench, name: &str| -> Vec<Piped> {
+        let mut out = Vec::new();
+        for seed in 0..2 {
+            out.push(piped(bench, seed, &|d| vec![staged(&TOY, d), staged(&Back, d), staged(&TOY, d)], &chain).unwrap_or_else(|b| panic!("{name}, the chain: {b:?}")));
+            out.push(piped(bench, seed, &|d| vec![staged(&TOY, d), staged(&Back, d), staged(&Union2, d)], &diamond).unwrap_or_else(|b| panic!("{name}, the diamond: {b:?}")));
+        }
+        out.push(rerail_delta_exec::laws::l1_pipeline(bench, &laws_dir(&format!("{name}-l1-pipeline"))).unwrap_or_else(|e| panic!("{name}, L1's pipeline: {e}")));
+        out
+    };
+    let want = runs(&mut Bench::new().unwrap(), "cpu");
+    for (name, mut bench) in benches(5) {
+        assert_eq!(runs(&mut bench, name), want, "{name}'s pipelines are the CPU's");
+    }
+}
+
+/// P1 by the device's own ledger (the device's runner): the validation mode counts the device kernels' state reads
+/// (`kind::WORK`, the table's last row) beside each phase's items and turns. One edit among 4, 8 and 16 modules, one document let go
+/// among as many, and one partition's edit among as many partitions grow by no more than `work_grows` allows; the toy
+/// that scans its input grows.
+#[test]
+fn the_work_ledger_holds_p1_on_the_device() {
+    use rerail_delta_exec::laws::{edit_among, let_go_among, work_grows};
+    use rerail_delta_exec::toys::{Part, PerPart};
+    device();
+    let sizes = [4usize, 8, 16];
+    let d = |n: usize| (n / sizes[0]).ilog2() as u64;
+    // The device's runner alone: a mixed one sends each launch to the CPU or the device by its seed, and the larger
+    // data's merges move which, so its ledgers compare a twin's reads with a kernel's.
+    {
+        let name = "the device";
+        let fresh = || benches(3).into_iter().next().expect("the device's bench").1;
+        let edits: Vec<_> = sizes.iter().map(|&n| edit_among(&mut fresh(), &laws_dir(&format!("{name}-p1-{n}")), n).unwrap_or_else(|e| panic!("{name}, {n}: {e}"))).collect();
+        let counted: u64 = edits[0].step_ledger.iter().chain(&edits[0].read_ledger).filter(|w| w.phase == "reads").map(|w| w.reads).sum();
+        assert!(counted > 0, "{name}: the device's kernels counted their reads: {:?}", edits[0].step_ledger);
+        for (e, &n) in edits.iter().zip(&sizes) {
+            for (side, base, at) in [("read", &edits[0].read_ledger, &e.read_ledger), ("step", &edits[0].step_ledger, &e.step_ledger)] {
+                let grew = work_grows(base, at, d(n));
+                assert!(grew.is_empty(), "{name}: the edit's {side} beside {n} grew:\n{}", grew.join("\n"));
+            }
+        }
+        let gone: Vec<_> = sizes.iter().map(|&n| let_go_among(&mut fresh(), &laws_dir(&format!("{name}-d5-{n}")), n).unwrap_or_else(|e| panic!("{name}, {n}: {e}"))).collect();
+        for (g, &n) in gone.iter().zip(&sizes) {
+            let grew = work_grows(&gone[0], g, d(n));
+            assert!(grew.is_empty(), "{name}: one document let go beside {n} grew:\n{}", grew.join("\n"));
+        }
+        let row = |_: usize, q: i64, i: u64| vec![q, i as i64];
+        for (flaw, grows) in [(Part::None, false), (Part::Scan, true)] {
+            let w: Vec<_> = sizes.iter().map(|&n| rerail_delta_exec::contract::partition_work_on(&mut fresh(), &PerPart(flaw), n as i64, 4, &row).unwrap_or_else(|e| panic!("{name}: {e}"))).collect();
+            let grew: Vec<String> = w.iter().zip(&sizes).flat_map(|(x, &n)| work_grows(&w[0], x, d(n))).collect();
+            assert_eq!(!grew.is_empty(), grows, "{name}, {flaw:?}: {grew:?}");
+        }
+    }
+}
+
+/// L9 as it runs, on the device and a mixed runner: the validation mode refuses a per-partition step that changed a
+/// partition its inputs' change does not name, reading what the device's kernels committed.
+#[test]
+fn l9_as_it_runs_on_the_device_or_mixed() {
+    use rerail_delta_exec::toys::l9_as_it_runs;
+    device();
+    for (name, mut bench) in benches(2) {
+        l9_as_it_runs(&mut bench, false).unwrap_or_else(|e| panic!("{name}: {e}"));
+    }
+    for (name, mut bench) in benches(2) {
+        let e = l9_as_it_runs(&mut bench, true).unwrap_err();
+        assert!(e.contains("L9") && e.contains("[99]"), "{name}: {e}");
+    }
+}

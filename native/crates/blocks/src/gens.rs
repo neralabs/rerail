@@ -86,7 +86,7 @@ pub fn write_table(bytes: &mut [u8], rows: &[Desc]) {
 /// length that buffer covers. With the buffers, which a launch names as used through addresses (`uses_read`).
 #[cfg(any(target_os = "macos", target_os = "linux", windows))]
 pub fn device_rows(rows: &[Desc], pins: &[&BlockPin], device: &rerail_device::device::Device) -> Result<(Vec<Desc>, Vec<rerail_device::device::Buffer>), String> {
-    let mut out = Vec::with_capacity(rows.len());
+    let mut out = Vec::with_capacity(rows.len() + 1);
     let mut buffers = Vec::with_capacity(rows.len());
     for d in rows {
         let pin = pins.iter().find(|p| p.addr() as u64 == d.addr).ok_or_else(|| format!("descriptor table row #{} names memory the launch did not pin", d.id))?;
@@ -97,7 +97,19 @@ pub fn device_rows(rows: &[Desc], pins: &[&BlockPin], device: &rerail_device::de
         out.push(Desc { addr, len, ..*d });
         buffers.push(buffer);
     }
+    with_work_row(&mut out);
     Ok((out, buffers))
+}
+
+/// A device table's row of id `WORK_ROW`: the launch's `kind::WORK` block, when it pins one (the validation mode),
+/// again under the largest id, so it is the table's last row and a kernel finds it by one load (`<ukl/delta/op.h>`'s
+/// `delta_work`). Its own row stays where its id puts it.
+pub const WORK_ROW: u32 = u32::MAX;
+
+fn with_work_row(rows: &mut Vec<Desc>) {
+    if let Some(w) = rows.iter().find(|d| d.kind == crate::block::kind::WORK).copied() {
+        rows.push(Desc { id: WORK_ROW, ..w });
+    }
 }
 
 /// A launch's table rows in memory domain `domain` (a discrete GPU's, 1 and up: decision 0440 §7.2): each block's
@@ -114,7 +126,11 @@ pub fn device_rows_in(rows: &[Desc], pins: &[&BlockPin], domain: u32) -> Result<
             let addr = pin.copy_address(domain).ok_or_else(|| format!("block #{}: its replica in domain {domain} has no address", d.id))?;
             Ok(Desc { addr, ..*d })
         })
-        .collect()
+        .collect::<Result<Vec<Desc>, String>>()
+        .map(|mut rows| {
+            with_work_row(&mut rows);
+            rows
+        })
 }
 
 /// A launch's descriptor table on a device (E2: a kernel follows a reference through its own device's table): the same
@@ -211,6 +227,8 @@ pub fn device_table_in<'l>(table: &Table<'l>, pins: &[&'l BlockPin], domain: u32
 pub const DESC_READS: &str = r#"
 #include <ukl/clif.h>
 typedef struct DescRow { uint32_t id; uint32_t kind; uint64_t version; CLIF_BLOCK_SPACE const uint8_t* addr; uint64_t len; } DescRow;
+// The id of the row naming a launch's count of its state reads (`gens::WORK_ROW`): the last row, when there is one.
+#define DESC_WORK_ROW 0xFFFFFFFFu
 UKL_STATIC_ASSERT(sizeof(DescRow) == 32, "DescRow: gens::Desc's size");
 // Block `id`'s row in the table at `t` (its row count, then its rows), or none (0) when the launch cannot reach it.
 UKL_INLINE CLIF_BLOCK_SPACE const DescRow* desc_row(CLIF_BLOCK_SPACE const uint8_t* t, uint32_t id) {

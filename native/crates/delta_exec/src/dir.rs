@@ -143,6 +143,9 @@ struct Work {
     on: Cell<bool>,
     reads: std::sync::atomic::AtomicU64,
     ledger: RefCell<Vec<PhaseWork>>,
+    /// The word a device launch's kernels count their state reads into (`kind::WORK`): made when the mode is first
+    /// turned on.
+    word: Option<BlockId>,
 }
 
 impl Directory {
@@ -231,10 +234,33 @@ impl Directory {
         self.ledger.launches.get()
     }
 
-    /// Turns the validation mode on or off: while on, every operation's launch on the CPU counts its items and its
-    /// state reads into the work ledger (`take_work`), phase by phase.
-    pub fn validate(&self, on: bool) {
+    /// Turns the validation mode on or off: while on, every operation's launch counts its items and its state reads
+    /// into the work ledger (`take_work`): a twin's phase by phase, a device's kernels into one word a launch
+    /// (`work_word`).
+    pub fn validate(&mut self, on: bool) {
+        if on && self.work.word.is_none() {
+            self.work.word = Some(self.make(kind::WORK, 8));
+        }
         self.work.on.set(on);
+    }
+
+    /// The validation mode's word for a device launch's state reads, set to 0 (none when the mode is off).
+    pub(crate) fn work_word(&self) -> Result<Option<BlockId>, String> {
+        let Some(id) = self.work.word.filter(|_| self.validating()) else { return Ok(None) };
+        let mut l = self.launch("the validation mode's count", &[(id, true)])?;
+        let w = l.parts().0[0].bytes_mut().ok_or("a write pin")?;
+        // Written before its kernels add to it.
+        w[BODY_AT..BODY_AT + 4].copy_from_slice(&0u32.to_le_bytes());
+        Ok(Some(id))
+    }
+
+    /// The state reads a device launch's kernels counted into the validation mode's word.
+    pub(crate) fn work_word_reads(&self, id: BlockId) -> Result<u64, String> {
+        if let Some(b) = self.block(id) {
+            rerail_blocks::region::whole(&b).region().sync_host();
+        }
+        let l = self.read("the validation mode's count", &[id])?;
+        Ok(u64::from(u32::from_le_bytes(l.block(0)[BODY_AT..BODY_AT + 4].try_into().expect("4 bytes"))))
     }
 
     /// Whether the validation mode is on.

@@ -438,3 +438,15 @@ pub fn let_go_among(bench: &mut Bench, base: &Path, others: usize) -> Result<Vec
     }
     Ok(ledger)
 }
+
+/// L6 on the engine's own operator, a global among its inputs: the document set's tape into L1 (the atoms its
+/// global), into `toys::Heads` (each module's rules' heads), over l0's chain of edits (`boot::l0_edit_chain`). At every
+/// state each stage is its composed function's output, and a stage whose inputs and globals are the identity cuts off
+/// (`contract::pipeline_laws`). What the run saw.
+pub fn l1_pipeline(bench: &mut Bench, base: &Path) -> Result<crate::contract::Piped, String> {
+    use crate::contract::{Stage, Staged, Wire, pipeline_laws};
+    let (docs, _, heads, globals) = crate::boot::l0_edit_chain(bench, base, false)?;
+    let mut stages: Vec<Box<dyn Stage>> = vec![Box::new(Staged::new(&L1, &mut bench.dir)?), Box::new(Staged::new(&crate::toys::Heads, &mut bench.dir)?)];
+    let wires = [vec![Wire::Input(0)], vec![Wire::Stage(0, 0)]];
+    pipeline_laws(bench, std::slice::from_ref(&docs.tape), &heads, &globals, &mut stages, &wires, &[vec![0], Vec::new()]).map_err(|b| format!("{b:?}"))
+}

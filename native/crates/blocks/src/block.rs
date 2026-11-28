@@ -40,6 +40,9 @@ pub mod kind {
     pub const CACHE: u32 = 11;
     /// A document's tape, as the rr parser wrote it (decision 0686, B4): a blob, read where it lies.
     pub const TAPE: u32 = 12;
+    /// A device launch's count of its state reads, in the executor's validation mode (0686): a word its kernels add
+    /// to, found by the table's last row (`gens::WORK_ROW`).
+    pub const WORK: u32 = 13;
 }
 
 structure! {

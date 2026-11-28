@@ -906,8 +906,9 @@ pub trait OnDevice {
     /// are its `rooms` meter's `capacity` (how far each block's allocations may reach) and their fronts `fronts`, which
     /// its claims move; an item that found one too small wrote nothing past it and recorded what it needs, into
     /// `needs`, and no phase of its instance after it did work (0686 D6: the executor grows the blocks and runs that
-    /// instance again). The turns each phase ran, the most of any instance's.
-    fn program(&mut self, source: &'static str, entry: &str, phases: &[DevicePhase], rooms: &mut [Meter]) -> Result<Vec<u32>, String>;
+    /// instance again). The turns each phase ran, the most of any instance's; and each phase's items, every
+    /// instance's (its last turn's, for a phase that runs again).
+    fn program(&mut self, source: &'static str, entry: &str, phases: &[DevicePhase], rooms: &mut [Meter]) -> Result<(Vec<u32>, Vec<u64>), String>;
 }
 
 /// A phase as a device queues it (`OnDevice::program`).
@@ -1024,7 +1025,13 @@ fn execute(sig: &Signature, v: &Version, dir: &Directory, wide: &Wide<'_>, tilin
     let mut reran = 0;
     loop {
         let run: Vec<(&[BlockId], &[u8])> = pending.iter().map(|&j| wide[j]).collect(); // copy: not block data (the instances left)
-        let modes: Vec<(BlockId, bool)> = run.iter().flat_map(|(slots, _)| slots.iter().zip(sig.slots).map(|(&id, s)| (id, s.mode.writes()))).collect(); // copy: not block data (the slots' modes)
+        let mut modes: Vec<(BlockId, bool)> = run.iter().flat_map(|(slots, _)| slots.iter().zip(sig.slots).map(|(&id, s)| (id, s.mode.writes()))).collect(); // copy: not block data (the slots' modes)
+        // The validation mode, on a device: a word its kernels count their state reads into (`kind::WORK`, the
+        // table's last row there), pinned past the slots.
+        let work = if matches!(v.imp, Impl::Ukl { .. }) { dir.work_word()? } else { None };
+        if let Some(w) = work {
+            modes.push((w, true));
+        }
         let launch = dir.launch(sig.name, &modes)?;
         let drove: Vec<Drove> = match v.imp {
             Impl::Twin(twin) | Impl::Host(twin) => {
@@ -1047,7 +1054,15 @@ fn execute(sig: &Signature, v: &Version, dir: &Directory, wide: &Wide<'_>, tilin
                 out
             }
             // Bound to the device and handed to its fence, the launch is the device's: it ends with the work.
-            Impl::Ukl { source, entry } => on_device(sig, v, dir, &run, device, launch, source, entry)?,
+            Impl::Ukl { source, entry } => {
+                let drove = on_device(sig, v, dir, &run, device, launch, source, entry);
+                // The launch's state reads, every phase's (a kernel counts into one word), in the ledger beside its
+                // phases' items and turns.
+                if let Some(w) = work {
+                    dir.account(sig.name, "reads", true, 0, dir.work_word_reads(w)?);
+                }
+                drove?
+            }
             Impl::Compiled(_) => return Err(format!("{}: {} is compiled ahead, which is not built", sig.name, v.name)),
         };
         let mut next = Vec::new();
@@ -1140,10 +1155,15 @@ fn on_device(sig: &Signature, v: &Version, dir: &Directory, wide: &Wide<'_>, dev
 /// the launch again: a phase that bounds its capacity by growing or by running again; else refused).
 fn program(sig: &Signature, v: &Version, dir: &Directory, bound: &mut dyn OnDevice, source: &'static str, entry: &'static str, rooms: &mut [Meter]) -> Result<Vec<Drove>, String> {
     let phases: Vec<DevicePhase> = v.shape.iter().map(DevicePhase::of).collect(); // copy: not block data (the phases' launch settings)
-    let turns = bound.program(source, entry, &phases, rooms)?;
-    for (p, &n) in v.shape.iter().zip(&turns) {
-        for _ in 0..n.max(1) {
+    let (turns, items) = bound.program(source, entry, &phases, rooms)?;
+    for ((p, &n), &m) in v.shape.iter().zip(&turns).zip(&items) {
+        for t in 0..n.max(1) {
             dir.charge(sig.name, p.name)?;
+            // The validation mode: each turn of each phase, its items on the first (the device counts the reads of
+            // the launch whole: `execute`'s `reads`).
+            if dir.validating() {
+                dir.account(sig.name, p.name, t == 0, if t == 0 { m } else { 0 }, 0);
+            }
         }
     }
     let regrow = v.shape.iter().any(|p| matches!(p.capacity(), Some(Over::Grow | Over::Rerun)));

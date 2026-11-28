@@ -726,14 +726,12 @@ pub fn chain_edits() -> [String; 3] {
     [added, changed, removed]
 }
 
-/// The harness's laws (L1 to L5, and D1 under `wants`) for L1 over a chain of edits of l0 on disk, on `bench`: the file
-/// layer reads each version into the document set (an unchanged one twice, the identity), and `contract::harness_on`
-/// threads the set's states through L1, its cache dropped at a step each seed of `seeds` picks. Under `wants`, the want
-/// cycles through all of l0's relations, two of them and none.
+/// l0's chain of edits on disk, read into a document set of its own under `base`: each version (an unchanged one read
+/// again, the identity) through the file layer. The set (its tape the chain's input), the atoms, and at each state
+/// (the first ∅) the tape's head and the atoms' count.
 #[cfg(any(test, feature = "test-hooks"))]
-pub fn harness_over_edits(bench: &mut Bench, base: &std::path::Path, wants: bool, seeds: std::ops::RangeInclusive<u64>) -> Result<(), String> {
-    use std::collections::BTreeSet;
-    const PATH: &str = "bootstrap-l0.rerail";
+#[allow(clippy::type_complexity)]
+pub fn l0_edit_chain(bench: &mut Bench, base: &std::path::Path, wants: bool) -> Result<(DocSet, Atoms, Vec<Vec<Option<BlockId>>>, Vec<Vec<Global>>), String> {
     let root = base.join("root");
     std::fs::create_dir_all(&root).map_err(|e| e.to_string())?;
     let store = crate::files::Store::open(&base.join("store"))?;
@@ -752,12 +750,12 @@ pub fn harness_over_edits(bench: &mut Bench, base: &std::path::Path, wants: bool
     let (mut heads, mut globals) = (vec![vec![None]], vec![vec![count(&bench.dir)]]); // copy: not block data (the chain's states)
     for (k, e) in chain.into_iter().enumerate() {
         if let Some(text) = e {
-            std::fs::write(root.join(PATH), text).map_err(|e| e.to_string())?;
-            let f = std::fs::File::options().write(true).open(root.join(PATH)).map_err(|e| e.to_string())?;
+            std::fs::write(root.join(L0_PATH), text).map_err(|e| e.to_string())?;
+            let f = std::fs::File::options().write(true).open(root.join(L0_PATH)).map_err(|e| e.to_string())?;
             f.set_modified(std::time::SystemTime::now() - std::time::Duration::from_secs(600 - 10 * k as u64)).map_err(|e| e.to_string())?;
         }
         let mut leaves = docs.world.leaves_w(&mut bench.dir);
-        docs.read(bench, &mut leaves, atoms, PATH, "bootstrap-l0")?;
+        docs.read(bench, &mut leaves, atoms, L0_PATH, "bootstrap-l0")?;
         docs.world.commit_leaves(&bench.ops, &mut bench.dir, leaves)?;
         heads.push(vec![docs.tape.head()]);
         globals.push(vec![count(&bench.dir)]);
@@ -765,8 +763,23 @@ pub fn harness_over_edits(bench: &mut Bench, base: &std::path::Path, wants: bool
     if heads[1] != heads[2] {
         return Err("an unchanged file is the identity: the set's head moved".into());
     }
+    Ok((docs, atoms, heads, globals))
+}
+
+/// l0's path in the edit chains' roots.
+#[cfg(any(test, feature = "test-hooks"))]
+const L0_PATH: &str = "bootstrap-l0.rerail";
+
+/// The harness's laws (L1 to L5, and D1 under `wants`) for L1 over a chain of edits of l0 on disk, on `bench`: the file
+/// layer reads each version into the document set (an unchanged one twice, the identity), and `contract::harness_on`
+/// threads the set's states through L1, its cache dropped at a step each seed of `seeds` picks. Under `wants`, the want
+/// cycles through all of l0's relations, two of them and none.
+#[cfg(any(test, feature = "test-hooks"))]
+pub fn harness_over_edits(bench: &mut Bench, base: &std::path::Path, wants: bool, seeds: std::ops::RangeInclusive<u64>) -> Result<(), String> {
+    use std::collections::BTreeSet;
+    let (mut docs, atoms, heads, globals) = l0_edit_chain(bench, base, wants)?;
     let wanted = if wants {
-        let d = docs.key(&bench.dir, atoms, PATH)?;
+        let d = docs.key(&bench.dir, atoms, L0_PATH)?;
         let all: BTreeSet<(usize, i64)> = (0..RELATIONS.len()).map(|k| (k, d)).collect();
         let cycle = [all.clone(), BTreeSet::from([(1, d), (3, d)]), BTreeSet::new(), BTreeSet::new(), all];
         Some((0..heads.len()).map(|k| cycle[k % cycle.len()].clone()).collect::<Vec<_>>())

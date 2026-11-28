@@ -184,6 +184,19 @@ UKL_INLINE uint32_t delta_instance(UKL_GLOBAL uint32_t* meter, PhaseP ph, uint32
 
 // Block `id`'s bytes, and slot `k`'s.
 UKL_INLINE Blk blk(CLIF_BLOCK_SPACE const uint8_t* t, uint32_t id) { return (Blk)desc_row(t, id)->addr; }
+
+// The executor's validation mode: the word a launch's kernels count their state reads into (its `kind::WORK` block's
+// body, named by the table's last row, `DESC_WORK_ROW`), or none (0) when the launch is not validated: one load.
+UKL_INLINE CLIF_BLOCK_SPACE uint32_t* delta_work(CLIF_BLOCK_SPACE const uint8_t* t) {
+    uint64_t n = *(CLIF_BLOCK_SPACE const uint64_t*)t;
+    CLIF_BLOCK_SPACE const DescRow* last = (CLIF_BLOCK_SPACE const DescRow*)(t + 8) + (n - 1u);
+    return n != 0u && last->id == DESC_WORK_ROW ? (CLIF_BLOCK_SPACE uint32_t*)(last->addr + BODY_AT) : 0;
+}
+
+// `n` state reads counted, where the launch counts them (the twins' `State::touch`).
+UKL_INLINE void delta_touch(CLIF_BLOCK_SPACE uint32_t* work, uint32_t n) {
+    if (work != 0) ukl_atomic_add((UKL_GLOBAL uint32_t*)work, n);
+}
 #define SLOT(k) blk(t, slots[k])
 
 // The params, as their struct.

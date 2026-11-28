@@ -479,3 +479,12 @@ fn letting_one_document_go_does_not_grow_with_the_documents_kept() {
         assert!(grew.is_empty(), "letting one document go beside {n} kept grew with them:\n{}", grew.join("\n"));
     }
 }
+
+/// L6 on the engine's own operator: the tape into L1 (its atoms a global) into a stage after it (`toys::Heads`), over
+/// l0's edits, each stage its composed function's at every state; both cut off at the unchanged reads.
+#[test]
+fn l1_in_a_pipeline_with_its_global_is_its_composed_function_and_cuts_off() {
+    let p = crate::laws::l1_pipeline(&mut Bench::new().unwrap(), &laws_base("l6-l1-pipeline")).unwrap_or_else(|e| panic!("{e}"));
+    // 8 states (∅, then 7 reads); the two unchanged reads cut both stages off.
+    assert_eq!((p.steps, p.cutoffs), (8, 4), "{p:?}");
+}

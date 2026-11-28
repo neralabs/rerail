@@ -45,6 +45,8 @@ pub mod k0;
 pub mod l1;
 #[cfg(any(test, feature = "test-hooks"))]
 pub mod laws;
+#[cfg(any(test, feature = "test-hooks"))]
+pub mod toys;
 pub mod kform;
 pub mod op;
 pub mod residency;

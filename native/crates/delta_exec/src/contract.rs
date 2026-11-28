@@ -941,14 +941,19 @@ pub fn harness_under<O: DeltaOp>(op: &O, chain: &Chain, drop_at: usize, wants: O
 /// `rows` added) stepped in the validation mode: that step's ledger, the operator's own reads (`host`) among it.
 /// Compared across `parts` (`laws::work_grows`), an edit's work does not grow with the partitions it leaves alone.
 pub fn partition_work<O: DeltaOp>(op: &O, parts: i64, rows: u64, row: &dyn Fn(usize, i64, u64) -> Vec<i64>) -> Result<Vec<crate::dir::PhaseWork>, String> {
+    partition_work_on(&mut Bench::new()?, op, parts, rows, row)
+}
+
+#[cfg(any(test, feature = "test-hooks"))]
+/// `partition_work` on `bench` (a device's runner, a mixed one).
+pub fn partition_work_on<O: DeltaOp>(bench: &mut Bench, op: &O, parts: i64, rows: u64, row: &dyn Fn(usize, i64, u64) -> Vec<i64>) -> Result<Vec<crate::dir::PhaseWork>, String> {
     if !<O::Ports as PortSet>::PER_PARTITION {
         return Err("L7's work is of an operator declared per partition".into());
     }
     let shapes: Vec<Shape> = ports_of::<O>()?.ins.into_iter().map(|p| p.shape).collect();
     let cold: Vec<Vec<(Vec<i64>, i32)>> = (0..shapes.len()).map(|p| (0..parts).flat_map(|q| (0..rows).map(move |i| (row(p, q, i), 1))).collect()).collect();
     let edit: Vec<Vec<(Vec<i64>, i32)>> = (0..shapes.len()).map(|p| vec![(row(p, 0, 0), -1), (row(p, 0, rows), 1)]).collect();
-    let mut bench = Bench::new()?;
-    let (ins, heads) = inputs_of(&mut bench, &shapes, &vec![cold, edit])?;
+    let (ins, heads) = inputs_of(bench, &shapes, &vec![cold, edit])?;
     let mut inst = Instance::new(op, &mut bench.dir)?;
     let between = |a: usize, b: usize| -> Vec<InPort<'_>> { ins.iter().enumerate().map(|(p, t)| (t, heads[a][p], heads[b][p])).collect() };
     inst.step(op, &mut bench.cx(), &between(0, 1), &[], None)?;
@@ -970,15 +975,15 @@ pub enum Wire {
 
 #[cfg(any(test, feature = "test-hooks"))]
 /// A pipeline's stage: an operator and its instance, its port set's type erased, so stages of any operators wire into
-/// one pipeline (`pipeline_laws`). A stage takes no globals.
+/// one pipeline (`pipeline_laws`), its globals the pipeline's.
 pub trait Stage {
     fn ports(&self) -> Result<Ports, String>;
-    /// The instance's step over its input ports.
-    fn step(&mut self, cx: &mut Cx<'_>, ins: &[InPort<'_>]) -> Result<Work, String>;
+    /// The instance's step over its input ports and its globals.
+    fn step(&mut self, cx: &mut Cx<'_>, ins: &[InPort<'_>], globals: &[GlobalIn]) -> Result<Work, String>;
     fn instance(&self) -> &Instance;
     fn instance_mut(&mut self) -> &mut Instance;
-    /// The plain function on its inputs' states.
-    fn apply(&self, cx: &mut Cx<'_>, ins: &[(&Trace, Option<BlockId>)]) -> Result<Vec<BTreeSet<Vec<i64>>>, String>;
+    /// The plain function on its inputs' states and its globals'.
+    fn apply(&self, cx: &mut Cx<'_>, ins: &[(&Trace, Option<BlockId>)], globals: &[Global]) -> Result<Vec<BTreeSet<Vec<i64>>>, String>;
 }
 
 #[cfg(any(test, feature = "test-hooks"))]
@@ -1001,8 +1006,8 @@ impl<O: DeltaOp> Stage for Staged<'_, O> {
         ports_of::<O>()
     }
 
-    fn step(&mut self, cx: &mut Cx<'_>, ins: &[InPort<'_>]) -> Result<Work, String> {
-        self.inst.step(self.op, cx, ins, &[], None)
+    fn step(&mut self, cx: &mut Cx<'_>, ins: &[InPort<'_>], globals: &[GlobalIn]) -> Result<Work, String> {
+        self.inst.step(self.op, cx, ins, globals, None)
     }
 
     fn instance(&self) -> &Instance {
@@ -1013,8 +1018,8 @@ impl<O: DeltaOp> Stage for Staged<'_, O> {
         &mut self.inst
     }
 
-    fn apply(&self, cx: &mut Cx<'_>, ins: &[(&Trace, Option<BlockId>)]) -> Result<Vec<BTreeSet<Vec<i64>>>, String> {
-        apply(self.op, cx, ins, &[])
+    fn apply(&self, cx: &mut Cx<'_>, ins: &[(&Trace, Option<BlockId>)], globals: &[Global]) -> Result<Vec<BTreeSet<Vec<i64>>>, String> {
+        apply(self.op, cx, ins, globals)
     }
 }
 
@@ -1029,13 +1034,23 @@ pub struct Piped {
 
 #[cfg(any(test, feature = "test-hooks"))]
 /// L6 over any wiring of operators: `stages`, in an order where each reads only the pipeline's inputs `ins` and
-/// earlier stages (its ports wired by `wires`), stepped state by state of `heads` (the first state ∅), each stage's
-/// step over its sources' change. At every state each stage's output is the composed function's: its plain function
-/// on its sources' composed outputs, the pipeline run cold from the inputs. A stage whose every input is the identity
-/// cuts off (L4 of the next): checks only, no launch, its output where it was. The first breach is returned.
-pub fn pipeline_laws(bench: &mut Bench, ins: &[Trace], heads: &[Vec<Option<BlockId>>], stages: &mut [Box<dyn Stage + '_>], wires: &[Vec<Wire>]) -> Result<Piped, Broken> {
+/// earlier stages (its ports wired by `wires`) and the pipeline's globals `gwires` names (at each state, `globals`'),
+/// stepped state by state of `heads` (the first state ∅), each stage's step over its sources' change. At every state
+/// each stage's output is the composed function's: its plain function on its sources' composed outputs, the pipeline
+/// run cold from the inputs. A stage whose every input and global is the identity cuts off (L4 of the next): checks
+/// only, no launch, its output where it was. The first breach is returned.
+#[allow(clippy::too_many_arguments)]
+pub fn pipeline_laws(bench: &mut Bench, ins: &[Trace], heads: &[Vec<Option<BlockId>>], globals: &[Vec<Global>], stages: &mut [Box<dyn Stage + '_>], wires: &[Vec<Wire>], gwires: &[Vec<usize>]) -> Result<Piped, Broken> {
     let fail = |law, step, what: String| Broken { law, step, what };
     let ports: Vec<Ports> = stages.iter().map(|s| s.ports()).collect::<Result<_, _>>().map_err(|e| fail("setup", 0, e))?;
+    if gwires.len() != stages.len() || globals.len() != heads.len() {
+        return Err(fail("setup", 0, "a global wiring a stage, and the globals at each state".into()));
+    }
+    for (s, g) in gwires.iter().enumerate() {
+        if g.len() != ports[s].globals.len() || g.iter().any(|&i| globals.iter().any(|at| i >= at.len())) {
+            return Err(fail("setup", 0, format!("stage {s}'s globals {g:?} are not its ports' or the pipeline's")));
+        }
+    }
     for (s, w) in wires.iter().enumerate() {
         let wrong = w.len() != ports[s].ins.len()
             || w.iter().any(|w| match *w {
@@ -1067,7 +1082,8 @@ pub fn pipeline_laws(bench: &mut Bench, ins: &[Trace], heads: &[Vec<Option<Block
                         Wire::Stage(t, o) => (&built[t].0[o], built[t].1[o]),
                     })
                     .collect();
-                st.apply(&mut cx, &srcs).map_err(|e| fail("reference", k, e))?
+                let gs: Vec<Global> = gwires[s].iter().map(|&i| globals[k][i]).collect();
+                st.apply(&mut cx, &srcs, &gs).map_err(|e| fail("reference", k, e))?
             };
             let mut traces = Vec::new();
             let mut at = Vec::new();
@@ -1094,9 +1110,10 @@ pub fn pipeline_laws(bench: &mut Bench, ins: &[Trace], heads: &[Vec<Option<Block
                     Wire::Stage(t, o) => (&done[t].instance().outs[o], befores[t][o], done[t].instance().heads()[o]),
                 })
                 .collect();
-            let identity = k > 0 && src.iter().all(|p| p.1 == p.2);
+            let gs: Vec<GlobalIn> = gwires[s].iter().map(|&i| GlobalIn { block: globals[k][i].block, before: (k > 0).then(|| globals[k - 1][i].count), after: globals[k][i].count }).collect();
+            let identity = k > 0 && src.iter().all(|p| p.1 == p.2) && gs.iter().all(GlobalIn::is_identity);
             let launched = cx.ops.launches();
-            let work = st.step(&mut cx, &src).map_err(|e| fail("L6", k, format!("stage {s}: {e}")))?;
+            let work = st.step(&mut cx, &src, &gs).map_err(|e| fail("L6", k, format!("stage {s}: {e}")))?;
             if identity {
                 seen.cutoffs += 1;
                 if !work.is_checks_only() || cx.ops.launches() != launched {

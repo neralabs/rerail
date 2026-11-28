@@ -180,7 +180,7 @@ struct GpuBound {
 }
 
 impl OnDevice for GpuBound {
-    fn program(&mut self, source: &'static str, entry: &str, phases: &[DevicePhase], rooms: &mut [Meter]) -> Result<Vec<u32>, String> {
+    fn program(&mut self, source: &'static str, entry: &str, phases: &[DevicePhase], rooms: &mut [Meter]) -> Result<(Vec<u32>, Vec<u64>), String> {
         if phases.len() > PHASES {
             return Err(format!("{entry}: {} phases, past the device's {PHASES}", phases.len()));
         }
@@ -266,6 +266,8 @@ impl OnDevice for GpuBound {
         // Each phase's turns run, the most of any instance's (its count kernel's); a round phase still going after its
         // bound ran past it.
         let mut turns = vec![0u32; phases.len()]; // copy: not block data (the turns each phase ran)
+        // Each phase's items, every instance's (its count word, its last turn's): the validation mode's ledger.
+        let mut items = vec![0u64; phases.len()]; // copy: not block data (the items each phase ran)
         for (j, meter) in rooms.iter_mut().enumerate() {
             let at = j * STATE_WORDS;
             for (k, n) in meter.needs.iter_mut().enumerate() {
@@ -283,9 +285,10 @@ impl OnDevice for GpuBound {
                     return Err(format!("{entry}: phase {} ran past its bound of {} turns", ph.name, ph.turns));
                 }
                 turns[k] = turns[k].max(word(at + CTL_AT + TURNS_AT + k));
+                items[k] += u64::from(word(at + CTL_AT + k));
             }
         }
-        Ok(turns)
+        Ok((turns, items))
     }
 }
 
