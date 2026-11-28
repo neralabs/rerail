@@ -34,7 +34,8 @@ use crate::dir::{BlockId, Directory, Launch};
 use rerail_blocks::ledger::Fence;
 use std::sync::Arc;
 use rerail_blocks::gens::Table;
-use rerail_delta_twins::{Ctx, Field, Meter, Params, Slot, Tile, Twin};
+use rerail_delta_twins::{Ctx, Field, Params, Slot, Tile, Twin};
+pub use rerail_delta_twins::Meter;
 
 /// The most slots an operation binds: the twins' one definition (`rerail_delta_twins::MAX_SLOTS`).
 pub use rerail_delta_twins::MAX_SLOTS;
@@ -573,11 +574,11 @@ impl Registry {
     }
 
     /// A UKL version's shape: it declares no twin's phases, so its own shape is what it runs by, its bounds fitting its
-    /// axes. A bound an item reports (steps, a stack's depth, a sample, a slot's room) is metered for twins only: a
-    /// kernel's report of it is not built, so a UKL version declaring one is refused.
+    /// axes. A kernel reports a slot's room (`OnDevice::run`); a bound on steps, a stack's depth or a sample is metered
+    /// for twins only (a kernel's report of it is not built), so a UKL version declaring one is refused.
     fn fits_shape(sig: &Signature, v: &Version) -> Result<(), String> {
         Self::fits_bounds(sig, v.shape)?;
-        if let Some(p) = v.shape.iter().find(|p| p.bounds.iter().any(|b| !matches!(b, Bound::Turns(_)))) {
+        if let Some(p) = v.shape.iter().find(|p| p.bounds.iter().any(|b| !matches!(b, Bound::Turns(_) | Bound::Capacity(_)))) {
             return Err(format!("{}: {}: phase {} has a bound its items report, metered for twins only", sig.name, v.name, p.name));
         }
         Ok(())
@@ -801,8 +802,11 @@ pub trait Kernels {
 /// A launch bound on a device (`Kernels::bind`).
 pub trait OnDevice {
     /// Runs kernel `name` of `source` on items `lo..hi`, a thread an item (item `lo + i` for thread `i`), and waits
-    /// for it: the word it wrote to its result (an item count, or whether its phase runs again; 0 otherwise).
-    fn run(&mut self, source: &'static str, name: &str, lo: u32, hi: u32) -> Result<u64, String>;
+    /// for it: the word it wrote to its result (an item count, or whether its phase runs again; 0 otherwise). Its
+    /// slots' capacities are `room.capacity` (how far each block's allocations may reach); an item that found one too
+    /// small wrote nothing past it and recorded what it needs, into `room.needs` (0686 D6: the executor grows the
+    /// block and runs it again).
+    fn run(&mut self, source: &'static str, name: &str, lo: u32, hi: u32, room: &mut Meter) -> Result<u64, String>;
 }
 
 /// What runs a version's phases: its twin's calls, or a device's kernels.
@@ -856,16 +860,24 @@ struct UklRuns<'b> {
     source: &'static str,
     entry: &'static str,
     shape: &'static [Phase],
+    /// Its slots' capacities, and the room its kernels found they need: a capacity bound's only report.
+    room: Meter,
+}
+
+impl UklRuns<'_> {
+    fn kernel(&mut self, p: usize, suffix: &str, lo: u32, hi: u32) -> Result<u64, String> {
+        self.bound.run(self.source, &format!("{}_{}{suffix}", self.entry, self.shape[p].name), lo, hi, &mut self.room)
+    }
 }
 
 impl Runs for UklRuns<'_> {
     fn items(&mut self, p: usize) -> Result<u32, String> {
-        let n = self.bound.run(self.source, &format!("{}_{}_items", self.entry, self.shape[p].name), 0, 1)?;
+        let n = self.kernel(p, "_items", 0, 1)?;
         u32::try_from(n).map_err(|_| format!("phase {}: {n} items", self.shape[p].name))
     }
     fn run(&mut self, p: usize, t: Tile) -> Result<(), String> {
         if t.lo < t.hi {
-            self.bound.run(self.source, &format!("{}_{}", self.entry, self.shape[p].name), t.lo, t.hi)?;
+            self.kernel(p, "", t.lo, t.hi)?;
         }
         Ok(())
     }
@@ -873,10 +885,10 @@ impl Runs for UklRuns<'_> {
         if !matches!(self.shape[p].across, Across::Rounds) {
             return Ok(false);
         }
-        Ok(self.bound.run(self.source, &format!("{}_{}_again", self.entry, self.shape[p].name), 0, 1)? != 0)
+        Ok(self.kernel(p, "_again", 0, 1)? != 0)
     }
     fn meter(&mut self) -> Option<&mut Meter> {
-        None
+        Some(&mut self.room)
     }
 }
 
@@ -917,18 +929,23 @@ fn execute(sig: &Signature, v: &Version, dir: &Directory, slots: &[BlockId], par
     let modes: Vec<(BlockId, bool)> = slots.iter().zip(sig.slots).map(|(&id, s)| (id, s.mode.writes())).collect();
     let mut reran = false;
     loop {
-        let mut launch = dir.launch(sig.name, &modes)?;
+        let launch = dir.launch(sig.name, &modes)?;
         let drove = match v.imp {
             Impl::Twin(twin) | Impl::Host(twin) => {
+                let mut launch = launch;
                 let mut meter = Meter::new(slots.iter().map(|&id| dir.capacity(id)));
                 let (pins, table) = launch.parts();
                 let held: Vec<std::sync::Arc<rerail_blocks::block::Block>> = pins.iter().map(|p| std::sync::Arc::clone(p.block())).collect();
                 let blocks: Vec<&rerail_blocks::block::Block> = held.iter().map(|b| &**b).collect();
                 let mut slot_views: Vec<Slot<'_>> = pins.iter_mut().map(|p| if p.writes() { Slot::Write(p) } else { Slot::Read(p) }).collect();
                 let ctx = Ctx { slots: &mut slot_views, blocks: &blocks, table: &table, params, meter: &mut meter };
-                drive(sig, v, tiling, dir, slots, &mut TwinRuns { ctx, twin, watched: matches!(v.imp, Impl::Twin(_)), name: sig.name })?
+                let d = drive(sig, v, tiling, dir, slots, &mut TwinRuns { ctx, twin, watched: matches!(v.imp, Impl::Twin(_)), name: sig.name })?;
+                drop(slot_views);
+                drop(launch);
+                d
             }
-            Impl::Ukl { source, entry } => return on_device(sig, v, dir, slots, params, tiling, device, launch, source, entry),
+            // Bound to the device and handed to its fence, the launch is the device's: it ends with the work.
+            Impl::Ukl { source, entry } => on_device(sig, v, dir, slots, params, tiling, device, launch, source, entry)?,
             Impl::Compiled(_) => return Err(format!("{}: {} is compiled ahead, which is not built", sig.name, v.name)),
         };
         let needs = match drove {
@@ -937,7 +954,6 @@ fn execute(sig: &Signature, v: &Version, dir: &Directory, slots: &[BlockId], par
         };
         // Run again from the first phase, once, each slot that needed room grown to what it needs: past that, the need
         // was not the exact size, and the launch fails.
-        drop(launch);
         if reran {
             return Err(format!("{}: run again at the capacity its slots needed, and they needed more: {needs:?}", sig.name));
         }
@@ -948,7 +964,8 @@ fn execute(sig: &Signature, v: &Version, dir: &Directory, slots: &[BlockId], par
     }
 }
 
-/// A UKL version's launch on `device`: bound there, handed to its fence, its phases driven.
+/// A UKL version's launch on `device`: bound there, handed to its fence, its phases driven: done, or to run again at
+/// the capacities its slots need (`execute` grows them).
 #[allow(clippy::too_many_arguments)]
 fn on_device(
     sig: &Signature,
@@ -961,7 +978,7 @@ fn on_device(
     launch: Launch,
     source: &'static str,
     entry: &'static str,
-) -> Result<(), String> {
+) -> Result<Drove, String> {
     let d = device.ok_or_else(|| format!("{}: {} is a UKL version, and no device was given to run it on", sig.name, v.name))?;
     if !v.devices.has(d.devices()) {
         return Err(format!("{}: {} runs on {:?}, not on the device's {:?}", sig.name, v.name, v.devices, d.devices()));
@@ -969,7 +986,7 @@ fn on_device(
     let ids: Vec<u32> = slots.iter().map(|s| s.0).collect(); // copy: not block data (the slots' ids, an argument)
     let fence = Fence::new();
     // Every use the launch hands the fence ends with it, whatever the work did.
-    let done = |r: Result<(), String>| {
+    let done = |r: Result<Drove, String>| {
         fence.mark_committed();
         fence.complete();
         r
@@ -982,10 +999,8 @@ fn on_device(
         drop(bound);
         return done(Err(b.1));
     }
-    let r = done(drive(sig, v, tiling, dir, slots, &mut UklRuns { bound, source, entry, shape: v.shape }).and_then(|d| match d {
-        Drove::Done => Ok(()),
-        Drove::Rerun(_) => Err(format!("{}: a kernel's room is not metered", sig.name)),
-    }));
+    let room = Meter::new(slots.iter().map(|&id| dir.capacity(id)));
+    let r = done(drive(sig, v, tiling, dir, slots, &mut UklRuns { bound, source, entry, shape: v.shape, room }));
     // A device domain of its own: what the kernels wrote comes back to the host's bytes (`Region::sync_host`).
     if d.domain() != 0 {
         for (spec, &id) in sig.slots.iter().zip(slots) {

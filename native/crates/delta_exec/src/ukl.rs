@@ -6,7 +6,7 @@
 //! its kernels read are the twins' own constants, written into `<ukl/delta/layout.h>` (`layout_h`, generated and held
 //! equal by a test), so each layout keeps one definition.
 
-use crate::cache::{CACHE_COMMIT, CACHE_OPEN, OpCache};
+use crate::cache::{CACHE_COMMIT, CACHE_OPEN, ORDER, OpCache};
 use crate::contract::push_layer;
 use crate::dir::Directory;
 use crate::drop::{DROP_PARTS, Parts};
@@ -56,6 +56,7 @@ const MODULES: &[(&str, &str)] = &[
 const VERSIONS: &[Ukl] = &[
     Ukl { sig: &CACHE_OPEN, module: "cache", case: cache_open_case },
     Ukl { sig: &CACHE_COMMIT, module: "cache", case: cache_commit_case },
+    Ukl { sig: &ORDER, module: "cache", case: order_case },
     Ukl { sig: &DROP_PARTS, module: "drop", case: drop_parts_case },
     Ukl { sig: &SEMI_CHANGE, module: "semi", case: semi_change_case },
     Ukl { sig: &CHANGE_ROWS, module: "semi", case: change_rows_case },
@@ -111,6 +112,19 @@ fn cache_commit_case(dir: &mut Directory) -> Case {
     let c = OpCache::new(dir);
     c.open(&cpu, dir, 0).expect("an open cache");
     Case { slots: vec![c.0], params: params(CacheP { state: 0xd1 }) }
+}
+
+/// A layer of 150 rows (three fences) ordered by its second column then its first, into a cache holding another
+/// layer's order and too small for this one: it grows, and the order is written once.
+fn order_case(dir: &mut Directory) -> Case {
+    let cpu = Runner::new().expect("the CPU's runner");
+    let mut t = Trace::new(&Shape::run(vec![ColType::I32, ColType::I64], vec![0, 1], Some(0))).expect("a trace").with_roll_up(RollUp::Never);
+    let rows: Vec<(Vec<i64>, i32)> = (0..150).map(|i| (vec![i, (i * 37) % 11], 1)).collect();
+    let layer = push_layer(&cpu, dir, &mut t, &rows).expect("a layer");
+    let c = OpCache(dir.make_capped(kind::CACHE, cache_twin::CACHE_BYTES, cache_twin::ENTRIES_AT + 512, 1 << 20));
+    c.open(&cpu, dir, 0).expect("an open cache");
+    c.order(&cpu, dir, layer, &[0]).expect("another order");
+    Case { slots: vec![layer, c.0], params: params(cache_twin::order_params(layer.0, &[1, 0])) }
 }
 
 /// A trace of two layers partitioned on its first column, the second killing a row of the first, its rows in
@@ -323,6 +337,7 @@ fn named_blocks_case(dir: &mut Directory) -> Case {
 pub fn layout() -> Vec<(&'static str, usize)> {
     vec![
         ("BODY_AT", BODY_AT),
+        ("MAX_SLOTS", rerail_delta_twins::MAX_SLOTS),
         ("CACHE_BYTES", cache_twin::CACHE_BYTES),
         ("CACHE_STATE_AT", cache_twin::STATE_AT),
         ("CACHE_OPEN_AT", cache_twin::OPEN_AT),
@@ -354,6 +369,7 @@ pub fn layout() -> Vec<(&'static str, usize)> {
         // `rerail_delta_twins::cache`'s entries.
         ("CACHE_ENTRIES_AT", cache_twin::ENTRIES_AT),
         ("CACHE_ENTRY_BYTES", cache_twin::ENTRY_BYTES),
+        ("FENCE", cache_twin::FENCE),
         // `rerail_delta_twins::k0`'s docs block and the relations a pass writes.
         ("DOCS_LEN_AT", k0_twin::DOCS_LEN_AT),
         ("DOCS_N_AT", k0_twin::DOCS_N_AT),

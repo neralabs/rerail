@@ -3,6 +3,7 @@
 // --lib ukl::tests::the_layout_header_is_the_twins` writes it again.
 #pragma once
 #define BODY_AT 320u
+#define MAX_SLOTS 30u
 #define CACHE_BYTES 40u
 #define CACHE_STATE_AT 328u
 #define CACHE_OPEN_AT 336u
@@ -31,6 +32,7 @@
 #define PARTS_AT 336u
 #define CACHE_ENTRIES_AT 360u
 #define CACHE_ENTRY_BYTES 32u
+#define FENCE 64u
 #define DOCS_LEN_AT 320u
 #define DOCS_N_AT 328u
 #define DOCS_MISSING_AT 336u

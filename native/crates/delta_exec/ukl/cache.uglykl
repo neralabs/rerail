@@ -1,6 +1,9 @@
 // An operator's cache (`rerail_delta_twins::cache`): its header marked open at a run's start, reset to ∅ when it holds
-// another state than the run's before, and committed at its end, the mark cleared last.
-#include <ukl/delta/op.h>
+// another state than the run's before, and committed at its end, the mark cleared last. And `order`: a layer's order
+// added to it.
+#include <ukl/delta/cache.h>
+#include <ukl/delta/trace.h>
+#include <ukl/delta/sort.h>
 
 DELTA_ONE(cache_open_open)
 {
@@ -23,4 +26,60 @@ DELTA_ONE(cache_commit_commit)
     Blk h = SLOT(0);
     U64(h, CACHE_STATE_AT) = PARAMS(CacheP).state;
     U64(h, CACHE_OPEN_AT) = 0u;
+}
+
+// An order's rows: a layer, read where it lies, and the columns it sorts by.
+typedef struct ByCols {
+    Layer l;
+    uint32_t cols[4], n;
+} ByCols;
+
+// Whether row `x` comes before row `y`: by the columns, ties by id.
+UKL_INLINE bool by_cols(ByCols c, uint32_t x, uint32_t y) {
+    for (uint32_t k = 0u; k < c.n; k++) {
+        int64_t a = layer_get(c.l, x, c.cols[k]), b = layer_get(c.l, y, c.cols[k]);
+        if (a != b) return a < b;
+    }
+    return x < y;
+}
+DELTA_SORT(sort_by_cols, ByCols, by_cols)
+
+// The entry of layer `layer`'s order by `c`'s columns: where it lies, or NONE.
+UKL_INLINE uint32_t cache_order(CBlk h, uint32_t layer, ByCols c) {
+    uint32_t end = CACHE_ENTRIES_AT + (uint32_t)U64(h, CACHE_USED_AT);
+    for (uint32_t at = CACHE_ENTRIES_AT; at < end; at = cache_next(h, at)) {
+        bool same = U32(h, at) == layer && U32(h, at + 4u) == c.n;
+        for (uint32_t k = 0u; same && k < c.n; k++) same = (uint32_t)(*(CLIF_BLOCK_SPACE uint16_t*)(h + at + 8u + 2u * k)) == c.cols[k];
+        if (same) return at;
+    }
+    return NONE;
+}
+
+// `order`'s one item: the layer's own ids sorted by the columns into a new entry at the cache's cursor, with their
+// fences (every FENCE-th id's first column), unless the cache holds it. Past the cache's capacity it writes nothing and
+// asks for room.
+DELTA_ONE(order_order)
+{
+    if (i != 0u) return;
+    OrderP q = PARAMS(OrderP);
+    Blk h = SLOT(1);
+    ByCols c;
+    c.l = layer_of(t, slots[0]);
+    c.n = q.ncols;
+    for (uint32_t k = 0u; k < 4u; k++) c.cols[k] = k < q.ncols ? (uint32_t)(q.cols >> (16u * k)) & 0xFFFFu : 0u;
+    if (cache_order(h, q.layer, c) != NONE) return;
+    uint32_t n = c.l.end - c.l.start, nf = (n + FENCE - 1u) / FENCE;
+    uint32_t at = CACHE_ENTRIES_AT + (uint32_t)U64(h, CACHE_USED_AT), ids = at + CACHE_ENTRY_BYTES, fences = ids + ((4u * n + 7u) & ~7u);
+    if (!REACH(1, fences + 8u * nf)) return;
+    U32(h, at) = q.layer;
+    U32(h, at + 4u) = q.ncols;
+    for (uint32_t k = 0u; k < 4u; k++) *(CLIF_BLOCK_SPACE uint16_t*)(h + at + 8u + 2u * k) = (uint16_t)c.cols[k];
+    U32(h, at + 24u) = n;
+    U32(h, at + 28u) = nf;
+    CLIF_BLOCK_SPACE uint32_t* a = (CLIF_BLOCK_SPACE uint32_t*)(h + ids);
+    for (uint32_t k = 0u; k < n; k++) a[k] = c.l.start + k;
+    sort_by_cols(c, a, n);
+    for (uint32_t f = 0u; f < nf; f++) I64(h, fences + 8u * f) = layer_get(c.l, a[f * FENCE], c.cols[0]);
+    // The entry counted last.
+    U64(h, CACHE_USED_AT) = fences + 8u * nf - CACHE_ENTRIES_AT;
 }

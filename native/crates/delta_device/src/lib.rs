@@ -16,7 +16,7 @@
 
 use rerail_blocks::ledger::Fence;
 use rerail_delta_exec::dir::{BlockId, Directory, Launch};
-use rerail_delta_exec::op::{Devices, Kernels, OnDevice};
+use rerail_delta_exec::op::{Devices, Kernels, MAX_SLOTS, Meter, OnDevice};
 use rerail_gpu::device::{Buffer, ComputeQueue, Device, alloc_uninitialized_array_sync, transfer_to_host_sync};
 use rerail_gpu::kernels::{Program, launch};
 use rerail_gpu::shared::Shared;
@@ -98,6 +98,7 @@ impl Kernels for Gpu {
         let slots_b = words(slots.len().div_ceil(2));
         let params_b = words(params.len().div_ceil(8));
         let res = words(1);
+        let room = words(MAX_SLOTS);
         let mut q = ComputeQueue::new(&self.shared.queue);
         // The kernels' arguments, written by the queue: the slots' ids and the params' bytes (not block data).
         q.enqueue_copy_from_host(&slots_b, 0, as_bytes(slots));
@@ -105,7 +106,7 @@ impl Kernels for Gpu {
             q.enqueue_copy_from_host(&params_b, 0, params);
         }
         q.flush().await_()?;
-        Ok(Box::new(GpuBound { shared: self.shared, table, at, reached, slots: slots_b, params: params_b, res, programs: HashMap::new() }))
+        Ok(Box::new(GpuBound { shared: self.shared, table, at, reached, slots: slots_b, params: params_b, res, room, programs: HashMap::new() }))
     }
 }
 
@@ -124,11 +125,13 @@ struct GpuBound {
     slots: Buffer,
     params: Buffer,
     res: Buffer,
+    /// Each slot's capacity, then the room an item found it needs (u32s, `MAX_SLOTS` each; `<ukl/delta/op.h>`'s `reach`).
+    room: Buffer,
     programs: HashMap<usize, &'static Program>,
 }
 
 impl OnDevice for GpuBound {
-    fn run(&mut self, source: &'static str, name: &str, lo: u32, hi: u32) -> Result<u64, String> {
+    fn run(&mut self, source: &'static str, name: &str, lo: u32, hi: u32, meter: &mut Meter) -> Result<u64, String> {
         let program = match self.programs.get(&(source.as_ptr() as usize)) {
             Some(p) => *p,
             None => {
@@ -141,12 +144,29 @@ impl OnDevice for GpuBound {
         let f = program.function(name)?;
         let mut q = ComputeQueue::new(&self.shared.queue);
         q.enqueue_fill_array(&self.res, &0u64, 0, Some(1));
-        let mut run = launch(&q, f).buffer_at("t", &self.table, self.at).buffer("slots", &self.slots).buffer("p", &self.params).value("tile", &TileP { lo, hi }).buffer("res", &self.res);
+        // The capacities, a word each (a block past 4 GiB is held to 4 GiB), and no need yet.
+        let mut room = [0u32; 2 * MAX_SLOTS];
+        for (r, &c) in room.iter_mut().zip(&meter.capacity) {
+            *r = u32::try_from(c).unwrap_or(u32::MAX);
+        }
+        q.enqueue_copy_from_host(&self.room, 0, as_bytes(&room));
+        let mut run = launch(&q, f)
+            .buffer_at("t", &self.table, self.at)
+            .buffer("slots", &self.slots)
+            .buffer("p", &self.params)
+            .value("tile", &TileP { lo, hi })
+            .buffer("res", &self.res)
+            .buffer("meter", &self.room);
         for r in &self.reached {
             run = run.uses(r);
         }
         run.run(&[u64::from(hi - lo).div_ceil(GROUP)], &[GROUP]).map_err(|e| format!("{name}: {e}"))?;
         q.flush().await_().map_err(|e| format!("{name}: {e}"))?;
+        let needs = transfer_to_host_sync::<u64>(&self.room, MAX_SLOTS);
+        for (k, n) in meter.needs.iter_mut().enumerate() {
+            let w = needs[(MAX_SLOTS + k) / 2] >> (32 * ((MAX_SLOTS + k) % 2)) & 0xFFFF_FFFF;
+            *n = (*n).max(w as usize);
+        }
         Ok(transfer_to_host_sync::<u64>(&self.res, 1)[0])
     }
 }

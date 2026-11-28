@@ -10,11 +10,12 @@ typedef CLIF_BLOCK_SPACE uint8_t* Blk;
 typedef CLIF_BLOCK_SPACE const uint8_t* CBlk;
 
 // Every kernel takes the same arguments (`rerail_delta_device`): the launch's device table, the slots' block ids, the
-// params' bytes, its tile of items, and one result word (a phase's item count, or whether it runs again).
+// params' bytes, its tile of items, one result word (a phase's item count, or whether it runs again), and its meter:
+// its slots' capacities and the room its items need (`reach`).
 #define DELTA_KERNEL(name)                                                                                          \
     DEFINE_KERNEL2(delta_exec, name, ROBUFFER, uint8_t, t, "[table]", ROBUFFER, uint32_t, slots, "[table]",         \
-                   ROBUFFER, uint8_t, p, "[table]", ARGS, TileP, tile, , RWBUFFER, uint64_t, res, "[1]", GID0,       \
-                   uint32_t, i, )
+                   ROBUFFER, uint8_t, p, "[table]", ARGS, TileP, tile, , RWBUFFER, uint64_t, res, "[1]", RWBUFFER,  \
+                   uint32_t, meter, "[meter]", GID0, uint32_t, i, )
 
 // A phase of one item: its count kernel, then the item's kernel's head.
 #define DELTA_ONE(name)                                                                                             \
@@ -36,3 +37,13 @@ UKL_INLINE Blk blk(CLIF_BLOCK_SPACE const uint8_t* t, uint32_t id) { return (Blk
 #define I32(b, at) (*(CLIF_BLOCK_SPACE int32_t*)((b) + (at)))
 #define U64(b, at) (*(CLIF_BLOCK_SPACE uint64_t*)((b) + (at)))
 #define I64(b, at) (*(CLIF_BLOCK_SPACE int64_t*)((b) + (at)))
+
+// Whether slot `k`'s block holds `end` bytes from its start (its capacity, `meter[k]`); else what it needs recorded
+// (`meter[MAX_SLOTS + k]`), and the item writes nothing past the capacity: the executor grows the block within its
+// reservation and runs the phase, or the launch, again (decision 0686 D6, the twins' `Ctx::reach`).
+UKL_INLINE bool reach(UKL_GLOBAL uint32_t* meter, uint32_t k, uint64_t end) {
+    if (end <= meter[k]) return true;
+    ukl_atomic_max(&meter[MAX_SLOTS + k], end > 0xFFFFFFFFull ? 0xFFFFFFFFu : (uint32_t)end);
+    return false;
+}
+#define REACH(k, end) reach(meter, k, end)
