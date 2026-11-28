@@ -707,6 +707,29 @@ pub fn of_address(addr: usize) -> Option<Arc<Ledger>> {
     live[..i].iter().rev().filter(|(start, end, _)| *start <= addr && addr < *end).find_map(|(_, _, l)| l.upgrade())
 }
 
+/// Where a live block's memory holding `addr` is, as a join capture reads it (`of_address`'s ledger): its range, its
+/// kind (0: a lease's, no block's header), its used length, whether its pages are its own (an anonymous block's), and
+/// the file it is mapped from.
+#[derive(Clone, Debug)]
+pub struct Placed {
+    pub start: usize,
+    pub end: usize,
+    pub kind: u32,
+    pub top: usize,
+    pub anon: bool,
+    pub path: Option<std::path::PathBuf>,
+}
+
+/// The live block whose memory holds `addr` (the innermost), where it is (`Placed`).
+pub fn placed_at(addr: usize) -> Option<Placed> {
+    let live = blocks();
+    let i = live.partition_point(|e| e.0 <= addr);
+    live[..i].iter().rev().filter(|(start, end, _)| *start <= addr && addr < *end).find_map(|(start, end, l)| {
+        let l = l.upgrade()?;
+        Some(Placed { start: *start, end: *end, kind: l.ext.kind.load(Relaxed), top: l.ext.top.load(Relaxed), anon: l.pages, path: l.ext.path.get().cloned() })
+    })
+}
+
 /// A command buffer's uses of blocks: registered before its work is encoded, completed by its completion handler
 /// (or when dropped: work never committed ran nothing).
 pub struct Fence {
