@@ -3,7 +3,7 @@
 // added to it.
 #include <ukl/delta/cache.h>
 #include <ukl/delta/trace.h>
-#include <ukl/delta/sort.h>
+#include <ukl/delta/par.h>
 
 DELTA_ONE(cache_open_open)
 {
@@ -42,7 +42,6 @@ UKL_INLINE bool by_cols(ByCols c, uint32_t x, uint32_t y) {
     }
     return x < y;
 }
-DELTA_SORT(sort_by_cols, ByCols, by_cols)
 
 // The entry of layer `layer`'s order by `c`'s columns: where it lies, or NONE.
 UKL_INLINE uint32_t cache_order(CBlk h, uint32_t layer, ByCols c) {
@@ -55,31 +54,96 @@ UKL_INLINE uint32_t cache_order(CBlk h, uint32_t layer, ByCols c) {
     return NONE;
 }
 
-// `order`'s one item: the layer's own ids sorted by the columns into a new entry at the cache's cursor, with their
-// fences (every FENCE-th id's first column), unless the cache holds it. Past the cache's capacity it writes nothing and
-// asks for room.
-DELTA_ONE(order_order)
-{
-    if (i != 0u) return;
-    OrderP q = PARAMS(OrderP);
-    Blk h = SLOT(1);
+// `order` as phases (decision 0686): the layer's own ids sorted by the columns into a new entry at the cache's
+// cursor, with their fences (every FENCE-th id's first column), unless the cache holds it (every phase's count 0).
+// The entry and what the sort works in: its header at the cursor, its ids, its fences; past them (not the cache's: the
+// cursor moves only to the fences' end) the sort's words and its second array, chosen so that its last pass ends in
+// the ids. Past the cache's capacity it writes nothing and asks for room.
+typedef struct Ord {
     ByCols c;
-    c.l = layer_of(t, slots[0]);
-    c.n = q.ncols;
-    for (uint32_t k = 0u; k < 4u; k++) c.cols[k] = k < q.ncols ? (uint32_t)(q.cols >> (16u * k)) & 0xFFFFu : 0u;
-    if (cache_order(h, q.layer, c) != NONE) return;
-    uint32_t n = c.l.end - c.l.start, nf = (n + FENCE - 1u) / FENCE;
-    uint32_t at = CACHE_ENTRIES_AT + (uint32_t)U64(h, CACHE_USED_AT), ids = at + CACHE_ENTRY_BYTES, fences = ids + ((4u * n + 7u) & ~7u);
-    if (!REACH(1, fences + 8u * nf)) return;
-    U32(h, at) = q.layer;
-    U32(h, at + 4u) = q.ncols;
-    for (uint32_t k = 0u; k < 4u; k++) *(CLIF_BLOCK_SPACE uint16_t*)(h + at + 8u + 2u * k) = (uint16_t)c.cols[k];
-    U32(h, at + 24u) = n;
-    U32(h, at + 28u) = nf;
-    CLIF_BLOCK_SPACE uint32_t* a = (CLIF_BLOCK_SPACE uint32_t*)(h + ids);
-    for (uint32_t k = 0u; k < n; k++) a[k] = c.l.start + k;
-    sort_by_cols(c, a, n);
-    for (uint32_t f = 0u; f < nf; f++) I64(h, fences + 8u * f) = layer_get(c.l, a[f * FENCE], c.cols[0]);
-    // The entry counted last.
-    U64(h, CACHE_USED_AT) = fences + 8u * nf - CACHE_ENTRIES_AT;
+    uint32_t layer, n, nf, at, ids, fences, words, tmp;
+    bool held;
+} Ord;
+
+UKL_INLINE Ord ord_of(CBlk t, UKL_GLOBAL const uint32_t* slots, UKL_GLOBAL const uint8_t* p) {
+    OrderP q = PARAMS(OrderP);
+    CBlk h = SLOT(1);
+    Ord o;
+    o.c.l = layer_of(t, slots[0]);
+    o.c.n = q.ncols;
+    for (uint32_t k = 0u; k < 4u; k++) o.c.cols[k] = k < q.ncols ? (uint32_t)(q.cols >> (16u * k)) & 0xFFFFu : 0u;
+    o.layer = q.layer;
+    o.held = cache_order(h, q.layer, o.c) != NONE;
+    o.n = o.c.l.end - o.c.l.start;
+    o.nf = (o.n + FENCE - 1u) / FENCE;
+    o.at = CACHE_ENTRIES_AT + (uint32_t)U64(h, CACHE_USED_AT);
+    o.ids = o.at + CACHE_ENTRY_BYTES;
+    o.fences = o.ids + ((4u * o.n + 7u) & ~7u);
+    o.words = o.fences + 8u * o.nf;
+    o.tmp = o.words + 16u;
+    return o;
+}
+// The sort's arrays: the first ranked into, the second; the passes alternate, an even count of them ending in the
+// first.
+UKL_INLINE uint32_t ord_passes(uint32_t n) {
+    uint32_t k = 0u;
+    for (uint64_t w = DELTA_CHUNK; w < n; w *= DELTA_FAN) k++;
+    return k;
+}
+UKL_INLINE uint32_t ord_a0(Ord o) { return ord_passes(o.n) % 2u == 0u ? o.ids : o.tmp; }
+UKL_INLINE uint32_t ord_a1(Ord o) { return ord_passes(o.n) % 2u == 0u ? o.tmp : o.ids; }
+
+// Positions `x`, `y` (ids from the layer's start) compared, and ids.
+UKL_INLINE bool by_pos(ByCols c, uint32_t x, uint32_t y) { return by_cols(c, c.l.start + x, c.l.start + y); }
+DELTA_CHUNK_RANK(ord_rank, ByCols, by_pos)
+DELTA_MERGE_PLACE(ord_place, ByCols, by_cols)
+
+#define ORD Ord o = ord_of(t, slots, p); Blk h = SLOT(1); (void)h
+
+// `open`: one lane: the room asked, the entry's header, the sort's words.
+DELTA_COUNT(order_open_items) { ORD; return o.held ? 0u : 1u; }
+DELTA_LANES(order_open)
+{
+    DELTA_ITEM(k);
+    ORD;
+    if (!REACH(1, o.tmp + 4u * o.n)) return;
+    U32(h, o.at) = o.layer;
+    U32(h, o.at + 4u) = o.c.n;
+    for (uint32_t k = 0u; k < 4u; k++) *(CLIF_BLOCK_SPACE uint16_t*)(h + o.at + 8u + 2u * k) = (uint16_t)o.c.cols[k];
+    U32(h, o.at + 24u) = o.n;
+    U32(h, o.at + 28u) = o.nf;
+    delta_sort_start(h, o.words);
+}
+// `rank`: a lane an id, placed in its chunk.
+DELTA_COUNT(order_rank_items) { ORD; return o.held ? 0u : o.n; }
+DELTA_LANES(order_rank)
+{
+    DELTA_ITEM(k);
+    ORD;
+    U32(h, ord_a0(o) + 4u * ord_rank(o.c, o.n, k)) = o.c.l.start + k;
+}
+// `passes`: merge passes of 16 runs, a lane an id.
+DELTA_COUNT(order_passes_items) { ORD; return o.held ? 0u : delta_sort_items(h, o.words, o.n); }
+DELTA_LANES(order_passes)
+{
+    DELTA_ITEM(k);
+    ORD;
+    ord_place_pass(o.c, h, o.words, h, ord_a0(o), ord_a1(o), o.n, k);
+}
+DELTA_AGAIN(order_passes) { ORD; return delta_sort_again(h, o.words, o.n); }
+// `fences`: a lane a fence.
+DELTA_COUNT(order_fences_items) { ORD; return o.held ? 0u : o.nf; }
+DELTA_LANES(order_fences)
+{
+    DELTA_ITEM(f);
+    ORD;
+    I64(h, o.fences + 8u * f) = layer_get(o.c.l, U32(h, o.ids + 4u * f * FENCE), o.c.cols[0]);
+}
+// `seal`: the entry counted last.
+DELTA_COUNT(order_seal_items) { ORD; return o.held ? 0u : 1u; }
+DELTA_LANES(order_seal)
+{
+    DELTA_ITEM(k);
+    ORD;
+    U64(h, CACHE_USED_AT) = o.words - CACHE_ENTRIES_AT;
 }

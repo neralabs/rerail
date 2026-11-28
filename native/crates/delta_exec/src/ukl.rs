@@ -62,7 +62,7 @@ const MODULES: &[(&str, &str)] = &[
 const VERSIONS: &[Ukl] = &[
     Ukl { sig: &CACHE_OPEN, module: "cache", cases: &[cache_open_case], shape: None },
     Ukl { sig: &CACHE_COMMIT, module: "cache", cases: &[cache_commit_case], shape: None },
-    Ukl { sig: &ORDER, module: "cache", cases: &[order_case], shape: None },
+    Ukl { sig: &ORDER, module: "cache", cases: &[order_case, order_large_case], shape: Some(&crate::cache::ORDER_UKL) },
     Ukl { sig: &DROP_PARTS, module: "drop", cases: &[drop_parts_case, drop_parts_large_case], shape: None },
     Ukl { sig: &SEMI_CHANGE, module: "semi", cases: &[semi_change_case, semi_change_large_case], shape: None },
     Ukl { sig: &CHANGE_ROWS, module: "semi", cases: &[change_rows_case, change_rows_large_case], shape: None },
@@ -137,6 +137,17 @@ fn order_case(dir: &mut Directory) -> Case {
     let c = OpCache(dir.make_capped(kind::CACHE, cache_twin::CACHE_BYTES, cache_twin::ENTRIES_AT + 512, 1 << 20));
     c.open(&cpu, dir, 0).expect("an open cache");
     c.order(&cpu, dir, layer, &[0]).expect("another order");
+    Case { slots: vec![layer, c.0], params: params(cache_twin::order_params(layer.0, &[1, 0])) }
+}
+
+/// `order` at scale: a layer of 5000 rows (more than a chunk's merges: two passes), sorted by two columns with ties.
+fn order_large_case(dir: &mut Directory) -> Case {
+    let cpu = Runner::new().expect("the CPU's runner");
+    let mut t = Trace::new(&Shape::run(vec![ColType::I32, ColType::I64], vec![0, 1], Some(0))).expect("a trace").with_roll_up(RollUp::Never);
+    let rows: Vec<(Vec<i64>, i32)> = (0..5000).map(|i| (vec![i % 97, i / 97 * 13 + (i * 7919) % 13], 1)).collect();
+    let layer = push_layer(&cpu, dir, &mut t, &rows).expect("a layer");
+    let c = OpCache(dir.make_capped(kind::CACHE, cache_twin::CACHE_BYTES, cache_twin::ENTRIES_AT + 512, 1 << 20));
+    c.open(&cpu, dir, 0).expect("an open cache");
     Case { slots: vec![layer, c.0], params: params(cache_twin::order_params(layer.0, &[1, 0])) }
 }
 

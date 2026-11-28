@@ -31,6 +31,17 @@ static COMMIT_PHASE: [Phase; 1] = [one("commit", Inside::Nothing, Output::InPlac
 /// grows the cache within its reservation.
 static ORDER_PHASE: [Phase; 1] = [one("order", Inside::GroupMemory, Output::WriterState, &[Bound::Capacity(Over::Grow)])];
 
+/// The UKL version's shape (`ukl/cache.uglykl`): the entry opened (one lane), the ids ranked in their chunks (a lane
+/// an id), merge passes of 16 runs (rounds, bounded at 6 turns: 2^30 ids), the fences (a lane each), the entry
+/// counted (one lane).
+pub(crate) static ORDER_UKL: [Phase; 5] = [
+    Phase { name: "open", unit: Unit::Lane, inside: Inside::Nothing, ..ORDER_PHASE[0] },
+    Phase { name: "rank", unit: Unit::Lane, inside: Inside::Nothing, output: Output::ByIndex, bounds: &[], ..ORDER_PHASE[0] },
+    Phase { name: "passes", unit: Unit::Lane, inside: Inside::Nothing, across: Across::Rounds, output: Output::ByIndex, bounds: &[Bound::Turns(6)], ..ORDER_PHASE[0] },
+    Phase { name: "fences", unit: Unit::Lane, inside: Inside::Nothing, output: Output::ByIndex, bounds: &[], ..ORDER_PHASE[0] },
+    Phase { name: "seal", unit: Unit::Lane, inside: Inside::Nothing, bounds: &[], ..ORDER_PHASE[0] },
+];
+
 /// `cache_open`: rw the cache: reset to ∅ unless it holds the run's before, then marked open.
 pub static CACHE_OPEN: Signature = Signature::of(
     &crate::op::interfaces::CACHE_OPEN,
