@@ -5,6 +5,7 @@ import { WebStandardStreamableHTTPServerTransport } from "@modelcontextprotocol/
 import { checkoutRealpath, physicalPath } from "../engine/catalog/checkout-control.js";
 import { duplicateJsonKeyError } from "../engine/json-duplicate-keys.js";
 import { CALLER_CWD_HEADER, normalizeFolder, type ApiCaller } from "../engine/catalog/repository-model.js";
+import { placementRanToLimit } from "../engine/catalog/repository-identity.js";
 import { locationNow, recordedCheckoutsVersion, stillPlaces, type KeptLocation } from "../engine/catalog/repository-registry.js";
 import { allowedHost, type PublicHosts } from "./http.js";
 import { ApiError, invokeOperation, operationAvailable, type Operation, type RerailApiStores } from "./operation.js";
@@ -79,19 +80,28 @@ const CALLER_CACHE_LIMIT = 1_024;
 let callerCacheVersion: string | undefined;
 
 /**
- * The checkout root of the caller folder `real`: the kept one while its location still places the folder, else read
- * afresh. As the checkout resolver does, only a location in Git is kept: a folder outside Git is read again at each
- * request, so a later `git init` above it is seen, and so is the next answer after a Git that gave none.
+ * The checkout root of the caller folder `real`: the kept one while it serves ({@link servesKept}), else read afresh.
+ * As the checkout resolver does, a location in Git is kept, and a folder outside Git is read again at each request, so
+ * a later `git init` above it is seen, and so is the next answer after a Git that could not start or failed. A folder
+ * whose Git ran to its time limit is kept too, so no request waits on that Git again.
  */
 function callerCheckout(real: string): string {
   const known = callerCheckouts.get(real);
-  if (known !== undefined && stillPlaces(known.kept)) return known.checkout;
+  if (known !== undefined && servesKept(known.kept)) return known.checkout;
   const kept = locationNow(real);
   const checkout = physicalPath(kept.location.workspaceRoot);
-  if (!kept.location.git) return checkout;
+  if (!kept.location.git && !placementRanToLimit(kept.location)) return checkout;
   if (callerCheckouts.size >= CALLER_CACHE_LIMIT) callerCheckouts.clear();
   callerCheckouts.set(real, { kept, checkout });
   return checkout;
+}
+
+/**
+ * Whether a kept caller location serves: one in Git while it still places the folder ({@link stillPlaces}); one whose
+ * Git ran to its time limit until the recorded checkouts change, as every kept checkout served before.
+ */
+function servesKept(kept: KeptLocation): boolean {
+  return !kept.location.git || stillPlaces(kept);
 }
 
 /** Forgets every kept caller checkout once `recordedVersion`, the recorded checkouts' version, moves. */

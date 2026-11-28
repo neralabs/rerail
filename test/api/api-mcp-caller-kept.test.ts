@@ -20,9 +20,10 @@ vi.mock("node:fs", async importOriginal => {
 
 /**
  * How many of the next Gits asked where a folder's repository is (`rev-parse --show-toplevel ...`) end as a Git that
- * could not start ends, with no answer (on Linux the loader's exit 127).
+ * could not start ends, with no answer (on Linux the loader's exit 127), or with `pastLimit` as one ended at its time
+ * limit, as `spawnSync` ends a Git that runs past Rerail's.
  */
-const placements = vi.hoisted(() => ({ unanswered: 0 }));
+const placements = vi.hoisted(() => ({ unanswered: 0, pastLimit: false }));
 vi.mock("../../src/engine/child-process.js", async () => {
   const original = await vi.importActual<typeof import("../../src/engine/child-process.js")>("../../src/engine/child-process.js");
   const spawn = ((...parameters: Parameters<typeof original.spawn>) => {
@@ -34,6 +35,7 @@ vi.mock("../../src/engine/child-process.js", async () => {
     const args = parameters[1];
     if (placements.unanswered === 0 || !Array.isArray(args) || !args.includes("--show-toplevel")) return original.spawnSync(...parameters);
     placements.unanswered -= 1;
+    if (placements.pastLimit) return original.spawnSync(process.execPath, ["-e", "setTimeout(() => {}, 60_000)"], { encoding: "utf8", timeout: 200 });
     return original.spawnSync(process.execPath, ["-e", "process.exit(127)"], { encoding: "utf8" });
   }) as typeof original.spawnSync;
   return { ...original, spawn, spawnSync };
@@ -45,7 +47,7 @@ import { removeFolder } from "../support/platform/remove-folder.js";
 
 const cleanups: Array<() => Promise<void>> = [];
 afterEach(async () => {
-  placements.unanswered = 0;
+  Object.assign(placements, { unanswered: 0, pastLimit: false });
   for (const cleanup of cleanups.splice(0).reverse()) await cleanup();
 });
 
@@ -137,6 +139,20 @@ describe("the checkout kept for an MCP bridge's folder", () => {
     expect(resolved(folder)).toEqual({ checkout: folder, folder: "" });
     expect(placements.unanswered).toBe(0);
 
+    expect(resolved(folder)).toEqual({ checkout: app, folder: "web" });
+  });
+
+  it("asks a Git that ran to its time limit where the folder is once, and keeps that answer until the recorded checkouts change", async () => {
+    const app = await recordedCheckout();
+    const folder = join(app, "web");
+    mkdirSync(folder);
+    Object.assign(placements, { unanswered: 4, pastLimit: true });
+    const outside = { checkout: folder, folder: "" };
+    expect(counted(folder)).toMatchObject({ answer: outside, starts: 1 });
+    expect([1, 2, 3].map(() => counted(folder))).toMatchObject(Array(3).fill({ answer: outside, starts: 0 }));
+    placements.unanswered = 0;
+
+    callerFromHeader(encodeURIComponent(folder), "the recorded checkouts changed");
     expect(resolved(folder)).toEqual({ checkout: app, folder: "web" });
   });
 });
