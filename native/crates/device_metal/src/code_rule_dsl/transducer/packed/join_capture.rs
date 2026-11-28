@@ -49,6 +49,7 @@ pub(in crate::code_rule_dsl) struct Label {
 #[derive(Clone, Debug)]
 pub(in crate::code_rule_dsl) struct Config {
     dir: PathBuf,
+    /// The launches captured: those with a label whose shape or rule holds one of its comma-separated names.
     only: Option<String>,
     min: u64,
     budget: u64,
@@ -176,7 +177,7 @@ fn chosen() -> std::sync::Arc<Chosen> {
 /// Whether to capture a launch of `labels`, and its number: past the selection, the size budget refuses it.
 fn choose(cfg: &Config, labels: &[Label]) -> Option<u64> {
     if let Some(only) = &cfg.only
-        && !labels.iter().any(|l| l.shape.contains(only.as_str()) || l.rule.contains(only.as_str()))
+        && !only.split(',').filter(|o| !o.is_empty()).any(|o| labels.iter().any(|l| l.shape.contains(o) || l.rule.contains(o)))
     {
         return None;
     }

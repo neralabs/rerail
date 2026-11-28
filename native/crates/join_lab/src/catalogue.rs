@@ -141,7 +141,8 @@ mod tests {
         assert_eq!(e.instances, vec![("rule 44b0f1b068d64aad".to_owned(), 64)]);
         assert_eq!(c["s-1"].runs, 2);
         assert_eq!(e.parts(), vec!["ScanKind<doc>".to_owned(), "Arith".into(), "Emit".into()]);
-        // Its parts built, its class not generated.
-        assert_eq!(e.class(), Err("its class (join-lab classes)".to_owned()));
+        // Its class generated from a capture of it (`join-lab classes`); a shape with none named as its gap.
+        assert_eq!(e.class(), Ok("s-28c54b9d365aab6f"));
+        assert_eq!(c["s-1"].class(), Err("its class (join-lab classes)".to_owned()));
     }
 }
