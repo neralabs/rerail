@@ -32,6 +32,18 @@ static K0_PHASES: [Phase; 4] = [
     Phase { name: "keep", found: Found::Fixed, unit: Unit::Threadgroup, inside: Inside::Nothing, across: Across::Nothing, output: Output::InPlace, bounds: &[Bound::Capacity(Over::Grow)] },
 ];
 
+/// The UKL version's shape (`ukl/k0.uglykl`): its statements listed first, a threadgroup a document (counted, then
+/// listed from the document's start), then count a lane a statement, the scan one threadgroup (its statements in
+/// rounds), place a lane a statement, keep one item.
+pub(crate) static K0_UKL: [Phase; 6] = [
+    Phase { name: "docs", inside: Inside::GroupMemory, ..K0_PHASES[0] },
+    Phase { name: "stmts", inside: Inside::GroupMemory, ..K0_PHASES[0] },
+    Phase { unit: Unit::Lane, ..K0_PHASES[0] },
+    Phase { inside: Inside::GroupMemory, ..K0_PHASES[1] },
+    Phase { unit: Unit::Lane, ..K0_PHASES[2] },
+    Phase { unit: Unit::Lane, ..K0_PHASES[3] },
+];
+
 /// `k0_pass`: read the documents (a docs block, their tape and symbols blocks by reference) and the atoms · rw
 /// control · read the documents gone (a parts block) · write each K-form relation's δ runs · rw L1's cache (Bootstrap,
 /// Figure 2) · read the language's table.

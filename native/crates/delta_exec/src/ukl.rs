@@ -71,7 +71,7 @@ const VERSIONS: &[Ukl] = &[
     Ukl { sig: &ROOM_OF, module: "k0", cases: &[room_of_case], shape: None },
     Ukl { sig: &NAMED_BLOCKS, module: "k0", cases: &[named_blocks_case], shape: None },
     Ukl { sig: &INTERN, module: "intern", cases: &[intern_case, intern_cold_case], shape: Some(&crate::intern::INTERN_UKL) },
-    Ukl { sig: &K0_PASS, module: "k0", cases: &[k0_pass_case, k0_refused_case], shape: None },
+    Ukl { sig: &K0_PASS, module: "k0", cases: &[k0_pass_case, k0_refused_case, k0_large_case, k0_refused_large_case], shape: Some(&crate::k0::K0_UKL) },
     Ukl { sig: &CONSOLIDATE, module: "trace", cases: &[consolidate_first_case, consolidate_case, consolidate_one_col_case, consolidate_wide_case, consolidate_large_case], shape: Some(&crate::trace::TRACE_UKL) },
     Ukl { sig: &MERGE, module: "trace", cases: &[merge_case, merge_large_case], shape: Some(&crate::trace::TRACE_UKL) },
 ];
@@ -380,6 +380,21 @@ fn k0_pass_case(dir: &mut Directory) -> Case {
 /// A run with a document past K0 between two that are: refused, the first refusal by document and node order named.
 fn k0_refused_case(dir: &mut Directory) -> Case {
     k0_launch(dir, &["e(1, 2).\n", "p(x) :- e(x, _).\nn(c) :- c = count : { e(_, _) }.\n", "q(1).\n"])
+}
+
+/// Documents of many statements (more than a round of the scan's group in one): every K0 form, repeated.
+fn k0_large_case(dir: &mut Directory) -> Case {
+    let doc = |n: usize, k: usize| (0..n).map(|i| format!("p{}(x, y) :- e{}(x, _), !q(x), y != {i}, r(\"s{k}\").\n", i % 9, i % 4)).collect::<String>();
+    let (a, b) = (doc(150, 0), doc(70, 1));
+    k0_launch(dir, &[&a, "e(1, 2).\n", &b])
+}
+
+/// Refusals in two documents, the later one's first in the run's order: the first by document and node order named.
+fn k0_refused_large_case(dir: &mut Directory) -> Case {
+    let mut a: String = (0..100).map(|i| format!("p(x) :- e(x, {i}).\n")).collect();
+    a.push_str("n(c) :- c = count : { e(_, _) }.\n");
+    a.extend((0..30).map(|i| format!("q(x) :- e(x, {i}).\n")));
+    k0_launch(dir, &["e(1, 2).\n", &a, "m(c) :- c = count : { e(_, _) }.\n"])
 }
 
 /// `consolidate`'s launch over the run of `pairs` on `t`, as `Trace::commit` makes it: the runs, the new layer's block

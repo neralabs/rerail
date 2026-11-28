@@ -108,36 +108,6 @@ UKL_INLINE Rr k0_doc(CBlk t, CBlk docs, CBlk lang, uint32_t k) {
     return rr_of(blk(t, (uint32_t)DOC(docs, k, 1u)), DOC(docs, k, 4u), blk(t, (uint32_t)DOC(docs, k, 2u)), DOC(docs, k, 6u), blk(t, (uint32_t)DOC(docs, k, 3u)), lang);
 }
 
-// A document's statements: the root's counted children.
-UKL_INLINE uint32_t k0_statements(UKL_PRIVATE const Rr* r) {
-    uint32_t n = 0u;
-    RR_CHILDREN(r, 0u, c) n += rr_counted(r, c) ? 1u : 0u;
-    return n;
-}
-
-// The statements of every document, in order: the pass's items.
-UKL_INLINE uint32_t k0_items(CBlk t, CBlk docs, CBlk lang) {
-    uint32_t n = 0u;
-    for (uint32_t k = 0u; k < docs_len(docs); k++) {
-        Rr r = k0_doc(t, docs, lang, k);
-        n += k0_statements(&r);
-    }
-    return n;
-}
-
-// Item `item`'s statement: its document's place (`*k`) and its node.
-UKL_INLINE uint32_t k0_statement(CBlk t, CBlk docs, CBlk lang, uint32_t item, UKL_PRIVATE uint32_t* k, UKL_PRIVATE Rr* r) {
-    for (*k = 0u; *k < docs_len(docs); (*k)++) {
-        *r = k0_doc(t, docs, lang, *k);
-        RR_CHILDREN(r, 0u, c) {
-            if (!rr_counted(r, c)) continue;
-            if (item == 0u) return c;
-            item--;
-        }
-    }
-    return NONE;
-}
-
 // Where a walk's rows go: counted (`runs` unset), or written at `at[r]` of each relation's runs block with `diff`.
 typedef struct Put {
     uint32_t n[R], at[R];
@@ -256,60 +226,135 @@ UKL_INLINE uint32_t k0_walk(UKL_PRIVATE const Walk* w, UKL_PRIVATE Put* o, uint3
     return OK;
 }
 
-// The launch's statement `item`: its walk's reads, its document's place and its node.
+// The UKL version's control, past the twin's header (its facts read only the refusal and what was placed): the step
+// kinds' symbols (3 words, then one free), each document's statements (one word a document) and their total, then
+// each statement's places by relation (`R` words a statement), then each statement's document and node (2 words).
+#define K0_KINDS_AT K0_PLACES_AT
+#define K0_DOCN_AT (K0_PLACES_AT + 16u)
+
+UKL_INLINE CBlk k0_docs(CBlk t, UKL_GLOBAL const uint8_t* p) { return blk(t, (uint32_t)PARAMS(K0P).docs); }
+UKL_INLINE uint32_t k0_total(CBlk control, uint32_t nd) { return U32(control, K0_DOCN_AT + 4u * nd); }
+UKL_INLINE uint32_t k0_places(uint32_t nd) { return K0_DOCN_AT + 4u * (nd + 1u); }
+// Statement `item`'s place in relation `r`, and its document and node.
+#define PLACE(control, item, r) U32(control, k0_places(nd) + 4u * (R * (item) + (r)))
+#define STMT(control, item, w) U32(control, k0_places(nd) + 4u * R * k0_total(control, nd) + 4u * (2u * (item) + (w)))
+// What every k0_pass kernel reads first: control, the documents and their count.
+#define K0_CTL                                                                                                     \
+    Blk control = SLOT(K0_CONTROL);                                                                                 \
+    CBlk docs = k0_docs(t, p), lang = SLOT(K0_LANG);                                                                \
+    uint32_t nd = docs_len(docs);                                                                                   \
+    (void)lang
+
+// Whether node `n` of document `r` is a statement: a counted child of the root.
+UKL_INLINE bool k0_is_statement(UKL_PRIVATE const Rr* r, uint32_t n) {
+    return n != 0u && clif_f16_parent(r->tape, r->v, n) == 0u && rr_counted(r, n);
+}
+UKL_INLINE uint32_t k0_nodes(CBlk t, CBlk docs, uint32_t k) { return (uint32_t)U64(blk(t, (uint32_t)DOC(docs, k, 3u)), SYMS_N_AT); }
+
+// Statement `item`'s walk's reads, its document's place and its node (from the statements' list).
 UKL_INLINE uint32_t k0_item(CBlk t, UKL_GLOBAL const uint32_t* slots, UKL_GLOBAL const uint8_t* p, uint32_t item, UKL_PRIVATE Walk* w, UKL_PRIVATE uint32_t* k) {
-    CBlk docs = blk(t, (uint32_t)PARAMS(K0P).docs), lang = SLOT(K0_LANG);
-    uint32_t c = k0_statement(t, docs, lang, item, k, &w->r);
+    K0_CTL;
+    *k = STMT(control, item, 0u);
+    w->r = k0_doc(t, docs, lang, *k);
     w->d = docs_module(docs, *k);
-    // The step kinds' symbols: the language's last three names (`intern::STEP_KINDS`), found in the atoms (0: none).
-    Atoms atoms = atoms_of(SLOT(K0_ATOMS));
-    int64_t kinds[3];
-    for (uint32_t j = 0u; j < 3u; j++) {
-        Text x = rr_lang_name(lang, rr_lang_names(lang) - 3u + j);
-        uint32_t id = atoms_find(atoms, x, atom_hash(x));
-        kinds[j] = id == NONE ? 0 : (int64_t)id;
+    w->atom = (int64_t)U32(control, K0_KINDS_AT);
+    w->not_ = (int64_t)U32(control, K0_KINDS_AT + 4u);
+    w->cmp = (int64_t)U32(control, K0_KINDS_AT + 8u);
+    return STMT(control, item, 1u);
+}
+
+// `docs`: a threadgroup a document, its nodes a lane each, its statements counted. The first group finds the step
+// kinds' symbols (the language's last three names, `intern::STEP_KINDS`: 0 for none).
+DELTA_COUNT(k0_pass_docs_items) { return docs_len(k0_docs(t, p)); }
+DELTA_GROUPS(k0_pass_docs)
+{
+    DELTA_GROUP_ITEM(k);
+    K0_CTL;
+    if (!REACH(K0_CONTROL, k0_places(nd))) return;
+    if (k == 0u && lid == 0u) {
+        Atoms atoms = atoms_of(SLOT(K0_ATOMS));
+        for (uint32_t j = 0u; j < 3u; j++) {
+            Text x = rr_lang_name(lang, rr_lang_names(lang) - 3u + j);
+            uint32_t id = atoms_find(atoms, x, atom_hash(x));
+            U32(control, K0_KINDS_AT + 4u * j) = id == NONE ? 0u : id;
+        }
     }
-    w->atom = kinds[0];
-    w->not_ = kinds[1];
-    w->cmp = kinds[2];
-    return c;
-}
-UKL_INLINE uint32_t k0_n(CBlk t, UKL_GLOBAL const uint32_t* slots, UKL_GLOBAL const uint8_t* p) {
-    return k0_items(t, blk(t, (uint32_t)PARAMS(K0P).docs), SLOT(K0_LANG));
+    Rr r = k0_doc(t, docs, lang, k);
+    uint32_t n = 0u, nodes = k0_nodes(t, docs, k);
+    for (uint32_t c = lid; c < nodes; c += lsz) n += k0_is_statement(&r, c) ? 1u : 0u;
+    n = ukl_tg_sum(n, lid, lsz, scratch __UKL_ARGS);
+    if (lid == 0u) U32(control, K0_DOCN_AT + 4u * k) = n;
 }
 
-// Statement `item`'s words in control: its rows by relation (counts, then places after `scan`).
-#define PLACE(control, item, r) U32(control, K0_PLACES_AT + 4u * (R * (item) + (r)))
+// `stmts`: a threadgroup a document again, its statements listed in node order from the document's start (the
+// statements of the documents before it); the count kernel totals them.
+DELTA_COUNT(k0_pass_stmts_items)
+{
+    K0_CTL;
+    uint32_t total = 0u;
+    for (uint32_t k = 0u; k < nd; k++) total += U32(control, K0_DOCN_AT + 4u * k);
+    U32(control, K0_DOCN_AT + 4u * nd) = total;
+    return nd;
+}
+DELTA_GROUPS(k0_pass_stmts)
+{
+    DELTA_GROUP_ITEM(k);
+    K0_CTL;
+    uint32_t total = k0_total(control, nd);
+    if (!REACH(K0_CONTROL, k0_places(nd) + 4u * (R + 2u) * (total > 0u ? total : 1u))) return;
+    uint32_t start = 0u;
+    for (uint32_t j = 0u; j < k; j++) start += U32(control, K0_DOCN_AT + 4u * j);
+    Rr r = k0_doc(t, docs, lang, k);
+    uint32_t nodes = k0_nodes(t, docs, k);
+    for (uint32_t base = 0u; base < nodes; base += lsz) {
+        uint32_t c = base + lid;
+        bool is = c < nodes && k0_is_statement(&r, c);
+        UklScan s = ukl_tg_exclusive_sum(is ? 1u : 0u, lid, lsz, scratch __UKL_ARGS);
+        if (is) {
+            STMT(control, start + s.exclusive, 0u) = k;
+            STMT(control, start + s.exclusive, 1u) = c;
+        }
+        start += s.total;
+    }
+}
 
-// `count`: each statement's rows by relation; a refused one marks its first word K0_UNCLAIMED (`scan` finds the first
-// by document and node order: the first statement so marked).
-DELTA_COUNT(k0_pass_count_items) { return k0_n(t, slots, p); }
+// `count`: each statement's rows by relation; a refused one marks its first word K0_UNCLAIMED (`scan` finds the
+// first in document and node order).
+DELTA_COUNT(k0_pass_count_items) { K0_CTL; return k0_total(control, nd); }
 DELTA_LANES(k0_pass_count)
 {
     DELTA_ITEM(item);
-    if (!REACH(K0_CONTROL, K0_PLACES_AT + 4u * R * (item + 1u))) return;
     Walk w;
     uint32_t k, bad = NONE;
     uint32_t c = k0_item(t, slots, p, item, &w, &k);
     Put o = {{0u}, {0u}, {0}, false, 0};
     uint32_t why = k0_walk(&w, &o, c, &bad);
-    Blk control = SLOT(K0_CONTROL);
+    K0_CTL;
     for (uint32_t r = 0u; r < R; r++) PLACE(control, item, r) = o.n[r];
     if (why != OK) PLACE(control, item, 0u) = K0_UNCLAIMED;
 }
 
-// `scan`: one item. The first refused statement's refusal into control; else the counts' exclusive prefix sums by
-// relation, from the places claimed in each runs block at once.
-DELTA_ONE(k0_pass_scan)
+// `scan`: one threadgroup. The first refused statement (the least marked) walked again by one thread, its refusal
+// into control; else the counts' exclusive prefix sums by relation, a round of the group's statements at a time, then
+// each relation's places claimed in its runs block at once (one thread) and added.
+DELTA_COUNT(k0_pass_scan_items) { return 1u; }
+DELTA_GROUPS(k0_pass_scan)
 {
-    if (i != 0u) return;
-    Blk control = SLOT(K0_CONTROL);
-    uint32_t items = k0_n(t, slots, p);
-    for (uint32_t item = 0u; item < items; item++) {
-        if (PLACE(control, item, 0u) != K0_UNCLAIMED) continue;
+    DELTA_GROUP_ITEM(one);
+    K0_CTL;
+    uint32_t items = k0_total(control, nd);
+    uint64_t least = 0x7FFFFFFFFFFFFFFFull;
+    for (uint32_t base = 0u; base < items; base += lsz) {
+        uint32_t q = base + lid;
+        uint64_t v = q < items && PLACE(control, q, 0u) == K0_UNCLAIMED ? (uint64_t)q : 0x7FFFFFFFFFFFFFFFull;
+        v = ukl_tg_reduce64(UKL_MIN_I64, v, lid, lsz, scratch __UKL_ARGS);
+        least = v < least ? v : least;
+    }
+    if (least != 0x7FFFFFFFFFFFFFFFull) {
+        if (lid != 0u) return;
         Walk w;
         uint32_t k, bad = NONE;
-        uint32_t c = k0_item(t, slots, p, item, &w, &k);
+        uint32_t c = k0_item(t, slots, p, (uint32_t)least, &w, &k);
         Put o = {{0u}, {0u}, {0}, false, 0};
         U32(control, K0_REFUSED_WHY_AT) = k0_walk(&w, &o, c, &bad);
         U64(control, K0_REFUSED_NODE_AT) = bad;
@@ -317,32 +362,41 @@ DELTA_ONE(k0_pass_scan)
         I64(control, K0_REFUSED_MODULE_AT) = w.d;
         return;
     }
-    uint32_t total[R] = {0u}, placed = 0u;
-    for (uint32_t item = 0u; item < items; item++)
+    uint32_t total[R];
+    for (uint32_t r = 0u; r < R; r++) total[r] = 0u;
+    for (uint32_t base = 0u; base < items; base += lsz) {
+        uint32_t q = base + lid;
         for (uint32_t r = 0u; r < R; r++) {
-            uint32_t n = PLACE(control, item, r);
-            PLACE(control, item, r) = total[r];
-            total[r] += n;
+            uint32_t n = q < items ? PLACE(control, q, r) : 0u;
+            UklScan s = ukl_tg_exclusive_sum(n, lid, lsz, scratch __UKL_ARGS);
+            if (q < items) PLACE(control, q, r) = total[r] + s.exclusive;
+            total[r] += s.total;
         }
-    for (uint32_t r = 0u; r < R; r++) {
-        uint32_t base = total[r] == 0u ? 0u : runs_claim(SLOT(K0_RUNS + r), total[r]);
-        for (uint32_t item = 0u; item < items; item++) PLACE(control, item, r) = base == NONE ? K0_UNCLAIMED : base + PLACE(control, item, r);
-        U32(control, K0_ENDS_AT + 4u * r) = base == NONE ? K0_UNCLAIMED : base + total[r];
-        placed += base == NONE ? 0u : total[r];
     }
-    U64(control, K0_PLACED_AT) = placed;
+    if (lid == 0u) {
+        uint32_t placed = 0u;
+        for (uint32_t r = 0u; r < R; r++) {
+            uint32_t base = total[r] == 0u ? 0u : runs_claim(SLOT(K0_RUNS + r), total[r]);
+            sh[r] = base;
+            U32(control, K0_ENDS_AT + 4u * r) = base == NONE ? K0_UNCLAIMED : base + total[r];
+            placed += base == NONE ? 0u : total[r];
+        }
+        U64(control, K0_PLACED_AT) = placed;
+    }
+    ukl_tg_barrier();
+    for (uint32_t q = lid; q < items; q += lsz)
+        for (uint32_t r = 0u; r < R; r++) PLACE(control, q, r) = sh[r] == NONE ? K0_UNCLAIMED : sh[r] + PLACE(control, q, r);
 }
 
 // `place`: each statement walked again, its rows written at its places with the run's sign.
-DELTA_COUNT(k0_pass_place_items) { return k0_n(t, slots, p); }
+DELTA_COUNT(k0_pass_place_items) { K0_CTL; return U64(control, K0_REFUSED_NODE_AT) != 0xFFFFFFFFFFFFFFFFull ? 0u : k0_total(control, nd); }
 DELTA_LANES(k0_pass_place)
 {
     DELTA_ITEM(item);
-    Blk control = SLOT(K0_CONTROL);
-    if (U64(control, K0_REFUSED_NODE_AT) != 0xFFFFFFFFFFFFFFFFull) return;
     Walk w;
     uint32_t k, bad = NONE;
     uint32_t c = k0_item(t, slots, p, item, &w, &k);
+    K0_CTL;
     Put o = {{0u}, {0u}, {0}, true, (int32_t)PARAMS(K0P).diff};
     for (uint32_t r = 0u; r < R; r++) {
         o.at[r] = PLACE(control, item, r);
@@ -352,7 +406,7 @@ DELTA_LANES(k0_pass_place)
 }
 
 // Statement `item`'s first place in relation `r` (past the last: the relation's end).
-UKL_INLINE uint32_t k0_start(CBlk control, uint32_t items, uint32_t item, uint32_t r) {
+UKL_INLINE uint32_t k0_start(CBlk control, uint32_t nd, uint32_t items, uint32_t item, uint32_t r) {
     return item == items ? U32(control, K0_ENDS_AT + 4u * r) : PLACE(control, item, r);
 }
 
@@ -383,11 +437,10 @@ DELTA_ONE(k0_pass_keep)
     }
     for (uint32_t r = 0u; r < R; r++)
         if (U32(control, K0_ENDS_AT + 4u * r) == K0_UNCLAIMED) return;
-    CBlk docs = blk(t, (uint32_t)PARAMS(K0P).docs), lang = SLOT(K0_LANG);
-    uint32_t items = k0_n(t, slots, p), first = 0u;
-    for (uint32_t k = 0u; k < docs_len(docs); k++) {
-        Rr r = k0_doc(t, docs, lang, k);
-        uint32_t n = k0_statements(&r), d = (uint32_t)docs_module(docs, k);
+    CBlk docs = k0_docs(t, p);
+    uint32_t nd = docs_len(docs), items = k0_total(control, nd), first = 0u;
+    for (uint32_t k = 0u; k < nd; k++) {
+        uint32_t n = U32(control, K0_DOCN_AT + 4u * k), d = (uint32_t)docs_module(docs, k);
         uint32_t at = k0_entry(h, d), len = CACHE_ENTRY_BYTES + 4u * R;
         bool append = at == NONE;
         if (append) at = CACHE_ENTRIES_AT + (uint32_t)U64(h, CACHE_USED_AT);
@@ -396,7 +449,7 @@ DELTA_ONE(k0_pass_keep)
         for (uint32_t c = 0u; c < 4u; c++) *(CLIF_BLOCK_SPACE uint16_t*)(h + at + 8u + 2u * c) = 0u;
         U32(h, at + 24u) = R;
         U32(h, at + 28u) = 0u;
-        for (uint32_t x = 0u; x < R; x++) U32(h, at + CACHE_ENTRY_BYTES + 4u * x) = k0_start(control, items, first + n, x) - k0_start(control, items, first, x);
+        for (uint32_t x = 0u; x < R; x++) U32(h, at + CACHE_ENTRY_BYTES + 4u * x) = k0_start(control, nd, items, first + n, x) - k0_start(control, nd, items, first, x);
         // The document named last, and an appended entry counted last.
         U32(h, at) = d;
         if (append) U64(h, CACHE_USED_AT) = at + len - CACHE_ENTRIES_AT;
