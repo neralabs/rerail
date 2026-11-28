@@ -3633,44 +3633,8 @@ fn run_observed_within(
         }
         stored.push((rel.clone(), named.iter().map(|c| (*c).to_owned()).collect()));
     }
-    // The measures' keys (decision 0364 §5, R6): a proved recursive component of the cross part ordered by a node's
-    // depth or document order reads `ast_depth` or `node_order` of its candidates' nodes, and the cross part holds no
-    // tree (its tree steps were pushed into the chunks, decision 0051). The chunks hand that relation on as an input,
-    // as they hand on a base relation a cross-file rule looks a node up in (`semijoin`, below): the rows of the nodes
-    // the cross part holds, its exports' and its held base relations' (`held_nodes`). A candidate's node is one of
-    // those (no rule makes a node), so its key is there, and each candidate is rechecked once, in order.
-    drop(section.take()); section = Some(crate::code_rule_dsl::logic::profile::span(|| "the measures' keys".into()));
-    let measure_keys: BTreeSet<String> = {
-        use crate::code_rule_dsl::logic::plan::wellfounded::Order;
-        let proofs = crate::code_rule_dsl::logic::plan::kept_analyses::kept::<crate::code_rule_dsl::logic::plan::wellfounded::Proofs>(&split.program).ok();
-        let derived_here = |r: &str| cross_run.rel(r).is_some_and(|id| cross_run.heads(id).next().is_some());
-        let mut keys = BTreeSet::new();
-        if let Some(proofs) = proofs {
-            for (comp, verdict) in proofs.comps() {
-                let Ok(m) = verdict else { continue };
-                let key = match m.order {
-                    Order::Down | Order::Up => "ast_depth",
-                    Order::Back => "node_order",
-                    Order::Climbs | Order::Falls | Order::Same => continue,
-                };
-                if comp.iter().all(|r| derived_here(r)) {
-                    keys.insert(key.to_owned());
-                }
-            }
-        }
-        // A cross-file rule that reads the relation itself has it stored already, with the columns it names.
-        keys.retain(|k| !split.base.contains(k));
-        // A key the batch's shape has no view of is not bound: its measure is unkeyed (`Measured::keyed`), each
-        // candidate checked again as a row it may read goes. (Both shapes bind `ast_depth` and `node_order`.)
-        keys.retain(|k| syntax::has_view(projection.shape, k));
-        keys
-    };
-    for key in &measure_keys {
-        stored.push((key.clone(), vec!["n".into(), "k".into()]));
-    }
-    if !measure_keys.is_empty() {
-        crate::code_rule_dsl::logic::profile::decision("the measures' keys (decision 0364 R6)", || format!("{measure_keys:?}: an input of the cross part, the rows of the nodes the exports hold"));
-    }
+    // No measure's key (decision 0364 R6's `ast_depth`, `node_order`) is bound in the cross part: it holds no node
+    // (decision 0727), so no component of it is ordered by one.
     // Decide after projection planning: the split's base list can still contain unused inputs.
     // This changes the local frame's identity, not the cross-file program's semantic identity.
     drop(section.take()); section = Some(crate::code_rule_dsl::logic::profile::span(|| "the memo's program and digests".into()));
@@ -3732,7 +3696,6 @@ fn run_observed_within(
         .unwrap_or_default()
         .into_iter()
         .filter(|r| stored.iter().any(|(s, _)| s == r))
-        .chain(measure_keys.iter().cloned())
         .collect();
     if !stored.is_empty() {
         crate::code_rule_dsl::logic::profile::decision("semi-join of the held base relations", || {
@@ -7908,9 +7871,6 @@ fn run_observed_within(
         let mut p = projection.clone();
         if let Some(reads) = &mut p.reads {
             reads.retain(|r| !matches!(r.as_str(), "tree_digest" | "def_digest") || cross_reads.contains(r));
-            // The measures' keys (0364 R6) are the cross part's inputs, read off the batch as its base relations are,
-            // though no file-local rule reads them.
-            reads.extend(measure_keys.iter().cloned());
         }
         p
     };

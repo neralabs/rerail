@@ -8443,9 +8443,9 @@ fn run_within(program: &body::Placed, db: &Connection, inputs: Inputs, lowering:
     // and documents' inputs, in SQL.
     let native_out: BTreeSet<String> = if atoms {
         // `finding` too, when the nodes and documents it is decoded with are bound in place (`finding_rows`).
-        // Only the findings form (`finding(key, n)`) is decoded with them: a `finding` of another shape is an output
-        // like any other.
-        let findings_form = |r: &str| r == "finding" && f0.columns(r).is_none_or(|c| c.len() == 2);
+        // Only the findings form (`finding(key, n)`, `n` a node) is decoded with them: a `finding` of another shape, or
+        // placed by a symbol (decision 0727), is an output like any other.
+        let findings_form = |r: &str| r == "finding" && f0.columns(r).is_none_or(|c| c.len() == 2 && c[1].1 == "node");
         let in_place = |r: &str| !findings_form(r) || ["node", "doc"].iter().all(|t| crate::code_rule_dsl::facts::vtab::bound_source(db, t).is_some());
         written.iter().filter(|r| in_place(r) && run.native_rels.contains(*r) && !run.inputs.contains(r.as_str()) && super::native::component::held(db, r).is_some()).cloned().collect()
     } else {
@@ -8992,10 +8992,11 @@ fn decoded_outputs_within(
     let (mut outputs, mut all_nodes) = (BTreeMap::new(), BTreeMap::new());
     let text = |e: &str| if atoms { format!("sym_text({e})") } else { e.to_owned() };
     for &rel in outputs_of.iter().filter(|r| !kept.contains(**r)) {
-        // The findings form `finding(key, n)` is written as `finding_at` (key, path, start); a `finding` of another
-        // shape (a data-layer program's `finding(clause, code, n)`) is an output like any other.
+        // The findings form `finding(key, n)`, `n` a node, is written as `finding_at` (key, path, start); a `finding` of
+        // another shape (a data-layer program's `finding(clause, code, n)`, or one placed by a symbol, `n: symbol`, as
+        // a cross-file part's is: decision 0727) is an output like any other.
         let declared = types(rel);
-        let findings_form = rel == "finding" && declared.as_ref().is_none_or(|t| t.len() == 2);
+        let findings_form = rel == "finding" && declared.as_ref().is_none_or(|t| t.len() == 2 && t[1] == "node");
         // Each column's decoding: symbols as text (names in SQL, kinds and fields from the dialect's grammar).
         let domains: Vec<lower::Domain> = match lowered {
             Some(l) if !findings_form => l.domains.get(rel).cloned().ok_or_else(|| Error::Plan(format!("the output {rel} has no columns' domains")))?,
