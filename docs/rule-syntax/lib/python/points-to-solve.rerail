@@ -1347,8 +1347,15 @@ pt_tsup_open_l_0(b__t, e__t) :- pt_basex(b, e), !pt_builtin_ref(e, "object"), pt
 pt_tsup_open(n, t) :- pt_cls_q_t(c, t), pt_tsup_open_l_0(b, e), pt_type_of_all(n, t), pt_anc(c, b), pt_extb(e).
 .decl pt_type_miss(n: symbol, u: symbol)
 // u is a supertype of one of n's types and not of another. Every type of a proven n is a subtype of u, so
-// u's candidates are any type's supertypes (no "first" type: a min over symbols has no order, 0483).
-pt_type_miss(n, u) :- pt_tsub(n, t0, u), pt_type_of_all(n, t0), pt_type_of_all(n, t), !pt_tsub(n, t, u).
+// u's candidates are any type's supertypes (no "first" type: a min over symbols has no order, 0483). Each pt_tsub row
+// is of a type of n (its rules read pt_type_of_all(n, t)), so u misses one exactly when fewer of n's types reach it
+// than n has: counted, each row read once. Joined to every type of n for each candidate instead, it made 1.1 M rows
+// for 30 k on PostHog cold.
+.decl pt_type_count(n: symbol, k: number)
+pt_type_count(n, k) :- pt_type_of_all(n, _), k = count : { pt_type_of_all(n, _) }.
+.decl pt_tsub_count(n: symbol, u: symbol, k: number)
+pt_tsub_count(n, u, k) :- pt_tsub(n, _, u), k = count : { pt_tsub(n, _, u) }.
+pt_type_miss(n, u) :- pt_tsub_count(n, u, k), pt_type_count(n, m), k < m.
 .decl pt_proven_type_all(n: symbol, u: symbol)
 pt_proven_type_all(n, u) :- pt_type_of_all(n, t), pt_tsub(n, t, u), !pt_type_open_all(n), !pt_type_miss(n, u).
 .decl pt_possible_type_all(n: symbol, u: symbol)
