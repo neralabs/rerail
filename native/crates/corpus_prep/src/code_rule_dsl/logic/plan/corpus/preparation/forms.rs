@@ -51,6 +51,34 @@ pub fn parse(text: &str) -> Result<Declared> {
     Ok(Declared { rel: (*rel).to_owned(), form: (*form).to_owned(), reads, args })
 }
 
+/// `settings`' forms' reads renamed (`rename`: a relation's new name, as a pass renames the rules' reads of it): a
+/// form reads what its relation's rules read. Whether one was.
+pub fn rename_reads(settings: &mut [(String, String)], rename: impl Fn(&str) -> Option<String>) -> bool {
+    let mut renamed = false;
+    for (_, value) in settings.iter_mut().filter(|(k, _)| k == SETTING) {
+        let mut reads = false;
+        let words: Vec<String> = value
+            .split_whitespace()
+            .map(|w| {
+                match w {
+                    "reads" => reads = true,
+                    "args" => reads = false,
+                    _ if reads => {
+                        if let Some(r) = rename(w) {
+                            renamed = true;
+                            return r;
+                        }
+                    }
+                    _ => {}
+                }
+                w.to_owned()
+            })
+            .collect();
+        *value = words.join(" ");
+    }
+    renamed
+}
+
 /// The version's declared forms, checked: each relation declared, each form registered with its relation's column
 /// types, each relation read declared, no relation twice.
 pub fn declared(v: &Version) -> Result<Vec<Declared>> {

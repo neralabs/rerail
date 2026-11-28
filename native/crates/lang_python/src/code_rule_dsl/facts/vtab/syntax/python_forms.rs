@@ -6,18 +6,19 @@ use crate::code_rule_dsl::facts::core::NONE;
 use rustc_hash::FxHashMap;
 
 /// Python's forms.
-pub const FORMS: &[&dyn Form] = &[&PlaceTerm, &InLiteral];
+pub const FORMS: &[&dyn Form] = &[&Term, &InLiteral];
 
-/// `python.place_term SKIP… / SCOPE… reads scope_tm hosted`: `r(n, t)`, node `n`'s term by its place (python/
-/// points-to-file's `pt_tm` of a node no definition names, decision 0677): `q@o+l^c`, `q` the term (`scope_tm`'s) of
-/// its nearest ancestor of a SCOPE kind, `o` its start from that one's, `l` its length, `c` how many of its ancestors
-/// in an unbroken chain up span what it does (`tape.same_span`). Nodes of a SKIP kind, and those `hosted` holds (a
-/// guest's), have none. Keyed by `n`.
-pub struct PlaceTerm;
+/// `python.term SKIP… / SCOPE… reads scope_tm hosted given…`: `r(n, t)`, node `n`'s term (python/points-to-file's
+/// `pt_tm`, decision 0677): each row of `scope_tm` (a module's or a definition's) and of each `given` (a guest's
+/// node's, its last two columns), and every other node's by its place, `q@o+l^c`: `q` the term (`scope_tm`'s) of its nearest ancestor of a
+/// SCOPE kind, `o` its start from that one's, `l` its length, `c` how many of its ancestors in an unbroken chain up
+/// span what it does (`tape.same_span`). Nodes of a SKIP kind, and those `hosted` holds (a guest's), have no place
+/// term. Keyed by `n`.
+pub struct Term;
 
-impl Form for PlaceTerm {
+impl Form for Term {
     fn name(&self) -> &'static str {
-        "python.place_term"
+        "python.term"
     }
     fn version(&self) -> u32 {
         1
@@ -30,9 +31,11 @@ impl Form for PlaceTerm {
     }
     fn rows(&self, call: &FormCall<'_>, _column: usize, out: &mut FormRows) -> Result<(), String> {
         let Some(cut) = call.args.iter().position(|a| *a == "/") else {
-            return Err("python.place_term takes the kinds with no place term, `/`, then the scopes' kinds".into());
+            return Err("python.term takes the kinds with no place term, `/`, then the scopes' kinds".into());
         };
-        let [scope_tm, hosted] = call.reads else { return Err("python.place_term reads the scopes' terms and the guests' nodes".into()) };
+        let [scope_tm, hosted, given @ ..] = call.reads else {
+            return Err("python.term reads the scopes' terms, the guests' nodes, then any relations of given terms".into());
+        };
         let (mut skip, mut scope) = (KindSet::new(&call.args[..cut]), KindSet::new(&call.args[cut + 1..]));
         // Each scope's terms, their texts found once.
         let atoms: Vec<i64> = (0..scope_tm.len()).map(|r| scope_tm.value(r, 1)).collect();
@@ -43,6 +46,26 @@ impl Form for PlaceTerm {
         }
         let mut guests: Vec<i64> = (0..hosted.len()).map(|r| hosted.value(r, 0)).collect();
         guests.sort_unstable();
+        // The terms given whole, a scope's and a guest's node's: those of the keys asked, or every one.
+        let asked = |n: i64| call.keys.is_none_or(|k| k.binary_search(&n).is_ok());
+        for (r, t) in texts.iter().enumerate() {
+            let n = scope_tm.value(r, 0);
+            if asked(n) {
+                let t = out.text(t.clone());
+                out.push(&[n, t]);
+            }
+        }
+        // A given relation's last two columns are its node and term (a kept pass's read leads with its value's
+        // document, `kept::Pass::read`).
+        for g in given {
+            let Some(at) = g.columns().len().checked_sub(2) else { return Err("python.term: a given relation has a node and a term".into()) };
+            let rows: Vec<usize> = (0..g.len()).filter(|&r| asked(g.value(r, at))).collect();
+            let texts = (call.texts)(&rows.iter().map(|&r| g.value(r, at + 1)).collect::<Vec<_>>())?;
+            for (&r, t) in rows.iter().zip(texts) {
+                let t = out.text(t);
+                out.push(&[g.value(r, at), t]);
+            }
+        }
         let mut push = |out: &mut FormRows, n: i64, s: i64, sb: u32, [b, e]: [u32; 2], same: i64| {
             let Some(rows) = terms.get(&s) else { return };
             for &r in rows {

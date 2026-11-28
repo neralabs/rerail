@@ -64,6 +64,16 @@ fn a_pass_reads_another_under_a_name_of_its_own() {
     assert!(rules_of(&v, "used").iter().all(|r| r.contains("rr_pass_annotation_ann_names(")), "{}", v.show());
 }
 
+/// A Rust form's reads name what the language's rules read: a `.from` name reads the context's instance there too.
+#[test]
+fn a_forms_read_of_another_pass_reads_its_instance() {
+    let text = PROGRAM.replace("used(x) :- ann_names(x).", "used(x) :- quoted(x).").replace(".from annotation ann_names", ".from annotation ann_names as quoted")
+        + ".form used tape.same_span reads quoted bound args a b\n";
+    let v = parse_version(&text).unwrap();
+    let forms: Vec<String> = crate::code_rule_dsl::logic::program_image::fields::ProgramFields::settings(&*v).into_iter().filter(|(k, _)| k == "form").map(|(_, w)| w).collect();
+    assert_eq!(forms, vec!["used tape.same_span reads rr_pass_annotation_ann_names bound args a b".to_owned()], "{}", v.show());
+}
+
 /// A program that declares no pass is read as it is.
 #[test]
 fn a_program_without_passes_is_itself() {

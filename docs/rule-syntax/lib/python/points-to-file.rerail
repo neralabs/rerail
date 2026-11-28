@@ -835,14 +835,13 @@ pt_scope_tm(f, cat(@dot(q, x), "#", to_string(i))) :- pt_scope_tm(s, q), pt_tm_c
 pt_scope_tm(f, cat(q, "@", to_string(o), "+", to_string(l), "^", to_string(c))) :- pt_scope_tm(s, q), pt_tm_dead_child(f, s, o, l, c).
 .decl pt_tm_scope(kind: symbol)
 pt_tm_scope("module"). pt_tm_scope("function_definition"). pt_tm_scope("class_definition").
+// Made by its Rust form (`python.term`): the scopes' and the guests' terms as they are, and every other node's by
+// its place, a walk down each tape that carries each node's nearest scope and its span's ancestors (`pt_tm_same`'s
+// count) from its parent's. The rules are its definition, and the form's tests' oracle; the form's kinds are
+// pt_tm_def's, "module", then pt_tm_scope's.
+.form pt_tm python.term reads pt_scope_tm host_node pt_q_gtm args function_definition class_definition module / module function_definition class_definition
 pt_tm(s, q) :- pt_scope_tm(s, q).
-pt_tm(n, t) :- pt_tm_place(n, t).
-// pt_tm_place(n, t): a node's term by its place. Made by its Rust form (`python.place_term`): a walk up each node's
-// parents to its nearest scope, counting the ancestors of its span on the way. The rule is its definition, and the
-// form's tests' oracle; the form's kinds are pt_tm_def's, "module", then pt_tm_scope's.
-.decl pt_tm_place(n: node, t: symbol)
-.form pt_tm_place python.place_term reads pt_scope_tm host_node args function_definition class_definition module / module function_definition class_definition
-pt_tm_place(n, cat(q, "@", to_string(b - sb), "+", to_string(e - b), "^", to_string(c))) :- node(_, n, k, b, e), !pt_tm_def(k),
+pt_tm(n, cat(q, "@", to_string(b - sb), "+", to_string(e - b), "^", to_string(c))) :- node(_, n, k, b, e), !pt_tm_def(k),
     k != "module", !host_node(n, _), nearest(n, s, pt_tm_scope), node(_, s, _, sb, _), pt_scope_tm(s, q), pt_tm_same(n, c).
 // A guest's node is the guest's own (its document a tape that equal texts share, decision 0431), whatever string
 // holds it: named by that document and its place there. Only the annotation context reads a guest's nodes (decision

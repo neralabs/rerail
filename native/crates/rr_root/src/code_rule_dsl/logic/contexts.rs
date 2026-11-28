@@ -647,6 +647,28 @@ fn write(v: &Version, d: &Declared, plan: &Plan, b: &mut Builder<'_>) -> Result<
         }
     }
     let mut settings: Vec<(String, String)> = ProgramFields::settings(v).into_iter().filter(|(k, _)| k != "context" && k != "from").collect();
+    // A Rust form's reads (`.form r FORM reads x… args …`) name what the language's rules read: a `.from` name reads
+    // the source pass's instance there too, as the rules' reads of it are renamed.
+    for (_, value) in settings.iter_mut().filter(|(k, _)| k == "form") {
+        let mut reads = false;
+        let words: Vec<String> = value
+            .split_whitespace()
+            .map(|w| {
+                match w {
+                    "reads" => reads = true,
+                    "args" => reads = false,
+                    _ if reads => {
+                        if let Some(r) = d.read_of(&d.language, w) {
+                            return d.name_in(&r.source, &r.rel);
+                        }
+                    }
+                    _ => {}
+                }
+                w.to_owned()
+            })
+            .collect();
+        *value = words.join(" ");
+    }
     for c in d.contexts.values().filter(|c| !c.made) {
         let exports: Vec<&str> = c.exports.iter().map(String::as_str).collect();
         // A set, as its exports are: the `.from` statements of two modules neither includes have no order, and the

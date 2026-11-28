@@ -293,6 +293,11 @@ pub fn write(v: &Version, groups: &[Group], b: &mut Builder<'_>) -> Result<(), S
             }
         }
     }
+    // A Rust form's reads of a frontier relation read the host's read of it, as its relation's rules now do.
+    let mut settings = ProgramFields::settings(v);
+    if super::forms::rename_reads(&mut settings, |r| reads.get(r).cloned()) {
+        b.fields().set_field(crate::code_rule_dsl::logic::program_facts::Field::Settings(&settings));
+    }
     Ok(())
 }
 
