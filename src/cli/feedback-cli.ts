@@ -87,7 +87,9 @@ function steeredHere(database: RerailDatabase, ruleId: string, cwd: string): {
     .where(and(
       eq(events.kind, "steering-delivered"),
       inArray(sessions.repositoryId, repositoryIds),
-      sql`EXISTS (SELECT 1 FROM json_each(${events.payloadJson}, '$.ruleIds') WHERE value = ${ruleId})`,
+      // A receipt whose text is no JSON names no rule: `json_each` would raise on it for the whole lookup.
+      sql`EXISTS (SELECT 1 FROM json_each(CASE WHEN json_valid(${events.payloadJson}) THEN ${events.payloadJson} ELSE '{}' END, '$.ruleIds')
+        WHERE value = ${ruleId})`,
     ))
     .orderBy(sql`${events.sequence} DESC`).limit(1).get();
   return { repositoryId: checkout.repositoryKey, session };

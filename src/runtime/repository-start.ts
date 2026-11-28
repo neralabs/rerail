@@ -23,6 +23,7 @@ import { clearSetupReview } from "../engine/catalog/setup-review.js";
 import { ADAPTER_CAPABILITIES, type RerailHost } from "../engine/adapter-contract.js";
 import { conversationRulesEnabled } from "../engine/experimental-features.js";
 import type { SessionNoteRules } from "../engine/code-rule/rerail-steer.js";
+import { sayLeftOut, storedReceiptRuleIds } from "./session-store.js";
 
 const STOPPED: RepositoryStatus = { started: false, setUp: false, startedBy: "repository" };
 
@@ -312,14 +313,19 @@ export function startSetUpRepository(database: RerailDatabase, checkout: Checkou
 /**
  * The rules whose violations `session` was steered about, each once, in the order they first steered: the
  * `ruleIds` of its `steering-delivered` receipts, as the footer's steered count reads those receipts. A session
- * recorded under another host is not the caller's, so it names none.
+ * recorded under another host is not the caller's, so it names none. A receipt whose text is no JSON names none, and
+ * the command's error output names it once (`sayLeftOut`).
  */
 function sessionSteeredRules(database: RerailDatabase, host: RerailHost, sessionId: string): string[] {
-  const receipts = database.select({ ruleIds: sql<string | null>`json_extract(${events.payloadJson}, '$.ruleIds')` })
+  const receipts = database.select({ eventId: events.eventId, payloadJson: events.payloadJson })
     .from(events).innerJoin(sessions, eq(sessions.sessionId, events.sessionId))
     .where(and(eq(events.sessionId, sessionId), eq(sessions.host, host), eq(events.kind, "steering-delivered")))
     .orderBy(asc(events.sequence)).all();
-  return [...new Set(receipts.flatMap(({ ruleIds }) => (ruleIds === null ? [] : JSON.parse(ruleIds) as string[])))];
+  return [...new Set(receipts.flatMap(({ eventId, payloadJson }) => {
+    const ruleIds = storedReceiptRuleIds(payloadJson);
+    if (ruleIds === undefined) sayLeftOut({ database, log: process.stderr }, sessionId, eventId);
+    return ruleIds ?? [];
+  }))];
 }
 
 /** `a`, `a and b`, `a, b and c`: the design's list, without an Oxford comma. */

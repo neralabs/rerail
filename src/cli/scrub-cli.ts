@@ -66,9 +66,30 @@ function message(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
 }
 
-/** A stored event payload as `persistEvent` would now write it; undefined when it holds no secret. */
+/** A stored payload text that is no JSON, scrubbed as text; undefined when that changes nothing. */
+function scrubbedText(json: string): { json: string; v8: null } | undefined {
+  const text = scrubSecrets(json);
+  return text === json ? undefined : { json: text, v8: null };
+}
+
+/** The JSON value `json` holds, or undefined when it is no JSON. */
+function jsonValue(json: string): { value: unknown } | undefined {
+  try {
+    return { value: JSON.parse(json) };
+  } catch {
+    return undefined;
+  }
+}
+
+/**
+ * A stored event payload as `persistEvent` would now write it; undefined when it holds no secret. A text with no
+ * `node:v8` copy that is no JSON (a damaged file or a hand edit) is scrubbed as text, so a secret in it goes as one in
+ * any other row does, and the rows after it are still read.
+ */
 function scrubbedPayload(json: string, v8: Buffer | null): { json: string; v8: Buffer | null } | undefined {
-  const payload: unknown = v8 === null ? JSON.parse(json) : deserialize(v8);
+  const stored = v8 === null ? jsonValue(json) : { value: deserialize(v8) as unknown };
+  if (stored === undefined) return scrubbedText(json);
+  const payload = stored.value;
   const scrubbed = scrubValue(payload);
   if (scrubbed === payload) return undefined;
   return { json: stableJsonText(scrubbed) ?? JSON.stringify({ encoding: "node:v8" }), v8: v8 === null ? null : serialize(scrubbed) };
