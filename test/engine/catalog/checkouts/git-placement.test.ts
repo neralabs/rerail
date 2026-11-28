@@ -30,6 +30,7 @@ import {
   learnWorktreeRegistry,
   placeWithoutBlocking,
   readRemoteAddress,
+  readRemoteAnswer,
   repositoryIdentityLocation,
   resolveCloneId,
   worktreeRegistry,
@@ -597,17 +598,23 @@ describe("a walk's learn step of Git's list of the worktrees", () => {
 });
 
 describe("a clone's remote, kept while the files Git reads it from read the same", () => {
-  it("keeps no answer from a Git that failed, and asks Git again at the next call", async () => {
-    const root = await temporaryRoot();
-    const main = repository(join(root, "main"));
-    git(main, "remote", "add", "origin", "https://example.invalid/team/main.git");
-    const failed = { status: null, stdout: "", stderr: "", error: new Error("Git ran past its time limit") };
-    // The read ends at the first ask Git gives no answer to.
-    vi.mocked(runGit).mockReturnValueOnce(failed);
+  /** A Git that gave no answer: ended at its time limit as `spawnSync` ends one (`ETIMEDOUT`), or failed otherwise. */
+  const unanswered = {
+    "ran past its time limit": { error: Object.assign(new Error("spawnSync git ETIMEDOUT"), { code: "ETIMEDOUT" }), ranToLimit: true },
+    "failed otherwise": { error: new Error("Git failed"), ranToLimit: false },
+  };
+  for (const [ended, { error, ranToLimit }] of Object.entries(unanswered)) {
+    it(`keeps no answer from a Git that ${ended}, says so, and asks Git again at the next call`, async () => {
+      const root = await temporaryRoot();
+      const main = repository(join(root, "main"));
+      git(main, "remote", "add", "origin", "https://example.invalid/team/main.git");
+      // The read ends at the first ask Git gives no answer to.
+      vi.mocked(runGit).mockReturnValueOnce({ status: null, stdout: "", stderr: "", error });
 
-    expect(readRemoteAddress(main)).toBeUndefined();
-    expect(readRemoteAddress(main)).toEqual({ name: "origin", url: "https://example.invalid/team/main.git" });
-  });
+      expect(readRemoteAnswer(main)).toEqual({ remote: undefined, answered: false, ranToLimit });
+      expect(readRemoteAddress(main)).toEqual({ name: "origin", url: "https://example.invalid/team/main.git" });
+    });
+  }
 
   it("asks Git nothing ahead for a remote it keeps", async () => {
     const root = await temporaryRoot();
