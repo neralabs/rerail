@@ -23,7 +23,7 @@ use cranelift_codegen::ir::{
 #[cfg(feature = "ir")]
 pub fn ukl() -> String {
     use std::mem::offset_of;
-    let fields: [(&str, &str, usize); 27] = [
+    let fields: [(&str, &str, usize); 28] = [
         ("uint32_t", "key", offset_of!(ViewDoc, key)),
         ("uint32_t", "tag", offset_of!(ViewDoc, tag)),
         ("uint32_t", "preorder", offset_of!(ViewDoc, preorder)),
@@ -43,6 +43,7 @@ pub fn ukl() -> String {
         ("Run", "named", offset_of!(ViewDoc, named)),
         ("Run", "visits", offset_of!(ViewDoc, visits)),
         ("Run", "digests", offset_of!(ViewDoc, digests)),
+        ("Run", "texts", offset_of!(ViewDoc, texts)),
         ("Run", "names", offset_of!(ViewDoc, names)),
         ("Run", "segments", offset_of!(ViewDoc, segments)),
         ("uint32_t", "place", offset_of!(ViewDoc, place)),
@@ -1278,6 +1279,27 @@ pub fn visit(b: &mut B<'_, '_>) -> Value {
     let (l, col) = (b.arg(0), b.arg(1));
     let c = b.f.ins().icmp_imm(IntCC::Equal, col, 0);
     b.either(I64, c, |b| b.node_id(l), |b| b.entry_item(at::VISITS, l))
+}
+
+/// `view_text(i, col)`: column `col` of `text`'s row `i`: its node's or position's id (`loc_id` of its local id), its
+/// text's atom (`ViewDoc::texts`, `[local, atom]` by row: interned where its program reads `text`, `tape_rows::texts`).
+#[cfg(feature = "ir")]
+pub fn text(b: &mut B<'_, '_>) -> Value {
+    let (i, col) = (b.arg(0), b.arg(1));
+    let row = |b: &mut B<'_, '_>| {
+        let items = b.follow(b.tape, at::TEXTS);
+        b.item(items, i, 8)
+    };
+    let c = b.f.ins().icmp_imm(IntCC::Equal, col, 0);
+    b.either(I64, c, |b| {
+        let p = row(b);
+        let l = b.word_at(I32, p, 0);
+        b.loc_id(l)
+    }, |b| {
+        let p = row(b);
+        let a = b.word_at(I32, p, 4);
+        b.f.ins().uextend(I64, a)
+    })
 }
 
 #[cfg(all(test, feature = "ir"))]

@@ -55,9 +55,12 @@ struct PlacedDir {
     pad: u32,
 }
 
-/// The kernels' `VIEW_PLACED`: a kind's bit for a placed relation, whose directory is a `PlacedDir`.
+/// The kernels' `VIEW_PLACED`: a kind's bit for a placed relation, whose directory is a `PlacedDir`: past every view's
+/// kind (`device_chunk::read_kind`, `VIEWS`' places).
 #[cfg(any(target_os = "macos", target_os = "linux", windows))]
-pub const VIEW_PLACED: u32 = 16;
+pub const VIEW_PLACED: u32 = 256;
+#[cfg(any(target_os = "macos", target_os = "linux", windows))]
+const _: () = assert!(rerail_clif::view_reads::VIEWS.len() < VIEW_PLACED as usize);
 
 /// A placed relation on the device: its `PlacedDir` (a buffer of its own: addresses, no rows), the buffer its reads
 /// reach past the view's (the spans' block), the spans' relation held while it is read, and its relation of no

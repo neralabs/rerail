@@ -505,6 +505,13 @@ impl<'a> Doc<'a> {
     pub fn visit(&self, l: u32, col: u32) -> i64 {
         if col == 0 { self.node_id(l) } else { i64::from(self.items(&self.entry.visits)[l as usize]) }
     }
+    /// `view_text(i, col)`: `text`'s row `i`'s id (its local id's, `loc_id`), its text's atom (`ViewDoc::texts`).
+    #[inline]
+    pub fn text_row(&self, i: u32, col: u32) -> i64 {
+        // SAFETY: the entry's run of `[u32; 2]`s, set where it was made, in its block.
+        let [l, atom] = unsafe { self.entry.texts.as_slice::<[u32; 2]>() }[i as usize];
+        if col == 0 { self.loc_id(l) } else { i64::from(atom) }
+    }
     /// The numbered node of the `next_sibling` view's row `i` (a node after a numbered sibling), and its tape node.
     #[inline]
     pub fn after_sibling(&self, i: u32) -> (u32, u32) {

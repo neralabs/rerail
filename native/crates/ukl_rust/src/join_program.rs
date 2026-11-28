@@ -39,7 +39,7 @@ const SCAN_ITEMS: u32 = 4;
 /// A sort's tile (`UKL_RADIX_TILE`) and its digits.
 const RADIX_TILE: u32 = 1024;
 const RADIX_DIGITS: usize = 256;
-const VIEW_PLACED: u32 = 16;
+const VIEW_PLACED: u32 = 256;
 const IX_LIVE: u32 = 0x8000_0000;
 
 // What an item runs (`Item::what >> 24`).

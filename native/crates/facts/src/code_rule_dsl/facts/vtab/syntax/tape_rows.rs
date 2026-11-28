@@ -39,6 +39,9 @@ pub struct Derived {
     visits: OnceLock<Cells<u32>>,
     /// Each node's `tree_digest` hash, its 32 bytes, by local id.
     digests: OnceLock<Cells<[u8; 32]>>,
+    /// `text`'s rows as `view_text` reads them: each row's local id and its text's atom, by row (`texts`); `None`
+    /// where a text could not be interned.
+    texts: OnceLock<Option<Cells<[u32; 2]>>>,
     /// `doc`'s row of a file: its path's and module's atoms (`DocRow::doc`'s), for its entry (`ViewDoc::doc_path`).
     doc: OnceLock<[u32; 2]>,
 }
@@ -53,6 +56,41 @@ impl Derived {
     pub(super) fn doc(&self) -> Option<[u32; 2]> {
         self.doc.get().copied()
     }
+    /// Whether `text`'s rows are made for its entry (`texts`), every text interned.
+    pub(super) fn texts_held(&self) -> bool {
+        self.texts.get().is_some_and(Option::is_some)
+    }
+}
+
+/// Document `doc`'s `text` rows as the views' reads read them (`view_text`, decision 0656 step 4): each row's local id
+/// (`Projected::text_local`: its nodes with text, then its positions with text) and its text's atom, interned as the
+/// host's reads intern them (`text_atoms`, which fills the term table they read after), made once where its program
+/// reads `text` (`derive`) and its entry's run pointed at them. `None` where a text could not be interned: the
+/// device is refused the view (`Viewed::device_view`).
+pub(super) fn texts(batch: &Batch, doc: usize) -> Option<&Cells<[u32; 2]>> {
+    let p = &batch.docs[doc];
+    p.derived
+        .texts
+        .get_or_init(|| {
+            let rows: Vec<(u32, u32)> = (0..p.text_rows()).map(|i| p.text_local(i)).collect();
+            let atoms = p.text_atoms(&*batch.atoms, &rows);
+            let atoms: Vec<u32> = atoms.iter().map(|&a| u32::try_from(a).ok()).collect::<Option<_>>()?;
+            let n = rows.len();
+            // copy: derived (each text row's interned text: the tape holds the bytes, not their atoms)
+            let cells = Cells::build(p.block(), n.max(1), |out: &mut [[u32; 2]]| {
+                out[0] = [NONE, NONE];
+                for (o, (&(l, _), &a)) in out.iter_mut().zip(rows.iter().zip(&atoms)) {
+                    *o = [l, a];
+                }
+                n.max(1)
+            })
+            .expect("a projection's block holds a view's texts");
+            // SAFETY: the entry lies in the projection's block from its making; its `texts` is written by this alone,
+            // inside the `OnceLock`, and read by a view's read only once the `OnceLock` holds it (`texts_held`).
+            unsafe { rerail_clif::ids::Run::set(&raw mut (*p.entry().0.as_ptr()).texts, cells.as_ptr(), n) };
+            Some(cells)
+        })
+        .as_ref()
 }
 
 /// Which of a document's items a `TapeRows` has a row of.
@@ -494,6 +532,11 @@ pub(super) fn derive(batch: &Batch, doc: usize) {
     }
     if wants(VISIT) {
         VisitIndex::places(&at);
+    }
+    // `text`'s rows, read in place (`view_text`): a node's or position's text interned, as a text test's scan interns
+    // them all (`made::TextTest::scan`).
+    if batch.shape == Shape::Core && wants("text") {
+        texts(batch, doc);
     }
     // `doc`'s row, read in place (`view_doc`): its atoms in its entry, a file's alone (a tape value has none).
     // Written into the entry here, whenever its other fields were (`view_docs::ViewEntry::fill`): these two are

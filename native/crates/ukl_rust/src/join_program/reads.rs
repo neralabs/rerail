@@ -127,7 +127,7 @@ impl<'a> At<'a> {
     }
 }
 
-/// The last view (`views::VIEWS`), `visit_index`: a kind past it reads it.
+/// The last view (`views::VIEWS`), `text`: a kind past it reads it.
 pub const LAST_VIEW: u32 = (rerail_reads::views::VIEWS.len() - 1) as u32;
 
 /// Column `col` of view `k`'s (`views::VIEWS`) row `r` of document `d`: through `d`, which keeps the tape node it last
@@ -149,7 +149,8 @@ pub fn col(d: &Doc<'_>, k: u32, r: u32, col: u32) -> u64 {
         11 => d.order_row(r, col),
         12 => d.op(r, col),
         13 => d.doc(col),
-        _ => d.visit(r, col),
+        14 => d.visit(r, col),
+        _ => d.text_row(r, col),
     }) as u64
 }
 

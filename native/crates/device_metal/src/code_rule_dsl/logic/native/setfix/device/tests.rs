@@ -2521,8 +2521,10 @@ use rerail_blocks::vector::Vector;
                     }
                 }
             }
+            // `text` (decision 0656 step 4) and its line's read (`line_text`, decision 0724 step 3): each node's and
+            // position's text's atom, in its entry (`ViewDoc::texts`), as the host interns it.
             for views in [&core_views, &own_views] {
-                for name in ["line", "end_line", "col", "docof"] {
+                for name in ["line", "end_line", "col", "docof", "text", "line_text"] {
                     let src = &views.iter().find(|(n, _)| *n == name).unwrap_or_else(|| panic!("{name}")).1;
                     let d = src.device_view();
                     assert_eq!(d.is_some(), device.has_addresses(), "{name}: read in place where buffers have addresses");

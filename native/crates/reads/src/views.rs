@@ -49,6 +49,9 @@ pub struct ViewDoc {
     pub named: Run,
     pub visits: Run,
     pub digests: Run,
+    /// `text`'s rows as `view_text` reads them (`[u32; 2]`s, by row: the row's local id, its text's atom), interned
+    /// once where its program reads `text` (`tape_rows::texts`); empty before.
+    pub texts: Run,
     /// By the tape's code (`tape_number`), the atom of its kind's name (u32s): the `op` view's `s` of an anonymous
     /// child of that code (`view_op`), the host's and the kernels' one table. Interned once where a batch reads `op`;
     /// empty where it does not.
@@ -75,7 +78,7 @@ pub struct ViewDoc {
     /// numbering's slot entry and then one load, not a search of the granule's children. Empty where `node_table` is.
     pub node_by_id: Run,
 }
-const _: () = assert!(std::mem::size_of::<ViewDoc>() == 16 + 16 * 2 + 16 + 24 + 16 * 7 + 16 + 16 + 16);
+const _: () = assert!(std::mem::size_of::<ViewDoc>() == 16 + 16 * 2 + 16 + 24 + 16 * 8 + 16 + 16 + 16);
 
 /// A language's place in the codes' directory (decision 0697, `rerail_tape_format::codes_dir`, in the binary): by
 /// tape tag, the offsets from the directory's first byte of its codes' kind atoms and field atoms (u32s, by the tape's
@@ -160,9 +163,8 @@ pub struct ViewRow {
 const _: () = assert!(std::mem::size_of::<ViewRow>() == (8 + 8 + 8 + 8 + 12 + 4 + 4 * ROWS + std::mem::size_of::<crate::view::TapeView>() + 4 + 4).next_multiple_of(8));
 
 /// A row's first rows: one per view of `VIEWS`, then the views no kernel reads, the host's alone: `child`'s sibling
-/// view (`SIBLING`), the token order's four (`TOK`), `spread` (`SPREAD`), `end_point` (`END`) and `text` (`TEXT`: its
-/// nodes with text, then its positions with text), and the other relations of the tape's answers (`TAPE`, the
-/// engine's `tape_rows`). Every view's rows are found in the directory, whoever reads them.
+/// view (`SIBLING`), the token order's four (`TOK`), `spread` (`SPREAD`) and `end_point` (`END`), and the other
+/// relations of the tape's answers (`TAPE`, the engine's `tape_rows`). Every view's rows are found in the directory, whoever reads them.
 pub const ROWS: usize = TAPE + TAPE_RELATIONS;
 /// `op`'s rows (each numbered node's anonymous children, `Item::Op`): `view_op`'s, in `VIEWS`.
 pub const OP: usize = 12;
@@ -172,11 +174,9 @@ pub const SIBLING: usize = VIEWS.len();
 pub const TOK: usize = SIBLING + 1;
 pub const SPREAD: usize = TOK + 4;
 pub const END: usize = SPREAD + 1;
-/// `text`'s rows (decision 0656 step 4: a view, no row made).
-pub const TEXT: usize = END + 1;
 /// The first of the tape's other relations' (`tape_rows`): `structural_before`, `structural_after`,
 /// `rr_token_named` and `tree_digest`, in that order (`doc` and `visit_index` are views': `DOC_VIEW`, `VISIT_VIEW`).
-pub const TAPE: usize = TEXT + 1;
+pub const TAPE: usize = END + 1;
 /// How many relations `TAPE` starts.
 pub const TAPE_RELATIONS: usize = 4;
 
@@ -556,13 +556,18 @@ pub fn lower_bound(keys: &[u32], key: u32) -> u32 {
 /// A view's number in a kernel's reads (`ViewDir`'s rows' and `vread`'s): `node`, `child`, `field`, `core_node`,
 /// `line`, then core.rerail's places (`Loc`): `line`, `end_line`, `col`, `docof`; then `tape`, `ast_depth` and
 /// `node_order`; then `op`, then `doc` (a row per file: its key, its path's and module's atoms), then `visit_index` (a
-/// row a node: its id, its place in the visit order, `ViewDoc::visits`).
-pub const VIEWS: [&str; 15] = ["view_node", "view_child", "view_field", "view_core", "view_line", "view_loc_line", "view_loc_end", "view_loc_col", "view_loc_docof", "view_tape", "view_depth", "view_order", "view_op", "view_doc", "view_visit"];
+/// row a node: its id, its place in the visit order, `ViewDoc::visits`), then `text` (its nodes with text, then its
+/// positions with text: its id, its text's atom, `ViewDoc::texts`).
+pub const VIEWS: [&str; 16] = ["view_node", "view_child", "view_field", "view_core", "view_line", "view_loc_line", "view_loc_end", "view_loc_col", "view_loc_docof", "view_tape", "view_depth", "view_order", "view_op", "view_doc", "view_visit", "view_text"];
 /// `doc`'s slot: its first rows, one a file.
 pub const DOC_VIEW: usize = 13;
 const _: () = assert!(matches!(VIEWS[DOC_VIEW].as_bytes(), b"view_doc"));
-/// `visit_index`'s slot (`VIEWS`' last): its first rows, one a node.
-pub const VISIT_VIEW: usize = VIEWS.len() - 1;
+/// `visit_index`'s slot: its first rows, one a node.
+pub const VISIT_VIEW: usize = 14;
+const _: () = assert!(matches!(VIEWS[VISIT_VIEW].as_bytes(), b"view_visit"));
+/// `text`'s slot (`VIEWS`' last, decision 0656 step 4: a view, no row made): its nodes with text, then its positions
+/// with text.
+pub const TEXT: usize = VIEWS.len() - 1;
 
 /// A field's byte offset in the entry.
 pub mod at {
@@ -585,6 +590,7 @@ pub mod at {
     pub const PLACED: i32 = offset_of!(ViewDoc, placed) as i32;
     pub const NAMES: i32 = offset_of!(ViewDoc, names) as i32;
     pub const VISITS: i32 = offset_of!(ViewDoc, visits) as i32;
+    pub const TEXTS: i32 = offset_of!(ViewDoc, texts) as i32;
     pub const SEGMENTS: i32 = offset_of!(ViewDoc, segments) as i32;
     pub const PLACE: i32 = offset_of!(ViewDoc, place) as i32;
     pub const DOC_PATH: i32 = offset_of!(ViewDoc, doc_path) as i32;
@@ -612,6 +618,8 @@ pub const OP_COLUMNS: u32 = 2;
 pub const DOC_COLUMNS: u32 = 3;
 /// `visit_index`'s: the node's id, its place in the visit order.
 pub const VISIT_COLUMNS: u32 = 2;
+/// `text`'s: the row's id, its text's atom.
+pub const TEXT_COLUMNS: u32 = 2;
 
 /// No row: a parent probe's end (`view_child_first`, `view_child_next`, `view_number`).
 pub const NO_ROW: u32 = u32::MAX;

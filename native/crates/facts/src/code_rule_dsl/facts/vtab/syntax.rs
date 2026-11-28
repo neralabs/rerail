@@ -5114,12 +5114,12 @@ impl Batch {
                 let [nodes, fielded, siblings, locs] = [c[0], c[1], c[2], c[3]];
                 let own = [nodes, nodes.saturating_sub(1), if wants_field { fielded } else { 0 }, if wants_sibling { siblings } else { 0 }, locs];
                 // `ROWS`' order: node, child, field, core_node, line, the four `Loc` views, tape, ast_depth,
-                // node_order, `op`, `doc` (a free slot, written above), `visit_index` (`tape_rows::count`'s), then
-                // siblings; then the host's alone: the token order's four, `spread`, `end_point`, `text`, and the
-                // tape's other relations (`tape_rows`), whose token order's four it counts too.
+                // node_order, `op`, `doc` (a free slot, written above), `visit_index` (`tape_rows::count`'s), `text`,
+                // then siblings; then the host's alone: the token order's four, `spread`, `end_point`, and the tape's
+                // other relations (`tape_rows`), whose token order's four it counts too.
                 let views: [usize; TAPE] = [
-                    own[0], own[1], own[2], own[0], own[0], own[4], own[4], own[4], own[4], own[0], own[0], own[0], c[9], 0, 0,
-                    own[3], 0, 0, 0, 0, if wants_spread { c[5] } else { 0 }, if wants_end { nodes } else { 0 }, c[11],
+                    own[0], own[1], own[2], own[0], own[0], own[4], own[4], own[4], own[4], own[0], own[0], own[0], c[9], 0, 0, c[11],
+                    own[3], 0, 0, 0, 0, if wants_spread { c[5] } else { 0 }, if wants_end { nodes } else { 0 },
                 ];
                 let mut by: [usize; ROWS] = std::array::from_fn(|k| views.get(k).copied().unwrap_or(0));
                 tape_rows::count(self, i, &counts, &mut by);
@@ -5530,8 +5530,9 @@ impl Source for Viewed {
     fn device_view(&self) -> Option<crate::code_rule_dsl::facts::vtab::DeviceView> {
         let view = device_chunk::device_view(self.view)?;
         // A view is read in place where the device reads every tape (and for `line`, every document's lines; for the
-        // `Loc` views, every document's places), or not at all: nothing makes its rows (decision 0353 step 4).
-        let loc = matches!(self.view, View::Loc(_));
+        // `Loc` views and `text`, every document's places), or not at all: nothing makes its rows (decision 0353 step
+        // 4). `text`'s atoms are its entries' (`tape_rows::texts`): every document's interned, before its directory.
+        let loc = matches!(self.view, View::Loc(_) | View::Text);
         // The directory is of the process's device's addresses, which the stages read it by (decision 0440 step C):
         // none where its buffers have none (`views_in_place`). Where the join programs run on the host
         // (`rerail_accel::gpu::shared::on_host`, or no process device), of the host's (`ViewsInPlace::host`).
@@ -5541,8 +5542,15 @@ impl Source for Viewed {
                 (view != device_chunk::VIEW_LINE || lines) && (!loc || locs)
             })
             .and_then(|v| v.read_of(view, Arc::clone(&self.batch) as Arc<dyn std::any::Any + Send + Sync>));
+        let in_place = in_place.filter(|_| {
+            let held = !matches!(self.view, View::Text) || (0..self.batch.docs.len()).all(|d| self.batch.docs[d].derived.texts_held());
+            if !held {
+                crate::code_rule_dsl::prof::count("views.refused.not_derived", 1);
+            }
+            held
+        });
         let Some(in_place) = in_place else {
-            crate::code_rule_dsl::prof::count(["views.refused.not_on_device.node", "views.refused.not_on_device.child", "views.refused.not_on_device.field", "views.refused.not_on_device.core", "views.refused.not_on_device.axis", "views.refused.not_on_device.line", "views.refused.not_on_device.end_line", "views.refused.not_on_device.col", "views.refused.not_on_device.docof", "views.refused.not_on_device.tline", "views.refused.not_on_device.tape", "views.refused.not_on_device.depth", "views.refused.not_on_device.order", "views.refused.not_on_device.op", "views.refused.not_on_device.doc"].get(view as usize).copied().unwrap_or("views.refused.not_on_device.other"), 1);
+            crate::code_rule_dsl::prof::count(["views.refused.not_on_device.node", "views.refused.not_on_device.child", "views.refused.not_on_device.field", "views.refused.not_on_device.core", "views.refused.not_on_device.axis", "views.refused.not_on_device.line", "views.refused.not_on_device.end_line", "views.refused.not_on_device.col", "views.refused.not_on_device.docof", "views.refused.not_on_device.tline", "views.refused.not_on_device.tape", "views.refused.not_on_device.depth", "views.refused.not_on_device.order", "views.refused.not_on_device.op", "views.refused.not_on_device.doc", "views.refused.not_on_device.visit", "views.refused.not_on_device.text"].get(view as usize).copied().unwrap_or("views.refused.not_on_device.other"), 1);
             return None;
         };
         // Room for an index at every entry of its directory, found again by every later binding (with room for one, each

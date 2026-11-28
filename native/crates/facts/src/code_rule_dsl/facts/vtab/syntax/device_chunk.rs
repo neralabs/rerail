@@ -33,6 +33,9 @@ pub const VIEW_DOC: u32 = 14;
 /// `visit_index` (`tape_rows::VisitIndex`): each node's id and its place in the visit order, read in its entry's
 /// `visits` (derived once where its program reads it).
 pub const VIEW_VISIT: u32 = 15;
+/// `text` (`View::Text`, decision 0656 step 4): each node's and position's id with text and its text's atom, read in its
+/// entry's `texts` (interned once where its program reads it).
+pub const VIEW_TEXT: u32 = 16;
 
 /// The views' reads' views (`rerail_clif::view_reads::VIEWS`): a directory's document has its first row in each.
 #[cfg(any(target_os = "macos", target_os = "linux", windows))]
@@ -57,6 +60,7 @@ pub fn read_kind(view: u32) -> u32 {
         VIEW_OP => 13,
         VIEW_DOC => 14,
         VIEW_VISIT => 15,
+        VIEW_TEXT => 16,
         _ => panic!("view {view} has no read"),
     }
 }
@@ -77,6 +81,7 @@ pub fn device_view(view: View) -> Option<u32> {
         View::Depth => VIEW_DEPTH,
         View::Order => VIEW_ORDER,
         View::Op => VIEW_OP,
+        View::Text => VIEW_TEXT,
         _ => return None,
     })
 }
