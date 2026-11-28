@@ -398,12 +398,47 @@ unsafe fn write_numbers(ti: *mut u32, count: &mut usize, first: usize, all: u64,
     }
 }
 
+/// Word `k` of `p` ORed with `v`: a device's atomic OR (each newline's bits its own, a word shared at a chunk's
+/// ends).
+///
+/// # Safety
+/// Word `k` of `p` is the line index's.
+#[inline(always)]
+unsafe fn or_word(p: *mut u32, k: usize, v: u32) {
+    // SAFETY: the caller's.
+    unsafe { core::sync::atomic::AtomicU32::from_ptr(p.add(k)).fetch_or(v, core::sync::atomic::Ordering::Relaxed) };
+}
+
+/// Newline `i` (its rank) at byte `o` into the line index's words at `lines` (decision 0612, `LineSink::words`): its
+/// high bit at `(o >> L) + i` past word `shape[1]`, its low `L` bits (`L` is `shape[0]`) at bit `i * L` past word
+/// `shape[2]`. Each bit its newline's alone, ORed in.
+///
+/// # Safety
+/// `lines` is the index's words, `i` and `o` a newline's rank and offset.
+#[inline(always)]
+unsafe fn put_line(lines: *mut u32, shape: [u32; 4], i: usize, o: usize) {
+    let l = shape[0] as usize;
+    let h = (o >> l) + i;
+    unsafe { or_word(lines, shape[1] as usize + h / 32, 1u32 << (h % 32)) };
+    if l > 0 {
+        let part = (o & ((1usize << l) - 1)) as u64;
+        let bit = i * l;
+        let w = shape[2] as usize + bit / 32;
+        let sh = bit % 32;
+        unsafe { or_word(lines, w, (part << sh) as u32) };
+        if sh + l > 32 {
+            unsafe { or_word(lines, w + 1, (part >> (32 - sh)) as u32) };
+        }
+    }
+}
+
 /// Pass 2 over blocks `from..to`, from entry `e`, run twice (decision 0726): counting (`write` false), the chunk's
 /// records and each type's added to `at` (the records, then each type's); then writing, each record at its index in
 /// the file (`starts`, from `at[0]`) and each type's records' numbers at their index among the type's (`types[t]`,
-/// from `at[1 + t]`). Whether the chunk refuses, and its end.
+/// from `at[1 + t]`); and each newline (a line terminator's last byte, the tape's line index's: decision 0612) its
+/// rank among them (from `at[1 + TYPES]`), its bits put in the index's words at `lines` where `shape[3]`. Whether the chunk refuses, and its end.
 #[inline(always)]
-unsafe fn stage1_from(src: &[u8], n: usize, from: usize, to: usize, e: Carries, at: &mut [usize; TYPES + 1], starts: *mut u32, types: [*mut u32; TYPES], write: bool) -> (bool, Carries) {
+unsafe fn stage1_from(src: &[u8], n: usize, from: usize, to: usize, e: Carries, at: &mut [usize; TYPES + 2], starts: *mut u32, types: [*mut u32; TYPES], write: bool, lines: *mut u32, shape: [u32; 4]) -> (bool, Carries) {
     let off = if src.starts_with(&[0xef, 0xbb, 0xbf]) { 3 } else { 0 };
     let nw = (n - off).div_ceil(64);
     let to = to.min(nw);
@@ -425,6 +460,7 @@ unsafe fn stage1_from(src: &[u8], n: usize, from: usize, to: usize, e: Carries, 
     let mut prev_type_1 = 0u64;
     let mut tc_2 = at[3];
     let mut prev_type_2 = 0u64;
+    let mut nl = at[4];
     if from > 0 {
         let q = from - 1;
         let b: &[u8; 64] = src[off + 64 * q..off + 64 * q + 64].try_into().expect("a padded block");
@@ -483,6 +519,18 @@ unsafe fn stage1_from(src: &[u8], n: usize, from: usize, to: usize, e: Carries, 
             prev_incomplete = s::gt_bits(v, max_value);
         }
         prev_input = v;
+        // The line ends (decision 0612): each terminator's last byte, its rank, and its bits in the index where `shape[3]`.
+        let mut nlm = s::eq_mask(v, 0x0a) | s::eq_mask(v, 0x0d);
+        while nlm != 0 {
+            let o = off + 64 * q + nlm.trailing_zeros() as usize;
+            nlm &= nlm - 1;
+            if o < n && ((src[o] == 0x0a) || (src[o] == 0x0d && src[o + 1] != 0x0a)) {
+                if write && shape[3] != 0 {
+                    unsafe { put_line(lines, shape, nl, o) };
+                }
+                nl += 1;
+            }
+        }
         // class quote
         let v_m_quote = s::eq_mask(v, 0x22);
         // class backslash
@@ -578,6 +626,7 @@ unsafe fn stage1_from(src: &[u8], n: usize, from: usize, to: usize, e: Carries, 
     at[1] = tc_0;
     at[2] = tc_1;
     at[3] = tc_2;
+    at[4] = nl;
     let mut refused = errors != 0;
     // a string open at the end of the file: the carry out of the file's last block.
     refused |= to == nw && c_m_in_string != 0;
@@ -590,7 +639,7 @@ unsafe fn stage1_from(src: &[u8], n: usize, from: usize, to: usize, e: Carries, 
 }
 
 rerail_simd8::kernel! {
-    pub fn stage1_from_best(src: &[u8], n: usize, from: usize, to: usize, e: Carries, at: &mut [usize; TYPES + 1], starts: *mut u32, types: [*mut u32; TYPES], write: bool) -> (bool, Carries) = stage1_from, on stage1_from_on;
+    pub fn stage1_from_best(src: &[u8], n: usize, from: usize, to: usize, e: Carries, at: &mut [usize; TYPES + 2], starts: *mut u32, types: [*mut u32; TYPES], write: bool, lines: *mut u32, shape: [u32; 4]) -> (bool, Carries) = stage1_from, on stage1_from_on;
 }
 
 /// Pass 3, across the chunks: each chunk's one entry, from the chunks' maps of entry to end (pass 1), by a prefix scan
@@ -660,10 +709,26 @@ pub fn lex_typed(buf: &[u8], n: usize, blocks: usize) -> Typed {
     lex_typed_in(buf, n, blocks, &in_order)
 }
 
-/// `lex_chunked`'s records, and the records of each type apart: pass 2 run twice, counting then writing (decision
-/// 0726). Each chunk's places in the records and in each type's from an exclusive scan of the chunks' counts, so each
-/// chunk writes on its own. Every pass's chunks, and each round of its scans, in `order`'s order.
+/// `lex_chunked`'s records, and the records of each type apart: L1 each chunk's ends from every entry and their
+/// scan, L2 (`lex_count`) each chunk's records, each type's and its newlines counted, L3 (`Counted::write`) each
+/// written at its place (decision 0726). Every pass's chunks, and each round of its scans, in `order`'s order.
 pub fn lex_typed_in(buf: &[u8], n: usize, blocks: usize, order: Order<'_>) -> Typed {
+    lex_count(buf, n, blocks, order).write(None, order)
+}
+
+/// L1 and L2 of `buf[..n]` (`lex_typed_in`): each chunk's entry, and its first places in the records, in each type's
+/// and among the newlines (the tape's line index, decision 0612), from an exclusive scan of the chunks' counts.
+pub struct Counted<'b> {
+    buf: &'b [u8],
+    n: usize,
+    blocks: usize,
+    ends: Vec<[Carries; LANES]>,
+    entries: Vec<Carries>,
+    firsts: Vec<[usize; TYPES + 2]>,
+}
+
+/// L1 and L2 of `buf[..n]`, its blocks in chunks of `blocks`.
+pub fn lex_count<'b>(buf: &'b [u8], n: usize, blocks: usize, order: Order<'_>) -> Counted<'b> {
     assert!(buf.len() >= n + PADDING && buf[n..n + PADDING].chunks_exact(8).all(|w| w == b"        "), "the source padded with spaces");
     let blocks = blocks.max(1);
     let off = if buf.starts_with(&[0xef, 0xbb, 0xbf]) { 3 } else { 0 };
@@ -672,38 +737,61 @@ pub fn lex_typed_in(buf: &[u8], n: usize, blocks: usize, order: Order<'_>) -> Ty
     let ends: Vec<[Carries; LANES]> = each(chunks, order, |c| stage1_ends_best(buf, n, c * blocks, c * blocks + blocks));
     let entries = entries_in(&ends, order);
     let none = [core::ptr::null_mut::<u32>(); TYPES];
-    // Counting: each chunk's records and each type's.
-    let counts: Vec<[usize; TYPES + 1]> = each(chunks, order, |c| {
-        let mut at = [0usize; TYPES + 1];
-        stage1_from_best(buf, n, c * blocks, c * blocks + blocks, entries[c], &mut at, core::ptr::null_mut(), none, false);
+    // L2: each chunk's records, each type's and its newlines.
+    let counts: Vec<[usize; TYPES + 2]> = each(chunks, order, |c| {
+        let mut at = [0usize; TYPES + 2];
+        stage1_from_best(buf, n, c * blocks, c * blocks + blocks, entries[c], &mut at, core::ptr::null_mut(), none, false, core::ptr::null_mut(), [0; 4]);
         at
     });
     // Each chunk's first places: an exclusive scan of the counts.
     let sums = scan(counts, order, |a, b| core::array::from_fn(|k| a[k] + b[k]));
-    let firsts: Vec<[usize; TYPES + 1]> = each(chunks + 1, order, |c| if c == 0 { [0; TYPES + 1] } else { sums[c - 1] });
-    let total = firsts[chunks];
-    let mut starts: Vec<u32> = Vec::with_capacity(total[0] + 3);
-    let mut types: Vec<Vec<u32>> = (0..TYPES).map(|t| Vec::with_capacity(total[t + 1])).collect();
-    let ptrs: [*mut u32; TYPES] = core::array::from_fn(|t| types[t].as_mut_ptr());
-    let si = starts.as_mut_ptr();
-    // Writing: each chunk from its places.
-    let refusals = each(chunks, order, |c| {
-        let mut at = firsts[c];
-        let (r, end) = stage1_from_best(buf, n, c * blocks, c * blocks + blocks, entries[c], &mut at, si, ptrs, true);
-        debug_assert_eq!(end, ends[c][lane_of(entries[c])], "pass 2 ends where pass 1 did");
-        debug_assert_eq!(at, firsts[c + 1], "pass 2 writes what it counted");
-        r
-    });
-    let refused = refusals.iter().any(|&r| r);
-    // SAFETY: every place below the totals written, each once.
-    unsafe {
-        starts.set_len(total[0]);
-        for (t, v) in types.iter_mut().enumerate() {
-            v.set_len(total[t + 1]);
-        }
+    let firsts: Vec<[usize; TYPES + 2]> = each(chunks + 1, order, |c| if c == 0 { [0; TYPES + 2] } else { sums[c - 1] });
+    Counted { buf, n, blocks, ends, entries, firsts }
+}
+
+impl Counted<'_> {
+    /// The source's newlines: the line index's `m`.
+    pub fn newlines(&self) -> usize {
+        self.firsts[self.ends.len()][TYPES + 1]
     }
-    starts.extend([n as u32, n as u32, 0]);
-    Typed { lexed: Lexed { starts, count: total[0], len: n, refused }, types }
+
+    /// L3: each chunk's records, each type's, and where `lines` its newlines into the line index (begun there, its
+    /// samples and head after), each at its place.
+    pub fn write(&self, lines: Option<&mut rerail_tape_format::Vector<u8>>, order: Order<'_>) -> Typed {
+        let Counted { buf, n, blocks, ref ends, ref entries, ref firsts } = *self;
+        let chunks = ends.len();
+        let total = firsts[chunks];
+        let mut starts: Vec<u32> = Vec::with_capacity(total[0] + 3);
+        let mut types: Vec<Vec<u32>> = (0..TYPES).map(|t| Vec::with_capacity(total[t + 1])).collect();
+        let ptrs: [*mut u32; TYPES] = core::array::from_fn(|t| types[t].as_mut_ptr());
+        let si = starts.as_mut_ptr();
+        let sink = lines.map(|out| {
+            let s = rerail_tape_format::newlines::LineSink::begin(out, n as u64, total[TYPES + 1] as u64);
+            (s, out as *mut rerail_tape_format::Vector<u8>)
+        });
+        let (lw, shape) = sink.as_ref().map_or((core::ptr::null_mut(), [0; 4]), |s| s.0.words());
+        let refusals = each(chunks, order, |c| {
+            let mut at = firsts[c];
+            let (r, end) = stage1_from_best(buf, n, c * blocks, c * blocks + blocks, entries[c], &mut at, si, ptrs, true, lw, shape);
+            debug_assert_eq!(end, ends[c][lane_of(entries[c])], "pass 2 ends where pass 1 did");
+            debug_assert_eq!(at, firsts[c + 1], "pass 2 writes what it counted");
+            r
+        });
+        if let Some((s, out)) = sink {
+            // SAFETY: the index's room, which nothing moved since `begin`.
+            s.finish(unsafe { &mut *out }, blocks, order);
+        }
+        let refused = refusals.iter().any(|&r| r);
+        // SAFETY: every place below the totals written, each once.
+        unsafe {
+            starts.set_len(total[0]);
+            for (t, v) in types.iter_mut().enumerate() {
+                v.set_len(total[t + 1]);
+            }
+        }
+        starts.extend([n as u32, n as u32, 0]);
+        Typed { lexed: Lexed { starts, count: total[0], len: n, refused }, types }
+    }
 }
 
 /// The records of `buf[..n]`, its `PADDING` bytes after it spaces.

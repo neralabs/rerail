@@ -50,6 +50,23 @@ mine &= (mine - 1u);
 }
 }
 
+UKL_INLINE void json_t1_put_line(UKL_GLOBAL uint32_t* lines, UKL_PRIVATE const uint32_t* shape, uint32_t i, uint32_t o)
+{
+uint32_t l = ((uint32_t)(shape[0u]));
+uint32_t h = ((o >> l) + i);
+ukl_atomic_or(&(lines)[(((uint32_t)(shape[1u])) + (h / 32u))], (1u << (h % 32u)));
+if ((l > 0u)) {
+uint64_t part = ((uint64_t)((o & ((1u << l) - 1u))));
+uint32_t bit = (i * l);
+uint32_t w = (((uint32_t)(shape[2u])) + (bit / 32u));
+uint32_t sh = (bit % 32u);
+ukl_atomic_or(&(lines)[w], ((uint32_t)((part << sh))));
+if (((sh + l) > 32u)) {
+ukl_atomic_or(&(lines)[(w + 1u)], ((uint32_t)((part >> (32u - sh)))));
+}
+}
+}
+
 UKL_INLINE void json_t1_stage1_ends(UKL_GLOBAL const uint8_t* src, uint32_t n, uint32_t from, uint32_t to, UKL_PRIVATE json_t1_Carries* ends_out)
 {
 uint32_t off = ((src[0] == 0xefu && src[1] == 0xbbu && src[2] == 0xbfu) ? 3u : 0u);
@@ -164,7 +181,7 @@ ends_out[l].m_in_string = (c_m_in_string[k] ^ e.m_in_string);
 }
 }
 
-UKL_INLINE bool json_t1_stage1_from(UKL_GLOBAL const uint8_t* src, uint32_t n, uint32_t from, uint32_t to, json_t1_Carries e, UKL_PRIVATE uint32_t* at, UKL_GLOBAL uint32_t* starts, UKL_GLOBAL uint32_t* types, bool write, UKL_PRIVATE json_t1_Carries* end_out)
+UKL_INLINE bool json_t1_stage1_from(UKL_GLOBAL const uint8_t* src, uint32_t n, uint32_t from, uint32_t to, json_t1_Carries e, UKL_PRIVATE uint32_t* at, UKL_GLOBAL uint32_t* starts, UKL_GLOBAL uint32_t* types, bool write, UKL_GLOBAL uint32_t* lines, UKL_PRIVATE const uint32_t* shape, UKL_PRIVATE json_t1_Carries* end_out)
 {
 uint32_t off = ((src[0] == 0xefu && src[1] == 0xbbu && src[2] == 0xbfu) ? 3u : 0u);
 uint32_t nw = (((n - off) + 64u - 1u) / 64u);
@@ -187,6 +204,7 @@ uint32_t tc_1 = at[2u];
 uint64_t prev_type_1 = 0ull;
 uint32_t tc_2 = at[3u];
 uint64_t prev_type_2 = 0ull;
+uint32_t nl = at[4u];
 if ((from > 0u)) {
 uint32_t q = (from - 1u);
 UKL_GLOBAL const uint8_t* b = src + (off + (64u * q));
@@ -245,6 +263,18 @@ error = ukl_b64_or(error, ukl_b64_xor(sc, must23));
 prev_incomplete = ukl_b64_gt_bits(v, max_value);
 }
 prev_input = v;
+// The line ends (decision 0612): each terminator's last byte, its rank, and its bits in the index where `shape[3]`.
+uint64_t nlm = (ukl_b64_eq_mask(v, 0x0au) | ukl_b64_eq_mask(v, 0x0du));
+while ((nlm != 0u)) {
+uint32_t o = ((off + (64u * q)) + ((uint32_t)(ukl_ctz64(nlm))));
+nlm &= (nlm - 1u);
+if (((o < n) && ((src[o] == 0x0au) || ((src[o] == 0x0du) && (src[(o + 1u)] != 0x0au))))) {
+if ((write && (shape[3u] != 0u))) {
+json_t1_put_line(lines, shape, nl, o);
+}
+nl += 1u;
+}
+}
 // class quote
 uint64_t v_m_quote = ukl_b64_eq_mask(v, 0x22u);
 // class backslash
@@ -341,6 +371,7 @@ at[0u] = count;
 at[1u] = tc_0;
 at[2u] = tc_1;
 at[3u] = tc_2;
+at[4u] = nl;
 bool refused = (errors != 0u);
 // a string open at the end of the file: the carry out of the file's last block.
 refused |= ((to == nw) && (c_m_in_string != 0u));
@@ -366,10 +397,11 @@ UKL_INLINE void ukl_lex_ends(UKL_GLOBAL const uint8_t* src, uint32_t n, uint32_t
 
 // Pass 2 (`stage1_from`) from entry lane `lane` (`lane_carries`).
 UKL_INLINE bool ukl_lex_from(UKL_GLOBAL const uint8_t* src, uint32_t n, uint32_t from, uint32_t to, uint32_t lane, UKL_PRIVATE uint32_t* at,
-                             UKL_GLOBAL uint32_t* starts, UKL_GLOBAL uint32_t* types, bool write)
+                             UKL_GLOBAL uint32_t* starts, UKL_GLOBAL uint32_t* types, bool write, UKL_GLOBAL uint32_t* lines,
+                             UKL_PRIVATE const uint32_t* shape)
 {
     json_t1_Carries end;
-    return json_t1_stage1_from(src, n, from, to, json_t1_lane_carries(lane), at, starts, types, write, &end);
+    return json_t1_stage1_from(src, n, from, to, json_t1_lane_carries(lane), at, starts, types, write, lines, shape, &end);
 }
 
 typedef struct json_t1_LArgs {

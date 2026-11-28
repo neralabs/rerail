@@ -13,7 +13,7 @@ mod tier1;
 #[allow(clippy::all, unused_parens, unused_mut, dead_code, unreachable_code, unused_variables, unused_assignments)]
 mod tier2;
 
-pub use tier1::{Carries, LANES, Lexed, PADDING, TYPE_NAMES, TYPES, Typed, entries, entries_in, lane_carries, lane_of, lex, lex_chunked, lex_typed, lex_typed_in, stage1_ends_best, stage1_from_best};
+pub use tier1::{Carries, LANES, Lexed, PADDING, TYPE_NAMES, TYPES, Typed, entries, entries_in, lane_carries, lane_of, Counted, lex, lex_chunked, lex_count, lex_typed, lex_typed_in, stage1_ends_best, stage1_from_best};
 /// The code table tier 2's numbers are of: each number's kind, field and supertypes.
 pub use tier2::{ENTRIES, WIDTHS};
 /// Tier 1's passes as UKL, printed from its Rust (decision 0726; `bitlex_lex_rust::ukl`, held by `json_rust_is_current`):

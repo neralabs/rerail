@@ -3581,7 +3581,8 @@ mod tests {
 
     /// `finish_by_phases` (decision 0726's tier 2 as phases) is `finish` byte for byte, its presence and faults
     /// too: a tree with side lists and ERROR nodes, its blocks made final at the end (one commit) or as they are
-    /// written (a commit a node), each phase's blocks in order and at random.
+    /// written (a commit a node), in 16; in 16z (final at the end), the tree and a flat one whose blocks' pieces
+    /// repeat; each phase's blocks in order and at random.
     #[test]
     fn the_finish_by_phases_is_the_finish() {
         let entries: Vec<Entry> = (0..600u16).map(|k| Entry { kind: if k % 37 == 5 { crate::ERROR_CODE } else { k % 300 }, field: k % 7, flags: 0, alias: None, classes: Vec::new() }).collect();
@@ -3602,21 +3603,37 @@ mod tests {
                 v
             }
         };
+        let bytes = |w: &Written| match w {
+            Written::F16(t) => t.as_bytes().to_vec(),
+            Written::F16Z(t) => t.as_bytes().to_vec(),
+        };
+        // A root over 20,000 leaves alike, 3 bytes apart: its blocks' codes alike (16z's repeats).
+        let flat: Vec<(u32, u64, u64, usize)> = {
+            let mut v = vec![(599u32, 0u64, 60_001u64, 20_001usize)];
+            v.extend((0..20_000u64).map(|i| (5u32, 3 * i, 3 * i + 2, 1usize)));
+            v
+        };
         let mut checked = 0;
-        for every in [1usize, 1_000_000] {
-            let mut w = Writer::new(&lang, &source, crate::newlines::Terminators::Lf, 0, false, true, nodes.len());
-            by_ops(&mut w, &nodes, every);
-            let want = w.finish().unwrap();
-            let Written::F16(want_t) = &want.tape else { panic!("16") };
-            assert!(want_t.faults().is_some_and(|f| !f.is_empty()), "the tree has faults");
+        // 16z's blocks final at the end only: a block final as it is written stores its pieces then.
+        for (z, every, tree) in [(false, 1usize, &nodes), (false, 1_000_000, &nodes), (true, 1_000_000, &nodes), (true, 1_000_000, &flat)] {
+            let mut w = Writer::new(&lang, &source, crate::newlines::Terminators::Lf, 0, z, true, tree.len());
+            by_ops(&mut w, tree, every);
+            let want = bytes(&w.finish().unwrap().tape);
+            if z {
+                // The piece index's kinds (the header's words at 108 and 112: where they start and end).
+                let word = |at: usize| u32::from_le_bytes(want[at..at + 4].try_into().unwrap()) as usize;
+                let kinds = &want[word(108)..word(112)];
+                let count = |k: u32| kinds.iter().filter(|&&x| u32::from(x) == k).count();
+                eprintln!("16z, {} nodes: {} pieces raw, {} LZ4, {} repeats", tree.len(), count(crate::writer16::RAW), count(crate::writer16::LZ4), count(crate::writer16::REPEAT));
+                assert!(tree.len() < 20_000 || count(crate::writer16::REPEAT) > 0, "the flat tree's pieces repeat");
+            }
             for seed in [0u64, 1, 2] {
                 let r = random(seed);
                 let order: crate::phases::Order<'_> = if seed == 0 { &crate::phases::in_order } else { &r };
-                let mut w = Writer::new(&lang, &source, crate::newlines::Terminators::Lf, 0, false, true, nodes.len());
-                by_ops(&mut w, &nodes, every);
-                let got = w.finish_by_phases(order).unwrap();
-                let Written::F16(t) = &got.tape else { panic!("16") };
-                assert!(t.as_bytes() == want_t.as_bytes(), "a commit every {every}, order {seed}: differs at byte {:?}", t.as_bytes().iter().zip(want_t.as_bytes()).position(|(a, b)| a != b));
+                let mut w = Writer::new(&lang, &source, crate::newlines::Terminators::Lf, 0, z, true, tree.len());
+                by_ops(&mut w, tree, every);
+                let got = bytes(&w.finish_by_phases(order).unwrap().tape);
+                assert!(got == want, "16z {z}, a commit every {every}, {} nodes, order {seed}: differs at byte {:?}", tree.len(), got.iter().zip(&want).position(|(a, b)| a != b));
                 checked += 1;
             }
         }

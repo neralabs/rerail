@@ -702,7 +702,9 @@ impl State {
     /// Every block of a tape of `n` nodes made, in order, for cursors from the middle (decision 0726: `Cursor::resume`),
     /// each writing a chunk of its nodes. Format 16's alone (16z's rooms are given back as its blocks are final).
     pub(crate) unsafe fn make_blocks(&mut self, n: u32) -> R {
-        if self.z() || self.n != 0 || self.blocks != 0 {
+        // (In 16z each block's room is a new one in ROOMS, none given back yet: the middle's blocks are final at its
+        // end, by phases: `f16::Writer::finish_by_phases`.)
+        if self.n != 0 || self.blocks != 0 {
             return self.fail(fail::OUTSIDE, 0);
         }
         for b in 0..n.div_ceil(Z).max(1) {
@@ -1031,6 +1033,89 @@ impl State {
             tail[9] = end;
             self.write_head(out, MAGIC16, tail);
         }
+    }
+
+    // ---- 16z by phases: each piece on its own, a prefix sum of their stored bytes placing them ----
+
+    /// 16z: piece `j`'s bytes (block `j >> 2` of `rows` rows: its column `j & 3` at its rows, then that side list's
+    /// part as F2 laid it), into `raw` (cleared; 8 bytes of room past them, as `hash` reads).
+    pub(crate) unsafe fn zpiece_raw(&self, j: u32, rows: u32, raw: &mut Vec<u8>) {
+        let (b, q) = (j >> 2, (j & 3) as usize);
+        // SAFETY: block `b` is made and laid.
+        unsafe {
+            let room = self.block(b).room;
+            let cell = if q == 0 { 1 } else { u64::from(self.w[q - 1]) };
+            let clen = (u64::from(rows) * cell) as usize;
+            let e = self.part(part::LAID_AT) + (u64::from(b) * LAID_AT) as usize + 8 * q;
+            let (lst, llen) = (ld32(e) as usize, ld32(e + 4) as usize);
+            raw.clear();
+            raw.reserve(clen + llen + 8);
+            raw.extend_from_slice(std::slice::from_raw_parts((room + self.at[q] as usize) as *const u8, clen));
+            raw.extend_from_slice(std::slice::from_raw_parts((self.part(part::LAID) + lst) as *const u8, llen));
+            let end = raw.len();
+            raw.extend_from_slice(&[0; 8]);
+            raw.truncate(end);
+        }
+    }
+
+    /// 16z: a piece's hash (`zpiece`'s), its bytes at `raw` (8 bytes of room past them).
+    pub(crate) fn zhash(raw: &[u8]) -> u64 {
+        // SAFETY: the bytes and the word past them (`zpiece_raw`'s room).
+        unsafe { hash(raw.as_ptr() as usize, raw.len() as u64) }
+    }
+
+    /// 16z: `raw`'s LZ4 block (`zpiece`'s compressor) into `dst` (its room: `raw.len() + raw.len() / 255 + 16`), its
+    /// bytes. A piece's indices start 64 KB past the last one's end, so its block is its bytes' alone, whatever was
+    /// compressed before.
+    pub(crate) unsafe fn zlz4(&mut self, raw: &[u8], dst: &mut [u8]) -> u64 {
+        // SAFETY: the room the caller gives.
+        unsafe { self.lz4(raw.as_ptr() as usize, raw.len() as u64, dst.as_mut_ptr() as usize) }
+    }
+
+    /// 16z: piece `j` stored at the tape's byte `pos` (the payload's: a prefix sum of the pieces' stored bytes), as
+    /// `zpiece` stores it: `bytes` (its `len` stored bytes: as they are, its LZ4 block, or the repeated piece's number),
+    /// and its entry in the piece index (`raw` bytes, `kind`, its hash).
+    pub(crate) unsafe fn zpiece_at(&self, j: u32, pos: u64, bytes: &[u8], raw: u64, kind: u32, h: u64) {
+        // SAFETY: the tape's room and the piece index's (the host's, from the sums).
+        unsafe {
+            copy(self.part(part::OUT) + pos as usize, bytes.as_ptr() as usize, bytes.len() as u64);
+            let pe = self.part(part::PIECES) + (u64::from(j) * PIECE) as usize;
+            st32(pe, (pos - HEAD16) as u32);
+            st32(pe + 4, bytes.len() as u32);
+            st32(pe + 8, raw as u32);
+            st32(pe + 12, kind);
+            st32(pe + 16, NONE);
+            st64(pe + 24, h);
+        }
+    }
+
+    /// 16z: block `b`'s checkpoints (`rows` rows), at their place among the blocks' (as `zblock` keeps them).
+    pub(crate) unsafe fn zckpt(&self, b: u32, rows: u32) {
+        let cw = u64::from(self.cw);
+        let c0 = u64::from(b) * u64::from(Z / K) * cw;
+        let clen = u64::from(rows).div_ceil(u64::from(K)) * cw;
+        // SAFETY: block `b`'s room; the part's room (`reserve_run`'s).
+        unsafe { copy(self.part(part::CKPT) + c0 as usize, self.block(b).room + self.at[4] as usize, clen) };
+    }
+
+    /// 16z by phases: the payload's parts grown to their totals, checked against their room: the tape to `end` (the
+    /// pieces' end), the piece index to `pieces` entries, the checkpoints to `blocks` blocks of `n` nodes.
+    pub(crate) fn zparts(&mut self, end: u64, pieces: u32, blocks: u32) -> R {
+        self.room(part::OUT, end)?;
+        self.room(part::PIECES, u64::from(pieces) * PIECE)?;
+        let cw = u64::from(self.cw);
+        let ck = if blocks == 0 { 0 } else { u64::from(blocks - 1) * u64::from(Z / K) * cw + u64::from(self.n - (blocks - 1) * Z).div_ceil(u64::from(K)) * cw };
+        self.room(part::CKPT, ck)?;
+        self.set_len(part::OUT, end);
+        self.grow(part::PIECES, u64::from(pieces) * PIECE);
+        self.grow(part::CKPT, ck);
+        Ok(())
+    }
+
+    /// 16z's tail by phases: `zfinish`'s, each side list's part starts by block (`before`, Z1's sums; `totals`).
+    pub(crate) unsafe fn zfinish_at(&mut self, count: u32, before: &[[u32; 4]], totals: [u32; 4]) -> R {
+        // SAFETY: the caller's: the laid entries are each block's.
+        unsafe { self.zfinish_with(count, Some((before, totals))) }
     }
 
     /// Block `b`'s side list `q` as `lay` stores it: its bytes.
@@ -1542,6 +1627,13 @@ impl State {
     /// 16z's tail after its payload: each side list's part starts by block, the checkpoints, the newline index, the
     /// piece index (starts, lengths, kinds); then the header, which says the tape it decodes to.
     unsafe fn zfinish(&mut self, count: u32) -> R {
+        // SAFETY: the caller's.
+        unsafe { self.zfinish_with(count, None) }
+    }
+
+    /// `zfinish`, each list's part starts by block from `sums` where given (each block's before it, and the totals),
+    /// else from the laid entries' lengths.
+    unsafe fn zfinish_with(&mut self, count: u32, sums: Option<(&[[u32; 4]], [u32; 4])>) -> R {
         let out = self.part(part::OUT);
         let pos0 = self.len(part::OUT);
         let la = self.part(part::LAID_AT);
@@ -1557,7 +1649,17 @@ impl State {
             let mut pos = parts_at;
             let mut totals = [0u64; 4];
             for (q, total) in totals.iter_mut().enumerate() {
-                pos = starts(out, pos, la, q, count);
+                match sums {
+                    // Each block's start at its own place (Z1's sums), the total after the last.
+                    Some((before, tot)) => {
+                        for (b, s) in before.iter().enumerate() {
+                            st32(out + pos as usize + 4 * b, s[q]);
+                        }
+                        st32(out + pos as usize + 4 * count as usize, tot[q]);
+                        pos += 4 * (u64::from(count) + 1);
+                    }
+                    None => pos = starts(out, pos, la, q, count),
+                }
                 // The last start is the list's parts' total.
                 *total = u64::from(ld32(out + pos as usize - 4));
             }

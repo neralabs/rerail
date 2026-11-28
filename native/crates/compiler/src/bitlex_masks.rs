@@ -979,7 +979,7 @@ pub fn compile_proved(stmts: &[Stmt], outputs: &[&str], symbols: Option<&Symbols
             let lexer = if t.mark_bits.iter().any(|b| b.0.is_some() && b.1 != 0) {
                 Err("tier 1 as Rust: a mark of one word is not written yet".to_owned())
             } else {
-                let x = crate::bitlex_lex_rust::Input { stmts, kinds: &r.kinds, row_kinds: &t.row_kinds, words: &r.words, mark_bits: &mark_bits, extra_bits: &t.extra_bits, own: r.own, token_bits: &t.token_bits, assumed: &low.assumed, assumed_ends: &low.assumed_ends, tier2_reads };
+                let x = crate::bitlex_lex_rust::Input { stmts, kinds: &r.kinds, row_kinds: &t.row_kinds, words: &r.words, mark_bits: &mark_bits, extra_bits: &t.extra_bits, own: r.own, token_bits: &t.token_bits, assumed: &low.assumed, assumed_ends: &low.assumed_ends, tier2_reads, terminators: Some(symbols.terminators) };
                 crate::bitlex_lex_rust::tier1(&x)
             };
             low.lexer_rust = Some(lexer);

@@ -659,9 +659,6 @@ impl Writer {
     pub fn finish_by_phases(&mut self, order: crate::phases::Order<'_>) -> Result<Finished, String> {
         use crate::phases::{each, prefix};
         let why = |r: u32| format!("the writer's ops failed: {r:#x}");
-        if self.z {
-            return Err("finish by phases: format 16's, not 16z's".into());
-        }
         let count = (self.state.n as usize).div_ceil(Z);
         self.reserve_final(count);
         let (kw, fw) = self.presence_words;
@@ -698,6 +695,9 @@ impl Writer {
         });
         // SAFETY: as above.
         unsafe { st.phases_presence(&total.2) };
+        if self.z {
+            return self.zfinish_by_phases(order, f1.iter().map(|x| (x.1, x.3)).collect());
+        }
         // The tail's room, as `finish_ops` reserves it; then its start.
         let (laid, lines) = (self.len_of(part::LAID), self.len_of(part::LINES));
         let s = &self.state;
@@ -746,6 +746,113 @@ impl Writer {
         let lasts = std::array::from_fn(|q| (tail[4 + q] + 4 * u64::from(blocks), tot[q]));
         // SAFETY: as above.
         unsafe { st.tail_end(&mut tail, lasts, lines_at) };
+        self.finished_tape()
+    }
+
+    /// 16z's payload and tail by phases, F2 done (`blocks`: each block's side lists' bytes, and whether it was final
+    /// before the end, as it was written: then its pieces are stored already, and the phases refuse). ZP1 each piece's
+    /// bytes, hash and LZ4 block, each on its own; ZP2 the repeats: the pieces sorted by hash (`phases::sort_by_key`),
+    /// each one's first piece of the same bytes found among the hashes like it (a segmented scan's heads), as `zpiece`'s
+    /// buckets find it; ZP3 each piece's stored bytes, their prefix sum its place; ZP4 each piece stored there, each
+    /// block's checkpoints at theirs; then the tail, each list's part starts by block from a prefix sum (Z1).
+    fn zfinish_by_phases(&mut self, order: crate::phases::Order<'_>, blocks: Vec<([u32; 4], bool)>) -> Result<Finished, String> {
+        use crate::phases::{each, prefix, sort_by_key};
+        use crate::writer16 as z;
+        let why = |r: u32| format!("the writer's ops failed: {r:#x}");
+        if blocks.iter().any(|b| b.1) {
+            return Err("16z by phases: a block made final as it was written stored its pieces in order".into());
+        }
+        let nb = blocks.len();
+        let np = 4 * nb;
+        let desc = self.desc();
+        // SAFETY: the state is the writer's own; its blocks laid (F2).
+        let st = unsafe { crate::writer16::state_of(desc) };
+        let n = st.phases_shape().0;
+        let rows = |b: usize| (n - b as u32 * Z as u32).min(Z as u32);
+        // ZP1: each piece's bytes, its hash, its LZ4 block.
+        struct Piece {
+            raw: Vec<u8>,
+            h: u64,
+            z: Option<Vec<u8>>,
+        }
+        let ps: Vec<Piece> = each(np, order, |j| {
+            let mut raw = Vec::new();
+            // SAFETY: block `j / 4` is made and laid.
+            unsafe { st.zpiece_raw(j as u32, rows(j / 4), &mut raw) };
+            let len = raw.len() as u64;
+            let h = if len >= z::REPEAT_MIN { z::State::zhash(&raw) } else { 0 };
+            let z = (len >= z::LZ4_MIN).then(|| {
+                let mut d = vec![0u8; raw.len() + raw.len() / 255 + 16];
+                // SAFETY: `d`'s room is the compressor's bound.
+                let k = unsafe { st.zlz4(&raw, &mut d) };
+                d.truncate(k as usize);
+                d
+            });
+            Piece { raw, h, z }
+        });
+        // ZP2: the pieces by hash; each one's segment of like hashes from its head (the last head at or before it, a
+        // scan); its first piece of the same bytes the first like it in the segment (the sort is stable: by number).
+        let keyed = |j: usize| ps[j].raw.len() as u64 >= z::REPEAT_MIN;
+        let by = sort_by_key(&ps.iter().map(|p| p.h).collect::<Vec<_>>(), 64, 64, order);
+        let heads: Vec<usize> = each(np, order, |i| if i == 0 || ps[by[i] as usize].h != ps[by[i - 1] as usize].h { i } else { 0 });
+        let (seg, _) = prefix(&heads, 0, order, |a, b| (*a).max(*b));
+        let first: Vec<usize> = each(np, order, |i| {
+            let j = by[i] as usize;
+            // The scan's sum before `i`, and `i` itself where it heads one.
+            let s = heads[i].max(seg[i]);
+            if !keyed(j) {
+                return j;
+            }
+            (s..i).map(|k| by[k] as usize).find(|&e| keyed(e) && ps[e].raw == ps[j].raw).unwrap_or(j)
+        });
+        let mut rep = vec![0usize; np];
+        for (i, &e) in first.iter().enumerate() {
+            rep[by[i] as usize] = e;
+        }
+        // ZP3: each piece's stored bytes and kind; their prefix sum, each one's place in the payload.
+        let stored: Vec<(u32, Vec<u8>)> = each(np, order, |j| {
+            let p = &ps[j];
+            if rep[j] != j {
+                (z::REPEAT, (rep[j] as u32).to_le_bytes().to_vec())
+            } else if p.z.as_ref().is_some_and(|z| z.len() * 10 <= p.raw.len() * 9) {
+                (z::LZ4, p.z.clone().expect("its block"))
+            } else {
+                (z::RAW, p.raw.clone())
+            }
+        });
+        let (at, total) = prefix(&stored.iter().map(|s| s.1.len() as u64).collect::<Vec<_>>(), 0, order, |a, b| a + b);
+        // The tape's room: the payload, then the tail (`zfinish`'s), then the presence (`finished`).
+        let pos0 = self.len_of(part::OUT) as u64;
+        let end = pos0 + total;
+        let (kw, fw) = self.presence_words;
+        let (clen, llen) = (nb * (Z / K) * self.state.cw as usize, self.len_of(part::LINES));
+        let need = end as usize + 16 * (nb + 1) + clen + llen + 9 * np + 64;
+        let need = need + 8 + super::presence::HEAD + 8 * (kw + fw) * (1 + if self.keep_blocks { nb } else { 0 });
+        self.reserve(part::OUT, need);
+        let desc = self.desc();
+        // SAFETY: as above.
+        let st = unsafe { crate::writer16::state_of(desc) };
+        st.zparts(end, np as u32, nb as u32).map_err(why)?;
+        // ZP4: each piece at its place, each block's checkpoints at theirs.
+        each(np, order, |j| {
+            let (kind, bytes) = &stored[j];
+            // SAFETY: the tape's room (`zparts`); the places are ZP3's.
+            unsafe { st.zpiece_at(j as u32, pos0 + at[j], bytes, ps[j].raw.len() as u64, *kind, ps[j].h) };
+        });
+        each(nb, order, |b| {
+            // SAFETY: block `b`'s checkpoints, at their place.
+            unsafe { st.zckpt(b as u32, rows(b)) };
+        });
+        // Z1: each list's bytes a block, their prefix sum; then the tail.
+        let lens: Vec<[u32; 4]> = blocks.iter().map(|b| b.0).collect();
+        let (before, tot) = prefix(&lens, [0; 4], order, |a, b| std::array::from_fn(|q| a[q].wrapping_add(b[q])));
+        // SAFETY: as above.
+        unsafe { st.zfinish_at(nb as u32, &before, tot) }.map_err(why)?;
+        self.finished_tape()
+    }
+
+    /// The finished writer's tape (`finished`), its OUT part taken.
+    fn finished_tape(&mut self) -> Result<Finished, String> {
         let count = (self.state.n as usize).div_ceil(Z);
         let end = self.len_of(part::OUT);
         let faults = self.len_of(part::ERRORS);

@@ -34,4 +34,6 @@ typedef UKL_COHERENT uint32_t* UklLexPool;
 #define UKL_LEX_SHORT 23u
 // Each phase's tickets.
 #define UKL_LEX_TICKET 24u
+// The file's newlines (the line index's `m`), said by the count phase's root.
+#define UKL_LEX_NEWLINES 31u
 

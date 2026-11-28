@@ -178,9 +178,9 @@ fn report_chunked_speed() {
                     let mut s: Vec<u32> = Vec::with_capacity(n + 67);
                     let mut t: Vec<Vec<u32>> = (0..crate::TYPES).map(|_| Vec::with_capacity(n + 67)).collect();
                     let ptrs: [*mut u32; crate::TYPES] = core::array::from_fn(|k| t[k].as_mut_ptr());
-                    let mut at = [0usize; crate::TYPES + 1];
+                    let mut at = [0usize; crate::TYPES + 2];
                     for (c, q) in (0..(n - off(b)).div_ceil(64)).step_by(blocks).enumerate() {
-                        _ = crate::stage1_from_best(b, *n, q, q + blocks, e[c], &mut at, s.as_mut_ptr(), ptrs, true);
+                        _ = crate::stage1_from_best(b, *n, q, q + blocks, e[c], &mut at, s.as_mut_ptr(), ptrs, true, core::ptr::null_mut(), [0; 4]);
                     }
                     std::hint::black_box(at[0]);
                 }
@@ -368,22 +368,28 @@ fn serial_places(buf: &[u8], lx: &crate::tier1::Lexed) -> Vec<u8> {
 
 /// Tier 2 as phases (decision 0726): at chunks of 1, 2, 3 and 16 records and in order and two random orders, each
 /// chunk's place at its start (P4's sum) is the serial walk's at that record, every verdict the serial walk's (a
-/// refusal at its byte), and every tape the serial tape byte for byte, made wholly by phases: its newline index
-/// (`newlines::index_by_phases`), its rows (`parse_phases`) and its blocks and tail (`finish_by_phases`).
+/// refusal at its byte), and every tape, in 16 and in 16z, the serial tape byte for byte, made wholly by phases: its
+/// records and its newline index by the lexer's (`lex_count`, `Counted::write`), its rows (`parse_phases`), and its
+/// blocks, its 16z pieces and its tail (`finish_by_phases`).
 #[test]
 fn tier2_by_phases_is_the_serial_tape() {
     let all: Vec<Vec<u8>> = files().into_iter().chain(trees()).collect();
     let entries = crate::ENTRIES.iter().map(|&(kind, field, classes)| rerail_tape_format::tape::Entry { kind, field, flags: 0, alias: None, classes: classes.to_vec() }).collect();
     let lang = rerail_tape_format::f16::Lang::new(rerail_tape_format::tape::CodeTable::new(entries), crate::WIDTHS, 1).expect("a language");
-    let writer = |f: &[u8]| rerail_tape_format::f16::Writer::new(&lang, f, rerail_tape_format::newlines::Terminators::Newlines, 0, false, true, f.len() / 2 + 16);
+    let writer = |f: &[u8], z: bool| rerail_tape_format::f16::Writer::new(&lang, f, rerail_tape_format::newlines::Terminators::Newlines, 0, z, true, f.len() / 2 + 16);
     let (mut tapes, mut refused, mut places) = (0, 0, 0);
     for (k, f) in all.iter().enumerate() {
         let buf = padded(f);
         let lx = lex(&buf, f.len());
         let types = crate::lex_typed(&buf, f.len(), 16).types;
-        let mut w = writer(f);
-        let parsed = crate::parse_lexed(&buf, &lx, &mut w);
-        let want = parsed.ok().map(|()| w.finish().expect("the serial tape").tape.as_bytes().to_vec());
+        // The serial tapes, 16 and 16z.
+        let wants: Vec<Option<Vec<u8>>> = [false, true]
+            .map(|z| {
+                let mut w = writer(f, z);
+                crate::parse_lexed(&buf, &lx, &mut w).ok().map(|()| w.finish().expect("the serial tape").tape.as_bytes().to_vec())
+            })
+            .to_vec();
+        let parsed = crate::parse_lexed(&buf, &lx, &mut writer(f, false));
         let serial = if lx.refused || lx.count == 0 { Vec::new() } else { serial_places(&buf, &lx) };
         for size in [1, 2, 3, 16] {
             for seed in [0u64, 1, 2] {
@@ -401,18 +407,25 @@ fn tier2_by_phases_is_the_serial_tape() {
                         }
                     }
                 }
-                let mut m = rerail_tape_format::f16::Writer::empty();
-                let doc = rerail_tape_format::f16::Document { lang: &lang, source: f, tag: 0, z: false, blocks: true, nodes: f.len() / 2 + 16 };
-                m.begin_with(&doc, |out| rerail_tape_format::newlines::index_by_phases(out, f, rerail_tape_format::newlines::Terminators::Newlines, 16 * size, order));
-                let got = crate::middle::parse_phases(&buf, &lx, &types, &mut m, size, order);
-                assert_eq!(got, parsed, "file {k} ({:?}), chunks of {size}, order {seed}: the verdict", String::from_utf8_lossy(&f[..f.len().min(60)]));
-                match &want {
-                    Some(want) => {
-                        let have = m.finish_by_phases(order).expect("the tape by phases").tape.as_bytes().to_vec();
-                        assert!(have == *want, "file {k}, chunks of {size}, order {seed}: the tape by phases differs at byte {:?} of {}", have.iter().zip(want).position(|(a, b)| a != b), want.len());
-                        tapes += 1;
+                for (z, want) in [false, true].into_iter().zip(&wants) {
+                    let mut m = rerail_tape_format::f16::Writer::empty();
+                    let doc = rerail_tape_format::f16::Document { lang: &lang, source: f, tag: 0, z, blocks: true, nodes: f.len() / 2 + 16 };
+                    // L1 and L2, then L3 into the tape's line index: the lexer's newlines, at their ranks.
+                    let counted = crate::lex_count(&buf, f.len(), size, order);
+                    let mut typed = None;
+                    m.begin_with(&doc, |out| typed = Some(counted.write(Some(out), order)));
+                    let typed = typed.expect("lexed");
+                    assert!(typed.lexed.starts == lx.starts && typed.types == types, "file {k}: the lexer's records by phases");
+                    let got = crate::middle::parse_phases(&buf, &typed.lexed, &typed.types, &mut m, size, order);
+                    assert_eq!(got, parsed, "file {k} ({:?}), chunks of {size}, order {seed}: the verdict", String::from_utf8_lossy(&f[..f.len().min(60)]));
+                    match want {
+                        Some(want) => {
+                            let have = m.finish_by_phases(order).expect("the tape by phases").tape.as_bytes().to_vec();
+                            assert!(have == *want, "file {k}, 16z {z}, chunks of {size}, order {seed}: the tape by phases differs at byte {:?} of {}", have.iter().zip(want).position(|(a, b)| a != b), want.len());
+                            tapes += 1;
+                        }
+                        None => refused += 1,
                     }
-                    None => refused += 1,
                 }
             }
         }
@@ -463,4 +476,42 @@ fn tier2_phase_merges_are_associative() {
         assert_eq!(places_merge(&places_merge(&p[0], &p[1]), &p[2]), places_merge(&p[0], &places_merge(&p[1], &p[2])));
         assert_eq!(places_merge(&places_unit(), &p[0]), p[0]);
     }
+}
+
+/// The lexer's newlines (L2 counts them, L3 puts them at their ranks) make the tape's line index, byte for byte the
+/// index of a scan of the source: `\n`, `\r\n` and a lone `\r` at every place about the blocks' and chunks' ends, in
+/// chunks of 1 to 3 blocks, in order and at random.
+#[test]
+fn the_lexers_newlines_are_the_line_index() {
+    let mut checked = 0;
+    for len in [1usize, 63, 64, 65, 127, 128, 129, 200, 400] {
+        for (k, ends) in [&b"\n"[..], b"\r\n", b"\r", b"\n\r"].iter().enumerate() {
+            for at in (0..len).step_by(7).chain([len.saturating_sub(1), len.saturating_sub(2)]) {
+                // An array of numbers, the terminator in the white space at `at` and every 61 bytes.
+                let mut f = b"[".to_vec();
+                while f.len() < len {
+                    if f.len() % 61 == at % 61 {
+                        f.extend_from_slice(ends);
+                    } else {
+                        f.extend_from_slice(b"1,");
+                    }
+                }
+                f.extend_from_slice(b"1]");
+                let want = rerail_tape_format::newlines::index(&f, rerail_tape_format::newlines::Terminators::Newlines);
+                let buf = padded(&f);
+                for blocks in [1usize, 2, 3] {
+                    for seed in 0..2u64 {
+                        let random = shuffled(seed + k as u64);
+                        let order: crate::tier1::Order<'_> = if seed == 0 { &crate::tier1::in_order } else { &random };
+                        let mut got = rerail_tape_format::Vector::new();
+                        let typed = crate::lex_count(&buf, f.len(), blocks, order).write(Some(&mut got), order);
+                        assert!(got[..] == want[..], "{len} bytes, {ends:?} at {at}, chunks of {blocks}: the index differs");
+                        assert_eq!(typed.lexed.starts, lex(&buf, f.len()).starts);
+                        checked += 1;
+                    }
+                }
+            }
+        }
+    }
+    eprintln!("{checked} line indexes from the lexer, each the scan's");
 }

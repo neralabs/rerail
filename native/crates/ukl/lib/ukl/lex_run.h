@@ -16,13 +16,13 @@
 // A scan's tree is as `<ukl/middle_run.h>`'s: a leaf stores its value and arrives at its parent, the second child to
 // arrive composing it, so the root's value is the file's; a leaf's state is walked down from the top, a right child
 // its parent's after its left sibling's value. M's values are maps of lanes (`UKL_LEX_LANES` of 4 bits, lane `l`'s
-// end lane at bits `4l`), composed in file order; K's are each chunk's `UKL_LEX_TYPES + 1` counts, summed.
+// end lane at bits `4l`), composed in file order; K's are each chunk's `UKL_LEX_TYPES + 2` counts (its records, each type's, its newlines), summed.
 //
 // The grammar's (the printer's): `ukl_lex_ends` (a chunk's end lane from each entry lane) and `ukl_lex_from` (pass 2
 // from an entry lane), declared here, and `UKL_LEX_LANES`, `UKL_LEX_TYPES` defined before it is included.
 //
 // The pool (u32s, coherent): its header (`UKL_LEX_H` words: the host's layout, and what the phases say, which tier
-// 2's kernels read), then M (values, arrivals), K (values, `UKL_LEX_TYPES + 1` a node; arrivals) and the entries.
+// 2's kernels read), then M (values, arrivals), K (values, `UKL_LEX_TYPES + 2` a node; arrivals) and the entries.
 
 #pragma once
 #include <ukl/simd.h>
@@ -33,7 +33,7 @@
 #define UKL_LEX_PH_COUNT 1u
 #define UKL_LEX_PH_WRITE 2u
 #define UKL_LEX_TURNS 100000000u
-#define UKL_LEX_K (UKL_LEX_TYPES + 1u)
+#define UKL_LEX_K (UKL_LEX_TYPES + 2u)
 #define UKL_LEX_NOT_KIND 4294967295u
 
 typedef struct UklLex {
@@ -50,10 +50,12 @@ typedef struct UklLex {
 } UklLex;
 
 // Chunk `from..to`'s (blocks) end lane from each entry lane, at `ends`; pass 2 from entry lane `lane`: the counts at
-// `at` (each place where `write`), its records and its types' written where `write`; whether it refuses.
+// `at` (each place where `write`), its records and its types' written where `write`, and its newlines' bits into the
+// line index's words at `lines` where `shape[3]` (`[L, high bits' word, low parts' word, on]`); whether it refuses.
 UKL_INLINE void ukl_lex_ends(UKL_GLOBAL const uint8_t* src, uint32_t n, uint32_t from, uint32_t to, UKL_PRIVATE uint32_t* ends);
 UKL_INLINE bool ukl_lex_from(UKL_GLOBAL const uint8_t* src, uint32_t n, uint32_t from, uint32_t to, uint32_t lane, UKL_PRIVATE uint32_t* at,
-                             UKL_GLOBAL uint32_t* starts, UKL_GLOBAL uint32_t* types, bool write);
+                             UKL_GLOBAL uint32_t* starts, UKL_GLOBAL uint32_t* types, bool write, UKL_GLOBAL uint32_t* lines,
+                             UKL_PRIVATE const uint32_t* shape);
 
 #define UKL_LEX_TM 0u
 #define UKL_LEX_TK 1u
@@ -109,10 +111,11 @@ UKL_INLINE void ukl_lex_root(UKL_PRIVATE UklLex* r, uint32_t top)
 {
     UklLexPool m = r->m;
     uint32_t count = m[ukl_lex_val(r, UKL_LEX_TK, top, 0u)], typed = 0u;
-    for (uint32_t k = 1u; k < UKL_LEX_K; k++) {
+    for (uint32_t k = 1u; k <= UKL_LEX_TYPES; k++) {
         m[UKL_LEX_TYPE0 + k - 1u] = m[ukl_lex_val(r, UKL_LEX_TK, top, k)];
         typed += m[ukl_lex_val(r, UKL_LEX_TK, top, k)];
     }
+    m[UKL_LEX_NEWLINES] = m[ukl_lex_val(r, UKL_LEX_TK, top, UKL_LEX_TYPES + 1u)];
     m[UKL_LEX_TYPED] = typed;
     m[UKL_LEX_COUNT] = count;
     // Past the room: what the file needs, and nothing written.
@@ -200,7 +203,8 @@ UKL_INLINE void ukl_lex_item(UKL_PRIVATE UklLex* r, uint32_t ph, uint32_t c)
         m[m[UKL_LEX_OE] + c] = lane;
         for (uint32_t k = 0u; k < UKL_LEX_K; k++)
             at[k] = 0u;
-        if (ukl_lex_from(r->src, n, from, to, lane, at, r->starts, r->types, false))
+        uint32_t none[4] = {0u, 0u, 0u, 0u};
+        if (ukl_lex_from(r->src, n, from, to, lane, at, r->starts, r->types, false, r->starts, none))
             ukl_atomic_or(&m[UKL_LEX_REFUSED], 1u);
         for (uint32_t k = 0u; k < UKL_LEX_K; k++)
             m[ukl_lex_val(r, UKL_LEX_TK, c, k)] = at[k];
@@ -210,12 +214,14 @@ UKL_INLINE void ukl_lex_item(UKL_PRIVATE UklLex* r, uint32_t ph, uint32_t c)
         ukl_lex_path(r, UKL_LEX_TK, c, at);
         // Each type's list after the types before it.
         uint32_t before = 0u;
-        for (uint32_t k = 1u; k < UKL_LEX_K; k++) {
+        for (uint32_t k = 1u; k <= UKL_LEX_TYPES; k++) {
             at[k] += before;
             before += m[UKL_LEX_TYPE0 + k - 1u];
         }
         uint32_t first = at[0], mine = m[ukl_lex_val(r, UKL_LEX_TK, c, 0u)];
-        ukl_lex_from(r->src, n, from, to, m[m[UKL_LEX_OE] + c], at, r->starts, r->types, true);
+        // (The line index's words: the device's line phases, decision 0726's step 4; none yet.)
+        uint32_t none[4] = {0u, 0u, 0u, 0u};
+        ukl_lex_from(r->src, n, from, to, m[m[UKL_LEX_OE] + c], at, r->starts, r->types, true, r->starts, none);
         // Its records' tokens none, until the token pass writes its types'.
         for (uint32_t j = first; j < first + mine; j++) {
             r->tokens[5u * j] = 0u;

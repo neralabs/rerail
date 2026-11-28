@@ -61,13 +61,15 @@ fn json_tier1_as_ukl_is_its_rust() {
             let rchunks = nw.div_ceil(blocks);
             let ends: Vec<[rerail_json_aot::Carries; 4]> = (0..rchunks).map(|c| rerail_json_aot::stage1_ends_best(&buf, n, c * blocks, (c + 1) * blocks)).collect();
             let ent = rerail_json_aot::entries(&ends);
-            let pool: Vec<u32> = read(&lex.pool, 32 + 5 * (2 * lex.chunks + 64) + lex.chunks);
+            // K's values: each chunk's records, each type's and its newlines.
+            let kw = rerail_json_aot::TYPES + 2;
+            let pool: Vec<u32> = read(&lex.pool, 32 + (1 + kw) * (2 * lex.chunks + 64) + lex.chunks);
             let (ok, oe) = (pool[5] as usize, pool[6] as usize);
             for c in 0..rchunks {
                 assert_eq!(pool[oe + c] as usize, rerail_json_aot::lane_of(ent[c]), "{}", at(&format!("chunk {c}'s entry")));
-                let mut want = [0usize; 4];
-                rerail_json_aot::stage1_from_best(&buf, n, c * blocks, (c + 1) * blocks, ent[c], &mut want, std::ptr::null_mut(), [std::ptr::null_mut(); 3], false);
-                let have: Vec<usize> = pool[ok + 4 * c..ok + 4 * c + 4].iter().map(|&x| x as usize).collect();
+                let mut want = [0usize; rerail_json_aot::TYPES + 2];
+                rerail_json_aot::stage1_from_best(&buf, n, c * blocks, (c + 1) * blocks, ent[c], &mut want, std::ptr::null_mut(), [std::ptr::null_mut(); 3], false, std::ptr::null_mut(), [0; 4]);
+                let have: Vec<usize> = pool[ok + kw * c..ok + kw * c + kw].iter().map(|&x| x as usize).collect();
                 assert_eq!(have, want.to_vec(), "{}", at(&format!("chunk {c}'s counts")));
             }
             chunks_run += rchunks;
@@ -802,7 +804,8 @@ impl Lex {
         let chunks = n.div_ceil(64).div_ceil(blocks).max(1);
         let tn = 2 * chunks + 64;
         let (om, ok) = (32, 32 + tn);
-        let oe = ok + 4 * tn;
+        // K's values: each chunk's records, each type's and its newlines.
+        let oe = ok + (rerail_json_aot::TYPES + 2) * tn;
         let words = oe + chunks + 64;
         let pb = kept.get("lex pool", 4 * words);
         let epoch = kept.next_epoch();

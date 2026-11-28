@@ -568,6 +568,10 @@ impl Fx<'_> {
             }
             E::Bin(op, a, b) => format!("({} {op} {})", self.c(a)?, self.c(b)?),
             E::Cast(a, t) => format!("(({})({}))", cast_ty(t).c(self.p), self.c(a)?),
+            // A word of the line index ORed (`or_word`): the device's atomic OR.
+            E::Call(f, args) if matches!(&**f, E::Id(n) if n == "or_word") && args.len() == 3 => {
+                format!("ukl_atomic_or(&({})[{}], {})", self.c(&args[0])?, self.c(&args[1])?, self.c(&args[2])?)
+            }
             E::Call(f, args) => {
                 // `s::load` of a table: the table's.
                 let f = match &**f {
@@ -1277,7 +1281,7 @@ pub fn tier1(rust: &str, p: &str) -> Result<String, String> {
     }
     let _ = writeln!(out, "}} {p}Carries;\n");
     // The functions of the passes, in their order.
-    let wanted = ["lane_carries", "write_exact", "write_numbers", "stage1_ends", "stage1_from"];
+    let wanted = ["lane_carries", "write_exact", "write_numbers", "put_line", "stage1_ends", "stage1_from"];
     for f in wanted {
         names.insert(f.into(), format!("{p}{f}"));
     }
@@ -1370,10 +1374,11 @@ UKL_INLINE void ukl_lex_ends(UKL_GLOBAL const uint8_t* src, uint32_t n, uint32_t
 
 // Pass 2 (`stage1_from`) from entry lane `lane` (`lane_carries`).
 UKL_INLINE bool ukl_lex_from(UKL_GLOBAL const uint8_t* src, uint32_t n, uint32_t from, uint32_t to, uint32_t lane, UKL_PRIVATE uint32_t* at,
-                             UKL_GLOBAL uint32_t* starts, UKL_GLOBAL uint32_t* types, bool write)
+                             UKL_GLOBAL uint32_t* starts, UKL_GLOBAL uint32_t* types, bool write, UKL_GLOBAL uint32_t* lines,
+                             UKL_PRIVATE const uint32_t* shape)
 {{
     {c} end;
-    return {p}stage1_from(src, n, from, to, {p}lane_carries(lane), at, starts, types, write, &end);
+    return {p}stage1_from(src, n, from, to, {p}lane_carries(lane), at, starts, types, write, lines, shape, &end);
 }}
 
 typedef struct {p}LArgs {{
