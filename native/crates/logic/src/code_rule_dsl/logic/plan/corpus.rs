@@ -9416,8 +9416,10 @@ fn run_observed_within(
                     };
                     // Decision 0117 step 3: with a kept part, the run walks the base program and makes a stratum's
                     // maintained form when a changed read reaches it (`Driver`); the inputs' deltas are taken here.
-                    // `RERAIL_MAINTAIN_WHOLE` rewrites the whole program first, as before.
-                    let driven = cell.is_some() && drive;
+                    // `RERAIL_MAINTAIN_WHOLE` rewrites the whole program first, as before. A kept part that keeps
+                    // nothing (the part's first run) has nothing to maintain: the run derives every stratum, as one
+                    // with no kept part does, its ready strata issued ahead (decision 0113), not walked one by one.
+                    let driven = cell.as_ref().is_some_and(|c| !c.keeps_nothing()) && drive;
                     let mut seeds: Vec<String> = Vec::new();
                     let mut given_rels: BTreeSet<String> = BTreeSet::new();
                     let mut maintained = if driven {

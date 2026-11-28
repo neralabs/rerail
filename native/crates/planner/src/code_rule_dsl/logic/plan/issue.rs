@@ -321,7 +321,8 @@ impl<'a> Board<'a> {
     }
 
     /// Issues the components of the strata ready from `at` on (§2, §3): `at` too, which then retires at once. `rules_of` gives a stratum's rules as the loop
-    /// orders them; `load` binds a stratum's inputs early (before its first reader, as the loop would).
+    /// orders them; `load` binds a stratum's inputs early (before its first reader, as the loop would), or says it
+    /// is not issued (`false`: under kept strata, one that may be clean, decision 0113's sessions).
     #[allow(clippy::too_many_arguments)]
     pub(super) fn issue<'s>(
         &mut self,
@@ -331,7 +332,7 @@ impl<'a> Board<'a> {
         rules_of: &dyn Fn(usize) -> Vec<RuleKey>,
         wants_of: &[BTreeSet<(String, Vector<usize>)>],
         waved: &mut [bool],
-        load: &mut dyn FnMut(usize) -> Result<()>,
+        load: &mut dyn FnMut(usize, &Run<'a, '_>) -> Result<bool>,
         stream: &Stream<'s, '_>,
         ambient: &'s Ambient,
     ) -> Result<()>
@@ -493,7 +494,7 @@ impl<'a> Board<'a> {
     /// Whether `j` may be issued with the relations `held` (its component's earlier members') taken as held: the
     /// relations its strand holds (`Run::strand_reads_with`).
     #[allow(clippy::too_many_arguments)]
-    fn eligible(&self, j: usize, run: &Run<'a, '_>, sccs: &crate::code_rule_dsl::logic::front::Components, rules_of: &dyn Fn(usize) -> Vec<RuleKey>, load: &mut dyn FnMut(usize) -> Result<()>, held: &BTreeSet<String>) -> Result<Option<BTreeSet<String>>> {
+    fn eligible(&self, j: usize, run: &Run<'a, '_>, sccs: &crate::code_rule_dsl::logic::front::Components, rules_of: &dyn Fn(usize) -> Vec<RuleKey>, load: &mut dyn FnMut(usize, &Run<'a, '_>) -> Result<bool>, held: &BTreeSet<String>) -> Result<Option<BTreeSet<String>>> {
         if sccs[j].iter().all(|r| run.views.contains(r)) {
             if let Some(t) = &self.trace {
                 t.why.borrow_mut()[j] = "views only";
@@ -511,7 +512,12 @@ impl<'a> Board<'a> {
             }
             return Ok(None);
         }
-        load(j)?;
+        if !load(j, run)? {
+            if let Some(t) = &self.trace {
+                t.why.borrow_mut()[j] = "kept strata: it may be clean, or it reads kept rows not held yet";
+            }
+            return Ok(None);
+        }
         match run.strand_reads_with(&sccs[j], &rules_of(j), held) {
             Ok(reads) => Ok(Some(reads)),
             Err(why) => {

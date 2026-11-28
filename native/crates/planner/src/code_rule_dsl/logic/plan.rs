@@ -7411,9 +7411,11 @@ fn run_within(program: &body::Placed, db: &Connection, inputs: Inputs, lowering:
     let mut evaluated: Vector<usize> = rerail_blocks::vector::Vector::new();
     let (mut clean_strata, mut held_again, mut held_rows) = (0usize, 0usize, 0usize);
     // Decision 0113: native strata issued ahead, as components on the executor's host stream, retired here in order.
-    let mut board = (issue::on() && native.contains("program") && strata_kept.is_none() && maintaining.is_none()).then(|| issue::Board::new(&sccs, &deps));
-    // Decision 0592: with strata issued ahead, a relation goes when its last reader to finish does.
-    let mut reads_left = board.as_ref().filter(|_| release_finished()).map(|_| ReadsLeft::new(f0, &run_vs, &sccs, &by_stratum, &run.views));
+    // Under kept strata (a session's cross part), only the strata that certainly run are issued (`load_early`).
+    let mut board = (issue::on() && native.contains("program") && maintaining.is_none()).then(|| issue::Board::new(&sccs, &deps));
+    // Decision 0592: with strata issued ahead, a relation goes when its last reader to finish does. Not under kept
+    // strata: a stratum's rows are kept once the loop has passed it, so they go at their last reader's position.
+    let mut reads_left = board.as_ref().filter(|_| release_finished() && strata_kept.is_none()).map(|_| ReadsLeft::new(f0, &run_vs, &sccs, &by_stratum, &run.views));
     let mut early = Early::default();
     if maintaining.is_some() {
         slots = (0..sccs.len()).map(|_| Slot::Base).collect();
@@ -8402,14 +8404,47 @@ fn run_within(program: &body::Placed, db: &Connection, inputs: Inputs, lowering:
             let got = match board.as_mut() {
                 Some(b) => {
                     let rules_of = |j: usize| -> Vec<RuleKey> { sccs[j].iter().flat_map(|rel| rules_by.get(rel).into_iter().flatten().copied()).collect() };
-                    let mut load_early = |j: usize| -> Result<()> {
+                    // Under kept strata a stratum is issued ahead only where it certainly runs, as the loop's check at
+                    // its position will find (below): a relation of it has no kept rows, or a read it has now is not
+                    // what it was kept reading. Not a view of an input (held again in place), and nothing it reads is
+                    // kept and not yet held (`unheld`: the loop holds those at a reader's position).
+                    let mut load_early = |j: usize, run: &Run<'_, '_>| -> Result<bool> {
                         if let Some(load) = hooks.load.as_deref_mut() {
                             let now: Vec<String> = std::mem::take(&mut loads[j]);
                             if !now.is_empty() {
                                 load(&now)?;
                             }
                         }
-                        Ok(())
+                        if let Some(ks) = strata_kept.as_deref_mut() {
+                            let scc = &sccs[j];
+                            let rules = rules_of(j);
+                            if run.input_view_stratum(scc, &rules).is_some() {
+                                return Ok(false);
+                            }
+                            let reads = stratum_reads(f0, &run_vs, scc, &rules);
+                            if reads.iter().any(|r| unheld.contains(r)) {
+                                return Ok(false);
+                            }
+                            let own: Vec<&str> = scc.iter().filter(|r| !run.views.contains(*r)).collect();
+                            let runs = own.iter().any(|r| !ks.has_rows(r))
+                                || reads.iter().filter(|r| !scc.contains(*r) || input_set.contains(r.as_str())).any(|r| {
+                                    let now = if let Some(&d) = fresh.get(r) {
+                                        d
+                                    } else if input_set.contains(r.as_str()) {
+                                        // An input's digest not known yet says nothing (its loop check may know it).
+                                        let Some(d) = ks.input(r) else { return false };
+                                        Some(d)
+                                    } else if rules_by.contains_key(r.as_str()) {
+                                        // Its stratum's digest is not taken yet: this read says nothing.
+                                        return false;
+                                    } else {
+                                        Some(0)
+                                    };
+                                    now.is_none() || own.iter().any(|x| ks.read_was(x, r) != now)
+                                });
+                            return Ok(runs);
+                        }
+                        Ok(true)
                     };
                     b.collect(&mut run, stream)?;
                     b.issue(at, &mut run, &sccs, &rules_of, &wants_of, &mut waved, &mut load_early, stream, &ambient)?;

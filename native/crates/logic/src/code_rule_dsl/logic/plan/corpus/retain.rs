@@ -1078,6 +1078,11 @@ impl Retained {
     pub(in crate::code_rule_dsl) fn relations(&self) -> usize {
         self.rels.len()
     }
+    /// Whether the part keeps nothing: no relation held, and its frames (if read from them) keep no input and no
+    /// derived relation. A part's first run (a cold run's) keeps nothing, so there is nothing to maintain.
+    pub(in crate::code_rule_dsl) fn keeps_nothing(&self) -> bool {
+        self.rels.is_empty() && self.frames.as_ref().is_none_or(|f| f.inputs.is_empty() && f.derived.is_empty())
+    }
     pub(in crate::code_rule_dsl) fn bytes(&self) -> usize {
         self.rels.values().map(Kept::bytes).sum()
     }
