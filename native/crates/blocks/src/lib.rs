@@ -49,6 +49,7 @@ pub mod journal;
 pub mod kept;
 pub mod ledger;
 pub mod located;
+pub mod node_id;
 pub mod maps;
 pub mod mapped;
 pub use rerail_vector::vector;

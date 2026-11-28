@@ -2665,7 +2665,7 @@ impl Projected {
             None if self.tape => {
                 let (nodes, tokens) = (self.len(), self.ranks.count(Item::Token));
                 if local < nodes {
-                    self.node(local)
+                    return self.node_id(local).located(rerail_blocks::located::DocKey(self.key())).0;
                 } else if local < nodes + tokens {
                     self.ranks.select(Item::Token, local - nodes).expect("a numbered token")
                 } else {
@@ -2691,9 +2691,19 @@ impl Projected {
     pub fn global_near(&self, local: u32, hint: &mut u32) -> i64 {
         match &self.defs {
             Some(d) if local < self.len() => rerail_blocks::located::Located::new(self.key(), d.table.low_of_near(&self.ranks, Item::Node, local, hint).expect("a numbered node")).0,
-            None if self.tape && local < self.len() => rerail_blocks::located::Located::new(self.key(), self.node_near(local, hint)).0,
+            None if self.tape && local < self.len() => self.node_id_near(local, hint).located(rerail_blocks::located::DocKey(self.key())).0,
             _ => self.global(local),
         }
+    }
+    /// Node `local`'s id in its batch under tape ids (`NodeIds::Tape`): its tape position, 32 bits (decision 0724 §1).
+    /// It leaves the batch only as `NodeId::located`.
+    pub fn node_id(&self, local: u32) -> rerail_blocks::node_id::NodeId {
+        debug_assert!(self.tape, "a node id is its tape position under tape ids alone");
+        rerail_blocks::node_id::NodeId::new(self.node(local))
+    }
+    /// `node_id`, its tape node searched from `hint` (`node_near`).
+    fn node_id_near(&self, local: u32, hint: &mut u32) -> rerail_blocks::node_id::NodeId {
+        rerail_blocks::node_id::NodeId::new(self.node_near(local, hint))
     }
     /// Every node in order with its id: `(local id, tape node, id)`. One walk (`granules::ids`), no point read.
     pub fn node_ids(&self) -> impl Iterator<Item = (u32, u32, i64)> + '_ {
