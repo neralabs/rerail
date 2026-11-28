@@ -104,7 +104,12 @@ describe("rerail feedback", () => {
     expect(output).toContain(`\`rerail feedback list --rule ${RULE}\` prints it for a rule misfire issue (https://github.com/neralabs/rerail/issues/new?template=2-rule-misfire.yml)`);
   });
 
-  it("keeps the note on the session the rule steered past a later receipt whose stored text is no JSON", async () => {
+  it.each([
+    // One byte changed, as a damaged file leaves it: the rule ids' "[" made "{".
+    ["whose stored text is no JSON", `replace(payload_json, '"ruleIds":[', '"ruleIds":{')`],
+    // A hand edit: no writer stores the rule ids as one string, and the rules activity counts such a receipt for no rule.
+    ["whose rule ids are one string, not a list", `json_object('ruleIds', '${RULE}')`],
+  ])("keeps the note on the session the rule steered past a later receipt %s", async (_, changed) => {
     const { root, run, notes } = await steeredRepository();
     const store = new SqliteSessionStore(defaultRerailDatabasePath());
     const database = openRerailDatabase(defaultRerailDatabasePath());
@@ -114,9 +119,7 @@ describe("rerail feedback", () => {
       store.openSession(later, Date.now(), repositoryId.id);
       store.recordSteer(later, "later-receipt", [RULE]);
       store.close();
-      // One byte changed, as a damaged file leaves it: the rule ids' "[" made "{".
-      database.$client.prepare("UPDATE events SET payload_json = replace(payload_json, '\"ruleIds\":[', '\"ruleIds\":{') WHERE event_id = ?")
-        .run("steering-delivered:later-receipt");
+      database.$client.prepare(`UPDATE events SET payload_json = ${changed} WHERE event_id = ?`).run("steering-delivered:later-receipt");
     } finally {
       database.$client.close();
     }
