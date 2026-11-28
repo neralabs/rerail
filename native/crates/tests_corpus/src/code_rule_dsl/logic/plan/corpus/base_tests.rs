@@ -839,6 +839,11 @@ fn w_at(rule: Value, files: &[(&str, &str)]) -> Vec<Vec<String>> {
 }
 
 /// A module with nested definitions, statements side by side, and a class.
+/// The batches' switches (`kind_batches_forced`, `keyed_batches_forced`, `span_batches_forced`) are the process's, and
+/// tests run on threads of one: a test that forces one holds this for its life, so no other turns its switch off
+/// under it (a keyed batch's switch, off for another test's oracle run, left 71 rows spanned of 43,964).
+static FORCED: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
 const TREE: (&str, &str) = (
     "t.py",
     "def f(a):\n    x = g(a)\n    y = h(x)\n    print(y)\n    return y\n\n\nclass C:\n    def m(self):\n        z = k(1)\n        z.w()\n        return z\n",
@@ -1823,6 +1828,65 @@ after_at(n, m) :- pair(n, p), pair(m, p), n != m, node(_, n, _, s, _), node(_, m
     let _ = std::fs::remove_dir_all(&dir);
 }
 
+/// A view's atom whose keys name one row together (`Source::names_one_row`: `child(p, c, 0)` by its parent and place;
+/// `field(f, "body", b)` by its parent and a field no parent of the batch holds twice) is a lookup: after a fused atom,
+/// its row asked with the chunk's (`setfix::run_counts().keyed_looks`), not a step of its own. Its rows are those of
+/// the same rules over derived copies of `child` and `field`, which are no lookups: a first child, a second, a first
+/// child's kind, a function's body, a call's arguments (a field a call holds once, its arguments' children many), and an
+/// `if`'s alternatives (a field an `if` holds once an `elif` and `else`: no lookup, every one a row).
+#[test]
+fn a_child_by_its_parent_and_place_is_a_lookup_after_a_fused_atom() {
+    let dir = corpus("keyed-looks", &[TREE, ("u.py", "if a:\n    pass\nelif b:\n    pass\nelif c:\n    pass\nelse:\n    pass\n")]);
+    let program = r#"
+.decl kids(p: node, c: node, i: number)
+kids(p, c, i) :- child(p, c, i).
+.decl fn(f: node)
+fn(f) :- kind(f, "function_definition").
+.decl fields(p: node, f: symbol, c: node)
+fields(p, f, c) :- field(p, f, c).
+.decl calls(c: node)
+calls(c) :- kind(c, "call").
+.decl body(f: node, b: node)
+body(f, b) :- fn(f), field(f, "body", b).
+.decl body_copy(f: node, b: node)
+body_copy(f, b) :- fn(f), fields(f, "body", b).
+.decl args(c: node, a: node)
+args(c, a) :- calls(c), field(c, "arguments", l), child(l, a, _).
+.decl args_copy(c: node, a: node)
+args_copy(c, a) :- calls(c), fields(c, "arguments", l), child(l, a, _).
+.decl ifs(i: node)
+ifs(i) :- kind(i, "if_statement").
+.decl alt(i: node, a: node)
+alt(i, a) :- ifs(i), field(i, "alternative", a).
+.decl alt_copy(i: node, a: node)
+alt_copy(i, a) :- ifs(i), fields(i, "alternative", a).
+.decl first(b: node, c: node)
+first(b, c) :- fn(f), child(f, b, _), child(b, c, 0).
+.decl first_copy(b: node, c: node)
+first_copy(b, c) :- fn(f), child(f, b, _), kids(b, c, 0).
+.decl second(b: node, c: node)
+second(b, c) :- fn(f), child(f, b, _), child(b, c, 1).
+.decl second_copy(b: node, c: node)
+second_copy(b, c) :- fn(f), child(f, b, _), kids(b, c, 1).
+.decl named(b: node, k: symbol)
+named(b, k) :- fn(f), child(f, b, _), child(b, c, 0), kind(c, k).
+.decl named_copy(b: node, k: symbol)
+named_copy(b, k) :- fn(f), child(f, b, _), kids(b, c, 0), kind(c, k).
+.output first, first_copy, second, second_copy, named, named_copy, body, body_copy, args, args_copy, alt, alt_copy
+"#;
+    // The run's own scope, held here: its counts are read before it ends.
+    let _run = crate::code_rule_dsl::logic::run::scope(crate::code_rule_dsl::logic::native::width::Settings::from_env);
+    let got = run(&dir, program, &["first", "first_copy", "second", "second_copy", "named", "named_copy", "body", "body_copy", "args", "args_copy", "alt", "alt_copy"]);
+    assert!(got.iter().all(|rows| !rows.is_empty()), "{got:?}");
+    assert_eq!(got[11].len(), 3, "an if's alternatives: {:?}", got[11]);
+    for k in [0, 2, 4, 6, 8, 10] {
+        assert_eq!(got[k], got[k + 1], "rule {k}: looked up against probed");
+    }
+    let looked = crate::code_rule_dsl::logic::native::setfix::run_counts().keyed_looks.load(std::sync::atomic::Ordering::Relaxed);
+    assert!(looked > 0, "a fused chunk looked a child up by its parent and place");
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
 /// A lookup (`setfix::lookups`: a node's own facts by its id, `kind(n, k)` binding `k`) after a fused atom is read
 /// with the chunk's other rows, its values computed columns (`rowcode::ViewTest::looks`, one `read_own_batch` a
 /// chunk): no probe a row. A lookup keyed by another's value (`child(g, p, _)` then `kind(g, k)`) reads it. Its rows
@@ -1877,6 +1941,8 @@ callee_ids(p, l) :- kind(c, "call"), child(c, n, _), kind(n, "identifier"), at(n
 not_calls(p, l, k) :- kind(c, "expression_statement"), child(c, n, _), node(_, n, k, _, _), !kind(n, "call"), at(n, p, l).
 .output callee_ids, not_calls
 "#;
+    // The batches' switches are the process's: held for the test's life (`FORCED`).
+    let _forced = FORCED.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
     kind_batches_forced(Some(true));
     let before = kind_batched_rows();
     let got = run(&dir, program, &["callee_ids", "not_calls"]);
@@ -2066,8 +2132,10 @@ same(a, b) :- node(d, n, "identifier", _, _), node_text(n, s), node(d, m, "ident
 
 /// Decision 0706 E1: a view's step by a bound node that binds its row's other columns (`field(p, f, n)` with `n`
 /// bound binds the parent and the field; `node(_, x, k, _, _)` with `x` bound binds its kind), and one whose keys
-/// and negation are checked (`kind(p, "binary_operator")`, `!kind(p, "assignment")`), read a batch of rows at a time.
-/// The rows are the source's: each line `x{i} = a{i} + b{i}` has an addition whose operands are its left and right,
+/// and negation are checked (`kind(p, "binary_operator")`, `!kind(p, "assignment")`), read a batch of rows at a time:
+/// by the walk (a kind batch), or in a fused chunk where it is a lookup after the chunk's atom (`ViewTest::looks`, one
+/// `read_own_batch` a chunk: `left_kinds`' `node` read after `field(b, "left", x)`, a lookup by its parent and a field
+/// no parent holds twice). The rows are the source's: each line `x{i} = a{i} + b{i}` has an addition whose operands are its left and right,
 /// identifiers, under no assignment directly.
 #[test]
 fn node_reads_that_bind_in_batches_give_each_rows_rows() {
@@ -2083,11 +2151,17 @@ not_assigned(l, f) :- kind(n, "identifier"), field(p, f, n), !kind(p, "assignmen
 left_kinds(l, k) :- kind(b, "binary_operator"), field(b, "left", x), node(_, x, k, _, _), line(x, l).
 .output operands, not_assigned, left_kinds
 "#;
+    // The run's own scope, held here: its counts are read before it ends.
+    let _run = crate::code_rule_dsl::logic::run::scope(crate::code_rule_dsl::logic::native::width::Settings::from_env);
+    // The batches' switches are the process's: held for the test's life (`FORCED`).
+    let _forced = FORCED.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
     kind_batches_forced(Some(true));
     let before = kind_batched_rows();
     let got = run(&dir, program, &["operands", "not_assigned", "left_kinds"]);
     kind_batches_forced(None);
-    assert!(kind_batched_rows() > before + 256, "read in batches ({} rows)", kind_batched_rows() - before);
+    let looked = crate::code_rule_dsl::logic::native::setfix::run_counts().view_looks.load(std::sync::atomic::Ordering::Relaxed);
+    let batched = kind_batched_rows() - before + looked;
+    assert!(batched > 256, "read in batches ({} rows by the walk, {looked} in chunks)", kind_batched_rows() - before);
     let of = |rows: &Vec<Vec<String>>| rows.iter().map(|r| (r[0].parse::<i64>().unwrap(), r[1].trim_matches('"').to_owned())).collect::<BTreeSet<_>>();
     let both: BTreeSet<(i64, String)> = (1..=400).flat_map(|l| [(l, "left".to_owned()), (l, "right".to_owned())]).collect();
     assert_eq!(of(&got[0]), both);
@@ -2109,6 +2183,8 @@ fn a_text_the_walk_holds_is_joined_whatever_steps_batch() {
 named(@cat("m", x)) :- kind(n, "function_definition"), field(n, "name", i), text(i, x).
 .output named
 "#;
+    // The batches' switches are the process's: held for the test's life (`FORCED`).
+    let _forced = FORCED.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
     kind_batches_forced(Some(true));
     let got = run(&dir, program, &["named"]);
     kind_batches_forced(None);
@@ -2137,6 +2213,8 @@ seen(n, f) :- kind(n, "identifier"), within(n, f), kind(f, "function_definition"
 counted(l, k) :- owner(n, f), seen(n, f), pair(f, g), line(g, l), line(n, k).
 .output owner, pair, counted
 "#;
+    // The batches' switches are the process's: held for the test's life (`FORCED`).
+    let _forced = FORCED.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
     keyed_batches_forced(Some(false));
     let off = run(&dir_off, program, &["owner", "pair", "counted"]);
     keyed_batches_forced(Some(true));
@@ -2170,6 +2248,8 @@ seen(n, f) :- kind(n, "identifier"), within(n, f), kind(f, "function_definition"
 far(n, g) :- owner(n, f), pair(f, g), n < g, !seen(n, g).
 .output owner, pair, far
 "#;
+    // The batches' switches are the process's: held for the test's life (`FORCED`).
+    let _forced = FORCED.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
     keyed_batches_forced(Some(true));
     span_batches_forced(Some(false));
     let off = run(&dir_off, program, &["owner", "pair", "far"]);
@@ -2202,6 +2282,8 @@ held_in(l, k) :- cand(n, f), within(n, f), line(n, l), line(f, k).
 held_out(n) :- cand(n, f), !within(n, f), line(n, l), line(f, l).
 .output held_in, held_out
 "#;
+    // The batches' switches are the process's: held for the test's life (`FORCED`).
+    let _forced = FORCED.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
     keyed_batches_forced(Some(false));
     let off = run(&dir_off, program, &["held_in", "held_out"]);
     keyed_batches_forced(Some(true));

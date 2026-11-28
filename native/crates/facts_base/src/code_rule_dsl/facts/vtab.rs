@@ -307,6 +307,17 @@ pub enum NodeRead<'a> {
 /// (`AtomTable::database`; `None` for an in-memory one's).
 pub type AtomTableOf<'a> = (*const (), Option<&'a std::path::Path>);
 
+/// Why a probe's keys name at most one row of a source (`Source::names_one_row`).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum OneRow {
+    /// They may name more.
+    No,
+    /// By the source's shape, whatever rows it holds now or later: a parent's place is one child.
+    Shape,
+    /// By the rows it holds, which never change (a batch's): no parent of the batch holds a field twice.
+    Rows,
+}
+
 pub trait Source: Send + Sync {
     /// The syntax batch it reads (the syntax table's `Batch`, rerail-facts'), which its readers take as their own
     /// type (`syntax::PythonBatch`).
@@ -685,6 +696,12 @@ pub trait Source: Send + Sync {
     /// documents its rows are of, as a node id's high bits do.
     fn keys_documents(&self, _column: usize) -> bool {
         false
+    }
+    /// Whether a probe keyed by these columns finds at most one row, whatever their values (`keyed`: each column, with
+    /// its value where the probe's is a constant), and why (`OneRow`): `child(p, c, 0)` by its parent and place. A
+    /// step keyed so is a lookup (`setfix::lookups`), its one row read with a fused chunk's others. By default, none.
+    fn names_one_row(&self, _keyed: &[(usize, Option<i64>)]) -> OneRow {
+        OneRow::No
     }
     /// Whether every row is of the source's own documents: each node id it holds, and each document key, one of
     /// theirs (a view of a batch's tapes), never a host's that a place names. An admitted value's part of such a

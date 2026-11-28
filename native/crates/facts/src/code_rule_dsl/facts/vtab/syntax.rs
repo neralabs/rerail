@@ -2881,6 +2881,9 @@ impl KindRows {
 struct FieldRows {
     /// The field atoms, ascending.
     keys: Cells<i64>,
+    /// The field atoms some parent holds twice or more (a call's `argument`s), ascending: every other names one child
+    /// of a parent (`Source::names_one_row`).
+    repeated: Cells<i64>,
     /// Where each field's rows start in `at`, and one past the last.
     starts: Cells<u32>,
     at: Cells<[u32; 4]>,
@@ -2911,7 +2914,22 @@ impl FieldRows {
             }
         }
         starts.push(all.len() as u32);
-        FieldRows { keys: in_block(&b.block, &keys), starts: in_block(&b.block, &starts), at: in_block(&b.block, &all.iter().map(|e| e.1).collect::<Vec<_>>()) }
+        // A field some parent holds twice: its rows' parents, by document, sorted, a pair alike.
+        let mut repeated = Vec::new();
+        let mut ups: Vec<(u32, u32)> = Vec::new();
+        for (k, w) in starts.windows(2).enumerate() {
+            ups.clear();
+            ups.extend(all[w[0] as usize..w[1] as usize].iter().filter(|e| e.1[3] != NONE).map(|e| (e.1[0], e.1[3])));
+            ups.sort_unstable();
+            if ups.windows(2).any(|p| p[0] == p[1]) {
+                repeated.push(keys[k]);
+            }
+        }
+        FieldRows { keys: in_block(&b.block, &keys), repeated: in_block(&b.block, &repeated), starts: in_block(&b.block, &starts), at: in_block(&b.block, &all.iter().map(|e| e.1).collect::<Vec<_>>()) }
+    }
+    /// Whether no parent holds `field` twice: a parent's child in it is one row.
+    fn single(&self, field: i64) -> bool {
+        self.repeated.binary_search(&field).is_err()
     }
     /// The rows of `field`, in row order.
     fn of(&self, field: i64) -> &[[u32; 4]] {
@@ -5618,6 +5636,17 @@ impl Source for Viewed {
     }
     fn keys_rows(&self, column: usize) -> bool {
         column == self.own()
+    }
+    /// A child by its parent and place (a parent's place is one child); a field's child by its parent and a field no
+    /// parent of the batch holds twice (`FieldRows::single`, the index built if it was not).
+    fn names_one_row(&self, keyed: &[(usize, Option<i64>)]) -> crate::code_rule_dsl::facts::vtab::OneRow {
+        use crate::code_rule_dsl::facts::vtab::OneRow;
+        let has = |c: usize| keyed.iter().any(|&(k, _)| k == c);
+        match self.view {
+            View::Child if has(0) && has(2) => OneRow::Shape,
+            View::Field if has(0) && keyed.iter().any(|&(k, v)| k == 1 && v.is_some_and(|f| self.batch.fields.get_or_init(|| FieldRows::new(&self.batch)).single(f))) => OneRow::Rows,
+            _ => OneRow::No,
+        }
     }
     fn keys_documents(&self, column: usize) -> bool {
         matches!((self.view, column), (View::Node | View::Core, 0) | (View::Loc(Place::Docof), 1))

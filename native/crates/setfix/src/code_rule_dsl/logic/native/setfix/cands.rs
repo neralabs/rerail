@@ -707,6 +707,9 @@ pub(super) fn look(j: &JoinRule, step: &Step, store: &Store, slots: &[i64], aske
     asked.key.clear();
     asked.key.extend(keys.iter().map(|&(_, k)| val(k)));
     let need = binds.iter().fold(0u64, |m, &(c, _)| m | 1 << c) | keys.iter().fold(0u64, |m, &(c, _)| m | 1 << c) | tests.iter().fold(0u64, |m, &(c, c0)| m | 1 << c | 1 << c0);
+    if let Src::In(rel, _) = src && j.bound(rel).view.is_some() {
+        super::run_counts().keyed_looks.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+    }
     let (rows, cands) = candidates(j, src, store, &asked.key, keys, &mut asked.hints, &mut asked.last, need, None, true);
     let mut found = false;
     rows.each(cands, need, &mut asked.last, |id, r| {

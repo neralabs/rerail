@@ -9465,10 +9465,20 @@ fn reads_own(v: &View, c: usize) -> bool {
     v.src.read_own_batch(v.cols[c], &[], &[], &mut [], &mut [], &mut crate::code_rule_dsl::facts::vtab::ProbeCursor::default())
 }
 
+/// Whether a view's source states that `keys` (its step's) name at most one row together (`Source::names_one_row`):
+/// each keyed column of the source, with its constant.
+fn names_one_row(v: &View, keys: &[(usize, Key)]) -> bool {
+    // A view's filters (`eqs`: the place, the field) key its probe too.
+    let keyed: Vec<(usize, Option<i64>)> = keys.iter().filter_map(|&(c, k)| Some((*v.cols.get(c)?, match k { Key::Const(x) => Some(x), Key::Slot(_) => None })))
+        .chain(v.eqs.iter().map(|&(c, x)| (c, Some(x)))).collect();
+    v.src.names_one_row(&keyed) != crate::code_rule_dsl::facts::vtab::OneRow::No
+}
+
 /// Why step `i` of `s`'s key names at most one row, or `None` (a component's relation, or no such key known):
 /// - every column bound, or none bound in a negation (a test: one answer, whether its row is there);
 /// - a view's column whose rows the source reads by their own id (`reads_own`), or that it states has at most one row
-///   a value (`Source::keys_rows`: `docof(n, d)` by `n`), bound;
+///   a value (`Source::keys_rows`: `docof(n, d)` by `n`), bound; or columns it states name one row together
+///   (`names_one_row`: `child(p, c, 0)` by `p` and the place);
 /// - a derived input's key whose every value has at most one live row, measured (`Csr::at_most_one`).
 fn at_most_one(s: &Section<steps::Plan>, i: usize) -> Option<&'static str> {
     let Some(Step::Atom { src: Src::In(rel, ix), keys, binds, neg, .. }) = s.steps.get(i) else { return None };
@@ -9477,8 +9487,9 @@ fn at_most_one(s: &Section<steps::Plan>, i: usize) -> Option<&'static str> {
     }
     let rel = s.bound(rel);
     match &rel.view {
-        Some(v) => (v.eqs.is_empty() && v.ids.is_none()
+        Some(v) => ((v.eqs.is_empty() && v.ids.is_none()
             && keys.iter().any(|&(c, k)| matches!(k, Key::Slot(_)) && (reads_own(v, c) || v.src.keys_rows(v.cols[c]))))
+            || (keys.iter().any(|&(_, k)| matches!(k, Key::Slot(_))) && names_one_row(v, keys)))
             .then_some("a view's key"),
         None => s.bound(ix).at_most_one(rel).then_some("measured"),
     }
@@ -9489,6 +9500,9 @@ fn at_most_one(s: &Section<steps::Plan>, i: usize) -> Option<&'static str> {
 /// starts a fused scan. `RERAIL_LOOKUPS=off` (a measurement aid, the run's setting) makes none. Two kinds:
 /// - an atom of a view whose source reads its rows by their own id in a column the step's keys bind (`reads_own`): a
 ///   chunk reads them as one batch (`rowcode::ViewTest`), and the walk batches it as any node read (`kinds::OwnRead`);
+/// - an atom of a view whose keys name at most one row together (`Source::names_one_row`: `child(p, c, 0)` by its
+///   parent and place), one bound, that binds columns: a chunk asks it a row at a time (`cands::look`), the walk probes
+///   it;
 /// - an atom of a derived input whose key names at most one row (`Plan::one`, measured) and that binds columns: a
 ///   chunk asks it at once by the key's value-keyed index (`cands::ask_chunk`), and the walk probes it.
 fn lookups(s: &Section<steps::Plan>, ranges: &[Option<Ranged>]) -> Vec<bool> {
@@ -9496,8 +9510,9 @@ fn lookups(s: &Section<steps::Plan>, ranges: &[Option<Ranged>]) -> Vec<bool> {
     s.steps.iter().enumerate().map(|(i, st)| {
         let Step::Atom { src: Src::In(rel, _), keys, binds, neg, .. } = st else { return false };
         on && ranges.get(i).is_none_or(Option::is_none) && match &s.bound(rel).view {
-            Some(v) => v.read_by_own() && v.cols.len() + v.eqs.len() <= READ
-                && keys.iter().any(|&(c, k)| matches!(k, Key::Slot(_)) && reads_own(v, c)),
+            Some(v) => (v.read_by_own() && v.cols.len() + v.eqs.len() <= READ
+                && keys.iter().any(|&(c, k)| matches!(k, Key::Slot(_)) && reads_own(v, c)))
+                || (!binds.is_empty() && !*neg && keys.iter().any(|&(_, k)| matches!(k, Key::Slot(_))) && names_one_row(v, keys)),
             None => !binds.is_empty() && !*neg && s.one.get(i).copied().unwrap_or(false),
         }
     }).collect()
@@ -12584,6 +12599,9 @@ pub struct SetfixCounts {
     pub view_looks: std::sync::atomic::AtomicU64,
     /// Rows of chunks whose row program computed calls (`rowcode::Word::Call`).
     pub chunk_calls: std::sync::atomic::AtomicU64,
+    /// A fused chunk's rows that looked up a view's one row by keys that name it together (`Source::names_one_row`,
+    /// `cands::look`).
+    pub keyed_looks: std::sync::atomic::AtomicU64,
     /// A fused chunk's tests of derived inputs asked of it at once (`cands::ask_chunk`): by a node-keyed bit, by value,
     /// by the whole key's hash (`cands::ask_derived_chunk`).
     pub chunk_asks: [std::sync::atomic::AtomicU64; 3],

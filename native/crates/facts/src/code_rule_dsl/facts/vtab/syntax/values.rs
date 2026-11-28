@@ -1271,6 +1271,15 @@ impl Source for Layered {
     /// value's node: a value's nodes are its part's, never the batch's. Unforwarded, a chunk's every `within` test was
     /// a lookup of the node's rows (`def_outside`: 1.56 M tests at 1.6 µs on 1,000 files).
     /// The base's; a pair it does not hold may be a part's, where the relation has parts: asked as one row.
+    /// The base's claim where it holds by the source's shape: the values admitted later are rows of the same shape
+    /// (their own documents, their parents theirs), but not of the base's rows.
+    fn names_one_row(&self, keyed: &[(usize, Option<i64>)]) -> crate::code_rule_dsl::facts::vtab::OneRow {
+        use crate::code_rule_dsl::facts::vtab::OneRow;
+        match self.base.names_one_row(keyed) {
+            OneRow::Shape => OneRow::Shape,
+            OneRow::Rows | OneRow::No => OneRow::No,
+        }
+    }
     fn holds_batch(&self, cols: [usize; 2], pairs: &[i64], out: &mut [u8]) -> bool {
         if !self.base.holds_batch(cols, pairs, out) {
             return false;
