@@ -1224,6 +1224,39 @@ impl Source for Within {
         }
         Some(self.below(n, a))
     }
+    /// The nearest axis's rows by `n` (decision A's one read of a row by its own id): a node has at most one nearest
+    /// ancestor in the set, so at most one row (`within`'s climb stops at the first). Read from the batch's solve
+    /// (`lookup_read`'s rows): its starts and rows taken once, each value's node found with the search's hint carried
+    /// from value to value. Where the axis is not solved for the batch (its rows made per lookup), each value is
+    /// `found` 2: the caller probes it as one row. The other axes have a row an ancestor: no such read.
+    fn read_own_batch(&self, column: usize, values: &[i64], reads: &[usize], out: &mut [i64], found: &mut [u8], _cursor: &mut super::super::ProbeCursor) -> bool {
+        if !matches!(self.mode, Mode::Axis(Axis::Nearest)) || column != 0 {
+            return false;
+        }
+        if values.is_empty() {
+            return true;
+        }
+        let _kind = rerail_prof::work::doing(rerail_prof::work::VIEW);
+        if !self.reads_solved() {
+            found[..values.len()].fill(2);
+            return true;
+        }
+        let (nodes, start, rows) = (self.batch.nodes(), self.starts(), self.solved_rows());
+        let (k, mut memo) = (reads.len(), 0);
+        for (r, &v) in values.iter().enumerate() {
+            let at = self.batch.node(v, &mut memo).map(|(doc, local)| nodes.at(doc) + local as usize);
+            found[r] = match at {
+                Some(row) if start[row] != start[row + 1] => {
+                    for (o, &c) in out[r * k..(r + 1) * k].iter_mut().zip(reads) {
+                        *o = rows.get(start[row], c.min(1));
+                    }
+                    1
+                }
+                _ => 0,
+            };
+        }
+        true
+    }
     /// `holds` of a batch of pairs (decision 0706 E5, `within`'s interval walk): the pairs taken in their outer
     /// node's order, each outer node found once with its preorder interval (`below`'s), and each inner node found
     /// from the last one's document (one memo for the batch); a pair holds where the inner node lies in the interval.
@@ -1281,42 +1314,6 @@ impl Source for Within {
         let mut out = rerail_blocks::vector::Vector::new();
         self.lookup_each(column, values, &mut |r| out.push(r));
         Some(out)
-    }
-    /// `nearest`'s by `n`: a batch of nodes, each one's row (its nearest ancestor of the set, at most one) read, from
-    /// the batch's solve where lookups read it, else made by lookup. `rf_crossing`'s `rr_nearest_rf_fnl(i, f)` of each
-    /// function read inside the reads' scan program, not a step of 672 rows of its own.
-    fn read_own_batch(&self, column: usize, values: &[i64], reads: &[usize], out: &mut [i64], found: &mut [u8], cursor: &mut crate::code_rule_dsl::facts::vtab::ProbeCursor) -> bool {
-        let _ = cursor;
-        if column != 0 || self.mode != Mode::Axis(Axis::Nearest) {
-            return false;
-        }
-        let k = reads.len();
-        for (i, &v) in values.iter().enumerate() {
-            found[i] = 0;
-            let row = &mut out[i * k..(i + 1) * k];
-            let mut first = None;
-            if !(k <= 2 && self.lookup_read(0, v, reads, &mut |r, got| {
-                if first.is_none() {
-                    first = Some(r);
-                    row.copy_from_slice(got);
-                }
-            })) {
-                self.lookup_each(0, &[v], &mut |r| {
-                    if first.is_none() {
-                        first = Some(r);
-                    }
-                });
-                if let Some(r) = first {
-                    for (o, &c) in row.iter_mut().zip(reads) {
-                        *o = self.value(r, c);
-                    }
-                }
-            }
-            if first.is_some() {
-                found[i] = 1;
-            }
-        }
-        true
     }
     fn lookup_each(&self, column: usize, values: &[i64], each: &mut dyn FnMut(usize)) -> bool {
         let _kind = rerail_prof::work::doing(rerail_prof::work::VIEW);

@@ -2672,51 +2672,31 @@ fn a_solved_axis_reads_a_nodes_rows_as_it_finds_them() {
             read_rows += got.len();
         }
         assert!(read_rows > 0, "{name}: some node has a member ancestor");
+        // The nearest axis's rows by `n` read a chunk at once (`read_own_batch`): each node's row as `lookup` gives
+        // it, or none, every node in chunks of 200. Another axis has a row an ancestor: no such read.
+        let ids: Vec<i64> = (0..nodes).map(|r| batch.id(r, &mut { crate::code_rule_dsl::facts::vtab::NO_MEMO })).collect();
+        for values in ids.chunks(200) {
+            let k = values.len();
+            let (mut out, mut found) = (vec![0i64; 2 * k], vec![9u8; k]);
+            let read = source.read_own_batch(0, values, &[1, 0], &mut out, &mut found, &mut crate::code_rule_dsl::facts::vtab::ProbeCursor::default());
+            if axis != within::Axis::Nearest {
+                assert!(!read, "{name}: a row an ancestor, no read by `n`");
+                break;
+            }
+            assert!(read, "{name}");
+            for (r, &n) in values.iter().enumerate() {
+                let want: Vec<[i64; 2]> = source.lookup(0, &[n]).unwrap().into_iter().map(|row| [source.value(row, 1), source.value(row, 0)]).collect();
+                assert!(want.len() <= 1, "{name}: at most one nearest ancestor");
+                assert_eq!(found[r], u8::from(!want.is_empty()), "{name}: node {n}");
+                if let Some(&one) = want.first() {
+                    assert_eq!([out[2 * r], out[2 * r + 1]], one, "{name}: node {n}");
+                }
+            }
+        }
         assert!(!source.lookup_read(1, id, &[0], &mut |_, _| ()), "{name}: by `a`, the solve's rows are searched as before");
     }
 }
 
-/// `nearest` read in a batch by `n` (`Source::read_own_batch`, a fused step's lookup: `rf_crossing`'s
-/// `rr_nearest_rf_fnl(i, f)`): each node's one row, its columns as `lookup` and `value` give them, or none found;
-/// before its solve (each made by lookup) and after (read off the solve). By `a`, or for `inside` (many rows a node),
-/// refused.
-#[test]
-fn nearest_reads_a_batch_of_nodes_by_n() {
-    use crate::code_rule_dsl::facts::core::kind_atom;
-    use crate::code_rule_dsl::facts::vtab::ProbeCursor;
-    use crate::code_rule_dsl::typing::file_local::Binding;
-    let store = ContentStore::open(&temp("nearest-batch")).unwrap();
-    let docs: Vec<Document> = documents().into_iter().take(4).collect();
-    let (batch, _, _, _) = Batch::build(&store, docs, &Projection::default(), &[], &[], false).unwrap();
-    let nodes = batch.nodes().total();
-    let kind = |r: usize| {
-        let (p, local) = batch.locate(View::Node, r, &mut { crate::code_rule_dsl::facts::vtab::NO_MEMO });
-        let code = crate::code_rule_dsl::facts::core::kind_code(p.f().kind(p.node(local as u32)));
-        i64::from(kind_atom(p.tag(), batch.dialects[p.tag()].canonical.get(usize::from(code)).copied().unwrap_or(code)))
-    };
-    let set: Vec<i64> = [0, nodes / 3, nodes / 2].map(kind).to_vec();
-    let ids: Vec<i64> = (0..nodes).map(|r| batch.id(r, &mut { crate::code_rule_dsl::facts::vtab::NO_MEMO })).collect();
-    let source = within::Within::axis(Arc::clone(&batch), within::Axis::Nearest, &set, Binding::Cpu);
-    let want = |source: &within::Within| -> Vec<Option<[i64; 2]>> {
-        ids.iter().map(|&n| source.lookup(0, &[n]).unwrap().first().map(|&row| [source.value(row, 1), source.value(row, 0)])).collect()
-    };
-    let batched = |source: &within::Within| -> Vec<Option<[i64; 2]>> {
-        let (mut out, mut found) = (vec![0; 2 * ids.len()], vec![9u8; ids.len()]);
-        assert!(source.read_own_batch(0, &ids, &[1, 0], &mut out, &mut found, &mut ProbeCursor::default()), "by `n`, read in a batch");
-        found.iter().enumerate().map(|(i, &f)| (f == 1).then(|| [out[2 * i], out[2 * i + 1]])).collect()
-    };
-    assert!(!source.is_solved());
-    let unsolved = batched(&source);
-    assert_eq!(unsolved, want(&source), "made by lookup");
-    assert!(unsolved.iter().any(Option::is_some) && unsolved.iter().any(Option::is_none), "some nodes have a member ancestor, some none");
-    let _ = (0..source.len()).count();
-    let _ = source.value(0, 0);
-    assert!(source.is_solved());
-    assert_eq!(batched(&source), unsolved, "read off the solve: the same rows");
-    assert!(!source.read_own_batch(1, &ids[..4], &[0], &mut [0; 4], &mut [0; 4], &mut ProbeCursor::default()), "by `a`: refused");
-    let inside = within::Within::axis(Arc::clone(&batch), within::Axis::Inside, &set, Binding::Cpu);
-    assert!(!inside.read_own_batch(0, &ids[..4], &[1], &mut [0; 4], &mut [0; 4], &mut ProbeCursor::default()), "`inside`: refused");
-}
 
 /// A measurement (the reads, after t50): ns per call of `text`'s probe by node over a chunk's documents, bare (its
 /// batch's relation) and layered with a value admitted (a chunk with a parsed string's parts), against `node`'s.
