@@ -298,7 +298,7 @@ fn json_tier2_timings() {
 
 /// A JSON file of at least `bytes` bytes: a list of objects (numbers, strings, lists, a nest every 50), its numbers
 /// from `seed`.
-fn json_of(bytes: usize, seed: usize) -> Vec<u8> {
+pub(crate) fn json_of(bytes: usize, seed: usize) -> Vec<u8> {
     let mut f = b"[".to_vec();
     let mut i = 0usize;
     while f.len() < bytes {
@@ -469,13 +469,13 @@ fn json_tier2_compile_times() {
 }
 
 /// JSON's language for format 16 writers.
-fn json_lang() -> rerail_tape_format::f16::Lang {
+pub(crate) fn json_lang() -> rerail_tape_format::f16::Lang {
     let entries = rerail_json_aot::ENTRIES.iter().map(|&(kind, field, classes)| rerail_tape_format::tape::Entry { kind, field, flags: 0, alias: None, classes: classes.to_vec() }).collect();
     rerail_tape_format::f16::Lang::new(rerail_tape_format::tape::CodeTable::new(entries), rerail_json_aot::WIDTHS, 1).expect("a language")
 }
 
 /// A format 16 writer of `f`'s tape, its blocks' presence kept.
-fn json_writer(lang: &rerail_tape_format::f16::Lang, f: &[u8]) -> rerail_tape_format::f16::Writer {
+pub(crate) fn json_writer(lang: &rerail_tape_format::f16::Lang, f: &[u8]) -> rerail_tape_format::f16::Writer {
     rerail_tape_format::f16::Writer::new(lang, f, rerail_tape_format::newlines::Terminators::Newlines, 0, false, true, f.len() / 2 + 16)
 }
 

@@ -27,6 +27,8 @@ mod library_tests;
 mod bitlex_tests;
 #[cfg(test)]
 mod matrix_tests;
+#[cfg(test)]
+mod match_tests;
 
 /// A device's preprocessing of UKL (`rerail_ukl`), which the device layer, below the preprocessor, does not do.
 pub trait Preprocessing {

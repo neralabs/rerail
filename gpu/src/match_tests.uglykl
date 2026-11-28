@@ -1,0 +1,135 @@
+// Exact window matches on the matrix units (decision 0727): for each query (a window of 32 bytes of the text at
+// `q0 + q · qs`), the first reference (a window at `r0 + j`, j < nr) whose bytes are the query's. The bytes are
+// int8 as they lie (a byte's int8 reading is one-to-one), and the windows' sum of squared differences
+//   D(q, j) = P(q) + P(j) - 2 · Σ_k T[q + k] · T[j + k]
+// is 0 exactly when they are equal (Fischer and Paterson's matching by correlation): the cross term is a product of
+// two Hankel matrices, A's rows the queries' windows (row-major, stride qs) and B's columns the references' (B[k][c]
+// = T[j0 + c + k]: row-major, stride 1), read where they lie. Integer sums: exact on the unit and in the emulation.
+
+#include <ukl/matrix.h>
+#include <ukl/memory.h>
+
+typedef struct MatchArgs {
+    uint32_t nq;
+    uint32_t qs;
+    uint32_t q0;
+    uint32_t nr;
+    uint32_t r0;
+    uint32_t pad0;
+    uint32_t pad1;
+    uint32_t pad2;
+} MatchArgs;
+UKL_REFLECT_STRUCT(MatchArgs, nq, qs, q0, nr, r0, pad0, pad1, pad2)
+
+#define M_W 32u
+
+// Whether i8 runs on the unit here, and its shape.
+DEFINE_KERNEL2(tests, m_consts,
+               RWBUFFER, uint32_t, out, "[6]",
+               GID0,     uint32_t, i,   )
+{
+    if (i != 0u)
+        return;
+    out[0] = UKL_MMA_NATIVE(i8); out[1] = UKL_MMA_M(i8); out[2] = UKL_MMA_N(i8); out[3] = UKL_MMA_K(i8);
+    out[4] = UKL_MMA_LANES; out[5] = UKL_SIMD_WIDTH;
+}
+
+// Each window's sum of squares: `n` windows at `base + i · stride`.
+DEFINE_KERNEL2(tests, m_squares,
+               ARGS,     MatchArgs, args, ,
+               ROBUFFER, int8_t,   T,    "[1]",
+               RWBUFFER, int32_t,  P,    "[1]",
+               GID0,     uint32_t, i,    )
+{
+    // args.nq windows at q0 + i · qs.
+    if (i >= args.nq)
+        return;
+    int32_t s = 0;
+    for (uint32_t k = 0u; k < M_W; k++) {
+        int32_t x = (int32_t)T[args.q0 + i * args.qs + k];
+        s += x * x;
+    }
+    P[i] = s;
+}
+
+// The join on the matrix units: one owner (a SIMD group) a threadgroup, `M_QT` tiles of 16 queries an owner (`tile`
+// its first), every reference tile of 16 in turn, each B read once for the owner's tiles. A lane keeps the first
+// match of each row it holds, and sets it once at the end.
+#ifndef M_QT
+#define M_QT 1u
+#endif
+DEFINE_KERNEL2(tests, m_mma,
+               ARGS,     MatchArgs, args, ,
+               ROBUFFER, int8_t,   T,    "[1]",
+               ROBUFFER, int32_t,  Pq,   "[1]",
+               ROBUFFER, int32_t,  Pr,   "[1]",
+               RWBUFFER, uint32_t, out,  "[1]",
+               TGID0,    uint32_t, tile, ,
+               LID0,     uint32_t, lid,  )
+{
+    UklMmaAt at = ukl_mma_at(lid);
+    const uint32_t M = UKL_MMA_M(i8), N = UKL_MMA_N(i8);
+    uint32_t q = tile * M * M_QT;
+    if (q >= args.nq)
+        return;
+    // The window in steps of the unit's K (32 on the units, 16 in the emulation): A's steps held.
+    const uint32_t KS = UKL_MMA_K(i8), STEPS = M_W / UKL_MMA_K(i8);
+    uint32_t best[M_QT][UKL_MMA_RB];
+    ukl_mma_a_i8 a[M_QT][M_W / UKL_MMA_K(i8)];
+    for (uint32_t t = 0u; t < M_QT; t++) {
+        for (uint32_t i = 0u; i < UKL_MMA_RB; i++)
+            best[t][i] = 0xffffffffu;
+        uint32_t qt = min(q + t * M, args.nq - M);
+        for (uint32_t s = 0u; s < STEPS; s++)
+            ukl_mma_load_a_i8(&a[t][s], T + args.q0 + qt * args.qs + s * KS, args.qs, UKL_ROW_MAJOR, at);
+    }
+    for (uint32_t j = 0u; j < args.nr; j += N) {
+        ukl_mma_b_i8 b[M_W / UKL_MMA_K(i8)];
+        for (uint32_t s = 0u; s < STEPS; s++)
+            ukl_mma_load_b_i8(&b[s], T + args.r0 + j + s * KS, 1u, UKL_ROW_MAJOR, at);
+        for (uint32_t t = 0u; t < M_QT; t++) {
+            uint32_t qt = min(q + t * M, args.nq - M);
+            ukl_mma_c_i32 c;
+            ukl_mma_fill_c_i32(&c, 0, at);
+            for (uint32_t s = 0u; s < STEPS; s++)
+                ukl_mma_i8(&c, &a[t][s], &b[s], at __UKL_ARGS);
+            for (uint32_t e = 0u; e < UKL_MMA_C_PER; e++) {
+                uint32_t row = ukl_mma_row(e / UKL_MMA_CB, at), col = ukl_mma_col(e % UKL_MMA_CB, at);
+                int32_t d = Pq[qt + row] + Pr[j + col] - 2 * c.x[e];
+                if (d == 0 && j + col < best[t][e / UKL_MMA_CB])
+                    best[t][e / UKL_MMA_CB] = j + col;
+            }
+        }
+    }
+    for (uint32_t t = 0u; t < M_QT; t++) {
+        uint32_t qt = min(q + t * M, args.nq - M);
+        for (uint32_t i = 0u; i < UKL_MMA_RB; i++) {
+            uint32_t row = ukl_mma_row(i, at);
+            if (best[t][i] != 0xffffffffu)
+                ukl_atomic_min(out + qt + row, best[t][i]);
+        }
+    }
+}
+
+// The same join on the threads: a query a thread, its window's four words held, each reference's first word read
+// where it lies (unaligned) and the rest only where it matches; the first match ends the query.
+DEFINE_KERNEL2(tests, m_threads,
+               ARGS,     MatchArgs, args, ,
+               ROBUFFER, uint8_t,  T,    "[1]",
+               RWBUFFER, uint32_t, out,  "[1]",
+               GID0,     uint32_t, q,    )
+{
+    if (q >= args.nq)
+        return;
+    uint32_t at = args.q0 + q * args.qs;
+    uint64_t w0 = ukl_ld_u64(T, at), w1 = ukl_ld_u64(T, at + 8u), w2 = ukl_ld_u64(T, at + 16u), w3 = ukl_ld_u64(T, at + 24u);
+    uint32_t found = 0xffffffffu;
+    for (uint32_t j = 0u; j < args.nr; j++) {
+        uint32_t r = args.r0 + j;
+        if (ukl_ld_u64(T, r) == w0 && ukl_ld_u64(T, r + 8u) == w1 && ukl_ld_u64(T, r + 16u) == w2 && ukl_ld_u64(T, r + 24u) == w3) {
+            found = j;
+            break;
+        }
+    }
+    out[q] = found;
+}

@@ -2422,6 +2422,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "libsais-sys"
+version = "0.2.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "4ec495a2918bacd868428951b45b9b3fb9464840e2ac559462c4370d6fa2c404"
+dependencies = [
+ "cc",
+]
+
+[[package]]
 name = "libsqlite3-sys"
 version = "0.39.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -4309,6 +4318,7 @@ version = "0.1.0"
 dependencies = [
  "block",
  "libc",
+ "libsais-sys",
  "lz4-sys",
  "metal",
  "objc",
@@ -4322,6 +4332,7 @@ dependencies = [
  "rerail-ukl",
  "rerail-ukl-rust",
  "rerail-ukl-vec",
+ "zstd",
 ]
 
 [[package]]

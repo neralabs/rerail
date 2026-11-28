@@ -31,6 +31,10 @@ rerail-json-lean = { path = "../native/crates/json_lean" }
 rerail-simdjson = { path = "../native/crates/simdjson" }
 # The LZ4 block compressor the tapes' 16z pieces are made with: the library's decoder is tested on its blocks.
 lz4-sys = "=1.11.1"
+# Suffix arrays on the CPU, the reference and the cost measure for the device's (SA-IS, one thread: libsais).
+libsais-sys = { version = "=0.2.0", default-features = false }
+# Dictionaries trained from a tape's pieces (zstd's trainers), for 16z's matches across pieces (decision 0727).
+zstd = "=0.14.4"
 
 [target.'cfg(target_os = "macos")'.dependencies]
 metal = "0.33.0"
