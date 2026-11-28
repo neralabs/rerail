@@ -790,6 +790,12 @@ impl Source for Layered {
     fn syntax_batch(&self) -> Option<Arc<dyn std::any::Any + Send + Sync>> {
         self.base.syntax_batch()
     }
+    /// The chunk's numbering, its base's: a chunk whose sources are all layered (it admitted tape values) binds its
+    /// connection's through them, and an output's node leaves the chunk located by it. Without it the connection had
+    /// none, its outputs' nodes left as the chunk's ids, and the memo took no entry of the chunk.
+    fn numbering(&self) -> Option<Arc<dyn rerail_facts_base::code_rule_dsl::facts::numbering::Numbering>> {
+        self.base.numbering()
+    }
     /// A chunk's layered binding (decision 0431 §8): a node is read through the batch that holds its document, the
     /// chunk's or a tape value's. A value's parts are keyed by their hosts' keys too, so a host file's
     /// key names its guests' parts as well: the first of them that holds the node answers. The base is asked, then

@@ -3121,12 +3121,9 @@ pub(super) fn crossing(v: &Version, f: Fields<'_>, local: &BTreeSet<String>, vie
     cross_reads.extend(local.iter().filter(|r| elsewhere(r)).cloned());
     let exports: Vec<String> = cross_reads.iter().filter(|r| is_local(r) && !projected.contains(*r)).cloned().collect();
     let base_read: Vec<String> = f.inputs().filter(|i| cross_reads.contains(*i)).map(str::to_owned).collect();
-    let mut base = base_read.clone();
-    for decode in ["node", "doc"] {
-        if f.is_input(decode) && !base.iter().any(|b| b == decode) {
-            base.push(decode.to_owned());
-        }
-    }
+    // What the cross part reads, and no more: a finding's place is made in its node's file (decision 0727), so `node`
+    // and `doc` are not bound to decode it.
+    let base = base_read.clone();
     Crossing { exports, base_read, base, projected }
 }
 

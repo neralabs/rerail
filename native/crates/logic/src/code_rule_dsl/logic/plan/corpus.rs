@@ -3502,7 +3502,6 @@ fn run_observed_within(
     // The run's cross part as a version: what the run reads of it, not its tree (t36 item 7).
     let run_placed = super::body::Placed::whole(Arc::clone(&cross_run));
     let run_f = run_placed.fields()?;
-    let decodes = cross_run.outputs().any(|o| cross_run.text(o) == "finding");
     let mut stored: Vec<(String, Vec<String>)> = Vec::new();
     // The repository inputs (`facts::repository`) the program reads: made once, bound once beside every chunk's.
     drop(section.take()); section = Some(crate::code_rule_dsl::logic::profile::span(|| "the repository's relations".into()));
@@ -3614,16 +3613,11 @@ fn run_observed_within(
     }
     for rel in split.base.iter().filter(|rel| !repository.iter().any(|(r, _, _)| r == *rel)) {
         let cols = projection.columns(rel).ok_or_else(|| Error::Plan(format!("no columns for {rel}")))?;
-        let decode: &[&str] = match rel.as_str() {
-            "node" if decodes => &["d", "n"],
-            "doc" if decodes => &["d", "path"],
-            _ => &[],
-        };
         let read = named_by.get(rel.as_str());
         let mut named: Vec<&str> = cols
             .iter()
             .enumerate()
-            .filter(|(i, c)| decode.contains(c) || read.is_some_and(|r| r.get(*i).copied().unwrap_or(false)))
+            .filter(|(i, _)| read.is_some_and(|r| r.get(*i).copied().unwrap_or(false)))
             .map(|(_, c)| *c)
             .collect();
         // A relation read with every column a wildcard (`text(_, _)` in a negated conjunction) is read for whether it
@@ -3897,7 +3891,9 @@ fn run_observed_within(
     // A session's base relations' statistics, kept by file across its runs (decision 0096 §3): each with every column
     // `input_columns` names. `RERAIL_STATS_KEEP=off` measures them as before.
     // Without a session, the tape cache's memo keeps them: read from the blob the last run of this plan wrote.
-    let keeping = memoised && !stored.is_empty() && std::env::var("RERAIL_STATS_KEEP").map_or(true, |v| v != "off");
+    // Kept with no base relation too (decision 0727: the cross part reads none): the keeper's counted files are what
+    // the kept route knows an unchanged file by, a hit then read for its outputs alone (decision 0117 step 1).
+    let keeping = memoised && std::env::var("RERAIL_STATS_KEEP").map_or(true, |v| v != "off");
     // The space's last program (`memo::last_program`) is this run's already: "none" is marked only before the run's
     // first entry is written, and the program again at its end only then. A run that writes no entry writes neither
     // (decision 0250; the run after a cold one wrote both).

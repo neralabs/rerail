@@ -173,9 +173,9 @@ fn a_new_builds_first_edit_counts_every_file_in_so_its_next_edit_is_steady() {
     assert_eq!(first.stats_kept, Some(Ok((3, 0))), "the new build's first edit counts every file in");
     // Nor is anything of the old build's cross-file part read (decision 0077 §4: kept per engine build): no
     // stratum's rows (their identities are of the build), and no input's rows, which it read to make deltas with
-    // nothing to apply them to. So every input is new to it, `defined` too, which the edit leaves as it was.
+    // nothing to apply them to. So every input is new to it, `def_name_at` too, which the edit leaves as it was.
     assert!(first.cross_kept.is_none_or(|(run, all)| run == all), "the new build derives every cross-file stratum: {:?}", first.cross_kept);
-    assert!(first.cross_changed.iter().any(|r| r == "defined"), "no input compared with the old build's rows: {:?} changed", first.cross_changed);
+    assert!(first.cross_changed.iter().any(|r| r == "def_name_at"), "no input compared with the old build's rows: {:?} changed", first.cross_changed);
     assert!(first.cross_handed > 0, "its cross-file relations handed off as it goes");
     assert!(first.cross_unloaded > 0, "its cross-file inputs let go after their last reader");
     let tail = "\nhelper(6)\n";
