@@ -26,6 +26,16 @@ fn unrefused(version: Arc<Version>) -> Programs {
     p
 }
 
+/// The split of `version`, which the split refuses (decision 0727: no node crosses, a finding's place neither): each of
+/// `held` is named as holding a node in the cross part. What the split did besides is read from it unrefused.
+fn refused_for(version: Arc<Version>, held: &[&str]) -> Programs {
+    let refused = programs_of(Arc::clone(&version)).err().expect("a node crosses into the cross-file part (decision 0727)");
+    for rel in held {
+        assert!(refused.contains(&format!("  {rel}: holds a node")), "{rel} is refused: {refused}");
+    }
+    unrefused(version)
+}
+
 /// `v` with the file-local joins of its cross-file rules pushed into the chunks (`PushLocalJoins`), and the joins made.
 fn pushed(v: Arc<Version>) -> (Arc<Version>, Vec<String>) {
     let mut pass = PushLocalJoins::default();
@@ -165,22 +175,27 @@ fn a_relation_over_a_derived_document_column_is_located() {
 
 /// A relation whose rows name no document (`aware()`, as data-layer's `ma_branch_aware`), handed on to a cross-file
 /// reader (`found`, as `MA033` over `ma_owner(_)`), whose rule reads its rows' nodes where the program has no `docof`
-/// or `node` to name their documents by, is moved to the cross-file part with its file-local readers (decision 0290).
+/// or `node` to name their documents by, is located through `docof`, which `locate` reads for it (`aware_at(d, 1)`),
+/// and read back from that (decision 0680), as one over a document column is: decision 0290 moved it to the
+/// cross-file part with its reads of `text`, and the cross part reads no base relation (decision 0727). Its reader
+/// `found` reads `owner(_)`, a node, in the cross part, which the split refuses (decision 0727).
 #[test]
-fn a_relation_over_nodes_no_document_names_moves_to_the_cross_file_part() {
+fn a_relation_over_nodes_no_document_names_is_located_through_docof() {
     let text = ".decl text(n: node, s: symbol)\n.input text\n.decl owner(n: node)\nowner(n) :- text(n, \"a\").\n\
                 .decl aware()\naware() :- owner(n), text(n, \"b\").\n.decl found(k: number)\nfound(1) :- owner(_), !aware().\n.output found\n";
     let v = read(text);
-    assert!(split_of(&v).local.contains("aware"), "the case: aware is file-local before the move");
+    assert!(split_of(&v).local.contains("aware"), "the case: aware is file-local before locate");
     let (v, found) = located(v);
-    let found = found.expect("every row the chunks hand on located");
-    assert_eq!(moved(&v), ["aware"]);
+    assert!(found.as_ref().is_ok_and(|l| l.iter().any(|r| r == "aware")), "aware is located: {found:?}");
+    assert!(moved(&v).is_empty(), "nothing moves: {:?}", moved(&v));
+    assert!(rules_of(&v, "aware_at").iter().all(|r| reads(&v, *r).contains(&"docof".to_owned())), "located through docof:\n{}", v.show());
     let parts = split_of(&v);
-    assert!(!parts.local.contains("aware") && !parts.local.contains("found") && parts.local.contains("owner"), "{:?}, located {found:?}", parts.local);
-    assert_eq!(parts.causes["aware"], "its rows name no document (moved by `locate`)");
+    assert!(!parts.local.contains("aware") && parts.local.contains("aware_at") && parts.local.contains("owner") && !parts.local.contains("found"), "{:?}", parts.local);
+    assert_eq!(parts.causes["aware"], "read back from its located form (`locate`)");
+    refused_for(Arc::clone(&v), &["owner"]);
     let (v, found) = located(v);
     found.unwrap();
-    assert_eq!(moved(&v), ["aware"]);
+    assert!(moved(&v).is_empty());
 }
 
 /// An earlier phase's export is placeless (decision 0709, amending 0083 §2.3): a rule that joins it is file-local, and
@@ -433,7 +448,8 @@ far(f, k) :- node(_, f, "call", _, _), text(f, x), node(_, k, "class", _, _), te
     for rel in ["small", "lc", "used"] {
         assert!(split.local.contains(rel), "{rel}: {:?} {:?}", split.local, split.causes);
     }
-    let p = programs_of(v).unwrap();
+    // `far` holds its nodes in the cross part, which the split refuses (decision 0727); its guard is still its own.
+    let p = refused_for(v, &["far", "fa", "fb"]);
     assert!(!p.exports.iter().any(|x| x == "small"), "the cross-file part's guard is its own: {:?}", p.exports);
     crossings_checked(&p).unwrap();
 }
@@ -483,7 +499,7 @@ far(c) :- node(_, c, "call", _, _), child(c, f, 0), alias(_, x), callee2(f, x).
     assert!(moved_by_locate.is_empty() && found == ["rr_reader_demand_callee2"], "{moved_by_locate:?} located {found:?}");
     // The cross-file part reads the demand back from its twin, every file's (`rr_reader_demand_callee2(x) :- …_at(_, x)`).
     assert!(rules_of(&v, "rr_reader_demand_callee2").iter().any(|r| reads(&v, *r) == ["rr_reader_demand_callee2_at"]), "read back from its twin:\n{}", v.show());
-    let p = programs_of(v).unwrap();
+    let p = refused_for(v, &["far", "callee2"]);
     assert!(!p.exports.iter().any(|x| x == "rr_reader_demand_callee"), "each file's own: {:?}", p.exports);
     crossings_checked(&p).unwrap();
 }
@@ -618,7 +634,7 @@ here(c) :- strs(c, v), vok(v).
     for rel in ["fval", "vok", "here", "vok_at"] {
         assert!(split.local.contains(rel), "{rel}: {:?} {:?}", split.local, split.causes);
     }
-    let p = programs_of(v).unwrap();
+    let p = refused_for(v, &["far", "strs"]);
     let cross = &p.versions.cross;
     assert!(!cross.rules().any(|r| ["fval", "vok"].contains(&cross.rel_name(r.head().rel()))), "the cross-file part derives none of the family:\n{}", cross.show());
     assert!(rules_of(cross, "far").iter().all(|r| r.body().filter_map(|l| l.atom()).any(|a| cross.rel_name(a.rel()).starts_with("vok_at"))), "far reads the twin:\n{}", cross.show());
@@ -889,7 +905,7 @@ missing(c, v) :- call_str(c, v), design(_), !codes(v).
     assert!(moved(&v).is_empty(), "{:?}", moved(&v));
     // The cross-file part reads `codes` back from its twin, every file's (`codes(v) :- codes_at(_, v)`).
     assert!(rules_of(&v, "codes").iter().any(|r| reads(&v, *r) == ["codes_at"]), "codes is read back from its twin:\n{}", v.show());
-    crossings_checked(&programs_of(v).unwrap()).unwrap();
+    crossings_checked(&refused_for(v, &["missing", "call_str"])).unwrap();
 }
 
 /// Two trees in one chunk (kinds 1 = module, 2 = function, 3 = other):
@@ -1106,7 +1122,7 @@ finding(n, s) :- node(_, n, "call", _, _), field(n, "function", f), text(f, s), 
     assert_eq!(finding.len(), 1);
     // What is left of the rule: the join and the cross-file negation.
     assert_eq!(reads(&v, finding[0]), [made[0].as_str(), "defined"]);
-    let parts = programs_of(Arc::clone(&v)).unwrap();
+    let parts = refused_for(Arc::clone(&v), &["finding"]);
     assert!(parts.exports.contains(&made[0]));
     assert!(!parts.base.iter().any(|b| b == "field" || b == "text" || b == "op"), "{:?}", parts.base);
     // The join takes the comparison and the negated base read along.
@@ -1347,7 +1363,7 @@ many(c) :- fmt(c, v), seen(v).
     assert!(found.as_ref().is_ok_and(|l| l.contains(&"ok".to_owned())), "{found:?}\n{}", v.show());
     let moves: Vec<String> = ProgramFields::qualifiers(&*v).into_iter().filter(|(_, w)| w.contains(crate::code_rule_dsl::typing::file_local::MOVED_CROSS_FILE)).map(|(r, _)| r).collect();
     assert!(moves.is_empty(), "nothing moved: {moves:?}");
-    let programs = programs_of(v).unwrap();
+    let programs = refused_for(v, &["many"]);
     crossings_checked(&programs).unwrap();
     for rel in ["pv", "rest", "bad", "ok", "flagged"] {
         assert!(programs.file_local.contains(rel), "{rel}: {:?}", programs.file_local);
@@ -1387,7 +1403,8 @@ distinct(a, x) :- attr(e, a, x, w), attr(e, b, x, v), a != b, !clash(x, v, w).
     }
     assert!(split.filters.contains("clash"), "{:?}", split.filters);
     crossings_checked(&programs_of(read(base)).unwrap()).unwrap();
-    let refused = crossings_checked(&programs_of(read(r#"
+    // A finding made in the cross part over another file's names: the split refuses it for its node (decision 0727).
+    let joined = read(r#"
 .decl node(d: number, n: node, kind: symbol, start: number, end: number)
 .decl text(n: node, s: symbol)
 .input node, text
@@ -1396,8 +1413,8 @@ defined(x) :- node(_, n, "def", _, _), text(n, x).
 .decl undefined_ref(n: node)
 undefined_ref(n) :- node(_, n, "ref", _, _), text(n, x), !defined(x).
 .output undefined_ref
-"#)).unwrap()).unwrap_err();
-    assert!(refused.contains("undefined_ref"), "{refused}");
+"#);
+    refused_for(joined, &["undefined_ref"]);
     // A located view joining two documents by a name (`pc_modattr`): each rule's reads are tied to a head location
     // column, and its reader holds both columns in its own document, so it reads only rows of its document.
     let located = r#"
@@ -1608,53 +1625,6 @@ named(n, m) :- node(d, n, "identifier", _, _), module(d, m).
     assert!(split.causes.is_empty(), "{:?}", split.causes);
 }
 
-#[test]
-fn the_cross_part_takes_node_attributes_as_a_semi_join_only_when_each_lookup_is_of_a_held_node() {
-    let source = |extra: &str| format!(r#"
-.decl node(d: number, n: node, kind: symbol, start: number, end: number)
-.decl child(p: node, c: node, i: number)
-.decl text(n: node, s: symbol)
-.decl line(n: place, l: number)
-.input node, child, text, line
-.decl names(x: symbol)
-names(x) :- node(_, n, "string", _, _), text(n, x).
-.decl ident(n: node, x: symbol)
-ident(n, x) :- node(_, n, "identifier", _, _), text(n, x).
-.decl pick(n: node)
-pick(n) :- ident(n, x), names(x).
-.decl hit(n: node, l: number)
-hit(n, l) :- pick(n), node_line_number(n, l).
-{extra}
-.output hit, pick
-"#);
-    // As the corpus run splits: after the file-local joins are pushed into the chunks.
-    let split = |text: &str| programs_of(pushed(read(text)).0).unwrap();
-    let parts = split(&source(""));
-    assert!(parts.base.iter().any(|b| b == "line"), "{:?}", parts.base);
-    let held = semijoin_bases(&parts.versions.cross, &parts.base).expect("every lookup is of a node an export holds");
-    assert!(held.contains("line"), "{held:?}");
-    // `child(p, c, _)` reaches nodes no export holds: their lines would be missing. So would a cross-file rule's
-    // own enumeration of nodes (`node(_, n, "identifier", _, _), text(n, x), names(x)`).
-    let parts = split(&source(".decl kid(c: node, l: number)\nkid(c, l) :- pick(p), child(p, c, _), node_line_number(c, l).\n.output kid"));
-    assert!(parts.base.iter().any(|b| b == "child"), "{:?}", parts.base);
-    assert!(!semijoin_bases(&parts.versions.cross, &parts.base).unwrap().contains("line"));
-    let parts = programs_of(read(&source(".decl own(n: node)\nown(n) :- node(_, n, \"identifier\", _, _), text(n, x), names(x).\n.decl seen(n: node, l: number)\nseen(n, l) :- own(n), node_line_number(n, l).\n.output seen, own"))).unwrap();
-    let held = semijoin_bases(&parts.versions.cross, &parts.base).unwrap();
-    assert!(!held.contains("line") && !held.contains("node") && !held.contains("text"), "{held:?}");
-    // Per relation: a walk of `child` that looks up no attribute leaves `line` a semi-join for the other rules.
-    let parts = split(&source(".decl kid(c: node, i: number)\nkid(c, i) :- pick(p), child(p, c, i).\n.decl kidline(p: node, l: number)\nkidline(p, l) :- kid(c, _), pick(p), child(p, c, _), node_line_number(p, l).\n.output kid, kidline"));
-    assert!(parts.base.iter().any(|b| b == "child"), "{:?}", parts.base);
-    let held = semijoin_bases(&parts.versions.cross, &parts.base).unwrap();
-    assert!(held.contains("line"), "{held:?}");
-    // A tainted output's findings are decoded through `node`: kept whole.
-    assert!(!held.contains("node"), "{held:?}");
-    // `tape(n, par, ..)`'s parent is a node though a number: a walk up it reaches nodes no export holds.
-    let parts = split(&source(".decl tape(n: node, par: number, size: number, depth: number)\n.input tape\n.decl up(n: node, p: number)\nup(n, p) :- hit(n, _), names(_), tape(n, p, _, _).\nup(n, q) :- up(n, p), names(_), tape(p, q, _, _).\n.output up"));
-    if parts.base.iter().any(|b| b == "tape") {
-        assert!(!semijoin_bases(&parts.versions.cross, &parts.base).unwrap().contains("tape"));
-    }
-}
-
 /// A cross-file finding's place (`node(d, n, …), doc(d, p, _), line(n, l)`) narrows no node: pushed into the chunks
 /// whole, it is a row for every node (1.5 M over 277 files of the data layer, decision 0677 batch 8). The finding's
 /// own relation binds its node in the chunks (`warn(n) :- at(n, x), !names(x)`), so the pushed join reads that domain,
@@ -1686,7 +1656,7 @@ found(p, n, l) :- warn(n), node(d, n, _, _, _), doc(d, p, _), node_line_number(n
     let narrowing = reads(&v, join_rules[0]).into_iter().find(|r| made.contains(r)).unwrap_or_else(|| panic!("narrowed by the finding's domain: {}", v.show_rule(join_rules[0])));
     let domain: Vec<Vec<String>> = rules_of(&v, &narrowing).into_iter().map(|r| reads(&v, r)).collect();
     assert_eq!(domain, vec![vec!["at".to_owned()]], "the domain is `at`'s nodes");
-    let split = programs_of(v).unwrap();
+    let split = refused_for(v, &["found", "warn", "at"]);
     assert!(split.file_local.contains(&join) && split.file_local.contains(&narrowing), "both made in the chunks: {:?}", split.causes);
 }
 
@@ -1808,10 +1778,13 @@ named(f, s) :- uses(f, _), child(p, f, _), text(p, s).
     assert!(split.exports.iter().any(|e| e == named), "{:?}", split.exports);
 }
 
-/// A composition that a cross-file read of the same rule filters stays in the cross-file part (t31 A1): pushed, the
-/// chunks would export every (function, name bound around it) pair, not the few the filter asks about.
+/// A composition that a cross-file read of the same rule filters is pushed into the chunks, though they then export
+/// every (function, name bound around it) pair, not the few the filter asks about (t31 A1 kept it in the cross part):
+/// left there, its rule read `p`, a node it hands on nowhere, so a node id crossed (decision 0677; 2a7aa9b10a pushes
+/// a component that reads a node the rest of its rule leaves unread). The pair it hands on holds `f`, which the
+/// split then refuses (decision 0727): such a rule is made in its node's file, reading the names staged.
 #[test]
-fn a_composition_filtered_by_a_cross_file_read_is_not_pushed() {
+fn a_composition_reading_a_node_it_hands_on_nowhere_is_pushed() {
     let text = r#"
 .decl doc(d: number, path: symbol, module: symbol)
 .decl node(d: number, n: node, kind: symbol, start: number, end: number)
@@ -1830,9 +1803,10 @@ bound_in(p, x) :- field(p, "name", c), text(c, x).
 outer(f, x) :- wanted(f, x), field(p, "body", f), bound_in(p, x).
 "#;
     let (v, made) = pushed(read(text));
-    assert!(!made.iter().any(|m| m.ends_with("_outer")), "{made:?}");
+    let join = made.iter().find(|m| m.ends_with("_outer")).unwrap_or_else(|| panic!("the composition is pushed: {made:?}"));
     let outer = rules_of(&v, "outer");
-    assert_eq!(reads(&v, outer[0]), ["wanted", "field", "bound_in"]);
+    assert_eq!(reads(&v, outer[0]), ["wanted", join.as_str()]);
+    refused_for(v, &["outer"]);
 }
 
 /// The split read from the version (`FileLocal`) is maintained across an edit of a few rules: computed again only
@@ -2652,7 +2626,13 @@ sig_at(n, f) :- text(n, f), types__sig(f, n).
     assert!(named.get("sig_at").is_some_and(|w| w.contains("types__sig")), "a phase's export by its node: {named:#?}");
     assert!(named.get("placed").is_some_and(|w| w.contains("placed.n") && w.contains("reads def_name's column 0")), "{named:#?}");
     assert!(named.get("in_node_doc").is_some_and(|w| w.starts_with("reads a node")), "{named:#?}");
-    for kept in ["resolved", "in_doc", "def_doc", "counted", "uncalled", "unresolved", "def_name", "ref_name", "callee", "key_doc", "used_def"] {
+    // A per-file relation the cross part reads, handed on with a node column, is named too (decision 0727,
+    // 2a7aa9b10a: refused by its declared types): `def_name` and `ref_name` of the names joined across files, and
+    // the outputs made in the cross part with a node: `uncalled`, `unresolved` and `used_def`.
+    for handed in ["def_name", "ref_name", "uncalled", "unresolved", "used_def"] {
+        assert!(named.contains_key(handed), "{handed}: {named:#?}");
+    }
+    for kept in ["resolved", "in_doc", "def_doc", "counted", "callee", "key_doc"] {
         assert!(!named.contains_key(kept), "{kept}: {named:#?}");
     }
     // Refused, whatever made them (decision 0677): the split itself refuses the program, naming each with its rule.
