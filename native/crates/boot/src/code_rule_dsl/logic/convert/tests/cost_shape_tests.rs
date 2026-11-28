@@ -164,6 +164,8 @@ pub(super) fn run(files: usize, n: usize) -> Cost {
     let was = profile::on();
     profile::set(true);
     profile::reset();
+    // The rules' graph's cost (not W's Rust, the run's default).
+    let _rules = crate::code_rule_dsl::logic::rr::set_references_rules();
     crate::code_rule_dsl::logic::plan::corpus::run(PROGRAM, &dir, None, &out, "program", Binding::Cpu, 1 << 20).unwrap_or_else(|e| panic!("{}: {e}", dir.display()));
     let mut cost = Cost::default();
     {
