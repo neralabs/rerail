@@ -274,9 +274,13 @@ fn no_shipped_rule_makes_a_text_only_for_strlen() {
 }
 
 /// The shapes that hand a node to the cross-file part are found in a rule file (`packs/rr/rr-no-node-crosses-files.rerail`,
-/// decision 0727): a `cross_file` relation holding a node (RR301), a `@place` in a `.decl`'s node column (RR302), and
-/// a relation of nodes reading an input that names no document (RR303). Their fixes are not reported: a relation of
-/// names the file joins, the place made in the `.violation`'s own head, an input keyed by its document.
+/// decision 0727), each beside its fix, which is not reported:
+/// - RR301, a `cross_file` relation holding a node (line 1); a relation of names (3).
+/// - RR302, a `@place` in a `.decl`'s node column (6); the place made in a `.violation`'s own head (8).
+/// - RR303, a located clause reading an input that names no document, its head a node (14) or a document (18); an
+///   input keyed by its document (16), a relation of names reading it alone (20).
+/// - RR304, a relation of nodes recursing through one with no location that a rule fills from no file (32, the
+///   `holds` of declarations read from every file); a recursion of one file's own facts (36-39).
 #[test]
 fn a_rule_handing_a_node_to_the_cross_part_is_found_in_a_rule_file() {
     let root = crate::code_rule_dsl::fixtures::temp().with_extension("rr-no-node-crosses-files");
@@ -284,21 +288,44 @@ fn a_rule_handing_a_node_to_the_cross_part_is_found_in_a_rule_file() {
     std::fs::create_dir_all(&root).unwrap();
     let rules = [
         ".decl used_at(n: node, q: symbol) cross_file",
-        "used_at(n, q) :- kind(n, \"call\"), text(n, q).",
+        "used_at(n, q) :- item(n, q).",
         ".decl used(q: symbol) cross_file",
-        "used(q) :- kind(n, \"call\"), text(n, q).",
+        "used(q) :- item(n, q).",
         ".decl listed(c: node, at: node)",
-        "listed(c, @place(f, 1)) :- kind(c, \"comment\"), docof(c, d), doc(d, f, _).",
+        "listed(c, @place(f, 1)) :- file_of(c, f).",
         ".violation Listed(at: node) \"listed\"",
-        "Listed(@place(f, 1)) :- kind(c, \"comment\"), docof(c, d), doc(d, f, _).",
+        "Listed(@place(f, 1)) :- file_of(c, f).",
         ".decl ignored(path: symbol)",
         ".input ignored",
         ".decl ignored_doc(d: number)",
         ".input ignored_doc",
         ".decl unpublished(n: node)",
-        "unpublished(n) :- kind(n, \"program\"), docof(n, d), doc(d, f, _), ignored(f).",
+        "unpublished(n) :- file_of(n, f), ignored(f).",
         ".decl unpublished_doc(n: node)",
-        "unpublished_doc(n) :- kind(n, \"program\"), docof(n, d), ignored_doc(d).",
+        "unpublished_doc(n) :- item_doc(n, d), ignored_doc(d).",
+        ".decl checked(d: number)",
+        "checked(d) :- doc_path(d, f), !ignored(f).",
+        ".decl names_ignored(f: symbol)",
+        "names_ignored(f) :- ignored(f).",
+        ".decl item(n: node, q: symbol)",
+        ".decl file_of(n: node, f: symbol)",
+        ".decl item_doc(n: node, d: number)",
+        ".decl doc_path(d: number, f: symbol)",
+        ".input item, file_of, item_doc, doc_path",
+        ".decl declared_kind(rel: symbol, k: symbol)",
+        ".input declared_kind",
+        ".decl holds(rel: symbol, k: symbol)",
+        "holds(rel, k) :- declared_kind(rel, k).",
+        "holds(rel, k) :- head_of(c, rel), var_holds(c, k).",
+        ".decl var_holds(c: node, k: symbol)",
+        "var_holds(c, k) :- body_of(c, rel), holds(rel, k).",
+        ".decl head_of(c: node, rel: symbol)",
+        ".decl body_of(c: node, rel: symbol)",
+        ".input head_of, body_of",
+        ".decl own_holds(c: node, k: symbol)",
+        "own_holds(c, k) :- body_of(c, rel), own_kind(rel, k).",
+        ".decl own_kind(rel: symbol, k: symbol)",
+        "own_kind(rel, k) :- head_of(c, rel), own_holds(c, k).",
     ];
     std::fs::write(root.join("a.rerail"), rules.join("\n") + "\n").unwrap();
     let rule = crate::source_tree::native().join("../docs/rule-syntax/packs/rr/rr-no-node-crosses-files.rerail");
@@ -311,8 +338,8 @@ fn a_rule_handing_a_node_to_the_cross_part_is_found_in_a_rule_file() {
         .map(|d| (d["code"].as_str().unwrap_or("").to_owned(), d["line"].as_i64().or(d["start"]["line"].as_i64()).unwrap_or(-1)))
         .collect();
     found.sort();
-    let want: Vec<(String, i64)> = [("RR301", 1), ("RR302", 6), ("RR303", 14)].iter().map(|(c, l)| ((*c).to_owned(), *l)).collect();
-    assert_eq!(found, want, "used_at, listed and unpublished: {report:#}");
+    let want: Vec<(String, i64)> = [("RR301", 1), ("RR302", 6), ("RR303", 14), ("RR303", 18), ("RR304", 32)].iter().map(|(c, l)| ((*c).to_owned(), *l)).collect();
+    assert_eq!(found, want, "{report:#}");
 }
 
 /// No shipped rule hands a node to the cross-file part in a shape `rr-no-node-crosses-files` finds (decision 0727).
