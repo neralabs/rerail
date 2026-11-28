@@ -4927,8 +4927,9 @@ fn shape_of(r: &Run<'_>, plan: &Plan) -> rerail_join_shapes::Shape {
                 let walk = ix.as_ref().map_or(0, |i| i.walk());
                 if rel.is_axis() {
                     Input::Axis { walk }
-                } else if rel.view.is_some() {
-                    Input::View { view: d.r_view, parent: walk == 1 }
+                } else if let Some(v) = &rel.view {
+                    // The view's number is its read's (`ViewInPlace::kind`): the plan's record has it only once encoded.
+                    Input::View { view: v.kind, parent: walk == 1 }
                 } else if rel.at == 0 {
                     Input::Words
                 } else {
