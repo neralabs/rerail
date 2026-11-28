@@ -1,6 +1,6 @@
 # 0726: JSON on the GPU: tier 2 from the middle, then the tape, LZ4 and UKL
 
-Status: in progress (2026-11-27). The user's: "I want to get the JSON parsing on the GPU via bitlex", every stage "in
+Status: in progress (2026-11-27). Tier 2 as phases (§12, 2026-11-28) replaced tier 2 from the middle (§1, §8). The user's: "I want to get the JSON parsing on the GPU via bitlex", every stage "in
 ukl and all driven by the bitlex grammar". The design is the page the user reviewed (version 2), with the user's
 corrections: the lexer from the middle is the one already built, and tier 2's chunked form is JSON's own.
 
@@ -24,6 +24,9 @@ it, don't re-invent anything". LZ4: "using the greedy one is fine, we can do the
 ## Decision
 
 ### 1. Tier 2's chunked form is JSON's own, from its loop
+
+Replaced by tier 2 as phases (§12), on the CPU and the device. The walk's state at a place (`Entry`, `At`) and the walk
+a record at a time stay; the chunk starts, the bracket scan, the spans and the entries' scan below are gone.
 
 The user (2026-11-27), on how to hold tier 2's nest (1,024 levels deep): "We are doing JSON, not Kotlin, rr and
 Python. … We just need to know enough to superpose the states at the beginning and end of the blocks. We will also
@@ -217,6 +220,8 @@ have) and finishes the tape after (`finish`).
 
 ### 7. Every chunk on its own, in any order
 
+Tier 2's passes here are replaced by its phases (§12), which run in random orders too.
+
 The user (2026-11-27): "run the blocks in random order (including the prefix sum). This should allow us to validate the
 shape." Every pass of both tiers runs its chunks in the order an `Order` gives (a permutation asked each time a pass
 runs them), and each round of every scan too (`each`, `scan`: Hillis and Steele's, its two buffers apart):
@@ -232,6 +237,10 @@ chunk reads what another wrote but through a scan's rounds, and the shape is the
 scan round, each chunk a thread or a group.
 
 ### 8. Two programs, a launch a phase, the tape finished and stored as 16z on the device
+
+Replaced by tier 2 as phases on the device (§12): `<ukl/middle_run.h>`, `<ukl/middle.h>` and `<ukl/z16_run.h>` are
+removed. The runner's shape (a launch a phase, items by ticket, a scan's tree by arrivals) is kept in
+`<ukl/phases_run.h>`. The timings in §9 to §11 are this program's: the baseline for the phases' timings.
 
 The user (2026-11-27): "Chunk starts and depths computed on the device. The passes run with a fixed number of launches:
 today they take each tree's height twice plus three. The tape finished on the device, then the LZ4 encoding of its
@@ -410,7 +419,72 @@ tape, built once and searched by every piece at once), and that is a change to 1
 multiply small float matrices; finding byte matches in them would spend a 256-wide one-hot product on each
 comparison a SIMD group's ballot makes in one instruction, so they are not a fit.
 
+### 12. Tier 2 as phases, on the CPU and the device (2026-11-28)
+
+The user (2026-11-28): "no loops that allow state to be carried at all"; "there can be no serial or prefix-dependent
+pass in file order ANYWHERE. Only prefix sums may be used". No chunk forks, and nothing underflows.
+
+**The phases.** Each phase runs a block operator over fixed-size chunks: of records, or of items in level order. A
+chunk reads only its own elements, the arrays earlier phases wrote, and its sum at its start. It returns a
+fixed-size summary, and it may write an array. One exclusive prefix sum of the summaries, by the phase's associative
+merge, gives each chunk its sum. Nothing is carried from one chunk to the next.
+
+| Phase | Over | Summary and merge | Writes |
+|---|---|---|---|
+| P1 depth | records | change of depth and lowest depth, `(d, m) · (d', m') = (d + d', min(m, d + m'))` | each record's depth; its items |
+| P2 level sort | items | 256 keyed counts a digit, added | items by level (two 8-bit digits) |
+| P3 containers | items in level order | segmented last value | each record's container |
+| P4 places | records | a map over the split loop's places, composed | none |
+| P5 shape, events | records | events, nodes, frame depth and lowest frame depth | events at their numbers |
+| P7 frame sort | event items | keyed counts, added | items by frame depth |
+| P8 frames, children | event items | segmented last value; segmented count and last value | each item's frame, its children |
+| P6 rows | records | none | rows, from each chunk's state (`write_step`) |
+
+A pop below a chunk's start in P4 reads the return place of its containers' kinds, which P3 gave: it is known, so
+nothing forks. P6 finds a chunk's frames by binary search over the event items (`chunk_frames`). The finish
+(`finish_by_phases`) and 16z (`zfinish_by_phases`) are phases over blocks and pieces too. 16z's repeats are a hash
+sort of the pieces (keyed counts) and a segmented last value.
+
+**One source.** The phases are `phases.in.rs` in the printer's closed form: plain functions for each phase's `run`,
+`merge` and `write`, over u32 records and raw pointers. The generator appends them to tier 2 (`one_loop.rs`), with
+`run_step` and `write_step` cut from the split loop. The printer (`bitlex_lex_rust::ukl`) prints them into
+`tier2.uglykl`. So the CPU and the device run the same functions.
+
+**The device.** `<ukl/phases_run.h>` is the runner, written once: the pool, tickets, one launch a phase, and the
+arrival tree generic over a record's width and its merge. Add-only scans and the radix digits use the same tree, by
+its built-in add (agreed 2026-11-28: a scan whose merge is not a sum runs on the arrival tree, not `<ukl/stages.h>`,
+which only adds u32s). `<ukl/t2_phases.h>` is JSON's program: 50 phases in two kernels. `json_t2_phases` runs P1 to P8,
+P6 and the finish. `json_t2_zphases` runs 16z by phases, two of its phases a SIMD group an item (`UKL_PH_GROUP`). The
+launch count is the same for every file. The finished tape's pieces are read by `<ukl/z16_pieces.h>`.
+
+**16z's encoder.** The device stores 16z with its own greedy encoder (§5), to be improved with what this work taught
+(the user, 2026-11-28: "use the device encoder, which we will gradually improve using the things we have learnt from
+this work"). So the device's 16z is compared with the CPU phases run with the same encoder
+(`finish_by_phases_with(order, Some(&lz4_greedy))`). Format 16 is the CPU's byte for byte. A repeat is found by a
+16-bit hash key and a byte compare, which gives the CPU's 64-bit hash's answer.
+
+**Removed, on both sides.** The device's `<ukl/middle_run.h>`, `<ukl/middle.h>` and `<ukl/z16_run.h>`, and their kernels
+(`json_t2_run_scan`, `json_t2_run_walk`, `json_t2_run_write`, `json_t2_z_count`, `json_t2_z_write`). On the CPU,
+tier 2's `chunk_starts`, `depths`, the bracket words and kinds, the spans, the entries' scan, `serial_entries`,
+`parse_middle`, the shadow out, and the whole loop's `run_range` and `write_range`.
+
 ## Tests
+
+Tier 2 as phases (§12): `rerail-json-aot`'s `tier2_by_phases_is_the_serial_tape`: 720 tapes by phases, each the serial
+tape byte for byte, and 9,120 refusals, each at the serial byte; 52,701 chunks' places, each the serial walk's.
+`tier2_phase_merges_are_associative` holds each merge. `the_lexers_newlines_are_the_line_index`: 4,608 line indexes
+from the lexer. `rerail-tape-format`'s `the_writers_16z_by_phases_with_the_greedy_encoder_is_z_of`: 16z by phases with
+the greedy encoder is `z_of`, and decodes to its tape. `rerail-gpu`'s `json_tier2_phases_are_the_cpus`, on Metal on
+the farm's Macs: 30 runs (6 refused at a chunk's place), 235,539 records' depths, items, containers, heads and
+places, and 131,184 events, their items in frame order, frames and children, are the CPU phases'. 24 tapes finished on
+the device are the serial walk's (754,320 bytes), and their 16z by phases is the CPU phases' with the device's encoder
+(187,440 bytes, 243 pieces repeats). `json_batch_gives_each_files_tape`: 7 files at once, twice, each file's tape and
+16z its own.
+
+The tests below that name the old program's passes are removed with it (§12): `tier2_entries_are_the_serial_walks`,
+`tier2_tape_from_the_middle_is_the_serial_tape`, `json_tier2_program_is_its_rust` and
+`json_tier2_writes_from_the_middle_as_its_rust`.
+
 
 `rerail-json-aot`'s `tier2_entries_are_the_serial_walks`: 410 files (the stage-1 cases and `trees()`: lists of
 objects and arrays, nests 40, 1,023 and 1,025 deep, empty levels, and the closer, separator and value refusals), in
