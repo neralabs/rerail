@@ -1210,4 +1210,20 @@ describe("the daemon set-up links the dashboard to", () => {
     expect(daemonStop.starts).toEqual([]);
     expect(link.notRunning).toBe(line);
   });
+
+  // A daemon that runs but does not answer is no state a session's start names, so the link keeps set-up's reason,
+  // which `rerail start` shows after it, and no line.
+  it("under RERAIL_AUTOSTART=0, a start beside a daemon that does not answer carries the reason and no line", async () => {
+    const { context } = await fixture();
+    vi.stubEnv("RERAIL_AUTOSTART", "0");
+    daemonRun.found = { status: "unresponsive", state: foundDaemon("/nowhere/rerail", false).state };
+    daemonStop.starts = [];
+    const link = await setupEnvironment(context).dashboard({ repositoryKey: "repo", checkoutPath: null }, "rules", false, "running");
+    expect(daemonStop.starts).toEqual([]);
+    expect(link).toEqual({
+      url: expect.stringMatching(/^http:\/\/127\.0\.0\.1:4737\/.*#rules$/u),
+      browserOpened: false,
+      noBrowserReason: "The dashboard did not start: RERAIL_AUTOSTART=0 keeps set-up from starting it",
+    });
+  });
 });
