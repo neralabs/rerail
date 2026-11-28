@@ -231,39 +231,50 @@ impl<const N: usize> Row<N>
 where
     LaneCount<N>: SupportedLaneCount,
 {
-    /// The lanes' rows `id` of the stage's relation (`l.d`), or of its view: each lane's found once, a lane whose
-    /// row repeats the one before's (consecutive candidates of one row) taking it.
+    /// A walk's row, filled for each step (`fill`): one a walk, not one a step (a step's of 8 lanes is over a
+    /// kilobyte, copied out of each construction).
     #[inline(always)]
-    unsafe fn new(l: &Lanes, id: R<N>) -> Self {
-        let s = l.st.s;
-        let at = if s.r_view == 0 {
-            Found::Rel(ln::rel_at(l.d, id, l.far))
+    fn empty(l: &Lanes) -> Self {
+        let at = if l.st.s.r_view == 0 {
+            Found::Rel(ln::RowAt::none())
         } else {
-            // Each lane's row found from the lane before's document (`super::Found`'s hint), its document's reads made
-            // once for the lanes in it.
-            let mut f = super::Found::new();
-            let mut prev: Option<LaneRow> = None;
-            Found::View(core::array::from_fn(|j| {
-                let row = if j > 0 && id[j] == id[j - 1] {
-                    prev.clone().expect("the lane before's")
-                } else {
-                    match super::vrow(s.r_view, s.v_dir, id[j], &f) {
-                        super::Row::View(d, lo, k, i) => {
-                            let doc = match &prev {
-                                Some(LaneRow::At(a)) if f.d == d && f.lo == lo => a.doc().clone(),
-                                _ => super::doc(d, super::view_rows(d).add(lo as usize)),
-                            };
-                            (f.d, f.lo) = (d, lo);
-                            LaneRow::At(super::reads::at(doc, k, i))
-                        }
-                        row => LaneRow::Rel(row),
-                    }
-                };
-                prev = Some(row.clone());
-                row
-            }))
+            Found::View(core::array::from_fn(|_| LaneRow::Rel(super::Row::Rel(core::ptr::null(), 0, 0, core::ptr::null()))))
         };
         Row { at, have: Cell::new(0), v: UnsafeCell::new([MaybeUninit::uninit(); 16]) }
+    }
+
+    /// The lanes' rows `id` of the stage's relation (`l.d`), or of its view: each lane's found once, a lane whose
+    /// row repeats the one before's (consecutive candidates of one row) taking it. No column read yet.
+    #[inline(always)]
+    unsafe fn fill(&mut self, l: &Lanes, id: R<N>) {
+        let s = l.st.s;
+        self.have.set(0);
+        match &mut self.at {
+            Found::Rel(at) => *at = ln::rel_at(l.d, id, l.far),
+            Found::View(rows) => {
+                // Each lane's row found from the lane before's document (`super::Found`'s hint), its document's reads
+                // made once for the lanes in it.
+                let mut f = super::Found::new();
+                for j in 0..N {
+                    let row = if j > 0 && id[j] == id[j - 1] {
+                        rows[j - 1].clone()
+                    } else {
+                        match super::vrow(s.r_view, s.v_dir, id[j], &f) {
+                            super::Row::View(d, lo, k, i) => {
+                                let doc = match j.checked_sub(1).map(|p| &rows[p]) {
+                                    Some(LaneRow::At(a)) if f.d == d && f.lo == lo => a.doc().clone(),
+                                    _ => super::doc(d, super::view_rows(d).add(lo as usize)),
+                                };
+                                (f.d, f.lo) = (d, lo);
+                                LaneRow::At(super::reads::at(doc, k, i))
+                            }
+                            row => LaneRow::Rel(row),
+                        }
+                    };
+                    rows[j] = row;
+                }
+            }
+        }
     }
 
     /// Column `c` of each lane's row.
@@ -510,6 +521,7 @@ impl Lanes<'_> {
         let (mut first, mut len) = ([0u32; TILE + SLACK], [0u32; TILE + SLACK]);
         let (mut cb, mut cq) = ([0u32; CANDS + SLACK], [0u32; CANDS + SLACK]);
         let (mut sk, mut ek) = ([0u32; TILE + SLACK], [0u32; TILE + SLACK]);
+        let mut row = Row::empty(self);
         let mut ta = t0;
         while ta < t1 {
             let nt = (t1 - ta).min(TILE as u32);
@@ -564,7 +576,7 @@ impl Lanes<'_> {
                     } else {
                         ln::rel_group_row(self.d, s.r_index, q)
                     };
-                    let row = Row::new(self, id);
+                    row.fill(self, id);
                     let mut m = valid.cast::<i64>();
                     if s.r_dead != 0 {
                         m &= !ln::rel_dead(self.dead, id).cast::<i64>();
@@ -918,6 +930,7 @@ impl Lanes<'_> {
         let s = self.st.s;
         let iota = lane::<N>();
         let (mut cb, mut cq) = ([0u32; CANDS + SLACK], [0u32; CANDS + SLACK]);
+        let mut row = Row::empty(self);
         let mut i = 0u32;
         while i < nt {
             // The rows out of bindings from `i`, while a chunk has room for another's `FINDS_MAX`.
@@ -948,7 +961,8 @@ impl Lanes<'_> {
                 } else {
                     ln::rel_group_row(self.d, s.r_index, q)
                 };
-                v.put(self, &b, &Row::new(self, id), valid.cast::<i64>());
+                row.fill(self, id);
+                v.put(self, &b, &row, valid.cast::<i64>());
                 k += N as u32;
             }
         }

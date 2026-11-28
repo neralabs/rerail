@@ -578,6 +578,12 @@ impl<const N: usize> RowAt<N>
 where
     LaneCount<N>: SupportedLaneCount,
 {
+    /// No row: a place a walk fills (`rel_at`) before it reads any column.
+    #[inline(always)]
+    pub fn none() -> Self {
+        RowAt { one: core::ptr::null(), each: Simd::splat(core::ptr::null()), seg: Simd::splat(0), within: Simd::splat(0), i: Simd::splat(0), uniform: true }
+    }
+
     /// Column `c` of each lane's row: `clif_rel_get`'s.
     #[inline(always)]
     pub unsafe fn get(&self, c: u32) -> V<N> {

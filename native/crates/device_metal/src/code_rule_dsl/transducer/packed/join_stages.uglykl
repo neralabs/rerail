@@ -920,7 +920,8 @@ UKL_INLINE int64_t strcmp_value(StageP s, Longs L, uint32_t t, JSPACE const uint
 
 // A join's binding's finds (`V`, a word of two halves): its candidates' first place and a bit a candidate, set where
 // it is a row out (bit `q - lo` for place `q`), where its candidates are at most 32 consecutive places (an index's
-// group, or rows, not a view's walk); else `FINDS_WALK`, and its scatter walks its candidates again.
+// group, or rows); a view walk's (a `has`, a parent's children, an own id) its first row out and a bit a row from it,
+// where its rows out lie within 32 rows of it; else `FINDS_WALK`, and its scatter walks its candidates again.
 #define FINDS_MAX 32u
 #define FINDS_WALK ((int64_t)NONE)
 
@@ -959,6 +960,9 @@ UKL_INLINE void stage_count_one(Longs L, Longs R_rows, JSPACE const uint8_t* R_f
     for (uint32_t m = 0; m < 16; m++) q_counts[m] = 0;
     bool found = false;
     bool kept = s->mode == 0 && s->v_has == 0u && s->v_parent == 0u && how <= 1u && hi - lo <= FINDS_MAX;
+    bool as_rows = s->mode == 0 && (s->v_has != 0u || s->v_parent != 0u);
+    uint32_t first = NONE;
+    bool over = false;
     uint32_t finds = 0u;
     Walked wk = {0u, 3u};
     for (uint32_t q = lo; q < hi; q = cand_next(s, how, q)) {
@@ -971,10 +975,19 @@ UKL_INLINE void stage_count_one(Longs L, Longs R_rows, JSPACE const uint8_t* R_f
         for (uint32_t m = 0; m < s->npassed && m < 16; m++) q_counts[m] += s->passed[m] == NONE ? (uint32_t)ok : (uint32_t)(ok && out_bit(s, v, s->passed[m]));
         if (!ok || (s->last != NONE && !out_bit(s, v, s->last))) continue;
         if (kept) finds |= 1u << (q - lo);
+        else if (as_rows) {
+            first = first == NONE ? r : first;
+            uint32_t d = r - first;
+            // In the walk's order: past every row kept before it.
+            if (d < FINDS_MAX && (d == 0u || (finds >> d) == 0u)) finds |= 1u << d; else over = true;
+        }
         c++;
     }
     if (exists) c = (uint32_t)(found != (s->mode == 2));
-    else if (s->mode == 0) V[t] = kept ? (int64_t)((uint64_t)lo | ((uint64_t)finds << 32)) : FINDS_WALK;
+    else if (s->mode == 0) {
+        V[t] = kept ? (int64_t)((uint64_t)lo | ((uint64_t)finds << 32))
+            : (as_rows && !over) ? (int64_t)((uint64_t)(first == NONE ? 0u : first) | ((uint64_t)finds << 32)) : FINDS_WALK;
+    }
     counts[t] = c;
     if (!exists && s->counter != NONE) {
         if (p0 > 0) ukl_atomic_add(&counters[s->counter], p0);
@@ -1039,9 +1052,10 @@ UKL_INLINE void stage_scatter_one(Longs L, Longs R_rows, JSPACE const uint8_t* R
     uint64_t found = s->mode == 0 ? (uint64_t)V[t] : (uint64_t)FINDS_WALK;
     if ((uint32_t)found != NONE) {
         uint32_t first = (uint32_t)found, bits = (uint32_t)(found >> 32);
+        bool rows = s->nkeys == 0u || s->v_has != 0u || s->v_parent != 0u;
         for (; bits != 0u && at < s->cap_out; bits &= bits - 1u) {
             uint32_t q = first + ukl_ctz32(bits);
-            write_row(s, L, t, R, s->nkeys == 0u ? q : group_row(s, R, q), O, at);
+            write_row(s, L, t, R, rows ? q : group_row(s, R, q), O, at);
             at++;
         }
         return;
@@ -2328,7 +2342,8 @@ UKL_INLINE void ix_offs_one(JSPACE const uint8_t* B, JSPACE const uint32_t* keys
 // The index's marks (decision 0671, `rerail_blocks::relation::fill_marks`), once its buckets are placed and before
 // its rows are: its place `t`'s key's tag, and `MARK_SAME` where its bucket's previous place of the tag, among the
 // `MARK_REACH` before it, holds its key. A place's row is its sorted place's (`places`), its tag at the row's own
-// place in the rows' room (`ix_key_one`'s). Its marks lie after its rows' room, `n` of them.
+// place in the rows' room (`ix_key_one`'s). Its marks lie after its rows' room, `n` of them. A view's keys are not
+// compared, as the host's `build_index_hashed`: no place of it is `MARK_SAME`, and a probe compares its keys.
 #define MARK_REACH 8u
 UKL_INLINE void ix_mark_one(JSPACE const uint8_t* B, JSPACE const uint32_t* keys, JSPACE const uint32_t* places, JSPACE const uint32_t* offs, JSPACE uint32_t* rows,
                             JSPACE const IxP* p, JSPACE const uint8_t* B_far, uint32_t kb, uint32_t eb, uint32_t t)
@@ -2336,7 +2351,7 @@ UKL_INLINE void ix_mark_one(JSPACE const uint8_t* B, JSPACE const uint32_t* keys
     if (t >= ix_rows(B, p)) return;
     uint32_t lo = offs[keys[eb + t] - kb], rt = places[eb + t] - eb, tag = rows[rt];
     uint32_t same = 0u;
-    for (uint32_t u = t; u > lo && t - u < MARK_REACH;) {
+    for (uint32_t u = t; p->kind == 0ul && u > lo && t - u < MARK_REACH;) {
         u--;
         uint32_t ru = places[eb + u] - eb;
         if (rows[ru] != tag) continue;
