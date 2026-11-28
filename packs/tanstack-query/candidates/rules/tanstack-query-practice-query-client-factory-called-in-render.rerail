@@ -1,0 +1,213 @@
+.policy "tanstack-query-practice-query-client-factory-called-in-render" revision 1
+.description "Create a component's QueryClient once (useState(() => makeQueryClient()) or a getter that keeps one browser client), not by calling a factory that returns a new QueryClient on every render."
+.language typescript
+.mode log
+.scope include "**/*.ts", "**/*.mts", "**/*.cts", "**/*.tsx", "**/*.js", "**/*.jsx", "**/*.mjs", "**/*.cjs"
+.scope exclude "**/*.test.*", "**/*.spec.*", "**/*.cy.*", "**/__tests__/**", "**/test/**", "**/tests/**", "**/e2e/**"
+.scope exclude "**/__mocks__/**", "**/*.stories.*", "**/*.story.*", "**/__stories__/**", "**/__fixtures__/**", "**/fixtures/**"
+.scope exclude "**/node_modules/**", "**/dist/**", "**/build/**", "**/out/**", "**/.next/**", "**/coverage/**", "**/vendor/**"
+.scope exclude "**/.venv/**", "**/.yarn/**", "**/generated/**", "**/__generated__/**", "**/*.generated.*", "**/*.gen.*"
+.scope exclude "**/*.min.js", "**/*.d.ts"
+// Rerail's own rule, not a port. A QueryClient holds the query cache. A component or Hook that calls a factory
+// returning `new QueryClient(…)` straight in its body builds a new, empty client on every render: queries refetch,
+// optimistic updates and cached pages vanish, the UI flickers, and a Suspense query that throws during the first
+// render can loop forever. TanStack's own lint rule (stable-query-client) sees only a `new QueryClient` written in the
+// component; this one follows the call to the factory, in the same file or imported from another one, and reports
+// when every value the factory returns is a new QueryClient (directly, or through one more such factory).
+//   function Providers() { const qc = makeQueryClient(); … }               reported: makeQueryClient returns new
+//   <QueryClientProvider client={createQueryClient()}>                     reported: in a component's JSX
+//   const Widget = memo(function () { const qc = widgetClient(); … })      reported: memo's function is a component
+//   function useAppClient() { return makeAppQueryClient() }                reported: a Hook runs on every render, and
+//                                                                          makeAppQueryClient returns makeQueryClient()
+//   const [qc] = useState(() => makeQueryClient())                         not reported: created once
+//   const [qc] = useState(makeQueryClient())                               not reported: useState keeps the first
+//   if (!ref.current) ref.current = makeQueryClient()                      not reported: lazy ref, created once
+//   const qc = getQueryClient()  (returns a module client in the browser) not reported: not always new
+//   const qc = getClient()  where getClient = () => (client ??= new …)     not reported: kept, not new
+//   const qc = isServer ? makeQueryClient() : browserClient                not reported: only on some renders
+//   async function Page() { const qc = makeQueryClient(); … }              not reported: a Server Component
+//   function Page() { const qc = makeQueryClient(); … dehydrate(qc) … }    not reported: server prefetch per request
+//   const qc = makeQueryClient()  at module level, or in a plain function not reported: runs once, or not in render
+//   makeApiClient() returning the app's own `QueryClient` class            not reported: not TanStack Query's
+//   a wrapper in test-utils.tsx, testing/, mocks/ or .storybook/           not reported: a client per test is the point
+// Gaps: a factory reached only through an object (`clients.make()`), a class's static method, `export default`, a
+// workspace package imported by name, or more than one wrapper deep; a wrapper declared inside another function is
+// followed only to a factory of its own file; a call inside a ternary or `&&` in JSX is left alone with the lazy-init
+// forms; a component whose name is not PascalCase (and not passed to memo or forwardRef) is not seen as one; a
+// non-async Server Component that never calls dehydrate is reported. Engine gap: a .tsx file's cross-file join never
+// sees .ts files (and the reverse), so a component in a .tsx file calling a factory in a .ts file, the commonest
+// layout, is missed until the engine joins the two.
+
+#include "tsx/react-hooks.rerail"
+
+.violation QueryClientFactoryInRender(at: node, fn: symbol, line: number, path: symbol) "`{fn}()` returns a new QueryClient each time it is called ({path}:{line}), and this component or Hook calls it on every render: each re-render starts from an empty cache, so queries refetch, optimistic updates and cached pages are lost, and a suspending query can loop. Keep one client: `const [queryClient] = useState(() => {fn}())`, or, where the first render can suspend with no Suspense boundary below this component (a Next.js or SSR provider), a getter that makes a client per server request and keeps one in the browser (TanStack's `getQueryClient()` with `isServer`). Leave it in a Server Component, which renders once per request."
+// A top-level factory, this file's or another's, by its symbol (tqf_fresh_sym, across files); a function declared in
+// a narrower scope of this file, by its node.
+QueryClientFactoryInRender(c, x, l, p) :- tqf_render(c, f, e), tqf_callee(e, q), !tqf_key(f, q), tqf_fresh_sym(q, l, p),
+    text(e, x).
+QueryClientFactoryInRender(c, x, l, p) :- tqf_render(c, f, e), tqf_def(e, g), !tqf_key(g, _), f != g, tqf_fresh(g, n),
+    text(e, x), line(n, l), docof(n, dn), doc(dn, p, _).
+// tqf_render(c, f, e): call c of the function e names runs on every render of component or Hook f: not in a Hook's
+// argument, an assignment or a branch, not in an async or prefetching Server Component, and not in a test helper.
+.decl tqf_render(c: node, f: node, e: node)
+tqf_render(c, f, e) :- kind(c, "call_expression"), field(c, "function", e), kind(e, "identifier"),
+    nearest(c, f, function_kind), hook_direct(f), !op(f, "async"), !tqf_kept(c, f), !tqf_server(f), docof(c, d),
+    !tqf_test_doc(d).
+// tqf_callee(e, q): the called name e denotes the binding q ("module#name"): a top-level declaration of this file, or
+// an import tsx/names resolves and follows through re-exports (sym_of).
+.decl tqf_callee(e: node, q: symbol)
+tqf_callee(e, q) :- tqf_render(_, _, e), sym_of(e, q).
+
+// tqf_client(e, n): expression e is n, a `new QueryClient(…)` of TanStack Query (any adapter or query-core, or v3's
+// react-query), however the class was imported or re-exported.
+.decl tqf_client(e: node, n: node)
+tqf_client(e, n) :- kind(n, "new_expression"), field(n, "constructor", k), tqf_sym(k, "QueryClient"), deparen(e, n).
+// tqf_sym(n, x): name n denotes TanStack Query's export x: `@tanstack/react-query#x`, any other adapter's or
+// query-core's, or v3's `react-query#x`.
+.decl tqf_sym(n: node, x: symbol)
+tqf_sym(n, x) :- sym_of(n, q), match("(@tanstack/[a-z-]*query[a-z-]*|react-query)#(?<x>[A-Za-z]+)", q).
+
+// tqf_ret(f, v): function f returns v: an arrow's expression body, or the value of a `return` whose own function is f;
+// a returned name of f's own that is never assigned again stands for its initial value
+// (`const c = new QueryClient(); return c`).
+.decl tqf_ret(f: node, v: node)
+tqf_ret(f, v) :- tqf_ret0(f, v), !tqf_local(f, v, _).
+tqf_ret(f, x) :- tqf_ret0(f, v), tqf_local(f, v, x).
+.decl tqf_ret0(f: node, v: node)
+tqf_ret0(f, b) :- kind(f, "arrow_function"), field(f, "body", b), !kind(b, "statement_block").
+tqf_ret0(f, v) :- kind(r, "return_statement"), nearest(r, f, function_kind), child(r, v, 0), !kind(v, "comment").
+// tqf_local(f, v, x): v, returned by f, names a variable declared in f with the value x and never assigned again.
+.decl tqf_local(f: node, v: node, x: node)
+tqf_local(f, v, x) :- tqf_ret0(f, v), deparen(v, i), kind(i, "identifier"), ref_site(i, s), kind(s, "variable_declarator"),
+    nearest(s, f, function_kind), field(s, "name", n), kind(n, "identifier"), field(s, "value", x), !tqf_reassigned(s).
+.decl tqf_reassigned(s: node)
+tqf_reassigned(s) :- (kind(a, "assignment_expression") ; kind(a, "augmented_assignment_expression")), field(a, "left", l),
+    kind(l, "identifier"), ref_site(l, s).
+// tqf_bare(f): f has a `return;` with no value.
+.decl tqf_bare(f: node)
+tqf_bare(f) :- kind(r, "return_statement"), nearest(r, f, function_kind), !tqf_has_value(r).
+.decl tqf_has_value(r: node)
+tqf_has_value(r) :- kind(r, "return_statement"), child(r, v, _), !kind(v, "comment").
+
+// tqf_fresh0(f, n): every value f returns is a new QueryClient; n is one of them (for the message).
+.decl tqf_fresh0(f: node, n: node)
+tqf_fresh0(f, n) :- tqf_ret(f, v), tqf_client(v, n), !tqf_other0(f), !tqf_bare(f).
+.decl tqf_other0(f: node)
+tqf_other0(f) :- tqf_ret(f, v), !tqf_client(v, _).
+// tqf_fresh(f, n): every value f returns is a new QueryClient or the result of a tqf_fresh0 factory of this file (one
+// hop: `const makeClient = () => makeQueryClient()`). A factory that also returns a kept client (`browserClient`,
+// `client ??= …`) has another return and is not fresh.
+.decl tqf_fresh(f: node, n: node)
+tqf_fresh(f, n) :- tqf_fresh0(f, n).
+tqf_fresh(f, n) :- tqf_ret(f, v), tqf_hop(v, n), !tqf_other1(f), !tqf_bare(f).
+.decl tqf_hop(v: node, n: node)
+tqf_hop(v, n) :- deparen(v, c), kind(c, "call_expression"), field(c, "function", e), tqf_def(e, g), tqf_fresh0(g, n).
+.decl tqf_other1(f: node)
+tqf_other1(f) :- tqf_ret(f, v), !tqf_client(v, _), !tqf_hop(v, _).
+
+// A top-level factory may also hop to an imported one: each file states its top-level functions by symbol, path and
+// line, and tqf_fresh_sym joins them across files.
+// tqf_key(g, q): function g is declared at the top of its file as q ("module#name").
+.decl tqf_key(g: node, q: symbol)
+tqf_key(g, @qname(m, x)) :- tqf_site_fn(s, g), top_level(s, x), docof(s, d), ts_module(d, m).
+// tqf_ihop(v, h): returned value v calls an imported name that denotes h (sym_of).
+.decl tqf_ihop(v: node, h: symbol)
+tqf_ihop(v, h) :- tqf_ret(_, v), deparen(v, c), kind(c, "call_expression"), field(c, "function", e),
+    kind(e, "identifier"), ref_site(e, sp), import_binding(sp, _, _, _), sym_of(e, h).
+// tqf_made(h, l, p): the top-level function h is a tqf_fresh0 factory; one of its new QueryClients is at line l of the
+// file at path p.
+.decl tqf_made(h: symbol, l: number, p: symbol)
+tqf_made(h, l, p) :- tqf_fresh0(g, n), tqf_key(g, h), line(n, l), docof(n, d), doc(d, p, _).
+// tqf_top_ok(q): the top-level function q returns only new QueryClients, results of this file's tqf_fresh0
+// factories, or results of imported calls (tqf_top_hop), and has no bare `return;`.
+.decl tqf_top_ok(q: symbol)
+tqf_top_ok(q) :- tqf_key(f, q), tqf_ret(f, _), !tqf_other2(f), !tqf_bare(f).
+.decl tqf_other2(f: node)
+tqf_other2(f) :- tqf_ret(f, v), !tqf_client(v, _), !tqf_hop(v, _), !tqf_ihop(v, _).
+// tqf_top_line(q, l, p): a new QueryClient q makes, for the message: its own where it returns no factory's result,
+// else that of a factory of this file it returns.
+.decl tqf_top_line(q: symbol, l: number, p: symbol)
+tqf_top_line(q, l, p) :- tqf_key(f, q), tqf_ret(f, v), tqf_hop(v, n), line(n, l), docof(n, d), doc(d, p, _).
+tqf_top_line(q, l, p) :- tqf_key(f, q), tqf_ret(f, v), tqf_client(v, n), !tqf_hops(f), line(n, l), docof(n, d),
+    doc(d, p, _).
+.decl tqf_hops(f: node)
+tqf_hops(f) :- tqf_ret(f, v), (tqf_hop(v, _) ; tqf_ihop(v, _)).
+// tqf_top_hop(q, h): the top-level function q returns the result of h, imported.
+.decl tqf_top_hop(q: symbol, h: symbol)
+tqf_top_hop(q, h) :- tqf_key(f, q), tqf_ret(f, v), tqf_ihop(v, h).
+// tqf_unmade(q): q returns an imported call's result whose function is no tqf_fresh0 factory.
+.decl tqf_unmade(q: symbol) cross_file
+tqf_unmade(q) :- tqf_top_hop(q, h), !tqf_made(h, _, _).
+// tqf_fresh_sym(q, l, p): every value the top-level function q returns is a new QueryClient (tqf_fresh), with an
+// imported factory one hop away too; one of them is at line l of the file at path p.
+.decl tqf_fresh_sym(q: symbol, l: number, p: symbol) cross_file
+tqf_fresh_sym(q, l, p) :- tqf_top_ok(q), !tqf_unmade(q), tqf_top_line(q, l, p).
+tqf_fresh_sym(q, l, p) :- tqf_top_ok(q), !tqf_unmade(q), tqf_top_hop(q, h), tqf_made(h, l, p).
+
+// tqf_def(e, g): identifier e names function g, declared in this file (any scope).
+.decl tqf_def(e: node, g: node)
+tqf_def(e, g) :- kind(e, "identifier"), ref_site(e, s), tqf_site_fn(s, g).
+// tqf_site_fn(s, g): declaration site s holds function g: `function f() {}`, `const f = () => …`, `const f = function () {}`.
+.decl tqf_site_fn(s: node, g: node)
+tqf_site_fn(s, s) :- kind(s, "function_declaration").
+tqf_site_fn(s, g) :- kind(s, "variable_declarator"), field(s, "value", v), deparen(v, g),
+    (kind(g, "arrow_function") ; kind(g, "function_expression")).
+
+// tqf_kept(c, f): call c in f keeps its client or runs only on some renders: an argument of a Hook (useState,
+// useRef, useMemo: the Hook keeps the first), the right side of an assignment (`ref.current = …`, `qc ??= …`), or
+// under a branch in f (`if`, `?:`, `&&`, `||`, `??`).
+.decl tqf_kept(c: node, f: node)
+tqf_kept(c, f) :- nearest(c, f, function_kind), child(l, c2, _), deparen(c2, c), kind(l, "arguments"), field(h, "arguments", l),
+    hook_call(h, _).
+tqf_kept(c, f) :- nearest(c, f, function_kind), inside(c, a, tqf_assign_kind), within(a, f).
+tqf_kept(c, f) :- nearest(c, f, function_kind), inside(c, a, tqf_branch_kind), within(a, f), !tqf_plain_binary(a).
+.decl tqf_assign_kind(k: symbol)
+tqf_assign_kind("assignment_expression"). tqf_assign_kind("augmented_assignment_expression").
+.decl tqf_branch_kind(k: symbol)
+tqf_branch_kind("if_statement"). tqf_branch_kind("ternary_expression"). tqf_branch_kind("binary_expression").
+tqf_branch_kind("switch_statement").
+// tqf_plain_binary(a): a binary expression that is no short-circuit (`a + b`): both sides always run.
+.decl tqf_plain_binary(a: node)
+tqf_plain_binary(a) :- kind(a, "binary_expression"), !op(a, "&&"), !op(a, "||"), !op(a, "??").
+
+// tqf_server(f): f prefetches on the server: it calls TanStack Query's dehydrate (passed to HydrationBoundary).
+.decl tqf_server(f: node)
+tqf_server(f) :- kind(k, "call_expression"), field(k, "function", e), tqf_sym(e, "dehydrate"),
+    nearest(k, f, function_kind).
+
+// tqf_test_doc(d): test helpers outside the scope's test folders: `test-utils.tsx`, `testing/`, `.storybook/`, `mocks/`.
+.decl tqf_test_doc(d: number)
+tqf_test_doc(d) :- doc(d, p, _), match("(.*/)?(test-?utils?|testUtils|test-helpers?|testing|mocks|\\.storybook)(/.*|\\.[a-z]+)", p).
+
+// The cases, `cases/tanstack-query-practice-query-client-factory-called-in-render/`, read as one repository: each line
+// ending in `// caught` is reported, and no other line. A line marked `// cross-lane` is a real finding the engine
+// misses today: a .tsx file's cross-file join never sees .ts files (and the reverse).
+.test cases exactly
+    .fixture "package.json" from "../cases/tanstack-query-practice-query-client-factory-called-in-render/package.json"
+    .fixture "tsconfig.json" from "../cases/tanstack-query-practice-query-client-factory-called-in-render/tsconfig.json"
+    .fixture "tsconfig.base.json" from "../cases/tanstack-query-practice-query-client-factory-called-in-render/tsconfig.base.json"
+    .fixture "src/app/dashboard/providers.tsx" from "../cases/tanstack-query-practice-query-client-factory-called-in-render/src/app/dashboard/providers.tsx"
+    .fixture "src/app/posts/page.tsx" from "../cases/tanstack-query-practice-query-client-factory-called-in-render/src/app/posts/page.tsx"
+    .fixture "src/app/posts/posts.tsx" from "../cases/tanstack-query-practice-query-client-factory-called-in-render/src/app/posts/posts.tsx"
+    .fixture "src/app/providers.tsx" from "../cases/tanstack-query-practice-query-client-factory-called-in-render/src/app/providers.tsx"
+    .fixture "src/app/settings/providers.tsx" from "../cases/tanstack-query-practice-query-client-factory-called-in-render/src/app/settings/providers.tsx"
+    .fixture "src/app/stable-providers.tsx" from "../cases/tanstack-query-practice-query-client-factory-called-in-render/src/app/stable-providers.tsx"
+    .fixture "src/app/users/page.tsx" from "../cases/tanstack-query-practice-query-client-factory-called-in-render/src/app/users/page.tsx"
+    .fixture "src/components/AppShell.tsx" from "../cases/tanstack-query-practice-query-client-factory-called-in-render/src/components/AppShell.tsx"
+    .fixture "src/components/Widget.tsx" from "../cases/tanstack-query-practice-query-client-factory-called-in-render/src/components/Widget.tsx"
+    .fixture "src/hooks/use-app-query-client.ts" from "../cases/tanstack-query-practice-query-client-factory-called-in-render/src/hooks/use-app-query-client.ts"
+    .fixture "src/lib/get-query-client.ts" from "../cases/tanstack-query-practice-query-client-factory-called-in-render/src/lib/get-query-client.ts"
+    .fixture "src/lib/index.ts" from "../cases/tanstack-query-practice-query-client-factory-called-in-render/src/lib/index.ts"
+    .fixture "src/lib/make-query-client.ts" from "../cases/tanstack-query-practice-query-client-factory-called-in-render/src/lib/make-query-client.ts"
+    .fixture "src/lib/query-client.tsx" from "../cases/tanstack-query-practice-query-client-factory-called-in-render/src/lib/query-client.tsx"
+    .fixture "src/lib/query.ts" from "../cases/tanstack-query-practice-query-client-factory-called-in-render/src/lib/query.ts"
+    .fixture "src/lib/store.ts" from "../cases/tanstack-query-practice-query-client-factory-called-in-render/src/lib/store.ts"
+    .fixture "src/test-utils.tsx" from "../cases/tanstack-query-practice-query-client-factory-called-in-render/src/test-utils.tsx"
+    .fixture "src/app/reports/providers.tsx" from "../cases/tanstack-query-practice-query-client-factory-called-in-render/src/app/reports/providers.tsx"
+    .expect _ at "src/app/dashboard/providers.tsx":8
+    .expect _ at "src/app/settings/providers.tsx":8
+    .expect _ at "src/components/AppShell.tsx":11
+    .expect _ at "src/components/Widget.tsx":12
+    .expect _ at "src/hooks/use-app-query-client.ts":6
+    .expect _ at "src/app/reports/providers.tsx":21
+.end

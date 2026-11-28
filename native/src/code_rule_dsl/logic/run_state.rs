@@ -122,6 +122,7 @@ pub(crate) const STATE: &[(&str, &str, Class, &str)] = &[
     ("src/code_rule_dsl/logic/plan/corpus.rs", "PREPARED", Thread, "prepared programs by key: any thread's gives the same program"),
     ("src/code_rule_dsl/logic/plan/corpus.rs", "RUNS_UNDER_WAY", Carried, ""),
     ("src/code_rule_dsl/logic/plan/corpus.rs", "RUN_TOKEN", Carried, ""),
+    ("src/code_rule_dsl/logic/plan/corpus/lane.rs", "RUNS", Carried, ""),
     ("src/code_rule_dsl/logic/plan/corpus/maintain.rs", "BY_LEVELS", Thread, "counts of this thread's own runs, which a test reads beside others (decision 0204)"),
     ("src/code_rule_dsl/logic/plan/corpus/maintain.rs", "TOGETHER", Thread, "counts of this thread's own runs, which a test reads beside others (decision 0204)"),
     ("src/code_rule_dsl/logic/plan/corpus/phases.rs", "HANDED_DOWN", Carried, ""),
@@ -292,6 +293,7 @@ impl<T: Clone + Send + Sync + 'static, G: 'static> Part for Shared<T, G> {
 const CARRIERS: &[fn(&mut Capture)] = &[
     super::plan::corpus::carried,
     super::plan::corpus::phases::carried,
+    super::plan::corpus::lane::carried,
     super::plan::carried,
     super::plan::keeps::carried,
     super::plan::choices::carried,

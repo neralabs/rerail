@@ -647,17 +647,22 @@ manifest.rules = listedPorts.map(({ rule, capabilities, candidate }) => ({
 }));
 writeFileSync(manifestPath, `${JSON.stringify(manifest, null, 2)}\n`);
 // The shipped pack lists the ported rules in the same order; a rule's hand-written fields (examples, mode, on) are kept.
+// The pack's own rules (next-practice-*, written in .rerail and listed by hand) follow the ports, as they are.
 const rulePackPath = join(PACK, "pack.json");
 const rulePack = JSON.parse(readFileSync(rulePackPath, "utf8"));
 const listed = new Map(rulePack.rules.map(entry => [entry.id, entry]));
 const title = rule => `${rule[0].toUpperCase()}${rule.slice(1).replaceAll("-", " ")}`;
 const generated = new Set(["id", "document", "title", "group"]);
-rulePack.rules = ported.map(({ rule }) => ({
-  id: `next-${rule}`,
-  document: `rules/next-${rule}.json`,
-  title: title(rule),
-  group: "Next.js",
-  ...Object.fromEntries(Object.entries(listed.get(`next-${rule}`) ?? {}).filter(([key]) => !generated.has(key))),
-}));
+const ownRules = rulePack.rules.filter(entry => entry.id.startsWith("next-practice-"));
+rulePack.rules = [
+  ...ported.map(({ rule }) => ({
+    id: `next-${rule}`,
+    document: `rules/next-${rule}.json`,
+    title: title(rule),
+    group: "Next.js",
+    ...Object.fromEntries(Object.entries(listed.get(`next-${rule}`) ?? {}).filter(([key]) => !generated.has(key))),
+  })),
+  ...ownRules,
+];
 writeFileSync(rulePackPath, `${JSON.stringify(rulePack, null, 2)}\n`);
 console.log(`written: ${ported.length} ported, ${candidates.length} candidates`);

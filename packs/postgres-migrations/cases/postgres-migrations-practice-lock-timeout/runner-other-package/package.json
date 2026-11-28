@@ -1,0 +1,1 @@
+{ "name": "launch", "private": true, "workspaces": ["apps/*", "packages/*"] }

@@ -1,0 +1,36 @@
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+model User {
+  id            String   @id @default(cuid())
+  email         String   @unique
+  name          String?
+  bio           String?
+  role          Role     @default(USER)
+  emailVerified DateTime?
+  posts         Post[]
+}
+
+model Post {
+  id       String @id @default(cuid())
+  title    String
+  body     String
+  authorId String
+  author   User   @relation(fields: [authorId], references: [id])
+}
+
+model WebhookEvent {
+  id      String @id @default(cuid())
+  payload Json
+}
+
+enum Role {
+  USER
+  ADMIN
+}

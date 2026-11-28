@@ -1,0 +1,361 @@
+.policy "prisma-practice-bulk-write-without-where" revision 1
+.description "Give every Prisma deleteMany/updateMany a where that filters on a value that is always set; an empty or missing where, or one whose values are all undefined, writes every row of the table."
+.language typescript
+.mode log
+.scope include "**/*.ts", "**/*.mts", "**/*.cts", "**/*.tsx", "**/*.js", "**/*.jsx", "**/*.mjs", "**/*.cjs"
+.scope exclude "**/*.test.*", "**/*.spec.*", "**/*.cy.*", "**/__tests__/**", "**/test/**", "**/tests/**", "**/e2e/**"
+.scope exclude "**/__mocks__/**", "**/*.stories.*", "**/*.story.*", "**/__stories__/**", "**/__fixtures__/**"
+.scope exclude "**/fixtures/**", "**/node_modules/**", "**/dist/**", "**/build/**", "**/out/**", "**/.next/**"
+.scope exclude "**/coverage/**", "**/vendor/**", "**/.venv/**", "**/.yarn/**", "**/generated/**", "**/__generated__/**"
+.scope exclude "**/*.generated.*", "**/*.gen.*", "**/*.min.js", "**/*.d.ts"
+.scope exclude "**/seed.*", "**/seed/**", "**/seeds/**", "**/*.seed.*", "**/scripts/**"
+// Rerail's own rule, not a port. `<client>.<model>.deleteMany(...)`, `updateMany(...)` and `updateManyAndReturn(...)`
+// write every row their `where` matches, and an empty or missing `where` matches the whole table. Prisma also drops a
+// field whose value is `undefined` from the filter ("if undefined is passed as a value, it is not included in the
+// generated query"), so `where: { userId: session?.user?.id }` with no session is `where: {}` too. The model is one the
+// repository's schema.prisma declares (`model Draft` gives `draft`, compared without case), so MongoDB's and Mongoose's
+// `deleteMany({})` on a collection are not Prisma's. Prisma 5-7; Prisma 8 (release candidate) reaches models as
+// `tx.orm.<schema>.<Model>`, which this rule does not match yet.
+//   prisma.draft.deleteMany()                                   reported: no argument
+//   prisma.draft.deleteMany({})                                 reported: no where
+//   db.notification.updateMany({ data: { read: true } })        reported: no where
+//   tx.session.deleteMany({ where: {} })                        reported: an empty where
+//   deleteMany({ where: { userId } }) with `userId?: string`    reported: the only value may be undefined
+//   deleteMany({ where: { userId: session?.user?.id } })        reported: the only value may be undefined
+//   deleteMany({ where: { userId: session.user.id } })          not reported
+//   updateMany({ where: { expiresAt: { lt: now } }, data })     not reported
+//   deleteMany({ where: { teamId, role: "MEMBER" } }) with `teamId?: string`   reported: the rest are constants,
+//                                                               which match every team's members
+//   deleteMany({ where: { userId: s?.user?.id, kind } })        not reported: another value the caller chose filters
+//   an optional parameter or chain root read earlier in the function (a guard: `if (!userId) throw`)   not reported
+//   deleteMany(args), deleteMany({ where }), deleteMany({ ...args })   not reported: the filter is not written here
+//   mongo.collection("x").deleteMany({}), this.items.deleteMany({}) with no model Item    not reported
+//   `data: [{ where, data }, …]` (an array: KeystoneJS's list API, which also writes a schema.prisma)   not reported
+//   a deleteMany followed in the same function by a create of the same model: replace the rows
+//   (`$transaction([db.license.deleteMany(), db.license.create(...)])`, an import that refills the table)
+//                                                               not reported: the whole table is the intent
+//   an unfiltered updateMany followed by a filtered update of the same model setting the same field: move a flag
+//   (`updateMany({ data: { isDefault: false } })` then `update({ where: { code }, data: { isDefault: true } })`)
+//                                                               not reported
+//   a function whose unfiltered bulk writes empty two or more models (a "delete all my data" reset)   not reported
+//   seed files, scripts/, tests                                 not reported (scope)
+// Gaps: a where built in a variable or another function; a value that is undefined for reasons the syntax does not
+// show (a function returning `string | undefined`, a destructured optional field); a model declared in a schema file
+// outside the repository; a delegate stored in a variable (`const d = prisma.draft; d.deleteMany()`); Prisma 8. A
+// table emptied on purpose in a function of its own (a single-row settings table whose refill lives elsewhere) is
+// reported; so is an accident that a later create of the same model happens to follow.
+
+#include "tsx/names.rerail"
+#include "tsx/eslint-a-common.rerail"
+#include "tsx/ts-a.rerail"
+
+.violation BulkWriteNoWhere(at: node, op: symbol, m: symbol, why: symbol, verb: symbol)
+    "This `{m}.{op}` has {why}, so it {verb} every {m} row in the table. Put the filter this change is for in `where` (the owner or tenant id, the id list, the date bound). If emptying the whole table is the intent (a purge job, a single-row settings table), keep it and say so in a `rerail-ignore` comment."
+BulkWriteNoWhere(c, op, m, why, verb) :- bww_call(c, op, m, verb), bww_no_where(c, why), !bww_refilled(c), !bww_wipe(c).
+
+// bww_refilled(c): c clears the table on purpose. A deleteMany followed in the same function by a create of the same
+// model replaces its rows; an updateMany followed by a filtered update of the same model that sets one of the same
+// fields moves a flag to some rows (every row `isDefault: false`, then one row `isDefault: true`).
+.decl bww_refilled(c: node)
+bww_refilled(c) :- bww_call(c, "deleteMany", m, _), bww_later(c, c2, m, op2), bww_create_op(op2).
+bww_refilled(c) :- bww_call(c, op, m, _), op != "deleteMany", bww_later(c, c2, m, op2),
+    (op2 = "update" ; op2 = "updateMany" ; op2 = "updateManyAndReturn"), bww_arg_prop(c2, "where", _),
+    bww_arg_prop(c, "data", d1), bww_pair(d1, k, _), bww_arg_prop(c2, "data", d2), bww_pair(d2, k, _).
+// bww_later(c, c2, m, op2): c2 is a later `<x>.<model>.<op2>(...)` call on c's model m, in the function around c.
+.decl bww_later(c: node, c2: node, m: symbol, op2: symbol)
+bww_later(c, c2, m, op2) :- bww_call(c, _, m, _), bww_no_where(c, _), nearest(c, f, fn_scope), bww_model_call(c2, m2, op2),
+    @lower(m2) = @lower(m), within(c2, f), node(_, c, _, s1, _), node(_, c2, _, s2, _), s1 < s2.
+.decl bww_model_call(c: node, m: symbol, op: symbol)
+bww_model_call(c, m, op) :- called(c, f), static_prop(f, d, op), bww_later_op(op), static_prop(d, _, m).
+.decl bww_later_op(op: symbol)
+bww_later_op(op) :- bww_create_op(op).
+bww_later_op("update"). bww_later_op("updateMany"). bww_later_op("updateManyAndReturn").
+.decl bww_create_op(op: symbol)
+bww_create_op("create"). bww_create_op("createMany"). bww_create_op("createManyAndReturn"). bww_create_op("upsert").
+// bww_wipe(c): the function around c empties two or more models: a reset of all the data, not a forgotten filter.
+.decl bww_wipe(c: node)
+bww_wipe(c) :- bww_no_where(c, _), nearest(c, f, fn_scope), bww_call(c, _, m, _), bww_no_where(o, _), within(o, f),
+    bww_call(o, _, m2, _), @lower(m2) != @lower(m).
+
+.violation BulkWriteUndefinedWhere(at: node, op: symbol, m: symbol, v: symbol, verb: symbol)
+    "`{v}` in this `{m}.{op}` where may be undefined, and Prisma leaves an undefined field out of the filter: when it is missing, the call {verb} every {m} row that the rest of the where matches, which is nothing or only constants (a status, a role), across every owner and tenant. Check the value first and return or throw when it is missing, or enable the `strictUndefinedChecks` preview feature so Prisma rejects undefined. If the value is always set here, leave it."
+// Not when a schema enables `strictUndefinedChecks` (Prisma 5.20+ preview): Prisma then throws on an undefined value.
+BulkWriteUndefinedWhere(c, op, m, v, verb) :- bww_call(c, op, m, verb), bww_arg_prop(c, "where", w), bww_all_undefined(w, c),
+    bww_first_maybe(w, c, x), text(x, v), !bww_strict(1).
+.decl bww_strict(k: number)
+bww_strict(1) :- bww_schema_file(f), file_line(f, _, t), match(".*strictUndefinedChecks.*", t), !match("\\s*//.*", t).
+
+// ---- Prisma calls ---------------------------------------------------------------------------------------------------
+// bww_call(c, op, m, verb): c is `<x>.<m>.<op>(...)` with op a bulk write and m a model of the repository's schema.
+.decl bww_call(c: node, op: symbol, m: symbol, verb: symbol)
+bww_call(c, op, m, verb) :- called(c, f), static_prop(f, d, op), bww_op(op, verb), static_prop(d, r, m),
+    bww_model(@lower(m)), !bww_list_api(c), pcg_client(r).
+.decl pcg_ask(r: node)
+pcg_ask(r) :- called(c, f), static_prop(f, d, op), bww_op(op, _), static_prop(d, r, m), bww_model(@lower(m)),
+    !bww_list_api(c).
+// ---- the Prisma client gate (the same block in each rule of the pack that matches `<r>.<model>.<op>(…)`) ----------
+// pcg_client(r): receiver r (pcg_ask) is a Prisma client. Resolved Prisma: r's root name is the parameter of a
+// `$transaction` callback; a parameter, variable or class member typed with a Prisma client type (`PrismaClient`,
+// `Prisma.TransactionClient`, `PrismaService`); a variable whose value makes or extends one (`new PrismaClient(…)`,
+// `prisma.$extends(…)`); or an import from a Prisma module: `@prisma/client`, a generated client, a specifier with a
+// path part naming prisma (`@/lib/prisma`, `@acme/prisma`), or a file of the run that makes a PrismaClient. Resolved
+// otherwise: an import from Drizzle, Kysely, Knex, TypeORM, Sequelize, Mongoose, Objection or MikroORM, a file of the
+// run that imports one, or a variable made by one (`drizzle(…)`, `new Kysely(…)`): never Prisma. Not resolved (`ctx.db`
+// of a tRPC context, an import from a file the run reads in another lane): accepted only under the client names of
+// pcg_named, and only when a package.json of the repository lists Prisma and the file's package and the root list
+// no other ORM.
+.decl pcg_root(r: node, o: node)
+pcg_root(r, x) :- pcg_ask(r), deparen(r, x).
+pcg_root(r, o) :- pcg_root(r, e), kind(e, "member_expression"), field(e, "object", o0), deparen(o0, o).
+pcg_root(r, o) :- pcg_root(r, e), kind(e, "non_null_expression"), child(e, o0, 0), deparen(o0, o).
+pcg_root(r, o) :- pcg_root(r, e), kind(e, "call_expression"), field(e, "function", o0), deparen(o0, o).
+pcg_root(r, o) :- pcg_root(r, e), kind(e, "await_expression"), child(e, o0, 0), deparen(o0, o).
+// pcg_base(r, o): o is the identifier or `this` r's chain starts from.
+.decl pcg_base(r: node, o: node)
+pcg_base(r, o) :- pcg_root(r, o), (kind(o, "identifier") ; kind(o, "this")).
+.decl pcg_prisma(r: node)
+pcg_prisma(r) :- pcg_base(r, o), kind(o, "identifier"), ref_site(o, s), pcg_prisma_site(s).
+pcg_prisma(r) :- pcg_base(r, o), kind(o, "identifier"), ref_site(o, sp), import_binding(sp, _, src, _),
+    pcg_prisma_spec(src).
+pcg_prisma(r) :- pcg_base(r, o), kind(o, "identifier"), ref_site(o, sp), import_binding(sp, _, src, _), docof(o, d),
+    pcg_target(d, src, dt), pcg_prisma_mod(dt).
+pcg_prisma(r) :- pcg_base(r, o), kind(o, "this"), pcg_this_prop(r, o, x), kind(cb, "class_body"), within(o, cb),
+    within(s, cb), pcg_member_named(s, x), pcg_prisma_site(s).
+.decl pcg_other(r: node)
+pcg_other(r) :- pcg_base(r, o), kind(o, "identifier"), ref_site(o, s), pcg_other_site(s).
+pcg_other(r) :- pcg_base(r, o), kind(o, "identifier"), ref_site(o, sp), import_binding(sp, _, src, _),
+    pcg_other_spec(src).
+pcg_other(r) :- pcg_base(r, o), kind(o, "identifier"), ref_site(o, sp), import_binding(sp, _, src, _), docof(o, d),
+    pcg_target(d, src, dt), pcg_other_mod(dt).
+.decl pcg_client(r: node)
+pcg_client(r) :- pcg_prisma(r), !pcg_other(r).
+pcg_client(r) :- pcg_ask(r), !pcg_prisma(r), !pcg_other(r), pcg_named(r), docof(r, d), pcg_prisma_repo(d).
+// pcg_this_prop(r, o, x): r's chain reads `this.x` (o the `this`).
+.decl pcg_this_prop(r: node, o: node, x: symbol)
+pcg_this_prop(r, o, x) :- pcg_root(r, e), kind(e, "member_expression"), field(e, "object", o0), deparen(o0, o),
+    kind(o, "this"), field(e, "property", p), text(p, x).
+// pcg_member_named(s, x): s declares class member x: a field `x = …` / `x: T`, or a constructor parameter property
+// `private x: T`.
+.decl pcg_member_named(s: node, x: symbol)
+pcg_member_named(s, x) :- kind(s, "public_field_definition"), field(s, "name", n), text(n, x).
+pcg_member_named(s, x) :- kind(p, "required_parameter"), child(p, m, _), kind(m, "accessibility_modifier"),
+    field(p, "pattern", s), text(s, x).
+pcg_member_named(s, x) :- kind(p, "required_parameter"), child(p, m, _), kind(m, "readonly"),
+    field(p, "pattern", s), text(s, x).
+// pcg_prisma_site(s): the binding or member at s is a Prisma client by its type or its value, or is the parameter of
+// a `$transaction` callback.
+.decl pcg_prisma_site(s: node)
+pcg_prisma_site(s) :- pcg_site_type(s, t), match("(?s).*(?:PrismaClient|TransactionClient|PrismaService).*", t).
+pcg_prisma_site(s) :- pcg_site_value(s, v), text(v, t), (contains("PrismaClient", t) ; contains("$extends", t)).
+pcg_prisma_site(s) :- kind(t, "call_expression"), callee(t, m), static_prop(m, _, "$transaction"), call_arg(t, a, 0),
+    deparen(a, f), (kind(f, "arrow_function") ; kind(f, "function_expression")),
+    (field(f, "parameter", s) ; field(f, "parameters", ps), within(s, ps)).
+.decl pcg_other_site(s: node)
+// The parameter of a callback given to `<x>.transaction(…)`, without Prisma's `$`: Drizzle's, Knex's, TypeORM's and
+// Sequelize's transactions.
+pcg_other_site(s) :- kind(t, "call_expression"), callee(t, m), static_prop(m, _, "transaction"), call_arg(t, a, 0),
+    deparen(a, f), (kind(f, "arrow_function") ; kind(f, "function_expression")),
+    (field(f, "parameter", s) ; field(f, "parameters", ps), within(s, ps)).
+pcg_other_site(s) :- pcg_site_value(s, v), text(v, t),
+    match("(?s)\\s*(?:await\\s+)?(?:drizzle|knex|Knex)\\s*\\(.*|.*\\bnew\\s+(?:Kysely|Sequelize|DataSource|MikroORM)\\b.*", t).
+pcg_other_site(s) :- pcg_site_type(s, t), !contains("Prisma", t),
+    match("(?s).*\\b(?:\\w+Database|Kysely|Knex|DataSource|EntityManager|Repository|Sequelize|MikroORM)\\b.*", t).
+// pcg_site_type(s, t): the annotation text of a parameter, variable or class field at s.
+.decl pcg_site_type(s: node, t: symbol)
+pcg_site_type(s, t) :- field(p, "pattern", s), field(p, "type", a), text(a, t).
+pcg_site_type(s, t) :- (kind(s, "variable_declarator") ; kind(s, "public_field_definition")), field(s, "type", a),
+    text(a, t).
+.decl pcg_site_value(s: node, v: node)
+pcg_site_value(s, v) :- (kind(s, "variable_declarator") ; kind(s, "public_field_definition")), field(s, "value", v).
+// pcg_prisma_spec(s), pcg_other_spec(s): an import specifier of a Prisma module, of another ORM.
+.decl pcg_prisma_spec(s: symbol)
+pcg_prisma_spec(s) :- import_binding(_, _, s, _), match("(?i)(?:.*/)?[^/]*prisma[^/]*(?:/.*)?", s).
+.decl pcg_other_spec(s: symbol)
+pcg_other_spec(s) :- import_binding(_, _, s, _),
+    match("(?:drizzle-orm|kysely|knex|typeorm|sequelize|sequelize-typescript|mongoose|objection|@mikro-orm/[^/]+)(?:/.*)?", s).
+// pcg_prisma_mod(d), pcg_other_mod(d): file d makes a PrismaClient or imports a Prisma module; imports another ORM.
+.decl pcg_prisma_mod(d: number)
+pcg_prisma_mod(d) :- kind(n, "new_expression"), field(n, "constructor", c), text(c, "PrismaClient"), docof(n, d).
+pcg_prisma_mod(d) :- import_binding(sp, _, s, _), pcg_prisma_spec(s), docof(sp, d).
+.decl pcg_other_mod(d: number)
+pcg_other_mod(d) :- import_binding(sp, _, s, _), pcg_other_spec(s), docof(sp, d).
+// pcg_target(d, s, d2): specifier s imported by d names file d2 of the run: relative to d, or `@/x`, `~/x`, `#/x`
+// matched by the path's end (tsconfig `paths` are not read), or `@scope/pkg/x` as /pkg/x or /pkg/src/x.
+.decl pcg_spec(d: number, s: symbol)
+pcg_spec(d, s) :- pcg_base(_, o), ref_site(o, sp), import_binding(sp, _, s, _), docof(o, d).
+.decl pcg_target(d: number, s: symbol, d2: number)
+pcg_target(d, s, d2) :- pcg_spec(d, s), prefix(".", s), doc(d, p, _), b = @join(@dir(p), s), pcg_ext(e),
+    doc(d2, cat(b, e), _).
+pcg_target(d, s, d2) :- pcg_spec(d, s), match("[@~#]/(?<r>.+)", s), pcg_ext(e), t = cat("/", r, e), doc(d2, f, _),
+    (suffix(t, f) ; f = cat(r, e)).
+pcg_target(d, s, d2) :- pcg_spec(d, s), match("@[^/]+/(?<k>[^/]+)/(?<r>.+)", s), pcg_ext(e), doc(d2, f, _),
+    (suffix(cat("/", k, "/", r, e), f) ; suffix(cat("/", k, "/src/", r, e), f)).
+.decl pcg_ext(e: symbol)
+pcg_ext(".ts"). pcg_ext(".tsx"). pcg_ext(".js"). pcg_ext(".jsx"). pcg_ext(".mts"). pcg_ext(".mjs").
+pcg_ext("/index.ts"). pcg_ext("/index.tsx"). pcg_ext("/index.js").
+// pcg_prisma_repo(d): a package.json of the repository lists Prisma, and neither d's package nor the root lists
+// another ORM.
+.decl pcg_prisma_repo(d: number)
+pcg_prisma_repo(d) :- pcg_ask(r), docof(r, d), pcg_lists_prisma(1), !pcg_orm_doc(d).
+.decl pcg_lists_prisma(k: number)
+pcg_lists_prisma(1) :- package_field(_, k, _),
+    (k = "dependencies/@prisma~1client" ; k = "devDependencies/@prisma~1client" ; k = "dependencies/prisma" ;
+     k = "devDependencies/prisma").
+// A Prisma schema in the repository is the same evidence.
+pcg_lists_prisma(1) :- bww_schema_file(_).
+.decl pcg_orm_doc(d: number)
+pcg_orm_doc(d) :- pcg_ask(r), docof(r, d), doc(d, p, _), package_for(p, dir), (pcg_orm_pkg(dir) ; pcg_orm_pkg("")).
+.decl pcg_orm_pkg(dir: symbol)
+pcg_orm_pkg(dir) :- package_field(dir, k, _),
+    match("(?:dev)?[dD]ependencies/(?:drizzle-orm|kysely|knex|typeorm|sequelize|mongoose|objection|@mikro-orm~1core)", k).
+// pcg_named(r): the client names an unresolved receiver must have: its text contains "prisma" (`ctx.prisma`,
+// `this.prismaService`), or it is, or ends in the property, `db`, `tx`, `trx`, `database` or `_db` (`ctx.db`).
+.decl pcg_named(r: node)
+pcg_named(r) :- pcg_ask(r), (kind(r, "identifier") ; kind(r, "member_expression")), text(r, t), icontains("prisma", t).
+pcg_named(r) :- pcg_ask(r), kind(r, "identifier"), text(r, x), pcg_name(x).
+pcg_named(r) :- pcg_ask(r), kind(r, "member_expression"), field(r, "property", p), text(p, x), pcg_name(x).
+.decl pcg_name(x: symbol)
+pcg_name("db"). pcg_name("tx"). pcg_name("trx"). pcg_name("database"). pcg_name("_db").
+// bww_list_api(c): `data` is a list of per-item writes (`data: [{ where, data }, …]`, `data: ids.map(…)`),
+// KeystoneJS's list API: Prisma's updateMany takes one object. Keystone generates a schema.prisma, so its list names
+// are models too.
+.decl bww_list_api(c: node)
+bww_list_api(c) :- called(c, _), bww_arg_prop(c, "data", v), kind(v, "array").
+bww_list_api(c) :- called(c, _), bww_arg_prop(c, "data", v), called(v, f), static_prop(f, _, x),
+    (x = "map" ; x = "flatMap").
+.decl bww_op(op: symbol, verb: symbol)
+bww_op("deleteMany", "deletes"). bww_op("updateMany", "updates"). bww_op("updateManyAndReturn", "updates").
+// bww_model(lm): a `model X {` line in a .prisma file of the repository gives the lower-cased X: Prisma Client's
+// delegate is X with its first letter lower-cased (`model UserSetting` is `prisma.userSetting`). The schema files are
+// found by walking the directories six levels down from the root (`prisma/schema.prisma`, `prisma/schema/*.prisma`,
+// `packages/db/src/prisma/schema/*.prisma`), skipping node_modules, build output and dot directories.
+.decl bww_model(lm: symbol)
+bww_model(@lower(x)) :- bww_schema_file(f), file_line(f, _, t), match("\\s*model\\s+(?<x>\\w+)\\s*\\{.*", t).
+.decl bww_schema_file(f: symbol)
+bww_schema_file(n) :- dir_entry("", n, 0), match(".*\\.prisma", n).
+bww_schema_file(f) :- bww_dir(p, k), k > 0, dir_entry(p, n, 0), match(".*\\.prisma", n), f = cat(p, "/", n).
+// bww_dir(p, k): p is a directory k levels below the root ("" is the root).
+.decl bww_dir(p: symbol, k: number)
+bww_dir("", 0).
+bww_dir(n, 1) :- dir_entry("", n, 1), !bww_skip_dir(n).
+bww_dir(c, k + 1) :- bww_dir(p, k), k > 0, k < 6, dir_entry(p, n, 1), !bww_skip_dir(n), c = cat(p, "/", n).
+.decl bww_skip_dir(n: symbol)
+bww_skip_dir(n) :- dir_entry(_, n, 1), (match("\\..*", n) ; n = "node_modules" ; n = "dist" ; n = "build" ;
+    n = "coverage" ; n = "out").
+
+// bww_arg_prop(c, k, v): the object argument of call c has `k: v` (v without parentheses).
+.decl bww_arg_prop(c: node, k: symbol, v: node)
+bww_arg_prop(c, k, v) :- call_arg(c, a, 0), deparen(a, o), bww_pair(o, k, v).
+// bww_pair(o, k, v): object literal o has `k: v`; `{ k }` gives v the shorthand name itself.
+.decl bww_pair(o: node, k: symbol, v: node)
+bww_pair(o, k, v) :- kind(o, "object"), child(o, p, _), kind(p, "pair"), field(p, "key", kn), key_static(kn, k),
+    field(p, "value", v0), deparen(v0, v).
+bww_pair(o, k, p) :- kind(o, "object"), child(o, p, _), kind(p, "shorthand_property_identifier"), text(p, k).
+// bww_entry(o, e): e is a property, method or spread of object literal o (comments are not).
+.decl bww_entry(o: node, e: node)
+bww_entry(o, e) :- kind(o, "object"), child(o, e, _), !kind(e, "comment").
+.decl bww_spread(o: node)
+bww_spread(o) :- kind(o, "object"), child(o, e, _), kind(e, "spread_element").
+
+// bww_no_where(c, why): the call's filter is missing or empty, as written.
+.decl bww_no_where(c: node, why: symbol)
+bww_no_where(c, "no argument") :- bww_call(c, "deleteMany", _, _), call_arg_count(c, 0).
+bww_no_where(c, "no where") :- bww_call(c, _, _, _), call_arg(c, a, 0), deparen(a, o), kind(o, "object"),
+    !bww_spread(o), !bww_pair(o, "where", _).
+bww_no_where(c, "an empty where") :- bww_call(c, _, _, _), bww_arg_prop(c, "where", w), kind(w, "object"),
+    !bww_entry(w, _).
+
+// ---- values that may be undefined ------------------------------------------------------------------------------------
+// bww_maybe(x, c): value x of a where of call c may be undefined: the identifier `undefined`, an optional chain
+// (`session?.user?.id`), or a name bound to an optional parameter (`userId?: string`) or one typed `| undefined`;
+// unless the chain's root or the name is read earlier in the same function, where a guard may have checked it.
+.decl bww_maybe(x: node, c: node)
+bww_maybe(x, c) :- bww_in_where(x, c), kind(x, "undefined").
+bww_maybe(x, c) :- bww_in_where(x, c), in_chain(x), bww_root(x, r), !bww_read_before(r, c).
+bww_maybe(x, c) :- bww_in_where(x, c), (kind(x, "identifier") ; kind(x, "shorthand_property_identifier")),
+    ref_site(x, s), bww_optional_site(s), !bww_read_before(x, c).
+// bww_in_where(x, c): x is a value of the where object of call c.
+.decl bww_in_where(x: node, c: node)
+bww_in_where(x, c) :- bww_call(c, _, _, _), bww_arg_prop(c, "where", w), bww_pair(w, _, x).
+// bww_root(x, r): r is the identifier at the start of member chain x.
+.decl bww_root(x: node, r: node)
+bww_root(x, x) :- kind(x, "identifier").
+bww_root(x, r) :- (field(x, "object", o) ; field(x, "function", o)), deparen(o, y), bww_root(y, r),
+    (kind(x, "member_expression") ; kind(x, "subscript_expression") ; kind(x, "call_expression")).
+bww_root(x, r) :- kind(x, "non_null_expression"), child(x, o, 0), deparen(o, y), bww_root(y, r).
+// bww_optional_site(s): parameter s is optional (`id?: string`) or typed with `undefined` in a union.
+.decl bww_optional_site(s: node)
+bww_optional_site(s) :- decl_site(_, _, s, "param", _), field(p, "pattern", s), kind(p, "optional_parameter").
+bww_optional_site(s) :- decl_site(_, _, s, "param", _), site_annotation(s, t), kind(t, "union_type"),
+    child(t, u, _), kind(u, "literal_type"), child(u, k, 0), kind(k, "undefined").
+bww_optional_site(s) :- decl_site(_, _, s, "param", _), site_annotation(s, t), kind(t, "union_type"),
+    child(t, u, _), kind(u, "predefined_type"), text(u, "undefined").
+// bww_read_before(r, c): another reference to r's binding comes before call c in the function around c.
+.decl bww_read_before(r: node, c: node)
+bww_read_before(r, c) :- ref_site(r, s), ref_site(o, s), o != r, node(_, o, _, so, _), node(_, c, _, sc, _), so < sc,
+    nearest(c, f, fn_scope), within(o, f).
+
+// bww_all_undefined(w, c): where object w has no spread, at least one value that may be undefined, and no other value
+// that always filters by something the caller chose: literals (`role: "MEMBER"`, `deleted: false`, `Role.MEMBER`) do
+// not count, since with the owner or tenant key missing they match the rows of every owner.
+.decl bww_all_undefined(w: node, c: node)
+bww_all_undefined(w, c) :- bww_call(c, _, _, _), bww_arg_prop(c, "where", w), kind(w, "object"), bww_first_maybe(w, c, _),
+    !bww_spread(w), !bww_defined_entry(w, c).
+.decl bww_defined_entry(w: node, c: node)
+bww_defined_entry(w, c) :- bww_in_where(x, c), bww_pair(w, _, x), !bww_maybe(x, c), !bww_literal(x).
+bww_defined_entry(w, c) :- bww_call(c, _, _, _), bww_arg_prop(c, "where", w), bww_entry(w, e),
+    !kind(e, "pair"), !kind(e, "shorthand_property_identifier").
+// bww_literal(x): a constant filter value: a string, number, boolean or null literal, or an enum member.
+.decl bww_literal(x: node)
+bww_literal(x) :- bww_in_where(x, _), (kind(x, "string") ; kind(x, "number") ; kind(x, "true") ; kind(x, "false") ;
+    kind(x, "null")).
+bww_literal(x) :- bww_in_where(x, _), kind(x, "member_expression"), field(x, "object", o), kind(o, "identifier"),
+    text(o, t), match("[A-Z$].*", t).
+// bww_first_maybe(w, c, x): the first value of w that may be undefined, for the message.
+.decl bww_first_maybe(w: node, c: node, x: node)
+bww_first_maybe(w, c, x) :- bww_in_where(x, c), bww_pair(w, _, x), bww_maybe(x, c),
+    x = min y : { bww_pair(w, _, y), bww_maybe(y, c) }.
+
+// The cases, `cases/prisma-practice-bulk-write-without-where/`, read as one repository: each line ending in
+// `// caught` is reported, and no other line.
+.test cases exactly
+    .fixture "package.json" from "../cases/prisma-practice-bulk-write-without-where/package.json"
+    .fixture "tsconfig.json" from "../cases/prisma-practice-bulk-write-without-where/tsconfig.json"
+    .fixture "prisma/schema.prisma" from "../cases/prisma-practice-bulk-write-without-where/prisma/schema.prisma"
+    .fixture "prisma/seed.ts" from "../cases/prisma-practice-bulk-write-without-where/prisma/seed.ts"
+    .fixture "scripts/reset-db.ts" from "../cases/prisma-practice-bulk-write-without-where/scripts/reset-db.ts"
+    .fixture "src/lib/db.ts" from "../cases/prisma-practice-bulk-write-without-where/src/lib/db.ts"
+    .fixture "src/lib/mongo.ts" from "../cases/prisma-practice-bulk-write-without-where/src/lib/mongo.ts"
+    .fixture "src/app/settings/actions.ts" from "../cases/prisma-practice-bulk-write-without-where/src/app/settings/actions.ts"
+    .fixture "src/app/api/notifications/route.ts" from "../cases/prisma-practice-bulk-write-without-where/src/app/api/notifications/route.ts"
+    .fixture "src/server/sessions.ts" from "../cases/prisma-practice-bulk-write-without-where/src/server/sessions.ts"
+    .fixture "src/server/sessions.test.ts" from "../cases/prisma-practice-bulk-write-without-where/src/server/sessions.test.ts"
+    .fixture "src/app/admin/page.tsx" from "../cases/prisma-practice-bulk-write-without-where/src/app/admin/page.tsx"
+    .fixture "src/server/admin.ts" from "../cases/prisma-practice-bulk-write-without-where/src/server/admin.ts"
+    .fixture "src/app/api/cart/route.ts" from "../cases/prisma-practice-bulk-write-without-where/src/app/api/cart/route.ts"
+    .fixture "src/db/drizzle.ts" from "../cases/prisma-practice-bulk-write-without-where/src/db/drizzle.ts"
+    .fixture "src/drizzle/sessions.ts" from "../cases/prisma-practice-bulk-write-without-where/src/drizzle/sessions.ts"
+    .expect _ at "src/app/settings/actions.ts":7
+    .expect _ at "src/app/settings/actions.ts":11
+    .expect _ at "src/app/settings/actions.ts":16
+    .expect _ at "src/app/settings/actions.ts":22
+    .expect _ at "src/app/admin/page.tsx":9
+    .expect _ at "src/app/api/notifications/route.ts":6
+    .expect _ at "src/server/sessions.ts":4
+    .expect _ at "src/server/sessions.ts":8
+    .expect _ at "src/server/sessions.ts":21
+    .expect _ at "src/server/sessions.ts":26
+    .expect _ at "src/server/admin.ts":31
+    .expect _ at "src/server/admin.ts":38
+    .expect _ at "src/server/admin.ts":43
+    .expect _ at "src/server/admin.ts":55
+    .expect _ at "src/server/admin.ts":56
+.end
+
+// A schema that enables strictUndefinedChecks: Prisma throws on an undefined filter value, so only the missing where
+// is reported.
+.test strict_undefined_checks exactly
+    .fixture "prisma/schema.prisma" from "../cases/prisma-practice-bulk-write-without-where/strict/prisma/schema.prisma"
+    .fixture "src/server/sessions.ts" from "../cases/prisma-practice-bulk-write-without-where/strict/src/server/sessions.ts"
+    .expect _ at "src/server/sessions.ts":21
+.end

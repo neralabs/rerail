@@ -65,3 +65,34 @@ export async function runChecked(runner: CommandRunner, argv: readonly string[],
   }
   return result.stdout;
 }
+
+/**
+ * The variables that point Git at another repository than the folder it runs in, or hand it configuration from an outer
+ * command (`git -c`, which a hook inherits, and its template folder): left out of a Git command that must work on its
+ * own folder with no configuration but its own.
+ */
+const OUTER_VARIABLES: Record<string, true> = {
+  GIT_DIR: true,
+  GIT_WORK_TREE: true,
+  GIT_INDEX_FILE: true,
+  GIT_OBJECT_DIRECTORY: true,
+  GIT_ALTERNATE_OBJECT_DIRECTORIES: true,
+  GIT_COMMON_DIR: true,
+  GIT_PREFIX: true,
+  GIT_CONFIG_PARAMETERS: true,
+  GIT_CONFIG_COUNT: true,
+  GIT_TEMPLATE_DIR: true,
+};
+
+/** `git -c`'s numbered pairs, as an outer command exports them (`GIT_CONFIG_KEY_0`, `GIT_CONFIG_VALUE_0`, …). */
+const CONFIG_PAIR = /^GIT_CONFIG_(?:KEY|VALUE)_\d+$/u;
+
+/**
+ * An environment for Git commands on a repository of their own: `base` (the process's by default) without the variables
+ * that name another repository or carry an outer command's configuration, and with no user or system configuration
+ * read, plus `extra`.
+ */
+export function isolatedGitEnv(extra: NodeJS.ProcessEnv = {}, base: NodeJS.ProcessEnv = process.env): NodeJS.ProcessEnv {
+  const kept = Object.entries(base).filter(([name]) => !Object.hasOwn(OUTER_VARIABLES, name) && !CONFIG_PAIR.test(name));
+  return { ...Object.fromEntries(kept), GIT_CONFIG_GLOBAL: "/dev/null", GIT_CONFIG_NOSYSTEM: "1", ...extra };
+}

@@ -1,0 +1,11 @@
+{
+  "name": "@acme/remix",
+  "private": true,
+  "dependencies": {
+    "@react-router/node": "7.1.0",
+    "@tanstack/react-query": "^5.62.0",
+    "react": "19.0.0",
+    "react-router": "7.1.0"
+  },
+  "devDependencies": { "@react-router/dev": "7.1.0" }
+}

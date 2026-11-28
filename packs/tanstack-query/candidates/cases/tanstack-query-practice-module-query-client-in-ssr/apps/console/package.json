@@ -1,0 +1,9 @@
+{
+  "name": "@acme/console",
+  "private": true,
+  "dependencies": {
+    "@tanstack/react-query": "^4.36.1",
+    "next": "15.1.0",
+    "react": "19.0.0"
+  }
+}

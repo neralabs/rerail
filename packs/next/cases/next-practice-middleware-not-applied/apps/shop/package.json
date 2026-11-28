@@ -1,0 +1,8 @@
+{
+  "name": "@acme/shop",
+  "private": true,
+  "dependencies": {
+    "next": "^15.3.0",
+    "react": "^19.0.0"
+  }
+}

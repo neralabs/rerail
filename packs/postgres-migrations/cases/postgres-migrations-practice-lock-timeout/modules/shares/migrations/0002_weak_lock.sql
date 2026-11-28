@@ -1,0 +1,4 @@
+BEGIN;
+LOCK TABLE shares IN ROW EXCLUSIVE MODE;
+ALTER TABLE shares ADD COLUMN note text; -- caught
+COMMIT;

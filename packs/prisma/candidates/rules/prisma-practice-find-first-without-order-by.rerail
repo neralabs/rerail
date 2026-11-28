@@ -1,0 +1,179 @@
+.policy "prisma-practice-find-first-without-order-by" revision 1
+.description "Give a Prisma findFirst whose where does not pin a unique field an orderBy, or it returns whichever matching row Postgres reaches first."
+.language typescript
+.mode log
+.scope include "**/*.ts", "**/*.mts", "**/*.cts", "**/*.tsx", "**/*.js", "**/*.jsx", "**/*.mjs", "**/*.cjs"
+.scope exclude "**/*.test.*", "**/*.spec.*", "**/*.cy.*", "**/__tests__/**", "**/test/**", "**/tests/**", "**/e2e/**"
+.scope exclude "**/__mocks__/**", "**/*.stories.*", "**/*.story.*", "**/__stories__/**", "**/__fixtures__/**"
+.scope exclude "**/fixtures/**", "**/node_modules/**", "**/dist/**", "**/build/**", "**/out/**", "**/.next/**"
+.scope exclude "**/coverage/**", "**/vendor/**", "**/.venv/**", "**/.yarn/**", "**/generated/**", "**/__generated__/**"
+.scope exclude "**/*.generated.*", "**/*.gen.*", "**/*.min.js", "**/*.d.ts"
+.scope exclude "**/seed.*", "**/seed/**", "**/seeds/**", "**/*.seed.*", "**/scripts/**"
+// Rerail's own rule, not a port. Prisma runs `findFirst` as a findMany limited to one row after it has decided the
+// ordering, so without `orderBy` (and without `take`, `skip` or `cursor`, which make Prisma order by the primary key)
+// the SQL is `... WHERE ... LIMIT 1` with no ORDER BY. When several rows match, Postgres returns whichever its plan
+// reaches first ("the rows will be returned in an unspecified order ... it must not be relied on"), and that row
+// changes after updates, VACUUM or a new index: "the active subscription", "the latest invoice" become some row.
+// The model is one the repository's schema.prisma declares (`model Draft` gives `draft`, compared without case); its
+// unique fields come from the same schema (`@id`, `@unique`, `@@id([...])`, `@@unique([...])`). Prisma 5-7; Prisma 8
+// (release candidate) reads `db.orm.<schema>.<Model>.where(...).first()`, which this rule does not match yet.
+//   prisma.subscription.findFirst({ where: { userId, status: "ACTIVE" } })      reported
+//   tx.invoice.findFirstOrThrow({ where: { teamId }, select: { id: true } })    reported
+//   findFirst({ where: { email: { contains: q } } }) with `email @unique`         reported: contains does not pin it
+//   findFirst({ where: { id: { not: id }, slug } }) with `id @id`                 reported: not does not pin it
+//   findFirst({ where, orderBy: { createdAt: "desc" } })                        not reported
+//   findFirst({ where: { ... }, take: 1 }), with skip or cursor                 not reported: Prisma orders by the id
+//   findFirst({ where: { email } }) with `email String @unique`                 not reported: one row at most
+//   findFirst({ where: { id, ownerId } }), `{ email: { equals: e, mode: "insensitive" } }`   not reported
+//   findFirst({ where: { teamId, slug } }) with `@@unique([teamId, slug])`       not reported
+//   `if (await prisma.x.findFirst(...))`, `const e = await ...; if (e) throw`, `!!e`, `e === null`
+//                                                                                not reported: any row answers
+//   findFirst(), findFirst({ select }), findFirst(args), findFirst({ where }), a where with a spread
+//                                                                                not reported: no filter written here
+//   mongo.collection("x").findFirst(...), a model the schema does not declare   not reported
+//   findMany({ take, skip }) without orderBy                                    not reported: Prisma adds
+//                                                                                ORDER BY <primary key> itself
+//   seed files, scripts/, tests                                                 not reported (scope)
+// Gaps: a where built in a variable or another function; a where that is unique by a business rule the schema does
+// not declare; a unique filter through a relation (`where: { user: { id } }` on a 1:1); a schema file outside the
+// repository or more than six directories down; a delegate stored in a variable; Prisma 8.
+
+#include "tsx/names.rerail"
+#include "tsx/eslint-a-common.rerail"
+
+.violation FindFirstWithoutOrderBy(at: node, op: symbol, m: symbol)
+    "This `{m}.{op}` has no `orderBy` and its `where` pins no unique field of `{m}`, so when several rows match, Postgres returns whichever one its plan reaches first, and that can change after an update, VACUUM or a new index. Add the `orderBy` that picks the row you mean, ending in a unique field (newest first, then by id), or filter on a unique field. If at most one row can match by a rule the schema does not declare, declare it there with `@unique`/`@@unique`, or leave this as it is."
+FindFirstWithoutOrderBy(c, op, m) :- fff_call(c, op, m, x), fff_arg_prop(c, "where", w), kind(w, "object"),
+    !fff_spread(w), fff_entry(w, _), !fff_ordered(c), !fff_pinned(c, w, x), !fff_existence(c).
+
+// ---- Prisma calls ---------------------------------------------------------------------------------------------------
+// fff_call(c, op, m, x): c is `<client>.<m>.findFirst(...)` (or findFirstOrThrow) with an object literal argument, and
+// m is the delegate of model x of the repository's schema.
+.decl fff_call(c: node, op: symbol, m: symbol, x: symbol)
+fff_call(c, op, m, x) :- called(c, f), static_prop(f, d, op), (op = "findFirst" ; op = "findFirstOrThrow"),
+    static_prop(d, _, m), fff_model(x, _, _, _), @lower(x) = @lower(m), call_arg(c, a, 0), deparen(a, o),
+    kind(o, "object"), !fff_spread(o).
+// fff_ordered(c): the call passes orderBy, or take, skip or cursor, after which Prisma orders by the primary key.
+.decl fff_ordered(c: node)
+fff_ordered(c) :- fff_call(c, _, _, _), fff_arg_prop(c, k, _), (k = "orderBy" ; k = "take" ; k = "skip" ; k = "cursor").
+
+// fff_pinned(c, w, x): where w names a unique field of model x with a value that is equality, or every field of one of
+// x's compound unique keys.
+.decl fff_pinned(c: node, w: node, x: symbol)
+fff_pinned(c, w, x) :- fff_call(c, _, _, x), fff_arg_prop(c, "where", w), fff_unique_field(x, k), fff_equal_key(w, k).
+fff_pinned(c, w, x) :- fff_call(c, _, _, x), fff_arg_prop(c, "where", w), fff_compound(x, f, i, l),
+    !fff_compound_missing(w, x, f, i, l).
+.decl fff_compound_missing(w: node, x: symbol, f: symbol, i: number, l: symbol)
+fff_compound_missing(w, x, f, i, l) :- fff_call(c, _, _, x), fff_arg_prop(c, "where", w), fff_compound(x, f, i, l),
+    fff_field(x, n, _), match(cat(".*\\b", n, "\\b.*"), l), !fff_equal_key(w, n).
+// fff_equal_key(w, n): where w filters field n on one value: anything but an object literal, or `{ equals: v }` with
+// an optional `mode`.
+.decl fff_equal_key(w: node, n: symbol)
+fff_equal_key(w, n) :- fff_pair(w, n, _), !fff_object_key(w, n).
+fff_equal_key(w, n) :- fff_pair(w, n, v), kind(v, "object"), fff_pair(v, "equals", _), !fff_other_operator(v).
+.decl fff_object_key(w: node, n: symbol)
+fff_object_key(w, n) :- fff_pair(w, n, v), kind(v, "object").
+.decl fff_other_operator(v: node)
+fff_other_operator(v) :- kind(v, "object"), fff_pair(v, k, _), k != "equals", k != "mode".
+fff_other_operator(v) :- kind(v, "object"), child(v, e, _), kind(e, "spread_element").
+
+// ---- order-insensitive uses ----------------------------------------------------------------------------------------
+// fff_existence(c): the result is only tested for presence: the awaited call sits in a test, or is the value of a
+// `const` whose every read is a test.
+.decl fff_existence(c: node)
+fff_existence(c) :- fff_value(c, u), fff_test(u).
+fff_existence(c) :- fff_value(c, u), child(d, u0, _), deparen(u0, u), kind(d, "variable_declarator"),
+    field(d, "value", u0), ref_site(_, d), !fff_untested_read(d).
+.decl fff_untested_read(d: node)
+fff_untested_read(d) :- ref_site(r, d), !fff_test(r).
+// fff_value(c, u): u is the expression that yields c's row: `await c`, possibly in parentheses.
+.decl fff_value(c: node, u: node)
+fff_value(c, c) :- fff_call(c, _, _, _).
+fff_value(c, u) :- fff_call(c, _, _, _), kind(u, "await_expression"), child(u, a, _), deparen(a, c).
+fff_value(c, p) :- fff_value(c, u), kind(p, "parenthesized_expression"), child(p, u, _).
+// fff_test(n): n is used for its truthiness or compared with null: `!n`, `if (n)`, `n ? a : b`, `n && ...` in a test,
+// `n === null`, `n != undefined`, `Boolean(n)`.
+.decl fff_test(n: node)
+fff_test(n) :- fff_test_cand(n), kind(p, "unary_expression"), child(p, n, _), op(p, "!").
+fff_test(n) :- fff_test_cand(n), kind(p, "parenthesized_expression"), child(p, n, _), fff_cond(p).
+fff_test(n) :- fff_test_cand(n), fff_cond(n).
+fff_test(n) :- fff_test_cand(n), kind(p, "ternary_expression"), field(p, "condition", n).
+fff_test(n) :- fff_test_cand(n), kind(p, "binary_expression"), child(p, n, _),
+    (op(p, "===") ; op(p, "!==") ; op(p, "==") ; op(p, "!=")), child(p, z, _), z != n,
+    (kind(z, "null") ; kind(z, "undefined")).
+fff_test(n) :- fff_test_cand(n), kind(p, "binary_expression"), child(p, n, _), (op(p, "&&") ; op(p, "||")),
+    fff_test(p).
+fff_test(n) :- fff_test_cand(n), kind(a, "arguments"), child(a, n, _), child(k, a, _), field(k, "function", g),
+    text(g, "Boolean").
+// fff_cond(p): p is the condition of an if, while or do statement.
+.decl fff_cond(p: node)
+fff_cond(p) :- (kind(s, "if_statement") ; kind(s, "while_statement") ; kind(s, "do_statement")), field(s, "condition", p).
+// fff_test_cand(n): the nodes fff_test looks at: the values of the reported calls, the reads of the constants they
+// initialize, and the `&&`/`||` chains around them.
+.decl fff_test_cand(n: node)
+fff_test_cand(u) :- fff_value(_, u).
+fff_test_cand(r) :- fff_value(_, u), child(d, u0, _), deparen(u0, u), kind(d, "variable_declarator"), ref_site(r, d).
+fff_test_cand(p) :- fff_test_cand(n), kind(p, "binary_expression"), child(p, n, _), field(p, "operator", o),
+    (text(o, "&&") ; text(o, "||")).
+fff_test_cand(p) :- fff_test_cand(n), kind(p, "parenthesized_expression"), child(p, n, _).
+
+// ---- object literals -----------------------------------------------------------------------------------------------
+// fff_arg_prop(c, k, v): the object argument of call c has `k: v` (v without parentheses).
+.decl fff_arg_prop(c: node, k: symbol, v: node)
+fff_arg_prop(c, k, v) :- called(c, _), call_arg(c, a, 0), deparen(a, o), fff_pair(o, k, v).
+// fff_pair(o, k, v): object literal o has `k: v`; `{ k }` gives v the shorthand name itself.
+.decl fff_pair(o: node, k: symbol, v: node)
+fff_pair(o, k, v) :- kind(o, "object"), child(o, p, _), kind(p, "pair"), field(p, "key", kn), key_static(kn, k),
+    field(p, "value", v0), deparen(v0, v).
+fff_pair(o, k, p) :- kind(o, "object"), child(o, p, _), kind(p, "shorthand_property_identifier"), text(p, k).
+.decl fff_entry(o: node, e: node)
+fff_entry(o, e) :- kind(o, "object"), child(o, e, _), !kind(e, "comment").
+.decl fff_spread(o: node)
+fff_spread(o) :- kind(o, "object"), child(o, e, _), kind(e, "spread_element").
+
+// ---- schema.prisma --------------------------------------------------------------------------------------------------
+// fff_model(x, f, s, e): `model x {` on line s of schema file f, closed by the `}` line e.
+.decl fff_model(x: symbol, f: symbol, s: number, e: number)
+fff_model(x, f, s, e) :- fff_schema_file(f), file_line(f, s, t), match("\\s*model\\s+(?<x>\\w+)\\s*\\{.*", t),
+    e = min i : { file_line(f, i, u), i > s, match("\\s*\\}.*", u) }.
+// fff_field(x, n, t): line t of model x declares field n.
+.decl fff_field(x: symbol, n: symbol, t: symbol)
+fff_field(x, n, t) :- fff_model(x, f, s, e), file_line(f, i, t), i > s, i < e,
+    match("\\s*(?<n>[A-Za-z_]\\w*)\\s+[A-Za-z_].*", t).
+// fff_unique_field(x, n): field n of model x carries `@id` or `@unique`.
+.decl fff_unique_field(x: symbol, n: symbol)
+fff_unique_field(x, n) :- fff_field(x, n, t), match("[^/]*@(id|unique)\\b.*", t).
+// fff_compound(x, f, i, l): line i of file f in model x is `@@id([...])` or `@@unique([...])` listing l.
+.decl fff_compound(x: symbol, f: symbol, i: number, l: symbol)
+fff_compound(x, f, i, l) :- fff_model(x, f, s, e), file_line(f, i, t), i > s, i < e,
+    match("\\s*@@(id|unique)\\s*\\(\\s*(fields\\s*:\\s*)?\\[(?<l>[^\\]]*)\\].*", t).
+// fff_schema_file(f): a .prisma file of the repository, found by walking the directories six levels down from the root
+// (`prisma/schema.prisma`, `prisma/schema/*.prisma`, `packages/db/prisma/schema.prisma`), skipping node_modules,
+// build output and dot directories.
+.decl fff_schema_file(f: symbol)
+fff_schema_file(n) :- dir_entry("", n, 0), match(".*\\.prisma", n).
+fff_schema_file(f) :- fff_dir(p, k), k > 0, dir_entry(p, n, 0), match(".*\\.prisma", n), f = cat(p, "/", n).
+.decl fff_dir(p: symbol, k: number)
+fff_dir("", 0).
+fff_dir(n, 1) :- dir_entry("", n, 1), !fff_skip_dir(n).
+fff_dir(c, k + 1) :- fff_dir(p, k), k > 0, k < 6, dir_entry(p, n, 1), !fff_skip_dir(n), c = cat(p, "/", n).
+.decl fff_skip_dir(n: symbol)
+fff_skip_dir(n) :- dir_entry(_, n, 1), (match("\\..*", n) ; n = "node_modules" ; n = "dist" ; n = "build" ;
+    n = "coverage" ; n = "out").
+
+// The cases, `cases/prisma-practice-find-first-without-order-by/`, read as one repository: each line ending in
+// `// caught` is reported, and no other line.
+.test cases exactly
+    .fixture "package.json" from "../cases/prisma-practice-find-first-without-order-by/package.json"
+    .fixture "prisma/schema.prisma" from "../cases/prisma-practice-find-first-without-order-by/prisma/schema.prisma"
+    .fixture "prisma/seed.ts" from "../cases/prisma-practice-find-first-without-order-by/prisma/seed.ts"
+    .fixture "src/lib/db.ts" from "../cases/prisma-practice-find-first-without-order-by/src/lib/db.ts"
+    .fixture "src/server/billing.ts" from "../cases/prisma-practice-find-first-without-order-by/src/server/billing.ts"
+    .fixture "src/server/projects.ts" from "../cases/prisma-practice-find-first-without-order-by/src/server/projects.ts"
+    .fixture "src/app/api/invites/route.ts" from "../cases/prisma-practice-find-first-without-order-by/src/app/api/invites/route.ts"
+    .fixture "src/server/billing.test.ts" from "../cases/prisma-practice-find-first-without-order-by/src/server/billing.test.ts"
+    .expect _ at "src/server/billing.ts":5
+    .expect _ at "src/server/billing.ts":10
+    .expect _ at "src/server/projects.ts":5
+    .expect _ at "src/server/projects.ts":9
+.end

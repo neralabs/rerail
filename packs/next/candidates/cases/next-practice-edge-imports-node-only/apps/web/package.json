@@ -1,0 +1,5 @@
+{
+  "name": "web",
+  "private": true,
+  "dependencies": { "next": "^16.3.0", "@prisma/client": "^6.5.0" }
+}

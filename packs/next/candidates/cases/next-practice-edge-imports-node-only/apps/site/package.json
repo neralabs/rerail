@@ -1,0 +1,4 @@
+{
+  "private": true,
+  "dependencies": { "next": "15.3.0", "bcrypt": "^5.1.1" }
+}

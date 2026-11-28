@@ -1,0 +1,6 @@
+{
+  "name": "@todo/ui-kit",
+  "private": true,
+  "main": "src/use-gallery.ts",
+  "dependencies": { "@tanstack/react-query": "^5.59.0" }
+}

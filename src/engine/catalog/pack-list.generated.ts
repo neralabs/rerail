@@ -9,10 +9,13 @@ export const RULE_PACK_LIST: readonly { readonly id: string; readonly packageNam
   { id: "next", packageName: "@neralabs/rerail-pack-next" },
   { id: "node", packageName: "@neralabs/rerail-pack-node" },
   { id: "php", packageName: "@neralabs/rerail-pack-php" },
+  { id: "postgres-migrations", packageName: "@neralabs/rerail-pack-postgres-migrations" },
+  { id: "prisma", packageName: "@neralabs/rerail-pack-prisma" },
   { id: "python", packageName: "@neralabs/rerail-pack-python" },
   { id: "react", packageName: "@neralabs/rerail-pack-react" },
   { id: "rust", packageName: "@neralabs/rerail-pack-rust" },
   { id: "sql", packageName: "@neralabs/rerail-pack-sql" },
+  { id: "tanstack-query", packageName: "@neralabs/rerail-pack-tanstack-query" },
   { id: "typescript", packageName: "@neralabs/rerail-pack-typescript" },
   { id: "vue", packageName: "@neralabs/rerail-pack-vue" },
 ];

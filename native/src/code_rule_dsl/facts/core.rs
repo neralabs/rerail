@@ -793,6 +793,7 @@ pub fn input_columns(rel: &str) -> Option<&'static [&'static str]> {
         "package" => &["dir", "name"],
         "package_field" => &["dir", "key", "v"],
         "package_for" => &["path", "dir"],
+        "package_export" => &["name", "subpath", "target"],
         "pkg" => &["d", "p"],
         "path_part" | "file_name" => &["d", "s"],
         "tape" => &["n", "par", "size", "depth"],

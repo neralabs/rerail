@@ -1,0 +1,423 @@
+.policy "tanstack-query-practice-fetch-without-ok-check" revision 1
+.description "A fetch() that feeds a TanStack Query queryFn or mutationFn must throw on an HTTP error status (check res.ok), or the failed request counts as success."
+.language typescript
+.mode log
+.scope include "**/*.ts", "**/*.mts", "**/*.cts", "**/*.tsx", "**/*.js", "**/*.jsx", "**/*.mjs", "**/*.cjs"
+.scope exclude "**/*.test.*", "**/*.spec.*", "**/*.cy.*", "**/__tests__/**", "**/test/**", "**/tests/**", "**/e2e/**"
+.scope exclude "**/__mocks__/**", "**/*.stories.*", "**/*.story.*", "**/__stories__/**", "**/__fixtures__/**", "**/fixtures/**"
+.scope exclude "**/node_modules/**", "**/dist/**", "**/build/**", "**/out/**", "**/.next/**", "**/coverage/**", "**/vendor/**"
+.scope exclude "**/.venv/**", "**/.yarn/**", "**/generated/**", "**/__generated__/**", "**/*.generated.*", "**/*.gen.*"
+.scope exclude "**/*.min.js", "**/*.d.ts"
+// Rerail's own rule, not a port. fetch() resolves, not rejects, on a 404 or a 500; TanStack Query only sees an error
+// when the queryFn or mutationFn throws. A fetch whose response is read without a status check makes a failed request
+// a success: a query caches the error body as data (no error state, no retry, no error boundary) and a mutation runs
+// onSuccess. Reported at the fetch() call, citing the option it feeds, in a function that runs for a `queryFn` or
+// `mutationFn` option (pair or method) of a file that imports @tanstack/*query* or react-query: the option's own
+// function, inline or named (same file, or imported: relative, `@/`/`~/` alias, barrel re-exports, namespace
+// imports; resolved below), and any function it calls by name, transitively. The fetch is the global one (also
+// window./globalThis./self.fetch), and its
+// response is read (`.json()`, `.text()`, `.blob()`, `.arrayBuffer()`, `.formData()`) or thrown away (`await
+// fetch(...);`), through a variable, `await`, or a `.then(r => ...)` callback.
+//   lib/api.ts:   export async function getTodos() { const r = await fetch("/api/todos"); return r.json() }
+//   use-todos.ts: useQuery({ queryKey: ["todos"], queryFn: getTodos })         reported at fetch, cites queryFn
+//   queryFn: () => fetcher("/api/stats")  with  fetcher = (u) => fetch(u).then((r) => r.json())   reported
+//   queryFn: () => projectService.getAll()  with  projectService = { async getAll() { …fetch… } }  reported
+//   mutationFn: async (t) => { await fetch("/api/todos", { method: "PUT", body }) }                reported
+// Not reported, near misses:
+//   if (!res.ok) throw ... / res.status === 404 / const { ok } = res     any `.ok` or `.status` in the function
+//   const body = await res.json(); if (body.error) throw ...             a throw after the fetch, outside a catch
+//   return handleResponse(res) / fetch(u).then(check)                    the response goes to another function
+//   return fetch(u) / return res                                         the caller gets the Response to check
+//   a fetch in useEffect, or in a function no queryFn/mutationFn reaches; RTK Query's queryFn (no TanStack import)
+//   fetch(u, { mode: "no-cors" })  (or an init const holding it)       an opaque response: `ok` is always false and
+//                                                                       the status 0, so a check would always throw
+//   axios, ky, ofetch, tRPC: they reject on error statuses
+// Gaps: class methods and `this.m()`, a function passed as a value (`queryFn: () => request(getTodos)`), a custom
+// wrapper hook in a file that does not import TanStack Query, workspace packages (`@acme/api`) and `paths` aliases
+// other than `@/`, `~/`, `#/`, a Response held in an array (`Promise.all([...])`), an object member more than 3 deep
+// (`api.a.b.c.d`), and a member taken past a local object's imported member (`{ todos: importedApi }.todos.list`)
+// are not followed. Any `.ok`/`.status` name or Promise.reject in the function counts as a check, even when it reads
+// something else.
+
+#include "tsx/names.rerail"
+
+.violation FetchWithoutOkCheck(at: node, k: symbol, p: symbol, ol: number)
+    "fetch() resolves on HTTP errors (404, 500), and nothing checks this response before it feeds `{k}` at {p}:{ol}: TanStack Query then takes the failed request as success (a query caches the error body as data, a mutation runs onSuccess) and never shows its error state or retries. Throw on a bad status before reading the body, `if (!res.ok) throw new Error(...)`, or call the project's fetch helper that already does. Leave it when this endpoint's error responses are meant to reach the UI as data."
+// The rule runs per file (decisions 0652, 0677, 0649). A file states, by symbols alone, what it defines
+// (fwoc_def_key: "path#name", "path#name.member"), what each definition and each option calls through its imports
+// (fwoc_key_call, fwoc_opt_first), and, for each fetch it may report (fwoc_fk: its path, its digest and how many
+// fetches of that digest come before it), which of its definitions run it and whether a check stands there
+// (fwoc_fk_entry, fwoc_fk_kchk). Resolution, reach and the option a fetch cites cross between files by those
+// symbols alone (fwoc_res, fwoc_kreach, fwoc_fk_cite), and only the finding joins a fetch to them. A fetch fed by an
+// option of its own file cites that file's first such option by line; else the option of the least path (then the
+// least definition it enters by) whose functions reach it, that file's first such option.
+FetchWithoutOkCheck(c, k, p, l) :- fwoc_unchecked(c), fwoc_fk(c, fk), !fwoc_fk_checked(fk), fwoc_fk_cite(fk, k, p, l).
+
+// fwoc_tq_doc(d): document d imports TanStack Query (@tanstack/react-query, @tanstack/query-core, @tanstack/vue-query,
+// …, or v3's react-query).
+.decl fwoc_tq_doc(d: number)
+fwoc_tq_doc(d) :- import_binding(sp, _, s, _), match("@tanstack/(?:[a-z]+-)?query(?:-[a-z-]+)?|react-query", s),
+    docof(sp, d).
+// fwoc_option(o, k, v): o is a `queryFn` or `mutationFn` option of value v; a method `queryFn() {}` is its own value.
+.decl fwoc_option(o: node, k: symbol, v: node)
+fwoc_option(o, k, v) :- kind(o, "pair"), field(o, "key", n), kind(n, "property_identifier"), text(n, k), fwoc_key(k),
+    field(o, "value", v), docof(o, d), fwoc_tq_doc(d).
+fwoc_option(o, k, o) :- kind(o, "method_definition"), field(o, "name", n), kind(n, "property_identifier"), text(n, k),
+    fwoc_key(k), docof(o, d), fwoc_tq_doc(d).
+.decl fwoc_key(k: symbol)
+fwoc_key("queryFn"). fwoc_key("mutationFn").
+
+// ---- values in a file ----------------------------------------------------------------------------------------------
+// fwoc_fn_value(v, g): expression v is function g, or names it in v's own file. fwoc_value(v, n): v is, or names, n,
+// a function or an object literal: a local function or a const bound to one, or a member of an object literal
+// (`todoService.getAll`, `api.todos.list`). A name another file defines is fwoc_ref's.
+.decl fwoc_fn_kind(k: symbol)
+fwoc_fn_kind("arrow_function"). fwoc_fn_kind("function_expression"). fwoc_fn_kind("function").
+fwoc_fn_kind("function_declaration"). fwoc_fn_kind("generator_function"). fwoc_fn_kind("generator_function_declaration").
+fwoc_fn_kind("method_definition").
+.decl fwoc_fn_value(v: node, g: node)
+fwoc_fn_value(v, g) :- fwoc_value(v, g), kind(g, k), fwoc_fn_kind(k).
+.decl fwoc_value(v: node, n: node)
+fwoc_value(v, v) :- kind(v, k), fwoc_fn_kind(k).
+fwoc_value(v, v) :- kind(v, "object").
+fwoc_value(v, n) :- kind(v, "identifier"), ref_site(v, s), fwoc_site_val(s, n).
+fwoc_value(v, n) :- kind(v, "member_expression"), field(v, "object", o), fwoc_value(o, b), kind(b, "object"),
+    field(v, "property", p), text(p, x), fwoc_member(b, x, n).
+// fwoc_member(b, x, n): object literal b's member x is n: `x: <value>` or a method `x() {}`.
+.decl fwoc_member(b: node, x: symbol, n: node)
+fwoc_member(b, x, n) :- child(b, p, _), kind(p, "pair"), field(p, "key", k), kind(k, "property_identifier"),
+    text(k, x), field(p, "value", v), fwoc_value(v, n).
+fwoc_member(b, x, m) :- child(b, m, _), kind(m, "method_definition"), field(m, "name", k), text(k, x).
+.decl fwoc_site_val(s: node, n: node)
+fwoc_site_val(s, s) :- kind(s, "function_declaration").
+fwoc_site_val(s, n) :- kind(s, "variable_declarator"), field(s, "value", n), kind(n, k),
+    (fwoc_fn_kind(k) ; k = "object").
+// fwoc_ref(v, s, xr): expression v names xr ("x", or "x.m" for a member) of what its file's import source s names:
+// an imported name, a member of a namespace import (`api.getTodos`), a member of either (`api.todos.list`,
+// fwoc_iref), or a member of a local object literal bound to one (`{ list: importedList }.list`).
+.decl fwoc_ref(v: node, s: symbol, xr: symbol)
+fwoc_ref(v, s, xr) :- fwoc_iref(v, s, xr).
+fwoc_ref(v, s, xr) :- kind(v, "member_expression"), field(v, "object", o), fwoc_value(o, b), kind(b, "object"),
+    field(v, "property", p), text(p, x), fwoc_member_ref(b, x, s, xr).
+.decl fwoc_iref(v: node, s: symbol, xr: symbol)
+fwoc_iref(v, s, x) :- kind(v, "identifier"), ref_site(v, sp), import_binding(sp, _, s, x), x != "*".
+fwoc_iref(v, s, x) :- kind(v, "member_expression"), field(v, "object", o), kind(o, "identifier"), ref_site(o, sp),
+    import_binding(sp, _, s, "*"), field(v, "property", p), text(p, x).
+fwoc_iref(v, s, cat(y, ".", x)) :- kind(v, "member_expression"), field(v, "object", o), fwoc_iref(o, s, y),
+    field(v, "property", p), text(p, x).
+// fwoc_member_ref(b, x, s, xr): object literal b's member x is `x: <v>`, v naming xr of import source s.
+.decl fwoc_member_ref(b: node, x: symbol, s: symbol, xr: symbol)
+fwoc_member_ref(b, x, s, xr) :- child(b, p, _), kind(p, "pair"), field(p, "key", k), kind(k, "property_identifier"),
+    text(k, x), field(p, "value", v), fwoc_ref(v, s, xr).
+
+// ---- what a file defines, and what its functions call ---------------------------------------------------------------
+// fwoc_def(d, x, n): document d's top-level x is n, a function or an object literal: its own top-level function or
+// const, or `export default`.
+.decl fwoc_def(d: number, x: symbol, n: node)
+fwoc_def(d, x, n) :- top_level(s, x), fwoc_site_val(s, n), docof(s, d).
+fwoc_def(d, "default", g) :- kind(e, "export_statement"), field(e, "declaration", g), kind(g, "function_declaration"),
+    match("export\\s+default\\b[\\s\\S]*", e), docof(e, d).
+fwoc_def(d, "default", n) :- kind(e, "export_statement"), field(e, "value", v), kind(v, "identifier"),
+    ref_site(v, s), fwoc_site_val(s, n), docof(e, d).
+fwoc_def(d, "default", n) :- kind(e, "export_statement"), field(e, "value", n), kind(n, k),
+    (fwoc_fn_kind(k) ; k = "object"), docof(e, d).
+// fwoc_dk(p, h, r, n): the file at path p defines n, a function or an object literal, as its top-level h (r ""), or
+// as member r (".m", ".m.n", at most 3 deep: a value-making rule may not recurse) of the object literal h is.
+// fwoc_def_key(e, n): the same, as definition e, "p#h" or "p#h.m".
+.decl fwoc_dk(p: symbol, h: symbol, r: symbol, n: node)
+fwoc_dk(p, h, r, n) :- fwoc_dk0(p, h, r, n).
+fwoc_dk(p, h, r, n) :- fwoc_dk1(p, h, r, n).
+fwoc_dk(p, h, r, n) :- fwoc_dk2(p, h, r, n).
+fwoc_dk(p, h, r, n) :- fwoc_dk3(p, h, r, n).
+.decl fwoc_dk0(p: symbol, h: symbol, r: symbol, n: node)
+fwoc_dk0(p, x, "", n) :- fwoc_def(d, x, n), doc(d, p, _).
+.decl fwoc_dk1(p: symbol, h: symbol, r: symbol, n: node)
+fwoc_dk1(p, h, cat(r, ".", x), m) :- fwoc_dk0(p, h, r, b), kind(b, "object"), fwoc_member(b, x, m).
+.decl fwoc_dk2(p: symbol, h: symbol, r: symbol, n: node)
+fwoc_dk2(p, h, cat(r, ".", x), m) :- fwoc_dk1(p, h, r, b), kind(b, "object"), fwoc_member(b, x, m).
+.decl fwoc_dk3(p: symbol, h: symbol, r: symbol, n: node)
+fwoc_dk3(p, h, cat(r, ".", x), m) :- fwoc_dk2(p, h, r, b), kind(b, "object"), fwoc_member(b, x, m).
+.decl fwoc_def_key(e: symbol, n: node)
+fwoc_def_key(cat(p, "#", h, r), n) :- fwoc_dk(p, h, r, n).
+.decl fwoc_key_def(p: symbol, h: symbol, r: symbol)
+fwoc_key_def(p, h, r) :- fwoc_dk(p, h, r, _).
+// fwoc_def_ref(p, x, s, y): the file at path p has `export { y as x } from s`. fwoc_member_alias(p, h, r, s, xr): its
+// object literal h's member r is `m: <v>`, v naming xr of what its import source s names.
+.decl fwoc_def_ref(p: symbol, x: symbol, s: symbol, y: symbol)
+fwoc_def_ref(p, x, s, y) :- export_from(ex, s, y, x), docof(ex, d), doc(d, p, _).
+.decl fwoc_member_alias(p: symbol, h: symbol, r: symbol, s: symbol, xr: symbol)
+fwoc_member_alias(p, h, cat(r, ".", x), s, xr) :- fwoc_dk(p, h, r, b), kind(b, "object"),
+    fwoc_member_ref(b, x, s, xr), docof(b, d), doc(d, p, _).
+// fwoc_star(p, s): the file at path p has `export * from s`.
+.decl fwoc_star(p: symbol, s: symbol)
+fwoc_star(p, s) :- star_export(ex, s), docof(ex, d), doc(d, p, _).
+
+// fwoc_root(g): a function whose calls the rule follows: an option's own, or a definition another file may call.
+.decl fwoc_root(g: node)
+fwoc_root(g) :- fwoc_option(_, _, v), fwoc_fn_value(v, g).
+fwoc_root(g) :- fwoc_def_key(_, g), kind(g, k), fwoc_fn_kind(k).
+// fwoc_lreach(g, h): function h runs when root g runs, in g's file: g, or a function it (or one it reaches) calls by
+// a name of the file. fwoc_lcall(g, s, xr): running g calls xr of what import source s names.
+.decl fwoc_lreach(g: node, h: node)
+fwoc_lreach(g, g) :- fwoc_root(g).
+fwoc_lreach(g, h) :- fwoc_lreach(g, f), has(f, c, "call_expression"), field(c, "function", x), fwoc_fn_value(x, h).
+.decl fwoc_lcall(g: node, s: symbol, xr: symbol)
+fwoc_lcall(g, s, xr) :- fwoc_lreach(g, f), has(f, c, "call_expression"), field(c, "function", x), fwoc_ref(x, s, xr).
+// fwoc_key_call(e, p, s, xr): running definition e, of the file at path p, calls xr of what p's import s names.
+.decl fwoc_key_call(e: symbol, p: symbol, s: symbol, xr: symbol)
+fwoc_key_call(e, p, s, xr) :- fwoc_def_key(e, g), fwoc_lcall(g, s, xr), docof(g, d), doc(d, p, _).
+// fwoc_opt_first(p, s, xr, k, l): in the file at path p, an option k runs xr of what p's import s names (its value
+// names it, or a function it reaches calls it), the first such option by line and column, at line l.
+.decl fwoc_opt_ref(o: node, k: symbol, s: symbol, xr: symbol)
+fwoc_opt_ref(o, k, s, xr) :- fwoc_option(o, k, v), fwoc_ref(v, s, xr).
+fwoc_opt_ref(o, k, s, xr) :- fwoc_option(o, k, v), fwoc_fn_value(v, g), fwoc_lcall(g, s, xr).
+.decl fwoc_opt_later(o: node, s: symbol, xr: symbol)
+fwoc_opt_later(o, s, xr) :- fwoc_opt_ref(o, _, s, xr), fwoc_opt_ref(o2, _, s, xr), docof(o, d), docof(o2, d),
+    line(o, l), line(o2, l2), (l2 < l ; l2 = l, col(o, x), col(o2, x2), x2 < x).
+.decl fwoc_opt_first(p: symbol, s: symbol, xr: symbol, k: symbol, l: number)
+fwoc_opt_first(p, s, xr, k, l) :- fwoc_opt_ref(o, k, s, xr), !fwoc_opt_later(o, s, xr), docof(o, d), doc(d, p, _),
+    line(o, l).
+
+// ---- import resolution, across files, by path --------------------------------------------------------------------
+// Aliases are resolved by their shape, not yet through tsx/names' `target` and `sym_of` (which read the tsconfig).
+// fwoc_path(p, s, f): the file at path p's import or re-export source s may be the file at path f:
+//   "./a", "../a"            from p's directory, then .ts, .tsx, .js, .jsx, .mts, .mjs and index.* candidates
+//   "@/a", "~/a", "#/a"      by layout: a under any directory above p (src/a.ts for "@/*": ["./src/*"]), the
+//                            usual tsconfig `paths` alias; tsconfig.json itself is not read
+// Workspace packages (`@acme/api`) and other `paths` keys are not resolved. Only a file that defines the name is
+// taken (fwoc_res), so a candidate no file has names nothing.
+.decl fwoc_path(p: symbol, s: symbol, f: symbol)
+fwoc_path(p, s, cat(b, e)) :- import_spec(i, s), prefix(".", s), docof(i, d), doc(d, p, _), b = @join(@dir(p), s),
+    fwoc_ext(e).
+fwoc_path(p, s, f) :- fwoc_alias(p, s, r), fwoc_up(p, a), fwoc_ext(e),
+    (a = "", f = cat(r, e) ; a != "", f = cat(a, "/", r, e)).
+.decl fwoc_ext(e: symbol)
+fwoc_ext(""). fwoc_ext(".ts"). fwoc_ext(".tsx"). fwoc_ext(".js"). fwoc_ext(".jsx"). fwoc_ext(".mts"). fwoc_ext(".mjs").
+fwoc_ext("/index.ts"). fwoc_ext("/index.tsx"). fwoc_ext("/index.js"). fwoc_ext("/index.jsx").
+// fwoc_alias(p, s, r): the file at path p imports s, "@/r", "~/r" or "#/r".
+.decl fwoc_alias(p: symbol, s: symbol, r: symbol)
+fwoc_alias(p, s, substr(s, 2, strlen(s) - 2)) :- import_spec(i, s), (prefix("@/", s) ; prefix("~/", s) ; prefix("#/", s)),
+    docof(i, d), doc(d, p, _).
+// fwoc_up(p, a): a is a directory above file p ("" for the root).
+.decl fwoc_up(p: symbol, a: symbol)
+fwoc_up(p, a) :- fwoc_alias(p, _, _), a0 = @dir(p), (a0 = ".", a = "" ; a0 != ".", a = a0).
+fwoc_up(p, a) :- fwoc_up(p, b), b != "", a0 = @dir(b), (a0 = "." , a = "" ; a0 != ".", a = a0), a != b.
+
+// fwoc_want(p, s, xr): xr of what the file at path p's import s names is asked: an option's, or a reached
+// definition's call.
+.decl fwoc_want(p: symbol, s: symbol, xr: symbol) cross_file
+fwoc_want(p, s, xr) :- fwoc_opt_first(p, s, xr, _, _).
+fwoc_want(p, s, xr) :- fwoc_kreach(_, e), fwoc_key_call(e, p, s, xr).
+// fwoc_ask(f, h, r): what the file at path f has as h, then its member r ("" or ".m…"), is asked: a want, or where
+// one leads through `export { y as x } from`, `export * from` (never `default`), or an object's member bound to an
+// import. The asked name is kept as its parts, so following one makes no new value.
+.decl fwoc_ask(f: symbol, h: symbol, r: symbol) cross_file
+fwoc_ask(f, h, r) :- fwoc_want(p, s, xr), fwoc_path(p, s, f), match("(?<h>[^.]*)(?<r>.*)", xr).
+fwoc_ask(f2, y, r) :- fwoc_ask(f, h, r), fwoc_def_ref(f, h, s, y), fwoc_path(f, s, f2).
+fwoc_ask(f2, h, r) :- fwoc_ask(f, h, r), h != "default", fwoc_star(f, s), fwoc_path(f, s, f2).
+fwoc_ask(f2, yh, yr) :- fwoc_ask(f, h, r), fwoc_member_alias(f, h, r, s, y), fwoc_path(f, s, f2),
+    match("(?<yh>[^.]*)(?<yr>.*)", y).
+fwoc_ask(f2, y, r2) :- fwoc_ask(f, h, r), fwoc_member_alias(f, h, m, s, y), match("[^.]*", y), prefix(cat(m, "."), r),
+    r2 = substr(r, strlen(m), strlen(r) - strlen(m)), fwoc_path(f, s, f2).
+// fwoc_res(f, h, r, e): asked name h, r of the file at path f is definition e, followed as fwoc_ask follows it.
+.decl fwoc_res(f: symbol, h: symbol, r: symbol, e: symbol) cross_file
+fwoc_res(f, h, r, cat(f, "#", h, r)) :- fwoc_ask(f, h, r), fwoc_key_def(f, h, r).
+fwoc_res(f, h, r, e) :- fwoc_ask(f, h, r), fwoc_def_ref(f, h, s, y), fwoc_path(f, s, f2), fwoc_res(f2, y, r, e).
+fwoc_res(f, h, r, e) :- fwoc_ask(f, h, r), h != "default", fwoc_star(f, s), fwoc_path(f, s, f2), fwoc_res(f2, h, r, e).
+fwoc_res(f, h, r, e) :- fwoc_ask(f, h, r), fwoc_member_alias(f, h, r, s, y), fwoc_path(f, s, f2),
+    match("(?<yh>[^.]*)(?<yr>.*)", y), fwoc_res(f2, yh, yr, e).
+fwoc_res(f, h, r, e) :- fwoc_ask(f, h, r), fwoc_member_alias(f, h, m, s, y), match("[^.]*", y), prefix(cat(m, "."), r),
+    r2 = substr(r, strlen(m), strlen(r) - strlen(m)), fwoc_path(f, s, f2), fwoc_res(f2, y, r2, e).
+// fwoc_ref_key(p, s, xr, e): xr of what the file at path p's import s names is definition e.
+.decl fwoc_ref_key(p: symbol, s: symbol, xr: symbol, e: symbol) cross_file
+fwoc_ref_key(p, s, xr, e) :- fwoc_want(p, s, xr), fwoc_path(p, s, f), match("(?<h>[^.]*)(?<r>.*)", xr),
+    fwoc_res(f, h, r, e).
+
+// ---- reach across files, and the option each reached definition cites ----------------------------------------------
+// fwoc_kreach(r, e): running definition r, which an option names or calls, runs definition e, at any depth.
+.decl fwoc_kreach(r: symbol, e: symbol) cross_file
+fwoc_kreach(r, r) :- fwoc_opt_first(p, s, xr, _, _), fwoc_ref_key(p, s, xr, r).
+fwoc_kreach(r, e) :- fwoc_kreach(r, e0), fwoc_key_call(e0, p, s, xr), fwoc_ref_key(p, s, xr, e).
+// fwoc_cite(e, p, k, l): an option k at line l of the file at path p runs definition e: of those, the least by path,
+// then by import source and name.
+.decl fwoc_cite_row(e: symbol, w: symbol, p: symbol, s: symbol, xr: symbol) cross_file
+fwoc_cite_row(e, cat(p, "|", s, "|", xr), p, s, xr) :- fwoc_opt_first(p, s, xr, _, _), fwoc_ref_key(p, s, xr, r),
+    fwoc_kreach(r, e).
+.decl fwoc_cite_later(e: symbol, w: symbol) cross_file
+fwoc_cite_later(e, w) :- fwoc_cite_row(e, w, _, _, _), fwoc_cite_row(e, w2, _, _, _), w2 < w.
+.decl fwoc_cite(e: symbol, p: symbol, k: symbol, l: number) cross_file
+fwoc_cite(e, p, k, l) :- fwoc_cite_row(e, w, p, s, xr), !fwoc_cite_later(e, w), fwoc_opt_first(p, s, xr, k, l).
+.decl fwoc_kreached(e: symbol) cross_file
+fwoc_kreached(e) :- fwoc_cite_row(e, _, _, _, _).
+
+// ---- the fetch, in its file ----------------------------------------------------------------------------------------
+// fwoc_fetch(c): c calls the global fetch: a `fetch` (or window./globalThis./self.fetch) nothing in the file declares
+// or imports (es_global holds ECMAScript's globals only, not the browser's).
+.decl fwoc_fetch(c: node)
+fwoc_fetch(c) :- kind(c, "call_expression"), field(c, "function", f), kind(f, "identifier"), fwoc_global(f, "fetch").
+fwoc_fetch(c) :- kind(c, "call_expression"), field(c, "function", f), kind(f, "member_expression"),
+    field(f, "property", p), text(p, "fetch"), field(f, "object", w), fwoc_global(w, x),
+    (x = "window" ; x = "globalThis" ; x = "self").
+.decl fwoc_global(r: node, x: symbol)
+fwoc_global(r, x) :- kind(r, "identifier"), text(r, x), (x = "fetch" ; x = "window" ; x = "globalThis" ; x = "self"),
+    ref(r, x, "value"), !ref_site(r, _).
+// fwoc_scope(c, s): s is a function around fetch call c.
+.decl fwoc_scope(c: node, s: node)
+fwoc_scope(c, s) :- fwoc_fetch(c), nearest(c, s, fwoc_fn_kind).
+fwoc_scope(c, s) :- fwoc_scope(c, i), nearest(i, s, fwoc_fn_kind).
+// fwoc_lfeed(c, o): option o, of c's file, runs a function around c. fwoc_centry(c, e): running definition e, of c's
+// file, runs a function around c.
+.decl fwoc_lfeed(c: node, o: node)
+fwoc_lfeed(c, o) :- fwoc_option(o, _, v), fwoc_fn_value(v, g), fwoc_lreach(g, r), fwoc_scope(c, r).
+.decl fwoc_local_fed(c: node)
+fwoc_local_fed(c) :- fwoc_lfeed(c, _).
+.decl fwoc_centry(c: node, e: symbol)
+fwoc_centry(c, e) :- fwoc_def_key(e, g), fwoc_lreach(g, r), fwoc_scope(c, r).
+// fwoc_local_first(c, k, l): the first option of c's file, by line and column, that runs a function around c.
+.decl fwoc_lfeed_later(c: node, o: node)
+fwoc_lfeed_later(c, o) :- fwoc_lfeed(c, o), fwoc_lfeed(c, o2), line(o, l), line(o2, l2),
+    (l2 < l ; l2 = l, col(o, x), col(o2, x2), x2 < x).
+.decl fwoc_local_first(c: node, k: symbol, l: number)
+fwoc_local_first(c, k, l) :- fwoc_lfeed(c, o), !fwoc_lfeed_later(c, o), fwoc_option(o, k, _), line(o, l).
+
+// fwoc_resp(c, e): expression e holds fetch call c's Response: c, `await c`, a const bound to it, the parameter of
+// a `.then` callback on it.
+.decl fwoc_resp(c: node, e: node)
+fwoc_resp(c, c) :- fwoc_fetch(c).
+fwoc_resp(c, a) :- fwoc_resp(c, e), child(a, e, _), kind(a, k), fwoc_wrap(k).
+fwoc_resp(c, r) :- fwoc_resp(c, e), kind(s, "variable_declarator"), field(s, "value", e), field(s, "name", n),
+    kind(n, "identifier"), ref_site(r, s).
+fwoc_resp(c, r) :- fwoc_then(c, _, g), kind(g, k), fwoc_fn_kind(k), decl_site(g, _, s, "param", _), ref_site(r, s).
+.decl fwoc_wrap(k: symbol)
+fwoc_wrap("await_expression"). fwoc_wrap("parenthesized_expression"). fwoc_wrap("as_expression").
+fwoc_wrap("non_null_expression"). fwoc_wrap("satisfies_expression").
+// fwoc_then(c, e, a): `e.then(a, …)`, e holding c's Response.
+.decl fwoc_then(c: node, e: node, a: node)
+fwoc_then(c, e, a) :- fwoc_resp(c, e), fwoc_method_call(e, "then", t), field(t, "arguments", args), child(args, a, 0).
+// fwoc_method_call(e, x, t): t is the call `e.x(…)`.
+.decl fwoc_method_call(e: node, x: symbol, t: node)
+fwoc_method_call(e, x, t) :- fwoc_resp(_, e), kind(m, "member_expression"), field(m, "object", e),
+    field(m, "property", p), text(p, x), kind(t, "call_expression"), field(t, "function", m).
+
+// fwoc_consumed(c): c's response body is read, or the response is dropped (`await fetch(...);`).
+.decl fwoc_consumed(c: node)
+fwoc_consumed(c) :- fwoc_resp(c, e), fwoc_method_call(e, x, _), fwoc_body_read(x).
+fwoc_consumed(c) :- fwoc_resp(c, e), child(s, e, _), kind(s, "expression_statement").
+.decl fwoc_body_read(x: symbol)
+fwoc_body_read("json"). fwoc_body_read("text"). fwoc_body_read("blob"). fwoc_body_read("arrayBuffer").
+fwoc_body_read("formData").
+// fwoc_escapes(c): the response goes where this function cannot see what happens to it: an argument, a return
+// value, an arrow's result, an element of an object or array, an assignment, a `.then` handler named elsewhere.
+.decl fwoc_escapes(c: node)
+fwoc_escapes(c) :- fwoc_resp(c, e), child(a, e, _), kind(a, k), fwoc_escape_parent(k).
+fwoc_escapes(c) :- fwoc_resp(c, e), kind(g, "arrow_function"), field(g, "body", e).
+fwoc_escapes(c) :- fwoc_resp(c, e), kind(a, "assignment_expression"), field(a, "right", e).
+fwoc_escapes(c) :- fwoc_then(c, _, a), kind(a, k), !fwoc_fn_kind(k).
+.decl fwoc_escape_parent(k: symbol)
+fwoc_escape_parent("arguments"). fwoc_escape_parent("return_statement"). fwoc_escape_parent("array").
+fwoc_escape_parent("object"). fwoc_escape_parent("pair"). fwoc_escape_parent("yield_expression").
+fwoc_escape_parent("spread_element"). fwoc_escape_parent("ternary_expression").
+
+// fwoc_check(c, s): function s around c checks a status (`.ok`, `.status`, `{ ok }`), rejects, or throws after c
+// outside a catch clause (a catch only sees network errors and parse errors). fwoc_chk_in(c, r): a function around c
+// inside r, or r, checks: a check counts where it stands in a function that runs for the query.
+.decl fwoc_check(c: node, s: node)
+fwoc_check(c, s) :- fwoc_scope(c, s), has(s, k, fwoc_status_kind), (text(k, "ok") ; text(k, "status")).
+fwoc_check(c, s) :- fwoc_scope(c, s), has(s, t, "throw_statement"), fwoc_after(c, t), !inside(t, _, "catch_clause").
+fwoc_check(c, s) :- fwoc_scope(c, s), has(s, m, "member_expression"), text(m, "Promise.reject").
+// fwoc_after(c, t): t starts after c starts (earlier and visit_index have no TypeScript rows in this runner).
+.decl fwoc_after(c: node, t: node)
+fwoc_after(c, t) :- fwoc_scope(c, s), has(s, t, "throw_statement"), line(c, a), line(t, b),
+    (b > a ; b = a, col(c, x), col(t, y), y > x).
+.decl fwoc_status_kind(k: symbol)
+fwoc_status_kind("property_identifier"). fwoc_status_kind("shorthand_property_identifier_pattern").
+fwoc_status_kind("shorthand_property_identifier").
+.decl fwoc_chk_in(c: node, r: node)
+fwoc_chk_in(c, r) :- fwoc_scope(c, r), fwoc_scope(c, s), (s = r ; within(s, r)), fwoc_check(c, s).
+// fwoc_lchecked(c): an option of c's file runs a function around c in which a check stands. fwoc_kchecked(c, e):
+// running definition e, of c's file, does; the finding asks whether some option reaches e (fwoc_kreached).
+.decl fwoc_lchecked(c: node)
+fwoc_lchecked(c) :- fwoc_option(_, _, v), fwoc_fn_value(v, g), fwoc_lreach(g, r), fwoc_chk_in(c, r).
+.decl fwoc_kchecked(c: node, e: symbol)
+fwoc_kchecked(c, e) :- fwoc_def_key(e, g), fwoc_lreach(g, r), fwoc_chk_in(c, r).
+
+// fwoc_no_cors(c): fetch call c asks for an opaque response, `mode: "no-cors"` in its init (written in the call or in
+// a const it passes): a reachability probe, whose `ok` is always false.
+.decl fwoc_no_cors(c: node)
+fwoc_no_cors(c) :- fwoc_fetch(c), field(c, "arguments", args), has(args, p, "pair"), fwoc_no_cors_pair(p).
+fwoc_no_cors(c) :- fwoc_fetch(c), field(c, "arguments", args), child(args, a, _), kind(a, "identifier"),
+    ref_site(a, s), kind(s, "variable_declarator"), field(s, "value", o), kind(o, "object"), child(o, p, _),
+    fwoc_no_cors_pair(p).
+.decl fwoc_no_cors_pair(p: node)
+fwoc_no_cors_pair(p) :- kind(p, "pair"), field(p, "key", k), text(k, "mode"), field(p, "value", v),
+    (text(v, "\"no-cors\"") ; text(v, "'no-cors'")).
+
+// fwoc_unchecked(c): fetch c's response is read or dropped, does not escape, and is not an opaque probe, and no option
+// of its file runs a function around it in which a check stands.
+.decl fwoc_unchecked(c: node)
+fwoc_unchecked(c) :- fwoc_fetch(c), fwoc_consumed(c), !fwoc_escapes(c), !fwoc_lchecked(c), !fwoc_no_cors(c).
+
+// fwoc_fk(c, fk): fetch c, which the finding may report, is keyed fk: its path, its digest, and how many fetches of
+// its file with that digest come before it (a node's id and position would change with every edit above it).
+.decl fwoc_fdig(c: node, d: number, g: symbol)
+fwoc_fdig(c, d, g) :- fwoc_unchecked(c), docof(c, d), g = @tree_digest(c).
+.decl fwoc_fk(c: node, fk: symbol)
+fwoc_fk(c, cat(p, "#", g, "#", to_string(i))) :- fwoc_fdig(c, d, g), doc(d, p, _),
+    i = count : { fwoc_fdig(c2, d, g), c2 < c }.
+// fwoc_fk_entry(fk, e): running definition e, of fk's file, runs a function around fetch fk; fwoc_fk_kchk(fk, e): one
+// in which a check stands. fwoc_fk_lfirst(fk, k, p, l): fk is in the file at path p, whose first option by line and
+// column that runs a function around it is k, at line l.
+.decl fwoc_fk_entry(fk: symbol, e: symbol)
+fwoc_fk_entry(fk, e) :- fwoc_fk(c, fk), fwoc_centry(c, e).
+.decl fwoc_fk_kchk(fk: symbol, e: symbol)
+fwoc_fk_kchk(fk, e) :- fwoc_fk(c, fk), fwoc_kchecked(c, e).
+.decl fwoc_fk_lfirst(fk: symbol, k: symbol, p: symbol, l: number)
+fwoc_fk_lfirst(fk, k, p, l) :- fwoc_fk(c, fk), fwoc_local_first(c, k, l), docof(c, d), doc(d, p, _).
+.decl fwoc_fk_local(fk: symbol)
+fwoc_fk_local(fk) :- fwoc_fk(c, fk), fwoc_local_fed(c).
+// fwoc_fk_checked(fk): an option of another file reaches a definition that runs a function around fetch fk in which a
+// check stands.
+.decl fwoc_fk_checked(fk: symbol) cross_file
+fwoc_fk_checked(fk) :- fwoc_fk_kchk(fk, e), fwoc_kreached(e).
+// fwoc_fk_cite(fk, k, p, l): the option fetch fk cites, k at line l of the file at path p: its own file's first, else
+// among the definitions that run it, the least by the citing option's path, then by the definition.
+.decl fwoc_fk_crow(fk: symbol, w: symbol, e: symbol) cross_file
+fwoc_fk_crow(fk, cat(p, "|", e), e) :- fwoc_fk_entry(fk, e), fwoc_cite(e, p, _, _), !fwoc_fk_local(fk).
+.decl fwoc_fk_clater(fk: symbol, w: symbol) cross_file
+fwoc_fk_clater(fk, w) :- fwoc_fk_crow(fk, w, _), fwoc_fk_crow(fk, w2, _), w2 < w.
+.decl fwoc_fk_cite(fk: symbol, k: symbol, p: symbol, l: number) cross_file
+fwoc_fk_cite(fk, k, p, l) :- fwoc_fk_lfirst(fk, k, p, l).
+fwoc_fk_cite(fk, k, p, l) :- fwoc_fk_crow(fk, w, e), !fwoc_fk_clater(fk, w), fwoc_cite(e, p, k, l).
+
+// The cases, `cases/tanstack-query-practice-fetch-without-ok-check/`, read as one repository: each line ending in
+// `// caught` is reported, and no other line.
+.test cases exactly
+    .fixture "package.json" from "../cases/tanstack-query-practice-fetch-without-ok-check/package.json"
+    .fixture "src/features/board/board-api.ts" from "../cases/tanstack-query-practice-fetch-without-ok-check/src/features/board/board-api.ts"
+    .fixture "src/features/board/use-board.ts" from "../cases/tanstack-query-practice-fetch-without-ok-check/src/features/board/use-board.ts"
+    .fixture "src/features/inbox/inbox.tsx" from "../cases/tanstack-query-practice-fetch-without-ok-check/src/features/inbox/inbox.tsx"
+    .fixture "src/features/onboarding/reachability.ts" from "../cases/tanstack-query-practice-fetch-without-ok-check/src/features/onboarding/reachability.ts"
+    .fixture "src/features/todos/save-todo.tsx" from "../cases/tanstack-query-practice-fetch-without-ok-check/src/features/todos/save-todo.tsx"
+    .fixture "src/features/todos/use-todos.test.ts" from "../cases/tanstack-query-practice-fetch-without-ok-check/src/features/todos/use-todos.test.ts"
+    .fixture "src/features/todos/use-todos.ts" from "../cases/tanstack-query-practice-fetch-without-ok-check/src/features/todos/use-todos.ts"
+    .fixture "src/lib/api/board.ts" from "../cases/tanstack-query-practice-fetch-without-ok-check/src/lib/api/board.ts"
+    .fixture "src/lib/api/inbox.ts" from "../cases/tanstack-query-practice-fetch-without-ok-check/src/lib/api/inbox.ts"
+    .fixture "src/lib/api/index.ts" from "../cases/tanstack-query-practice-fetch-without-ok-check/src/lib/api/index.ts"
+    .fixture "src/lib/api/service.ts" from "../cases/tanstack-query-practice-fetch-without-ok-check/src/lib/api/service.ts"
+    .fixture "src/lib/api/todos.ts" from "../cases/tanstack-query-practice-fetch-without-ok-check/src/lib/api/todos.ts"
+    .fixture "src/lib/api/types.ts" from "../cases/tanstack-query-practice-fetch-without-ok-check/src/lib/api/types.ts"
+    .fixture "src/lib/http.ts" from "../cases/tanstack-query-practice-fetch-without-ok-check/src/lib/http.ts"
+    .fixture "src/store/api.ts" from "../cases/tanstack-query-practice-fetch-without-ok-check/src/store/api.ts"
+    .fixture "tsconfig.json" from "../cases/tanstack-query-practice-fetch-without-ok-check/tsconfig.json"
+    .expect _ at "src/features/board/board-api.ts":2
+    .expect _ at "src/features/onboarding/reachability.ts":32
+    .expect _ at "src/features/board/use-board.ts":20
+    .expect _ at "src/features/todos/save-todo.tsx":13
+    .expect _ at "src/features/todos/use-todos.ts":56
+    .expect _ at "src/lib/api/board.ts":2
+    .expect _ at "src/lib/api/service.ts":3
+    .expect _ at "src/lib/api/todos.ts":5
+    .expect _ at "src/lib/api/todos.ts":10
+    .expect _ at "src/lib/api/todos.ts":43
+    .expect _ at "src/lib/http.ts":8
+.end

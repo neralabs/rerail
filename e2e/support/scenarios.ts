@@ -74,7 +74,7 @@ const STOREFRONT_FILES: Readonly<Record<string, string>> = {
   "package.json": `${JSON.stringify({
     name: "storefront",
     private: true,
-    // No `next` dependency: the installed next pack would be recommended for it.
+    // No `vue` dependency and no `.vue` file: the installed vue pack would be recommended for it.
     dependencies: { react: "19.1.0" },
     devDependencies: { typescript: "5.9.3" },
   }, null, 2)}\n`,
@@ -169,10 +169,11 @@ function writeOlderTokenPack(source: string, copy: string, ruleId: string): void
 
 /**
  * Every pack a scenario adds is installed, plus two nobody adds, so the catalog offers packs not added: python, and
- * next, a framework pack (the others are language packs) that matches nothing in the scenario checkouts. ci.yml's e2e
+ * vue, a framework pack (the others are language packs) that matches nothing in the scenario checkouts (no `.vue`
+ * file) and loads on the core this checkout builds (next's range starts at a core not released yet). ci.yml's e2e
  * filter names each one (`npm run check:ci-paths` fails when it misses one).
  */
-const INSTALLED_PACKS = ["complexity", "javascript", "next", "python", "typescript"] as const;
+const INSTALLED_PACKS = ["complexity", "javascript", "python", "typescript", "vue"] as const;
 
 // ---------------------------------------------------------------------------------------------------------------
 // Rules created by you

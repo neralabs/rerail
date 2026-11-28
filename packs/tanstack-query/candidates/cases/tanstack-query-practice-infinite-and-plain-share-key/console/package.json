@@ -1,0 +1,5 @@
+{
+  "name": "todo-console",
+  "private": true,
+  "dependencies": { "@tanstack/react-query": "^5.59.0", "react": "19.0.0" }
+}

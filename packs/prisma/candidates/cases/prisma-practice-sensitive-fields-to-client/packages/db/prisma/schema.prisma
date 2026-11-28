@@ -1,0 +1,6 @@
+// The schema of a workspace package that the admin app depends on.
+model Session {
+  id           String @id
+  userId       String
+  sessionToken String @unique
+}

@@ -1,0 +1,327 @@
+.policy "next-practice-revalidate-unknown-target" revision 1
+.description "Revalidate a route the app has; a misspelt, renamed or untyped revalidatePath target refreshes nothing, and readers keep serving stale data."
+.language typescript
+.mode steer
+.scope include "**/*.ts", "**/*.mts", "**/*.cts", "**/*.tsx", "**/*.js", "**/*.jsx", "**/*.mjs", "**/*.cjs"
+.scope exclude "**/node_modules/**", "**/dist/**", "**/.next/**", "**/coverage/**", "**/.venv/**", "**/.yarn/**"
+.scope exclude "**/generated/**", "**/__generated__/**", "**/*.generated.*", "**/*.gen.*", "**/*.min.js", "**/*.d.ts"
+.scope exclude "**/*.test.*", "**/*.spec.*", "**/*.cy.*", "**/__tests__/**", "**/__mocks__/**"
+.scope exclude "**/*.stories.*", "**/*.story.*", "**/__stories__/**", "**/__fixtures__/**"
+// Rerail's own rule, not a port. revalidatePath(path) from next/cache succeeds whatever it is given: a path no route
+// file renders, or a dynamic pattern without its type, invalidates nothing, and every reader keeps serving the old
+// (sometimes permission-relevant) data. Nothing errors; Next.js only logs a warning for the untyped pattern. (The
+// tag half, revalidateTag and updateTag of a tag nothing assigns, is next-practice-revalidate-unknown-tag, which logs
+// while the engine keeps .ts and .tsx apart.)
+// Paths are checked against the route files on disk (the app/ or pages/ folder of a package, beside its package.json
+// or in its src/, as Next.js looks for them, whose package holds the calling file), so a page.tsx counts for a call in
+// a .ts file, and a page.mdx counts.
+//   revalidatePath("/dashbaord")                        reported: no route renders /dashbaord
+//   revalidatePath(`/organisations/${id}/members`)      reported: no route has these static segments
+//   revalidatePath("/dashboard/page")                   reported: /page appended (pass "page" as the type)
+//   revalidatePath("/blog/[slug]")                      reported: a dynamic pattern with no type does nothing
+//   revalidatePath("/(en)/admin")                       reported: no (en) route group
+//   revalidatePath("/blog/[slug]", "page")              not reported: app/(site)/blog/[slug]/page.tsx
+//   revalidatePath("/(site)/blog/[slug]", "page")       not reported: a pattern may name the route group
+//   revalidatePath("/", "layout")                       not reported: the root layout
+//   revalidatePath(`/orgs/${id}/members`)               not reported: ${id} fills [orgId]
+//   revalidatePath("/docs/a/b")                         not reported: app/docs/[[...slug]]/page.mdx
+//   revalidatePath("/blog/")                            not reported: the trailing slash is ignored
+//   revalidatePath("/blog/page")                        not reported: [slug] may be "page"
+//   revalidatePath(path), revalidatePath(base + "/x")   not reported: not a static path
+//   revalidatePath("/x") when no package above the calling file has an app/ or pages/ folder: not reported
+//   a revalidatePath that is not next/cache's, test files (*.test.*, __tests__/, e2e/, playwright/, cypress/): not
+//   reported; a route folder named test/ or tests/ is checked like any other
+// Gaps: locale prefixes added by middleware (`/invoices/1` matches app/[locale]/invoices, [locale] taking
+// "invoices", though the URL Next caches is /en/invoices/1); rewrites in next.config or in an i18n middleware's
+// rewrite strategy (a path is reported when no route happens to match it as written); a [slug] pattern against an
+// [id] folder is taken as a match; an app/ in a folder without a package.json; folders more than twelve deep (a bound
+// the engine needs to see the walk end). Routes are read from disk, so this rule has no .ts/.tsx lane gap.
+
+#include "tsx/names.rerail"
+
+.violation UnknownPath(at: node, p: symbol)
+    "revalidatePath({p}) matches no route file under app/ or pages/ (route groups, slots and dynamic segments considered), so it refreshes nothing and the page keeps its stale data. Name the page that shows this data as its folders spell it: a literal URL, or a pattern such as '/blog/[slug]' with 'page' or 'layout' as the second argument (never /page or /layout appended), and for a rewrite the destination route; leave it if the route is served from outside this repository."
+UnknownPath(c, p) :- rut_path_call(c, a, b, t), docof(c, d), doc(d, q, _), rut_has_routes(q), !rut_hit(q, b, t),
+    !rut_untyped_pattern(c), text(a, p), rut_next_doc(d), !rut_test_doc(d).
+
+.violation UntypedPattern(at: node, p: symbol)
+    "revalidatePath({p}) is a route pattern with a dynamic segment but no type, and Next.js ignores it (\"This has no effect by default\"). Add 'page' to refresh the pages of that route, or 'layout' to refresh everything beneath it; if one concrete URL was meant, put the real value in place of the [segment]."
+UntypedPattern(c, p) :- rut_untyped_pattern(c), rut_arg(c, 0, a), text(a, p), docof(c, d), rut_next_doc(d),
+    !rut_test_doc(d).
+// rut_next_doc(d): d is in a package that uses Next.js: the nearest package.json above it lists next
+// (dependencies, devDependencies or peerDependencies), not only an import that names next/cache.
+.decl rut_next_doc(d: number)
+rut_next_doc(d) :- doc(d, p, _), package_for(p, dir), rut_next_pkg(dir).
+.decl rut_next_pkg(dir: symbol)
+rut_next_pkg(dir) :- package_field(dir, k, _),
+    (k = "dependencies/next" ; k = "devDependencies/next" ; k = "peerDependencies/next").
+
+// ---- the calls ------------------------------------------------------------------------------------------------
+// rut_call(c, x): c calls next/cache's x, imported by name (renamed too) or through a namespace import.
+.decl rut_api(x: symbol)
+rut_api("revalidatePath").
+.decl rut_call(c: node, x: symbol)
+rut_call(c, x) :- kind(c, "call_expression"), field(c, "function", f), kind(f, "identifier"), ref_site(f, sp),
+    import_binding(sp, _, "next/cache", x), rut_api(x).
+rut_call(c, x) :- kind(c, "call_expression"), field(c, "function", f), kind(f, "member_expression"),
+    field(f, "object", o), ref_site(o, sp), import_binding(sp, _, "next/cache", "*"), field(f, "property", p),
+    text(p, x), rut_api(x).
+.decl rut_arg(c: node, i: number, a: node)
+rut_arg(c, i, a) :- rut_call(c, _), field(c, "arguments", args), child(args, a, i).
+.decl rut_test_doc(d: number)  // a test helper outside the scope's test globs: a browser-test runner's folder
+rut_test_doc(d) :- doc(d, p, _), match("(?:.*/)?(?:e2e|playwright|cypress)/.*", p).
+
+// ---- revalidatePath's path ------------------------------------------------------------------------------------
+// rut_path_call(c, a, b, t): c revalidates path argument a, whose segments are b (no leading or trailing "/";
+// "" for the root; a ${…} segment stands for any one or more segments), with type t ("none", "page", "layout").
+// Only a path that starts with "/" is read: a static string (a file-local constant too), or a template whose
+// substitutions hold no "/".
+.decl rut_path_call(c: node, a: node, b: symbol, t: symbol)
+rut_path_call(c, a, b, t) :- rut_call(c, "revalidatePath"), rut_arg(c, 0, a), rut_path_text(a, b), rut_type(c, t).
+// rut_path_text(a, b): "/" gives "", "/a/b/" gives "a/b". Keyed by the argument, so it stays in its file.
+.decl rut_path_text(a: node, b: symbol)
+rut_path_text(a, "") :- rut_raw(a, "/").
+rut_path_text(a, b) :- rut_raw(a, v), match("/(?<b>.*[^/])/?", v), !contains("//", v).
+.decl rut_static(a: node, v: symbol)
+rut_static(a, v) :- static_value(a, v).
+rut_static(a, v) :- kind(a, "template_string"), !rut_has_sub(a), value(a, v).
+.decl rut_has_sub(a: node)
+rut_has_sub(a) :- kind(a, "template_string"), child(a, s, _), kind(s, "template_substitution").
+.decl rut_slash_sub(a: node)  // `${a ? "/x" : "/y"}` may be several segments or none: not read
+rut_slash_sub(a) :- kind(a, "template_string"), child(a, s, _), kind(s, "template_substitution"), text(s, x),
+    contains("/", x).
+// rut_raw(a, v): path argument a reads v, which starts with "/" and holds no query or fragment: a static value, or
+// the text between a template's backticks.
+.decl rut_raw(a: node, v: symbol)
+rut_raw(a, v) :- rut_arg(_, 0, a), rut_static(a, v), prefix("/", v), !contains("?", v), !contains("#", v).
+rut_raw(a, v) :- rut_arg(_, 0, a), kind(a, "template_string"), child(a, _, _), rut_has_sub(a), !rut_slash_sub(a),
+    text(a, s), match("`(?<v>/[^`]*)`", s), !contains("?", v), !contains("#", v).
+// rut_type(c, t): the second argument, when it is absent or a static "page" or "layout".
+.decl rut_type(c: node, t: symbol)
+rut_type(c, "none") :- rut_call(c, "revalidatePath"), !rut_arg(c, 1, _).
+rut_type(c, t) :- rut_call(c, "revalidatePath"), rut_arg(c, 1, a), rut_static(a, t), (t = "page" ; t = "layout").
+// rut_untyped_pattern(c): a path with a [dynamic] segment and no type (Next's isDynamicRoute).
+.decl rut_untyped_pattern(c: node)
+// A template counts when a static segment of it is one: `/[locale]/orders/${id}` still holds "[locale]".
+rut_untyped_pattern(c) :- rut_path_call(c, _, b, "none"), match("(?:.*/)?\\[[^/$]+\\](?:/.*)?", b).
+
+// ---- the routes on disk -------------------------------------------------------------------------------------
+// Routes are read from the disk (dir_entry), not from the run's documents, so .tsx pages are seen from a .ts action
+// and page.mdx counts. The engine answers a dir_entry request only from relations that read no base relation
+// (decision 0065 §2a), so the walk starts at the repository root, not at the calling file: it visits every folder
+// (dot folders, dependencies, build output and public/ assets aside), and takes app/ and pages/ where Next.js looks
+// for them: in a package's folder (one with a package.json) or its src/.
+// rut_top(dir): a folder of the walk ("" the root). The depth bound only lets the engine prove the walk ends.
+.decl rut_top(dir: symbol)
+rut_top("").
+rut_top(c) :- rut_top(dir), @count_matches("/", dir) < 12, dir_entry(dir, n, 1), !prefix(".", n), !rut_skip_dir(n),
+    c = @join(dir, n).
+.decl rut_skip_dir(n: symbol)
+rut_skip_dir("node_modules"). rut_skip_dir("dist"). rut_skip_dir("build"). rut_skip_dir("out").
+rut_skip_dir("coverage"). rut_skip_dir("vendor"). rut_skip_dir("public").
+// rut_home(dir): Next.js looks for app/ and pages/ in dir: a package's folder, or its src/.
+.decl rut_pkg(dir: symbol)
+rut_pkg(dir) :- rut_top(dir), dir_entry(dir, "package.json", 0).
+.decl rut_home(dir: symbol)
+rut_home(dir) :- rut_pkg(dir).
+rut_home(s) :- rut_pkg(dir), s = @join(dir, "src"), rut_top(s).
+// rut_root(r, k): r is an app/ (k "app") or pages/ (k "pages") directory.
+.decl rut_root(r: symbol, k: symbol)
+rut_root(@join(dir, k), k) :- rut_home(dir), (k = "app" ; k = "pages"), dir_entry(dir, k, 1).
+// rut_dir(r, rel, p): rel is a folder below root r ("" for r itself), on disk at p. Private folders (_x), dot folders
+// and node_modules are not routes.
+.decl rut_walk(r: symbol, p: symbol)
+rut_walk(r, r) :- rut_root(r, _).
+rut_walk(r, @join(p, m)) :- rut_walk(r, p), @count_matches("/", p) < 30, dir_entry(p, m, 1), !prefix("_", m),
+    !prefix(".", m), m != "node_modules".
+.decl rut_dir(r: symbol, rel: symbol, p: symbol)
+rut_dir(r, "", r) :- rut_root(r, _).
+rut_dir(r, x, p) :- rut_walk(r, p), p != r, x = substr(p, strlen(r) + 1, strlen(p) - strlen(r) - 1).
+// rut_route(r, rel, k): under root r, folder rel has a route file: k "url" for a page or route handler (a URL
+// renders it), "file" for a layout, template or default. Under pages/, every file but _app, _document, _error and
+// such is a page: pages/a/b.tsx is the URL a/b, pages/a/index.tsx is a.
+.decl rut_route(r: symbol, rel: symbol, k: symbol)
+rut_route(r, x, k) :- rut_root(r, "app"), rut_dir(r, x, p), dir_entry(p, f, 0),
+    match("(?<s>page|route|layout|template|default)\\.(?:[jt]sx?|mdx?)", f), rut_file_kind(s, k).
+rut_route(r, x, "url") :- rut_root(r, "pages"), rut_dir(r, x, p), dir_entry(p, f, 0), match("index\\.(?:[jt]sx?|mdx?)", f).
+rut_route(r, @join(x, s), "url") :- rut_root(r, "pages"), rut_dir(r, x, p), dir_entry(p, f, 0),
+    match("(?<s>[^_.][^.]*)\\.(?:[jt]sx?|mdx?)", f), s != "index".
+.decl rut_file_kind(s: symbol, k: symbol)
+rut_file_kind("page", "url"). rut_file_kind("route", "url").
+rut_file_kind("layout", "file"). rut_file_kind("template", "file"). rut_file_kind("default", "file").
+// rut_next_root(r): root r is the app/ or pages/ of a package whose package.json lists next: a React Router, Remix
+// or Expo app's app/ folder holds routes too, which Next.js never serves.
+.decl rut_home_pkg(h: symbol, pkg: symbol)
+rut_home_pkg(dir, dir) :- rut_pkg(dir).
+rut_home_pkg(s, dir) :- rut_pkg(dir), s = @join(dir, "src"), rut_top(s).
+.decl rut_next_root(r: symbol)
+rut_next_root(r) :- rut_root(r, k), rut_home_pkg(h, pkg), r = @join(h, k), rut_next_pkg(pkg).
+// rut_call_at(q, b, t): a call in the file at path q revalidates path b with type t. What follows is keyed by the
+// file's path, not the call: the routes are the repository's, and the match is read back only by the finding.
+.decl rut_call_at(q: symbol, b: symbol, t: symbol)
+rut_call_at(q, b, t) :- rut_path_call(c, _, b, t), docof(c, d), doc(d, q, _).
+// rut_root_at(q, r): root r serves the file at q: r's parent folder is the repository root or a folder above it.
+.decl rut_root_at(q: symbol, r: symbol)
+rut_root_at(q, r) :- rut_call_at(q, _, _), rut_next_root(r), @dir(r) = "".
+rut_root_at(q, r) :- rut_call_at(q, _, _), rut_next_root(r), h = @dir(r), h != "", prefix(cat(h, "/"), q).
+// rut_target(q, t, rel): a route of q's roots a revalidation of type t can name: a page or handler for no type and
+// "page"; any folder holding route files, or above one, for "layout" (Next tags every layout level of a URL).
+.decl rut_target(q: symbol, t: symbol, rel: symbol)
+rut_target(q, t, x) :- rut_call_at(q, _, t), t != "layout", rut_root_at(q, r), rut_route(r, x, "url").
+rut_target(q, "layout", x) :- rut_call_at(q, _, "layout"), rut_root_at(q, r), rut_route(r, y, _), rut_ancestor(y, x).
+.decl rut_ancestor(y: symbol, x: symbol)  // x is folder y or one above it ("" the root)
+rut_ancestor(y, y) :- rut_route(_, y, _).
+rut_ancestor(y, @dir(x)) :- rut_ancestor(y, x), x != "".
+.decl rut_has_routes(q: symbol)
+rut_has_routes(q) :- rut_root_at(q, r), rut_route(r, _, _).
+.decl rut_hit(q: symbol, b: symbol, t: symbol)
+rut_hit(q, b, t) :- rut_call_at(q, b, t), rut_target(q, t, x), rut_ok(x, b).
+
+// ---- matching a path against a route folder -------------------------------------------------------------------
+// rut_ok(x, b): route folder x renders path b. Folder segments: (group) and @slot are no URL segment (a pattern
+// may still name a group: then it matches exactly); [x] takes one path segment; [...x] one or more; [[...x]] none
+// or more. A path segment with ${…} in it takes one or more route segments.
+.decl rut_need(x: symbol, b: symbol)
+rut_need(x, b) :- rut_call_at(q, b, t), rut_target(q, t, x).
+.decl rut_str(s: symbol)
+rut_str(s) :- rut_need(s, _) ; rut_need(_, s).
+.decl rut_seg(s: symbol, h: symbol, t: symbol)  // s is h, then the rest t
+rut_seg(s, h, t) :- rut_str(s), match("(?<h>[^/]+)/(?<t>.+)", s).
+rut_seg(s, s, "") :- rut_str(s), s != "", !contains("/", s).
+// The kinds of folder name, read from the folders on disk (not from rut_seg, which the recursion builds).
+.decl rut_folder(m: symbol)
+rut_folder(m) :- rut_dir(_, x, _), x != "", match("(?:.*/)?(?<m>[^/]+)", x).
+.decl rut_skip(h: symbol)
+rut_skip(h) :- rut_folder(h), match("[(@].*", h).
+.decl rut_one(h: symbol)
+rut_one(h) :- rut_folder(h), match("\\[[^.\\[][^\\]]*\\]", h).
+.decl rut_many(h: symbol)
+rut_many(h) :- rut_folder(h), match("\\[\\.\\.\\.[^\\]]+\\]", h).
+.decl rut_any(h: symbol)
+rut_any(h) :- rut_folder(h), match("\\[\\[\\.\\.\\.[^\\]]+\\]\\]", h).
+
+rut_need(t, b) :- rut_need(x, b), rut_seg(x, h, t), (rut_skip(h) ; rut_any(h)).
+rut_need(t, u) :- rut_need(x, b), rut_seg(x, h, t), rut_seg(b, h, u).
+rut_need(t, u) :- rut_need(x, b), rut_seg(x, h, t), (rut_one(h) ; rut_many(h)), rut_seg(b, g, u), !match("\\(.*\\)", g).
+rut_need(x, u) :- rut_need(x, b), rut_seg(x, h, _), (rut_many(h) ; rut_any(h)), rut_seg(b, g, u), !match("\\(.*\\)", g).
+rut_need(t, u) :- rut_need(x, b), rut_seg(x, h, t), !rut_skip(h), rut_seg(b, g, u), contains("${", g).
+rut_need(t, b) :- rut_need(x, b), rut_seg(x, h, t), !rut_skip(h), rut_seg(b, g, _), contains("${", g).
+
+.decl rut_ok(x: symbol, b: symbol)
+rut_ok("", "") :- rut_need("", "").
+rut_ok(x, b) :- rut_need(x, b), rut_seg(x, h, t), (rut_skip(h) ; rut_any(h)), rut_ok(t, b).
+rut_ok(x, b) :- rut_need(x, b), rut_seg(x, h, t), rut_seg(b, h, u), rut_ok(t, u).
+// A dynamic folder takes a URL segment, not a "(group)" a pattern names: "/(en)/profile" is no route of
+// app/[locale]/(routes)/profile.
+rut_ok(x, b) :- rut_need(x, b), rut_seg(x, h, t), (rut_one(h) ; rut_many(h)), rut_seg(b, g, u), !match("\\(.*\\)", g),
+    rut_ok(t, u).
+rut_ok(x, b) :- rut_need(x, b), rut_seg(x, h, _), (rut_many(h) ; rut_any(h)), rut_seg(b, g, u), !match("\\(.*\\)", g),
+    rut_ok(x, u).
+rut_ok(x, b) :- rut_need(x, b), rut_seg(x, h, t), !rut_skip(h), rut_seg(b, g, u), contains("${", g), rut_ok(t, u).
+rut_ok(x, b) :- rut_need(x, b), rut_seg(x, h, t), !rut_skip(h), rut_seg(b, g, _), contains("${", g), rut_ok(t, b).
+
+// The cases, `cases/next-practice-revalidate-unknown-target/web/`, read as one repository: each line ending in
+// `// caught` is reported, and no other line. Routes are read from the disk, so page.tsx, route.ts and page.mdx all count.
+.test cases exactly
+    .fixture "__tests__/actions.test.ts" from "../cases/next-practice-revalidate-unknown-target/web/__tests__/actions.test.ts"
+    .fixture "app/[team]/settings/page.tsx" from "../cases/next-practice-revalidate-unknown-target/web/app/[team]/settings/page.tsx"
+    .fixture "app/(site)/@modal/default.tsx" from "../cases/next-practice-revalidate-unknown-target/web/app/(site)/@modal/default.tsx"
+    .fixture "app/(site)/actions.ts" from "../cases/next-practice-revalidate-unknown-target/web/app/(site)/actions.ts"
+    .fixture "app/(site)/blog/[slug]/page.tsx" from "../cases/next-practice-revalidate-unknown-target/web/app/(site)/blog/[slug]/page.tsx"
+    .fixture "app/(site)/blog/page.tsx" from "../cases/next-practice-revalidate-unknown-target/web/app/(site)/blog/page.tsx"
+    .fixture "app/(site)/dashboard/page.tsx" from "../cases/next-practice-revalidate-unknown-target/web/app/(site)/dashboard/page.tsx"
+    .fixture "app/(site)/layout.tsx" from "../cases/next-practice-revalidate-unknown-target/web/app/(site)/layout.tsx"
+    .fixture "app/(site)/orgs/[orgId]/members/page.tsx" from "../cases/next-practice-revalidate-unknown-target/web/app/(site)/orgs/[orgId]/members/page.tsx"
+    .fixture "app/(site)/page.tsx" from "../cases/next-practice-revalidate-unknown-target/web/app/(site)/page.tsx"
+    .fixture "app/(site)/test/actions.ts" from "../cases/next-practice-revalidate-unknown-target/web/app/(site)/test/actions.ts"
+    .fixture "app/(site)/test/page.tsx" from "../cases/next-practice-revalidate-unknown-target/web/app/(site)/test/page.tsx"
+    .fixture "app/_components/hidden/page.tsx" from "../cases/next-practice-revalidate-unknown-target/web/app/_components/hidden/page.tsx"
+    .fixture "app/api/posts/route.ts" from "../cases/next-practice-revalidate-unknown-target/web/app/api/posts/route.ts"
+    .fixture "app/docs/[[...slug]]/page.mdx" from "../cases/next-practice-revalidate-unknown-target/web/app/docs/[[...slug]]/page.mdx"
+    .fixture "clients/acme/portal/web/package.json" from "../cases/next-practice-revalidate-unknown-target/web/clients/acme/portal/web/package.json"
+    .fixture "clients/acme/portal/web/app/actions.ts" from "../cases/next-practice-revalidate-unknown-target/web/clients/acme/portal/web/app/actions.ts"
+    .fixture "clients/acme/portal/web/app/invoices/page.tsx" from "../cases/next-practice-revalidate-unknown-target/web/clients/acme/portal/web/app/invoices/page.tsx"
+    .fixture "e2e/helpers.ts" from "../cases/next-practice-revalidate-unknown-target/web/e2e/helpers.ts"
+    .fixture "lib/data.ts" from "../cases/next-practice-revalidate-unknown-target/web/lib/data.ts"
+    .fixture "lib/db.ts" from "../cases/next-practice-revalidate-unknown-target/web/lib/db.ts"
+    .fixture "lib/local-revalidate.ts" from "../cases/next-practice-revalidate-unknown-target/web/lib/local-revalidate.ts"
+    .fixture "package.json" from "../cases/next-practice-revalidate-unknown-target/web/package.json"
+    .fixture "rr-app/package.json" from "../cases/next-practice-revalidate-unknown-target/web/rr-app/package.json"
+    .fixture "rr-app/react-router.config.ts" from "../cases/next-practice-revalidate-unknown-target/web/rr-app/react-router.config.ts"
+    .fixture "rr-app/app/routes/teams/page.tsx" from "../cases/next-practice-revalidate-unknown-target/web/rr-app/app/routes/teams/page.tsx"
+    .fixture "rr-app/app/actions.ts" from "../cases/next-practice-revalidate-unknown-target/web/rr-app/app/actions.ts"
+    .fixture "tsconfig.json" from "../cases/next-practice-revalidate-unknown-target/web/tsconfig.json"
+    .expect _ at "app/(site)/actions.ts":14
+    .expect _ at "app/(site)/actions.ts":15
+    .expect _ at "app/(site)/actions.ts":16
+    .expect _ at "app/(site)/actions.ts":17
+    .expect _ at "app/(site)/actions.ts":19
+    .expect _ at "app/(site)/actions.ts":20
+    .expect _ at "app/(site)/actions.ts":21
+    .expect _ at "app/(site)/actions.ts":22
+    .expect _ at "app/(site)/test/actions.ts":8
+    .expect _ at "clients/acme/portal/web/app/actions.ts":8
+.end
+
+// The pack.json examples.
+.test example_caught exactly
+    .fixture "package.json" ```
+        {
+          "name": "web",
+          "private": true,
+          "dependencies": { "next": "^15.5.2", "react": "^19.0.0" }
+        }
+        ```
+    .fixture "app/(site)/dashboard/page.tsx" ```
+        export default function DashboardPage() {
+          return <h1>Dashboard</h1>;
+        }
+        ```
+    .fixture "app/(site)/blog/[slug]/page.tsx" ```
+        export default function PostPage() {
+          return <article />;
+        }
+        ```
+    .fixture "app/(site)/actions.ts" ```
+        "use server";
+
+        import { revalidatePath } from "next/cache";
+
+        export async function publish() {
+          revalidatePath("/dashbaord");
+          revalidatePath("/blog/[slug]");
+        }
+        ```
+    .expect UnknownPath at "app/(site)/actions.ts":6
+    .expect UntypedPattern at "app/(site)/actions.ts":7
+.end
+.test example_passes exactly
+    .fixture "package.json" ```
+        {
+          "name": "web",
+          "private": true,
+          "dependencies": { "next": "^15.5.2", "react": "^19.0.0" }
+        }
+        ```
+    .fixture "app/(site)/dashboard/page.tsx" ```
+        export default function DashboardPage() {
+          return <h1>Dashboard</h1>;
+        }
+        ```
+    .fixture "app/(site)/blog/[slug]/page.tsx" ```
+        export default function PostPage() {
+          return <article />;
+        }
+        ```
+    .fixture "app/(site)/actions.ts" ```
+        "use server";
+
+        import { revalidatePath } from "next/cache";
+
+        export async function publish(slug: string) {
+          revalidatePath("/dashboard");
+          revalidatePath("/blog/[slug]", "page");
+          revalidatePath(`/blog/${slug}`);
+        }
+        ```
+.end

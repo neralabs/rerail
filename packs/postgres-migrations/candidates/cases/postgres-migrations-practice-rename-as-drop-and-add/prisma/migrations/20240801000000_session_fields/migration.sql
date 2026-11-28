@@ -1,0 +1,4 @@
+-- AlterTable
+ALTER TABLE "Session" DROP COLUMN "expires", -- caught
+ADD COLUMN     "createdAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
+ADD COLUMN     "expiresAt" TIMESTAMP(3) NOT NULL;

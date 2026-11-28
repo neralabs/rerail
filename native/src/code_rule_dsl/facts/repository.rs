@@ -8,7 +8,8 @@
 //! - `file(path)`: every file under the root, the host's ignored directories (`git_workspace::ignored_directories`:
 //!   `.git`, `node_modules`, `target`, …) skipped.
 //! - `package(dir, name)`, `package_field(dir, key, v)`: each `package.json`'s name and string-valued members, keys
-//!   as paths from the root (`engines/node`); `package_for(path, dir)`: a document's nearest `package.json`.
+//!   as paths from the root (`engines/node`); `package_for(path, dir)`: a document's nearest `package.json`;
+//!   `package_export(name, subpath, target)`: a named `package.json`'s `exports`, one row per target string.
 //! - A language's project files (decision 0710): the relations of each `ProjectReader` a language registers at load
 //!   (`install_project_reader`), over the same walk (`Tree`). The core names none of them: ECMAScript's adapter reads
 //!   `tsconfig.json` and npm's publication (`import_target::project`).
@@ -34,6 +35,7 @@ pub struct Rows {
     pub(crate) package: Vec<(String, String)>,
     pub(crate) package_field: Vec<(String, String, String)>,
     pub(crate) package_for: Vec<(String, String)>,
+    pub(crate) package_export: Vec<(String, String, String)>,
     /// Each registered reader's relations the program reads: (name, columns, rows).
     pub(crate) project: Vec<ProjectRelation>,
 }
@@ -224,16 +226,41 @@ fn tree_entry(root: &Path, entry: &std::fs::DirEntry, stack: &mut Vec<PathBuf>, 
     rows.file.push(rel);
 }
 
-/// `package` and `package_field` of each `package.json` that parses to an object.
+/// `package`, `package_field` and `package_export` of each `package.json` that parses to an object.
 fn package_rows(packages: &BTreeMap<String, Option<Value>>, rows: &mut Rows) {
     for (dir, json) in packages {
         let Some(json @ Value::Object(o)) = json else { continue };
         if let Some(Value::String(name)) = o.get("name") {
             rows.package.push((dir.clone(), name.clone()));
+            let mut targets = Vec::new();
+            exports(o.get("exports").unwrap_or(&Value::Null), &mut targets);
+            rows.package_export.extend(targets.into_iter().map(|(s, t)| (name.clone(), s, t)));
         }
         let mut fields = Vec::new();
         strings("", json, &mut fields);
         rows.package_field.extend(fields.into_iter().map(|(k, v)| (dir.clone(), k, v)));
+    }
+}
+
+/// The targets of a `package.json`'s `exports`, by subpath: an object whose keys start with "." maps subpaths, and
+/// anything else is the targets of ".". A subpath's targets are its strings, through condition objects and fallback
+/// arrays, each one row; `null` gives none.
+fn exports(v: &Value, out: &mut Vec<(String, String)>) {
+    match v {
+        Value::Object(o) if o.keys().any(|k| k.starts_with('.')) => {
+            o.iter().filter(|(k, _)| k.starts_with('.')).for_each(|(k, x)| export_targets(k, x, out));
+        }
+        other => export_targets(".", other, out),
+    }
+}
+
+/// The target strings of one `exports` subpath, through condition objects and fallback arrays.
+fn export_targets(subpath: &str, v: &Value, out: &mut Vec<(String, String)>) {
+    match v {
+        Value::String(t) => out.push((subpath.to_owned(), t.clone())),
+        Value::Array(list) => list.iter().for_each(|x| export_targets(subpath, x, out)),
+        Value::Object(o) => o.values().for_each(|x| export_targets(subpath, x, out)),
+        _ => {}
     }
 }
 
@@ -261,7 +288,7 @@ pub fn relations(store: &ContentStore, root: &Path, docs: &[String], opts: &Valu
         options(opts, &mut rows);
     }
     let projects = READERS.read().unwrap_or_else(|e| e.into_inner()).iter().flat_map(|r| r.relations.iter()).any(|(n, _)| reads(n));
-    if projects || ["file", "package", "package_field", "package_for"].iter().any(|r| reads(r)) {
+    if projects || ["file", "package", "package_field", "package_for", "package_export"].iter().any(|r| reads(r)) {
         let packages = tree(root, docs, &mut rows);
         if projects {
             let files = std::mem::take(&mut rows.file);
@@ -276,6 +303,7 @@ pub fn relations(store: &ContentStore, root: &Path, docs: &[String], opts: &Valu
     rows.package.iter().for_each(|(a, b)| texts.extend([a.as_str(), b.as_str()]));
     rows.package_field.iter().for_each(|(a, b, c)| texts.extend([a.as_str(), b.as_str(), c.as_str()]));
     rows.package_for.iter().for_each(|(a, b)| texts.extend([a.as_str(), b.as_str()]));
+    rows.package_export.iter().for_each(|(a, b, c)| texts.extend([a.as_str(), b.as_str(), c.as_str()]));
     rows.project.iter().flat_map(|(_, _, r)| r.iter().flatten()).for_each(|x| texts.push(x.as_str()));
     let atoms = store.intern_atoms(&texts)?;
     let mut next = atoms.iter().map(|&a| i64::from(a));
@@ -302,6 +330,8 @@ pub fn relations(store: &ContentStore, root: &Path, docs: &[String], opts: &Valu
     make("package_field", &["dir", "key", "v"], field);
     let pfor: Vec<Vec<i64>> = rows.package_for.iter().map(|_| vec![sym(), sym()]).collect();
     make("package_for", &["path", "dir"], pfor);
+    let export: Vec<Vec<i64>> = rows.package_export.iter().map(|_| vec![sym(), sym(), sym()]).collect();
+    make("package_export", &["name", "subpath", "target"], export);
     for (name, columns, made) in &rows.project {
         let interned: Vec<Vec<i64>> = made.iter().map(|row| row.iter().map(|_| sym()).collect()).collect();
         make(name, columns, interned);
@@ -340,6 +370,30 @@ pub mod tests {
         assert!(!rows.package_field.iter().any(|(_, k, _)| k == "n"));
         assert_eq!(rows.package_for, [("web/src/a.ts".to_owned(), "web".to_owned())]);
         let _ = std::fs::remove_dir_all(&root);
+    }
+
+    /// `package_export`: one row per target string of a named package's `exports`, through conditions and fallback
+    /// arrays (`null` gives none); a string or a conditions object is the subpath "."; a package with no name has none.
+    #[test]
+    fn the_tree_gives_package_exports() {
+        let root = std::env::temp_dir().join(format!("rerail-repo-exports-{}-{:?}", std::process::id(), std::thread::current().id()));
+        let _ = std::fs::remove_dir_all(&root);
+        for (p, t) in [
+            ("ui/package.json", r#"{"name": "@acme/ui", "exports": {"./button": "./src/button.ts", ".": {"types": "./index.d.ts", "default": ["./index.js", null]}}}"#),
+            ("cfg/package.json", r#"{"name": "cfg", "exports": "./main.js"}"#),
+            ("anon/package.json", r#"{"exports": "./x.js"}"#),
+        ] {
+            let p = root.join(p);
+            std::fs::create_dir_all(p.parent().unwrap()).unwrap();
+            std::fs::write(p, t).unwrap();
+        }
+        let mut rows = Rows::default();
+        tree(&root, &[], &mut rows);
+        let _ = std::fs::remove_dir_all(&root);
+        let mut exports = rows.package_export.clone();
+        exports.sort();
+        let three = |v: &[(&str, &str, &str)]| v.iter().map(|(a, b, c)| (a.to_string(), b.to_string(), c.to_string())).collect::<Vec<_>>();
+        assert_eq!(exports, three(&[("@acme/ui", ".", "./index.d.ts"), ("@acme/ui", ".", "./index.js"), ("@acme/ui", "./button", "./src/button.ts"), ("cfg", ".", "./main.js")]));
     }
 
     /// Decision 0710: a registered project reader's relations are made over the walked tree when the program reads

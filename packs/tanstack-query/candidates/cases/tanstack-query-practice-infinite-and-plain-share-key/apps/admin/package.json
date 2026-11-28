@@ -1,0 +1,5 @@
+{
+  "name": "todo-admin",
+  "private": true,
+  "dependencies": { "@tanstack/react-query": "^5.59.0" }
+}

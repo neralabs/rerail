@@ -98,7 +98,9 @@ projection, as before.
     every chunk and the cross-file part, and measured once.
     - `option` and `option_item` come from the policy's options (`corpus::run_with_options`), flattened as
       rrlab flattens them.
-    - `file`, `package`, `package_field` and `package_for` come from one walk of the root.
+    - `file`, `package`, `package_field`, `package_for` and `package_export` come from one walk of the root;
+      `package_export` is one row per target string of a named package's `exports`, through conditions and fallback
+      arrays. A language's own project files (`tsconfig*`) are its registered reader's (decision 0710).
 11. **Functors.**
     - `@dot("", b)` is `b`: in the native executor's `cat`, its inverse with the first part given, and SQL.
     - `@lower` is registered as Unicode lowercase. SQLite's own `lower` is ASCII only.

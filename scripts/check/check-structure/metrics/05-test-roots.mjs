@@ -9,7 +9,8 @@
 // are"): a scenario of the workbench's explorer (`docs/rule-syntax/site/explorer/scenarios/`) holds the sample source
 // a rule is shown on, named as the code it stands for (`test_parse.py` for a pytest rule); it is never run as a test.
 // Exemption `rule-cases`: a pack rule's cases (`docs/rule-syntax/packs/<pack>/cases/<rule>/` in the workbench,
-// `packs/<id>/cases/<rule>/` for a published pack's `.rerail` rules) are the small repository its `.test` blocks read
+// `packs/<id>/cases/<rule>/` for a published pack's `.rerail` rules, `packs/<id>/candidates/cases/<rule>/` for one left
+// out of the pack) are the small repository its `.test` blocks read
 // (`.fixture … from`), named as the code they stand for (`shop/tests/test_views.py`, a Django test module a rule leaves
 // alone); never run as a test.
 // Rust tests are not files of their own kind: `#[cfg(test)]` modules (`tests.rs`, `*_tests.rs`) are part of
@@ -26,7 +27,7 @@ const ROOTS = ["test/", "integration/", "e2e/"];
 /** Exemption `workbench-samples`. */
 const WORKBENCH_SAMPLES = "docs/rule-syntax/site/explorer/scenarios/";
 /** Exemption `rule-cases`. */
-const RULE_CASES = /^(?:docs\/rule-syntax\/packs|packs)\/[^/]+\/cases\//;
+const RULE_CASES = /^(?:docs\/rule-syntax\/packs\/[^/]+|packs\/[^/]+(?:\/candidates)?)\/cases\//;
 
 /** A test file the metric counts: none of the exemptions above covers it. */
 function counted(path) {

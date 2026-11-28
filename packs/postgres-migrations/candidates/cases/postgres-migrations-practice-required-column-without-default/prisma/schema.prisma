@@ -1,0 +1,25 @@
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+model Post {
+  id        String   @id @default(cuid())
+  title     String
+  slug      String
+  updatedAt DateTime @updatedAt
+  code      String   @unique
+  views     Int      @default(0)
+  summary   String?
+}
+
+model Tag {
+  id    String @id @default(cuid())
+  label String
+  color String
+}
+
+model Draft {
+  id    String @id
+  owner String
+}

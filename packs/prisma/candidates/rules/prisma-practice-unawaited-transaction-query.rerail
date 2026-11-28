@@ -1,0 +1,148 @@
+.policy "prisma-practice-unawaited-transaction-query" revision 1
+.description "Await every query on an interactive transaction's client inside its callback; a query left floating, run from forEach(async …) or deferred with a timer never runs or runs after the transaction closes."
+.language typescript
+.mode steer
+.scope include "**/*.ts", "**/*.mts", "**/*.cts", "**/*.tsx", "**/*.js", "**/*.jsx", "**/*.mjs", "**/*.cjs"
+.scope exclude "**/*.test.*", "**/*.spec.*", "**/*.cy.*", "**/__tests__/**", "**/test/**", "**/tests/**", "**/e2e/**", "**/__mocks__/**", "**/*.stories.*", "**/*.story.*", "**/__stories__/**", "**/__fixtures__/**", "**/fixtures/**", "**/node_modules/**", "**/dist/**", "**/build/**", "**/out/**", "**/.next/**", "**/coverage/**", "**/vendor/**", "**/.venv/**", "**/.yarn/**", "**/generated/**", "**/__generated__/**", "**/*.generated.*", "**/*.gen.*", "**/*.min.js", "**/*.d.ts"
+// Rerail's own rule, not a port. Prisma 5-7. Inside `<client>.$transaction(async (tx) => …)` Prisma commits when the
+// callback's promise settles, so every query on tx has to finish before then. A Prisma query is a lazy thenable: one
+// that nothing awaits or `.then()`s never runs; one started without waiting for it runs after the commit and fails with
+// P2028 "Transaction already closed", or is lost while the caller sees success.
+// The transaction client is the first parameter of a function passed first to `.$transaction(…)` (an extended client's
+// too), or a parameter typed `…TransactionClient` (`tx: Prisma.TransactionClient`) in a helper. A query is
+// `tx.<model>.<op>(…)` with a Prisma model operation (findMany … groupBy, the OrThrow and AndReturn forms) or
+// `tx.$queryRaw` / `$executeRaw` (and their Unsafe and Typed forms), tagged or called.
+//   tx.cart.delete({ … });                                      reported: a statement nothing awaits
+//   void tx.auditLog.create({ … });                             reported
+//   tx.event.create({ … }).then(log);                           reported: runs, but the callback does not wait
+//   Promise.all(xs.map((x) => tx.a.update(…)));                 reported: the Promise.all is not awaited
+//   xs.map(async (x) => { await tx.a.update(…) });              reported: the array of promises is dropped
+//   xs.forEach(async (x) => { await tx.a.update(…) });          reported: forEach does not wait for its callback
+//   xs.forEach((x) => tx.a.update(…));                          reported: forEach drops the query, which never runs
+//   setTimeout(() => tx.a.deleteMany(…), 0);                    reported, also setImmediate, queueMicrotask, nextTick
+//   await tx.a.update(…);  return tx.a.update(…);               not reported
+//   for (const x of xs) await tx.a.update(…);                   not reported
+//   await Promise.all(xs.map((x) => tx.a.update(…)));           not reported; returned, too
+//   const p = tx.a.create(…); …; await p;                       not reported: kept in a variable
+//   xs.forEach((x) => writes.push(tx.a.update(…)));             not reported: collected for a later Promise.all
+//   prisma.$transaction([prisma.a.create(…), …]);               not reported: the array form takes no callback
+//   xs.forEach(async (x) => { await prisma.a.update(…) });      not reported: the outer client, after the transaction
+//   function apply(tx: LedgerTx) { tx.account.update(…) }       not reported: a `tx` that is not Prisma's
+// Prisma 8 (release candidate) calls it `db.transaction(async (tx) => …)` with `tx.orm.<schema>.<Model>.<op>(…)`, and
+// refuses a second call on tx while one is in flight, so there even `await Promise.all` over tx queries is wrong; a
+// later revision adds that shape.
+// Gaps: tx passed to a helper that is called without await (`audit(tx, "paid");`), or a helper whose parameter is not
+// typed `…TransactionClient`; tx aliased to another name; a promise kept in a variable and never awaited; a
+// parameter shadowing tx inside the callback is still taken as tx; Next.js `after()` and other deferring APIs; model
+// methods added by a client extension.
+
+.violation FloatingTxQuery(at: node) "This query on the transaction client `tx` is not awaited, so the transaction does not wait for it. Prisma queries are lazy: a `tx` query that nothing awaits never runs, and one that runs through `.then()`, an un-awaited `Promise.all` or an async `.map()` can run after the transaction has committed and fail with P2028 (Transaction already closed), or be lost while the caller sees success. Await it inside the callback (`await tx.…`), return it, or collect the promises and `await Promise.all(...)`. If the result is not needed, still await it; the write only happens then."
+.violation TxQueryDeferred(at: node, w: symbol) "`{w}` runs its callback after the `$transaction` callback has returned, when the transaction has already committed or closed, so the `tx` query in it fails with P2028 (Transaction already closed). Await the query inside the transaction; if it belongs after the commit, run it after `$transaction(...)` resolves, on the outer client and awaited."
+.violation TxQueryInForEach(at: node) "`forEach` does not wait for its callback, so the `tx` queries in it run after the `$transaction` callback has returned: the transaction commits without them, and they fail with P2028 (Transaction already closed) or are lost while the caller sees success (a callback that returns the query without awaiting it never runs it at all). Loop with `for (const x of xs) {{ await tx.… }}`, or run them together with `await Promise.all(xs.map((x) => tx.…))`."
+
+FloatingTxQuery(e) :- utq_floating(e), utq_carries(e, _).
+TxQueryInForEach(c) :- utq_array_call(c, "forEach", cb), utq_cb_runs_query(cb).
+TxQueryDeferred(c, w) :- utq_deferring_call(c, w, cb), utq_query(q), within(q, cb).
+
+// ---- the transaction client -----------------------------------------------------------------------------------------
+.decl utq_fn_kind(k: symbol)
+utq_fn_kind("arrow_function"). utq_fn_kind("function_expression"). utq_fn_kind("function").
+// utq_param(f, i, x, p): the i-th parameter of function f is the plain name x, declared at p.
+.decl utq_param(f: node, i: number, x: symbol, p: node)
+utq_param(f, 0, x, p) :- kind(f, "arrow_function"), field(f, "parameter", p), kind(p, "identifier"), text(p, x).
+utq_param(f, i, x, rp) :- field(f, "parameters", ps), kind(ps, "formal_parameters"), child(ps, rp, i),
+    kind(rp, "required_parameter"), field(rp, "pattern", p), kind(p, "identifier"), text(p, x).
+// utq_tx_scope(f, x): inside function f, the name x is a Prisma transaction client.
+.decl utq_tx_scope(f: node, x: symbol)
+// `prisma.$transaction(async (tx) => …)`, `db.$transaction(function (tx) { … }, { timeout })`.
+utq_tx_scope(f, x) :- kind(m, "member_expression"), field(m, "property", pr), text(pr, "$transaction"),
+    field(c, "function", m), kind(c, "call_expression"), field(c, "arguments", a), child(a, f, 0), kind(f, k),
+    utq_fn_kind(k), utq_param(f, 0, x, _).
+// `async function reserve(tx: Prisma.TransactionClient, …)`: a helper handed the transaction client.
+utq_tx_scope(f, x) :- utq_param(f, _, x, rp), field(rp, "type", t), match("(?s).*TransactionClient.*", t).
+// utq_tx_ref(r): identifier r reads a transaction client.
+.decl utq_tx_ref(r: node)
+utq_tx_ref(r) :- utq_tx_scope(f, x), kind(r, "identifier"), within(r, f), text(r, x).
+
+// ---- queries --------------------------------------------------------------------------------------------------------
+.decl utq_model_op(op: symbol)
+utq_model_op("findUnique"). utq_model_op("findUniqueOrThrow"). utq_model_op("findFirst").
+utq_model_op("findFirstOrThrow"). utq_model_op("findMany"). utq_model_op("create"). utq_model_op("createMany").
+utq_model_op("createManyAndReturn"). utq_model_op("update"). utq_model_op("updateMany").
+utq_model_op("updateManyAndReturn"). utq_model_op("upsert"). utq_model_op("delete"). utq_model_op("deleteMany").
+utq_model_op("count"). utq_model_op("aggregate"). utq_model_op("groupBy").
+.decl utq_raw_op(op: symbol)
+utq_raw_op("$queryRaw"). utq_raw_op("$executeRaw"). utq_raw_op("$queryRawUnsafe"). utq_raw_op("$executeRawUnsafe").
+utq_raw_op("$queryRawTyped").
+// utq_query(q): call q is a query on a transaction client: `tx.order.update(…)`, tx.$executeRaw`…`.
+.decl utq_query(q: node)
+utq_query(q) :- utq_tx_ref(r), field(mm, "object", r), kind(mm, "member_expression"), field(m, "object", mm),
+    kind(m, "member_expression"), field(m, "property", o), text(o, op), utq_model_op(op), field(q, "function", m),
+    kind(q, "call_expression").
+utq_query(q) :- utq_tx_ref(r), field(m, "object", r), kind(m, "member_expression"), field(m, "property", o),
+    text(o, op), utq_raw_op(op), field(q, "function", m), kind(q, "call_expression").
+
+// ---- where a query's promise goes -----------------------------------------------------------------------------------
+// utq_carries(e, q): the value of expression e is query q's promise, or a promise or array that holds it.
+.decl utq_carries(e: node, q: node)
+utq_carries(q, q) :- utq_query(q).
+utq_carries(e, q) :- utq_carries(i, q), kind(e, "parenthesized_expression"), child(e, i, _).
+utq_carries(e, q) :- utq_carries(i, q), kind(e, "array"), child(e, i, _).
+// `q.then(f)`, `q.catch(f)`, `q.finally(f)`.
+utq_carries(e, q) :- utq_carries(o, q), field(m, "object", o), kind(m, "member_expression"), field(m, "property", p),
+    text(p, w), (w = "then" ; w = "catch" ; w = "finally"), field(e, "function", m), kind(e, "call_expression").
+// `Promise.all([…])`, `Promise.allSettled(xs.map(…))`.
+utq_carries(e, q) :- utq_carries(i, q), child(a, i, 0), kind(a, "arguments"), field(e, "arguments", a),
+    kind(e, "call_expression"), field(e, "function", m), kind(m, "member_expression"), field(m, "object", pr),
+    text(pr, "Promise"), field(m, "property", w), text(w, k), (k = "all" ; k = "allSettled" ; k = "race" ; k = "any").
+// `xs.map(cb)`: an array of the callback's results.
+utq_carries(e, q) :- utq_array_call(e, k, cb), (k = "map" ; k = "flatMap"), utq_cb_carries(cb, q).
+// utq_cb_carries(cb, q): calling cb returns a promise that holds q: an async function that runs q, or a concise
+// arrow whose body is q's promise.
+.decl utq_cb_carries(cb: node, q: node)
+utq_cb_carries(cb, q) :- op(cb, "async"), utq_query(q), within(q, cb).
+utq_cb_carries(cb, q) :- kind(cb, "arrow_function"), field(cb, "body", b), utq_carries(b, q).
+.decl utq_cb_runs_query(cb: node)
+utq_cb_runs_query(cb) :- utq_cb_carries(cb, _).
+// utq_array_call(c, k, cb): c is `<expr>.k(cb, …)` with a function literal cb.
+.decl utq_array_call(c: node, k: symbol, cb: node)
+utq_array_call(c, k, cb) :- kind(c, "call_expression"), field(c, "function", m), kind(m, "member_expression"),
+    field(m, "property", p), text(p, k), (k = "map" ; k = "flatMap" ; k = "forEach"), field(c, "arguments", a),
+    child(a, cb, 0), kind(cb, fk), utq_fn_kind(fk).
+// utq_floating(e): nothing reads e's value: a statement of its own, or the operand of `void`.
+.decl utq_floating(e: node)
+utq_floating(e) :- kind(s, "expression_statement"), child(s, e, 0).
+utq_floating(e) :- kind(u, "unary_expression"), op(u, "void"), field(u, "argument", e).
+// utq_deferring_call(c, w, cb): c hands cb to the event loop to run later.
+.decl utq_deferring_call(c: node, w: symbol, cb: node)
+utq_deferring_call(c, w, cb) :- kind(c, "call_expression"), field(c, "function", f), kind(f, "identifier"), text(f, w),
+    (w = "setTimeout" ; w = "setImmediate" ; w = "queueMicrotask"), field(c, "arguments", a), child(a, cb, 0),
+    kind(cb, k), utq_fn_kind(k).
+utq_deferring_call(c, "process.nextTick", cb) :- kind(c, "call_expression"), field(c, "function", f),
+    text(f, "process.nextTick"), field(c, "arguments", a), child(a, cb, 0), kind(cb, k), utq_fn_kind(k).
+
+// The cases, `cases/prisma-practice-unawaited-transaction-query/`, read as one repository: each line ending in
+// `// caught` is reported, and no other line.
+.test cases exactly
+    .fixture "package.json" from "../cases/prisma-practice-unawaited-transaction-query/package.json"
+    .fixture "tsconfig.json" from "../cases/prisma-practice-unawaited-transaction-query/tsconfig.json"
+    .fixture "src/lib/db.ts" from "../cases/prisma-practice-unawaited-transaction-query/src/lib/db.ts"
+    .fixture "src/app/admin/page.tsx" from "../cases/prisma-practice-unawaited-transaction-query/src/app/admin/page.tsx"
+    .fixture "src/app/cart/actions.ts" from "../cases/prisma-practice-unawaited-transaction-query/src/app/cart/actions.ts"
+    .fixture "src/server/orders.ts" from "../cases/prisma-practice-unawaited-transaction-query/src/server/orders.ts"
+    .fixture "src/server/mail.ts" from "../cases/prisma-practice-unawaited-transaction-query/src/server/mail.ts"
+    .fixture "src/server/ledger.ts" from "../cases/prisma-practice-unawaited-transaction-query/src/server/ledger.ts"
+    .fixture "src/server/__tests__/orders.test.ts" from "../cases/prisma-practice-unawaited-transaction-query/src/server/__tests__/orders.test.ts"
+    .expect _ at "src/app/admin/page.tsx":8
+    .expect _ at "src/app/cart/actions.ts":11
+    .expect _ at "src/app/cart/actions.ts":14
+    .expect _ at "src/app/cart/actions.ts":21
+    .expect _ at "src/app/cart/actions.ts":22
+    .expect _ at "src/app/cart/actions.ts":23
+    .expect _ at "src/app/cart/actions.ts":26
+    .expect _ at "src/app/cart/actions.ts":34
+    .expect _ at "src/app/cart/actions.ts":35
+    .expect _ at "src/app/cart/actions.ts":36
+    .expect _ at "src/app/cart/actions.ts":42
+    .expect _ at "src/server/orders.ts":10
+.end

@@ -1,0 +1,8 @@
+{
+  "name": "@acme/docs",
+  "private": true,
+  "dependencies": {
+    "next": "catalog:",
+    "react": "^19.0.0"
+  }
+}

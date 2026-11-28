@@ -107,7 +107,7 @@ Packs that port a linter are [linter-equivalent](docs/rule-packs.md#linter-equiv
 | `python` | Ruff v0.16, Bandit v1 |
 | `javascript` | ESLint v10, eslint-plugin-unicorn v76 |
 | `typescript` | typescript-eslint v8, @vitest/eslint-plugin v1 |
-| `next` | @next/eslint-plugin-next v16 |
+| `next` | @next/eslint-plugin-next v16; also Rerail's own App Router rules for swallowed redirects and revalidation paths |
 | `react` | eslint-plugin-react v7, eslint-plugin-react-hooks v7 |
 | `node` | eslint-plugin-n v18 |
 | `sql` | SQLFluff v4 |
@@ -117,6 +117,9 @@ Packs that port a linter are [linter-equivalent](docs/rule-packs.md#linter-equiv
 | `php` | PHP_CodeSniffer v4, PHPStan v2, Psalm v6 |
 | `complexity` | none: counts like lizard v1, for cyclomatic complexity above 6 in Python, TypeScript, JavaScript, PHP, Blade, Rust, Vue and Java |
 | `django` | none: Rerail's own rules for Django models, querysets, transactions, views and settings, from the Django docs and maintainers' review advice |
+| `tanstack-query` | none: Rerail's own rules for copied query state, unchecked fetch responses and Server Actions used as query functions |
+| `prisma` | none: Rerail's own rules for client reuse, unchecked request data and side effects in transactions; looped queries and unsafe SQL checks ship off |
+| `postgres-migrations` | none: Rerail's own rules for scans and blocking indexes on existing PostgreSQL tables, and missing lock timeouts |
 
 A ported rule ships only once it passes the conformance check: it is scored against the original tool's own findings on the tool's tests, at the exact release the pack pins, and on real-code samples. Ports that are not ready yet sit in each pack's `candidates/`, scored but never shipped. Each pack is versioned with changesets and released separately from core. See [Rule packs](docs/rule-packs.md), the [pack format](docs/pack-format.md) and [the conformance check](conformance/README.md#the-gate).
 

@@ -1,0 +1,4 @@
+{
+  "buildCommand": "cd ../.. && pnpm --filter @acme/db db:reset && pnpm --filter @acme/web build",
+  "installCommand": "pnpm install"
+}

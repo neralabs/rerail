@@ -1,0 +1,4 @@
+{
+  "name": "@acme/web-e2e",
+  "scripts": { "build": "prisma migrate reset --force" }
+}

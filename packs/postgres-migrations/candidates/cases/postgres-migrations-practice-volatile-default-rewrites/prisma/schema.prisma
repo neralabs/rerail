@@ -1,0 +1,21 @@
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+model Order {
+  id        String   @id @default(cuid())
+  publicId  String   @unique @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  seq       Int      @default(autoincrement())
+  name      String
+  createdAt DateTime @default(now())
+  active    Boolean  @default(true)
+  tags      Tag[]
+}
+
+model Tag {
+  id      String @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  seq     Int    @default(autoincrement())
+  orderId String
+  order   Order  @relation(fields: [orderId], references: [id])
+}

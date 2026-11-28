@@ -1,0 +1,588 @@
+.policy "prisma-practice-query-in-loop" revision 1
+.description "Do not send one Prisma query per item of a list in a for…of loop or array callback; load or write the items in one query: an in filter, include, createMany, updateMany or a $transaction batch."
+.language typescript
+.mode log
+.scope include "**/*.ts", "**/*.mts", "**/*.cts", "**/*.tsx", "**/*.js", "**/*.jsx", "**/*.mjs", "**/*.cjs"
+.scope exclude "**/*.test.*", "**/*.spec.*", "**/*.cy.*", "**/__tests__/**", "**/test/**", "**/tests/**", "**/e2e/**"
+.scope exclude "**/__mocks__/**", "**/*.stories.*", "**/*.story.*", "**/__stories__/**", "**/__fixtures__/**"
+.scope exclude "**/fixtures/**", "**/node_modules/**", "**/dist/**", "**/build/**", "**/out/**", "**/.next/**"
+.scope exclude "**/coverage/**", "**/vendor/**", "**/.venv/**", "**/.yarn/**", "**/generated/**", "**/__generated__/**"
+.scope exclude "**/*.generated.*", "**/*.gen.*", "**/*.min.js", "**/*.d.ts"
+// Rerail's own rule, not a port. A Prisma query per item of a list is the n+1 problem Prisma's performance guide
+// names ("looping through query results and performing one additional query per result"): N round trips per
+// request, and under `Promise.all(xs.map(…))` N queries at once, which queue for the connection pool and fail with
+// P2024 ("Timed out fetching a new connection from the connection pool") once the list outgrows it. Prisma 5 to 7;
+// Prisma 8's `tx.orm.<schema>.<Model>.<op>(…)` delegates (one member level more) are not matched yet.
+// A query is `<r>.<model>.<op>(…)` (findMany … groupBy, their OrThrow and AndReturn forms) where the receiver r reads
+// as a Prisma client by name: its text contains "prisma" (`prisma`, `ctx.prisma`, `this.prismaService`,
+// `prisma.client`), or it is the identifier or ends in the property `db`, `tx`, `trx`, `database` or `_db` (`db`,
+// `ctx.db`, `this.db`). It is reported when it runs once per item of a list and its arguments read the item:
+//   for (const o of orders) await prisma.item.findMany({ where: { orderId: o.id } })            reported (read)
+//   rows.map((r) => prisma.product.update({ where: { sku: r.sku }, data: { price: r.price } }))   reported (write)
+//   ids.forEach(async (id) => { await db.user.delete({ where: { id } }) })                        reported
+//   for (const x of xs) { await tx.x.update({ where: { id: x.id }, … }) } in a $transaction      reported
+//   for (const [k, v] of Object.entries(rates)) await db.rate.upsert(…)                       reported (data, not enum)
+// Left alone:
+//   ids.map((id) => prisma.user.findUnique({ where: { id } }))   Prisma's dataloader batches findUnique calls made
+//                                                                 in one tick into one query
+//   for (const chunk of chunks) await prisma.x.createMany({ data: chunk })   createMany per chunk is the batch fix
+//   for (const ids of groups) await prisma.x.updateMany({ where: { id: { in: ids } }, … })   the query filters `in`
+//                                                                 on the item: each iteration already is a batch
+//   for (const s of ["a", "b"] as const) …, REGIONS.map(…) with `const REGIONS = [...]`, Object.values(Provider)
+//                                                                 a list fixed in the code ([...spread] is not)
+//   prisma.$transaction(xs.map((x) => prisma.y.update(…)))        the batch the fix asks for
+//   findMany({ where, take }) / findFirst({ where, orderBy }) per item   top-N or newest per key: no `in` query
+//   a query in a `try` block inside the loop body                 each item may fail alone; a batch would not
+//   for (const x of xs) await prisma.setting.findFirst({ where: { key: "k" } })   the query ignores the item
+//   while / do / for (;;) loops                                               cursor and batch pagination loops
+//   a query in a function nested in the loop body (other than the iteration callbacks above)
+//   stripe.customers.create(…), openai.chat.completions.create(…)            not a Prisma client by name
+//   updateMany({ where: { id: r.id, version: r.version }, data: { version: … } })   a compare-and-set: the write
+//                                                                 holds only if the row still has the value read
+//   xs.sort(…); for (const x of xs) await tx.y.update(…)  in a transaction   one lock order for every writer,
+//                                                                 so two transactions cannot deadlock
+//   for (…) { if (bad) throw …; await tx.y.update({ …, data: { v: x.v } }) }   in a transaction: a per-row value
+//                                                                 written after a check that abandons it all; a
+//                                                                 create or delete there is reported (createMany)
+//   a file that exports nothing and calls its own function at its top level (`main()`, `main().catch(…)`, an IIFE):
+//   a script run on its own; a module that exports a function `up` (the migration API of knex, Kysely, umzug,
+//   TypeORM, MikroORM): a data migration that runs once per database
+//   seed files, scripts, migrations (by path: `seed.*`, `seed-*`, `*-seed.*`, `seed/`, `seeds/`, `seeders/`,
+//   `scripts/`, `migrations/`), and a module only they (or the script and `up` files above) import: a backfill
+//   run from the seed; tests and stories (scope)
+// Gaps: a client under another name (`client`, `dbWrite`, `this.repo`) is not seen, nor a client passed in as a
+// parameter of another name; a query in a helper the loop calls (`for (…) await loadUser(id)`); `while`/classic
+// `for` loops over a list (`for (let i = 0; i < xs.length; i++)`); the item read only through a variable derived
+// from it in the loop body (`const key = x.id;` then `where: { id: key }`); a validation loop that returns early on
+// a missing row is left alone; a list small by business rule but read from data (an input keyed by a fixed set of
+// categories), a one-off data migration reached from a script through more than one module (one import level is
+// followed), per-row guarded claims with a constant state (`updateMany({ where: { id, status: "PENDING" } })`, which
+// one `in` query does batch) and a write after a per-item external call are reported, hence log mode. Left alone
+// though possibly an n+1: a module the seed imports and the app imports only through a tsconfig alias other than
+// `@/`, `~/`, `#/` (tsconfig `paths` are not read); a per-row write over a list sorted for another reason in a
+// transaction, or a per-row update after a per-item check that throws. `Object.values(X)` counts as a fixed list when X is
+// capitalised (an enum by naming convention), whatever X is.
+
+#include "tsx/eslint-a-common.rerail"
+
+.violation QueryInLoop(at: node, call: symbol, list: symbol, l: number, fix: symbol) "`{call}(…)` runs once per item of `{list}` (the loop at line {l}): N database round trips for N items (the n+1 problem), and when the calls run together under `Promise.all` they queue for the connection pool until requests fail with P2024. {fix} Leave it when the list is small and bounded by the code (a handful of fixed items), or when each iteration must see the previous one's write or must run one at a time on purpose (a job that processes rows singly with its own error handling)."
+QueryInLoop(q, call, lt, l, fix) :- prq_report(q, it), callee(q, m), text(m, call), text(it, lt), line(it, l),
+    prq_query(q, op, s, w), prq_fix(op, fix), docof(q, d), !prq_offline_doc(d), doc(d, p, _), !prq_offline_path(p),
+    pcg_holds(p, s, w), prq_live(p).
+
+// prq_offline_doc(d): d runs outside the app's request and job paths by its shape. A file that exports nothing and
+// calls a function of its own at its top level (`main()`, `main().catch(…)`, `(async () => …)()`) is a script run on
+// its own; a module exporting a function `up` is a migration (knex, Kysely, umzug, TypeORM and MikroORM migrations
+// export `up`), which runs once per database.
+.decl prq_offline_doc(d: number)
+prq_offline_doc(d) :- prq_sdoc(d), !prq_exports(d), prq_top_called(d).
+prq_offline_doc(d) :- prq_sdoc(d), kind(e, "export_statement"), docof(e, d), field(e, "declaration", dc),
+    ((kind(dc, "function_declaration"), field(dc, "name", nm)) ;
+     (kind(dc, "lexical_declaration"), child(dc, v, _), kind(v, "variable_declarator"), field(v, "name", nm))),
+    text(nm, "up").
+.decl prq_doc(d: number)
+prq_doc(d) :- prq_report(q, _), docof(q, d).
+// prq_sdoc(d): the documents whose shape is asked: those with a finding, and those importing a module of the run.
+.decl prq_sdoc(d: number)
+prq_sdoc(d) :- prq_doc(d).
+prq_sdoc(d) :- prq_imp_doc(d).
+// prq_exports(d): d exports something (`export …`, `module.exports`, `exports.x =`).
+.decl prq_exports(d: number)
+prq_exports(d) :- prq_sdoc(d), kind(e, "export_statement"), docof(e, d).
+prq_exports(d) :- prq_sdoc(d), kind(m, "member_expression"), docof(m, d), field(m, "object", o), text(o, x),
+    (x = "module" ; x = "exports"), field(a, "left", l), kind(a, "assignment_expression"), (l = m ; within(m, l)).
+// prq_top_called(d): d calls, at its top level, a function it declares (`function main() {}` or
+// `const main = async () => {}`), or an IIFE.
+.decl prq_top_called(d: number)
+prq_top_called(d) :- prq_sdoc(d), kind(c, "call_expression"), docof(c, d), field(c, "function", cf), deparen(cf, id),
+    kind(id, "identifier"), ref_site(id, s), prq_fn_site(s), nearest(c, p, fn_scope), kind(p, "program").
+prq_top_called(d) :- prq_sdoc(d), kind(c, "call_expression"), docof(c, d), field(c, "function", cf), deparen(cf, f),
+    (kind(f, "arrow_function") ; kind(f, "function_expression")), nearest(c, p, fn_scope), kind(p, "program").
+
+// prq_offline_path(p): the file at path p is a seed, a script or a migration by its path (`seed.*`, `seed-*`,
+// `*-seed.*`, and anything under `seed/`, `seeds/`, `seeders/`, `scripts/`, `migrations/`). Read, so that what it
+// imports is known, and never reported.
+.decl prq_offline_path(p: symbol)
+prq_offline_path(p) :- doc(_, p, _),
+    match("(?:.*/)?(?:seed\\.[^/]*|[^/]*-seed\\.[^/]*|seed-[^/]*(?:/.*)?|(?:seed|seeds|seeders|scripts|migrations)/.*)", p).
+// The modules only offline files import: a backfill exported from a module of the app and run from the seed
+// (`import { backfill } from "./migration"` in `prisma/seed.ts`) runs once per deploy, outside the request and job
+// paths. prq_imp(p, s, k): the file at path p imports specifier s (an import, a re-export, `import(…)`,
+// `require(…)`), a relative or `@/`-style one; k is "offline" when p is a seed, script or migration (by its path or
+// prq_offline_doc's shape), else "app".
+.decl prq_imp_src(d: number, s: symbol)
+prq_imp_src(d, s) :- (kind(i, "import_statement") ; kind(i, "export_statement")), field(i, "source", src),
+    str(src, s), docof(i, d).
+prq_imp_src(d, s) :- kind(c, "call_expression"), field(c, "function", f),
+    (kind(f, "import") ; (kind(f, "identifier"), text(f, "require"))), call_arg(c, a, 0), str(a, s), docof(c, d).
+.decl prq_imp_spec(d: number, s: symbol)
+prq_imp_spec(d, s) :- prq_imp_src(d, s), (prefix(".", s) ; match("[@~#]/.+", s) ; match("@[^/]+/[^/]+/.+", s)).
+.decl prq_imp_doc(d: number)
+prq_imp_doc(d) :- prq_imp_spec(d, _).
+.decl prq_imp_kind(d: number, k: symbol)
+prq_imp_kind(d, "offline") :- prq_imp_doc(d), doc(d, p, _), prq_offline_path(p).
+prq_imp_kind(d, "offline") :- prq_imp_doc(d), prq_offline_doc(d).
+prq_imp_kind(d, "app") :- prq_imp_doc(d), doc(d, p, _), !prq_offline_path(p), !prq_offline_doc(d).
+.decl prq_imp(p: symbol, s: symbol, k: symbol)
+prq_imp(p, s, k) :- prq_imp_spec(d, s), prq_imp_kind(d, k), doc(d, p, _).
+// prq_mod(f): the file at path f has a finding.
+.decl prq_mod(f: symbol)
+prq_mod(f) :- prq_doc(d), doc(d, f, _).
+// prq_used(f, k): a file of kind k imports the file at path f, resolved by paths as pcg_target resolves (relative,
+// `@/x`, `~/x`, `#/x` by the path's end, `@scope/pkg/x`), with an extension written as `.js` read as `.ts` too.
+.decl prq_used(f: symbol, k: symbol) cross_file
+prq_used(f, k) :- prq_imp(p, s, k), prefix(".", s), b = @join(@dir(p), s), prq_ext(b, f), prq_mod(f).
+prq_used(f, k) :- prq_imp(p, s, k), match("[@~#]/(?<r>.+)", s), prq_ext(cat("/", r), t), prq_mod(f),
+    (suffix(t, f) ; t = cat("/", f)).
+prq_used(f, k) :- prq_imp(p, s, k), match("@[^/]+/(?<g>[^/]+)/(?<r>.+)", s), prq_mod(f),
+    (prq_ext(cat("/", g, "/", r), t) ; prq_ext(cat("/", g, "/src/", r), t)), suffix(t, f).
+// prq_ext(b, f): f is a file path specifier path b may name: b with an extension or an index, b itself, or b's
+// `.js`/`.mjs`/`.cjs` as `.ts`/`.tsx`/`.mts`/`.cts`.
+.decl prq_ext(b: symbol, f: symbol)
+prq_ext(b, cat(b, e)) :- prq_spec_path(b), pcg_ext(e).
+prq_ext(b, b) :- prq_spec_path(b).
+prq_ext(b, cat(x, ".ts")) :- prq_spec_path(b), match("(?<x>.*)\\.(?:js|jsx)", b).
+prq_ext(b, cat(x, ".tsx")) :- prq_spec_path(b), match("(?<x>.*)\\.(?:js|jsx)", b).
+prq_ext(b, cat(x, ".mts")) :- prq_spec_path(b), match("(?<x>.*)\\.mjs", b).
+prq_ext(b, cat(x, ".cts")) :- prq_spec_path(b), match("(?<x>.*)\\.cjs", b).
+.decl prq_spec_path(b: symbol)
+prq_spec_path(b) :- prq_imp(p, s, _), prefix(".", s), b = @join(@dir(p), s).
+prq_spec_path(cat("/", r)) :- prq_imp(_, s, _), match("[@~#]/(?<r>.+)", s).
+prq_spec_path(cat("/", g, "/", r)) :- prq_imp(_, s, _), match("@[^/]+/(?<g>[^/]+)/(?<r>.+)", s).
+prq_spec_path(cat("/", g, "/src/", r)) :- prq_imp(_, s, _), match("@[^/]+/(?<g>[^/]+)/(?<r>.+)", s).
+// prq_live(f): the file at path f runs in the app: nothing offline imports it, or an app file does.
+.decl prq_live(f: symbol) cross_file
+prq_live(f) :- prq_mod(f), !prq_used(f, "offline").
+prq_live(f) :- prq_used(f, "app").
+
+.decl prq_fn_site(s: node)
+prq_fn_site(s) :- kind(s, "function_declaration").
+prq_fn_site(s) :- kind(s, "variable_declarator"), field(s, "value", v), deparen(v, f),
+    (kind(f, "arrow_function") ; kind(f, "function_expression")).
+
+// prq_report(q, it): query q runs once per item of list it and reads the item; the innermost such loop wins.
+.decl prq_report(q: node, it: node)
+prq_report(q, it) :- prq_hit(q, it, _), !prq_inner(q, it).
+.decl prq_hit(q: node, it: node, b: node)
+prq_hit(q, it, b) :- prq_loop(it, b, l, how), prq_in_body(q, b), prq_query(q, op, _, _), prq_reads(q, l),
+    !prq_batched(op, how), !prq_fixed_list(it), !prq_per_group(q, op), !prq_exits(b), !prq_guarded(q, b),
+    !prq_item_list(q, l), !prq_cas(q, l), !prq_lock_order(q, it), !prq_checked_first(q, b, l).
+// prq_in_body(q, b): query q runs in loop body b, not in a function nested in it.
+.decl prq_in_body(q: node, b: node)
+prq_in_body(q, b) :- prq_loop(_, b, _, _), prq_query(q, _, _, _), (q = b ; within_stop(q, b, prq_fn)).
+// prq_cas(q, l): q is a compare-and-set write: its `where` picks the item's row by a value read from the item
+// (`id: row.id`, the shorthand `id`) and beside it compares another field with a value read from the item
+// (`version: row.version`, `dataId: previousDataId` destructured from it, `{ equals: row.content }`), and its `data`
+// (either branch of a ternary) writes that field. Each row's write holds only if the row still has the value read (an
+// optimistic lock); one write by id for all rows drops the check. A `where` whose only item value is the compared
+// field (`{ envelopeId, dataId: oldId }`) looks rows up by it and is reported.
+.decl prq_cas(q: node, l: node)
+prq_cas(q, l) :- prq_in_body(q, b), prq_loop(_, b, l, _), prq_arg_obj(q, "where", w), child(w, p, _),
+    prq_own_value(p, l, k), prq_data_obj(q, dt), prq_obj_has(dt, k), child(w, p2, _), p2 != p,
+    prq_own_value(p2, l, k2), k2 != k.
+.decl prq_arg_obj(q: node, k: symbol, o: node)
+prq_arg_obj(q, k, o) :- prq_query(q, op, _, _), prq_write(op), call_arg(q, a0, 0), deparen(a0, a), kind(a, "object"),
+    child(a, p, _), kind(p, "pair"), field(p, "key", kk), text(kk, k), field(p, "value", v), deparen(v, o),
+    kind(o, "object").
+// prq_data_obj(q, o): o is q's `data` object, or a branch of a `data: cond ? {…} : {…}`.
+.decl prq_data_obj(q: node, o: node)
+prq_data_obj(q, o) :- prq_arg_obj(q, "data", o).
+prq_data_obj(q, o) :- prq_query(q, op, _, _), prq_write(op), call_arg(q, a0, 0), deparen(a0, a), kind(a, "object"),
+    child(a, p, _), kind(p, "pair"), field(p, "key", kk), text(kk, "data"), field(p, "value", v), deparen(v, t),
+    kind(t, "ternary_expression"), (field(t, "consequence", b0) ; field(t, "alternative", b0)), deparen(b0, o),
+    kind(o, "object").
+// prq_own_value(p, l, k): pair p of a `where` compares field k with a value read from the item bound in l: a name
+// bound in l or a member chain from one, directly or in `{ equals: … }`; or the shorthand `k`, k bound in l.
+.decl prq_own_value(p: node, l: node, k: symbol)
+prq_own_value(p, l, k) :- prq_arg_obj(_, "where", w), child(w, p, _), kind(p, "pair"), field(p, "key", kk),
+    text(kk, k), field(p, "value", v0), deparen(v0, v1), prq_cmp_value(v1, v), prq_ref_root(v, r),
+    kind(r, "identifier"), text(r, x), prq_bound(l, x).
+prq_own_value(p, l, k) :- prq_arg_obj(_, "where", w), child(w, p, _), kind(p, "shorthand_property_identifier"),
+    text(p, k), prq_bound(l, k).
+// prq_ref_root(v, r): r is v or the object at the root of member chain v.
+.decl prq_ref_root(v: node, r: node)
+prq_ref_root(v, v) :- prq_cmp_value(_, v).
+prq_ref_root(v, r) :- prq_ref_root(v, e), kind(e, "member_expression"), field(e, "object", o0), deparen(o0, r).
+// prq_cmp_value(v, x): the value a `where` entry v compares with: v itself, or x in `{ equals: x }` (`as T` dropped).
+.decl prq_cmp_value(v: node, x: node)
+prq_cmp_value(v, v) :- prq_arg_obj(_, "where", w), child(w, p, _), kind(p, "pair"), field(p, "value", v0),
+    deparen(v0, v).
+prq_cmp_value(v, x) :- prq_arg_obj(_, "where", w), child(w, p, _), kind(p, "pair"), field(p, "value", v0),
+    deparen(v0, v), kind(v, "object"), child(v, e, _), kind(e, "pair"), field(e, "key", ek), text(ek, "equals"),
+    field(e, "value", x0), deparen(x0, x1), prq_unas(x1, x).
+.decl prq_unas(e: node, x: node)
+prq_unas(e, e) :- prq_cmp_raw(e), !kind(e, "as_expression"), !kind(e, "satisfies_expression").
+prq_unas(e, x) :- prq_cmp_raw(e), (kind(e, "as_expression") ; kind(e, "satisfies_expression")), child(e, y0, 0),
+    deparen(y0, x).
+.decl prq_cmp_raw(e: node)
+prq_cmp_raw(x1) :- prq_arg_obj(_, "where", w), child(w, p, _), kind(p, "pair"), field(p, "value", v0), deparen(v0, v),
+    kind(v, "object"), child(v, e, _), kind(e, "pair"), field(e, "key", ek), text(ek, "equals"), field(e, "value", x0),
+    deparen(x0, x1).
+.decl prq_obj_has(o: node, k: symbol)
+prq_obj_has(o, k) :- prq_data_obj(_, o), child(o, p, _),
+    ((kind(p, "pair"), field(p, "key", kk), text(kk, k)) ; (kind(p, "shorthand_property_identifier"), text(p, k))).
+// prq_lock_order(q, it): q writes, in a transaction, once per item of a list the code sorted first (`xs.sort(…)`
+// before the loop, `const ys = xs.toSorted(…)`, `for (const x of xs.sort(…))`): every transaction takes the row
+// locks in one order, so two writing the same rows cannot deadlock, which one write per item in that order keeps.
+.decl prq_lock_order(q: node, it: node)
+prq_lock_order(q, it) :- prq_loop(it, b, _, _), prq_sorted(it), prq_in_body(q, b), prq_query(q, op, _, _),
+    prq_write(op), prq_in_tx(q).
+.decl prq_sorted(it: node)
+prq_sorted(it) :- prq_loop(it, _, _, _), prq_sort_call(it).
+prq_sorted(it) :- prq_loop(it, _, _, _), kind(it, "identifier"), ref_site(it, s), kind(s, "variable_declarator"),
+    field(s, "value", v0), deparen(v0, v), prq_sort_call(v).
+prq_sorted(it) :- prq_loop(it, _, _, _), kind(it, "identifier"), ref_site(it, s), kind(k, "call_expression"),
+    callee(k, m), static_prop(m, o, "sort"), kind(o, "identifier"), ref_site(o, s), line(k, lk), line(it, li),
+    lk <= li.
+.decl prq_sort_call(c: node)
+prq_sort_call(c) :- kind(c, "call_expression"), callee(c, m), static_prop(m, _, x), (x = "sort" ; x = "toSorted").
+// prq_in_tx(q): q runs in an interactive transaction: inside a `$transaction` callback, or on a client typed as one
+// (`tx: Prisma.TransactionClient`).
+.decl prq_in_tx(q: node)
+prq_in_tx(q) :- prq_query(q, _, _, _), kind(t, "call_expression"), callee(t, m), static_prop(m, _, "$transaction"),
+    call_arg(t, a, 0), deparen(a, f), (kind(f, "arrow_function") ; kind(f, "function_expression")), within(q, f).
+prq_in_tx(q) :- prq_shape(q, r, _), pcg_base(r, o), kind(o, "identifier"), ref_site(o, s), pcg_site_type(s, t),
+    match("(?s).*\\bTransactionClient\\b.*", t).
+// prq_checked_first(q, b, l): q is an `update`/`upsert` in an interactive transaction (prq_in_tx) whose data reads
+// the item (`data: { sourceId: field.remote }`: a value per row, which no `updateMany` writes), and it comes after a
+// `throw` in loop body b on its own path: a statement of a block holds the throw and a later statement of the same
+// block holds q (`if (bad) throw …;` then the write; a throw in another branch of an `if`, or one rethrown in a
+// `catch`, does not count). Each item is checked, the whole transaction abandoned on a bad one, and written once
+// checked; the batch the message proposes (`$transaction([...])`) is not open inside an interactive transaction.
+// A create or delete after such a check is still reported: `createMany`/`deleteMany` after the loop fits.
+.decl prq_checked_first(q: node, b: node, l: node)
+prq_checked_first(q, b, l) :- prq_in_body(q, b), prq_loop(_, b, l, _), prq_query(q, op, _, _),
+    (op = "update" ; op = "upsert"), prq_in_tx(q), prq_item_data(q, l), kind(t, "throw_statement"),
+    within_stop(t, b, prq_fn), !prq_rethrow(t, b), kind(p, "statement_block"), (p = b ; within(p, b)),
+    child(p, s1, i1), (s1 = t ; within(t, s1)), child(p, s2, i2), (s2 = q ; within(q, s2)), i1 < i2.
+// prq_item_data(q, l): the `data` (an upsert's `update`) of q reads a name bound to the item in l.
+.decl prq_item_data(q: node, l: node)
+prq_item_data(q, l) :- prq_loop(_, _, l, _), prq_arg_obj(q, k, o), (k = "data" ; k = "update"), within(i, o),
+    (kind(i, "identifier") ; kind(i, "shorthand_property_identifier")), text(i, x), prq_bound(l, x).
+// prq_rethrow(t, b): throw t sits in a `catch` clause inside loop body b: an error passed on, not a check.
+.decl prq_rethrow(t: node, b: node)
+prq_rethrow(t, b) :- kind(t, "throw_statement"), kind(c, "catch_clause"), within(t, c), within(c, b).
+.decl prq_write(op: symbol)
+prq_write("create"). prq_write("update"). prq_write("updateMany"). prq_write("updateManyAndReturn").
+prq_write("upsert"). prq_write("delete"). prq_write("deleteMany").
+// prq_item_list(q, l): q filters `in` on the item (`where: { id: { in: chunk } }`, `{ in: ids.map(…) }`): each
+// iteration already loads or writes a group of rows in one query (a chunk, or the ids grouped under one key).
+.decl prq_item_list(q: node, l: node)
+prq_item_list(q, l) :- prq_loop(_, _, l, _), prq_bound(l, x), prq_query(q, _, _, _), field(q, "arguments", al),
+    within(p, al), kind(p, "pair"), field(p, "key", k), text(k, "in"), field(p, "value", v), (i = v ; within(i, v)),
+    kind(i, "identifier"), text(i, x).
+// prq_per_group(q, op): a top-N or newest-row query per item (`findMany({ take })`, `findFirst({ orderBy })`): one
+// `in` query does not express a limit or an order per key.
+.decl prq_per_group(q: node, op: symbol)
+prq_per_group(q, "findMany") :- prq_arg_key(q, "take").
+prq_per_group(q, op) :- (op = "findFirst" ; op = "findFirstOrThrow"), prq_arg_key(q, "orderBy").
+.decl prq_arg_key(q: node, k: symbol)
+prq_arg_key(q, k) :- prq_query(q, _, _, _), call_arg(q, a0, 0), deparen(a0, a), kind(a, "object"), child(a, p, _),
+    ((kind(p, "pair"), field(p, "key", kk), text(kk, k)) ; (kind(p, "shorthand_property_identifier"), text(p, k))).
+// prq_exits(b): the for loop running b stops early, by `return` or its own `break`: a search for the first match
+// (`for (const l of links) { const r = await …findFirst(…); if (r) return r }`) usually runs once or twice.
+.decl prq_exits(b: node)
+prq_exits(b) :- kind(s, "for_in_statement"), field(s, "body", b), kind(r, "return_statement"), within_stop(r, b, prq_fn).
+prq_exits(b) :- kind(s, "for_in_statement"), field(s, "body", b), kind(r, "break_statement"), !field(r, "label", _),
+    within(r, b), nearest(r, s, prq_breakable).
+.decl prq_breakable(k: symbol)
+prq_breakable("for_in_statement"). prq_breakable("for_statement"). prq_breakable("while_statement").
+prq_breakable("do_statement"). prq_breakable("switch_statement").
+// prq_guarded(q, b): q sits in a `try` statement (its block or its catch) inside the loop body: each item is
+// handled, and may fail, on its own, which a batch would turn into all-or-nothing.
+.decl prq_guarded(q: node, b: node)
+prq_guarded(q, b) :- prq_loop(_, b, _, _), kind(t, "try_statement"), within(q, t), within_stop(t, b, prq_fn).
+// A query handed unsent to `ops.push(…)` is collected for a later `$transaction(ops)`: the batch the fix asks for.
+prq_guarded(q, b) :- prq_loop(_, b, _, _), prq_query(q, _, _, _), call_arg(k, a, 0), deparen(a, q), callee(k, m),
+    kind(m, "member_expression"), field(m, "property", p), text(p, "push"), within_stop(k, b, prq_fn).
+// prq_inner(q, it): another hit of q sits inside it's loop body: report only the innermost loop.
+.decl prq_inner(q: node, it: node)
+prq_inner(q, it) :- prq_hit(q, it, b), prq_hit(q, it2, b2), it2 != it, within(b2, b).
+
+.decl prq_fn(k: symbol)
+prq_fn("function_declaration"). prq_fn("function_expression"). prq_fn("arrow_function"). prq_fn("method_definition").
+prq_fn("generator_function_declaration"). prq_fn("generator_function"). prq_fn("class_declaration").
+prq_fn("class").
+
+// prq_loop(it, b, l, how): b runs once per item of list expression it; l holds the names bound to the item.
+//   `for (const x of it) b` and `for (const k in it) b` (how = "for"), and `it.map((x) => b)` and the other array
+//   iteration methods, whose callback's body is b and parameters are l (how = "callback").
+.decl prq_loop(it: node, b: node, l: node, how: symbol)
+prq_loop(it, b, l, "for") :- kind(s, "for_in_statement"), field(s, "right", it), field(s, "body", b),
+    field(s, "left", l).
+prq_loop(it, b, l, "callback") :- kind(k, "call_expression"), callee(k, m), kind(m, "member_expression"),
+    field(m, "property", p), text(p, x), prq_iter(x), field(m, "object", it), call_arg(k, a, 0), deparen(a, f),
+    (kind(f, "arrow_function") ; kind(f, "function_expression")), field(f, "body", b),
+    (field(f, "parameters", l) ; field(f, "parameter", l)), !prq_tx_batch(k).
+// prq_tx_batch(k): `<client>.$transaction(xs.map(…))`: the map builds the batch the fix asks for.
+.decl prq_tx_batch(k: node)
+prq_tx_batch(k) :- kind(t, "call_expression"), callee(t, m), kind(m, "member_expression"), field(m, "property", p),
+    text(p, "$transaction"), call_arg(t, a, 0), deparen(a, k), kind(k, "call_expression").
+.decl prq_iter(x: symbol)
+prq_iter("map"). prq_iter("forEach"). prq_iter("flatMap"). prq_iter("reduce"). prq_iter("filter").
+prq_iter("some"). prq_iter("every"). prq_iter("find").
+
+// prq_query(q, op, s, w): call q is `<r>.<model>.<op>(…)` and r is a Prisma client where pcg_holds(path, s, w) holds
+// for q's file (pcg_client).
+.decl prq_query(q: node, op: symbol, s: symbol, w: symbol)
+prq_query(q, op, s, w) :- prq_shape(q, r, op), pcg_client(r, s, w).
+.decl prq_shape(q: node, r: node, op: symbol)
+prq_shape(q, r, op) :- kind(q, "call_expression"), callee(q, m), kind(m, "member_expression"), field(m, "property", p),
+    text(p, op), prq_op(op), field(m, "object", mo0), deparen(mo0, mo), kind(mo, "member_expression"),
+    field(mo, "property", mp), kind(mp, "property_identifier"), text(mp, model), !prefix("$", model),
+    field(mo, "object", r0), deparen(r0, r).
+.decl pcg_ask(r: node)
+pcg_ask(r) :- prq_shape(_, r, _).
+// ---- the Prisma client gate (the same block in each rule of the pack that matches `<r>.<model>.<op>(…)`) ----------
+// pcg_client(r, s, w): receiver r (pcg_ask) is a Prisma client where pcg_holds(p, s, w) holds for r's file at path p.
+// Resolved Prisma: r's root name is the parameter of a `$transaction` callback; a parameter, variable or class member
+// typed with a Prisma client type (`PrismaClient`, `Prisma.TransactionClient`, `PrismaService`); a variable whose
+// value makes or extends one (`new PrismaClient(…)`, `prisma.$extends(…)`); or an import from a Prisma module:
+// `@prisma/client`, a generated client, a specifier with a path part naming prisma (`@/lib/prisma`, `@acme/prisma`),
+// or a file of the run that makes a PrismaClient. Resolved otherwise: an import from Drizzle, Kysely, Knex, TypeORM,
+// Sequelize, Mongoose, Objection or MikroORM, a file of the run that imports one, or a variable made by one
+// (`drizzle(…)`, `new Kysely(…)`): never Prisma. Not resolved (`ctx.db` of a tRPC context, an import from a file the
+// run reads in another lane): accepted only under the client names of pcg_named, and only when a package.json of the
+// repository lists Prisma and the file's package and the root list no other ORM.
+// What the file an import names makes or imports is another file's (pcg_target, by paths alone, decision 0677): r's
+// own file states what it needs of it, keyed by the specifier s, and the finding joins pcg_holds. w is "" (nothing:
+// r is no import, s is ""), "!other" (s names no file of another ORM) or "prisma" (s names a file of Prisma's, and
+// none of another ORM).
+.decl pcg_root(r: node, o: node)
+pcg_root(r, x) :- pcg_ask(r), deparen(r, x).
+pcg_root(r, o) :- pcg_root(r, e), kind(e, "member_expression"), field(e, "object", o0), deparen(o0, o).
+pcg_root(r, o) :- pcg_root(r, e), kind(e, "non_null_expression"), child(e, o0, 0), deparen(o0, o).
+pcg_root(r, o) :- pcg_root(r, e), kind(e, "call_expression"), field(e, "function", o0), deparen(o0, o).
+pcg_root(r, o) :- pcg_root(r, e), kind(e, "await_expression"), child(e, o0, 0), deparen(o0, o).
+// pcg_base(r, o): o is the identifier or `this` r's chain starts from.
+.decl pcg_base(r: node, o: node)
+pcg_base(r, o) :- pcg_root(r, o), (kind(o, "identifier") ; kind(o, "this")).
+// pcg_prisma(r), pcg_other(r): r's own file resolves it as Prisma's, as another ORM's.
+.decl pcg_prisma(r: node)
+pcg_prisma(r) :- pcg_base(r, o), kind(o, "identifier"), ref_site(o, s), pcg_prisma_site(s).
+pcg_prisma(r) :- pcg_base(r, o), kind(o, "identifier"), ref_site(o, sp), pcg_prisma_spec(sp).
+pcg_prisma(r) :- pcg_base(r, o), kind(o, "this"), pcg_this_prop(r, o, x), kind(cb, "class_body"), within(o, cb),
+    within(s, cb), pcg_member_named(s, x), pcg_prisma_site(s).
+.decl pcg_other(r: node)
+pcg_other(r) :- pcg_base(r, o), kind(o, "identifier"), ref_site(o, s), pcg_other_site(s).
+pcg_other(r) :- pcg_base(r, o), kind(o, "identifier"), ref_site(o, sp), pcg_other_spec(sp).
+// pcg_imported(r, s): r's root name is imported from specifier s.
+.decl pcg_imported(r: node, s: symbol)
+pcg_imported(r, s) :- pcg_base(r, o), kind(o, "identifier"), ref_site(o, sp), import_binding(sp, _, s, _).
+// pcg_unnamed_ok(r): the names and the repository accept r unresolved.
+.decl pcg_unnamed_ok(r: node)
+pcg_unnamed_ok(r) :- pcg_ask(r), pcg_named(r), docof(r, d), pcg_prisma_repo(d).
+.decl pcg_client(r: node, s: symbol, w: symbol)
+pcg_client(r, "", "") :- pcg_prisma(r), !pcg_other(r), !pcg_imported(r, _).
+pcg_client(r, "", "") :- pcg_ask(r), !pcg_prisma(r), !pcg_other(r), !pcg_imported(r, _), pcg_unnamed_ok(r).
+pcg_client(r, s, "!other") :- pcg_prisma(r), !pcg_other(r), pcg_imported(r, s).
+pcg_client(r, s, "!other") :- pcg_ask(r), !pcg_prisma(r), !pcg_other(r), pcg_imported(r, s), pcg_unnamed_ok(r).
+pcg_client(r, s, "prisma") :- pcg_ask(r), !pcg_prisma(r), !pcg_other(r), pcg_imported(r, s).
+// pcg_this_prop(r, o, x): r's chain reads `this.x` (o the `this`).
+.decl pcg_this_prop(r: node, o: node, x: symbol)
+pcg_this_prop(r, o, x) :- pcg_root(r, e), kind(e, "member_expression"), field(e, "object", o0), deparen(o0, o),
+    kind(o, "this"), field(e, "property", p), text(p, x).
+// pcg_member_named(s, x): s declares class member x: a field `x = …` / `x: T`, or a constructor parameter property
+// `private x: T`.
+.decl pcg_member_named(s: node, x: symbol)
+pcg_member_named(s, x) :- kind(s, "public_field_definition"), field(s, "name", n), text(n, x).
+pcg_member_named(s, x) :- kind(p, "required_parameter"), child(p, m, _), kind(m, "accessibility_modifier"),
+    field(p, "pattern", s), text(s, x).
+pcg_member_named(s, x) :- kind(p, "required_parameter"), child(p, m, _), kind(m, "readonly"),
+    field(p, "pattern", s), text(s, x).
+// pcg_prisma_site(s): the binding or member at s is a Prisma client by its type or its value, or is the parameter of
+// a `$transaction` callback.
+.decl pcg_prisma_site(s: node)
+pcg_prisma_site(s) :- pcg_site_type(s, t), match("(?s).*(?:PrismaClient|TransactionClient|PrismaService).*", t).
+pcg_prisma_site(s) :- pcg_site_value(s, v), text(v, t), (contains("PrismaClient", t) ; contains("$extends", t)).
+pcg_prisma_site(s) :- kind(t, "call_expression"), callee(t, m), static_prop(m, _, "$transaction"), call_arg(t, a, 0),
+    deparen(a, f), (kind(f, "arrow_function") ; kind(f, "function_expression")),
+    (field(f, "parameter", s) ; field(f, "parameters", ps), within(s, ps)).
+.decl pcg_other_site(s: node)
+// The parameter of a callback given to `<x>.transaction(…)`, without Prisma's `$`: Drizzle's, Knex's, TypeORM's and
+// Sequelize's transactions.
+pcg_other_site(s) :- kind(t, "call_expression"), callee(t, m), static_prop(m, _, "transaction"), call_arg(t, a, 0),
+    deparen(a, f), (kind(f, "arrow_function") ; kind(f, "function_expression")),
+    (field(f, "parameter", s) ; field(f, "parameters", ps), within(s, ps)).
+pcg_other_site(s) :- pcg_site_value(s, v), text(v, t),
+    match("(?s)\\s*(?:await\\s+)?(?:drizzle|knex|Knex)\\s*\\(.*|.*\\bnew\\s+(?:Kysely|Sequelize|DataSource|MikroORM)\\b.*", t).
+pcg_other_site(s) :- pcg_site_type(s, t), !contains("Prisma", t),
+    match("(?s).*\\b(?:\\w+Database|Kysely|Knex|DataSource|EntityManager|Repository|Sequelize|MikroORM)\\b.*", t).
+// pcg_site_type(s, t): the annotation text of a parameter, variable or class field at s.
+.decl pcg_site_type(s: node, t: symbol)
+pcg_site_type(s, t) :- field(p, "pattern", s), field(p, "type", a), text(a, t).
+pcg_site_type(s, t) :- (kind(s, "variable_declarator") ; kind(s, "public_field_definition")), field(s, "type", a),
+    text(a, t).
+.decl pcg_site_value(s: node, v: node)
+pcg_site_value(s, v) :- (kind(s, "variable_declarator") ; kind(s, "public_field_definition")), field(s, "value", v).
+// pcg_prisma_spec(sp), pcg_other_spec(sp): the import at sp names a Prisma module, another ORM's, by its specifier.
+// Tested at the import, not as a table of every file's specifiers (decision 0677).
+.decl pcg_prisma_spec(sp: node)
+pcg_prisma_spec(sp) :- import_binding(sp, _, s, _), match("(?i)(?:.*/)?[^/]*prisma[^/]*(?:/.*)?", s).
+.decl pcg_other_spec(sp: node)
+pcg_other_spec(sp) :- import_binding(sp, _, s, _),
+    match("(?:drizzle-orm|kysely|knex|typeorm|sequelize|sequelize-typescript|mongoose|objection|@mikro-orm/[^/]+)(?:/.*)?", s).
+// pcg_mod(f, w): the file at path f makes a PrismaClient or imports a Prisma module (w = "prisma"), or imports
+// another ORM (w = "other").
+.decl pcg_mod(f: symbol, w: symbol)
+pcg_mod(f, "prisma") :- kind(n, "new_expression"), field(n, "constructor", c), text(c, "PrismaClient"), docof(n, d),
+    doc(d, f, _).
+pcg_mod(f, "prisma") :- pcg_prisma_spec(sp), docof(sp, d), doc(d, f, _).
+pcg_mod(f, "other") :- pcg_other_spec(sp), docof(sp, d), doc(d, f, _).
+// pcg_target(p, s, w): specifier s, imported by the file at path p, names a file of the run that is a pcg_mod of
+// kind w: relative to p, or `@/x`, `~/x`, `#/x` matched by the path's end (tsconfig `paths` are not read), or
+// `@scope/pkg/x` as /pkg/x or /pkg/src/x. It pairs two files, by their paths alone (decision 0677).
+.decl pcg_spec(p: symbol, s: symbol)
+pcg_spec(p, s) :- pcg_client(r, s, _), s != "", docof(r, d), doc(d, p, _).
+.decl pcg_target(p: symbol, s: symbol, w: symbol) cross_file
+pcg_target(p, s, w) :- pcg_spec(p, s), prefix(".", s), b = @join(@dir(p), s), pcg_ext(e), pcg_mod(cat(b, e), w).
+pcg_target(p, s, w) :- pcg_spec(p, s), match("[@~#]/(?<r>.+)", s), pcg_ext(e), t = cat("/", r, e), pcg_mod(f, w),
+    (suffix(t, f) ; f = cat(r, e)).
+pcg_target(p, s, w) :- pcg_spec(p, s), match("@[^/]+/(?<k>[^/]+)/(?<r>.+)", s), pcg_ext(e), pcg_mod(f, w),
+    (suffix(cat("/", k, "/", r, e), f) ; suffix(cat("/", k, "/src/", r, e), f)).
+// pcg_holds(p, s, w): what pcg_client asks of specifier s holds for the file at path p (w: "" always, "!other",
+// "prisma"). The importing file's finding reads it at its own path.
+.decl pcg_holds(p: symbol, s: symbol, w: symbol) cross_file
+pcg_holds(p, "", "") :- doc(_, p, _).
+pcg_holds(p, s, "!other") :- pcg_spec(p, s), !pcg_target(p, s, "other").
+pcg_holds(p, s, "prisma") :- pcg_target(p, s, "prisma"), !pcg_target(p, s, "other").
+.decl pcg_ext(e: symbol)
+pcg_ext(".ts"). pcg_ext(".tsx"). pcg_ext(".js"). pcg_ext(".jsx"). pcg_ext(".mts"). pcg_ext(".mjs").
+pcg_ext("/index.ts"). pcg_ext("/index.tsx"). pcg_ext("/index.js").
+// pcg_prisma_repo(d): a package.json of the repository lists Prisma, and neither d's package nor the root lists
+// another ORM.
+.decl pcg_prisma_repo(d: number)
+pcg_prisma_repo(d) :- pcg_ask(r), docof(r, d), pcg_lists_prisma(1), !pcg_orm_doc(d).
+.decl pcg_lists_prisma(k: number)
+pcg_lists_prisma(1) :- package_field(_, k, _),
+    (k = "dependencies/@prisma~1client" ; k = "devDependencies/@prisma~1client" ; k = "dependencies/prisma" ;
+     k = "devDependencies/prisma").
+.decl pcg_orm_doc(d: number)
+pcg_orm_doc(d) :- pcg_ask(r), docof(r, d), doc(d, p, _), package_for(p, dir), (pcg_orm_pkg(dir) ; pcg_orm_pkg("")).
+.decl pcg_orm_pkg(dir: symbol)
+pcg_orm_pkg(dir) :- package_field(dir, k, _),
+    match("(?:dev)?[dD]ependencies/(?:drizzle-orm|kysely|knex|typeorm|sequelize|mongoose|objection|@mikro-orm~1core)", k).
+// pcg_named(r): the client names an unresolved receiver must have: its text contains "prisma" (`ctx.prisma`,
+// `this.prismaService`), or it is, or ends in the property, `db`, `tx`, `trx`, `database` or `_db` (`ctx.db`).
+.decl pcg_named(r: node)
+pcg_named(r) :- pcg_ask(r), (kind(r, "identifier") ; kind(r, "member_expression")), text(r, t), icontains("prisma", t).
+pcg_named(r) :- pcg_ask(r), kind(r, "identifier"), text(r, x), pcg_name(x).
+pcg_named(r) :- pcg_ask(r), kind(r, "member_expression"), field(r, "property", p), text(p, x), pcg_name(x).
+.decl pcg_name(x: symbol)
+pcg_name("db"). pcg_name("tx"). pcg_name("trx"). pcg_name("database"). pcg_name("_db").
+.decl prq_op(op: symbol)
+prq_op("findUnique"). prq_op("findUniqueOrThrow"). prq_op("findFirst"). prq_op("findFirstOrThrow").
+prq_op("findMany"). prq_op("create"). prq_op("createMany"). prq_op("createManyAndReturn"). prq_op("update").
+prq_op("updateMany"). prq_op("updateManyAndReturn"). prq_op("upsert"). prq_op("delete"). prq_op("deleteMany").
+prq_op("count"). prq_op("aggregate"). prq_op("groupBy").
+
+// prq_reads(q, l): an argument of q reads a name bound in l (the loop's item, or a callback parameter).
+.decl prq_reads(q: node, l: node)
+prq_reads(q, l) :- prq_loop(_, _, l, _), prq_bound(l, x), prq_query(q, _, _, _), field(q, "arguments", al),
+    within(i, al), (kind(i, "identifier") ; kind(i, "shorthand_property_identifier")), text(i, x).
+.decl prq_bound(l: node, x: symbol)
+prq_bound(l, x) :- prq_loop(_, _, l, _), (i = l ; within(i, l)),
+    (kind(i, "identifier") ; kind(i, "shorthand_property_identifier_pattern")), text(i, x), !prq_type_part(i, l).
+// prq_type_part(i, l): i sits in a type annotation of the parameters, not a bound name.
+.decl prq_type_part(i: node, l: node)
+prq_type_part(i, l) :- prq_loop(_, _, l, _), within(i, t), within(t, l), kind(t, "type_annotation").
+
+// prq_batched(op, how): the query is already the batched form. createMany per item is one insert per chunk; a
+// findUnique made in an iteration callback joins the others of the same tick in one query (Prisma's dataloader).
+.decl prq_batched(op: symbol, how: symbol)
+prq_batched(op, how) :- (op = "createMany" ; op = "createManyAndReturn"), (how = "for" ; how = "callback").
+prq_batched("findUnique", "callback").
+prq_batched("findUniqueOrThrow", "callback").
+// prq_fixed_list(it): the list is written in the code (`["a", "b"]`, also `as const`, and a const bound to one), or
+// is the values of an enum-like object (`Object.values(Provider)`, capitalised).
+.decl prq_fixed_list(it: node)
+prq_fixed_list(it) :- prq_loop(it, _, _, _), prq_fixed_value(it).
+// A const bound to a non-empty array literal that nothing pushes to (`const out = []; out.push(…)` is data).
+prq_fixed_list(it) :- prq_loop(it, _, _, _), kind(it, "identifier"), ref_site(it, s), kind(s, "variable_declarator"),
+    field(s, "value", v), prq_fixed_value(v), text(v, vt), !match("(?s)\\s*\\[\\s*\\].*", vt), !prq_grown(s).
+// prq_grown(s): the variable declared at s is grown in place: `x.push(…)`, `x.unshift(…)`, `x.splice(…)`.
+.decl prq_grown(s: node)
+prq_grown(s) :- prq_loop(it, _, _, _), ref_site(it, s), kind(k, "call_expression"), callee(k, m),
+    kind(m, "member_expression"), field(m, "property", p), text(p, x), (x = "push" ; x = "unshift" ; x = "splice"),
+    field(m, "object", o), kind(o, "identifier"), ref_site(o, s).
+.decl prq_fixed_value(v: node)
+prq_fixed_value(v) :- prq_unwrap(v, a), kind(a, "array"), !prq_spread(a).
+prq_fixed_value(v) :- prq_unwrap(v, c), kind(c, "call_expression"), callee(c, m), text(m, mt),
+    (mt = "Object.values" ; mt = "Object.keys" ; mt = "Object.entries"), call_arg(c, e, 0), kind(e, "identifier"),
+    text(e, et), match("[A-Z].*", et).
+// prq_unwrap(v, a): v without parentheses, `as T` and `satisfies T`.
+.decl prq_unwrap(v: node, a: node)
+prq_unwrap(v, a) :- prq_fixed_ask(v), deparen(v, a), !kind(a, "as_expression"), !kind(a, "satisfies_expression").
+prq_unwrap(v, a) :- prq_fixed_ask(v), deparen(v, w), (kind(w, "as_expression") ; kind(w, "satisfies_expression")),
+    child(w, a0, 0), deparen(a0, a).
+.decl prq_fixed_ask(v: node)
+prq_fixed_ask(it) :- prq_loop(it, _, _, _).
+prq_fixed_ask(v) :- prq_loop(it, _, _, _), kind(it, "identifier"), ref_site(it, s), kind(s, "variable_declarator"),
+    field(s, "value", v).
+.decl prq_spread(a: node)
+prq_spread(a) :- kind(a, "array"), child(a, e, _), kind(e, "spread_element").
+
+.decl prq_fix(op: symbol, fix: symbol)
+prq_fix(op, "Load them in one query before the loop: `findMany({ where: { <key>: { in: keys } } })` and match the rows up in memory, or `include`/`select` the relation on the query that loaded the list (`_count`/`groupBy` for counts).") :-
+    (op = "findMany" ; op = "findFirst" ; op = "findFirstOrThrow" ; op = "findUnique" ; op = "findUniqueOrThrow" ;
+     op = "count" ; op = "aggregate" ; op = "groupBy").
+prq_fix(op, "Insert them in one query: build the rows first and call `createMany({ data: rows })` (`createManyAndReturn` when you need them back), or a nested `create: [...]` on the parent.") :-
+    op = "create".
+prq_fix(op, "Write them in one query when every item gets the same change (`updateMany`/`deleteMany` with `where: { id: { in: ids } }`); otherwise build the per-item writes first and send them together as one batch transaction, `prisma.$transaction(items.map((x) => prisma.<model>.update(…)))` (outside any interactive `$transaction` callback), or many upserts as one `INSERT … ON CONFLICT` through `$executeRaw`.") :-
+    (op = "update" ; op = "updateMany" ; op = "updateManyAndReturn" ; op = "upsert" ; op = "delete" ;
+     op = "deleteMany").
+
+// The cases, `cases/prisma-practice-query-in-loop/`, read as one repository: each line ending in `// caught` is
+// reported, and no other line.
+.test cases exactly
+    .fixture "package.json" from "../cases/prisma-practice-query-in-loop/package.json"
+    .fixture "src/lib/db.ts" from "../cases/prisma-practice-query-in-loop/src/lib/db.ts"
+    .fixture "src/app/orders/actions.ts" from "../cases/prisma-practice-query-in-loop/src/app/orders/actions.ts"
+    .fixture "src/server/api/routers/team.ts" from "../cases/prisma-practice-query-in-loop/src/server/api/routers/team.ts"
+    .fixture "src/server/jobs/import-prices.ts" from "../cases/prisma-practice-query-in-loop/src/server/jobs/import-prices.ts"
+    .fixture "src/server/catalog/sync.ts" from "../cases/prisma-practice-query-in-loop/src/server/catalog/sync.ts"
+    .fixture "src/lib/billing/stripe-sync.ts" from "../cases/prisma-practice-query-in-loop/src/lib/billing/stripe-sync.ts"
+    .fixture "prisma/seed.ts" from "../cases/prisma-practice-query-in-loop/prisma/seed.ts"
+    .fixture "src/app/orders/__tests__/actions.test.ts" from "../cases/prisma-practice-query-in-loop/src/app/orders/__tests__/actions.test.ts"
+    .fixture "src/queries/prisma/website.ts" from "../cases/prisma-practice-query-in-loop/src/queries/prisma/website.ts"
+    .fixture "prisma/assign-default-plan.ts" from "../cases/prisma-practice-query-in-loop/prisma/assign-default-plan.ts"
+    .fixture "src/db/code-migrations/3-split-names.ts" from "../cases/prisma-practice-query-in-loop/src/db/code-migrations/3-split-names.ts"
+    .fixture "src/server/jobs/nightly.ts" from "../cases/prisma-practice-query-in-loop/src/server/jobs/nightly.ts"
+    .fixture "src/db/drizzle.ts" from "../cases/prisma-practice-query-in-loop/src/db/drizzle.ts"
+    .fixture "src/db/sequelize.ts" from "../cases/prisma-practice-query-in-loop/src/db/sequelize.ts"
+    .fixture "src/server/reports/drizzle-sync.ts" from "../cases/prisma-practice-query-in-loop/src/server/reports/drizzle-sync.ts"
+    .fixture "src/server/reports/legacy-sync.ts" from "../cases/prisma-practice-query-in-loop/src/server/reports/legacy-sync.ts"
+    .fixture "prisma/backfill.ts" from "../cases/prisma-practice-query-in-loop/prisma/backfill.ts"
+    .fixture "src/server/jobs/recount.ts" from "../cases/prisma-practice-query-in-loop/src/server/jobs/recount.ts"
+    .fixture "src/server/jobs/cron.ts" from "../cases/prisma-practice-query-in-loop/src/server/jobs/cron.ts"
+    .fixture "scripts/rebuild-search.ts" from "../cases/prisma-practice-query-in-loop/scripts/rebuild-search.ts"
+    .fixture "src/server/search/documents.ts" from "../cases/prisma-practice-query-in-loop/src/server/search/documents.ts"
+    .fixture "src/server/attributes.ts" from "../cases/prisma-practice-query-in-loop/src/server/attributes.ts"
+    .expect _ at "src/app/orders/actions.ts":7
+    .expect _ at "src/app/orders/actions.ts":13
+    .expect _ at "src/app/orders/actions.ts":24
+    .expect _ at "src/app/orders/actions.ts":31
+    .expect _ at "src/server/api/routers/team.ts":10
+    .expect _ at "src/server/api/routers/team.ts":14
+    .expect _ at "src/server/jobs/import-prices.ts":6
+    .expect _ at "src/server/catalog/sync.ts":76
+    .expect _ at "src/server/catalog/sync.ts":57
+    .expect _ at "src/server/catalog/sync.ts":63
+    .expect _ at "src/server/catalog/sync.ts":68
+    .expect _ at "src/queries/prisma/website.ts":6
+    .expect _ at "src/queries/prisma/website.ts":12
+    .expect _ at "src/queries/prisma/website.ts":33
+    .expect _ at "src/server/jobs/nightly.ts":7
+    .expect _ at "src/server/jobs/recount.ts":7
+    .expect _ at "src/server/jobs/recount.ts":8
+    .expect _ at "src/server/attributes.ts":23
+    .expect _ at "src/server/attributes.ts":49
+    .expect _ at "src/server/attributes.ts":56
+    .expect _ at "src/server/attributes.ts":66
+    .expect _ at "src/server/attributes.ts":81
+    .expect _ at "src/server/attributes.ts":93
+    .expect _ at "src/server/attributes.ts":100
+    .expect _ at "src/server/attributes.ts":101
+    .expect _ at "src/server/attributes.ts":113
+    .expect _ at "src/server/attributes.ts":143
+.end

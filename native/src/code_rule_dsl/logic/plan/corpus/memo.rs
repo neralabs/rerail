@@ -529,14 +529,20 @@ pub fn doc_keys(paths: &[String]) -> Vec<i64> {
         .collect()
 }
 
-/// The memo's frames' program part (decision 0225 §2): the phase that runs, and the names of the file-local part's
-/// relations (those an entry holds, those its rules derive, its inputs), not their rules, which each entry's
-/// `COVERED` identities name. Two programs of other relations (a phase's, a nested run's) keep their entries apart;
-/// a rule's edit keeps the space, and misses only the relations it reaches.
+/// The memo's frames' program part (decision 0225 §2): the phase that runs, the run's dialect, and the names of the
+/// file-local part's relations (those an entry holds, those its rules derive, its inputs), not their rules, which each
+/// entry's `COVERED` identities name. Two programs of other relations (a phase's, a nested run's) keep their entries
+/// apart; a rule's edit keeps the space, and misses only the relations it reaches. A run of one dialect of a language
+/// of several reads the others' files as text (decision 0337), so one file is a tree in one dialect's run and text in
+/// another's: their runs (`lane::RunDialect`) keep their entries apart too.
 pub(super) fn space_digest(ids: &BTreeMap<String, [u8; 32]>, local: &crate::code_rule_dsl::logic::plan::body::Placed, phase: Option<&str>) -> [u8; 32] {
     let mut hash = Sha256::new();
     hash.update(b"rerail.corpus-local-space/v2\0");
     hash.update(phase.unwrap_or("").as_bytes());
+    if let Some(dialect) = super::lane::RunDialect::current() {
+        hash.update(b"\0dialect\0");
+        hash.update(dialect.as_bytes());
+    }
     // Read from the program's version (t36 item 7).
     let v = &local.v;
     let derived: BTreeSet<&str> = (0..local.len()).map(|k| v.rel_name(local.rule(k).head().rel())).collect();

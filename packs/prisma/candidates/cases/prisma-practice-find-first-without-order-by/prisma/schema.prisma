@@ -1,0 +1,43 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+model User {
+  id    String @id @default(cuid())
+  email String @unique
+  name  String?
+}
+
+model Subscription {
+  id        String   @id @default(cuid())
+  userId    String
+  status    String
+  createdAt DateTime @default(now())
+}
+
+model Invoice {
+  id        String   @id @default(cuid())
+  teamId    String
+  number    Int
+  createdAt DateTime @default(now())
+}
+
+model Project {
+  id     String @id @default(cuid())
+  teamId String
+  slug   String
+  name   String
+
+  @@unique([teamId, slug])
+}
+
+model Invite {
+  id     String @id @default(cuid())
+  teamId String
+  email  String
+}

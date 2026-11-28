@@ -1662,6 +1662,51 @@ Let(d, x) :- kind(d, "variable_declarator"), field(d, "name", n), text(n, x).
     let _ = std::fs::remove_dir_all(&dir);
 }
 
+/// Each dialect's run of a `.language typescript` policy reads the other dialects' files as text (decision 0337): a
+/// rule of a `.tsx` or `.js` file sees a `.ts` file's `doc` and source lines. Each file's findings are its own
+/// dialect's run's, once: by `test-rr`'s run, then by `run-rr`'s over the same files.
+#[test]
+fn a_dialects_run_reads_the_others_files_as_text() {
+    let dir = crate::code_rule_dsl::fixtures::temp().with_extension("rrlanes");
+    std::fs::create_dir_all(&dir).unwrap();
+    let file = dir.join("t.rerail");
+    std::fs::write(&file, r#".policy "contract:lanes" revision 1
+.language typescript
+.scope include "**/*"
+.violation SeesA(at: node) code "A" "sees a.ts"
+SeesA(n) :- kind(n, "program"), doc(d, "a.ts", _), src_line(d, 1, _).
+.violation Doc(at: span) code "D" "a document"
+Doc(@place(p, 1)) :- doc(_, p, _).
+.test lanes exactly
+    .fixture "a.ts" ```
+        export function useA() {}
+        ```
+    .fixture "b.tsx" ```
+        export const b = <p/>;
+        ```
+    .fixture "c.js" ```
+        export const c = 1;
+        ```
+    .expect A at "a.ts":1
+    .expect A at "b.tsx":1
+    .expect A at "c.js":1
+    .expect D at "a.ts":1
+    .expect D at "b.tsx":1
+    .expect D at "c.js":1
+.end
+"#).unwrap();
+    let tests = super::testing::tests(&file).unwrap();
+    let outcome = super::testing::run(&file, &tests[0], &dir.join("work")).unwrap();
+    assert!(outcome.passed(), "{outcome:?}");
+    let root = dir.join("work").join("root");
+    let report = crate::code_rule_dsl::tools::run_rr(&file, &root, &dir.join("out"), &serde_json::Value::Null).unwrap();
+    let mut actual: Vec<_> = report["diagnostics"].as_array().unwrap().iter().map(|r| (r["code"].as_str().unwrap(), r["path"].as_str().unwrap())).collect();
+    actual.sort();
+    assert_eq!(actual, [("A", "a.ts"), ("A", "b.tsx"), ("A", "c.js"), ("D", "a.ts"), ("D", "b.tsx"), ("D", "c.js")]);
+    assert_eq!(report["files"], 3);
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
 /// A malformed row must not leak an earlier prefix of a policy input into rule execution.
 #[test]
 fn repository_inputs_report_missing_and_malformed_without_partial_rows() {
@@ -3572,6 +3617,83 @@ reach(a, c) :- reach(a, b), edge(b, c).
         ("only_names_every_row".to_owned(), Ok(vec!["line 24: .expect only reach: also 2: (a, c), (b, c)".to_owned()])),
         ("the_rules_left_alone".to_owned(), Ok(vec![])),
     ]);
+}
+
+/// TypeScript's project reader (decision 0710) reaches `tsx/names.rerail` through the phase `tsx_names`: a tsconfig's
+/// `paths`, over an `extends` chain and read with comments and trailing commas, resolve `@/…` and exact aliases to the
+/// workspace's documents, and each document's module is its path without its extension (`ts_module`), so `sym_of`
+/// names the defining file's symbol across files (two `helper`s apart), through a re-exporting `index` reached as
+/// `@/ui` and `@/ui/index` alike.
+#[test]
+fn tsconfig_paths_resolve_names_across_files() {
+    let policy = r##".policy "t:tsconfig-paths" revision 1
+.language typescript
+.scope include "**/*"
+#include "tsx/names.rerail"
+
+// A call of util's helper, however the file imports it: `@/lib/util` (a tsconfig `paths` alias), `~util` (an exact
+// pattern) or a relative path; not other's helper of the same name.
+.violation UsesHelper(at: node) code "uses-helper" "calls util's helper"
+UsesHelper(f) :- kind(c, "call_expression"), field(c, "function", f), sym_of(f, "web/src/lib/util#helper").
+
+.test aliases_resolve_across_files exactly
+    .fixture "web/tsconfig.base.json" ```
+        { "compilerOptions": { "strict": true } }
+        ```
+    .fixture "web/tsconfig.json" ```
+        {
+          // comments and trailing commas, as TypeScript allows
+          "extends": "./tsconfig.base.json",
+          "compilerOptions": {
+            "paths": { "@/*": ["./src/*"], "~util": ["./src/lib/util.ts"], },
+          },
+        }
+        ```
+    .fixture "web/src/lib/util.ts" ```
+        export function helper() { return 1; }
+        ```
+    .fixture "web/src/lib/other.ts" ```
+        export function helper() { return 2; }
+        ```
+    .fixture "web/src/ui/index.ts" ```
+        export { helper as uiHelper } from "@/lib/util";
+        ```
+    .fixture "web/src/app/page.ts" ```
+        import { helper } from "@/lib/util";
+        import { helper as h2 } from "~util";
+        import { helper as h3 } from "@/lib/other";
+        import { uiHelper } from "@/ui";
+        import { uiHelper as u2 } from "@/ui/index";
+        helper();
+        h2();
+        h3();
+        uiHelper();
+        u2();
+        ```
+    .fixture "web/src/app/rel.ts" ```
+        import { helper } from "../lib/util";
+        helper();
+        ```
+    .decl tgt(s: symbol, t: symbol)
+    tgt(s, t) :- target(_, s, t).
+    .decl sym(q: symbol)
+    sym(q) :- sym_of(_, q).
+    .expect only tgt("@/lib/util", "web/src/lib/util")
+    .expect only tgt("~util", "web/src/lib/util")
+    .expect only tgt("@/lib/other", "web/src/lib/other")
+    .expect only tgt("@/ui", "web/src/ui/index")
+    .expect only tgt("@/ui/index", "web/src/ui/index")
+    .expect only tgt("../lib/util", "web/src/lib/util")
+    .expect sym("web/src/lib/util#helper")
+    .expect sym("web/src/lib/other#helper")
+    .expect "uses-helper" at "web/src/app/page.ts":6
+    .expect "uses-helper" at "web/src/app/page.ts":7
+    .expect "uses-helper" at "web/src/app/page.ts":9
+    .expect "uses-helper" at "web/src/app/page.ts":10
+    .expect "uses-helper" at "web/src/app/rel.ts":2
+.end
+"##;
+    assert_eq!(run_tests_of("rr-tsconfig-paths", policy), [("aliases_resolve_across_files".to_owned(), Ok(vec![]))]);
 }
 
 /// A tool call is a test's input (`.tool_call`, `docs/rule-syntax/tool-calls.md`): the run is given the test's calls,

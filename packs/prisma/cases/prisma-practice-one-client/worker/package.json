@@ -1,0 +1,8 @@
+{
+  "name": "crm-worker",
+  "private": true,
+  "dependencies": {
+    "@prisma/client": "^7.0.0",
+    "bullmq": "^5.0.0"
+  }
+}

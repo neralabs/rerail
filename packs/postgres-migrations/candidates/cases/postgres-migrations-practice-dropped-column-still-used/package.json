@@ -1,0 +1,12 @@
+{
+  "name": "acme-app",
+  "private": true,
+  "dependencies": {
+    "@prisma/client": "^6.19.0",
+    "drizzle-orm": "^0.44.0"
+  },
+  "devDependencies": {
+    "prisma": "^6.19.0",
+    "drizzle-kit": "^0.31.0"
+  }
+}

@@ -142,11 +142,12 @@ function isConversationRuleShape(value) {
 
 /**
  * A `.rerail` file in a pack's `rules/`: a rule written in `.rerail` that its pack.json lists, or a library file of the
- * pack's that such a rule includes. Only the engine tells which files a rule includes, so the pack validation's check 1
- * judges an unlisted one (docs/pack-format.md, "Rules written in .rerail").
+ * pack's that such a rule includes; or one under `candidates/rules/`, a rule left out of the pack. Only the engine tells
+ * which files a rule includes, so the pack validation's check 1 judges an unlisted one (docs/pack-format.md, "Rules
+ * written in .rerail").
  */
 export function isPackRerailFile(path) {
-  return /^packs\/[^/]+\/rules\/.+\.rerail$/u.test(path);
+  return /^packs\/[^/]+\/(?:candidates\/)?rules\/.+\.rerail$/u.test(path);
 }
 
 /** A rule document: a JSON object whose `format` is rerail.policy/v1, or a conversation rule. */

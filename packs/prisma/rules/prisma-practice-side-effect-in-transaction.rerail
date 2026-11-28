@@ -1,0 +1,312 @@
+.policy "prisma-practice-side-effect-in-transaction" revision 1
+.description "Send mail, charge payments, call HTTP APIs and enqueue jobs before or after a Prisma interactive transaction, not inside its callback."
+.language typescript
+.mode log
+.scope include "**/*.ts", "**/*.mts", "**/*.cts", "**/*.tsx", "**/*.js", "**/*.jsx", "**/*.mjs", "**/*.cjs"
+.scope exclude "**/*.test.*", "**/*.spec.*", "**/*.cy.*", "**/__tests__/**", "**/test/**", "**/tests/**", "**/e2e/**", "**/__mocks__/**", "**/*.stories.*", "**/*.story.*", "**/__stories__/**", "**/__fixtures__/**", "**/fixtures/**", "**/node_modules/**", "**/dist/**", "**/build/**", "**/out/**", "**/.next/**", "**/coverage/**", "**/vendor/**", "**/.venv/**", "**/.yarn/**", "**/generated/**", "**/__generated__/**", "**/*.generated.*", "**/*.gen.*", "**/*.min.js", "**/*.d.ts"
+// Rerail's own rule, not a port. Prisma runs an interactive transaction `prisma.$transaction(async (tx) => …)` on one
+// connection; nothing else the callback does is part of it. A mail, a Stripe charge, a webhook POST, a queued job or
+// a Next.js cache revalidation issued in the callback still happens when the transaction rolls back, and a worker
+// it wakes can read rows before they are committed; a slow request also keeps the transaction, its row locks and a
+// pooled connection open until the 5 s default timeout aborts it (P2028). Prisma's docs: "Try to avoid performing
+// network requests and executing slow queries inside your transaction functions." Same failure as
+// django-practice-enqueue-on-commit. Targets Prisma 5-7; Prisma 8's rewrite names it `db.transaction(async (tx) …)`,
+// which this revision does not match.
+// A call runs in the callback when it sits in the callback's body, or in a callback an array method there runs at
+// once (`xs.map(async (x) => …)`, forEach, flatMap, filter, reduce, some, every, find). Reported there:
+//   fetch(url, …)                                  the global fetch
+//   stripe.paymentIntents.create(…)                any call on a client made at the top of a module, in this file or
+//   resend.emails.send(…)  queue.add(…)            imported from another: `new Stripe|Resend|Queue|Inngest|WebClient|
+//   transporter.sendMail(…)  inngest.send(…)       SQSClient|SNSClient|SESClient|ServerClient|OpenAI|Anthropic|
+//   openai.chat.completions.create(…)              PostHog|Pusher|Twilio(…)`, @upstash/qstash's Client, twilio(…),
+//                                                  nodemailer's createTransport, `axios.create`, also
+//                                                  `globalThis.x ?? new X()`
+//   axios.post(…)  got(…)  sgMail.send(…)          the axios, got, ky and @sendgrid/mail imports themselves,
+//   tasks.trigger(…)                               node-fetch and undici's fetch/request, @trigger.dev/sdk's tasks
+//   revalidatePath(…)  revalidateTag(…)            from next/cache
+//   sendReceipt(…)                                 a function of the workspace (a top-level function or const arrow,
+//                                                  in this file or imported, through re-exports and workspace
+//                                                  packages) whose body reaches one of the above, at any depth
+// Not reported:
+//   the same calls after `await prisma.$transaction(…)` returns, or before it
+//   stripe.webhooks.constructEvent(…), sgMail.setApiKey(…)        stay in the process (`<client>.webhooks.*` is
+//                                                                  local signature work)
+//   afterCommit.push(() => sendReceipt(…)), after(() => …)         only defined in the callback, run later
+//   a helper that only queries through the `tx` it is given; a pure helper of a mail module (`renderReceipt`)
+//   the array form `$transaction([q1, q2])`; `fetch` that is a parameter or local, not the global
+//   test files (*.test.*, *.spec.*, __tests__, test/, tests/, e2e/)
+// Gaps: a callback passed by name (`$transaction(work)`); wrappers around $transaction (`withTransaction(fn)`);
+// clients held in class fields or made by a getter (`this.stripe`, `getStripe()`); calls through methods of an
+// object or class (`emailService.send()`, NestJS `this.mailer.send()`); SDKs outside the lists above (a Redis
+// client, firebase-admin); a .tsx file calling a helper in a .ts file (the engine's lanes, see the notes); the
+// Prisma 8 `db.transaction` form.
+
+#include "tsx/names.rerail"
+#include "tsx/eslint-a-common.rerail"
+
+.violation SideEffectInTransaction(at: node, what: symbol) "`{what}` runs inside a Prisma interactive `$transaction(async (tx) => …)` callback, and it is not part of the transaction: if the transaction then fails or rolls back, the mail, payment, request, job or cache revalidation has already happened, and a worker or webhook receiver it starts can read rows that are not committed yet; a slow call also holds the transaction (its locks and a pooled connection) open toward its 5 s timeout (P2028). Return what it needs from the callback and make the call after `$transaction(…)` resolves, or before it when it only fetches input. Leave it where it is only if the call must happen inside, such as a lock-guarded request whose answer the writes depend on, and is idempotent."
+
+// ---- functions and when their bodies run -------------------------------------------------------------------------
+// The rule runs per file. A file states, by symbols alone, what its top-level functions call and which of its
+// top-level bindings hold a client of an outside service; what another file's helper or client is crosses between
+// files by those symbols (ses_client_sym, ses_reach, ses_canon, declared `cross_file`, decision 0677), and only the
+// finding joins them.
+.decl ses_fn(k: symbol)
+ses_fn("arrow_function"). ses_fn("function_expression"). ses_fn("function_declaration").
+ses_fn("method_definition"). ses_fn("generator_function"). ses_fn("generator_function_declaration").
+
+// ses_runs(g, h): g's body runs while h runs: g is h, or a callback an array method in h calls at once. Asked of the
+// transaction callbacks and of the file's top-level functions (ses_fn_sym), which other files' callbacks may reach.
+.decl ses_runs(g: node, h: node)
+ses_runs(h, h) :- ses_tx_fn(h).
+ses_runs(h, h) :- ses_fn_sym(_, h).
+ses_runs(g, h) :- ses_runs(f, h), kind(k, "call_expression"), nearest(k, f, ses_fn), callee(k, m),
+    static_prop(m, _, x), ses_iter(x), call_arg(k, a, 0), deparen(a, g),
+    (kind(g, "arrow_function") ; kind(g, "function_expression")).
+.decl ses_iter(x: symbol)
+ses_iter("map"). ses_iter("forEach"). ses_iter("flatMap"). ses_iter("filter"). ses_iter("reduce").
+ses_iter("some"). ses_iter("every"). ses_iter("find").
+
+// ses_call_in(c, h): call c runs when function h runs.
+.decl ses_call_in(c: node, h: node)
+ses_call_in(c, h) :- kind(c, "call_expression"), nearest(c, g, ses_fn), ses_runs(g, h).
+
+// ses_tx_fn(f): f is the function passed first to `<client>.$transaction(f, …)`.
+.decl ses_tx_fn(f: node)
+ses_tx_fn(f) :- kind(t, "call_expression"), callee(t, m), static_prop(m, _, "$transaction"), call_arg(t, a, 0),
+    deparen(a, f), (kind(f, "arrow_function") ; kind(f, "function_expression")).
+
+// ---- clients of outside services ---------------------------------------------------------------------------------
+// ses_ctor(q): `new X(…)` with X this symbol is a client whose every call leaves the process.
+.decl ses_ctor(q: symbol)
+ses_ctor("stripe#default"). ses_ctor("stripe#Stripe").
+ses_ctor("resend#Resend").
+ses_ctor("bullmq#Queue"). ses_ctor("bull#default").
+ses_ctor("inngest#Inngest").
+ses_ctor("@aws-sdk/client-sqs#SQSClient"). ses_ctor("@aws-sdk/client-sns#SNSClient").
+ses_ctor("@aws-sdk/client-ses#SESClient"). ses_ctor("@aws-sdk/client-sesv2#SESv2Client").
+ses_ctor("postmark#ServerClient"). ses_ctor("@slack/web-api#WebClient").
+ses_ctor("openai#default"). ses_ctor("openai#OpenAI"). ses_ctor("@anthropic-ai/sdk#default").
+ses_ctor("@anthropic-ai/sdk#Anthropic"). ses_ctor("posthog-node#PostHog"). ses_ctor("pusher#default").
+ses_ctor("twilio#Twilio"). ses_ctor("@upstash/qstash#Client").
+// ses_factory(q): a call of q returns such a client.
+.decl ses_factory(q: symbol)
+ses_factory("nodemailer#createTransport"). ses_factory("nodemailer#default"). ses_factory("twilio#default").
+// ses_module_client(q): the import itself is the client.
+.decl ses_module_client(q: symbol)
+ses_module_client("axios#default"). ses_module_client("@sendgrid/mail#default").
+ses_module_client("got#default"). ses_module_client("ky#default").
+ses_module_client("@trigger.dev/sdk#tasks"). ses_module_client("@trigger.dev/sdk/v3#tasks").
+// ses_func(q): a function that leaves the process (or, revalidate*, acts outside the transaction).
+.decl ses_func(q: symbol)
+ses_func("next/cache#revalidatePath"). ses_func("next/cache#revalidateTag").
+ses_func("axios#default"). ses_func("got#default"). ses_func("ky#default"). ses_func("node-fetch#default").
+ses_func("undici#fetch"). ses_func("undici#request").
+
+
+// ses_client_value(v): expression v makes a client.
+.decl ses_client_value(v: node)
+ses_client_value(v) :- kind(v, "new_expression"), field(v, "constructor", k), ses_sym(k, q), ses_ctor(q).
+ses_client_value(v) :- kind(v, "call_expression"), callee(v, k), ses_sym(k, q), ses_factory(q).
+ses_client_value(v) :- kind(v, "call_expression"), callee(v, k), kind(k, "member_expression"),
+    static_prop(k, o, "createTransport"), ses_sym(o, "nodemailer#default").
+ses_client_value(v) :- kind(v, "call_expression"), callee(v, k), static_prop(k, o, "create"),
+    ses_sym(o, "axios#default").
+// `globalThis.stripe ?? new Stripe(…)`
+ses_client_value(v) :- kind(v, "binary_expression"), (op(v, "??") ; op(v, "||")), field(v, "right", r), deparen(r, x),
+    ses_client_value(x).
+
+// ses_client_sym(q): the binding q holds a client: a top-level binding of a file whose value makes one, read by
+// every file that imports it, or a module that is one.
+.decl ses_client_sym(q: symbol) cross_file
+ses_client_sym(@qname(m, x)) :- kind(d, "variable_declarator"), field(d, "name", n), kind(n, "identifier"),
+    text(n, x), top_level(d, x), field(d, "value", v0), deparen(v0, v), ses_client_value(v), docof(d, dd),
+    ts_module(dd, m).
+ses_client_sym(q) :- ses_module_client(q).
+
+// ses_root(e, r): r is the identifier a member chain e starts from.
+.decl ses_root(e: node, r: node)
+ses_root(e, e) :- kind(e, "identifier").
+ses_root(e, r) :- kind(e, "member_expression"), field(e, "object", o0), deparen(o0, o), ses_root(o, r).
+
+
+// ---- calls that are, or may be, side effects ---------------------------------------------------------------------
+// ses_direct(c, w): call c, in a function the rule asks about, talks to the outside world as its file shows:
+.decl ses_direct(c: node, w: symbol)
+// fetch(…), the global
+ses_direct(c, "fetch") :- ses_call_in(c, _), callee(c, f), kind(f, "identifier"), text(f, "fetch"), !ref_site(f, _).
+// revalidatePath(…), axios(…); next/cache's functions only in a file whose nearest package.json lists next (the
+// root's when none is nearer).
+ses_direct(c, w) :- ses_call_in(c, _), callee(c, f), kind(f, "identifier"), ses_sym(f, q), ses_func(q),
+    !prefix("next/", q), text(f, w).
+ses_direct(c, w) :- ses_call_in(c, _), callee(c, f), kind(f, "identifier"), ses_sym(f, q), ses_func(q),
+    prefix("next/", q), docof(c, d), ses_next_doc(d), text(f, w).
+.decl ses_next_doc(d: number)
+ses_next_doc(d) :- doc(d, p, _), package_for(p, dir), ses_next_pkg(dir).
+ses_next_doc(d) :- doc(d, p, _), !ses_has_pkg(p), ses_next_pkg("").
+.decl ses_has_pkg(p: symbol)
+ses_has_pkg(p) :- doc(_, p, _), package_for(p, _).
+.decl ses_next_pkg(dir: symbol)
+ses_next_pkg(dir) :- package_field(dir, "dependencies/next", _).
+ses_next_pkg(dir) :- package_field(dir, "devDependencies/next", _).
+// ses_pure_call(f): calls on a client that stay in the process: `<client>.webhooks.<method>` (Stripe's signature
+// helpers, constructEvent and the like) and @sendgrid/mail's setApiKey.
+.decl ses_pure_call(f: node)
+ses_pure_call(f) :- static_prop(f, o, _), static_prop(o, _, "webhooks").
+ses_pure_call(f) :- static_prop(f, _, "setApiKey").
+
+// ses_cand(c, k, q, w): call c, in a function the rule asks about, is side effect w (k "direct"); is `w(…)` on a
+// member chain from the binding q (k "client": a side effect when q holds a client, ses_client_sym); or calls the
+// function q by the name w (k "hop": a side effect when q reaches one, ses_reach).
+.decl ses_cand(c: node, k: symbol, q: symbol, w: symbol)
+ses_cand(c, "direct", "", w) :- ses_direct(c, w).
+ses_cand(c, "client", q, w) :- ses_call_in(c, _), callee(c, f), kind(f, "member_expression"), ses_root(f, r),
+    ses_sym(r, q), !ses_pure_call(f), text(f, w).
+ses_cand(c, "hop", q, w) :- ses_call_in(c, _), callee(c, f), kind(f, "identifier"), ses_sym(f, q), !ses_direct(c, _),
+    text(f, w).
+
+// ---- helpers that reach one --------------------------------------------------------------------------------------
+// ses_fn_sym(q, g): top-level function g is symbol q ("module#name", as tsx/names names it).
+.decl ses_fn_sym(q: symbol, g: node)
+ses_fn_sym(@qname(m, x), g) :- kind(g, "function_declaration"), field(g, "name", n), text(n, x),
+    top_level(g, x), docof(g, d), ts_module(d, m).
+ses_fn_sym(@qname(m, x), g) :- kind(d0, "variable_declarator"), field(d0, "name", n), kind(n, "identifier"),
+    text(n, x), top_level(d0, x), field(d0, "value", v), deparen(v, g),
+    (kind(g, "arrow_function") ; kind(g, "function_expression")), docof(d0, d), ts_module(d, m).
+ses_fn_sym(@qname(m, "default"), g) :- kind(e, "export_statement"), field(e, "declaration", g),
+    kind(g, "function_declaration"), op(e, "default"), docof(e, d), ts_module(d, m).
+// ses_fn_cand(q, k, q2, w): running the top-level function q makes a call ses_cand(_, k, q2, w): its file's statement,
+// by symbols.
+.decl ses_fn_cand(q: symbol, k: symbol, q2: symbol, w: symbol)
+ses_fn_cand(q, k, q2, w) :- ses_fn_sym(q, g), ses_call_in(c, g), ses_cand(c, k, q2, w).
+// ses_reach(q, w): running the function q runs side effect w, in its own body or through the helpers it calls, at
+// any depth and in any file.
+.decl ses_reach(q: symbol, w: symbol) cross_file
+ses_reach(q, w) :- ses_fn_cand(q, "direct", _, w).
+ses_reach(q, w) :- ses_fn_cand(q, "client", q0, w), ses_canon(q0, q2), ses_client_sym(q2).
+ses_reach(q, w) :- ses_fn_cand(q, "hop", q0, _), ses_canon(q0, q2), q2 != q, ses_reach(q2, w).
+
+// ---- the finding -------------------------------------------------------------------------------------------------
+.decl ses_test_doc(d: number)
+ses_test_doc(d) :- doc(d, p, _), (glob("**/*.test.*", p) ; glob("**/*.spec.*", p) ; glob("**/__tests__/**", p) ;
+    glob("**/e2e/**", p) ; glob("**/test/**", p) ; glob("**/tests/**", p)).
+// ses_tx_cand(c, k, q, w): ses_cand of a call made while a transaction callback runs, outside test code.
+.decl ses_tx_cand(c: node, k: symbol, q: symbol, w: symbol)
+ses_tx_cand(c, k, q, w) :- ses_cand(c, k, q, w), ses_call_in(c, h), ses_tx_fn(h), docof(c, d), !ses_test_doc(d).
+
+SideEffectInTransaction(c, w) :- ses_tx_cand(c, "direct", _, w).
+SideEffectInTransaction(c, w) :- ses_tx_cand(c, "client", q0, w), ses_canon(q0, q), ses_client_sym(q).
+SideEffectInTransaction(c, cat(n, " (reaches ", w, ")")) :- ses_tx_cand(c, "hop", q0, n), ses_canon(q0, q),
+    ses_reach(q, w).
+
+// ---- names -------------------------------------------------------------------------------------------------------
+// ses_sym(n, q): identifier n denotes q, by tsx/names' sym_of: "src/lib/email#sendReceipt" for a name declared at
+// the top of its file or imported from a workspace module (a relative path, a tsconfig `paths` alias, followed through
+// `export { a } from` and `export *`), "stripe#default" or "next/cache#revalidatePath" for a package's.
+.decl ses_sym(n: node, q: symbol)
+ses_sym(n, q) :- kind(n, "identifier"), sym_of(n, q).
+
+// ses_canon(q0, q): the symbol q0 a file names is q: itself, or, for a name imported from a workspace package by its
+// package.json name ("@acme/emails#sendInvite", which tsx/names leaves a package's), that package's export:
+// `@acme/emails` is the package's src/index or index, `@acme/emails/x` its x or src/x.
+.decl ses_key(q0: symbol)
+ses_key(q0) :- ses_cand(_, k, q0, _), k != "direct".
+.decl ses_canon(q0: symbol, q: symbol) cross_file
+ses_canon(q0, q0) :- ses_key(q0).
+ses_canon(q0, q) :- ses_key(q0), match("(?<s>[^.#][^#]*)#(?<x>[^#]+)", q0), ses_pkg_module(s, m),
+    tsx_names__exports(m, x, q).
+// ses_pkg_module(s, m): specifier s names module m of a workspace package: m is some file's module
+// (tsx_names__module_at).
+.decl ses_pkg_spec(s: symbol)
+ses_pkg_spec(s) :- ses_key(q0), match("(?<s>[^.#][^#]*)#[^#]+", q0).
+.decl ses_pkg_module(s: symbol, m: symbol)
+ses_pkg_module(s, m) :- ses_pkg_spec(s), ses_pkg_dir(s, dir), (m = @join(dir, "src/index") ; m = @join(dir, "index")),
+    tsx_names__module_at(_, m).
+ses_pkg_module(s, m) :- ses_pkg_spec(s), ses_pkg_dir(n, dir), prefix(cat(n, "/"), s),
+    rest = substr(s, strlen(n) + 1, strlen(s) - strlen(n) - 1),
+    (m = @join(dir, rest) ; m = @join(dir, cat("src/", rest)) ; m = @join(dir, cat(rest, "/index")) ;
+     m = @join(dir, cat("src/", rest, "/index"))), tsx_names__module_at(_, m).
+
+// ses_walk(x, k): directory x, k levels below the root (""), up to 3; dot folders and node_modules left out.
+// (dir_entry can only be asked of folders the rule names from constants, not of documents' folders.)
+.decl ses_walk(x: symbol, k: number)
+ses_walk("", 0).
+ses_walk(b, 1) :- dir_entry("", b, 1), !prefix(".", b), b != "node_modules".
+ses_walk(cat(a, "/", b), k + 1) :- ses_walk(a, k), k >= 1, k < 3, dir_entry(a, b, 1), !prefix(".", b),
+    b != "node_modules".
+// ses_pkg_dir(n, dir): dir/package.json is named n (its first "name" line): a workspace package of a monorepo.
+.decl ses_pkg_dir(n: symbol, dir: symbol)
+ses_pkg_dir(n, x) :- ses_walk(x, k), k > 0, dir_entry(x, "package.json", 0), f = @join(x, "package.json"),
+    file_line(f, i, l), match("\\s*\"name\"\\s*:\\s*\"(?<n>[^\"]+)\".*", l),
+    i = min j : { file_line(f, j, l2), match("\\s*\"name\"\\s*:.*", l2) }.
+
+// The cases, `cases/prisma-practice-side-effect-in-transaction/`, read as one repository: each line ending in
+// `// caught` is reported, and no other line.
+.test cases exactly
+    .fixture "package.json" from "../cases/prisma-practice-side-effect-in-transaction/package.json"
+    .fixture "packages/emails/package.json" from "../cases/prisma-practice-side-effect-in-transaction/packages/emails/package.json"
+    .fixture "packages/emails/src/index.ts" from "../cases/prisma-practice-side-effect-in-transaction/packages/emails/src/index.ts"
+    .fixture "packages/emails/src/transport.ts" from "../cases/prisma-practice-side-effect-in-transaction/packages/emails/src/transport.ts"
+    .fixture "src/__tests__/orders.test.ts" from "../cases/prisma-practice-side-effect-in-transaction/src/__tests__/orders.test.ts"
+    .fixture "src/app/admin/actions.tsx" from "../cases/prisma-practice-side-effect-in-transaction/src/app/admin/actions.tsx"
+    .fixture "src/app/orders/actions.ts" from "../cases/prisma-practice-side-effect-in-transaction/src/app/orders/actions.ts"
+    .fixture "src/emails/welcome.tsx" from "../cases/prisma-practice-side-effect-in-transaction/src/emails/welcome.tsx"
+    .fixture "src/lib/audit.ts" from "../cases/prisma-practice-side-effect-in-transaction/src/lib/audit.ts"
+    .fixture "src/lib/db.ts" from "../cases/prisma-practice-side-effect-in-transaction/src/lib/db.ts"
+    .fixture "src/lib/email.ts" from "../cases/prisma-practice-side-effect-in-transaction/src/lib/email.ts"
+    .fixture "src/lib/notify/index.ts" from "../cases/prisma-practice-side-effect-in-transaction/src/lib/notify/index.ts"
+    .fixture "src/lib/notify/slack.ts" from "../cases/prisma-practice-side-effect-in-transaction/src/lib/notify/slack.ts"
+    .fixture "src/lib/notify/sms.ts" from "../cases/prisma-practice-side-effect-in-transaction/src/lib/notify/sms.ts"
+    .fixture "src/lib/queue.ts" from "../cases/prisma-practice-side-effect-in-transaction/src/lib/queue.ts"
+    .fixture "src/lib/stripe.ts" from "../cases/prisma-practice-side-effect-in-transaction/src/lib/stripe.ts"
+    .fixture "src/server/billing.ts" from "../cases/prisma-practice-side-effect-in-transaction/src/server/billing.ts"
+    .fixture "tsconfig.json" from "../cases/prisma-practice-side-effect-in-transaction/tsconfig.json"
+    .fixture "src/server/ai/summaries.ts" from "../cases/prisma-practice-side-effect-in-transaction/src/server/ai/summaries.ts"
+    .fixture "packages/emails/src/digest.ts" from "../cases/prisma-practice-side-effect-in-transaction/packages/emails/src/digest.ts"
+    .expect _ at "src/app/admin/actions.tsx":10
+    .expect _ at "src/app/orders/actions.ts":16
+    .expect _ at "src/app/orders/actions.ts":17
+    .expect _ at "src/app/orders/actions.ts":18
+    .expect _ at "src/app/orders/actions.ts":19
+    .expect _ at "src/app/orders/actions.ts":20
+    .expect _ at "src/app/orders/actions.ts":21
+    .expect _ at "src/app/orders/actions.ts":22
+    .expect _ at "src/server/billing.ts":11
+    .expect _ at "src/server/billing.ts":12
+    .expect _ at "src/server/billing.ts":19
+    .expect _ at "src/server/ai/summaries.ts":11
+    .expect _ at "src/server/ai/summaries.ts":12
+.end
+
+// The pack.json examples.
+.test example_caught exactly
+    .fixture "app/orders/actions.ts" ```
+        "use server";
+
+        import { prisma } from "@/lib/prisma";
+
+        export async function placeOrder(userId: string, total: number) {
+          return prisma.$transaction(async (tx) => {
+            const order = await tx.order.create({ data: { userId, total, status: "PENDING" } });
+            await fetch("https://hooks.example.com/order-placed", { method: "POST", body: order.id });
+            return order;
+          });
+        }
+        ```
+    .expect SideEffectInTransaction at "app/orders/actions.ts":8
+.end
+.test example_passes exactly
+    .fixture "app/orders/actions.ts" ```
+        "use server";
+
+        import { prisma } from "@/lib/prisma";
+
+        export async function placeOrder(userId: string, total: number) {
+          const order = await prisma.$transaction(async (tx) => {
+            return tx.order.create({ data: { userId, total, status: "PENDING" } });
+          });
+          await fetch("https://hooks.example.com/order-placed", { method: "POST", body: order.id });
+          return order;
+        }
+        ```
+.end

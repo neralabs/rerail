@@ -309,6 +309,9 @@ const STATE: &[(&str, &str)] = &[
     ("code_rule_dsl/logic/plan/corpus/memo.rs", "SIZES"),
     ("code_rule_dsl/logic/plan/corpus/inputs.rs", "BASE"),
     ("code_rule_dsl/logic/plan/corpus/inputs.rs", "FACTS_DIR"),
+    // The dialect of each run under way and how many of the other dialects' files it read as text (`corpus::lane`,
+    // decision 0337): the run's context, gone when it ends.
+    ("code_rule_dsl/logic/plan/corpus/lane.rs", "RUNS"),
     ("code_rule_dsl/logic/plan/corpus/phases.rs", "HANDED_DOWN"),
     // Phase 1's exports while the run that ran it is under way: the run's own facts, gone when it ends.
     ("code_rule_dsl/logic/plan/corpus/phases.rs", "PHASE_ONE"),

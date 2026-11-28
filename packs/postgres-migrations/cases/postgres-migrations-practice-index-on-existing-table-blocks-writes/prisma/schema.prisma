@@ -1,0 +1,14 @@
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+model Order {
+  id    String  @id
+  email String
+  ref   String  @unique
+  code  String? @unique
+  notes String?
+
+  @@index([email])
+}

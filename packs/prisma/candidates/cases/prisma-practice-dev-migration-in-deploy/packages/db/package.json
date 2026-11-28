@@ -1,0 +1,13 @@
+{
+  "name": "@acme/db",
+  "private": true,
+  "scripts": {
+    "build": "prisma generate",
+    "db:migrate": "prisma migrate dev",
+    "db:reset": "prisma migrate reset",
+    "db:deploy": "prisma migrate deploy",
+    "db:push": "prisma db push --accept-data-loss",
+    "postinstall": "prisma generate && npm run db:push",
+    "start:prod": "prisma migrate deploy"
+  }
+}

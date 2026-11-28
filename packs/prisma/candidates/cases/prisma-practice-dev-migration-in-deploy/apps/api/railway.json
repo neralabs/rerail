@@ -1,0 +1,7 @@
+{
+  "build": { "buildCommand": "pnpm build" },
+  "deploy": {
+    "startCommand": "node dist/server.js",
+    "preDeployCommand": ["npx prisma migrate reset --force"]
+  }
+}

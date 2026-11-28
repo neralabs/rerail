@@ -20,6 +20,9 @@ pub const HOLE: &str = "hole";
 /// The index of `message` in a finding's row (`HEAD`).
 pub const MESSAGE_COLUMN: usize = 6;
 
+/// The index of `path` in a finding's row (`HEAD`).
+pub const PATH_COLUMN: usize = 3;
+
 /// Whether `rel` is a finding's relation.
 pub fn is_diagnostic(rel: &str) -> bool {
     rel.starts_with(PREFIX)

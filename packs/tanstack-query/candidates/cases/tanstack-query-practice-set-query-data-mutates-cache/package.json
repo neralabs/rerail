@@ -1,0 +1,11 @@
+{
+  "name": "smc-cases",
+  "private": true,
+  "dependencies": {
+    "@tanstack/react-query": "^5.62.0",
+    "@trpc/react-query": "^11.0.0",
+    "immer": "^10.1.0",
+    "next": "15.1.0",
+    "react": "19.0.0"
+  }
+}

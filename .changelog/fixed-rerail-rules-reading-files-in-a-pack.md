@@ -1,0 +1,1 @@
+A `.rerail` rule that lists folders or reads files outside its scope (`dir_entry`, `file_line`) now finds the same when its pack runs it beside other rules as when it runs alone: run with others, it found nothing.

@@ -1,0 +1,5 @@
+{
+  "name": "@acme/graphql",
+  "private": true,
+  "main": "src/index.ts"
+}

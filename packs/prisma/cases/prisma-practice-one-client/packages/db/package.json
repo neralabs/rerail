@@ -1,0 +1,7 @@
+{
+  "name": "@crm/db",
+  "private": true,
+  "dependencies": {
+    "@prisma/client": "^7.0.0"
+  }
+}

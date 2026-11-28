@@ -1,0 +1,102 @@
+{
+  "format": "rerail.rule-pack/v1",
+  "id": "tanstack-query",
+  "name": "TanStack Query",
+  "category": "framework",
+  "covers": "Rerail's own TanStack Query rules for query data read from the cache instead of copied into state, query functions that throw on failed responses, and browser queries that use a Route Handler instead of a Server Action.",
+  "reason": "matches TanStack Query",
+  "match": {
+    "any": [
+      {
+        "dependencies": {
+          "ecosystem": "npm",
+          "names": [
+            "@tanstack/react-query",
+            "@tanstack/query-core",
+            "@tanstack/vue-query",
+            "@tanstack/solid-query",
+            "@tanstack/svelte-query"
+          ]
+        }
+      }
+    ]
+  },
+  "rules": [
+    {
+      "id": "tanstack-query-practice-query-data-copied-to-state",
+      "document": "rules/tanstack-query-practice-query-data-copied-to-state.rerail",
+      "title": "TanStack Query practice: read query data from the query, never copy it into useState",
+      "group": "TanStack Query practice",
+      "on": true,
+      "dimensions": { "risk": "correctness", "layer": "ui", "severity": "medium" },
+      "examples": {
+        "caught": {
+          "path": "src/features/todos/todo-list.tsx",
+          "text": "\"use client\";\nimport { useEffect, useState } from \"react\";\nimport { useQuery } from \"@tanstack/react-query\";\n\ntype Todo = { id: string; title: string };\n\nexport function TodoList() {\n  const { data } = useQuery({ queryKey: [\"todos\"], queryFn: fetchTodos });\n  const [todos, setTodos] = useState<Todo[]>([]);\n\n  useEffect(() => {\n    if (data) setTodos(data);\n  }, [data]);\n\n  return <ul>{todos.map((t) => <li key={t.id}>{t.title}</li>)}</ul>;\n}\n\nasync function fetchTodos(): Promise<Todo[]> {\n  const res = await fetch(\"/api/todos\");\n  if (!res.ok) throw new Error(`todos: ${res.status}`);\n  return res.json();\n}\n"
+        },
+        "passes": {
+          "path": "src/features/todos/todo-list.tsx",
+          "text": "\"use client\";\nimport { useQuery } from \"@tanstack/react-query\";\n\ntype Todo = { id: string; title: string };\n\nexport function TodoList() {\n  const { data: todos = [] } = useQuery({ queryKey: [\"todos\"], queryFn: fetchTodos });\n  return <ul>{todos.map((t) => <li key={t.id}>{t.title}</li>)}</ul>;\n}\n\nasync function fetchTodos(): Promise<Todo[]> {\n  const res = await fetch(\"/api/todos\");\n  if (!res.ok) throw new Error(`todos: ${res.status}`);\n  return res.json();\n}\n"
+        }
+      }
+    },
+    {
+      "id": "tanstack-query-practice-fetch-without-ok-check",
+      "document": "rules/tanstack-query-practice-fetch-without-ok-check.rerail",
+      "title": "TanStack Query practice: a queryFn or mutationFn that calls fetch() throws when the response is not ok",
+      "group": "TanStack Query practice",
+      "on": true,
+      "dimensions": { "risk": "correctness", "layer": "ui", "severity": "medium" },
+      "examples": {
+        "caught": {
+          "path": "src/lib/api/todos.ts",
+          "text": "export async function getTodos() {\n  const res = await fetch(\"/api/todos\");\n  return res.json();\n}\n",
+          "with": [
+            {
+              "path": "src/features/todos/use-todos.ts",
+              "text": "import { useQuery } from \"@tanstack/react-query\";\nimport { getTodos } from \"../../lib/api/todos\";\n\nexport function useTodos() {\n  return useQuery({ queryKey: [\"todos\"], queryFn: getTodos });\n}\n"
+            }
+          ]
+        },
+        "passes": {
+          "path": "src/features/todos/use-todos.ts",
+          "text": "import { useQuery } from \"@tanstack/react-query\";\n\nexport function useTodos() {\n  return useQuery({\n    queryKey: [\"todos\"],\n    queryFn: async () => {\n      const res = await fetch(\"/api/todos\");\n      if (!res.ok) throw new Error(`GET /api/todos failed: ${res.status}`);\n      return res.json();\n    },\n  });\n}\n"
+        }
+      }
+    },
+    {
+      "id": "tanstack-query-practice-server-action-as-query-fn",
+      "document": "rules/tanstack-query-practice-server-action-as-query-fn.rerail",
+      "title": "TanStack Query practice: a queryFn that runs in the browser never calls a Server Action",
+      "group": "TanStack Query practice",
+      "on": true,
+      "dimensions": { "risk": "correctness", "layer": "ui", "severity": "medium" },
+      "examples": {
+        "caught": {
+          "path": "src/features/projects/use-projects.ts",
+          "text": "'use client'\n\nimport { useQuery } from '@tanstack/react-query'\nimport { getProjects } from './actions'\n\nexport function useProjects() {\n  return useQuery({ queryKey: ['projects'], queryFn: () => getProjects() })\n}\n",
+          "with": [
+            {
+              "path": "src/features/projects/actions.ts",
+              "text": "'use server'\n\nimport { db } from '../../lib/db'\n\nexport async function getProjects() {\n  return db.project.findMany({ orderBy: { createdAt: 'desc' } })\n}\n"
+            },
+            {
+              "path": "package.json",
+              "text": "{ \"dependencies\": { \"@tanstack/react-query\": \"^5.62.0\", \"next\": \"^15.1.0\" } }\n"
+            }
+          ]
+        },
+        "passes": {
+          "path": "src/features/projects/use-projects.ts",
+          "text": "'use client'\n\nimport { useQuery } from '@tanstack/react-query'\n\nexport function useProjects() {\n  return useQuery({\n    queryKey: ['projects'],\n    queryFn: async () => {\n      const res = await fetch('/api/projects')\n      if (!res.ok) throw new Error(`GET /api/projects failed: ${res.status}`)\n      return res.json()\n    },\n  })\n}\n",
+          "with": [
+            {
+              "path": "package.json",
+              "text": "{ \"dependencies\": { \"@tanstack/react-query\": \"^5.62.0\", \"next\": \"^15.1.0\" } }\n"
+            }
+          ]
+        }
+      }
+    }
+  ]
+}

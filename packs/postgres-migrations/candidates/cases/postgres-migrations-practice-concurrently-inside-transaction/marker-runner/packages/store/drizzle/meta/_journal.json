@@ -1,0 +1,20 @@
+{
+  "version": "7",
+  "dialect": "postgresql",
+  "entries": [
+    {
+      "idx": 4,
+      "version": "7",
+      "when": 1763630000000,
+      "tag": "0004_document_url_idx",
+      "breakpoints": true
+    },
+    {
+      "idx": 5,
+      "version": "7",
+      "when": 1763716400000,
+      "tag": "0005_upload_url_idx",
+      "breakpoints": true
+    }
+  ]
+}
