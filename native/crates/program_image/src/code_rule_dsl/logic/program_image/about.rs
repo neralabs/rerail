@@ -733,6 +733,19 @@ impl Builder<'_> {
         self.set_about_rows("gate_quiet", quiet);
         self.set_about_rows("gate_dep", deps);
     }
+    /// Keeps the settings whose key `keep` takes, in their order, numbered again from 0: a stage cut from a phase drops
+    /// the phase's own `phase`, `export` and `rounds` (decision 0709).
+    pub(in crate::code_rule_dsl::logic::program_image) fn retain_settings(&mut self, keep: &dyn Fn(&str) -> bool) {
+        let rows = self.about_rows("setting");
+        let n = rows.len();
+        let mut kept: super::encoder::Rows = rows.iter().filter(|r| !matches!(r.get(2), Some(&Cell::Str(a)) if !keep(self.text(a)))).collect();
+        if kept.len() != n {
+            for (k, r) in kept.iter_mut().enumerate() {
+                r[1] = Cell::Int(k as i64);
+            }
+            self.set_about_rows("setting", kept);
+        }
+    }
     /// Adds setting `key` with `text` after the program's settings (`.global library …`, written by the file reader).
     pub(in crate::code_rule_dsl::logic::program_image) fn add_setting(&mut self, key: &str, text: &str) {
         let p = program_cell(self);

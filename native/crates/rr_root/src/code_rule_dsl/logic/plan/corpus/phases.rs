@@ -615,13 +615,17 @@ pub use crate::code_rule_dsl::logic::plan::phased::PROBE;
 
 /// `v`'s stage (decision 0709), if it has one: the program it leaves, which reads the staged relations as the stage's
 /// exports (`<stage>__<relation>`, placeless inputs), and the stage held for the run. The stage is `v`'s rules for
-/// the staged relations and every relation below them, a phase exporting the staged ones. A phase's or the constants'
-/// own run, and a stage's, stage nothing; nor does `RERAIL_STAGE=off`.
+/// the staged relations and every relation below them, a phase exporting the staged ones. The constants' own run, a
+/// stage's (a phase named `STAGE…`) and an asked phase's rounds (decision 0705) stage nothing; nor does
+/// `RERAIL_STAGE=off`. A phase run once is staged as any program is: its per-file part derives the views of values its
+/// cross part reads, and that part reads no base relation (decision 0727), so `points_to`'s solve has the same stages
+/// as `calls_p3`'s, the same rules run as a program.
 pub fn stage(v: &std::sync::Arc<Version>, options: &serde_json::Value) -> Result<Option<(std::sync::Arc<Version>, Staged)>> {
     use crate::code_rule_dsl::logic::program_image::fields::FieldsMut;
     use crate::code_rule_dsl::logic::program_image::{AtomRef, Builder, Rewrite};
     use crate::code_rule_dsl::logic::plan::phased::STAGE;
-    if options.get(super::constants::OWN).is_some() || declared(&**v).is_some() || std::env::var("RERAIL_STAGE").is_ok_and(|s| s == "off") {
+    let unstaged_phase = declared(&**v).is_some_and(|d| d.name.starts_with(STAGE) || !d.rounds.is_empty());
+    if options.get(super::constants::OWN).is_some() || unstaged_phase || std::env::var("RERAIL_STAGE").is_ok_and(|s| s == "off") {
         return Ok(None);
     }
     // An earlier phase's export the program reads (decision 0709 §3): probed as a stage's is.
@@ -643,18 +647,29 @@ pub fn stage(v: &std::sync::Arc<Version>, options: &serde_json::Value) -> Result
     if staging.staged.is_empty() && !phase_read {
         return Ok(None);
     }
-    // The staged relations and every derived relation below them.
+    // The staged relations and every derived relation below them, and the guest requests (decision 0431 §8: a string's
+    // `parsed`, `host_node`, …) whose answers they read: a stage is a phase that asks its own requests (decision 0727),
+    // and its rules read a request's answer as an input, not the request.
     let mut below: BTreeSet<String> = staging.staged.clone();
+    let answering = crate::code_rule_dsl::logic::plan::corpus::guests::answering(v);
     let mut todo: Vec<String> = below.iter().cloned().collect();
-    while let Some(rel) = todo.pop() {
-        for r in v.rules().filter(|r| v.rel_name(r.head().rel()) == rel) {
-            for a in r.reads() {
-                let x = v.rel_name(a.rel());
-                if v.rules().any(|q| v.rel_name(q.head().rel()) == x) && below.insert(x.to_owned()) {
-                    todo.push(x.to_owned());
+    loop {
+        while let Some(rel) = todo.pop() {
+            for r in v.rules().filter(|r| v.rel_name(r.head().rel()) == rel) {
+                for a in r.reads() {
+                    let x = v.rel_name(a.rel());
+                    if v.rules().any(|q| v.rel_name(q.head().rel()) == x) && below.insert(x.to_owned()) {
+                        todo.push(x.to_owned());
+                    }
                 }
             }
         }
+        let reads_below = |x: &str| v.rules().filter(|r| below.contains(v.rel_name(r.head().rel()))).any(|r| r.reads().any(|a| v.rel_name(a.rel()) == x));
+        todo = answering.iter().filter(|(q, (made, _))| !below.contains(q.as_str()) && made.iter().any(|m| reads_below(m))).map(|(q, _)| q.clone()).collect();
+        if todo.is_empty() {
+            break;
+        }
+        below.extend(todo.iter().cloned());
     }
     // Its name: a digest of its rules.
     let name = {
@@ -686,6 +701,8 @@ pub fn stage(v: &std::sync::Arc<Version>, options: &serde_json::Value) -> Result
         for e in &exports {
             b.fields().add_output(e);
         }
+        // Cut from a phase, the stage is a phase of its own: the program's name, exports and rounds are not its.
+        b.fields().retain_settings(&|k| !matches!(k, "phase" | "export" | "rounds"));
         b.fields().add_setting("phase", &name);
         b.fields().add_setting("export", &exports.join(", "));
         b.finish().map(|(v, _)| v).map_err(Error::Plan)
@@ -1005,13 +1022,14 @@ pub(crate) type Facts = BTreeMap<String, Vec<Vec<Value>>>;
 /// The facts `prog` reads from earlier phases (`<phase>__<export>`), each phase run first in its own space, and the
 /// phases' runs, in the order they ran.
 pub fn facts(prog: &(impl ProgramFields + ?Sized), shape: &super::shape::Shape, root: &Path, modes: &str, binding: Binding, chunk_nodes: usize, typing: &Typing, options: &serde_json::Value) -> Result<(Facts, Vec<PhaseRun>)> {
-    // A phase's own run: its upstream facts were worked out by the run that started it.
-    if let Some(me) = declared(prog)
-        && let Some(f) = crate::code_rule_dsl::logic::profile::with_bound(|h: &HandedDown| h.0.last().filter(|(n, _)| *n == me.name).map(|(_, f)| Facts::clone(f)))
-    {
-        return Ok((f, Vec::new()));
+    // A phase's own run: its upstream facts were worked out by the run that started it. Its own stage (decision 0709,
+    // `stage`: a phase run once is staged as a program is) is not one of those: it is cut from the phase's program in
+    // its own run, and run here.
+    let handed = declared(prog).and_then(|me| crate::code_rule_dsl::logic::profile::with_bound(|h: &HandedDown| h.0.last().filter(|(n, _)| *n == me.name).map(|(_, f)| Facts::clone(f))));
+    let (mut facts, mut runs) = (handed.clone().unwrap_or_default(), Vec::new());
+    if handed.is_some() && !wanted_in(prog, shape, options.get("phase_dir").and_then(|v| v.as_str()).map(Path::new))?.keys().any(|n| staged(n).is_some()) {
+        return Ok((facts, runs));
     }
-    let (mut facts, mut runs) = (Facts::new(), Vec::new());
     // The constants' own run (`constants::derive`) reads no phase: its relations are made from no document, and a
     // phase's exports are the run's inputs, never a constant. Run under its options, a phase would be a constants
     // run itself, writing none of its exports.
@@ -1022,6 +1040,9 @@ pub fn facts(prog: &(impl ProgramFields + ?Sized), shape: &super::shape::Shape, 
     for (name, reads) in wanted_in(prog, shape, dir.as_deref())? {
         // A stage (decision 0709): a phase cut from the program it runs before, held for the run, not a file.
         let staged = staged(&name);
+        if handed.is_some() && staged.is_none() {
+            continue;
+        }
         // Phase 1 ran before any phase, for the run (`PhaseOne`): its exports are handed on as it left them. A run
         // that did not run it (given its files, or with `RERAIL_SOURCES_PHASE=off`) reads none.
         if name == SOURCES {
