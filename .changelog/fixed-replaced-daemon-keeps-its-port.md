@@ -1,1 +1,0 @@
-A daemon started in place of another, when a coding agent's hook replaces another Rerail version's daemon or the daemon restarts itself, now tries the old daemon's port first, so a dashboard link shown before still opens.

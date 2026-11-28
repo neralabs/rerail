@@ -1,1 +1,0 @@
-In a repository set up before, `rerail start` now ends on the dashboard link, starting the daemon where none runs or saying why none could start. `rerail start --json` no longer restarts another Rerail version's daemon; a coding agent's next hook does. In OMP and Pi, that attach tries the old daemon's port first, so the link shown still opens.
