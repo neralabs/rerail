@@ -41,6 +41,9 @@ ann_str(s) :- (kind(s, "string") ; kind(s, "concatenated_string")), !concat_part
 .decl concat_part(s: node)  // s is one of the strings of `"a" "b"`
 concat_part(s) :- kind(c, "concatenated_string"), child(c, s, _).
 .decl literal_str(s: node)  // s is inside the brackets of `Literal[...]` or `x.Literal[...]`
+// Made by its Rust form (`python.in_literal`): a pass over each tape's subscripts and generic types. As rules, each
+// subscript's value's text was read (1.8 s on PostHog cold); they stay its definition and the form's tests' oracle.
+.form literal_str python.in_literal
 literal_str(s) :- kind(l, "subscript"), field(l, "value", v), (kind(v, "identifier") ; kind(v, "attribute")),
     text(v, t), (t = "Literal" ; suffix(".Literal", t)),
     within(s, l), !within(s, v).

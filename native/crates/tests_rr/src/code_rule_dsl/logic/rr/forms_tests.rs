@@ -243,3 +243,35 @@ fn a_place_terms_form_gives_its_rules_rows() {
     assert!(formed.iter().any(|r| r[2].starts_with("s") && !r[2].starts_with("s0@")), "{formed:?}");
     assert!(formed.iter().any(|r| r[2].ends_with("^1")), "{formed:?}");
 }
+
+/// `lit(s)`, python/annotation's `literal_str`: the nodes inside `Literal[...]`, `t.Literal[...]` and a generic
+/// type's `Literal[...]`. Over core.rerail's relations, as the library reads them: `text` is any node's.
+const LITERALS: &str = r#"#include "core.rerail"
+.decl lit(s: node)
+lit(s) :- kind(l, "subscript"), field(l, "value", v), (kind(v, "identifier") ; kind(v, "attribute")),
+    text(v, t), (t = "Literal" ; suffix(".Literal", t)),
+    within(s, l), !within(s, v).
+lit(s) :- kind(l, "generic_type"), child(l, v, 0), text(v, "Literal"), within(s, l).
+.decl lits(b: number, k: symbol)
+lits(b, k) :- lit(s), node(_, s, k, b, _).
+.output lits
+"#;
+
+/// `literal_str`'s form gives its rules' rows.
+#[test]
+fn a_literals_form_gives_its_rules_rows() {
+    let text = "from typing import Literal\nimport typing\nx: Literal['a', \"b\"] = 'a'\ny: typing.Literal['c'] = 'c'\nz: dict[str, 'int'] = {}\ndef f(m: Literal['d']) -> Literal['e']: pass\n";
+    let run = |program: &str, tag: &str| {
+        let dir = crate::code_rule_dsl::fixtures::temp().with_extension(tag);
+        std::fs::create_dir_all(&dir).unwrap();
+        std::fs::write(dir.join("c.py"), text).unwrap();
+        rows(program, &dir, "lits")
+    };
+    let formed = run(&format!("{LITERALS}.form lit python.in_literal\n"), "in-literal");
+    let ruled = run(LITERALS, "in-literal-rules");
+    assert_eq!(formed, ruled);
+    assert!(formed.iter().filter(|r| r[1] == "string").count() >= 5, "{formed:?}");
+    // `typing.Literal['c']`: its value, the attribute, is in it, as `!within(s, v)` leaves it.
+    assert!(formed.iter().any(|r| r[1] == "attribute"), "{formed:?}");
+}
+

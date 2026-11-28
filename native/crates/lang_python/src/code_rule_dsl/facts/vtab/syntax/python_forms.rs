@@ -6,7 +6,7 @@ use crate::code_rule_dsl::facts::core::NONE;
 use rustc_hash::FxHashMap;
 
 /// Python's forms.
-pub const FORMS: &[&dyn Form] = &[&PlaceTerm];
+pub const FORMS: &[&dyn Form] = &[&PlaceTerm, &InLiteral];
 
 /// `python.place_term SKIP… / SCOPE… reads scope_tm hosted`: `r(n, t)`, node `n`'s term by its place (python/
 /// points-to-file's `pt_tm` of a node no definition names, decision 0677): `q@o+l^c`, `q` the term (`scope_tm`'s) of
@@ -111,5 +111,89 @@ impl Form for PlaceTerm {
                 at = up;
             }
         })
+    }
+}
+
+/// `python.in_literal`: `r(s)`, `s` is inside the brackets of `Literal[...]` (python/annotation's `literal_str`): a
+/// node under a subscript whose `value` is an identifier or attribute reading `Literal` or `….Literal`, not under that
+/// value, or under a generic type whose first child reads `Literal`. Made whole: a pass over each tape's subscripts and
+/// generic types, their texts read only there.
+pub struct InLiteral;
+
+impl Form for InLiteral {
+    fn name(&self) -> &'static str {
+        "python.in_literal"
+    }
+    fn version(&self) -> u32 {
+        1
+    }
+    fn columns(&self) -> &'static [&'static str] {
+        &["node"]
+    }
+    fn keyed(&self) -> &'static [usize] {
+        &[]
+    }
+    fn rows(&self, call: &FormCall<'_>, _column: usize, out: &mut FormRows) -> Result<(), String> {
+        use crate::code_rule_dsl::facts::core::kind_tag;
+        let (mut subscript, mut generic, mut named) =
+            (KindSet::new(&["subscript"]), KindSet::new(&["generic_type"]), KindSet::new(&["identifier", "attribute"]));
+        // Each dialect's code of the field `value`.
+        let mut value: Vec<(u8, Option<u16>)> = Vec::new();
+        for (i, p) in (&call.batch.docs).into_iter().enumerate() {
+            if call.batch.docs.withheld(i) {
+                continue;
+            }
+            let f = p.f();
+            for l in 0..p.len() {
+                let x = p.node(l);
+                let k = f.kind(x);
+                let (is_sub, is_gen) = (subscript.has(k), generic.has(k));
+                if !is_sub && !is_gen {
+                    continue;
+                }
+                // The node that names it, and whether nodes under that one are out.
+                let mut head: Option<u32> = None;
+                if is_sub {
+                    let tag = kind_tag(k);
+                    let code = match value.iter().find(|(t, _)| *t == tag) {
+                        Some(&(_, c)) => c,
+                        None => {
+                            let c = crate::code_rule_dsl::language::from_tape_tag(tag).and_then(|d| d.kinds().field_id("value"));
+                            value.push((tag, c));
+                            c
+                        }
+                    };
+                    let Some(code) = code else { continue };
+                    let mut v = None;
+                    f.each_child_field(x, |c, fc| {
+                        if v.is_none() && fc == code {
+                            v = Some(c);
+                        }
+                    });
+                    let Some(v) = v.map(|v| p.local_of_node(v)).filter(|&v| v != NONE) else { continue };
+                    let t = f.text(p.node(v));
+                    if !named.has(f.kind(p.node(v))) || !(t == "Literal" || t.ends_with(".Literal")) {
+                        continue;
+                    }
+                    head = Some(v);
+                } else {
+                    let Some(v) = p.children(l).next() else { continue };
+                    if f.text(p.node(v)) != "Literal" {
+                        continue;
+                    }
+                }
+                let end = f.subtree_end(x);
+                let out_of = head.map(|v| f.subtree_end(p.node(v)));
+                let mut s = l + 1;
+                while s < p.len() && p.node(s) < end {
+                    let y = p.node(s);
+                    if !out_of.is_some_and(|e| head.is_some_and(|v| y > p.node(v) && y < e)) {
+                        out.push(&[p.global(s)]);
+                    }
+                    s += 1;
+                }
+            }
+        }
+        Ok(())
     }
 }
