@@ -2,14 +2,21 @@
  * `rerail packs`: the rule packs installed on this machine (docs/rule-packs.md, "Installing packs"). Packs are npm
  * packages installed into the Rerail home, Rerail's own (`@neralabs/rerail-pack-<id>`) or a third party's
  * (`rerail-pack-<id>`, `@<scope>/rerail-pack-<id>`); a running daemon follows an install or removal without a restart.
+ * `rerail packs add` also adds the packs it names to the repository of the checkout it is run in.
  */
-import { existsSync } from "node:fs";
-import { join, relative, resolve } from "node:path";
+import { existsSync, realpathSync } from "node:fs";
+import { isAbsolute, join, relative, resolve } from "node:path";
+import { and, eq } from "drizzle-orm";
 import { parseArguments } from "../daemon/daemon.js";
-import { repositoryIdentityLocation } from "../engine/catalog/repository-identity.js";
+import { agentSession, type AgentSession } from "../engine/agent-session.js";
+import { repositoryIdentityLocation, repositoryName } from "../engine/catalog/repository-identity.js";
+import { checkoutStatus, lookupCheckout } from "../engine/catalog/repository-registry.js";
+import type { CheckoutContext, RuleCatalog } from "../engine/catalog/repository-model.js";
+import { addAttachment, recordSetUp } from "../engine/catalog/rule-configuration.js";
+import { ruleAttachments } from "../engine/storage/schema.js";
 import { activeCoreVersion, installedPackDirectories, loadRuleCatalog } from "../engine/catalog/rule-catalog.js";
 import { isWorktreePack, WORKTREE_PACK_ID, worktreeRuleCatalog, worktreeRulesDirectory } from "../engine/catalog/worktree-pack.js";
-import { openRerailDatabase, RERAIL_DATABASE_FILE } from "../engine/storage/database.js";
+import { openRerailDatabase, RERAIL_DATABASE_FILE, type RerailDatabase } from "../engine/storage/database.js";
 import { approvalKey, packSubject, readApprovals, ruleSubject, type RuleApprovalSubject } from "../engine/catalog/rule-approval.js";
 import { ruleDocumentDigest } from "../engine/stable-json.js";
 import { streamProgress } from "../runtime/progress.js";
@@ -25,6 +32,7 @@ import {
   rulePackShortName,
   rulesStartingOn,
   type NoFitExplanation,
+  type RulePack,
   type RulePackLocalSource,
 } from "../engine/catalog/rule-packs.js";
 import { clean, looksForText, noFitScanLines } from "../harness/setup-screens.js";
@@ -248,18 +256,112 @@ async function recommend(args: readonly string[], usage: () => string, store: Pa
   return 0;
 }
 
-/** `rerail packs add`: installs the packs named, then lists what is installed, warning of each pack Rerail has not reviewed. */
+/** `path` with its links followed, or as it is when it cannot be read: `/tmp/pack` and `/private/tmp/pack` are one folder. */
+function realPath(path: string): string {
+  try {
+    return realpathSync(path);
+  } catch {
+    return path;
+  }
+}
+
+/** The package a package spec names, without the version, range or tag after it: `@acme/rerail-pack-sql@1.0.0` → `@acme/rerail-pack-sql`. */
+function specPackage(spec: string): string {
+  const at = spec.indexOf("@", 1);
+  return at === -1 ? spec : spec.slice(0, at);
+}
+
+/**
+ * The ids of the loaded packs that `specs` (`packAddSpec`'s) name, whether or not the install changed them: a folder or
+ * tarball is the pack installed from it, a package name at any version is the pack that package holds.
+ */
+function namedPackIds(specs: readonly string[], catalog: RuleCatalog): string[] {
+  const packs = [...catalog.packs.values()];
+  const named = (spec: string): RulePack | undefined => (isAbsolute(spec)
+    ? packs.find(pack => pack.localSource !== undefined && realPath(pack.localSource.path) === realPath(spec))
+    : packs.find(pack => pack.packageName === specPackage(spec)));
+  return [...new Set(specs.flatMap(spec => named(spec)?.id ?? []))];
+}
+
+/** What `addToCheckout` did in a checkout's repository: the packs it added, those added there already, and whether it was set up before. */
+interface CheckoutPacksAdded {
+  readonly adding: readonly string[];
+  readonly already: readonly string[];
+  readonly setUp: boolean;
+}
+
+/**
+ * Adds packs `ids` to `checkout`'s repository for the whole repository, in one transaction: setting it up with them
+ * when it is not set up, and leaving a pack added there already where it is. Undefined, changing nothing, when it is
+ * set up and `session` is a coding agent's.
+ */
+function addPacksTo(database: RerailDatabase, checkout: CheckoutContext, ids: readonly string[], session: AgentSession | undefined): CheckoutPacksAdded | undefined {
+  const { repositoryKey } = checkout;
+  return database.transaction(tx => {
+    const setUp = checkoutStatus(tx, checkout).setUp;
+    if (setUp && session !== undefined) return undefined;
+    const attached = new Set(tx.select({ id: ruleAttachments.sourceId }).from(ruleAttachments)
+      .where(and(eq(ruleAttachments.repositoryKey, repositoryKey), eq(ruleAttachments.sourceKind, "pack"))).all().map(row => row.id));
+    const adding = ids.filter(id => !attached.has(id));
+    if (setUp) for (const sourceId of adding) addAttachment(tx, { repositoryKey, sourceKind: "pack", sourceId, folder: "" });
+    else recordSetUp(tx, repositoryKey, { packs: adding.map(packId => ({ packId, folder: "" })) });
+    return { adding, already: ids.filter(id => attached.has(id)), setUp };
+  }, { behavior: "immediate" });
+}
+
+/** What `rerail packs add` prints of what it added to repository `name`, and why the checkout at `checkoutRoot` runs no rules yet. */
+function addedLines(name: string, { adding, already, setUp }: CheckoutPacksAdded, home: string, checkoutRoot: string): string[] {
+  const notRunning = notRunningLine(home, checkoutRoot);
+  return [
+    ...(adding.length === 0 ? [] : [`Added to ${clean(name)}, for the whole repository: ${adding.map(clean).join(", ")}${setUp ? "" : `. ${clean(name)} is set up with it now.`}`]),
+    ...(already.length === 0 ? [] : [`Added to ${clean(name)} already: ${already.map(clean).join(", ")}`]),
+    ...(notRunning === undefined ? [] : [notRunning]),
+  ];
+}
+
+/**
+ * Adds packs `ids` to the repository of the checkout at `cwd`, for the whole repository, as `repository_attachments_set`
+ * does (`addPacksTo`). Only in a checkout Rerail has recorded in `home`: anywhere else (a folder Rerail never ran in, a
+ * CI machine installing packs for `rerail scan --pack`) the packs are only installed, and no database is made. From a
+ * coding agent's session a set-up repository is not changed, as the API refuses it. Returns what `rerail packs add`
+ * prints of it; `args` are the command's, for the person to run.
+ */
+function addToCheckout(ids: readonly string[], args: readonly string[], home: string, cwd: string, session = agentSession()): string[] {
+  if (ids.length === 0) return [];
+  const databasePath = join(home, RERAIL_DATABASE_FILE);
+  const unknown = [`Not added to a repository: Rerail does not know ${clean(cwd)}. Run \`rerail packs add\` in a repository Rerail is set up or started in, or add the pack on the dashboard's Rule packs page (rerail manage).`];
+  if (!existsSync(databasePath)) return unknown;
+  const database = openRerailDatabase(databasePath);
+  try {
+    const checkout = lookupCheckout(database, cwd);
+    if (checkout === undefined) return unknown;
+    const name = repositoryName(checkout.checkoutPath);
+    const added = addPacksTo(database, checkout, ids, session);
+    if (added !== undefined) return addedLines(name, added, home, checkout.checkoutPath);
+    return [`Not added to ${clean(name)}: it is set up, so a coding agent can't add a pack to the whole repository (${session!.agent} runs this command, ${session!.variable} is set). `
+      + `Ask the person to add it on the dashboard's Rule packs page, or to run rerail packs add ${args.map(clean).join(" ")} in their own terminal.`];
+  } finally {
+    database.$client.close();
+  }
+}
+
+/**
+ * `rerail packs add`: installs the packs named, adds them to the repository of the checkout it is run in
+ * (`addToCheckout`), then lists what is installed, warning of each pack Rerail has not reviewed.
+ */
 async function add(args: readonly string[], usage: () => string, store: PackStore): Promise<number> {
   if (args.length === 0) throw new Error(`Name a rule pack to add, for example rerail packs add typescript\n\n${usage()}`);
+  const specs = args.map(packAddSpec);
   // Checked as set-up's install is: a pack that installs but is left out is put back, and the command fails.
-  const added = await addPackSpecs(args.map(packAddSpec), store);
+  const added = await addPackSpecs(specs, store);
   if ("problem" in added) throw new Error(added.problem);
   const catalog = loadRuleCatalog(store.home);
   const warnings = added.installed.flatMap(pack => {
     const localSource = catalog.packs.get(pack.id)?.localSource;
     return rulePackPublisher(pack.packageName) === RERAIL_PUBLISHER && localSource === undefined ? [] : [unreviewedWarning(pack, localSource)];
   });
-  write([...installedLines(store.home), ...warnings]);
+  const here = addToCheckout(namedPackIds(specs, catalog), args, store.home, process.cwd());
+  write([...installedLines(store.home), ...warnings, ...here]);
   return 0;
 }
 
