@@ -541,7 +541,7 @@ function locatedAfresh(located: Map<string, KeptLocation>, workspace: string): K
  */
 export function createCheckoutResolver(db: FileReader): (workspace: string) => CheckoutContext | undefined {
   const located = new Map<string, KeptLocation>();
-  return workspace => {
+  const resolve = (workspace: string): CheckoutContext | undefined => {
     try {
       gitExecutable();
     } catch (error) {
@@ -552,6 +552,20 @@ export function createCheckoutResolver(db: FileReader): (workspace: string) => C
     const kept = known !== undefined && stillPlaces(known) ? known : locatedAfresh(located, workspace);
     return lookupAt(db, kept.location, () => keptRemoteKey(kept), kept.cloneId);
   };
+  resolverLocations.set(resolve, located);
+  return resolve;
+}
+
+/** The locations in Git each resolver keeps ({@link createCheckoutResolver}), by resolver, for {@link resolverPlaced}. */
+const resolverLocations = new WeakMap<(workspace: string) => CheckoutContext | undefined, ReadonlyMap<string, KeptLocation>>();
+
+/**
+ * The location `resolver` keeps in Git for `workspace` while it still places it ({@link stillPlaces}), read with no Git;
+ * undefined where it keeps none, as for a folder its last read found outside Git, and for a resolver it did not make.
+ */
+export function resolverPlaced(resolver: (workspace: string) => CheckoutContext | undefined, workspace: string): KeptLocation | undefined {
+  const kept = resolverLocations.get(resolver)?.get(workspace);
+  return kept !== undefined && stillPlaces(kept) ? kept : undefined;
 }
 
 /** `fromKey`'s settings become `toKey`'s, its Merge Assist settings too; its `gh` readiness is read again for `toKey`. */

@@ -41,8 +41,10 @@ vi.mock("../../src/engine/child-process.js", async () => {
   return { ...original, spawn, spawnSync };
 });
 
-import { callerFromHeader } from "../../src/api/mcp.js";
-import { openRerailDatabase, recordCheckout } from "../../src/engine/index.js";
+import { callerFromHeader, createRerailMcpHandler } from "../../src/api/mcp.js";
+import { operations } from "../../src/api/operations.js";
+import { DatabaseApiStores } from "../../src/api/stores.js";
+import { CALLER_CWD_HEADER, openRerailDatabase, recordCheckout } from "../../src/engine/index.js";
 import { removeFolder } from "../support/platform/remove-folder.js";
 
 const cleanups: Array<() => Promise<void>> = [];
@@ -94,6 +96,29 @@ function counted(folder: string) {
   } finally {
     reads.counting = false;
   }
+}
+
+/**
+ * Tool calls to the MCP endpoint of daemon stores over the database in `root`, each from a bridge in `folder`: the
+ * call's result, or the text of its refusal.
+ */
+function mcpCalls(root: string) {
+  const path = join(root, "rerail.sqlite");
+  const stores = new DatabaseApiStores(path, {
+    health: () => ({ pid: process.pid, database: { path, exists: true }, native: { ok: true } }),
+    origin: () => "http://127.0.0.1:4737",
+  });
+  cleanups.push(async () => stores.close());
+  const mcp = createRerailMcpHandler(stores, operations, { version: "0.0.0-test" });
+  return async (name: string, args: Record<string, unknown>, folder: string): Promise<unknown> => {
+    const response = await mcp(new Request("http://localhost:4737/mcp", {
+      method: "POST",
+      headers: { host: "localhost:4737", "content-type": "application/json", accept: "application/json, text/event-stream", [CALLER_CWD_HEADER]: encodeURIComponent(folder) },
+      body: JSON.stringify({ jsonrpc: "2.0", id: 1, method: "tools/call", params: { name, arguments: args } }),
+    }));
+    const { result } = await response.json() as { result: { isError?: boolean; structuredContent?: unknown; content: Array<{ text: string }> } };
+    return result.isError === true ? result.content[0]?.text : result.structuredContent;
+  };
 }
 
 const LEVELS = Array.from({ length: 10 }, (_, index) => `level${index + 1}`);
@@ -158,5 +183,32 @@ describe("the checkout kept for an MCP bridge's folder", () => {
 
     callerFromHeader(encodeURIComponent(web), "the recorded checkouts changed");
     expect(resolved(web)).toEqual({ checkout: app, folder: "web" });
+  });
+
+  it("places a folder whose Git ran to its time limit where the request's checkout resolver keeps it once that resolver places it in Git", async () => {
+    const app = await recordedCheckout();
+    const web = join(app, "web");
+    mkdirSync(web);
+    const call = mcpCalls(dirname(app));
+    // The bridge's placement alone runs past its limit; the request's resolver then asks Git, which answers.
+    Object.assign(placements, { unanswered: 1, pastLimit: true });
+    await call("repository_context_get", {}, web);
+    expect(placements.unanswered).toBe(0);
+
+    expect(await call("repository_context_get", {}, web)).toMatchObject({ checkout: { checkoutPath: app, folder: "web" } });
+    expect(await call("repository_stop", { checkout: app, scope: "checkout" }, web)).toMatchObject({ checkout: { checkoutPath: app, state: "stopped" } });
+  });
+
+  it("keeps a folder whose Git ran to its time limit as its own checkout once the location the resolver keeps for it no longer places it", async () => {
+    const app = await recordedCheckout();
+    const web = join(app, "web");
+    mkdirSync(web);
+    const call = mcpCalls(dirname(app));
+    Object.assign(placements, { unanswered: 1, pastLimit: true });
+    await call("repository_context_get", {}, web);
+    // A second clone of the repository made at the folder before the bridge's next call.
+    repositoryAt(web, "git@github.com:acme/app.git");
+
+    expect(await call("repository_context_get", {}, web)).toMatchObject({ checkout: { checkoutPath: web, folder: "" } });
   });
 });
