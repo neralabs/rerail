@@ -7,6 +7,8 @@
 //! (`join_run`), each dispatch's groups as the phase before it set them, as the CPU device runs it; `Loaded::compare`
 //! holds what it left to what the engine's launch left.
 
+pub mod page;
+
 use rerail_blocks::block::{Block, PAGE};
 use std::io::{self, Read as _};
 use std::path::{Path, PathBuf};
@@ -26,6 +28,8 @@ pub struct Region {
     pub name: String,
     pub role: String,
     pub base: u64,
+    /// Where the engine's device reached it: the address its words held (the host's on the CPU device).
+    pub dev: u64,
     pub len: usize,
     pub kind: u32,
     pub source: String,
@@ -63,6 +67,9 @@ pub struct Wave {
     pub unbound: u64,
     /// Its after-images written: the engine's launch done.
     pub done: bool,
+    /// The views' directories' homes of the binary's codes' directory (decision 0697): each its region, the home's
+    /// offset there, and the directory's digest, bound to the lab's own (`rerail_tape_format::codes_dir`).
+    pub codes: Vec<(String, usize, u64)>,
 }
 
 fn bad(what: String) -> io::Error {
@@ -74,7 +81,7 @@ impl Wave {
     pub fn read(dir: &Path) -> io::Result<Wave> {
         let text = std::fs::read_to_string(dir.join("wave.txt"))?;
         let root = dir.parent().and_then(Path::parent).ok_or_else(|| bad(format!("{}: not in a capture's w/", dir.display())))?.to_path_buf();
-        let mut w = Wave { dir: dir.to_path_buf(), root, format: 0, args: [0; 4], offsets: Vec::new(), binds: Vec::new(), labels: Vec::new(), regions: Vec::new(), after: Vec::new(), unresolved: 0, unbound: 0, done: false };
+        let mut w = Wave { dir: dir.to_path_buf(), root, format: 0, args: [0; 4], offsets: Vec::new(), binds: Vec::new(), labels: Vec::new(), regions: Vec::new(), after: Vec::new(), unresolved: 0, unbound: 0, done: false, codes: Vec::new() };
         let num = |s: &str| s.parse::<u64>().map_err(|e| bad(format!("{}: {s}: {e}", dir.display())));
         for line in text.lines() {
             let (key, rest) = line.split_once(' ').unwrap_or((line, ""));
@@ -99,16 +106,21 @@ impl Wave {
                     w.labels.push(Label { shape: shape.to_owned(), rule: rule.replace('_', " "), work: num(work)? });
                 }
                 "region" => {
-                    let f: Vec<&str> = rest.splitn(6, ' ').collect();
-                    let [name, role, base, len, kind, source] = f[..] else { return Err(bad(format!("region: {line}"))) };
-                    let base = u64::from_str_radix(base.trim_start_matches("0x"), 16).map_err(|e| bad(format!("region: {line}: {e}")))?;
-                    w.regions.push(Region { name: name.to_owned(), role: role.to_owned(), base, len: num(len)? as usize, kind: num(kind)? as u32, source: source.to_owned() });
+                    let f: Vec<&str> = rest.splitn(7, ' ').collect();
+                    let [name, role, base, dev, len, kind, source] = f[..] else { return Err(bad(format!("region: {line}"))) };
+                    let hex = |h: &str| u64::from_str_radix(h.trim_start_matches("0x"), 16).map_err(|e| bad(format!("region: {line}: {e}")));
+                    w.regions.push(Region { name: name.to_owned(), role: role.to_owned(), base: hex(base)?, dev: hex(dev)?, len: num(len)? as usize, kind: num(kind)? as u32, source: source.to_owned() });
                 }
                 "after" => {
                     let (name, source) = rest.split_once(' ').ok_or_else(|| bad(format!("after: {line}")))?;
                     w.after.push((name.to_owned(), source.to_owned()));
                 }
                 "done" => w.done = true,
+                "codes" => {
+                    let f: Vec<&str> = rest.split(' ').collect();
+                    let [region, at, digest] = f[..] else { return Err(bad(format!("codes: {line}"))) };
+                    w.codes.push((region.to_owned(), num(at)? as usize, u64::from_str_radix(digest, 16).map_err(|e| bad(format!("codes: {line}: {e}")))?));
+                }
                 _ => return Err(bad(format!("{}: an unknown line: {line}", dir.display()))),
             }
         }
@@ -135,7 +147,14 @@ impl Wave {
 
     /// Its regions placed in this process, their addresses bound again where they lie now.
     pub fn load(&self) -> io::Result<Loaded> {
+        if !self.done {
+            return Err(bad(format!("{}: its capture did not finish (no after-images): the engine's launch never completed", self.dir.display())));
+        }
         let written: std::collections::HashSet<&str> = self.after.iter().map(|(n, _)| n.as_str()).collect();
+        let relocs = zstd::stream::decode_all(std::fs::File::open(self.dir.join("relocs.zst"))?)?;
+        // The regions the lab writes into: those the launch writes, and those holding a word bound again.
+        let mut bound_in: std::collections::HashSet<usize> = relocs.chunks_exact(32).map(|q| u64::from_le_bytes(q[..8].try_into().expect("8 bytes")) as usize).collect();
+        bound_in.extend(self.codes.iter().filter_map(|c| self.regions.iter().position(|r| r.name == c.0)));
         let mut mems = Vec::with_capacity(self.regions.len());
         for r in &self.regions {
             let path = self.source_path(&r.source);
@@ -143,7 +162,7 @@ impl Wave {
                 let m = Mem::reserve(r.len);
                 read_runs(&path, |at, bytes| m.write(at, bytes))?;
                 m
-            } else if !written.contains(r.name.as_str()) {
+            } else if !written.contains(r.name.as_str()) && !bound_in.contains(&mems.len()) {
                 // A block the launch only reads: mapped from its file, read-only.
                 let b = Block::map_file(&path, r.kind, false).map_err(|e| bad(format!("{}: {e}", r.name)))?;
                 Mem::Mapped(b)
@@ -165,13 +184,24 @@ impl Wave {
             };
             mems.push(mem);
         }
-        let relocs = zstd::stream::decode_all(std::fs::File::open(self.dir.join("relocs.zst"))?)?;
         let mut bound = 0;
         for q in relocs.chunks_exact(32) {
             let v = |i: usize| u64::from_le_bytes(q[8 * i..8 * i + 8].try_into().expect("8 bytes"));
-            let (i, o, t, off) = (v(0) as usize, v(1) as usize, v(2) as usize, v(3) as usize);
+            // The target's host bit (a view's home's host word): on the program's Rust, the host's address is the
+            // device's.
+            let (i, o, t, off) = (v(0) as usize, v(1) as usize, (v(2) & !HOST) as usize, v(3) as usize);
             let to = mems.get(t).ok_or_else(|| bad(format!("a relocation into region {t} of {}", mems.len())))?.base() + off;
             mems.get(i).ok_or_else(|| bad(format!("a relocation in region {i}")))?.write(o, &(to as u64).to_ne_bytes());
+            bound += 1;
+        }
+        let cd = rerail_tape_format::codes_dir::bytes();
+        for (region, at, digest) in &self.codes {
+            if *digest != capture_digest(cd) {
+                return Err(bad(format!("the codes' directory is not the engine's (its digest {:016x}, the capture's {digest:016x}): a lab of another build", capture_digest(cd))));
+            }
+            let i = self.regions.iter().position(|r| r.name == *region).ok_or_else(|| bad(format!("codes: no region {region}")))?;
+            mems[i].write(*at, &(cd.as_ptr() as u64).to_ne_bytes());
+            mems[i].write(*at + 8, &0u64.to_ne_bytes());
             bound += 1;
         }
         let mut binds = [0u64; 9];
@@ -181,6 +211,16 @@ impl Wave {
         }
         Ok(Loaded { wave: self.clone(), mems, binds, relocations: bound })
     }
+}
+
+/// `relocs.zst`'s host bit on a target (`join_capture::HOST`).
+const HOST: u64 = 1 << 63;
+
+/// `join_capture`'s digest of bytes (FxHash, and the length).
+fn capture_digest(bytes: &[u8]) -> u64 {
+    let mut h = rustc_hash::FxHasher::default();
+    std::hash::Hasher::write(&mut h, bytes);
+    std::hash::Hasher::finish(&h) ^ (bytes.len() as u64).rotate_left(32)
 }
 
 /// A region's runs (`join_capture`'s `<name>.zst`: each its offset and length, u64s, then its bytes), each given to
@@ -367,4 +407,146 @@ impl Loaded {
         let relocs = zstd::stream::decode_all(std::fs::File::open(self.wave.dir.join("relocs.zst"))?)?;
         Ok(relocs.chunks_exact(32).map(|q| (u64::from_le_bytes(q[..8].try_into().expect("8")) as usize, u64::from_le_bytes(q[8..16].try_into().expect("8")) as usize)).collect())
     }
+}
+
+/// An engine a launch is replayed on: the join program's Rust (`join_run`, the CPU device's).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Engine {
+    Program,
+}
+
+impl Engine {
+    /// The engine `name` names (`--engine`).
+    pub fn named(name: &str) -> Result<Engine, String> {
+        match name {
+            "program" => Ok(Engine::Program),
+            _ => Err(format!("no engine {name} (engines: program)")),
+        }
+    }
+
+    pub fn name(self) -> &'static str {
+        match self {
+            Engine::Program => "program",
+        }
+    }
+}
+
+impl Wave {
+    /// Its directory's name: the process and capture number (`<pid>-<id>`).
+    pub fn name(&self) -> String {
+        self.dir.file_name().map_or(String::new(), |n| n.to_string_lossy().into_owned())
+    }
+
+    /// The bytes its capture holds on disk: its own files, and the block files it names (each once).
+    pub fn bytes(&self) -> u64 {
+        let own: u64 = std::fs::read_dir(&self.dir).map(|d| d.filter_map(|e| e.ok()?.metadata().ok()).map(|m| m.len()).sum()).unwrap_or(0);
+        let blocks: std::collections::BTreeSet<&str> = self.regions.iter().map(|r| r.source.as_str()).chain(self.after.iter().map(|a| a.1.as_str())).filter(|s| s.starts_with("blocks/")).collect();
+        own + blocks.iter().filter_map(|b| std::fs::metadata(self.root.join(b)).ok()).map(|m| m.len()).sum::<u64>()
+    }
+}
+
+/// A replay: what it ran and how what it left compares.
+#[derive(Debug)]
+pub struct Replay {
+    pub ran: Ran,
+    pub diffs: Vec<Diff>,
+}
+
+impl Replay {
+    /// Every region it wrote as the engine's launch left it.
+    pub fn same(&self) -> bool {
+        self.diffs.iter().all(|d| d.differ == 0)
+    }
+
+    /// Its differing regions, the first word of each.
+    pub fn differing(&self) -> String {
+        self.diffs.iter().filter(|d| d.differ > 0).map(|d| match d.words.first() {
+            Some((o, got, want)) => format!("{}: {} bytes, first word at {o}: {got:#x}, the engine's {want:#x}", d.region, d.differ),
+            None => format!("{}: {} bytes", d.region, d.differ),
+        }).collect::<Vec<_>>().join("; ")
+    }
+}
+
+/// `w` replayed once on `e`, held to what the engine's launch left.
+pub fn replay(w: &Wave, e: Engine) -> io::Result<Replay> {
+    let mut l = w.load()?;
+    let ran = match e {
+        Engine::Program => l.run(),
+    };
+    Ok(Replay { diffs: l.compare()?, ran })
+}
+
+/// The CPU time this thread has used, in seconds (`CLOCK_THREAD_CPUTIME_ID`).
+fn thread_cpu() -> f64 {
+    let mut t = libc::timespec { tv_sec: 0, tv_nsec: 0 };
+    // SAFETY: a query of this thread's clock into a timespec of ours.
+    unsafe { libc::clock_gettime(libc::CLOCK_THREAD_CPUTIME_ID, &mut t) };
+    t.tv_sec as f64 + t.tv_nsec as f64 * 1e-9
+}
+
+/// A launch profiled on an engine: its work, its runs' best and median wall time and CPU time, whether it left
+/// what the engine's launch left.
+#[derive(Clone, Debug)]
+pub struct Profile {
+    pub launch: String,
+    pub engine: &'static str,
+    pub shapes: Vec<(String, String, u64)>,
+    pub dispatches: usize,
+    pub groups: u64,
+    pub repeat: usize,
+    pub best_ms: f64,
+    pub median_ms: f64,
+    pub cpu_ms: f64,
+    pub bytes: u64,
+    pub same: bool,
+}
+
+impl Profile {
+    pub fn header() -> String {
+        "launch\tengine\tdispatches\tgroups\trepeat\tbest_ms\tmedian_ms\tcpu_ms\tbytes\tsame\tshapes".to_owned()
+    }
+
+    pub fn tsv(&self) -> String {
+        let shapes: Vec<String> = self.shapes.iter().map(|(s, r, w)| format!("{s}|{r}|{w}")).collect();
+        format!("{}\t{}\t{}\t{}\t{}\t{:.4}\t{:.4}\t{:.4}\t{}\t{}\t{}", self.launch, self.engine, self.dispatches, self.groups, self.repeat, self.best_ms, self.median_ms, self.cpu_ms, self.bytes, self.same, shapes.join(","))
+    }
+
+    pub fn line(&self) -> String {
+        let shapes: Vec<&str> = self.shapes.iter().map(|s| s.0.as_str()).collect();
+        format!("{:<16} {:<8} {:>4} disp {:>9} groups  best {:>9.3} ms  median {:>9.3} ms  cpu {:>9.3} ms  {}  {}", self.launch, self.engine, self.dispatches, self.groups, self.best_ms, self.median_ms, self.cpu_ms, if self.same { "same" } else { "DIFFERS" }, shapes.join(" "))
+    }
+}
+
+/// `w` run `repeat` times on `e`, each loaded afresh (the load not timed): its wall times' best and median, the
+/// CPU time of its median run, and whether its last run left what the engine's launch left.
+pub fn profile(w: &Wave, e: Engine, repeat: usize) -> io::Result<Profile> {
+    let mut times = Vec::with_capacity(repeat);
+    let mut last = None;
+    for _ in 0..repeat.max(1) {
+        let mut l = w.load()?;
+        let cpu = thread_cpu();
+        let ran = match e {
+            Engine::Program => l.run(),
+        };
+        times.push((ran.seconds, thread_cpu() - cpu));
+        last = Some((ran, l));
+    }
+    let (ran, l) = last.expect("a run");
+    let same = l.compare()?.iter().all(|d| d.differ == 0);
+    let mut sorted = times.clone();
+    sorted.sort_by(|a, b| a.0.total_cmp(&b.0));
+    let median = sorted[sorted.len() / 2];
+    Ok(Profile {
+        launch: w.name(),
+        engine: e.name(),
+        shapes: w.labels.iter().map(|l| (l.shape.clone(), l.rule.clone(), l.work)).collect(),
+        dispatches: ran.dispatches,
+        groups: ran.groups,
+        repeat: times.len(),
+        best_ms: sorted[0].0 * 1e3,
+        median_ms: median.0 * 1e3,
+        cpu_ms: median.1 * 1e3,
+        bytes: w.bytes(),
+        same,
+    })
 }

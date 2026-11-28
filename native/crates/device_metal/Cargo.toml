@@ -91,6 +91,8 @@ zstd = "=0.14.4"
 tempfile = { version = "=3.27.0", optional = true }
 rerail-clif = { path = "../clif", default-features = false }
 rerail-tape-format = { path = "../tape_format" }
+# The views' directory a join capture follows to its homes (`join_capture`).
+rerail-reads = { path = "../reads" }
 rerail-facts = { path = "../facts", default-features = false }
 rerail-lang = { path = "../lang", default-features = false }
 rerail-prof = { path = "../prof" }

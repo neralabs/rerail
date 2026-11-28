@@ -10,7 +10,8 @@
 //!   frozen (`Block::map_file` maps it back), written once however many launches reach it. A block mapped from a file
 //!   (the tape store's, the atoms') is not copied: the capture names its path.
 //! - `w/<id>/wave.txt`: the launch: its program's format and arguments, its chain's count offsets, the nine buffers
-//!   `join_run` binds, and each region it reaches (`region <name> <role> <base> <len> <kind> <source>`), its labels.
+//!   `join_run` binds, and each region it reaches (`region <name> <role> <base> <device base> <len> <kind> <source>`),
+//!   its labels.
 //! - `w/<id>/<name>.zst`: a region of the program's own (its descriptors, items, phases, control words, counts, the
 //!   text arena) or a lease (memory a ledger holds with no block's header), as it was at the launch: its written
 //!   pages' runs (`rerail_blocks::mem::written_runs`; a reservation of gigabytes is mostly never touched), each as its
@@ -23,6 +24,7 @@
 //!   region.
 
 use rerail_device::device::Buffer;
+use rerail_reads::views::ViewDir;
 use std::collections::HashMap;
 use std::io::Write as _;
 use std::path::{Path, PathBuf};
@@ -82,6 +84,9 @@ struct Region {
     name: String,
     role: &'static str,
     base: usize,
+    /// Where the device reaches it (`Buffer::device_address`): the address the program's words hold, the host's
+    /// (`base`) on the CPU device, the GPU's on Metal.
+    dev: usize,
     len: usize,
     kind: u32,
     /// Its bytes' source: a block file (`blocks/<digest>.blk`), a mapped file (`file:<path>`), or its own runs
@@ -171,15 +176,21 @@ fn choose(cfg: &Config, labels: &[Label]) -> Option<u64> {
         crate::code_rule_dsl::logic::profile::decision("a join capture refused: past its size budget (RERAIL_JOIN_CAPTURE_MB)", || format!("{} MB written", st.bytes >> 20));
         return None;
     }
-    let wins: Vec<&Label> = labels.iter().filter(|l| l.work >= cfg.min && st.best.get(&l.shape).is_none_or(|b| l.work > b.0)).collect();
+    // Each shape once, at its most work in this launch (two runs of a launch may share a shape).
+    let mut most: HashMap<&str, u64> = HashMap::new();
+    for l in labels.iter().filter(|l| l.work >= cfg.min) {
+        let w = most.entry(l.shape.as_str()).or_default();
+        *w = (*w).max(l.work);
+    }
+    let wins: Vec<(&str, u64)> = most.into_iter().filter(|(s, w)| st.best.get(*s).is_none_or(|b| *w > b.0)).collect();
     if wins.is_empty() {
         return None;
     }
     let id = st.next;
     st.next += 1;
     let mut gone = Vec::new();
-    for l in wins {
-        if let Some((_, old)) = st.best.insert(l.shape.clone(), (l.work, id)) {
+    for (shape, work) in wins {
+        if let Some((_, old)) = st.best.insert(shape.to_owned(), (work, id)) {
             let n = st.holds.get_mut(&old).expect("a capture's count");
             *n -= 1;
             if *n == 0 {
@@ -215,13 +226,46 @@ pub(in crate::code_rule_dsl) fn before(cfg: &Config, labels: &[Label], reach: &R
     }
 }
 
+/// A relocation's target bit (`relocs.zst`'s third word): the word holds the target's host address (a view's home's
+/// `host`), not the device's.
+const HOST: u64 = 1 << 63;
+
+/// The block or lease `p` holds (its device address `dev`) as region `r<n>`: a lease's written pages as its own runs,
+/// a block mapped from a file by its path, any other block's used bytes as a block file (counted in `written`).
+fn place(cfg: &Config, p: &rerail_blocks::ledger::Placed, dev: usize, w: bool, n: usize, written: &mut u64) -> std::io::Result<Region> {
+    let name = format!("r{n}");
+    if p.kind == 0 {
+        return Ok(Region { source: format!("{name}.zst"), name, role: "lease", base: p.start, dev, len: p.end - p.start, kind: 0, written: w });
+    }
+    let len = if p.top > 0 { p.top.min(p.end - p.start) } else { p.end - p.start };
+    let source = match &p.path {
+        Some(path) => format!("file:{}", path.display()),
+        None => {
+            if len as u64 > cfg.budget {
+                return Err(std::io::Error::other(format!("a block of {} MB, past the capture's budget", len >> 20)));
+            }
+            // SAFETY: the block's used bytes, before the launch.
+            let bytes = unsafe { std::slice::from_raw_parts(p.start as *const u8, len) };
+            *written += write_block(cfg, bytes)?;
+            format!("blocks/{:016x}.blk", digest(bytes))
+        }
+    };
+    Ok(Region { name, role: "block", base: p.start, dev, len, kind: p.kind, source, written: w })
+}
+
 /// A buffer of the program's own as a region (`<name>.zst`), once.
 fn own(regions: &mut Vec<Region>, name: String, role: &'static str, b: &Buffer) {
     let (base, len) = (b.contents() as usize, b.length() as usize);
     if len == 0 || regions.iter().any(|r| r.base == base && r.len == len) {
         return;
     }
-    regions.push(Region { source: format!("{name}.zst"), name, role, base, len, kind: 0, written: true });
+    let dev = b.device_address().map_or(base, |a| a as usize);
+    regions.push(Region { source: format!("{name}.zst"), name, role, base, dev, len, kind: 0, written: true });
+}
+
+/// The region whose device range holds `a`.
+fn at_dev(regions: &[Region], a: usize) -> Option<usize> {
+    regions.iter().position(|t| t.dev <= a && a < t.dev + t.len)
 }
 
 /// The word at byte `o` of region `r`.
@@ -231,8 +275,8 @@ fn word(r: &Region, o: usize) -> usize {
 
 fn write_before(cfg: &Config, id: u64, labels: &[Label], reach: &Reached<'_>) -> std::io::Result<Pending> {
     let dir = wave_dir(cfg, id);
-    std::fs::create_dir_all(&dir)?;
-    std::fs::create_dir_all(cfg.dir.join("blocks"))?;
+    rerail_blocks::mapped::make_folder(&dir)?;
+    rerail_blocks::mapped::make_folder(&cfg.dir.join("blocks"))?;
     let mut regions: Vec<Region> = Vec::new();
     for (role, b) in reach.binds {
         own(&mut regions, role.to_owned(), role, b);
@@ -270,37 +314,66 @@ fn write_before(cfg: &Config, id: u64, labels: &[Label], reach: &Reached<'_>) ->
             }
         }
     }
-    // The blocks and leases they and its jobs reach, as regions too.
-    let mut targets: Vec<(usize, bool)> = reach.uses.iter().map(|(b, w)| (b.contents() as usize, *w)).collect();
-    targets.extend(refs.iter().map(|&(i, o)| (word(&regions[i], o), false)).filter(|&(a, _)| a >= 1 << 32));
-    targets.extend(reach.reached.iter().map(|&a| (a as usize, false)));
+    // The blocks and leases its jobs reach (each buffer with its host and device addresses), and those its words
+    // reach: a word holds a device address, the host's only where the device's memory is the host's (the CPU
+    // device's), where the ledger finds what holds it.
+    let identity = reach.binds[0].1.device_address().is_none_or(|a| a as usize == reach.binds[0].1.contents() as usize);
+    let mut targets: Vec<(usize, usize, bool)> = reach.uses.iter().map(|(b, w)| (b.contents() as usize, b.device_address().map_or(b.contents() as usize, |a| a as usize), *w)).collect();
+    if identity {
+        targets.extend(refs.iter().map(|&(i, o)| word(&regions[i], o)).chain(reach.reached.iter().map(|&a| a as usize)).filter(|&a| a >= 1 << 32).map(|a| (a, a, false)));
+    }
     let mut written = 0u64;
-    for (addr, w) in targets {
+    for (addr, dev, w) in targets {
         if let Some(r) = regions.iter_mut().find(|r| r.base <= addr && addr < r.base + r.len) {
             r.written |= w;
             continue;
         }
         let Some(p) = rerail_blocks::ledger::placed_at(addr) else { continue };
-        let name = format!("r{}", regions.len());
-        let region = if p.kind == 0 {
-            Region { source: format!("{name}.zst"), name, role: "lease", base: p.start, len: p.end - p.start, kind: 0, written: w }
-        } else {
-            let len = if p.top > 0 { p.top.min(p.end - p.start) } else { p.end - p.start };
-            let source = match &p.path {
-                Some(path) => format!("file:{}", path.display()),
-                None => {
-                    if len as u64 > cfg.budget {
-                        return Err(std::io::Error::other(format!("a block of {} MB, past the capture's budget", len >> 20)));
-                    }
-                    // SAFETY: the block's used bytes, before the launch.
-                    let bytes = unsafe { std::slice::from_raw_parts(p.start as *const u8, len) };
-                    written += write_block(cfg, bytes)?;
-                    format!("blocks/{:016x}.blk", digest(bytes))
-                }
-            };
-            Region { name, role: "block", base: p.start, len, kind: p.kind, source, written: w }
-        };
-        regions.push(region);
+        regions.push(place(cfg, &p, dev - (addr - p.start), w, regions.len(), &mut written)?);
+    }
+    // The views' directories its words reach (each self-describing: its own offset in its block, its homes there),
+    // and their homes: each tape's, lines' and source's memory, the 16z cache's (which the reads write), each placed
+    // where it lies; the binary's codes' directory, named (`codes`), which a replay binds to its own.
+    let mut homes: Vec<(usize, usize, bool)> = Vec::new();
+    let mut codes: Vec<(usize, usize)> = Vec::new();
+    let mut dirs = std::collections::HashSet::new();
+    for &(i, o) in &refs.clone() {
+        let a = word(&regions[i], o);
+        let Some(t) = at_dev(&regions, a).filter(|&t| regions[t].role == "block") else { continue };
+        let off = a - regions[t].dev;
+        if !dirs.insert((t, off)) || off + std::mem::size_of::<ViewDir>() > regions[t].len {
+            continue;
+        }
+        // SAFETY: within the block's used bytes, read unaligned.
+        let vd: ViewDir = unsafe { std::ptr::read_unaligned((regions[t].base + off) as *const ViewDir) };
+        let n = vd.nhomes as usize;
+        if vd.at as usize != off || n == 0 || vd.codes as usize >= n || vd.homes as usize + 16 * n > regions[t].len {
+            continue;
+        }
+        for h in 0..n {
+            let ho = vd.homes as usize + 16 * h;
+            let (host, gpu) = (word(&regions[t], ho), word(&regions[t], ho + 8));
+            if host == 0 {
+                continue;
+            }
+            if h == vd.codes as usize && host == rerail_tape_format::codes_dir::bytes().as_ptr() as usize {
+                codes.push((t, ho));
+                continue;
+            }
+            // The cache's home (the one before the codes'): the reads write it.
+            let cache = h + 1 == vd.codes as usize;
+            if let Some(r) = regions.iter_mut().find(|r| r.base <= host && host < r.base + r.len) {
+                r.written |= cache;
+            } else if let Some(p) = rerail_blocks::ledger::placed_at(host) {
+                let pdev = if gpu != 0 { gpu - (host - p.start) } else { p.start };
+                let r = place(cfg, &p, pdev, cache, regions.len(), &mut written)?;
+                regions.push(r);
+            }
+            homes.push((t, ho, true));
+            if gpu != 0 {
+                homes.push((t, ho + 8, false));
+            }
+        }
     }
     // The sparse regions' runs, and each address word as (region, offset, region it points into, offset there).
     for r in regions.iter().filter(|r| r.sparse()) {
@@ -310,15 +383,18 @@ fn write_before(cfg: &Config, id: u64, labels: &[Label], reach: &Reached<'_>) ->
     // Address words no region holds: memory no ledger knew (a replay that reads one fails there).
     let mut unresolved = 0u64;
     let mut unresolved_in: Vec<(usize, u64, Vec<(usize, usize)>)> = Vec::new();
-    for &(i, o) in &refs {
+    for &(i, o, host) in refs.iter().map(|&(i, o)| (i, o, false)).chain(homes.iter().copied()).collect::<Vec<_>>().iter() {
         let a = word(&regions[i], o);
         // A word of the program's a launch never reads (a descriptor's address of a buffer it has none of: 0).
         if a < 1 << 32 {
             continue;
         }
-        match regions.iter().position(|t| t.base <= a && a < t.base + t.len) {
+        // A home's host word points at its host address (its region's `base`), every other word at the device's.
+        let found = if host { regions.iter().position(|t| t.base <= a && a < t.base + t.len) } else { at_dev(&regions, a) };
+        match found {
             Some(t) => {
-                for v in [i as u64, o as u64, t as u64, (a - regions[t].base) as u64] {
+                let (t64, off) = if host { (t as u64 | HOST, (a - regions[t].base) as u64) } else { (t as u64, (a - regions[t].dev) as u64) };
+                for v in [i as u64, o as u64, t64, off] {
                     // copy: not block data (a capture's relocation list, for the lab alone)
                     relocs.extend_from_slice(&v.to_le_bytes());
                 }
@@ -345,7 +421,7 @@ fn write_before(cfg: &Config, id: u64, labels: &[Label], reach: &Reached<'_>) ->
         for (at, n) in r.runs() {
             for o in (at.next_multiple_of(8)..(at + n) / 8 * 8).step_by(8) {
                 let a = word(r, o);
-                if a >= 1 << 32 && !bound.contains(&(i, o)) && regions.iter().any(|t| t.len <= 64 << 20 && t.sparse() && t.base <= a && a < t.base + t.len) {
+                if a >= 1 << 32 && !bound.contains(&(i, o)) && regions.iter().any(|t| t.len <= 64 << 20 && t.sparse() && t.dev <= a && a < t.dev + t.len) {
                     unbound += 1;
                 }
             }
@@ -360,6 +436,10 @@ fn write_before(cfg: &Config, id: u64, labels: &[Label], reach: &Reached<'_>) ->
     writeln!(w, "binds {}", reach.binds.map(|(r, _)| r).join(" "))?;
     writeln!(w, "unresolved {unresolved}")?;
     writeln!(w, "unbound {unbound}")?;
+    let cd = rerail_tape_format::codes_dir::bytes();
+    for (t, o) in &codes {
+        writeln!(w, "codes {} {o} {:016x}", regions[*t].name, digest(cd))?;
+    }
     for (i, n, some) in &unresolved_in {
         let some: Vec<String> = some.iter().map(|(o, a)| format!("{o}:{a:#x}")).collect();
         writeln!(w, "unresolved_in {} {n} {}", regions[*i].name, some.join(" "))?;
@@ -368,7 +448,7 @@ fn write_before(cfg: &Config, id: u64, labels: &[Label], reach: &Reached<'_>) ->
         writeln!(w, "label {} {} {}", l.shape, l.rule.replace(' ', "_"), l.work)?;
     }
     for r in &regions {
-        writeln!(w, "region {} {} {:#x} {} {} {}", r.name, r.role, r.base, r.len, r.kind, r.source)?;
+        writeln!(w, "region {} {} {:#x} {:#x} {} {} {}", r.name, r.role, r.base, r.dev, r.len, r.kind, r.source)?;
     }
     w.flush()?;
     chosen().0.lock().unwrap_or_else(|e| e.into_inner()).bytes += written;

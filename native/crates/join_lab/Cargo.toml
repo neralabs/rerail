@@ -7,7 +7,7 @@ description = "The join lab (2026-11-27): a launch of the join program the engin
 
 [features]
 # The tests' variant of the blocks it maps (one compile of each workspace crate: `check_dev_features`).
-test-hooks = ["rerail-blocks/test-hooks"]
+test-hooks = ["rerail-blocks/test-hooks", "rerail-tape-format/test-hooks"]
 
 [dependencies]
 # The join program's Rust, run as the CPU device runs it.
@@ -15,6 +15,11 @@ rerail-ukl-rust = { path = "../ukl_rust" }
 # A capture's blocks mapped back (`Block::map_file`), and reservations for its own buffers (`mem`).
 rerail-blocks = { path = "../blocks" }
 zstd = "=0.14.4"
+# The thread's CPU clock (`profile`).
+libc = "0.2.189"
+# The binary's codes' directory a view's home names (decision 0697), and the hash a capture's digests are.
+rerail-tape-format = { path = "../tape_format" }
+rustc-hash = "=2.1.3"
 
 [[bin]]
 name = "join-lab"

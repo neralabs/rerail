@@ -3981,6 +3981,7 @@ dependencies = [
  "rerail-metal",
  "rerail-metal-programs",
  "rerail-prof",
+ "rerail-reads",
  "rerail-rr",
  "rerail-rr-parser",
  "rerail-rr-root",
@@ -4370,9 +4371,12 @@ dependencies = [
 name = "rerail-join-lab"
 version = "0.1.0"
 dependencies = [
+ "libc",
  "rerail-blocks",
  "rerail-join-lab",
+ "rerail-tape-format",
  "rerail-ukl-rust",
+ "rustc-hash",
  "zstd",
 ]
 
