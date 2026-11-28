@@ -294,6 +294,7 @@ describe("one session whose hooks name two model folders, against a daemon", () 
       expect(seen(await s.read()).code).toBe(0);
       expect(m.untaken()).toHaveLength(2);
       expect((await m.rerail(["daemon", "stop"])).code).toBe(0);
+      held = undefined;
       const restarted = await m.rerail(["daemon", "start"]);
       expect(restarted.stdout, restarted.stderr).toContain(`Rerail daemon ${NEXT} running`);
       // The hooks now run the next version, whose model folder is its own package's.
