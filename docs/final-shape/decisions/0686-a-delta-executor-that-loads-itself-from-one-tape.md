@@ -1726,3 +1726,49 @@ bench's runner: `semi_change`, `drop_parts`, `docs_of`, `room_of`, `k0_pass`, `n
 `delta_device` compile with their tests; the shape check holds.
 
 Step 4 (the runner runs a UKL version where one is checked) is the device's, and is not built.
+
+## Operations through a runner: step 4, UKL versions on the device (2026-11-27)
+
+Built. Each operation but the two host ones (`answer_load`, `parse`: a file read, the parser) has a UKL version, in
+`delta_exec/ukl/*.uglykl` over a library of headers in `ukl/lib/ukl/delta/`, written for reading first:
+
+- `op.h`: the kernel interface (`t, slots, p, tile, res, meter`), `DELTA_KERNEL`, `DELTA_ONE`, `REACH`, `CLAIM`,
+  `FAULT`;
+- `layout.h`: generated from the twins' own constants (`ukl::layout_h`, `offset_of!` of each structure);
+- the reads: `trace.h` (a layer, the state at a head), `runs.h`, `docs.h`, `cache.h`, `parts.h`, `atoms.h`,
+  `text.h`, `rr.h`. Rows are read through the CLIF relation reads (`<ukl/reads/relation.h>`, decision 0310);
+- the writers: `relw.h` (a relation made, opened, filled, indexed and sealed where it lies in its block: the C form of
+  `try_create_cols`, `try_continue_far_cols`, `layer_write::{open, stat, index, seal}`, `build_one_index`) and
+  `sketch.h` (`SketchW`'s port);
+- `sort.h`: a heap sort in place, by an order its user names.
+
+`Runner::on(device)` checks each version against its twin on the device (`Registry::check_on`, on every case the
+version lists, at `TILINGS`) and registers it as the device's default. A version may have phases of its own
+(`consolidate` and `merge`: sort, kills, layer, sketch, seal; `trace::TRACE_UKL`): the check compares the written
+slots' facts by meaning (`facts_of`), not the steps.
+
+**Growth (D6).** A kernel that writes a block claims its room from the block's front (`CLAIM`, a CAS on the meter's
+front word for that slot, bounded by its capacity), or records what it needs past it (`REACH`). The host wraps each
+written slot for the device up to its capacity (`Block::device_buffer_reaching`) and, after the work, takes the
+fronts back (`Block::claimed_to`), so the block's allocator continues past what the kernel wrote. A need past the
+capacity grows the block within its reservation, and the launch runs again, as on the CPU.
+
+**What the trace kernels write.** The Open encoding, no levels, `Hash` indexes only (every executor trace's: the tape
+port's has a `Hash` index on its path and 15 columns). The layer's hashed indexes are `LayerSpec::rows`' (each
+`Hash` index, then the row index when the arity is at most `MAX_KEY`). A kill finds its live row through the layer's
+first index by that index's own key, or among the layer's rows when it has none. A hashed index has as many buckets
+as the next power of two of its rows; the CPU sizes them by distinct keys. That is not a fact: a reader takes the
+mask the entry holds. A launch of another shape is refused (`FAULT`), and the host fails it, naming it.
+
+Checks (on Metal, a farm Mac):
+- `delta_device::tests::every_ukl_version_checks_against_its_twin`: all 14 versions, their cases included
+  (`consolidate`: a first layer past the sketch's few values, a layer killing rows of two below, one column, twelve
+  columns with a `Hash` index; `merge`: two layers of three). A value broken in the kernel on purpose fails it.
+- `delta_device::tests::the_boot_run_on_the_device_or_mixed_is_the_cpus`: l0's cold boot run (`boot::cold_k_form`)
+  on Metal gives the CPU run's K-form, by meaning. So do three runs of `Runner::mixed` (test-hooks: each launch on
+  the device or the CPU, by a seed), with about 17 of the run's 34 launches on each side. The CPU's operations read
+  layers the device wrote (their row indexes included), and the other way round.
+
+Not covered by the checks: a layer of the Packed, Dict or Ranged encodings, levels, and Bloom filters, orders and
+permutations as declared indexes. None of the executor's traces has them, and their launches are refused, not run.
+The kernels are mostly one item at a time; their speed is not measured.
