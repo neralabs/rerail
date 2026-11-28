@@ -1754,6 +1754,7 @@ UKL_INLINE bool ukl_run_sep(uint32_t b) { return b == 44u; }
 UKL_INLINE uint32_t ukl_run_root(void) { return json_t2_ROOT; }
 UKL_INLINE uint32_t ukl_run_cont(uint32_t k) { return json_t2_cont(k); }
 
+
 typedef struct json_t2_RArgs {
     uint32_t count;
     uint32_t len;
@@ -1761,16 +1762,22 @@ typedef struct json_t2_RArgs {
     uint32_t size;
     uint32_t runs;
     uint32_t most;
-    uint32_t capacity;
-    uint32_t budget;
+    uint32_t phase;
+    uint32_t pad;
 } json_t2_RArgs;
-UKL_REFLECT_STRUCT(json_t2_RArgs, count, len, ntoks, size, runs, most, capacity, budget)
+UKL_REFLECT_STRUCT(json_t2_RArgs, count, len, ntoks, size, runs, most, phase, pad)
 
-// Tier 2 from the middle as one program (`<ukl/middle_run.h>`): a persistent dispatch whose SIMD groups take the
-// chain's items from the work queue (`slots`, `control`) until none is left or their budget is spent; the host
-// launches it again while any are left. The pool holds every value an item hands on (its header the host's layout);
-// `t` is the writer's region, its state at 0, room reserved for the tape and its tail.
-DEFINE_KERNEL2(tier2, json_t2_run,
+// The 16z program's kernels take nothing but their buffers.
+typedef struct json_t2_ZArgs {
+    uint32_t pad;
+    uint32_t pad2;
+} json_t2_ZArgs;
+UKL_REFLECT_STRUCT(json_t2_ZArgs, pad, pad2)
+
+// Tier 2 from the middle (`<ukl/middle_run.h>`), its scan phases (the mask 0x72f), the phase `args.phase`: its
+// SIMD groups take the phase's items by ticket until none is left. The pool holds every value an item hands on (its header the host's layout); `t` is the writer's
+// region, its state at 0, room reserved for the tape and its tail.
+DEFINE_KERNEL2(tier2, json_t2_run_scan,
                ARGS,     json_t2_RArgs, args,    ,
                ROBUFFER, uint8_t,  src,     "[len + 64]",
                ROBUFFER, uint32_t, starts,  "[count + 3]",
@@ -1781,8 +1788,6 @@ DEFINE_KERNEL2(tier2, json_t2_run,
                RWBUFFER, uint32_t, f1,      "[(count + 1 + runs) * 10]",
                RWBUFFER, uint32_t, touch,   "[(count + 1 + runs) * 2]",
                RWBUFFER, uint32_t, f2,      "[(count + 1 + runs) * 25]",
-               RWBUFFER, uint32_t, slots,   "[capacity]",
-               RWBUFFER, uint32_t, control, "[5]",
                LANE,     uint16_t, lane,    )
 {
     UklRun r;
@@ -1795,36 +1800,95 @@ DEFINE_KERNEL2(tier2, json_t2_run,
     r.f1 = f1;
     r.touch = touch;
     r.f2 = f2;
-    r.q.slots = slots;
-    r.q.control = control;
-    r.q.capacity = args.capacity;
-    r.q.ring = 0u;
-    r.q.budget = args.budget;
+    r.phase = args.phase;
     r.count = args.count;
     r.len = args.len;
     r.ntoks = args.ntoks;
     r.size = args.size;
     r.runs = args.runs;
     r.most = args.most;
-    ukl_run_worker(&r, lane __UKL_ARGS);
+    ukl_run_worker(&r, 1839u, lane __UKL_ARGS);
 }
 
-typedef struct json_t2_ZArgs {
-    uint32_t capacity;
-    uint32_t budget;
-} json_t2_ZArgs;
-UKL_REFLECT_STRUCT(json_t2_ZArgs, capacity, budget)
+// Tier 2 from the middle (`<ukl/middle_run.h>`), its walk phases (the mask 0x10), the phase `args.phase`: its
+// SIMD groups take the phase's items by ticket until none is left. The pool holds every value an item hands on (its header the host's layout); `t` is the writer's
+// region, its state at 0, room reserved for the tape and its tail.
+DEFINE_KERNEL2(tier2, json_t2_run_walk,
+               ARGS,     json_t2_RArgs, args,    ,
+               ROBUFFER, uint8_t,  src,     "[len + 64]",
+               ROBUFFER, uint32_t, starts,  "[count + 3]",
+               ROBUFFER, uint32_t, toks,    "[ntoks * 5]",
+               RWBUFFER, uint32_t, pool,    "[pool]",
+               RWBUFFER, uint8_t,  t,       "[region]",
+               RWBUFFER, uint8_t,  rets,    "[runs * json_t2_DEPTH]",
+               RWBUFFER, uint32_t, f1,      "[(count + 1 + runs) * 10]",
+               RWBUFFER, uint32_t, touch,   "[(count + 1 + runs) * 2]",
+               RWBUFFER, uint32_t, f2,      "[(count + 1 + runs) * 25]",
+               LANE,     uint16_t, lane,    )
+{
+    UklRun r;
+    r.src = src;
+    r.starts = starts;
+    r.toks = toks;
+    r.m = (UklMidPool)pool;
+    r.t = t;
+    r.rets = rets;
+    r.f1 = f1;
+    r.touch = touch;
+    r.f2 = f2;
+    r.phase = args.phase;
+    r.count = args.count;
+    r.len = args.len;
+    r.ntoks = args.ntoks;
+    r.size = args.size;
+    r.runs = args.runs;
+    r.most = args.most;
+    ukl_run_worker(&r, 16u, lane __UKL_ARGS);
+}
 
-// The finished tape stored as 16z where it lies (`<ukl/z16_run.h>`): a persistent dispatch of SIMD groups, a group a
-// threadgroup, each its LZ4 table in threadgroup memory, taking the pieces' items from the work queue until none is
-// left or their budget is spent; the host launches it again while any are left.
-DEFINE_KERNEL2(tier2, json_t2_z,
+// Tier 2 from the middle (`<ukl/middle_run.h>`), its write phases (the mask 0xc0), the phase `args.phase`: its
+// SIMD groups take the phase's items by ticket until none is left. The pool holds every value an item hands on (its header the host's layout); `t` is the writer's
+// region, its state at 0, room reserved for the tape and its tail.
+DEFINE_KERNEL2(tier2, json_t2_run_write,
+               ARGS,     json_t2_RArgs, args,    ,
+               ROBUFFER, uint8_t,  src,     "[len + 64]",
+               ROBUFFER, uint32_t, starts,  "[count + 3]",
+               ROBUFFER, uint32_t, toks,    "[ntoks * 5]",
+               RWBUFFER, uint32_t, pool,    "[pool]",
+               RWBUFFER, uint8_t,  t,       "[region]",
+               RWBUFFER, uint8_t,  rets,    "[runs * json_t2_DEPTH]",
+               RWBUFFER, uint32_t, f1,      "[(count + 1 + runs) * 10]",
+               RWBUFFER, uint32_t, touch,   "[(count + 1 + runs) * 2]",
+               RWBUFFER, uint32_t, f2,      "[(count + 1 + runs) * 25]",
+               LANE,     uint16_t, lane,    )
+{
+    UklRun r;
+    r.src = src;
+    r.starts = starts;
+    r.toks = toks;
+    r.m = (UklMidPool)pool;
+    r.t = t;
+    r.rets = rets;
+    r.f1 = f1;
+    r.touch = touch;
+    r.f2 = f2;
+    r.phase = args.phase;
+    r.count = args.count;
+    r.len = args.len;
+    r.ntoks = args.ntoks;
+    r.size = args.size;
+    r.runs = args.runs;
+    r.most = args.most;
+    ukl_run_worker(&r, 192u, lane __UKL_ARGS);
+}
+
+// The finished tape stored as 16z where it lies (`<ukl/z16_run.h>`), its phase count: SIMD groups, a group a
+// threadgroup, each its LZ4 table in threadgroup memory, taking the phase's items by ticket.
+DEFINE_KERNEL2(tier2, json_t2_z_count,
                ARGS,     json_t2_ZArgs, args,    ,
                ROBUFFER, uint8_t,  t,       "[region]",
                RWBUFFER, uint8_t,  z,       "[zroom]",
                RWBUFFER, uint32_t, pool,    "[pool]",
-               RWBUFFER, uint32_t, slots,   "[capacity]",
-               RWBUFFER, uint32_t, control, "[5]",
                SHARED,   uint32_t, table,   UKL_LZ4E_TABLE,
                LANE,     uint16_t, lane,    )
 {
@@ -1833,11 +1897,27 @@ DEFINE_KERNEL2(tier2, json_t2_z,
     r.t = t + ukl_z16_u32(t, ukl_w_part_field(CLIF_W_PART_OUT, CLIF_W_AT_P_AT));
     r.z = z;
     r.m = (UklZ16Pool)pool;
-    r.q.slots = slots;
-    r.q.control = control;
-    r.q.capacity = args.capacity;
-    r.q.ring = 0u;
-    r.q.budget = args.budget;
+    r.phase = 0u;
+    r.table = table;
+    ukl_z16_worker(&r, lane __UKL_ARGS);
+}
+
+// The finished tape stored as 16z where it lies (`<ukl/z16_run.h>`), its phase write: SIMD groups, a group a
+// threadgroup, each its LZ4 table in threadgroup memory, taking the phase's items by ticket.
+DEFINE_KERNEL2(tier2, json_t2_z_write,
+               ARGS,     json_t2_ZArgs, args,    ,
+               ROBUFFER, uint8_t,  t,       "[region]",
+               RWBUFFER, uint8_t,  z,       "[zroom]",
+               RWBUFFER, uint32_t, pool,    "[pool]",
+               SHARED,   uint32_t, table,   UKL_LZ4E_TABLE,
+               LANE,     uint16_t, lane,    )
+{
+    UklZ16 r;
+    // The tape: the writer's region's OUT part, where the chain finished it.
+    r.t = t + ukl_z16_u32(t, ukl_w_part_field(CLIF_W_PART_OUT, CLIF_W_AT_P_AT));
+    r.z = z;
+    r.m = (UklZ16Pool)pool;
+    r.phase = 1u;
     r.table = table;
     ukl_z16_worker(&r, lane __UKL_ARGS);
 }

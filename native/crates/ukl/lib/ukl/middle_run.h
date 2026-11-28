@@ -1,42 +1,45 @@
-// ukl/middle_run.h: tier 2 from the middle as one program on a work queue (decision 0726): every pass of the chain,
-// from tier 1's records to the finished format 16 tape, an item of a persistent dispatch, each scan's tree up by its
-// arrivals and down by its items, so the launches are a fixed few whatever the file's size or its trees' heights.
+// ukl/middle_run.h: tier 2 from the middle as one program (decision 0726): every pass of the chain, from tier 1's
+// records to the finished format 16 tape, a phase of one kernel, a launch a phase, so the launches are a fixed eleven
+// whatever the file's size or its trees' heights (the user, 2026-11-27: "a launch per phase").
 //
-// The items, in the order their inputs make them ready (`UKL_RUN_*`):
+// The phases (`UKL_RUN_PH_*`), each its items taken by the launch's SIMD groups by ticket, a group's worth at a time,
+// from the count its phase has (set by the phases before it, in the pool: pushing a phase's items is that count):
 //
-//   RUN(k)          each run of `size` records: its first record after a separator (`chunk_starts`), a leaf of the
-//                   runs' scan (P: the count of runs that have one); P's down-sweep places each chunk's start.
-//   CHUNK(c)        once its start and the next one's are placed: its bracket word (`Word::of`, a leaf of C, the bracket
-//                   scan) and its records' change of the depth (a leaf of D, `depths`' scan).
-//   SPAN(c)         once its kinds (C's down-sweep) and its depth (D's) are known: its one walk (`span`), a leaf of S, the
-//                   spans' scan; S's down-sweep gives each chunk's state (`entries`), its levels placed (`levels`).
-//   BLOCK(b)        once S's root says the file's nodes: the tape's blocks made (`make_blocks`).
-//   WCOUNT(c)       once every state and block is: chunk `c`'s side-list entries counted (pass 2, counting);
-//   WRITE(c)        once every chunk counted: its nodes written (pass 2);
-//   END(b)          once every chunk wrote: each block's side lists' counts (`end_middle`), the last the state's;
-//   FIN(b)          once every block ended: block `b` final (`finalize`'s first half: its presence, its counts), a leaf
-//                   of B (each side list's laid bytes and the faults, by block); B's root lays the tail, its down-sweep
-//                   each block's side lists, faults, part starts and presence words where they go in the tape (FIN2);
-//   LINES(k)        the newline index, 512 bytes an item, into the tail.
+//   RUNS        each run of `size` records: its first record after a separator (`chunk_starts`), a leaf of the runs'
+//               scan (P: the count of runs that have one); P's root says the chunks.
+//   STARTS      each run's state from P's root (a walk down its path): its chunk's start placed.
+//   WORDS       each chunk's bracket word (`Word::of`, a leaf of C, the bracket scan) and its records' change of the
+//               depth (a leaf of D, `depths`' scan).
+//   KINDS       each chunk's kinds (C's) and depth (D's), each down its path.
+//   SPANS       each chunk's one walk (`span`), a leaf of S, the spans' scan; S's root says the file's verdict, nodes
+//               and blocks.
+//   STATES      each chunk's state (S's, down its path), its levels placed (`levels`: `entries`); and each of the
+//               tape's blocks made (`make_blocks`), where the file parses.
+//   COUNT       each chunk's side-list entries counted (pass 2, counting);
+//   WRITE       each chunk's nodes written (pass 2);
+//   END         each block's side lists' counts (`end_middle`), the last to end the state's (`ended`);
+//   FIN         each block final (`finalize`'s first half: its presence, its counts), a leaf of B (each side list's
+//               laid bytes and the faults, by block); B's root lays the tail;
+//   LAY         each block's side lists, faults, part starts and presence words where they go in the tape (B's state
+//               down its path), and the newline index, 512 bytes an item.
 //
 // A scan's tree is the Blelloch tree of `down` and `tree_of` (a level each half the one below): a leaf's item stores
 // its value and arrives at its parent; the second child to arrive composes the parent (a node of one child is its
 // child) and goes on up, so no item waits for another and the composition is the Rust's. The root stores the state
-// after the file, and the state at the top as the top reads it, and pushes the down-sweep: each node's item stores its
-// children's states (a left child its parent's, a right one through its left sibling's value) and pushes them. A
-// phase that needs every item of the one before (pass 2's count before its writes) is pushed by the item that brings
-// the phase's counter to its count. A "for each" is a fan: item `i` pushes `2i + 1` and `2i + 2`, then does `i`.
+// after the file and the state at the top. A later phase gives each leaf its state by walking down from the top to it,
+// each step the down-sweep's (a left child its parent's state, a right one its parent's after its left sibling's
+// value, each kept to what the child reads), so each leaf's state is the down-sweep's, and no level waits for another.
 //
-// Every value another item reads is in the pool, coherent memory; an item fences before it arrives or pushes, and
-// after it takes or completes a count, so what it wrote is seen by the item that goes on. The pool's header (`UKL_RUN_H`
-// words) holds the counters, the verdict and the layout, which the host writes: where each array and tree lies.
+// Every value another item reads is in the pool, coherent memory; an item fences before it arrives, and after it
+// completes a count, so what it wrote is seen by the item that goes on. The pool's header (`UKL_RUN_H` words) holds the
+// counters, the verdict and the layout, which the host writes: where each array and tree lies.
 //
 // The grammar's parts are the printer's: `ukl_run_bracket`, `ukl_run_sep`, `ukl_run_root`, `ukl_run_cont` and the two
 // walks, `ukl_run_span` (pass 1 on `Shadow`) and `ukl_run_write` (pass 2 on the cursor from the middle), declared here.
 #pragma once
 #include <ukl/middle.h>
 #include <ukl/writer_mid.h>
-#include <ukl/workqueue.h>
+#include <ukl/simd.h>
 
 // ---- The pool's header ------------------------------------------------------------------------------------------
 
@@ -49,7 +52,8 @@
 #define UKL_RUN_ERR 5u
 #define UKL_RUN_FAIL 6u
 #define UKL_RUN_NODES 7u
-#define UKL_RUN_G_READY 8u
+// Whether every block ended well (`ended`), and the tail laid (B's root).
+#define UKL_RUN_ENDED 8u
 #define UKL_RUN_G_COUNT 9u
 #define UKL_RUN_G_WRITE 10u
 #define UKL_RUN_G_END 11u
@@ -74,6 +78,9 @@
 #define UKL_RUN_O_FIN 29u
 // The pool's first free word (`m[0]` starts there).
 #define UKL_RUN_O_FREE 30u
+#define UKL_RUN_TAILED 31u
+// Each phase's tickets taken.
+#define UKL_RUN_TICKET 32u
 
 #define UKL_RUN_TP 0u
 #define UKL_RUN_TC 1u
@@ -93,20 +100,22 @@
 #define UKL_RUN_F_LAID0 16u
 #define UKL_RUN_F_SIZE 17u
 
-// The items: a kind in the top 5 bits, an index below.
-#define UKL_RUN_RUN 0u
-#define UKL_RUN_DOWN 1u
-#define UKL_RUN_CHUNK 6u
-#define UKL_RUN_SPAN 7u
-#define UKL_RUN_BLOCK 8u
-#define UKL_RUN_WCOUNT 9u
-#define UKL_RUN_WRITE 10u
-#define UKL_RUN_END 11u
-#define UKL_RUN_FIN 12u
-#define UKL_RUN_LINES 13u
-#define UKL_RUN_SHIFT 27u
-#define UKL_RUN_INDEX 134217727u
+// The phases.
+#define UKL_RUN_PH_RUNS 0u
+#define UKL_RUN_PH_STARTS 1u
+#define UKL_RUN_PH_WORDS 2u
+#define UKL_RUN_PH_KINDS 3u
+#define UKL_RUN_PH_SPANS 4u
+#define UKL_RUN_PH_STATES 5u
+#define UKL_RUN_PH_COUNT 6u
+#define UKL_RUN_PH_WRITE 7u
+#define UKL_RUN_PH_END 8u
+#define UKL_RUN_PH_FIN 9u
+#define UKL_RUN_PH_LAY 10u
+#define UKL_RUN_PHASES 11u
 #define UKL_RUN_LINE_BYTES 512u
+// A worker's turns at most (each a group's worth of items): past every phase's items.
+#define UKL_RUN_TURNS 100000000u
 
 typedef struct UklRun {
     UKL_GLOBAL const uint8_t* src;
@@ -121,8 +130,7 @@ typedef struct UklRun {
     UKL_GLOBAL uint32_t* f1;
     UKL_GLOBAL uint32_t* touch;
     UKL_GLOBAL uint32_t* f2;
-    UklWorkQueue q;
-    uint32_t count, len, ntoks, size, runs, most;
+    uint32_t count, len, ntoks, size, runs, most, phase;
 } UklRun;
 
 // The grammar's (the two walks each a function compiled once and called, `UKL_ONCE`: inlined into the one kernel with
@@ -144,13 +152,6 @@ UKL_INLINE void ukl_run_fail(UKL_PRIVATE UklRun* r, uint32_t code)
 {
     ukl_atomic_cas(&r->m[UKL_RUN_FAIL], 0u, code);
     ukl_atomic_store(&r->m[UKL_RUN_VERDICT], 3u);
-}
-
-UKL_INLINE void ukl_run_push(UKL_PRIVATE UklRun* r, uint32_t kind, uint32_t i)
-{
-    ukl_fence_device();
-    if (!ukl_wq_push(r->q, kind << UKL_RUN_SHIFT | i))
-        ukl_run_fail(r, 1u);
 }
 
 // A counter's arrival: whether it brought it to `target`.
@@ -257,30 +258,30 @@ UKL_INLINE void ukl_run_up(UKL_PRIVATE UklRun* r, uint32_t tr, uint32_t i)
 
 UKL_INLINE void ukl_run_leaf(UKL_PRIVATE UklRun* r, uint32_t tr, uint32_t i);
 
-// Node `x`'s down-sweep: its children's states, then their items; a leaf's own work.
-UKL_INLINE void ukl_run_down(UKL_PRIVATE UklRun* r, uint32_t tr, uint32_t x)
+// Leaf `i`'s state, walked down from the top (the root's state) to it as the down-sweep goes, then its own work.
+UKL_ONCE void ukl_run_path(UKL_PRIVATE UklRun* r, uint32_t tr, uint32_t i)
 {
     UklMidPool m = r->m;
-    uint32_t op = ukl_run_op(tr), lv = ukl_run_leaves(r, tr), base = 0u, below = 0u;
-    for (uint32_t level = 0u; level < 40u && x >= base + lv; level++) {
-        below = base;
-        base += lv;
+    uint32_t op = ukl_run_op(tr), n = ukl_run_leaves(r, tr), lv = n, levels = 0u, top = 0u;
+    for (; levels < 40u && lv > 1u; levels++) {
+        top += lv;
         lv = (lv + 1u) >> 1;
     }
-    if (base == 0u) {
-        ukl_run_leaf(r, tr, x);
-        return;
-    }
-    // The level below's size.
-    uint32_t i = x - base, n = base - below;
-    uint32_t at = m[ukl_run_st(r, tr, x)];
-    for (uint32_t c = 2u * i; c < 2u * i + 2u && c < n; c++) {
-        uint32_t s = at;
+    uint32_t s = m[ukl_run_st(r, tr, top)];
+    for (uint32_t l = levels; l > 0u; l--) {
+        // Level `l - 1`'s first node: the levels below it.
+        uint32_t below = 0u, size = n;
+        for (uint32_t k = 0u; k + 1u < l; k++) {
+            below += size;
+            size = (size + 1u) >> 1;
+        }
+        uint32_t c = i >> (l - 1u);
         if (c % 2u == 1u)
-            s = ukl_run_after(m, op, at, m[ukl_run_val(r, tr, below + c - 1u)]);
-        m[ukl_run_st(r, tr, below + c)] = ukl_run_keep(m, op, s, m[ukl_run_val(r, tr, below + c)]);
-        ukl_run_push(r, UKL_RUN_DOWN + tr, below + c);
+            s = ukl_run_after(m, op, s, m[ukl_run_val(r, tr, below + c - 1u)]);
+        s = ukl_run_keep(m, op, s, m[ukl_run_val(r, tr, below + c)]);
     }
+    m[ukl_run_st(r, tr, i)] = s;
+    ukl_run_leaf(r, tr, i);
 }
 
 // Tree `tr`'s root: the state after the file and the top's, its own work, then the down-sweep (unless its work
@@ -298,8 +299,8 @@ UKL_INLINE void ukl_run_root_done(UKL_PRIVATE UklRun* r, uint32_t tr)
     bool full = op != 2u && start >= UKL_MID_FULL;
     m[ukl_run_st(r, tr, ukl_run_stride(r, tr))] = full ? UKL_MID_FULL : ukl_run_after(m, op, start, v);
     m[ukl_run_st(r, tr, top)] = full ? UKL_MID_FULL : ukl_run_keep(m, op, start, v);
-    if (ukl_run_root_after(r, tr))
-        ukl_run_push(r, UKL_RUN_DOWN + tr, top);
+    if (ukl_run_root_after(r, tr) && tr == UKL_RUN_TB)
+        ukl_atomic_store(&m[UKL_RUN_TAILED], 1u);
 }
 
 // ---- The items --------------------------------------------------------------------------------------------------
@@ -313,21 +314,8 @@ UKL_INLINE uint32_t ukl_run_stop(UKL_PRIVATE UklRun* r, uint32_t c, uint32_t end
     return c + 1u < ukl_run_nc(r) ? ukl_run_chunk(r, c + 1u) : end;
 }
 
-// A chunk's readiness: its start and the next one's placed (2: its word and depth), then its kinds and its depth (4:
-// its walk).
-UKL_INLINE void ukl_run_ready(UKL_PRIVATE UklRun* r, uint32_t c)
-{
-    ukl_fence_device();
-    uint32_t was = ukl_atomic_add(&r->m[r->m[UKL_RUN_O_READY] + c], 1u) + 1u;
-    ukl_fence_device();
-    if (was == 2u)
-        ukl_run_push(r, UKL_RUN_CHUNK, c);
-    else if (was == 4u)
-        ukl_run_push(r, UKL_RUN_SPAN, c);
-}
-
 // Run `k` (`chunk_starts`): its first record after a separator, or none; a leaf of P.
-UKL_INLINE void ukl_run_run(UKL_PRIVATE UklRun* r, uint32_t k)
+UKL_ONCE void ukl_run_run(UKL_PRIVATE UklRun* r, uint32_t k)
 {
     uint32_t size = r->size, found = k == 0u ? 0u : UKL_MID_NONE;
     uint32_t end = (k + 1u) * size < r->count ? (k + 1u) * size : r->count;
@@ -371,7 +359,7 @@ UKL_ONCE void ukl_run_word(UKL_PRIVATE UklRun* r, uint32_t c)
 }
 
 // Chunk `c`'s walk: a leaf of S.
-UKL_INLINE void ukl_run_span_item(UKL_PRIVATE UklRun* r, uint32_t c)
+UKL_ONCE void ukl_run_span_item(UKL_PRIVATE UklRun* r, uint32_t c)
 {
     UklMidPool m = r->m;
     uint32_t k = m[ukl_run_st(r, UKL_RUN_TC, c)], w = m[ukl_run_val(r, UKL_RUN_TC, c)];
@@ -408,13 +396,6 @@ UKL_INLINE uint32_t ukl_run_nodes_blocks(uint32_t n)
 {
     uint32_t nb = (n + CLIF_W_Z - 1u) / CLIF_W_Z;
     return nb == 0u ? 1u : nb;
-}
-
-// Every state and block made: pass 2 counts.
-UKL_INLINE void ukl_run_readied(UKL_PRIVATE UklRun* r)
-{
-    if (ukl_run_arrive(r, UKL_RUN_G_READY, ukl_run_nc(r) + r->m[UKL_RUN_NB]) && ukl_atomic_poll(&r->m[UKL_RUN_VERDICT]) == 1u)
-        ukl_run_push(r, UKL_RUN_WCOUNT, 0u);
 }
 
 // ---- The finish -------------------------------------------------------------------------------------------------
@@ -604,8 +585,6 @@ UKL_ONCE bool ukl_run_tail(UKL_PRIVATE UklRun* r)
     uint32_t nlines = (uint32_t)((lines_len + UKL_RUN_LINE_BYTES - 1u) / UKL_RUN_LINE_BYTES);
     m[UKL_RUN_NLINES] = nlines;
     m[UKL_RUN_FIN_TARGET] = count + nlines;
-    if (nlines != 0u)
-        ukl_run_push(r, UKL_RUN_LINES, 0u);
     return true;
 }
 
@@ -719,7 +698,7 @@ UKL_ONCE void ukl_run_ended(UKL_PRIVATE UklRun* r)
         ukl_run_fail(r, 4u);
         return;
     }
-    ukl_run_push(r, UKL_RUN_FIN, 0u);
+    ukl_atomic_store(&m[UKL_RUN_ENDED], 1u);
 }
 
 // ---- The roots' and the leaves' own work ------------------------------------------------------------------------
@@ -731,7 +710,6 @@ UKL_INLINE bool ukl_run_root_after(UKL_PRIVATE UklRun* r, uint32_t tr)
     if (tr == UKL_RUN_TP) {
         // The chunks: run 0 has one, so at least one. The last has no next start to wait for.
         m[UKL_RUN_NC] = end;
-        ukl_run_ready(r, end - 1u);
     } else if (tr == UKL_RUN_TS) {
         uint32_t nc = ukl_run_nc(r);
         m[m[UKL_RUN_O_ATS] + nc] = end;
@@ -749,8 +727,6 @@ UKL_INLINE bool ukl_run_root_after(UKL_PRIVATE UklRun* r, uint32_t tr)
             ukl_run_fail(r, 8u);
         else
             ukl_atomic_cas(&m[UKL_RUN_VERDICT], 0u, verdict);
-        if (verdict == 1u)
-            ukl_run_push(r, UKL_RUN_BLOCK, 0u);
     } else if (tr == UKL_RUN_TB) {
         return ukl_run_tail(r);
     }
@@ -766,85 +742,97 @@ UKL_INLINE void ukl_run_leaf(UKL_PRIVATE UklRun* r, uint32_t tr, uint32_t i)
         if (found == UKL_MID_NONE)
             return;
         m[m[UKL_RUN_O_CHUNKS] + st] = found;
-        ukl_run_ready(r, st);
-        if (st != 0u)
-            ukl_run_ready(r, st - 1u);
     } else if (tr == UKL_RUN_TC) {
-        ukl_run_ready(r, i);
     } else if (tr == UKL_RUN_TD) {
         m[m[UKL_RUN_O_DEPTHS] + i] = i == 0u || (int32_t)st < 0 ? 0u : st;
-        ukl_run_ready(r, i);
     } else if (tr == UKL_RUN_TS) {
         m[m[UKL_RUN_O_ATS] + i] = ukl_run_levels(r, i, st);
-        ukl_run_readied(r);
     } else {
         ukl_run_fin2(r, i, st);
     }
 }
 
-// A fan's count: `kind`'s items.
-UKL_INLINE uint32_t ukl_run_fan(UKL_PRIVATE UklRun* r, uint32_t kind)
-{
-    return kind == UKL_RUN_RUN ? r->runs : kind == UKL_RUN_WCOUNT || kind == UKL_RUN_WRITE ? ukl_run_nc(r) : kind == UKL_RUN_LINES ? r->m[UKL_RUN_NLINES] : r->m[UKL_RUN_NB];
-}
-
-// One item.
-UKL_INLINE void ukl_run_item(UKL_PRIVATE UklRun* r, uint32_t item)
+// Phase `ph`'s items: its count, from the phases before it; none where the file did not parse or a phase failed.
+UKL_INLINE uint32_t ukl_run_items(UKL_PRIVATE UklRun* r, uint32_t ph)
 {
     UklMidPool m = r->m;
-    uint32_t kind = item >> UKL_RUN_SHIFT, i = item & UKL_RUN_INDEX;
-    if (kind == UKL_RUN_RUN || kind >= UKL_RUN_BLOCK) {
-        uint32_t n = ukl_run_fan(r, kind);
-        for (uint32_t c = 2u * i + 1u; c <= 2u * i + 2u; c++)
-            if (c < n)
-                ukl_run_push(r, kind, c);
-    }
-    if (kind == UKL_RUN_RUN) {
+    bool ok = ukl_atomic_poll(&m[UKL_RUN_VERDICT]) == 1u;
+    uint32_t nc = m[UKL_RUN_NC], nb = ok ? m[UKL_RUN_NB] : 0u;
+    if (ph <= UKL_RUN_PH_STARTS)
+        return r->runs;
+    if (ph <= UKL_RUN_PH_SPANS)
+        return nc;
+    if (ph == UKL_RUN_PH_STATES)
+        return nc + nb;
+    if (ph <= UKL_RUN_PH_WRITE)
+        return ok ? nc : 0u;
+    if (ph == UKL_RUN_PH_END)
+        return nb;
+    if (ph == UKL_RUN_PH_FIN)
+        return ukl_atomic_poll(&m[UKL_RUN_ENDED]) == 1u ? nb : 0u;
+    return ukl_atomic_poll(&m[UKL_RUN_TAILED]) == 1u ? nb + m[UKL_RUN_NLINES] : 0u;
+}
+
+// Whether phase `ph` is `x`, one of a kernel's phases `phases` (a mask its kernel gives as a constant, so the code of
+// the phases it does not run is not in it: each walk's kernel compiles apart).
+#define UKL_RUN_IS(ph, phases, x) ((ph) == (x) && (((phases) >> (x)) & 1u) != 0u)
+
+// Item `i` of phase `ph`.
+UKL_INLINE void ukl_run_item(UKL_PRIVATE UklRun* r, uint32_t ph, uint32_t i, uint32_t phases)
+{
+    UklMidPool m = r->m;
+    uint32_t nc = m[UKL_RUN_NC], nb = m[UKL_RUN_NB];
+    if (UKL_RUN_IS(ph, phases, UKL_RUN_PH_RUNS)) {
         ukl_run_run(r, i);
-    } else if (kind < UKL_RUN_CHUNK) {
-        ukl_run_down(r, kind - UKL_RUN_DOWN, i);
-    } else if (kind == UKL_RUN_CHUNK) {
+    } else if (UKL_RUN_IS(ph, phases, UKL_RUN_PH_STARTS)) {
+        ukl_run_path(r, UKL_RUN_TP, i);
+    } else if (UKL_RUN_IS(ph, phases, UKL_RUN_PH_WORDS)) {
         ukl_run_word(r, i);
-    } else if (kind == UKL_RUN_SPAN) {
+    } else if (UKL_RUN_IS(ph, phases, UKL_RUN_PH_KINDS)) {
+        ukl_run_path(r, UKL_RUN_TC, i);
+        ukl_run_path(r, UKL_RUN_TD, i);
+    } else if (UKL_RUN_IS(ph, phases, UKL_RUN_PH_SPANS)) {
         ukl_run_span_item(r, i);
-    } else if (kind == UKL_RUN_BLOCK) {
+    } else if (UKL_RUN_IS(ph, phases, UKL_RUN_PH_STATES) && i < nc) {
+        ukl_run_path(r, UKL_RUN_TS, i);
+    } else if (UKL_RUN_IS(ph, phases, UKL_RUN_PH_STATES)) {
         UKL_GLOBAL const uint8_t* t = r->t;
-        if (ukl_wmid_make_block(t, 0u, i) != 0u)
+        if (ukl_wmid_make_block(t, 0u, i - nc) != 0u)
             ukl_run_fail(r, 9u);
-        if (i == 0u && ukl_wmid_made(t, 0u, m[UKL_RUN_NB]) != 0u)
+        if (i == nc && ukl_wmid_made(t, 0u, nb) != 0u)
             ukl_run_fail(r, 10u);
-        ukl_run_readied(r);
-    } else if (kind == UKL_RUN_WCOUNT || kind == UKL_RUN_WRITE) {
-        bool counting = kind == UKL_RUN_WCOUNT;
+    } else if (UKL_RUN_IS(ph, phases, UKL_RUN_PH_COUNT) || UKL_RUN_IS(ph, phases, UKL_RUN_PH_WRITE)) {
         uint32_t a = m[m[UKL_RUN_O_ATS] + i];
-        ukl_run_write(r, i, a, ukl_run_chunk(r, i), ukl_run_stop(r, i, r->count + 1u), counting);
-        if (ukl_run_arrive(r, counting ? UKL_RUN_G_COUNT : UKL_RUN_G_WRITE, ukl_run_nc(r)))
-            ukl_run_push(r, counting ? UKL_RUN_WRITE : UKL_RUN_END, 0u);
-    } else if (kind == UKL_RUN_END) {
+        ukl_run_write(r, i, a, ukl_run_chunk(r, i), ukl_run_stop(r, i, r->count + 1u), ph == UKL_RUN_PH_COUNT);
+    } else if (UKL_RUN_IS(ph, phases, UKL_RUN_PH_END)) {
         ukl_wmid_end_block(r->t, 0u, i);
-        if (ukl_run_arrive(r, UKL_RUN_G_END, m[UKL_RUN_NB]))
+        if (ukl_run_arrive(r, UKL_RUN_G_END, nb))
             ukl_run_ended(r);
-    } else if (kind == UKL_RUN_FIN) {
+    } else if (UKL_RUN_IS(ph, phases, UKL_RUN_PH_FIN)) {
         ukl_run_fin(r, i);
-    } else if (kind == UKL_RUN_LINES) {
-        ukl_run_lines(r, i);
+    } else if (UKL_RUN_IS(ph, phases, UKL_RUN_PH_LAY) && i < nb) {
+        ukl_run_path(r, UKL_RUN_TB, i);
+    } else if (UKL_RUN_IS(ph, phases, UKL_RUN_PH_LAY)) {
+        ukl_run_lines(r, i - nb);
     }
 }
 
-// A worker: a SIMD group's lanes take items together, each lane its own, until none is left or its budget is spent.
-UKL_INLINE void ukl_run_worker(UKL_PRIVATE UklRun* r, uint32_t lane __UKL_PARAMS)
+// A worker of phase `r->phase`, one of its kernel's phases `phases`: a SIMD group's lanes take a group's worth of the
+// phase's items at a time by ticket, each lane its own, until none is left.
+UKL_INLINE void ukl_run_worker(UKL_PRIVATE UklRun* r, uint32_t phases, uint32_t lane __UKL_PARAMS)
 {
-    uint32_t taken = 0u;
-    for (uint32_t turn = 0u; turn < UKL_WQ_TURNS && !ukl_wq_spent(r->q, taken); turn++) {
-        uint32_t item = 0u;
-        bool got = ukl_wq_take_sg(r->q, lane, &item __UKL_ARGS);
-        if (got) {
-            ukl_fence_device();
-            ukl_run_item(r, item);
-            ukl_wq_done(r->q);
-        }
-        if (ukl_sg_count(got __UKL_ARGS) == 0u)
+    uint32_t ph = r->phase, n = ukl_run_items(r, ph);
+    for (uint32_t turn = 0u; turn < UKL_RUN_TURNS; turn++) {
+        uint32_t t0 = 0u;
+        if (lane == 0u)
+            t0 = ukl_atomic_add(&r->m[UKL_RUN_TICKET + ph], UKL_SIMD_WIDTH);
+        t0 = ukl_sg_broadcast(t0, 0u __UKL_ARGS);
+        if (t0 >= n)
             break;
-        taken++;
+        uint32_t i = t0 + lane;
+        if (i < n) {
+            ukl_fence_device();
+            ukl_run_item(r, ph, i, phases);
+        }
     }
 }

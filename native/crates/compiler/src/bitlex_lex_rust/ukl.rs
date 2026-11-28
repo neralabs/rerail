@@ -2004,6 +2004,22 @@ UKL_INLINE bool ukl_run_sep(uint32_t b) {{ return {seps}; }}
 UKL_INLINE uint32_t ukl_run_root(void) {{ return {p}ROOT; }}
 UKL_INLINE uint32_t ukl_run_cont(uint32_t k) {{ return {p}cont(k); }}
 
+"#,
+        firsts = tests.join(" || "),
+    );
+    tier2_kernels(&mut out, p);
+    Ok(out)
+}
+
+/// Tier 2's two programs as UKL kernels, launched a phase at a time in order (decision 0726). `<ukl/middle_run.h>`'s
+/// phases are three kernels, each its phases a constant mask, so it holds their code alone (its compile and its
+/// registers its own): `{p}run_walk` pass 1's walks, `{p}run_write` pass 2's (its count and its writes, one walk),
+/// `{p}run_scan` the rest. Compiled cold on the M3 Max (2026-11-27), a kernel a phase took 2 s each but pass 2's two,
+/// 19 and 20 s. `<ukl/z16_run.h>`'s are `{p}z_<phase>`.
+fn tier2_kernels(out: &mut String, p: &str) {
+    let _ = write!(
+        out,
+        r#"
 typedef struct {p}RArgs {{
     uint32_t count;
     uint32_t len;
@@ -2011,16 +2027,30 @@ typedef struct {p}RArgs {{
     uint32_t size;
     uint32_t runs;
     uint32_t most;
-    uint32_t capacity;
-    uint32_t budget;
+    uint32_t phase;
+    uint32_t pad;
 }} {p}RArgs;
-UKL_REFLECT_STRUCT({p}RArgs, count, len, ntoks, size, runs, most, capacity, budget)
+UKL_REFLECT_STRUCT({p}RArgs, count, len, ntoks, size, runs, most, phase, pad)
 
-// Tier 2 from the middle as one program (`<ukl/middle_run.h>`): a persistent dispatch whose SIMD groups take the
-// chain's items from the work queue (`slots`, `control`) until none is left or their budget is spent; the host
-// launches it again while any are left. The pool holds every value an item hands on (its header the host's layout);
-// `t` is the writer's region, its state at 0, room reserved for the tape and its tail.
-DEFINE_KERNEL2(tier2, {p}run,
+// The 16z program's kernels take nothing but their buffers.
+typedef struct {p}ZArgs {{
+    uint32_t pad;
+    uint32_t pad2;
+}} {p}ZArgs;
+UKL_REFLECT_STRUCT({p}ZArgs, pad, pad2)
+"#
+    );
+    // Each kernel's phases (`UKL_RUN_PH_*`'s bits).
+    let walk = 1u32 << 4;
+    let write = (1u32 << 6) | (1 << 7);
+    for (name, mask) in [("scan", ((1u32 << 11) - 1) & !walk & !write), ("walk", walk), ("write", write)] {
+        let _ = write!(
+            out,
+            r#"
+// Tier 2 from the middle (`<ukl/middle_run.h>`), its {name} phases (the mask {mask:#x}), the phase `args.phase`: its
+// SIMD groups take the phase's items by ticket until none is left. The pool holds every value an item hands on (its header the host's layout); `t` is the writer's
+// region, its state at 0, room reserved for the tape and its tail.
+DEFINE_KERNEL2(tier2, {p}run_{name},
                ARGS,     {p}RArgs, args,    ,
                ROBUFFER, uint8_t,  src,     "[len + 64]",
                ROBUFFER, uint32_t, starts,  "[count + 3]",
@@ -2031,8 +2061,6 @@ DEFINE_KERNEL2(tier2, {p}run,
                RWBUFFER, uint32_t, f1,      "[(count + 1 + runs) * 10]",
                RWBUFFER, uint32_t, touch,   "[(count + 1 + runs) * 2]",
                RWBUFFER, uint32_t, f2,      "[(count + 1 + runs) * 25]",
-               RWBUFFER, uint32_t, slots,   "[capacity]",
-               RWBUFFER, uint32_t, control, "[5]",
                LANE,     uint16_t, lane,    )
 {{
     UklRun r;
@@ -2045,36 +2073,29 @@ DEFINE_KERNEL2(tier2, {p}run,
     r.f1 = f1;
     r.touch = touch;
     r.f2 = f2;
-    r.q.slots = slots;
-    r.q.control = control;
-    r.q.capacity = args.capacity;
-    r.q.ring = 0u;
-    r.q.budget = args.budget;
+    r.phase = args.phase;
     r.count = args.count;
     r.len = args.len;
     r.ntoks = args.ntoks;
     r.size = args.size;
     r.runs = args.runs;
     r.most = args.most;
-    ukl_run_worker(&r, lane __UKL_ARGS);
+    ukl_run_worker(&r, {mask}u, lane __UKL_ARGS);
 }}
-
-typedef struct {p}ZArgs {{
-    uint32_t capacity;
-    uint32_t budget;
-}} {p}ZArgs;
-UKL_REFLECT_STRUCT({p}ZArgs, capacity, budget)
-
-// The finished tape stored as 16z where it lies (`<ukl/z16_run.h>`): a persistent dispatch of SIMD groups, a group a
-// threadgroup, each its LZ4 table in threadgroup memory, taking the pieces' items from the work queue until none is
-// left or their budget is spent; the host launches it again while any are left.
-DEFINE_KERNEL2(tier2, {p}z,
+"#
+        );
+    }
+    for (ph, name) in ["count", "write"].iter().enumerate() {
+        let _ = write!(
+            out,
+            r#"
+// The finished tape stored as 16z where it lies (`<ukl/z16_run.h>`), its phase {name}: SIMD groups, a group a
+// threadgroup, each its LZ4 table in threadgroup memory, taking the phase's items by ticket.
+DEFINE_KERNEL2(tier2, {p}z_{name},
                ARGS,     {p}ZArgs, args,    ,
                ROBUFFER, uint8_t,  t,       "[region]",
                RWBUFFER, uint8_t,  z,       "[zroom]",
                RWBUFFER, uint32_t, pool,    "[pool]",
-               RWBUFFER, uint32_t, slots,   "[capacity]",
-               RWBUFFER, uint32_t, control, "[5]",
                SHARED,   uint32_t, table,   UKL_LZ4E_TABLE,
                LANE,     uint16_t, lane,    )
 {{
@@ -2083,16 +2104,11 @@ DEFINE_KERNEL2(tier2, {p}z,
     r.t = t + ukl_z16_u32(t, ukl_w_part_field(CLIF_W_PART_OUT, CLIF_W_AT_P_AT));
     r.z = z;
     r.m = (UklZ16Pool)pool;
-    r.q.slots = slots;
-    r.q.control = control;
-    r.q.capacity = args.capacity;
-    r.q.ring = 0u;
-    r.q.budget = args.budget;
+    r.phase = {ph}u;
     r.table = table;
     ukl_z16_worker(&r, lane __UKL_ARGS);
 }}
-"#,
-        firsts = tests.join(" || "),
-    );
-    Ok(out)
+"#
+        );
+    }
 }

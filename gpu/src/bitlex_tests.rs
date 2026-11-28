@@ -317,6 +317,32 @@ fn json_tier2_timings() {
     }
 }
 
+/// Each of tier 2's kernels compiled cold, its time: the program's text salted in its code (a comment's salt finds the
+/// device's cache), each kernel's pipeline made by `function`. Run by name: `--ignored json_tier2_compile_times`.
+#[test]
+#[ignore]
+fn json_tier2_compile_times() {
+    if crate::shared::get().is_none() {
+        return;
+    }
+    let salt = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_nanos() as u32 | 0x8000_0000;
+    let text = rerail_json_aot::TIER2_UKL
+        .replace("    r.most = args.most;\n", &format!("    r.most = args.count == {salt}u ? 0u : args.most;\n"))
+        .replace("    r.table = table;\n", &format!("    r.table = table;\n    if (r.phase == {salt}u)\n        return;\n"));
+    assert_ne!(text, rerail_json_aot::TIER2_UKL);
+    let t = std::time::Instant::now();
+    let p = program("json_tier2_salted.uglykl", Box::leak(text.into_boxed_str())).unwrap();
+    eprintln!("{}: the library {:?}", crate::device::backend(), t.elapsed());
+    let mut total = std::time::Duration::ZERO;
+    for name in ["scan", "walk", "write"].map(|x| format!("json_t2_run_{x}")).into_iter().chain(["count", "write"].map(|x| format!("json_t2_z_{x}"))) {
+        let t = std::time::Instant::now();
+        p.function(&name).unwrap();
+        total += t.elapsed();
+        eprintln!("{}: {name} {:?}", crate::device::backend(), t.elapsed());
+    }
+    eprintln!("{}: every kernel {total:?}", crate::device::backend());
+}
+
 /// JSON's language for format 16 writers.
 fn json_lang() -> rerail_tape_format::f16::Lang {
     let entries = rerail_json_aot::ENTRIES.iter().map(|&(kind, field, classes)| rerail_tape_format::tape::Entry { kind, field, flags: 0, alias: None, classes: classes.to_vec() }).collect();
@@ -328,9 +354,10 @@ fn json_writer(lang: &rerail_tape_format::f16::Lang, f: &[u8]) -> rerail_tape_fo
     rerail_tape_format::f16::Writer::new(lang, f, rerail_tape_format::newlines::Terminators::Newlines, 0, false, true, f.len() / 2 + 16)
 }
 
-/// The programs' threadgroups: `RERAIL_T2_GROUPS` (the timings' knob), else 64.
+/// The programs' threadgroups: `RERAIL_T2_GROUPS` (the timings' knob), else 512 (on the M3 Max, 2 MB of JSON: tier 2's
+/// phases 11.6 ms of GPU at 64, 7.4 at 512, 7.9 at 2,048).
 fn groups() -> u64 {
-    std::env::var("RERAIL_T2_GROUPS").ok().and_then(|v| v.parse().ok()).unwrap_or(64)
+    std::env::var("RERAIL_T2_GROUPS").ok().and_then(|v| v.parse().ok()).unwrap_or(512)
 }
 
 /// The most blocks a tape of the file's records and bytes has (`Run::go`'s room).
@@ -338,11 +365,14 @@ fn most_blocks(lx: &rerail_json_aot::Lexed) -> usize {
     (1 + lx.count + lx.len).div_ceil(1024).max(1)
 }
 
+/// Each of `<ukl/middle_run.h>`'s phases' kernel, in the phases' order.
+const RUN_PHASES: [&str; 11] = ["scan", "scan", "scan", "scan", "walk", "scan", "write", "write", "scan", "scan", "scan"];
+
 #[repr(C)]
 #[derive(Clone, Copy)]
 struct T2ZArgs {
-    capacity: u32,
-    budget: u32,
+    pad: u32,
+    pad2: u32,
 }
 unsafe impl Pod for T2ZArgs {}
 
@@ -355,8 +385,8 @@ struct T2RArgs {
     size: u32,
     runs: u32,
     most: u32,
-    capacity: u32,
-    budget: u32,
+    phase: u32,
+    pad: u32,
 }
 unsafe impl Pod for T2RArgs {}
 
@@ -410,45 +440,28 @@ impl Run {
         (pool[27], pool[28], pool[29], pool[30]) = (tn as u32, tbn as u32, fin as u32, at as u32);
         let tw: Vec<u32> = toks.iter().flat_map(|t| [t.end, t.kind, t.nodes, t.last, t.err]).chain([0]).collect();
         let room = lx.count + 1 + runs;
-        // The queue: every item the chain can push, the first run's seeded.
-        let capacity = 16 * (runs + blocks) + 5 * tn + tbn + lx.len / 256 + 4096;
-        let mut slots = vec![0u32; capacity];
-        slots[0] = 1;
         let (sb, stb, tb, mb, rb) = (buffer_of(buf).unwrap(), buffer_of(&lx.starts).unwrap(), buffer_of(&tw).unwrap(), buffer_of(&pool).unwrap(), buffer_of(&region).unwrap());
         let (retb, f1, th, f2) = (alloc::<u8>(runs * DEPTH).unwrap(), alloc::<u32>(room * 10).unwrap(), alloc::<u32>(room * 2).unwrap(), alloc::<u32>(room * 25).unwrap());
-        let (qs, qc) = (buffer_of(&slots).unwrap(), buffer_of(&[0u32, 1, 1, 0, 0]).unwrap());
-        // 64 groups of 64 threads, each SIMD group a worker of a budget twice an even share of the items.
+        // A launch a phase, in one command buffer.
         let (groups, threads) = (groups(), 64u64);
-        let workers = (groups * threads) as usize / crate::device::simd_width().max(1) as usize;
-        let args = T2RArgs { count: lx.count as u32, len: lx.len as u32, ntoks: toks.len() as u32, size: size as u32, runs: runs as u32, most: blocks as u32, capacity: capacity as u32, budget: (2 * capacity / workers + 16) as u32 };
-        let mut launches = 0;
-        loop {
-            for _ in 0..2 {
-                launch(q, p.function("json_t2_run").unwrap())
-                    .value("args", &args)
-                    .buffer("src", &sb)
-                    .buffer("starts", &stb)
-                    .buffer("toks", &tb)
-                    .buffer("pool", &mb)
-                    .buffer("t", &rb)
-                    .buffer("rets", &retb)
-                    .buffer("f1", &f1)
-                    .buffer("touch", &th)
-                    .buffer("f2", &f2)
-                    .buffer("slots", &qs)
-                    .buffer("control", &qc)
-                    .run(&[groups], &[threads])
-                    .unwrap();
-                launches += 1;
-            }
-            q.flush().await_().unwrap();
-            let control: Vec<u32> = read(&qc, 5);
-            assert_eq!(control[3], 0, "{}: the work queue of {capacity} overflowed", crate::device::backend());
-            if control[2] == 0 {
-                break;
-            }
-            assert!(launches < 64, "{}: the work queue did not drain in {launches} launches ({} items left)", crate::device::backend(), control[2]);
+        for (phase, kernel) in RUN_PHASES.iter().enumerate() {
+            let args = T2RArgs { count: lx.count as u32, len: lx.len as u32, ntoks: toks.len() as u32, size: size as u32, runs: runs as u32, most: blocks as u32, phase: phase as u32, pad: 0 };
+            launch(q, p.function(&format!("json_t2_run_{kernel}")).unwrap())
+                .value("args", &args)
+                .buffer("src", &sb)
+                .buffer("starts", &stb)
+                .buffer("toks", &tb)
+                .buffer("pool", &mb)
+                .buffer("t", &rb)
+                .buffer("rets", &retb)
+                .buffer("f1", &f1)
+                .buffer("touch", &th)
+                .buffer("f2", &f2)
+                .run(&[groups], &[threads])
+                .unwrap();
         }
+        q.flush().await_().unwrap();
+        let launches = RUN_PHASES.len();
         Run { pool: mb, words, t: rb, region: region.len(), o, tree, tn, launches }
     }
 
@@ -457,37 +470,20 @@ impl Run {
     fn z(&self, q: &mut crate::device::ComputeQueue, p: &crate::kernels::Program, blocks: usize) -> (Vec<u8>, usize) {
         let np = 4 * blocks;
         let room = self.region + 9 * np + 256;
-        let words = 16 + 3 * np;
-        let capacity = 2 * np + self.region / 4096 + 64;
-        // COUNT(0) seeded (a slot holds its item plus one).
-        let mut slots = vec![0u32; capacity];
-        slots[0] = 1;
+        let words = 24 + 3 * np;
         let (zb, mb) = (alloc::<u8>(room).unwrap(), buffer_of(&vec![0u32; words]).unwrap());
-        let (qs, qc) = (buffer_of(&slots).unwrap(), buffer_of(&[0u32, 1, 1, 0, 0]).unwrap());
-        let groups = groups();
-        let args = T2ZArgs { capacity: capacity as u32, budget: (2 * capacity / groups as usize + 16) as u32 };
-        let mut launches = 0;
-        loop {
-            for _ in 0..2 {
-                launch(q, p.function("json_t2_z").unwrap())
-                    .value("args", &args)
-                    .buffer("t", &self.t)
-                    .buffer("z", &zb)
-                    .buffer("pool", &mb)
-                    .buffer("slots", &qs)
-                    .buffer("control", &qc)
-                    .run(&[groups], &[crate::device::simd_width() as u64])
-                    .unwrap();
-                launches += 1;
-            }
-            q.flush().await_().unwrap();
-            let control: Vec<u32> = read(&qc, 5);
-            assert_eq!(control[3], 0, "{}: the 16z queue of {capacity} overflowed", crate::device::backend());
-            if control[2] == 0 {
-                break;
-            }
-            assert!(launches < 64, "{}: the 16z queue did not drain in {launches} launches", crate::device::backend());
+        // A launch a phase, in one command buffer.
+        for phase in ["count", "write"] {
+            launch(q, p.function(&format!("json_t2_z_{phase}")).unwrap())
+                .value("args", &T2ZArgs { pad: 0, pad2: 0 })
+                .buffer("t", &self.t)
+                .buffer("z", &zb)
+                .buffer("pool", &mb)
+                .run(&[groups()], &[crate::device::simd_width() as u64])
+                .unwrap();
         }
+        q.flush().await_().unwrap();
+        let launches = 2;
         let m: Vec<u32> = read(&mb, 16);
         assert_eq!(m[2], 0, "{}: the 16z program failed", crate::device::backend());
         let end = m[3] as usize;

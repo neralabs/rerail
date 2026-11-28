@@ -231,56 +231,68 @@ The tests run them in seeded random orders, a new permutation at each ask: the a
 chunk reads what another wrote but through a scan's rounds, and the shape is the device's: one launch a pass or a
 scan round, each chunk a thread or a group.
 
-### 8. One program on a work queue, the tape finished and stored as 16z there
+### 8. Two programs, a launch a phase, the tape finished and stored as 16z on the device
 
 The user (2026-11-27): "Chunk starts and depths computed on the device. The passes run with a fixed number of launches:
 today they take each tree's height twice plus three. The tape finished on the device, then the LZ4 encoding of its
-blocks." Built as two programs, each a persistent dispatch whose SIMD groups take items from a work queue
-(`<ukl/workqueue.h>`):
+blocks." Built as two programs:
 
-- `<ukl/middle_run.h>` (`json_t2_run`): every pass of tier 2 from tier 1's records and the token pass's answers to the
-  finished format 16 tape. The runs' scan places the chunk starts; the bracket scan and the depths' scan give each
-  chunk's kinds and depth; each chunk's one walk is a leaf of the spans' scan, whose down-sweep gives each chunk's
-  state. Then the blocks are made, pass 2 counts and writes, the blocks end and go final (presence by atomics), and
-  the blocks' scan lays the tail: each block's side lists, part starts, faults and presence words where they go, and
-  the newline index. A scan's tree goes up by arrivals (the second child composes the parent) and down by items; a
-  phase that needs all of the one before is pushed by the item that completes its counter; a "for each" is a fan.
-  No item waits on another.
-- `<ukl/z16_run.h>` (`json_t2_z`): the finished tape stored as 16z where it lies. Each piece is counted by a SIMD
-  group's greedy parse (stopping at nine tenths of its bytes); the last count pushes the layout (a scan of the
-  lengths, the head, the piece index); each piece is then written at its place with its block's checkpoints, and the
-  tail is copied 4 KB an item.
+- `<ukl/middle_run.h>`: every pass of tier 2 from tier 1's records and the token pass's answers to the finished format
+  16 tape, in eleven phases. RUNS: each run's first record after a separator, a leaf of the runs' scan. STARTS: each
+  chunk's start placed. WORDS: each chunk's bracket word and depth change, leaves of the bracket and depth scans.
+  KINDS: each chunk's kinds and depth. SPANS: each chunk's one walk, a leaf of the spans' scan, whose root says the
+  verdict, the nodes and the blocks. STATES: each chunk's state, and the tape's blocks made. COUNT and WRITE: pass 2.
+  END: the blocks ended, the last to end checking the state (`ended`). FIN: each block final (presence by atomics), a
+  leaf of the blocks' scan, whose root lays the tail. LAY: each block's side lists, part starts, faults and presence
+  words where they go, and the newline index.
+- `<ukl/z16_run.h>`: the finished tape stored as 16z where it lies, in two phases. COUNT: each piece counted by a SIMD
+  group's greedy parse (stopping at nine tenths of its bytes), the last to arrive laying the tape out (a scan of the
+  lengths, the head, the piece index). WRITE: each piece at its place with its block's checkpoints, and the tail's
+  part starts and newline index, 4 KB an item.
 
-Each program is launched twice, then again while items are left (at 64 groups: twice for every test file). The
-host's side is `Writer::reserve_device_finish` (room for the tail) and `Writer::finished_on_device` (the tape taken
-from the region as the device left it, no op run). The walks and the finish are calls (`UKL_ONCE`): inlined, the
-kernel's Metal compile took 37 s cold on the M3 Max and the M1 Max, now 24 s.
+A phase is a launch, and its items are taken by the launch's SIMD groups by ticket from the count the phases before
+it set (the user, 2026-11-27, of the options: "A launch per phase"). So the launches are a fixed eleven and two, and
+every phase has the whole grid. A scan's tree goes up by arrivals within its leaves' phase (the second child composes
+the parent, the root stores the state at the top and after the file). A later phase gives each leaf its state by
+walking down from the top to it, each step the down-sweep's (a left child its parent's state, a right one its
+parent's after its left sibling's value, each kept to what the child reads), so no level waits for another.
+
+The first form, one persistent dispatch on a work queue whose workers end when they find it empty (decision 0540 step
+7), ran a phase that starts from one item (a root, a fan's first item) on the one SIMD group still running: on the M3
+Max, 2 MB of JSON took 587 ms of GPU in tier 2 and 78 ms in 16z, whatever the groups.
+
+The phases are three kernels of `<ukl/middle_run.h>`, each its phases a constant mask so it holds their code alone:
+pass 1's walks (`json_t2_run_walk`), pass 2's (`json_t2_run_write`, its count and writes one walk), and the rest
+(`json_t2_run_scan`). Compiled cold on the M3 Max (a load average of 10): 0.6 s, 0.9 s and 16.4 s, every kernel 17.9 s.
+A kernel a phase compiled pass 2's walk twice (19 and 20 s); one kernel of every phase took 39 to 67 s.
+
+The host's side is `Writer::reserve_device_finish` (room for the tail) and `Writer::finished_on_device` (the tape taken
+from the region as the device left it, no op run).
 
 ### 9. Timings (2026-11-27)
 
-`json_tier2_timings`, `--profile profiling`, on the M3 Max (the farm host idle but for the run): a 2,097,222-byte file,
-602,915 records, its tape 2,678,063 bytes, its 16z 467,904; warm, the best of 3.
+`json_tier2_timings`, `--profile profiling`: a 2,097,222-byte file, 602,915 records, its tape 2,678,063 bytes, its 16z
+467,904; warm, the best of 3. The device's are GPU time by its clock (`gpu_seconds_awaited`); the farm hosts ran other
+work (the M3 Max at a load average of 10, the M1 Max at 9 to 20).
 
-| CPU, one thread | Time |
-|---|---|
-| tier 1 (`lex`) | 0.45 ms |
-| the token pass | 5.1 ms |
-| tier 2's serial walk into the writer | 85 ms |
-| its finish | 0.26 ms |
-| `z_of` | 3.1 ms |
-
-| Metal, GPU time | 64 groups | 512 groups |
+| CPU, one thread | M3 Max | M1 Max |
 |---|---|---|
-| tier 2 to the finished tape, chunks of 16 | 801 ms (2 launches) | 556 ms (6) |
-| chunks of 64 | 593 ms (2) | 501 ms (6) |
-| chunks of 256 | 587 ms (2) | 280 ms (4) |
-| 16z | 78 ms (2) | 78 ms (2) |
+| tier 1 (`lex`) | 0.41 ms | 0.54 ms |
+| the token pass | 4.9 ms | 5.6 ms |
+| tier 2's serial walk into the writer | 81 to 86 ms | 94 ms |
+| its finish | 0.25 to 0.29 ms | 0.08 ms |
+| `z_of` | 3.1 ms | 2.7 ms |
 
-The device is 3 to 9 times slower than one CPU thread, and the 16z program does not speed up with more groups. The
-cause is the queue's protocol: a worker ends when it finds the queue empty (decision 0540 step 7). A phase that
-starts from one item (a tree's root, a fan's first item) finds the other workers ended, and the one SIMD group still
-running takes the phase alone, up to a group's worth of items at a time. More groups help tier 2 only because later
-groups start after earlier ones end, and launches start them again.
+| Metal, GPU time, 512 groups of 64 threads | M3 Max | M1 Max |
+|---|---|---|
+| tier 2 to the finished tape, chunks of 16 records (11 launches) | 8.4 ms | 18.4 ms |
+| chunks of 64 | 7.4 ms | 19.0 ms |
+| chunks of 256 | 14.0 ms | 47.5 ms |
+| 16z (2 launches) | 1.2 to 2.0 ms | 2.2 ms |
+
+On the M3 Max, at 64 groups tier 2 took 11.6 to 17.2 ms and 16z 2.1 ms; at 2,048, 7.8 to 13.8 ms and 1.2 to 1.7 ms.
+The device covers tier 2 and its finish and 16z; tier 1 and the token pass ran on the CPU (the token pass's kernel,
+`json_t2_tokens`, is tested apart).
 
 ## Tests
 
@@ -302,7 +314,7 @@ broken words): each chunk's start, depth, word, kinds, span and state are Rust's
 `span`, `entries`), and the verdict the serial walk's. `json_tier2_writes_from_the_middle_as_its_rust`: the 21 files
 that parse, the same chunks (12,369): the tape the device finished is the serial walk's finished tape byte for byte
 (284,640 bytes), and the 16z tape the device stored is `z_of(tape, lz4_greedy)` byte for byte (79,692 bytes), at
-most 2 launches each. Both on UKL's CPU backend (compiled and on the vector path) and on Metal on the M3 Max and the
+most 11 and 2 launches. Both on UKL's CPU backend (compiled and on the vector path) and on Metal on the M3 Max and the
 M1 Max. `rerail-gpu`'s `lz4_blocks_encode_greedily`: 26 blocks (0 to 70,000 bytes: matches at every distance, short and long,
 runs, noise, and one byte repeated), each encoded by a group to the bytes of the serial parse (`lz4_greedy`), which
 LZ4's `LZ4_decompress_safe` decodes to the block; on UKL's CPU backend, compiled and on the vector path. The tape test also stores each tape from the middle (90, in order) as 16z by `z_of` and the greedy encoder (129,819

@@ -1,28 +1,22 @@
 // ukl/z16_run.h: a finished format 16 tape stored as 16z (decision 0726, S6) by one program on a work queue, read
 // where it lies: the device's half of `z_of(t, lz4_greedy)`, byte for byte, from the tape the chain finished in place.
 //
-// The items (`UKL_Z16_*`), each a SIMD group's (the group's lanes take up to a group's worth of items and do each
-// together, its LZ4 table the group's threadgroup memory):
+// Two phases, a launch each (the user, 2026-11-27: "a launch per phase"), their items taken by the launch's SIMD
+// groups by ticket, a group's worth at a time; the group does each of its lanes' items in turn, together, its LZ4
+// table the group's threadgroup memory:
 //
-//   COUNT(j)   piece `j` (block `j / 4`, array `j % 4`: its column at the block's rows, then its side list's part,
-//              each where it lies in the tape): its LZ4 length, counted, where it holds at least `UKL_Z16_LZ4_MIN`
-//              bytes and saves a tenth (the count stops at nine tenths of it), else its bytes; its kind. The last to
-//              arrive pushes LAYOUT.
-//   LAYOUT     the pieces' places (a scan of their lengths, the group's), the tail's regions placed after them; the
-//              head (the tape's, its magic and its 16z fields), the piece index and the pads written; pushes WRITE(0)
-//              and COPY(0).
-//   WRITE(j)   piece `j` at its place: encoded again, written this time, or its bytes; its block's checkpoints too,
-//              with its first piece.
-//   COPY(k)    the tail's `k`th run of `UKL_Z16_COPY` bytes: the part starts, then the newline index.
-//
-// A "for each" is a fan: item `i` pushes `2i + 1` and `2i + 2`, then does `i`. The host seeds COUNT(0) and launches
-// the dispatch again while items are left (`<ukl/workqueue.h>`): a fixed few launches whatever the tape's size.
+//   COUNT    piece `j` (block `j / 4`, array `j % 4`: its column at the block's rows, then its side list's part, each
+//            where it lies in the tape): its LZ4 length, counted, where it holds at least `UKL_Z16_LZ4_MIN` bytes and
+//            saves a tenth (the count stops at nine tenths of it), else its bytes; its kind. The last to arrive lays
+//            the tape out: the pieces' places (a scan of their lengths, the group's), the tail's regions after them,
+//            the head (the tape's, its magic and its 16z fields), the piece index and the pads.
+//   WRITE    piece `j` at its place (encoded again, written this time, or its bytes; its block's checkpoints with its
+//            first piece), and then the tail's runs of `UKL_Z16_COPY` bytes: the part starts, then the newline index.
 //
 // The pool (u32s, coherent): its header (`UKL_Z16_H` words) and then each piece's length, kind and start.
 
 #pragma once
 #include <ukl/lz4_encode.h>
-#include <ukl/workqueue.h>
 
 #define UKL_Z16_Z 1024u
 #define UKL_Z16_K 8u
@@ -39,13 +33,14 @@
 #define UKL_Z16_END 3u
 #define UKL_Z16_NCOPY 4u
 #define UKL_Z16_FIELDS 8u
-#define UKL_Z16_H 16u
+// Each phase's tickets taken; whether the layout is made.
+#define UKL_Z16_TICKET 16u
+#define UKL_Z16_LAID 14u
+#define UKL_Z16_H 24u
 
-#define UKL_Z16_SHIFT 27u
-#define UKL_Z16_COUNT 0u
-#define UKL_Z16_LAYOUT 1u
-#define UKL_Z16_WRITE 2u
-#define UKL_Z16_COPYK 3u
+#define UKL_Z16_PH_COUNT 0u
+#define UKL_Z16_PH_WRITE 1u
+#define UKL_Z16_TURNS 100000000u
 
 #if defined(UKL_CPU) || defined(UKL_VEC)
 typedef UKL_GLOBAL uint32_t* UklZ16Pool;
@@ -57,7 +52,7 @@ typedef struct UklZ16 {
     UKL_GLOBAL const uint8_t* t;
     UKL_GLOBAL uint8_t* z;
     UklZ16Pool m;
-    UklWorkQueue q;
+    uint32_t phase;
     UKL_LOCAL uint32_t* table;
 } UklZ16;
 
@@ -124,24 +119,6 @@ UKL_INLINE UklLz4Spans ukl_z16_piece(UKL_GLOBAL const uint8_t* t, UKL_PRIVATE co
 
 UKL_INLINE void ukl_z16_fail(UKL_PRIVATE UklZ16* r, uint32_t code) { ukl_atomic_cas(&r->m[UKL_Z16_FAIL], 0u, code); }
 
-// Lane 0's push.
-UKL_INLINE void ukl_z16_push(UKL_PRIVATE UklZ16* r, uint32_t kind, uint32_t i, uint32_t lane)
-{
-    if (lane != 0u)
-        return;
-    ukl_fence_device();
-    if (!ukl_wq_push(r->q, kind << UKL_Z16_SHIFT | i))
-        ukl_z16_fail(r, 1u);
-}
-
-// A fan's children of item `i` of `n`.
-UKL_INLINE void ukl_z16_fan(UKL_PRIVATE UklZ16* r, uint32_t kind, uint32_t i, uint32_t n, uint32_t lane)
-{
-    for (uint32_t c = 2u * i + 1u; c <= 2u * i + 2u; c++)
-        if (c < n)
-            ukl_z16_push(r, kind, c, lane);
-}
-
 // Lane 0's arrival at counter `at`, every lane told whether it was the last of `target`.
 UKL_INLINE bool ukl_z16_arrive(UKL_PRIVATE UklZ16* r, uint32_t at, uint32_t target, uint32_t lane __UKL_PARAMS)
 {
@@ -180,26 +157,6 @@ UKL_INLINE void ukl_z16_put32(UKL_GLOBAL uint8_t* to, uint32_t v)
 UKL_INLINE uint32_t ukl_z16_len(uint32_t np, uint32_t j) { return UKL_Z16_H + j; }
 UKL_INLINE uint32_t ukl_z16_kind(uint32_t np, uint32_t j) { return UKL_Z16_H + np + j; }
 UKL_INLINE uint32_t ukl_z16_start(uint32_t np, uint32_t j) { return UKL_Z16_H + 2u * np + j; }
-
-UKL_INLINE void ukl_z16_count(UKL_PRIVATE UklZ16* r, UKL_PRIVATE const UklZ16P* p, uint32_t j, uint32_t lane __UKL_PARAMS)
-{
-    uint32_t np = 4u * p->count, raw = 0u;
-    if (np == 0u) {
-        ukl_z16_push(r, UKL_Z16_LAYOUT, 0u, lane);
-        return;
-    }
-    ukl_z16_fan(r, UKL_Z16_COUNT, j, np, lane);
-    UklLz4Spans s = ukl_z16_piece(r->t, p, j, &raw);
-    uint32_t len = UKL_NONE;
-    if (raw >= UKL_Z16_LZ4_MIN)
-        len = ukl_lz4_encode2_sg(s, raw, r->z, raw * 9u / 10u, false, r->table, lane __UKL_ARGS);
-    if (lane == 0u) {
-        r->m[ukl_z16_len(np, j)] = len == UKL_NONE ? raw : len;
-        r->m[ukl_z16_kind(np, j)] = len == UKL_NONE ? 0u : 1u;
-    }
-    if (ukl_z16_arrive(r, UKL_Z16_COUNTED, np, lane __UKL_ARGS))
-        ukl_z16_push(r, UKL_Z16_LAYOUT, 0u, lane);
-}
 
 UKL_INLINE uint32_t ukl_z16_round4(uint32_t x) { return (x + 3u) & ~3u; }
 
@@ -252,17 +209,29 @@ UKL_INLINE void ukl_z16_layout(UKL_PRIVATE UklZ16* r, UKL_PRIVATE const UklZ16P*
         m[UKL_Z16_NCOPY] = ncopy;
     }
     ukl_fence_device();
-    if (np != 0u)
-        ukl_z16_push(r, UKL_Z16_WRITE, 0u, lane);
-    if (ncopy != 0u)
-        ukl_z16_push(r, UKL_Z16_COPYK, 0u, lane);
+    if (lane == 0u)
+        ukl_atomic_store(&m[UKL_Z16_LAID], 1u);
+}
+
+UKL_INLINE void ukl_z16_count(UKL_PRIVATE UklZ16* r, UKL_PRIVATE const UklZ16P* p, uint32_t j, uint32_t lane __UKL_PARAMS)
+{
+    uint32_t np = 4u * p->count, raw = 0u;
+    UklLz4Spans s = ukl_z16_piece(r->t, p, j, &raw);
+    uint32_t len = UKL_NONE;
+    if (raw >= UKL_Z16_LZ4_MIN)
+        len = ukl_lz4_encode2_sg(s, raw, r->z, raw * 9u / 10u, false, r->table, lane __UKL_ARGS);
+    if (lane == 0u) {
+        r->m[ukl_z16_len(np, j)] = len == UKL_NONE ? raw : len;
+        r->m[ukl_z16_kind(np, j)] = len == UKL_NONE ? 0u : 1u;
+    }
+    if (ukl_z16_arrive(r, UKL_Z16_COUNTED, np, lane __UKL_ARGS))
+        ukl_z16_layout(r, p, lane __UKL_ARGS);
 }
 
 UKL_INLINE void ukl_z16_write(UKL_PRIVATE UklZ16* r, UKL_PRIVATE const UklZ16P* p, uint32_t j, uint32_t lane __UKL_PARAMS)
 {
     UklZ16Pool m = r->m;
     uint32_t np = 4u * p->count, raw = 0u;
-    ukl_z16_fan(r, UKL_Z16_WRITE, j, np, lane);
     UklLz4Spans s = ukl_z16_piece(r->t, p, j, &raw);
     uint32_t len = m[ukl_z16_len(np, j)];
     UKL_GLOBAL uint8_t* to = r->z + UKL_Z16_HEAD + m[ukl_z16_start(np, j)];
@@ -285,7 +254,6 @@ UKL_INLINE void ukl_z16_write(UKL_PRIVATE UklZ16* r, UKL_PRIVATE const UklZ16P* 
 UKL_INLINE void ukl_z16_tail(UKL_PRIVATE UklZ16* r, UKL_PRIVATE const UklZ16P* p, uint32_t k, uint32_t lane)
 {
     UklZ16Pool m = r->m;
-    ukl_z16_fan(r, UKL_Z16_COPYK, k, m[UKL_Z16_NCOPY], lane);
     uint32_t parts = p->lines - p->parts[0], na = (parts + UKL_Z16_COPY - 1u) / UKL_Z16_COPY;
     uint32_t from = 0u, to = 0u, n = 0u;
     if (k < na) {
@@ -301,36 +269,44 @@ UKL_INLINE void ukl_z16_tail(UKL_PRIVATE UklZ16* r, UKL_PRIVATE const UklZ16P* p
     ukl_z16_copy1(r->t + from, n < UKL_Z16_COPY ? n : UKL_Z16_COPY, r->z + to, lane);
 }
 
-UKL_INLINE void ukl_z16_item(UKL_PRIVATE UklZ16* r, uint32_t item, uint32_t lane __UKL_PARAMS)
+// Phase `ph`'s items: the pieces; then the pieces and the tail's copies, once the layout is made (none where an empty
+// tape's layout is the count phase's own).
+UKL_INLINE uint32_t ukl_z16_items(UKL_PRIVATE UklZ16* r, UKL_PRIVATE const UklZ16P* p, uint32_t ph)
 {
-    UklZ16P p = ukl_z16_placement(r->t);
-    uint32_t kind = item >> UKL_Z16_SHIFT, i = item & ((1u << UKL_Z16_SHIFT) - 1u);
-    if (kind == UKL_Z16_COUNT)
-        ukl_z16_count(r, &p, i, lane __UKL_ARGS);
-    else if (kind == UKL_Z16_LAYOUT)
-        ukl_z16_layout(r, &p, lane __UKL_ARGS);
-    else if (kind == UKL_Z16_WRITE)
-        ukl_z16_write(r, &p, i, lane __UKL_ARGS);
-    else
-        ukl_z16_tail(r, &p, i, lane);
+    uint32_t np = 4u * p->count;
+    if (ph == UKL_Z16_PH_COUNT)
+        return np == 0u ? 1u : np;
+    return ukl_atomic_poll(&r->m[UKL_Z16_LAID]) == 1u ? np + r->m[UKL_Z16_NCOPY] : 0u;
 }
 
-// A SIMD group's worker: its lanes take up to a group's worth of items, and the group does each in turn, together.
+UKL_INLINE void ukl_z16_item(UKL_PRIVATE UklZ16* r, UKL_PRIVATE const UklZ16P* p, uint32_t ph, uint32_t i, uint32_t lane __UKL_PARAMS)
+{
+    uint32_t np = 4u * p->count;
+    if (ph == UKL_Z16_PH_COUNT && np == 0u)
+        ukl_z16_layout(r, p, lane __UKL_ARGS);
+    else if (ph == UKL_Z16_PH_COUNT)
+        ukl_z16_count(r, p, i, lane __UKL_ARGS);
+    else if (i < np)
+        ukl_z16_write(r, p, i, lane __UKL_ARGS);
+    else
+        ukl_z16_tail(r, p, i - np, lane);
+}
+
+// A SIMD group's worker of phase `r->phase`: a group's worth of the phase's items at a time by ticket, the group doing
+// each of its lanes' in turn, together.
 UKL_INLINE void ukl_z16_worker(UKL_PRIVATE UklZ16* r, uint32_t lane __UKL_PARAMS)
 {
-    uint32_t taken = 0u;
-    for (uint32_t turn = 0u; turn < UKL_WQ_TURNS && !ukl_wq_spent(r->q, taken); turn++) {
-        uint32_t item = 0u;
-        bool got = ukl_wq_take_sg(r->q, lane, &item __UKL_ARGS);
-        ukl_fence_device();
-        ukl_mask_t has = ukl_sg_ballot(got __UKL_ARGS);
-        if (has == 0u)
+    UklZ16P p = ukl_z16_placement(r->t);
+    uint32_t ph = r->phase, n = ukl_z16_items(r, &p, ph);
+    for (uint32_t turn = 0u; turn < UKL_Z16_TURNS; turn++) {
+        uint32_t t0 = 0u;
+        if (lane == 0u)
+            t0 = ukl_atomic_add(&r->m[UKL_Z16_TICKET + ph], UKL_SIMD_WIDTH);
+        t0 = ukl_sg_broadcast(t0, 0u __UKL_ARGS);
+        if (t0 >= n)
             break;
-        for (uint32_t k = 0u; k < UKL_SIMD_WIDTH; k++)
-            if (((has >> k) & 1u) != 0u)
-                ukl_z16_item(r, ukl_sg_broadcast(item, k __UKL_ARGS), lane __UKL_ARGS);
-        if (got)
-            ukl_wq_done(r->q);
-        taken++;
+        ukl_fence_device();
+        for (uint32_t k = 0u; k < UKL_SIMD_WIDTH && t0 + k < n; k++)
+            ukl_z16_item(r, &p, ph, t0 + k, lane __UKL_ARGS);
     }
 }
