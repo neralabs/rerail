@@ -176,6 +176,14 @@ const STATE: &[(&str, &str)] = &[
     ("code_rule_dsl/logic/device/binding.rs", "Device"),
     // Profiling: the placements a recording run made, and the writer's jobs by kind.
     ("code_rule_dsl/logic/plan/placement.rs", "Recording"),
+    // Profiling (`RERAIL_PROF`): the join walker's plans' calls and steps' rows, summed over the run for its report
+    // (`walk_report`), and the walk's caller, set before it and taken by it. Measurements, not results kept.
+    ("code_rule_dsl/logic/native/setfix.rs", "WALK_PLANS"),
+    ("code_rule_dsl/logic/native/setfix.rs", "WALK_ENTRY"),
+    // The run's `RERAIL_KIND_BATCH` setting (decision 0706 E1), read once; and the open file of the join shapes'
+    // spike (`RERAIL_SPIKE_SHAPES`), where its lines are written. Settings and an open thing, not results kept.
+    ("code_rule_dsl/logic/native/setfix/kinds.rs", "MODE"),
+    ("code_rule_dsl/logic/plan.rs", "FILE"),
     // The coverage check's census of the shipped rule files, read once by a test process.
     // A rule's pattern compiled on this thread (decision 0161's group patterns, where `GROUPS` was): the in-memory form of
     // the rule's own text, made again from it; compiling a regex is cheap, so nothing is written (t33 step 7).

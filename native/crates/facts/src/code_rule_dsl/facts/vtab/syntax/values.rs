@@ -206,6 +206,14 @@ impl ShardKey for i64 {
 }
 
 impl<K: ShardKey> Keys<K> {
+    /// Every key with parts, in no order.
+    fn keys(&self) -> impl Iterator<Item = u64> + '_ {
+        let table = self.log.as_ref().map(|log| log.table.load_full());
+        (0..table.as_ref().map_or(0, |t| t.slots.len())).filter_map(move |i| {
+            let s = &table.as_ref()?.slots[i];
+            (s.first.load(Ordering::Acquire) != EMPTY).then(|| s.key.load(Ordering::Relaxed))
+        })
+    }
     /// The parts below `bound` that hold rows of key `k`, in the order admitted.
     fn parts(&self, k: K, bound: usize) -> impl Iterator<Item = usize> + '_ {
         // The table borrowed for the first link alone (`load`: no count of its holders written, as a probe of each
@@ -626,6 +634,8 @@ pub struct Layered {
     /// admitted, else kept, so its indexes are found again by every stratum that reads it.
     #[cfg(any(target_os = "macos", target_os = "linux", windows))]
     over: parking_lot::Mutex<Option<(usize, Arc<super::places::Over>)>>,
+    /// `part_docs`' last answer and the values admitted then.
+    part_docs: parking_lot::Mutex<(usize, Arc<[u32]>)>,
 }
 
 impl Layered {
@@ -642,7 +652,33 @@ impl Layered {
             seen: AtomicU64::new(0),
             #[cfg(any(target_os = "macos", target_os = "linux", windows))]
             over: parking_lot::Mutex::new(None),
+            part_docs: parking_lot::Mutex::new((0, Arc::from([]))),
         }
+    }
+    /// The row of value `value` in `column` in the parts that may hold it (`Parts::of`, `keyed` the base's
+    /// `keys_documents`): its values of `columns` written to `out`; `false` where none holds it. A value's rows in the
+    /// parts are few: each part's read of it (`lookup_read`, else its lookup, else its scan).
+    fn part_row(&self, p: &Parts, keyed: bool, column: usize, value: i64, columns: &[usize], out: &mut [i64]) -> bool {
+        let mut found = false;
+        p.of(value, keyed, &mut |part| {
+            if found {
+                return;
+            }
+            let mut each = |_: usize, got: &[i64]| {
+                if !found {
+                    out[..got.len()].copy_from_slice(got);
+                    found = true;
+                }
+            };
+            if !part.src.lookup_read(column, value, columns, &mut each) {
+                let rows = part.src.lookup(column, &[value]).unwrap_or_else(|| (0..part.src.len()).filter(|&r| part.src.value(r, column) == value).collect());
+                if let Some(&r) = rows.first() {
+                    part.src.row_at(r, columns, &mut out[..columns.len()]);
+                    found = true;
+                }
+            }
+        });
+        found
     }
     /// The batch's rows, where a value's rows are numbered past them (never for a base made on lookup, whose values'
     /// rows are at `MADE_AT`).
@@ -672,6 +708,21 @@ impl Layered {
     /// of a 15 s sample of `all`.
     /// Asked once per value admitted: each probe's load of the parts and hash of the name took about 1% of `all`'s
     /// per-file phase's samples.
+    /// The document keys the relation's parts hold rows of (`Parts::by_key`'s keys), sorted: made again only when more
+    /// values are admitted.
+    fn part_docs(&self) -> Arc<[u32]> {
+        let admitted = self.values.admitted();
+        let mut held = self.part_docs.lock();
+        if held.0 == admitted && admitted != 0 {
+            return Arc::clone(&held.1);
+        }
+        let all = self.values.parts.load();
+        let mut keys: Vec<u32> = all.get(self.name.as_str()).map_or_else(Vec::new, |p| p.by_key.keys().map(|k| k as u32).collect());
+        keys.sort_unstable();
+        keys.dedup();
+        *held = (admitted, Arc::from(keys));
+        Arc::clone(&held.1)
+    }
     fn has_parts(&self) -> bool {
         let admitted = self.values.admitted() as u64;
         if admitted == 0 {
@@ -867,6 +918,7 @@ impl Source for Layered {
     }
     /// `node_read`, the base's text lent; a part's is made (the parts are read under their list's guard).
     fn node_read_ref(&self, name: &str, n: i64, more: &[i64]) -> Option<super::super::NodeRead<'_>> {
+        let _kind = rerail_prof::work::doing(rerail_prof::work::VIEW);
         if let Some(v) = self.base.node_read_ref(name, n, more) {
             return Some(v);
         }
@@ -875,8 +927,8 @@ impl Source for Layered {
         p.by_key.parts(rerail_blocks::located::Located(n).key(), p.list.len()).find_map(|i| p.list[i].src.node_read(name, n, more)).map(super::super::NodeRead::Value)
     }
     /// The base's (a part's node is read as text).
-    fn node_text_atom(&self, name: &str, n: i64, arena: *const ()) -> Option<i64> {
-        self.base.node_text_atom(name, n, arena)
+    fn node_text_atom(&self, name: &str, n: i64, table: (*const (), Option<&std::path::Path>)) -> Option<i64> {
+        self.base.node_text_atom(name, n, table)
     }
     /// Every node's text where it lies (`LongTexts::node_texts_in_place`), the chunk's documents' and its values': a
     /// node is found through the directory over the chunk's batch and its values (`views_over`), each document's
@@ -977,6 +1029,21 @@ impl Source for Layered {
     fn build_value_index(&self, column: usize) -> Option<usize> {
         self.base.build_value_index(column)
     }
+    fn build_value_bits(&self, node: usize, column: usize, value: i64) -> Option<usize> {
+        self.base.build_value_bits(node, column, value)
+    }
+    /// The base's bits, which answer for the batch's nodes: the documents its parts hold rows of are named (`others`),
+    /// and a node of one is read as without them.
+    fn value_bits(&self, node: usize, column: usize, value: i64) -> Option<super::super::ValueBits> {
+        let mut bits = self.base.value_bits(node, column, value)?;
+        if self.has_parts() {
+            bits.others = self.part_docs();
+        }
+        Some(bits)
+    }
+    fn value_bits_gen(&self) -> u32 {
+        self.base.value_bits_gen()
+    }
     fn complete_rows(&self) -> bool {
         self.base.complete_rows()
     }
@@ -995,6 +1062,9 @@ impl Source for Layered {
     }
     /// The base's rows, then the parts' that may hold each value, numbered past the base's.
     fn lookup_each(&self, column: usize, values: &[i64], each: &mut dyn FnMut(usize)) -> bool {
+        let _kind = rerail_prof::work::doing(rerail_prof::work::VIEW);
+        let outer = each;
+        let each: &mut dyn FnMut(usize) = &mut |r| { let _caller = _kind.paused(); outer(r) };
         if !self.base.lookup_each(column, values, each) {
             return false;
         }
@@ -1049,10 +1119,9 @@ impl Source for Layered {
     fn lookup_read(&self, column: usize, value: i64, columns: &[usize], each: &mut dyn FnMut(usize, &[i64])) -> bool {
         self.lookup_read_at(column, value, columns, &mut super::super::ProbeCursor::default(), each)
     }
-    /// The base's batch test (decision 0706 E1), then, for each value the base has no such row of, the parts that may
-    /// hold it, read as `lookup_read_at` reads them.
-    /// The base's read; a node it has no row of, while the chunk has admitted values of the relation, may be a part's
-    /// (or a made row's): the caller probes it as one row.
+    /// The base's read; a node it has no row of, while the chunk has admitted values of the relation, is asked of the
+    /// parts that may hold it (`part_row`, as `test_at` asks them; theirs' measure: a value at a time was 60% of the
+    /// batched view reads of `all`). Made on lookup, the caller probes it as one row (`found` 2).
     fn read_own_batch(&self, column: usize, values: &[i64], reads: &[usize], out: &mut [i64], found: &mut [u8], cursor: &mut super::super::ProbeCursor) -> bool {
         if !self.base.read_own_batch(column, values, reads, out, found, cursor) {
             return false;
@@ -1061,13 +1130,25 @@ impl Source for Layered {
             return true;
         }
         let all = self.values.parts.load();
-        if all.get(self.name.as_str()).is_some_and(|p| p.total > 0) {
-            found.iter_mut().filter(|f| **f == 0).for_each(|f| *f = 2);
+        let Some(p) = all.get(self.name.as_str()).filter(|p| p.total > 0) else { return true };
+        let _kind = rerail_prof::work::doing(rerail_prof::work::VIEW);
+        let (k, keyed) = (reads.len(), self.base.keys_documents(column));
+        for (r, f) in found[..values.len()].iter_mut().enumerate() {
+            if *f == 0 {
+                *f = if self.made.is_some() {
+                    2
+                } else {
+                    u8::from(self.part_row(p, keyed, column, values[r], reads, &mut out[r * k..(r + 1) * k]))
+                };
+            }
         }
         true
     }
     /// The cursor is the base's: a part's reads keep none (a value's rows are few).
     fn lookup_read_at(&self, column: usize, value: i64, columns: &[usize], cursor: &mut super::super::ProbeCursor, each: &mut dyn FnMut(usize, &[i64])) -> bool {
+        let _kind = rerail_prof::work::doing(rerail_prof::work::VIEW);
+        let outer = each;
+        let each: &mut dyn FnMut(usize, &[i64]) = &mut |r, v| { let _caller = _kind.paused(); outer(r, v) };
         // No value admitted (a chunk's first run): the base's read, with no load of the parts.
         if self.values.admitted.load(Ordering::Acquire) == 0 {
             return self.base.lookup_read_at(column, value, columns, cursor, each);
@@ -1118,6 +1199,7 @@ impl Source for Layered {
     }
     /// The base's test; where the relation has parts that may hold the value, `None` (the matches are read).
     fn test_at(&self, column: usize, value: i64, columns: &[usize], want: &[i64], cursor: &mut super::super::ProbeCursor) -> Option<bool> {
+        let _kind = rerail_prof::work::doing(rerail_prof::work::VIEW);
         if self.values.admitted.load(Ordering::Acquire) == 0 {
             return self.base.test_at(column, value, columns, want, cursor);
         }
@@ -1145,6 +1227,32 @@ impl Source for Layered {
         });
         Some(found)
     }
+    /// Includes the rows of the base that pass (its own scan, document by document), then the values' rows past them,
+    /// numbered as `for_rows` numbers them (Typing's 4e1d423523). The trait's scan read each row's columns through
+    /// `value`: a select of the row's node for each column of each row (1,766 samples of an idc run, `View::filtered`).
+    fn filter_eq(&self, eqs: &[(usize, i64)]) -> Vector<u32> {
+        let mut out = self.base.filter_eq(eqs);
+        let passes = |r: &[i64]| eqs.iter().all(|&(c, v)| r[c] == v);
+        if self.made.is_some() {
+            let at = self.scan_at();
+            self.scanned(|s| {
+                s.each(at, self.width.max(1), &mut |i, r| {
+                    if passes(r) {
+                        out.push(i as u32);
+                    }
+                    true
+                });
+            });
+            return out;
+        }
+        self.parts(|p| {
+            for part in &p.list {
+                let at = (self.base_len() + part.start) as u32;
+                out.extend(part.src.filter_eq(eqs).iter().map(|&r| at + r));
+            }
+        });
+        out
+    }
     fn keys_documents(&self, column: usize) -> bool {
         self.base.keys_documents(column)
     }
@@ -1159,6 +1267,7 @@ impl Source for Layered {
     /// The base's rows in the range, then each part's, past the base's: a part with no range read is read whole (a
     /// value's rows are few). `rr_ann_node`'s range of the annotations' nodes is the values' rows.
     fn range_lookup(&self, column: usize, lower: Option<(i64, bool)>, upper: Option<(i64, bool)>) -> Option<rerail_blocks::vector::Vector<usize>> {
+        let _kind = rerail_prof::work::doing(rerail_prof::work::VIEW);
         if self.made.is_some() {
             return None;
         }
@@ -1223,6 +1332,7 @@ impl Source for Layered {
         true
     }
     fn holds(&self, equal: &[(usize, i64)]) -> Option<bool> {
+        let _kind = rerail_prof::work::doing(rerail_prof::work::VIEW);
         let base = self.base.holds(equal)?;
         if base || !self.has_parts() {
             return Some(base);
@@ -1315,6 +1425,7 @@ impl Source for Layered {
         self.parts(|p| p.at(row - self.base_len()).map(|(part, r)| part.src.value(r, column))).flatten().unwrap_or(0)
     }
     fn row_at(&self, row: usize, columns: &[usize], out: &mut [i64]) {
+        let _kind = rerail_prof::work::doing(rerail_prof::work::VIEW);
         if self.made.is_some() {
             let Some(i) = self.made_row(row) else { return self.base.row_at(row, columns, out) };
             self.scanned(|s| {

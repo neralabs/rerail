@@ -338,6 +338,8 @@ type At = (String, i64);
 /// the run's own `reference_def`.
 fn bare_graph(head: &str, include: &str, dir: &std::path::Path, out: &std::path::Path) -> (BTreeSet<(At, At, String)>, BTreeSet<At>) {
     let program = format!("{head}\n#include \"{include}\"\n.output reference_edge, reference_open, reference_def\n");
+    // `python/references.rerail` named is the rules' graph (W's Rust is the run's default for it).
+    let _rules = (include == "python/references.rerail").then(crate::code_rule_dsl::logic::rr::set_references_rules);
     crate::code_rule_dsl::logic::plan::corpus::run(&program, dir, None, out, "program", Binding::Cpu, 1 << 18).unwrap_or_else(|e| panic!("{}: {e}", dir.display()));
     let outputs = crate::code_rule_dsl::logic::plan::output::Outputs::open(out).unwrap();
     let defs: std::collections::BTreeMap<String, At> = outputs

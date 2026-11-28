@@ -462,6 +462,121 @@ fn a_views_membership_test_is_its_rows() {
     assert!(tried >= 2, "views with a membership test: {tried}");
 }
 
+/// A view's rows of a chunk of values read by their own ids at once (`Source::read_own_batch`, decision A: a chunk's
+/// reads of a node's row batched by the calling loop) are each value's row as `lookup` gives it: every view, every
+/// column it reads so, chunks of 300 values in key order, reversed and strided, one id in ten absent. A value the
+/// source sends back to be probed (`found` 2) is not checked.
+#[test]
+fn a_views_rows_of_a_chunk_read_at_once_are_its_one_rows() {
+    let store = ContentStore::open(&temp("read-many")).unwrap();
+    let mut tried = 0;
+    for (name, source) in sources(&store, documents().into_iter().take(4).collect()).unwrap() {
+        tried += chunk_reads_are_one_rows(&name, source.as_ref());
+    }
+    assert!(tried >= 3, "views read a chunk at once: {tried}");
+}
+
+/// Checks `source`'s batched reads by their own ids (`read_own_batch`) by each column it reads so: three orders of
+/// its rows a chunk at a time, every tenth value one no row has, against `lookup`'s rows. Returns the columns read a
+/// chunk at once.
+fn chunk_reads_are_one_rows(name: &str, source: &dyn Source) -> usize {
+    use crate::code_rule_dsl::facts::vtab::ProbeCursor;
+    let (n, width) = (source.len(), source.columns().len());
+    if n == 0 {
+        return 0;
+    }
+    let mut tried = 0;
+    for column in 0..width {
+        let others: Vec<usize> = (0..width).filter(|&c| c != column).collect();
+        let past = (0..n).map(|r| source.value(r, column)).max().unwrap() + 1;
+        let orders: [Vec<usize>; 3] = [(0..n).collect(), (0..n).rev().collect(), (0..n).map(|i| i * 7919 % n).collect()];
+        let mut read = false;
+        'orders: for order in &orders {
+            let mut cursor = ProbeCursor::default();
+            for chunk in order.chunks(300) {
+                let values: Vec<i64> = chunk.iter().enumerate().map(|(i, &r)| if i % 10 == 9 { past + i as i64 } else { source.value(r, column) }).collect();
+                let (k, w) = (values.len(), others.len());
+                let (mut out, mut found) = (vec![i64::MIN; w * k], vec![9u8; k]);
+                if !source.read_own_batch(column, &values, &others, &mut out, &mut found, &mut cursor) {
+                    break 'orders;
+                }
+                read = true;
+                for (r, &value) in values.iter().enumerate() {
+                    if found[r] == 2 {
+                        continue;
+                    }
+                    let rows: Vec<Vec<i64>> = source.lookup(column, &[value]).unwrap_or_else(|| (0..n).filter(|&q| source.value(q, column) == value).collect()).into_iter().map(|q| others.iter().map(|&c| source.value(q, c)).collect()).collect();
+                    assert!(rows.len() <= 1, "{name} by {column}: value {value} has one row at most");
+                    let got = (found[r] == 1).then(|| out[r * w..(r + 1) * w].to_vec());
+                    assert!(found[r] <= 1, "{name} by {column}: value {value} found {}", found[r]);
+                    assert_eq!(got, rows.into_iter().next(), "{name} by {column}: value {value} (chunk row {r})");
+                }
+            }
+        }
+        tried += usize::from(read);
+    }
+    tried
+}
+
+/// A chunk's source as it binds a relation (`Layered`: the batch's rows, then the values admitted past them), a
+/// document admitted: its chunk reads are its one-row reads, the base's rows read at once and the admitted values'
+/// from the parts (each layered source by its one-row columns).
+#[test]
+fn a_layered_sources_chunk_reads_with_values_admitted_are_its_one_rows() {
+    use crate::code_rule_dsl::facts::nearest::Binding;
+    let store = ContentStore::open(&temp("layered-read-many")).unwrap();
+    let tests = Arc::new(crate::code_rule_dsl::logic::strings::Vocabulary::default());
+    let projection = Projection::core();
+    let file = |k: u32| document(k, &format!("m{k}.py"), "python", &format!("def f{k}(x, y=[1, 2]):\n    return g(x, *y)\n"));
+    let (sources, mut grower) = Grower::start(&store, vec![file(20), file(23)], &[], &Matchers::default(), &tests, Binding::Cpu, &projection, &HashMap::new()).unwrap();
+    let values = Arc::new(super::values::Values::default());
+    values.add(&[5], &[], grower.admit(&store, vec![file(5)], &[], &tests, Binding::Cpu, &projection).unwrap());
+    let mut tried = 0;
+    for (name, s) in &sources {
+        let source = super::values::Layered::new(name, Arc::clone(s), Arc::clone(&values));
+        tried += chunk_reads_are_one_rows(&format!("{name} layered"), &source);
+    }
+    assert!(tried >= 3, "layered sources read a chunk at once: {tried}");
+}
+
+/// A chunk's source as it binds a relation (`Layered`: the batch's rows, then the values admitted past them) filters to
+/// the rows a per-row read keeps: for every source, on each column at every seventh row's value, and on two columns at
+/// once. Its own scan, where the trait's read each row's columns one select at a time (Typing's 4e1d423523).
+#[test]
+fn a_layered_sources_filter_scan_holds_the_rows_a_per_row_read_finds() {
+    use crate::code_rule_dsl::facts::nearest::Binding;
+    let store = ContentStore::open(&temp("layered-filter")).unwrap();
+    let tests = Arc::new(crate::code_rule_dsl::logic::strings::Vocabulary::default());
+    let projection = Projection::core();
+    let file = |k: u32| document(k, &format!("m{k}.py"), "python", &format!("def f{k}(x, y=[1, 2]):\n    return g(x, *y)\n"));
+    let (sources, mut grower) = Grower::start(&store, vec![file(20), file(23)], &[], &Matchers::default(), &tests, Binding::Cpu, &projection, &HashMap::new()).unwrap();
+    let values = Arc::new(super::values::Values::default());
+    values.add(&[5], &[], grower.admit(&store, vec![file(5)], &[], &tests, Binding::Cpu, &projection).unwrap());
+    let mut tried = 0;
+    for (name, s) in &sources {
+        let source = super::values::Layered::new(name, Arc::clone(s), Arc::clone(&values));
+        let n = source.len();
+        let width = source.columns().len();
+        for c in 0..width {
+            for r0 in (0..n).step_by(7) {
+                let v = source.value(r0, c);
+                let mut eqs = vec![(c, v)];
+                if width > 1 {
+                    let d = (c + 1) % width;
+                    eqs.push((d, source.value(r0, d)));
+                }
+                for eqs in [&eqs[..1], &eqs[..]] {
+                    let want: Vec<u32> = (0..n).filter(|&r| eqs.iter().all(|&(c, v)| source.value(r, c) == v)).map(|r| r as u32).collect();
+                    let got: Vec<u32> = source.filter_eq(eqs).iter().copied().collect();
+                    assert_eq!(got, want, "{name} {eqs:?}");
+                    tried += 1;
+                }
+            }
+        }
+    }
+    assert!(tried > 50, "{tried} filters");
+}
+
 /// The statistics of a relation held as a view of `node` (decision 0329) are its rows' counts, made without reading
 /// them: per column, the distinct values, the squares of their counts and each value's count, as counting every row
 /// gives (`n`, the key: each value once, no counts).
@@ -2672,6 +2787,27 @@ fn a_solved_axis_reads_a_nodes_rows_as_it_finds_them() {
             read_rows += got.len();
         }
         assert!(read_rows > 0, "{name}: some node has a member ancestor");
+        // The nearest axis's rows by `n` read a chunk at once (`read_own_batch`): each node's row as `lookup` gives
+        // it, or none, every node in chunks of 200. Another axis has a row an ancestor: no such read.
+        let ids: Vec<i64> = (0..nodes).map(|r| batch.id(r, &mut { crate::code_rule_dsl::facts::vtab::NO_MEMO })).collect();
+        for values in ids.chunks(200) {
+            let k = values.len();
+            let (mut out, mut found) = (vec![0i64; 2 * k], vec![9u8; k]);
+            let read = source.read_own_batch(0, values, &[1, 0], &mut out, &mut found, &mut crate::code_rule_dsl::facts::vtab::ProbeCursor::default());
+            if axis != within::Axis::Nearest {
+                assert!(!read, "{name}: a row an ancestor, no read by `n`");
+                break;
+            }
+            assert!(read, "{name}");
+            for (r, &n) in values.iter().enumerate() {
+                let want: Vec<[i64; 2]> = source.lookup(0, &[n]).unwrap().into_iter().map(|row| [source.value(row, 1), source.value(row, 0)]).collect();
+                assert!(want.len() <= 1, "{name}: at most one nearest ancestor");
+                assert_eq!(found[r], u8::from(!want.is_empty()), "{name}: node {n}");
+                if let Some(&one) = want.first() {
+                    assert_eq!([out[2 * r], out[2 * r + 1]], one, "{name}: node {n}");
+                }
+            }
+        }
         assert!(!source.lookup_read(1, id, &[0], &mut |_, _| ()), "{name}: by `a`, the solve's rows are searched as before");
     }
 }

@@ -1906,6 +1906,12 @@ impl Part {
     /// the relation's block (`rows::ColDir`'s `runs`), which every column reads. The writer sets each run (`KeyRuns::put`)
     /// before it writes a row.
     pub fn over_key_runs(life: Life, k: usize, rows: usize, runs: usize) -> (Part, KeyRuns) {
+        Part::over_key_runs_of(life, k, k, rows, runs)
+    }
+
+    /// `over_key_runs` whose first `keyed` columns are ids under the key runs and the rest plain 4-byte values (a
+    /// `nearest` with the child's field atom, `tag << 16 | code`).
+    pub fn over_key_runs_of(life: Life, k: usize, keyed: usize, rows: usize, runs: usize) -> (Part, KeyRuns) {
         let spec = Spec { widths: vec![4; k], order: Vec::new(), indexes: Vec::new(), min_log: rerail_blocks::rows::MIN_LOG };
         let table = 8 * (runs + 2) + 64;
         let indexes = rerail_blocks::relation::ADDED_INDEXES;
@@ -1913,7 +1919,7 @@ impl Part {
         // Its rows' growth keeps the room (`ix_room`), as `with_index_room`'s.
         Arc::get_mut(&mut part.held).expect("a new relation's one holder").ix_room = indexes as u8;
         let t = rerail_blocks::rows::alloc_runs(&part.facts.block, runs);
-        for c in 0..k {
+        for c in 0..keyed.min(k) {
             // SAFETY: the table is in the relation's block, which it lives as long as; its runs are set before a row.
             unsafe { part.rel().rows.set_runs(c, t) };
         }

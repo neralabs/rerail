@@ -417,7 +417,7 @@ fn program(d: &mut mj::Stage, f: &rowcode::Fused, kind: u32) -> Result<(), Strin
         return Err("a row program larger than a stage holds".into());
     }
     for (k, w) in f.columns.iter().enumerate() {
-        let (c, doc) = match *w { rowcode::Word::Col(c) => (c, 0), rowcode::Word::Doc(c) => (c, 1), rowcode::Word::Held(_) | rowcode::Word::Look(..) => unreachable!("the device's fusion asks no input (`fused_at`)") };
+        let (c, doc) = match *w { rowcode::Word::Col(c) => (c, 0), rowcode::Word::Doc(c) => (c, 1), rowcode::Word::Held(_) | rowcode::Word::Look(..) | rowcode::Word::Bound { .. } => unreachable!("the device's fusion asks no input and spans no rows (`fused_at`)") };
         d.col_kind[k] = kind;
         d.col_idx[k] = c as u32;
         d.col_doc[k] = doc;
@@ -2927,7 +2927,8 @@ fn complete(mut runs: Vec<Run<'static>>, rules: &[(&Plan, &JoinRule, usize)], st
             let mut symbols: HashMap<i64, i64> = HashMap::new();
             if let (Some(nc), Some(source)) = (plan.arena_node[c], plan.nodes.as_deref().and_then(node_source)) {
                 use crate::code_rule_dsl::facts::vtab::Source as _;
-                let at = Arc::as_ptr(names.atoms()).cast::<()>();
+                // The run's table: its address and its database (an atom of the source's only where it is that table's).
+                let at = (Arc::as_ptr(names.atoms()).cast::<()>(), names.atoms().database());
                 for (&v, &node) in cols[c].iter().zip(cols[nc]) {
                     if !symbols.contains_key(&v)
                         && let Some(a) = source.node_text_atom("rr_node_text_any", node, at)

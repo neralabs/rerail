@@ -260,6 +260,7 @@ impl Source for Places {
         if row < first { self.view.value(row, column) } else { self.spans.value(row - first, column) }
     }
     fn row_at(&self, row: usize, columns: &[usize], out: &mut [i64]) {
+        let _kind = rerail_prof::work::doing(rerail_prof::work::VIEW);
         let first = self.first();
         if row < first { self.view.row_at(row, columns, out) } else { self.spans.row_at(row - first, columns, out) }
     }
@@ -378,6 +379,9 @@ impl Source for Places {
     /// filtered, and read): a place relation's probe reads no row of the view a point read each. By a row's id, the
     /// side that holds it alone (`is_span`). Only the view may refuse, before any row is given; the spans always answer.
     fn lookup_read_at(&self, column: usize, value: i64, columns: &[usize], cursor: &mut super::super::ProbeCursor, each: &mut dyn FnMut(usize, &[i64])) -> bool {
+        let _kind = rerail_prof::work::doing(rerail_prof::work::VIEW);
+        let outer = each;
+        let each: &mut dyn FnMut(usize, &[i64]) = &mut |r, v| { let _caller = _kind.paused(); outer(r, v) };
         let width = columns.len();
         if width > 8 {
             return false;

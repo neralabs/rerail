@@ -76,7 +76,7 @@ decl_site(f, x, f, "function", "value") :- kind(f, k), (k = "function_expression
 decl_site(c, x, c, "class", sp) :- kind(c, "class"), field(c, "name", n), text(n, x), (sp = "value" ; sp = "type").
 // fn_own_name(f, x): function f has a parameter or a var named x.
 .decl fn_own_name(f: node, x: symbol)
-fn_own_name(f, x) :- field(f, "parameters", ps), within(p, ps), nearest(p, f, fn_scope), param_name(p, x).
+fn_own_name(f, x) :- nearest_in_field(p, f, fn_scope, "parameters"), param_name(p, x).
 fn_own_name(f, x) :- kind(d, "variable_declarator"), field(d, "name", n), text(n, x), child(v, d, _),
     kind(v, "variable_declaration"), nearest(d, f, fn_scope).
 // `for (const x of xs)`, `for (let [k, v] in o)`: tree-sitter has no declarator here; the loop's "left" field is the
@@ -94,8 +94,7 @@ decl_site(s, x, t, "type", "type")   :- kind(t, k), (k = "type_alias_declaration
 // Parameters: in `function f(a, c = g(d), { e, h: [i] })` a, c, e and i are declared with the function itself as
 // scope. Default values (`g(d)`) and keys (`h`) are not: they are references, or no names at all. A name inside a
 // function nested in a default (`f(k = (j) => j)`) belongs to that function, hence nearest(p, f, fn_scope).
-decl_site(f, x, p, "param", "value") :- kind(f, k), fn_scope(k), field(f, "parameters", ps), within(p, ps),
-    nearest(p, f, fn_scope), param_name(p, x).
+decl_site(f, x, p, "param", "value") :- nearest_in_field(p, f, fn_scope, "parameters"), param_name(p, x).
 // `x => x`: an arrow function's single bare parameter sits in its own field.
 decl_site(f, x, p, "param", "value") :- kind(f, "arrow_function"), field(f, "parameter", p), kind(p, "identifier"),
     text(p, x).

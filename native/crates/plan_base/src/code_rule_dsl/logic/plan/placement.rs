@@ -724,18 +724,31 @@ pub fn place(shape: &Shape) -> Placement {
     let device = binding != Binding::Cpu;
     // The GPU while its price is under `GPU_BIAS` times the CPU's (decision 0321).
     let gpu_cheaper = device_s < cpu_work_s * gpu_bias();
-    // Bound to the CPU: the device's join program on the host (`host_joins`), wherever it has every form; the
-    // scalar joins only for what it lacks.
+    // Bound to the CPU: the scalar joins, or with `RERAIL_CPU_JOINS=program` the device's join program on the host
+    // (`host_joins`) wherever it has every form, the scalar joins for what it lacks.
     let host = !device && host_joins();
     let gpu = missing.is_empty() && (binding == Binding::Always || device && gpu_cheaper || host);
     Placement { gpu, host: gpu && host, gpu_cheaper, missing, cpu_s, gpu_s, device, joins, lacking: shape.lacking(), terms }
 }
 
 /// Whether a run bound to the CPU runs the device's join program on the host (`rerail_accel::gpu::shared::on_host`):
-/// `rerail_ukl_rust`'s `join_run`, on `rerail_simd`. `RERAIL_CPU_JOINS=scalar`, a measurement aid: the scalar joins,
-/// as before.
+/// `rerail_ukl_rust`'s `join_program`, on `rerail_simd`, with `RERAIL_CPU_JOINS=program` (or a caller's
+/// `set_host_joins`). By default the scalar joins (user decision, 2026-11-27): on `all` the join program took the
+/// CPU-bound strata at 213.7 s of CPU against 170.7 s on the scalar joins, while its line goes on changing it.
 pub fn host_joins() -> bool {
-    !rerail_prof::code_rule_dsl::logic::profile::setting(|| std::env::var("RERAIL_CPU_JOINS").is_ok_and(|v| v == "scalar"))
+    match rerail_prof::code_rule_dsl::logic::profile::bound::<HostJoins>().0 {
+        Some(on) => on,
+        None => rerail_prof::code_rule_dsl::logic::profile::setting(|| std::env::var("RERAIL_CPU_JOINS").is_ok_and(|v| v == "program")),
+    }
+}
+
+/// A caller's choice of `host_joins` (a test's), over the environment's.
+#[derive(Clone, Copy, Default)]
+struct HostJoins(Option<bool>);
+
+/// The CPU binding's joins on the join program (`on`) or the scalar joins, until the guard drops.
+pub fn set_host_joins(on: bool) -> rerail_prof::code_rule_dsl::logic::profile::Bound {
+    rerail_prof::code_rule_dsl::logic::profile::bind(HostJoins(Some(on)))
 }
 
 /// A measurement aid only: `RERAIL_DEVICE_JOINS=off` keeps every stratum's joins on the CPU under a device binding,
@@ -790,9 +803,9 @@ pub mod tests {
         assert!(p.gpu_cheaper && !p.gpu, "{p:?}");
         assert_eq!(p.missing, vec![Form::Computed]);
         assert!(p.why().contains("no computed term"), "{}", p.why());
-        // Without the computed head, under the Metal binding, the device takes it; under the CPU binding, the device's
-        // join program on the host (`host_joins`), its Rust SIMD form, which the CPU binding always takes over the
-        // scalar joins wherever it has every form.
+        // Without the computed head, under the Metal binding, the device takes it; under the CPU binding, the scalar
+        // joins by default, and with the join program on the host (`host_joins`, its Rust SIMD form) that program,
+        // wherever it has every form.
         let mut plain = Shape::default();
         adds(&mut plain, &[atom("kind", false), atom("within", true)], &[T::Var("x")], 4e6, false);
         assert!(plain.missing_none());
@@ -801,7 +814,11 @@ pub mod tests {
         drop(device);
         assert!(p.gpu && p.missing.is_empty(), "{p:?}");
         let p = place(&plain);
-        assert!(p.gpu && p.host && !p.device, "the CPU binding runs it on the join program: {p:?}");
+        assert!(!p.gpu && !p.host && !p.device, "the CPU binding keeps it on the scalar joins: {p:?}");
+        let program = set_host_joins(true);
+        let p = place(&plain);
+        assert!(p.gpu && p.host && !p.device, "with the join program on the host, it runs there: {p:?}");
+        drop(program);
         // `@doc(x) = @doc(y)` and `@in(x, {…})` are row code, and so is `z = cat(x, y)` (a text the device makes);
         // `sha256(x)` is not; a cat in a recursive stratum is (its rounds keep their texts one value a content,
         // decision 0661), and so is `lower(x)`, there or not (a text the device makes into the component's arena,
@@ -875,12 +892,15 @@ pub mod tests {
         let wide = at(1.5);
         assert!(wide.gpu && wide.gpu_s > wide.cpu_s, "the GPU taken though priced above the CPU: {wide:?}");
         assert!(!at(2.5).gpu, "{:?}", at(2.5));
-        // Bound to the CPU, the join program is taken whatever its price: at 2.5 times, and at 100.
+        // Bound to the CPU with the join program on the host, it is taken whatever its price: at 2.5 times, and at 100.
         let cpu = set_device(false);
+        let program = set_host_joins(true);
         for ratio in [2.5, 100.0] {
             let p = at(ratio);
             assert!(p.gpu && p.host && p.gpu_s > p.cpu_s, "the CPU binding's join program at {ratio} times the scalar joins' price: {p:?}");
         }
+        drop(program);
+        assert!(!at(100.0).gpu, "the scalar joins by default");
         drop(cpu);
         let cut = |walked: f64| Shape { work: 2e6, rows: 1e3, rules: 1, steps: 2, joins: vec![JoinEst { rel: "node".into(), input: 1e3, relation: 1e6, output: 1e3, walked: (1e3, walked), keys: 1, range: false, cost: 1.0 }], ..Shape::default() };
         assert!(place(&cut(1e3)).gpu_s < place(&cut(1e7)).gpu_s, "every row walked costs the device more");

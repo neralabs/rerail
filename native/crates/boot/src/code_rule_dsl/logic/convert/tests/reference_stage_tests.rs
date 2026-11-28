@@ -302,6 +302,8 @@ pub(super) fn rules_side_in(dir: &std::path::Path, chunk_nodes: usize) -> Side {
     let profile = crate::code_rule_dsl::logic::profile::on();
     crate::code_rule_dsl::logic::profile::set(true);
     crate::code_rule_dsl::logic::profile::reset();
+    // The rules' graph, stage by stage (not W's Rust, the run's default).
+    let _rules = crate::code_rule_dsl::logic::rr::set_references_rules();
     crate::code_rule_dsl::logic::plan::corpus::run(PROGRAM, dir, None, &out, "program", Binding::Cpu, chunk_nodes).unwrap_or_else(|e| panic!("{}: {e}", dir.display()));
     let spans = crate::code_rule_dsl::logic::profile::spans();
     crate::code_rule_dsl::logic::profile::set(profile);

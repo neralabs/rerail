@@ -37,13 +37,19 @@ pub(super) struct Built(Mutex<[u64; 5]>);
 /// first, not a delta's, not fused or ranged, binding nothing or negated, keyed, no tests of its own columns): its
 /// `Access`, and whether it is negated.
 pub(super) fn needs(j: &JoinRule, i: usize) -> Option<(Access, bool)> {
-    let Step::Atom { src: Src::In(rel, ix), neg, keys, binds, tests } = &j.steps[i] else { return None };
+    let Step::Atom { src: src @ Src::In(rel, ix), neg, keys, binds, tests } = &j.steps[i] else { return None };
     if i == 0 || !(*neg || binds.is_empty()) || keys.is_empty() || !tests.is_empty() || j.fused[i].is_some() || j.ranges[i].is_some() {
         return None;
     }
     let (rel, ix) = j.src_in(rel, ix);
+    // A view's test of a bound node against a constant: its source's bits for the constant, on the view's bound name.
+    if let Some(v) = &rel.view {
+        let (node, col, k) = super::cands::value_bits_need(j, src, keys, tests)?;
+        let of = v.of.as_deref().or(rel.name.get().map(String::as_str))?;
+        return Some((Access { rel: of.to_owned(), kind: Kind::ValueBits(node as u16, col as u16, k) }, *neg));
+    }
     let name = rel.name.get()?;
-    if rel.view.is_some() || ix.cols.len() != keys.len() {
+    if ix.cols.len() != keys.len() {
         return None;
     }
     Some((Access::membership(name, keys.iter().map(|&(c, _)| c as u16)), *neg))
@@ -172,10 +178,17 @@ pub(super) fn prefetch(reads: &BTreeSet<String>, held: impl Fn(&str) -> Option<A
     }
     let wanted: Vec<(Access, Use)> = o.0.lock().unwrap().iter().filter(|(a, _)| reads.contains(&a.rel)).map(|(a, u)| (a.clone(), *u)).collect();
     // A view's value index (E4), on the source the view is bound to: built in parallel with the relations'.
-    let values: Vec<(Arc<dyn crate::code_rule_dsl::facts::vtab::Source>, usize)> = wanted
+    let values: Vec<(Arc<dyn crate::code_rule_dsl::facts::vtab::Source>, usize, Option<(usize, i64)>)> = wanted
         .iter()
         .filter_map(|(a, u)| match &a.kind {
-            Kind::Value(c) if access::pays(&a.kind, 0, *u) => bound(&a.rel).map(|s| (s, usize::from(*c))),
+            Kind::Value(c) if access::pays(&a.kind, 0, *u) => bound(&a.rel).map(|s| (s, usize::from(*c), None)),
+            // A view's bits by a constant (the prepare of its tests), priced over the nodes its tests found.
+            // The view's source: a view held in place under its name (`hold_view_in_place`, `kind` over `node`'s),
+            // else the source bound to it.
+            Kind::ValueBits(n, c, k) if access::pays(&a.kind, u.found, *u) => held(&a.rel)
+                .and_then(|r| r.view.as_ref().map(|v| Arc::clone(&v.src)))
+                .or_else(|| bound(&a.rel))
+                .map(|s| (s, usize::from(*c), Some((usize::from(*n), *k)))),
             _ => None,
         })
         .collect();
@@ -191,7 +204,21 @@ pub(super) fn prefetch(reads: &BTreeSet<String>, held: impl Fn(&str) -> Option<A
     }
     let _span = crate::code_rule_dsl::logic::profile::span(|| "index builds ahead (decision 0706)".into());
     use rayon::prelude::*;
-    let made_values: Vec<Option<usize>> = rerail_context::on_cores(|| values.par_iter().map(|(s, c)| s.build_value_index(*c)).collect());
+    // On the cores (the pool's threads, `rerail_context::on_cores`); a value's node bits by a constant (decision 0723
+    // step 1) where its kind asks for them.
+    let made_values: Vec<Option<usize>> = rerail_context::on_cores(|| values.par_iter().map(|(s, c, k)| match k { None => s.build_value_index(*c), Some((n, k)) => s.build_value_bits(*n, *c, *k) }).collect());
+    if crate::code_rule_dsl::prof::on() {
+        for ((_, _, k), m) in values.iter().zip(&made_values) {
+            if k.is_some() {
+                crate::code_rule_dsl::prof::count_named_args(format_args!("view bits: built {}", if m.is_some() { "ahead" } else { "none" }), m.unwrap_or(0).max(1));
+            }
+        }
+    }
+    if trace() {
+        for ((s, c, k), m) in values.iter().zip(&made_values) {
+            eprintln!("RERAIL_INDEX_TRACE built value {c} {k:?} at {:p} gen {}: {m:?}", Arc::as_ptr(s), s.value_bits_gen());
+        }
+    }
     let made: Vec<Option<(usize, u64)>> = rerail_context::on_cores(|| jobs
         .par_iter()
         .map(|(rel, kind)| {
@@ -280,7 +307,9 @@ pub(super) fn orders_ahead<'a>(plans: impl Iterator<Item = &'a JoinRule>) -> usi
     }
     let mut jobs: Vec<(&InRel, &super::Csr)> = Vec::new();
     for p in plans {
-        for step in p.steps.iter() {
+        // The steps a fused chunk asks a chunk at a time (`cands::ask_chunk`): its tests and lookups.
+        let asked: Vec<usize> = (0..p.steps.len()).filter_map(|k| p.fused_at(k).map(|f| (k, f))).flat_map(|(k, f)| f.tests.iter().map(move |t| k + 1 + t.at)).collect();
+        for (i, step) in p.steps.iter().enumerate() {
             // An atom's probe, or a scalar step's (an aggregate's candidates by its key).
             let (Step::Atom { src: Src::In(rel, ix), keys, .. } | Step::Scalar { src: Src::In(rel, ix), keys, .. }) = step else { continue };
             if keys.is_empty() {
@@ -288,7 +317,10 @@ pub(super) fn orders_ahead<'a>(plans: impl Iterator<Item = &'a JoinRule>) -> usi
             }
             let (rel, ix) = p.src_in(rel, ix);
             let ix: &super::Csr = ix;
-            if ix.ordered.is_none() || ix.order.get().is_some() || jobs.iter().any(|(_, c)| std::ptr::eq(*c, ix)) {
+            // A one-column key read by value where it has no order: a lookup's one row (`cands::read_one_in`), or a
+            // chunk's ask of a test or lookup (its value-keyed rows hold its node bits too), built here, not by them.
+            let by_value = ix.by_value_kind() && (p.lookups.get(i).copied().unwrap_or(false) || asked.contains(&i));
+            if (ix.ordered.is_none() && !by_value) || ix.order.get().is_some() || jobs.iter().any(|(_, c)| std::ptr::eq(*c, ix)) {
                 continue;
             }
             jobs.push((rel, ix));
@@ -315,9 +347,12 @@ pub(super) fn build_orders(jobs: &[(&InRel, &super::Csr)]) -> usize {
             rel.ahead.fetch_add(1, std::sync::atomic::Ordering::Release);
             return;
         }
-        AHEAD.with(|a| a.set(true));
-        let _ = ix.runs(rel);
-        AHEAD.with(|a| a.set(false));
+        // An order where the probe reads one (a key read by value alone has none to make).
+        if ix.ordered.is_some() {
+            AHEAD.with(|a| a.set(true));
+            let _ = ix.runs(rel);
+            AHEAD.with(|a| a.set(false));
+        }
     }));
     #[cfg(any(test, feature = "test-hooks"))]
     AHEAD_MADE.with(|a| a.set(a.get() + jobs.len()));

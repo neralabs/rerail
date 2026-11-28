@@ -123,7 +123,11 @@ pub use kinds::count_term_atom_for_tests;
 #[cfg(any(test, feature = "test-hooks"))]
 pub use kinds::{keyed_force_for_tests as keyed_batches_forced, keyed_rows_for_tests as keyed_batched_rows};
 #[cfg(any(test, feature = "test-hooks"))]
+pub use kinds::{span_force_for_tests as span_batches_forced, spanned_rows_for_tests as spanned_rows};
+#[cfg(any(test, feature = "test-hooks"))]
 pub use access::value_indexes_built_for_tests as value_indexes_built;
+#[cfg(any(test, feature = "test-hooks"))]
+pub use cands::value_bit_tests_for_tests as value_bit_tests;
 pub mod access;
 mod sorted_hash;
 pub mod table;
@@ -2022,6 +2026,7 @@ impl Fresh {
     /// are checked against it as one sorted batch, each run searched once in order, not row by row), laid out in
     /// place at slots `0..n`.
     fn settle(&mut self, rel: &Rel) {
+        let _kind = rerail_prof::work::doing(rerail_prof::work::HEAD);
         // Settled and noted in an order the relation has since changed: sorted whole.
         if self.order != rel.idx[0].cols {
             if self.n > 0 {
@@ -4127,7 +4132,7 @@ pub fn scans(conn: &Connection, name: &str) -> Result<Vec<ScanCase>> {
                     s.columns[g.0].extend_from_slice(&col[start..end]);
                 }
                 s.rows = end - start;
-                let words = f.run(&mut s, |_, _| {}, |_, _, _, _, _| unreachable!("no test"));
+                let words = f.run(&mut s, |_, _| {}, |_, _, _, _, _, _, _| unreachable!("no test"), |_, _, _, _, _| unreachable!("no test"));
                 for (w, &word) in words.iter().enumerate() {
                     let mut m = word;
                     while m != 0 { passed.push((start + 64 * w + m.trailing_zeros() as usize) as u32); m &= m - 1; }
@@ -4313,6 +4318,10 @@ pub fn step_cpu(conn: impl Scoped, name: &str) -> Result<Vec<Vector<f64>>> {
     Ok(comp.probes.iter().map(|p| match &p.body {
         Body::Join(j) => {
             let c: Vector<f64> = j.step_ns.iter().map(|c| c.replace(0) as f64 / 1e9).collect();
+            let shapes: Vec<Vec<u64>> = j.shapes.iter().map(|s| s.iter().map(|c| c.replace(0)).collect()).collect();
+            if shapes.iter().any(|s| s.iter().any(|&x| x > 0)) {
+                crate::code_rule_dsl::logic::profile::native_shapes(format!("{name}: {}", shape_key(j)), &shapes);
+            }
             j.plan_cpu(&c)
         }
         Body::Sql(_) | Body::Unplanned => rerail_blocks::vector::Vector::new(),
@@ -5350,6 +5359,9 @@ impl View {
     /// `find_keyed`'s rows, each given to `each` in order, no list made of them: a probe that walks its rows once
     /// (a test, a fold's read) made a list a probe (2.7 M on cold PostHog, `find_into`'s).
     fn each_keyed(&self, cols: &[usize], key: &[i64], lead: usize, each: &mut dyn FnMut(u32)) {
+        let _kind = rerail_prof::work::doing(rerail_prof::work::VIEW);
+        let outer = each;
+        let each: &mut dyn FnMut(u32) = &mut |r| { let _caller = _kind.paused(); outer(r) };
         if self.eqs.is_empty()
             && let Some(dc) = self.src.doc_column()
             && let Some(j) = cols.iter().position(|&k| self.cols[k] == dc)
@@ -5397,6 +5409,7 @@ impl View {
     /// source looks several columns up together (`Source::looks_up_columns`) or keeps the probe to a document
     /// (`find_read`'s order).
     fn streams(&self, cols: &[usize]) -> bool {
+        let _kind = rerail_prof::work::doing(rerail_prof::work::VIEW);
         let dc = self.src.doc_column();
         self.eqs.is_empty()
             && self.ids.is_none()
@@ -5415,6 +5428,7 @@ impl View {
     /// read with the other key columns and compared as found, the first equal one ending it (a membership step's
     /// probe, `exists`: no row of it read into the step). `None` where the source has no such read.
     fn tests_keys(&self, cols: &[usize], key: &[i64], lead: usize, cursor: &mut crate::code_rule_dsl::facts::vtab::ProbeCursor) -> Option<bool> {
+        let _kind = rerail_prof::work::doing(rerail_prof::work::VIEW);
         let (mut src, mut want, mut m) = ([0usize; READ], [0i64; READ], 0);
         for (j, &c) in cols.iter().enumerate() {
             if j != lead {
@@ -5437,6 +5451,9 @@ impl View {
     /// `find_read`'s read of probe `s`, each match given to `each` with its values of view columns `need` as the
     /// source finds it; `false` where the source has no such read (before any match).
     fn read_each(&self, s: &Stream<'_>, need: u64, cursor: &mut crate::code_rule_dsl::facts::vtab::ProbeCursor, each: &mut dyn FnMut(u32, [i64; READ])) -> bool {
+        let _kind = rerail_prof::work::doing(rerail_prof::work::VIEW);
+        let outer = each;
+        let each: &mut dyn FnMut(u32, [i64; READ]) = &mut |r, v| { let _caller = _kind.paused(); outer(r, v) };
         let (mut src, mut at, mut m) = ([0usize; READ], [0usize; READ], 0);
         for c in 0..self.cols.len() {
             if need >> c & 1 != 0 {
@@ -5458,6 +5475,7 @@ impl View {
         read
     }
     fn find_read(&self, cols: &[usize], key: &[i64], lead: usize, need: u64, cursor: &mut crate::code_rule_dsl::facts::vtab::ProbeCursor, spare: &mut Option<Arc<Vec<(u32, [i64; READ])>>>) -> Option<Found> {
+        let _kind = rerail_prof::work::doing(rerail_prof::work::VIEW);
         // A version's or a pick's rows (`ids` with no constants) are refused; a view chosen by constants has its
         // constants' rows as its ids (`filtered`), which the checks below find as `find` does, in the source's rows.
         if (self.ids.is_some() && self.eqs.is_empty()) || self.cols.len() > READ {
@@ -5689,7 +5707,9 @@ pub struct Csr { cols: Vector<usize>, source: bool, sorted: bool, chain: Option<
                  filter: OnceLock<(crate::code_rule_dsl::facts::rows::InBlock, usize, Vector<u8>)>,
                  /// Its relation's `ahead` when it last found none of its node bits, filter and rows by value, plus one
                  /// (0: never looked).
-                 seen: [std::sync::atomic::AtomicU32; 3] }
+                 seen: [std::sync::atomic::AtomicU32; 3],
+                 /// Whether each key of its columns has at most one live row (`at_most_one`), measured at its first ask.
+                 one: OnceLock<bool> }
 impl Csr {
     /// The rows of `rel` whose one key column holds `v`, by its value-keyed index (`node_rows`), `hint` where the last
     /// probe ended: `None` when it has none (a view, dead rows, rows in several parts, a key of several columns).
@@ -5700,6 +5720,7 @@ impl Csr {
         let (ib, i) = match self.by_value.get() {
             Some(b) => b,
             None => {
+                let _kind = rerail_prof::work::doing(rerail_prof::work::BUILD);
                 let rows = if cands::by_value_on() && self.looks_again(rel, 2) { rel.node_rows(self.cols[0]) } else { None };
                 let _ = self.by_value.set(rows?);
                 self.by_value.get()?
@@ -5715,6 +5736,7 @@ impl Csr {
         let (ib, i) = match self.bits.get() {
             Some(b) => b,
             None => {
+                let _kind = rerail_prof::work::doing(rerail_prof::work::BUILD);
                 let bits = if cands::node_bits_on() && self.looks_again(rel, 0) { rel.node_bits(self.cols[0]) } else { None };
                 run_counts().node_bits[usize::from(bits.is_none())].fetch_add(1, AtomicOrdering::Relaxed);
                 let Some(bits) = bits else { return None };
@@ -5723,6 +5745,47 @@ impl Csr {
             }
         };
         Some(ib.relation().node_index(*i).has(v, hint))
+    }
+    /// Whether each key of its columns has at most one live row of `rel`, a derived input (fixed while the rules that
+    /// read it run, so the measure is exact for them): measured once, from the indexes its probes read. A one-column
+    /// key's node-keyed index holds as many values as rows; a sorted order's groups by the key's columns (those it
+    /// leads with, `candidates`' prefix) hold one live row each. `false` for a view (its source states its keys,
+    /// `setfix::at_most_one`) and where no such index answers the key.
+    pub(super) fn at_most_one(&self, rel: &InRel) -> bool {
+        *self.one.get_or_init(|| {
+            if self.cols.is_empty() || rel.view.is_some() {
+                return false;
+            }
+            if rel.len() <= 1 {
+                return true;
+            }
+            if self.cols.len() == 1 && let Some((ib, i)) = rel.node_rows(self.cols[0]) {
+                let h = ib.relation().node_index(i).head;
+                return h.values == h.rows && h.rows as usize == rel.n;
+            }
+            // A hashed index in the relation's block (`block`): no two live rows of a bucket share the key. A bucket of
+            // more rows than `BUCKET` is taken to hold a key's several (a measure, not a search).
+            if let Some((ib, i)) = &self.block {
+                const BUCKET: usize = 64;
+                let r = ib.relation();
+                return r.buckets(*i).all(|b| {
+                    let live: rerail_blocks::frame::InlineVec<u32, { BUCKET + 1 }> = b.iter().copied().filter(|&id| !is_dead(&rel.dead, id)).take(BUCKET + 1).collect();
+                    live.len() <= BUCKET && live.iter().enumerate().all(|(x, &a)| live[..x].iter().all(|&b| self.cols.iter().any(|&c| rel.at(a as usize).at(c) != rel.at(b as usize).at(c))))
+                });
+            }
+            let Some(index) = self.runs(rel) else { return false };
+            let m = index.cols.iter().take_while(|c| self.cols.contains(c)).count();
+            if m == 0 {
+                return false;
+            }
+            let mut one = true;
+            index.each_group(&rel.rows, rel.k, m, |g| {
+                if one && g.len() > 1 && g.iter().filter(|&id| !is_dead(&rel.dead, id)).nth(1).is_some() {
+                    one = false;
+                }
+            });
+            one
+        })
     }
     /// Whether a probe of it may read its rows by value (`by_value`): a one-column key, not a lattice's keyed rows, a
     /// composite's, or a ranged order's.
@@ -5761,8 +5824,9 @@ impl Csr {
         !ib.relation().filter_may_hold(*i, rerail_blocks::bloom::key(&buf[..at.len()]))
     }
     /// The sorted hash of `rel`'s rows by this index's columns, made at its first ask.
-    fn hashed(&self, rel: &InRel) -> &sorted_hash::SortedHash {
+    pub(super) fn hashed(&self, rel: &InRel) -> &sorted_hash::SortedHash {
         self.hashed.get_or_init(|| {
+            let _kind = rerail_prof::work::doing(rerail_prof::work::BUILD);
             let _span = crate::code_rule_dsl::logic::profile::span(|| "probe: sorted hash of a derived input".into());
             let h = sorted_hash::SortedHash::new(rel.n, |id| {
                 let row = rel.at(id as usize);
@@ -5773,7 +5837,7 @@ impl Csr {
         })
     }
     /// Whether a probe of it walks an index's runs (`runs`): a derived input's order, or its kept chain.
-    fn runs_kind(&self) -> bool {
+    pub(super) fn runs_kind(&self) -> bool {
         self.ordered.is_some() || self.chain.is_some()
     }
     /// Whether `get` gives a key's rows alone (not a bucket's candidates).
@@ -5790,6 +5854,7 @@ impl Csr {
             // run inside the sort's wait made another: the same sort several times over. Under the lock, the others
             // wait for the one build.
             Some(printed) => Some(self.order.get_or_init(|| runs::inline(|| {
+                let _kind = rerail_prof::work::doing(rerail_prof::work::BUILD);
                 let _index = crate::code_rule_dsl::logic::profile::span(|| "probe: order of a derived input".into());
                 // A reader's (decision 0706 E5: its component's plans' orders are built ahead, `access::orders_ahead`).
                 let by_reader = access::count_order_made();
@@ -7939,7 +8004,7 @@ impl InRel {
         let mut idx = self.idx.lock().unwrap();
         idx.entry(mask).or_insert_with(|| {
             run_counts().orders_opened.fetch_add(1, AtomicOrdering::Relaxed);
-            Arc::new(Csr { cols: cols.iter().copied().collect::<rerail_blocks::vector::Vector<_>>(), source: false, sorted: false, chain: None, lead: 0, composite: false, keyed: false, ordered: Some(false), order: OnceLock::new(), block: None, then: Some(c), hashed: OnceLock::new(), bits: OnceLock::new(), by_value: OnceLock::new(), filter: OnceLock::new(), seen: Default::default() })
+            Arc::new(Csr { cols: cols.iter().copied().collect::<rerail_blocks::vector::Vector<_>>(), source: false, sorted: false, chain: None, lead: 0, composite: false, keyed: false, ordered: Some(false), order: OnceLock::new(), block: None, then: Some(c), hashed: OnceLock::new(), bits: OnceLock::new(), by_value: OnceLock::new(), filter: OnceLock::new(), seen: Default::default(), one: OnceLock::new() })
         }).clone()
     }
     /// Its rows' index on `cols` in their block (decision 0478 step 5, R2): the one the device finds and builds, over
@@ -8020,7 +8085,7 @@ impl InRel {
             let (t0, c0) = (Instant::now(), thread_cpu());
             // No key columns: the step reads every row, not an index.
             let path = |i: usize| { run_counts().index_paths[i].fetch_add(1, AtomicOrdering::Relaxed); };
-            let empty = |source, sorted| Csr { cols: cols.iter().copied().collect::<rerail_blocks::vector::Vector<_>>(), source, sorted, chain: None, lead: 0, composite: false, keyed: false, ordered: None, order: OnceLock::new(), block: None, then: None, hashed: OnceLock::new(), bits: OnceLock::new(), by_value: OnceLock::new(), filter: OnceLock::new(), seen: Default::default() };
+            let empty = |source, sorted| Csr { cols: cols.iter().copied().collect::<rerail_blocks::vector::Vector<_>>(), source, sorted, chain: None, lead: 0, composite: false, keyed: false, ordered: None, order: OnceLock::new(), block: None, then: None, hashed: OnceLock::new(), bits: OnceLock::new(), by_value: OnceLock::new(), filter: OnceLock::new(), seen: Default::default(), one: OnceLock::new() };
             let m = if cols.is_empty() {
                 path(0); empty(false, false)
             } else if let Some(b) = self.block_index(cols, false) {
@@ -8558,6 +8623,11 @@ pub struct JoinRule {
     /// Profiled: per step, and last the head's rows made, the CPU nanoseconds its walks spent there, the source's
     /// lookups included (`StepClock`); added as `counts` are, and taken with them.
     pub step_ns: Vector<Count>,
+    /// Profiled: per step, its `Rows::each` calls' shapes (`SHAPES`), taken with `step_ns` (`step_cpu`).
+    pub shapes: Vector<[Count; SHAPES]>,
+    /// Profiled: its id in the CPU sampler's words (`rerail_prof::work::join`), its steps named as `shape_key` names
+    /// them; made at its first profiled walk.
+    pub work_id: OnceLock<u16>,
     /// The rows the planner expects after each plan step, every row walked (`JoinSpec::est`); empty where it did not
     /// price the rule.
     pub est: Vector<f64>,
@@ -8579,6 +8649,8 @@ impl JoinRule {
             forms: (0..n).map(|_| table::StepForm::default()).collect(),
             passed_over: Default::default(),
             step_ns: (0..=n).map(|_| Default::default()).collect(),
+            shapes: (0..n).map(|_| std::array::from_fn(|_| Default::default())).collect(),
+            work_id: OnceLock::new(),
             est: Vector::new(),
             plan,
         }
@@ -8587,6 +8659,11 @@ impl JoinRule {
     /// The row program step `i` is fused into, if it is one's atom.
     pub fn fused_at(&self, i: usize) -> Option<&rowcode::Fused> {
         self.plan.fused.get(i)?.as_ref().map(|h| &**self.plan.bound(h))
+    }
+
+    /// Step `i`'s spanning fusion (`rowcode::spanning`), where it is a fused probe: its keyed batch's chunk form.
+    pub fn span_at(&self, i: usize) -> Option<&rowcode::Fused> {
+        self.plan.spans.get(i)?.as_ref().map(|h| &**self.plan.bound(h))
     }
 
     /// The derived relation and index an `In` source reads.
@@ -8755,6 +8832,77 @@ impl Count {
     fn add(&self, v: u64) { if v > 0 { self.0.fetch_add(v, std::sync::atomic::Ordering::Relaxed); } }
 }
 
+/// A step's `Rows::each` calls' counts (`JoinRule::shapes`, profiled): by call site (`SITE_GATHER`, `SITE_WALK`,
+/// `SITE_LIST0`) its calls (`0..3`) and the candidates they walked (`3..6`); its calls by their candidates' kind
+/// (`6..14`, `Cands`' variants in order); its calls by candidates walked (`14..20`: 0, 1, 2-3, 4-15, 16-255, more);
+/// every ask of the step by the rows it matched (`20..23`: 0, 1, more), its keys and tests held (a test's first match
+/// ends it, so it counts as 1), its `Rows::each` calls and its one-row reads (a lookup's, a node-keyed bit's, a fused
+/// test's) alike; and of those asks, the one-row reads (`23`); and a fused chunk's rows passed on, by where they go
+/// (`24..27`: the head, a lookup, another step); and a fused chunk's rows asked row by row, by why `ask_chunk` has no
+/// read for them (`27..34`, `cands::CHUNK_REFUSALS`).
+pub const SHAPES: usize = 34;
+/// A fused step's gather of its candidates into its chunk.
+const SITE_GATHER: usize = 0;
+/// The walk's step, a candidate at a time.
+const SITE_WALK: usize = 1;
+/// A first step's candidates listed for a cut (decision 0206).
+const SITE_LIST0: usize = 2;
+
+/// `Cands`' variant, as `SHAPES` counts it.
+fn cands_kind(c: &Cands<'_>) -> usize {
+    match c {
+        Cands::Range(..) => 0,
+        Cands::Slice(_) => 1,
+        Cands::Owned(_) => 2,
+        Cands::Shared(_) => 3,
+        Cands::Runs(_) => 4,
+        Cands::Pending(..) => 5,
+        Cands::Read(_) => 6,
+        Cands::Stream(_) => 7,
+    }
+}
+
+/// Counts one `Rows::each` call of step `i` from `site`, of candidates kind `kind`, that walked `walked`.
+fn count_shape(j: &JoinRule, i: usize, site: usize, kind: usize, walked: u64) {
+    let Some(s) = j.shapes.get(i) else { return };
+    s[site].add(1);
+    s[3 + site].add(walked);
+    s[6 + kind].add(1);
+    s[14 + match walked { 0 => 0, 1 => 1, 2..=3 => 2, 4..=15 => 3, 16..=255 => 4, _ => 5 }].add(1);
+}
+
+/// Counts one ask of step `i` that matched `matched` rows (`SHAPES` `20..24`): `direct`, a one-row read.
+fn count_match(j: &JoinRule, i: usize, matched: u64, direct: bool) {
+    let Some(s) = j.shapes.get(i) else { return };
+    s[20 + matched.min(2) as usize].add(1);
+    if direct { s[23].add(1); }
+}
+
+/// Counts a chunk's asks of step `i` (`ask_chunk`, or row by row): `none` found no row, `one` found one; one-row reads.
+fn count_asks(j: &JoinRule, i: usize, none: u64, one: u64) {
+    let Some(s) = j.shapes.get(i) else { return };
+    s[20].add(none);
+    s[21].add(one);
+    s[23].add(none + one);
+}
+
+/// A join's steps as `native_shapes.tsv` names them: each atom's relation (`!` negated), else its kind.
+fn shape_key(j: &JoinRule) -> String {
+    let src = |s: &Src| match s {
+        Src::In(rel, _) => j.plan.bound(rel).name.get().cloned().unwrap_or_else(|| "?".to_owned()),
+        Src::Delta(r) => format!("delta{r}"),
+        Src::Full(r) | Src::FullMulti(r, _) => format!("comp{r}"),
+    };
+    j.steps.iter().enumerate().map(|(i, s)| match s {
+        Step::Atom { src: s, neg, .. } => format!("{}{}{}", if *neg { "!" } else { "" }, src(s), lookup_why(&j.plan, i)),
+        Step::Scalar { src: s, .. } => format!("agg {}", src(s)),
+        Step::StrJoin { src: s, .. } => format!("strjoin {}", src(s)),
+        Step::Func { name, .. } => format!("@{name}"),
+        Step::Lt { .. } | Step::Eq { .. } | Step::Ne { .. } => "cmp".to_owned(),
+        _ => "other".to_owned(),
+    }).collect::<Vec<_>>().join(" , ")
+}
+
 /// Steps' (in, out) counts by the plan step each was made for (`from`, of `plan_steps`): a plan step's bindings into
 /// its first step and out of its last. A plan step that made no step passes its rows on; the head's computed terms'
 /// steps are no plan step's.
@@ -8794,7 +8942,7 @@ fn switch_ticks() -> f64 {
 
 fn measure_switch_ticks() -> f64 {
     const N: u64 = 4096;
-    let mut c = StepClock { ticks: rerail_blocks::vector![0; 3], switches: rerail_blocks::vector![0; 3], at: 2, last: ticks(), t0: 0, cpu0: 0.0, acc: crate::code_rule_dsl::logic::profile::accounted_ticks(), acc0: (0, 0.0), cost: 0.0 };
+    let mut c = StepClock { ticks: rerail_blocks::vector![0; 3], switches: rerail_blocks::vector![0; 3], at: 2, last: ticks(), t0: 0, cpu0: 0.0, acc: crate::code_rule_dsl::logic::profile::accounted_ticks(), acc0: (0, 0.0), cost: 0.0, word: None };
     (0..8).map(|_| switch_between_empty(&mut c, N) as f64 / N as f64).fold(f64::INFINITY, f64::min)
 }
 
@@ -8819,16 +8967,26 @@ fn switch_between_empty(c: &mut StepClock, n: u64) -> u64 {
 /// step does, and a step entered once a row was charged one a row, a membership test's three times its own cost on
 /// all (t57). So each place counts the switches charged to it (`switches`), and the walk's end takes off what they
 /// cost (`switch_ticks`, measured once a run) before the ticks are scaled.
-struct StepClock { ticks: Vector<u64>, switches: Vector<u64>, at: usize, last: u64, t0: u64, cpu0: f64, acc: u64, acc0: (u64, f64), cost: f64 }
+struct StepClock { ticks: Vector<u64>, switches: Vector<u64>, at: usize, last: u64, t0: u64, cpu0: f64, acc: u64, acc0: (u64, f64), cost: f64, word: Option<(&'static rerail_prof::work::Slot, u64)> }
 impl StepClock {
-    /// Off unless profiling. `steps + 2` places: each step, the head's rows made, and the walk outside any step.
-    fn start(steps: usize) -> Option<Box<StepClock>> {
+    /// Off unless profiling. `steps + 2` places: each step, the head's rows made, and the walk outside any step. The
+    /// CPU sampler's word (`rerail_prof::work`) names the join (`JoinRule::work_id`, the head `head` and its steps) and
+    /// the place the walk is in, as `to` moves it; `end` puts the word back.
+    fn start(j: &JoinRule, head: &str) -> Option<Box<StepClock>> {
         use crate::code_rule_dsl::logic::profile;
+        let steps = j.steps.len();
         profile::on().then(|| {
+            let word = rerail_prof::work::mine().map(|slot| {
+                let id = *j.work_id.get_or_init(|| {
+                    let key = shape_key(j);
+                    rerail_prof::work::join(&format!("{head} :- {key}"), || key.split(" , ").map(str::to_owned).collect())
+                });
+                (slot, slot.set_part(rerail_prof::work::JOIN | rerail_prof::work::STEP | rerail_prof::work::KIND, u64::from(id) << 32 | ((steps + 2) as u64) << 48 | u64::from(rerail_prof::work::WALK) << 56))
+            });
             let cost = switch_ticks();
             let t = ticks();
             let acc0 = crate::code_rule_dsl::logic::profile::accounted();
-            Box::new(StepClock { ticks: rerail_blocks::vector![0; steps + 2], switches: rerail_blocks::vector![0; steps + 2], at: steps + 1, last: t, t0: t, cpu0: crate::code_rule_dsl::logic::profile::now(), acc: acc0.0, acc0, cost })
+            Box::new(StepClock { ticks: rerail_blocks::vector![0; steps + 2], switches: rerail_blocks::vector![0; steps + 2], at: steps + 1, last: t, t0: t, cpu0: crate::code_rule_dsl::logic::profile::now(), acc: acc0.0, acc0, cost, word })
         })
     }
     /// Charges the ticks since the last switch to the step the walk was in, less those a scope inside it accounted
@@ -8840,6 +8998,9 @@ impl StepClock {
         self.ticks[self.at] += t.wrapping_sub(self.last).saturating_sub(acc.wrapping_sub(self.acc));
         self.switches[self.at] += 1;
         (self.last, self.acc) = (t, acc);
+        if let Some((slot, _)) = self.word {
+            slot.set_part(rerail_prof::work::STEP | rerail_prof::work::KIND, ((at + 1) as u64) << 48 | u64::from(rerail_prof::work::WALK) << 56);
+        }
         std::mem::replace(&mut self.at, at)
     }
     /// Place `k`'s own ticks: its charge less the switches' cost charged to it (none below nothing).
@@ -8853,6 +9014,9 @@ impl StepClock {
         use crate::code_rule_dsl::logic::profile;
         let outside = self.ticks.len() - 1;
         self.to(outside);
+        if let Some((slot, was)) = self.word {
+            slot.word.store(was, std::sync::atomic::Ordering::Relaxed);
+        }
         let (cpu1, acc1) = (profile::now(), profile::accounted());
         let (span, cpu) = (self.last.wrapping_sub(self.t0), cpu1 - self.cpu0);
         profile::account_scope(self.acc0, span, cpu);
@@ -8967,7 +9131,7 @@ fn join_rule_bound(conn: impl Scoped, spec: &ArchivedJoinSpec, syms: &mut Intern
     use steps::{Src, Step};
     use rerail_section::Bound;
     let conn = conn.db();
-    let unindexed = |cols: &[usize]| Arc::new(Csr { cols: cols.iter().copied().collect::<rerail_blocks::vector::Vector<_>>(), source: false, sorted: false, chain: None, lead: 0, composite: false, keyed: false, ordered: None, order: OnceLock::new(), block: None, then: None, hashed: OnceLock::new(), bits: OnceLock::new(), by_value: OnceLock::new(), filter: OnceLock::new(), seen: Default::default() });
+    let unindexed = |cols: &[usize]| Arc::new(Csr { cols: cols.iter().copied().collect::<rerail_blocks::vector::Vector<_>>(), source: false, sorted: false, chain: None, lead: 0, composite: false, keyed: false, ordered: None, order: OnceLock::new(), block: None, then: None, hashed: OnceLock::new(), bits: OnceLock::new(), by_value: OnceLock::new(), filter: OnceLock::new(), seen: Default::default(), one: OnceLock::new() });
     let mut bound: Vec<bool> = Vec::new();
     for &s in pre {
         if bound.len() <= s { bound.resize(s + 1, false) }
@@ -9237,7 +9401,7 @@ fn join_rule_bound(conn: impl Scoped, spec: &ArchivedJoinSpec, syms: &mut Intern
         ((0..steps.len()).collect(), steps.len())
     };
     let multi = multi.into_iter().map(|(rel, cols)| steps::Multi { rel, cols }).collect();
-    let plan = steps::Plan { steps, out, nslots: bound.len(), multi, probes: Vec::new(), fused: Vec::new(), spec: level::digest(spec), from, plan_steps, ranges: Vec::new(), lookups: Vec::new() };
+    let plan = steps::Plan { steps, out, nslots: bound.len(), multi, probes: Vec::new(), fused: Vec::new(), spans: Vec::new(), spec: level::digest(spec), from, plan_steps, ranges: Vec::new(), lookups: Vec::new(), one: Vec::new() };
     Ok(JoinRule::encoded(analysed(plan, !env_set!("RERAIL_NO_ROW_PROGRAMS"), |c| syms.name(c) == ".")))
 }
 
@@ -9290,8 +9454,17 @@ fn analysed(mut plan: steps::Plan, fuse: bool, is_dot: impl Fn(i64) -> bool) -> 
         let v = rel.view.as_ref()?;
         (v.ids.is_none() && v.eqs.is_empty() && rel.ndead == 0 && view_tests_on()).then(|| (Arc::clone(&v.src), v.cols.clone()))
     };
+    plan.one = (0..s.steps.len()).map(|i| at_most_one(&s, i).is_some()).collect();
+    let s = plan.encode();
     plan.lookups = lookups(&s, &plan.ranges);
     plan.fused = if fuse { rowcode::fuse(&s.steps, &plan.lookups, &view).into_iter().map(|f| f.map(|f| rerail_section::Bound(Arc::from(f)))).collect() } else { s.steps.iter().map(|_| None).collect() };
+    // A fused probe's spanning form, for the walk's keyed batch: its candidates of many bindings in one chunk.
+    plan.spans = s.steps.iter().enumerate().map(|(i, st)| match st {
+        Step::Atom { neg: false, keys, binds, .. } if i > 0 && !keys.is_empty() && plan.fused[i].is_some() => {
+            rowcode::spanning(binds, &s.steps[i + 1..], plan.lookups.get(i + 1..).unwrap_or(&[])).map(|f| rerail_section::Bound(Arc::from(f)))
+        }
+        _ => None,
+    }).collect();
     let s = plan.encode();
     scalars::register(&s, None);
     s
@@ -9304,20 +9477,63 @@ fn view_tests_on() -> bool {
     rerail_prof::code_rule_dsl::logic::profile::setting(|| std::env::var("RERAIL_VIEW_TESTS").map_or(true, |v| v != "off"))
 }
 
-/// Per step, whether it is a lookup: an atom of a view whose source reads its rows by their own id in a column the
-/// step's keys bind (`Source::read_own_batch` asked with no values: a node's own facts by its id, `kind(n, k)` by
-/// `n`), not ranged. Its rows are that one row, a value computed from the key, not a loop over candidates: a fused
-/// chunk reads its rows' with the chunk's others as computed columns (`rowcode`), and no lookup starts a fused scan.
-/// The walk batches it as any node read (`kinds::OwnRead`). `RERAIL_LOOKUPS=off` (a measurement aid, the run's
-/// setting) makes none.
+/// Why step `i` of `s`'s key names at most one row, or `None` (a component's relation, or no such key known):
+/// - every column bound, or none bound in a negation (a test: one answer, whether its row is there);
+/// - a view's column the source reads its rows by their own id in (`Source::read_own_batch` asked with no values: a
+///   node's own facts by its id, `kind(n, k)` by `n`) or states has one row a value (`Source::keys_rows`: `docof(n,
+///   d)` by `n`), bound;
+/// - a derived input's key whose every value has at most one live row, measured (`Csr::at_most_one`).
+fn at_most_one(s: &Section<steps::Plan>, i: usize) -> Option<&'static str> {
+    let Some(Step::Atom { src: Src::In(rel, ix), keys, binds, neg, .. }) = s.steps.get(i) else { return None };
+    if binds.is_empty() || *neg {
+        return Some("a test");
+    }
+    let rel = s.bound(rel);
+    match &rel.view {
+        Some(v) => (v.eqs.is_empty() && v.ids.is_none()
+            && keys.iter().any(|&(c, _)| own_read(v, c) || v.src.keys_rows(v.cols[c])))
+            .then_some("a view's key"),
+        None => s.bound(ix).at_most_one(rel).then_some("measured"),
+    }
+}
+
+/// Whether view `v`'s source reads its rows by their own id in the source's column of `v`'s column `c`
+/// (`Source::read_own_batch` asked with no values: decision A's one read of a node's row by its id).
+fn own_read(v: &View, c: usize) -> bool {
+    v.src.read_own_batch(v.cols[c], &[], &[], &mut [], &mut [], &mut crate::code_rule_dsl::facts::vtab::ProbeCursor::default())
+}
+
+/// Per step, whether it is a lookup: an atom that binds columns whose key names at most one row (`at_most_one`):
+/// - of a view whose source reads its rows by their own id in a column the step's keys bind (`Source::read_own_batch`
+///   asked with no values: a node's own facts by its id, `kind(n, k)` by `n`), not ranged. Its rows are that one row,
+///   read in batches by the loop around it (decision A): a fused chunk reads its rows' with the chunk's others as
+///   computed columns (`rowcode`), the walk batches it as any node read (`kinds::OwnRead`);
+/// - of a derived input whose key names at most one live row, measured (`Csr::at_most_one`): read as its one row by
+///   its index (`cands::read_one`), in the walk and in a fused chunk.
+/// No lookup starts a fused scan. `RERAIL_LOOKUPS=off` (a measurement aid, the run's setting) makes none.
 fn lookups(s: &Section<steps::Plan>, ranges: &[Option<Ranged>]) -> Vec<bool> {
     let on = rerail_prof::code_rule_dsl::logic::profile::setting(|| std::env::var("RERAIL_LOOKUPS").map_or(true, |v| v != "off"));
     s.steps.iter().enumerate().map(|(i, st)| {
-        let Step::Atom { src: Src::In(rel, _), keys, .. } = st else { return false };
-        let Some(v) = &s.bound(rel).view else { return false };
-        on && ranges.get(i).is_none_or(Option::is_none) && v.eqs.is_empty() && v.ids.is_none() && v.cols.len() <= READ
-            && keys.iter().any(|&(c, k)| matches!(k, Key::Slot(_)) && v.src.read_own_batch(v.cols[c], &[], &[], &mut [], &mut [], &mut crate::code_rule_dsl::facts::vtab::ProbeCursor::default()))
+        let Step::Atom { src: Src::In(rel, _), keys, binds, neg, .. } = st else { return false };
+        match &s.bound(rel).view {
+            Some(v) => on && ranges.get(i).is_none_or(Option::is_none) && v.eqs.is_empty() && v.ids.is_none() && v.cols.len() <= READ
+                && keys.iter().any(|&(c, k)| matches!(k, Key::Slot(_)) && own_read(v, c)),
+            None => on && !binds.is_empty() && !*neg && s.one.get(i).copied().unwrap_or(false),
+        }
     }).collect()
+}
+
+/// Why step `i` of `s` is or is not a lookup (`lookups`), with the test's inputs: profiled, for `native_shapes.tsv`.
+fn lookup_why(s: &Section<steps::Plan>, i: usize) -> String {
+    let Some(Step::Atom { src, keys, .. }) = s.steps.get(i) else { return String::new() };
+    let Src::In(rel, _) = src else { return "[not a relation]".to_owned() };
+    let one = at_most_one(s, i).unwrap_or("many");
+    let lookup = if s.lookups.get(i).copied().unwrap_or(false) { "LOOKUP" } else { "walk" };
+    let Some(v) = &s.bound(rel).view else { return format!("[no view; {one}; {lookup}]") };
+    let cols: Vec<String> = v.cols.iter().map(usize::to_string).collect();
+    let keyed: Vec<String> = keys.iter().map(|&(c, _)| v.cols[c].to_string()).collect();
+    let own: Vec<String> = keys.iter().filter(|&&(c, _)| own_read(v, c)).map(|&(c, _)| v.cols[c].to_string()).collect();
+    format!("[{one}; {lookup}; cols {}; keyed {}; own {}; eqs {:?}]", cols.join(" "), keyed.join(" "), own.join(" "), v.eqs)
 }
 
 /// Runs a join probe over the store; its new head tuples go to `fresh`. Returns the tuples it derived.
@@ -9593,6 +9809,9 @@ fn run_join_in_each_unframed(j: &JoinRule, head: usize, store: &Store, syms: &mu
                      /// Each step's place in the runs of the order it probes (`Index::find_at`): the step's keys come
                      /// in a sorted batch where they can (`scan_order`), so each probe starts where the last ended.
                      hints: Vec<[u32; runs::HINTS]>,
+                     /// Per step, the view bits by a constant its tests read (`cands::value_bits_test`): found at its
+                     /// first test in the walk.
+                     vbits: Vec<Option<Option<crate::code_rule_dsl::facts::vtab::ValueBits>>>,
                      /// Each step's last probe of a source's lookup and the candidates it gave: the step's keys come
                      /// sorted where they can, so a key the step probed just before is answered by its candidates
                      /// again, not by the source (a held `kind` probed by kind reads every document of the language).
@@ -9839,9 +10058,9 @@ fn run_join_in_each_unframed(j: &JoinRule, head: usize, store: &Store, syms: &mu
         cx.extreme[i] = Some(ids);
     }
     fn go<'a>(cx: &mut Ctx<'a, '_>, i: usize, slots: &mut [i64]) {
-        let Some(clock) = cx.clock.as_mut() else { return enter(cx, i, slots) };
+        let Some(clock) = cx.clock.as_mut() else { return walk_step(cx, i, slots) };
         let was = clock.to(i);
-        enter(cx, i, slots);
+        walk_step(cx, i, slots);
         if let Some(clock) = cx.clock.as_mut() { clock.to(was); }
     }
     /// Step `i`'s waiting rows tested (decision 0706 E1): their nodes' values read as one batch, and each row whose
@@ -9940,7 +10159,75 @@ fn run_join_in_each_unframed(j: &JoinRule, head: usize, store: &Store, syms: &mu
                     _ => false,
                 };
                 let order = t.order(&rows, w);
-                if let (true, Step::Atom { src, keys, binds, tests, .. }) = (direct, &j.steps[i]) {
+                // A fused probe's spanning form (`rowcode::spanning`): every row's candidates gathered into one chunk,
+                // its row program run once a chunk (not once a binding's row or two), and each row it passes handed
+                // on with its binding's slots. Not past the tail (the first row made ends a binding's loop) nor where
+                // a fused test reads a delta's step: those are walked as the walker walks them.
+                // A ranged probe (a later comparison bounds a column it binds) spans too: each binding's range is its
+                // own, taken as the walker takes it.
+                let spans = matches!(&j.steps[i], Step::Atom { src: Src::In(..), neg: false, .. })
+                    && i != cx.only_step && cx.factor[i].is_none() && cx.screen.is_none_or(|f| f.step != i) && i > 0;
+                let span = j.span_at(i).filter(|f| spans && i < cx.cut_from && !f.tests.iter().any(|t| i + 1 + t.at == cx.only_step));
+                if crate::code_rule_dsl::prof::on() && j.span_at(i).is_some() {
+                    let why = if span.is_some() { "spanned" } else if !spans {
+                        match &j.steps[i] {
+                            Step::Atom { src: Src::In(..), .. } if j.ranges[i].is_some() => "not direct: ranged",
+                            Step::Atom { src: Src::In(..), .. } if i == cx.only_step => "not direct: a delta's step",
+                            Step::Atom { src: Src::In(..), .. } if cx.factor[i].is_some() => "not direct: factored",
+                            Step::Atom { src: Src::In(..), .. } => "not direct: screened",
+                            Step::Atom { src: Src::Delta(_), .. } => "not direct: a delta",
+                            _ => "not direct: the component's own",
+                        }
+                    } else if i >= cx.cut_from { "past the tail" } else { "a delta's test" };
+                    crate::code_rule_dsl::prof::count_named_args(format_args!("walk span: batches {why}"), 1);
+                    crate::code_rule_dsl::prof::count_named_args(format_args!("walk span: rows {why}"), n);
+                }
+                if let (Some(f), Step::Atom { src, keys, tests, .. }) = (span, &j.steps[i]) {
+                    use self::cands::candidates;
+                    let exact: u64 = cands::exact_cols(j, src, false);
+                    let need: u64 = keys.iter().filter(|&&(c, _)| exact >> c & 1 == 0).fold(0u64, |m, &(c, _)| m | 1 << c)
+                        | tests.iter().fold(0u64, |m, &(c, c0)| m | 1 << c | 1 << c0)
+                        | f.gather.iter().fold(0u64, |m, &(_, c)| m | 1 << c);
+                    if i + f.steps > cx.deep { cx.deep = i + f.steps; }
+                    let mut last = cx.last[i].take().expect("the step's probe state, put back after each entry");
+                    let mut s = std::mem::take(&mut cx.scratch[i]);
+                    s.columns.resize_with(f.columns.len(), rerail_blocks::vector::Vector::new);
+                    s.columns.iter_mut().for_each(|c| c.clear());
+                    // A spanning fusion's parameters are constants: every slot bound before it is a column.
+                    s.params.clear();
+                    s.params.extend(f.params.iter().map(|p| { let v = val(&slots, p.key); if p.doc { v >> 32 } else { v } }));
+                    (s.rows, s.from) = (0, rerail_blocks::vector::Vector::new());
+                    let mut out = vec![0i64; w];
+                    for r in order {
+                        if cx.stop || cx.error.is_some() {
+                            break;
+                        }
+                        let r = r as usize;
+                        slots.copy_from_slice(&rows[r * w..(r + 1) * w]);
+                        cx.key.clear();
+                        cx.key.extend(keys.iter().map(|&(_, k)| val(&slots, k)));
+                        cx.tally[0] += 1;
+                        let within: Within = j.ranges[i].map(|r| (r.col, r.lo.map(|(k, eq)| (val(&slots, k), eq)), r.hi.map(|(k, eq)| (val(&slots, k), eq))));
+                        let (held, cands) = candidates(j, src, store, &cx.key, keys, &mut cx.hints[i], &mut last, need, within, true);
+                        held.each(cands, need, &mut last, |id, row| {
+                            cx.tally[1] += 1;
+                            if cx.stop || cx.error.is_some() { return true; }
+                            if held.dead(id) { return false; }
+                            if !keys.iter().all(|&(c, k)| exact >> c & 1 != 0 || row.at(c) == val(&slots, k)) || !tests.iter().all(|&(c, c0)| row.at(c) == row.at(c0)) { return false; }
+                            for &(k, c) in &f.gather { s.columns[k].push(row.at(c)); }
+                            for &(k, slot, doc) in &f.bound { let v = slots[slot]; s.columns[k].push(if doc { v >> 32 } else { v }); }
+                            s.from.push(r as u32);
+                            s.rows += 1;
+                            if s.rows == rowcode::CHUNK { span_flush(cx, i, f, &mut s, &rows, w, &mut out); }
+                            false
+                        });
+                    }
+                    if s.rows > 0 && !cx.stop && cx.error.is_none() { span_flush(cx, i, f, &mut s, &rows, w, &mut out); }
+                    (s.rows, s.from) = (0, rerail_blocks::vector::Vector::new());
+                    s.columns.iter_mut().for_each(|c| c.clear());
+                    cx.scratch[i] = s;
+                    cx.last[i] = Some(last);
+                } else if let (true, Step::Atom { src, keys, binds, tests, .. }) = (direct, &j.steps[i]) {
                     use self::cands::candidates;
                     let exact: u64 = cands::exact_cols(j, src, false);
                     let need: u64 = keys.iter().filter(|&&(c, _)| exact >> c & 1 == 0).fold(0u64, |m, &(c, _)| m | 1 << c)
@@ -9987,6 +10274,86 @@ fn run_join_in_each_unframed(j: &JoinRule, head: usize, store: &Store, syms: &mu
         rows.clear();
         cx.batch[i] = Some((t, rows));
     }
+    /// A spanning chunk's rows (`run_batch`, a fused probe's batch): its fused tests asked of each row with its
+    /// binding's slots (`rows`, `w` a row, the row's place in `s.from`), its row program run once over the chunk, and
+    /// each row it passes handed on, its binding's slots and the fusion's binds set in `out`. Counted as a fused
+    /// step's chunk is (`enter`'s `flush`): each step's entries and passes, and its filters' work.
+    fn span_flush(cx: &mut Ctx<'_, '_>, i: usize, f: &rowcode::Fused, s: &mut rowcode::Scratch, rows: &[i64], w: usize, out: &mut [i64]) {
+        let n = s.rows;
+        kinds::count_spanned_for_tests(n);
+        let counts = &cx.counts;
+        let bump = |m: usize, n: u64| {
+            let c = &counts[i + m][1]; c.set(c.get() + n);
+            let c = &counts[i + 1 + m][0]; c.set(c.get() + n);
+        };
+        bump(0, n as u64);
+        let added = std::cell::Cell::new(n as u64);
+        let mut asked = std::mem::take(&mut s.asked);
+        asked.resize_with(f.tests.len(), Default::default);
+        let from = std::mem::take(&mut s.from);
+        let asked = std::cell::RefCell::new(asked);
+        let (j, store, profiled) = (cx.j, cx.store, cx.clock.is_some());
+        // Each test asked of the chunk at once (`cands::ask_chunk`), as `enter`'s chunk asks it; where its input has
+        // no such read (`false`), `held` asks it row by row, the row's binding's slots in `out`.
+        let ask = |t: usize, columns: &mut [rerail_blocks::vector::Vector<i64>], params: &[i64], alive: &mut [u64], n: usize, k: usize, looks: &[(usize, usize)]| {
+            let test = &f.tests[t];
+            let at = i + 1 + test.at;
+            let step = &j.steps[at];
+            match cands::ask_chunk(j, step, test, columns, params, alive, n, k, looks, &mut asked.borrow_mut()[t]) {
+                Some((none, one)) => {
+                    if profiled { count_asks(j, at, none, one); }
+                    true
+                }
+                None => {
+                    if profiled && let Some(c) = j.shapes.get(at) {
+                        let live: u32 = alive.iter().map(|w| w.count_ones()).sum();
+                        c[27 + cands::chunk_refusal(j, step, test)].add(u64::from(live));
+                    }
+                    false
+                }
+            }
+        };
+        let held = |t: usize, r: usize, columns: &[rerail_blocks::vector::Vector<i64>], params: &[i64], vals: &mut [i64]| {
+            let test = &f.tests[t];
+            let at = i + 1 + test.at;
+            let b = from[r] as usize;
+            // copy: not block data (the row's binding's slots, the walk's scratch).
+            out.copy_from_slice(&rows[b * w..(b + 1) * w]);
+            for &(slot, bd) in &test.slots {
+                out[slot] = match bd { rowcode::Bind::Column(k) => columns[k][r], rowcode::Bind::Param(k) => params[k] };
+            }
+            let found = if j.lookups.get(at).copied().unwrap_or(false) {
+                cands::look(j, &j.steps[at], store, out, &mut asked.borrow_mut()[t], vals)
+            } else {
+                cands::holds(j, &j.steps[at], store, out, &mut asked.borrow_mut()[t])
+            };
+            if profiled { count_asks(j, at, u64::from(!found), u64::from(found)); }
+            found
+        };
+        let words: rerail_blocks::frame::InlineVec<u64, { rowcode::CHUNK / 64 }> =
+            f.run(s, |m, n| if m + 1 < f.steps { bump(m + 1, n); added.set(added.get() + n) }, ask, held).iter().copied().collect();
+        s.asked = asked.into_inner();
+        'rows: for (k, &word) in words.iter().enumerate() {
+            let mut m = word;
+            while m != 0 {
+                if cx.stop || cx.error.is_some() { break 'rows; }
+                let r = 64 * k + m.trailing_zeros() as usize;
+                m &= m - 1;
+                let b = from[r] as usize;
+                out.copy_from_slice(&rows[b * w..(b + 1) * w]);
+                for &(slot, bd) in &f.binds {
+                    out[slot] = match bd { rowcode::Bind::Column(c) => s.columns[c][r], rowcode::Bind::Param(c) => s.params[c] };
+                }
+                cx.tally[2] += 1;
+                go(cx, i + 1 + f.steps, out);
+            }
+        }
+        cx.work += added.get();
+        s.from = from;
+        s.from.clear();
+        s.rows = 0;
+        s.columns.iter_mut().for_each(|c| c.clear());
+    }
     /// Every step's waiting rows tested, in step order (a step's passing rows wait at later steps only), a cut or not
     /// (`run_batch`): a walk cut at its budget finishes the rows waiting, past it by at most a batch a step. Its rows
     /// from the cut on are walked again, and a head row made twice is one row of its set (decision 0206).
@@ -10001,15 +10368,84 @@ fn run_join_in_each_unframed(j: &JoinRule, head: usize, store: &Store, syms: &mu
             }
         }
     }
-    fn enter<'a>(cx: &mut Ctx<'a, '_>, i: usize, slots: &mut [i64]) {
-        if cx.error.is_some() || cx.stop { return; }
+    /// A binding into step `i`: the head's row (`to_head`) and a lookup (`read_lookup`) each by a function of its own, every
+    /// other step by `enter`. A row a chunk or a walk passes on to the head or to a lookup is then no frame of the
+    /// walk's every step (`enter` holds them all, its frame their room): 17.2 M of the 43.8 M rows chunks passed on in
+    /// the corpus went to the head.
+    #[inline]
+    fn walk_step<'a>(cx: &mut Ctx<'a, '_>, i: usize, slots: &mut [i64]) {
+        let j = cx.j;
+        if cx.pending.is_empty() {
+            if i >= j.steps.len() {
+                return to_head(cx, i, slots);
+            }
+            // Not a step whose rows wait for a batch (decision 0706 E1), or a test its value's bits may answer (0723
+            // step 1): `enter` runs those first.
+            if i > 0 && i != cx.only_step && j.lookups.get(i).copied().unwrap_or(false) && cx.screen.is_none_or(|f| f.step != i)
+                && cx.batch.get(i).is_none_or(Option::is_none)
+                && (matches!(cx.vbits[i], Some(None)) || matches!(&j.steps[i], Step::Atom { binds, .. } if !binds.is_empty()))
+            {
+                return read_lookup(cx, i, slots);
+            }
+        }
+        enter(cx, i, slots)
+    }
+    /// The walk's bookkeeping of a binding into step `i`: whether it goes on (no error, not stopped, its work within
+    /// the budget), the rows into and out of the steps counted.
+    #[inline]
+    fn arrive_at(cx: &mut Ctx<'_, '_>, i: usize) -> bool {
+        if cx.error.is_some() || cx.stop { return false; }
         // The walk's work is the steps it enters, as the planner counts a line's (`profile::plan_work`).
         cx.work += 1;
-        if cx.work > cx.budget { cx.stop = true; return; }
-        let (j, store): (&'a JoinRule, &'a Store) = (cx.j, cx.store);
+        if cx.work > cx.budget { cx.stop = true; return false; }
         if i > 0 { let c = &cx.counts[i - 1][1]; c.set(c.get() + 1); }
         if let Some(c) = cx.counts.get(i) { c[0].set(c[0].get() + 1); }
         if i > cx.deep { cx.deep = i; }
+        true
+    }
+    /// The head's row of the binding (`i` past the last step), no sum pending.
+    fn to_head(cx: &mut Ctx<'_, '_>, i: usize, slots: &mut [i64]) {
+        if arrive_at(cx, i) {
+            emit_head(cx, slots);
+        }
+    }
+    /// A lookup's step (`lookups`): its one row read in place (`cands::read_one`), its binds set, and the walk going
+    /// on. Where the source has no such read now, the step's probe (`enter`).
+    fn read_lookup<'a>(cx: &mut Ctx<'a, '_>, i: usize, slots: &mut [i64]) {
+        let j: &'a JoinRule = cx.j;
+        let Step::Atom { src, neg, keys, binds, tests } = &j.steps[i] else { return enter(cx, i, slots) };
+        cx.key.clear();
+        cx.key.extend(keys.iter().map(|&(_, k)| val(slots, k)));
+        let mut row = [0i64; READ];
+        let Some(found) = cands::read_one(j, src, keys, tests, &cx.key, &mut row) else { return enter(cx, i, slots) };
+        if !arrive_at(cx, i) { return; }
+        if cx.clock.is_some() { count_match(j, i, u64::from(found), true); }
+        if found && !*neg {
+            for &(c, s) in binds { slots[s] = row[c]; }
+        }
+        if found != *neg { go(cx, i + 1, slots); }
+    }
+    /// The head's row of `slots`: offered to its relation's fresh rows (or collected).
+    fn emit_head(cx: &mut Ctx<'_, '_>, slots: &mut [i64]) {
+        let _kind = rerail_prof::work::doing(rerail_prof::work::HEAD);
+        let (j, store) = (cx.j, cx.store);
+        cx.row.clear();
+        for o in &j.out {
+            let v = match o { Term::Slot(s) => slots[*s], Term::Const(c) => *c, Term::Cat(a, b) => cat(cx.syms, slots[*a], slots[*b]) };
+            cx.row.push(v);
+        }
+        cx.n += 1;
+        if let Some(c) = &mut cx.collect { c.extend_from_slice(&cx.row); return; }
+        // Decision 0462: no relation past the width cap. Its rows and those this walk made (an upper bound: some
+        // may repeat) stop at it; the run stops or cuts the probe (`width`), never fills memory.
+        let rel = &store.rels[cx.head];
+        if cx.fresh[cx.head].n + rel.n >= cx.cap { cx.error = Some(super::width::too_wide(&rel.table, cx.cap)); return; }
+        cx.fresh[cx.head].emitted += 1;
+        cx.fresh[cx.head].offer(&cx.row, rel);
+    }
+    fn enter<'a>(cx: &mut Ctx<'a, '_>, i: usize, slots: &mut [i64]) {
+        if !arrive_at(cx, i) { return; }
+        let (j, store): (&'a JoinRule, &'a Store) = (cx.j, cx.store);
         // Keep exact sums until a predicate, lookup, function, or emitted head
         // observes the binding. A later filter can remove a row before that use.
         if !cx.pending.is_empty()
@@ -10019,27 +10455,29 @@ fn run_join_in_each_unframed(j: &JoinRule, head: usize, store: &Store, syms: &mu
                 cx.error=Some(super::aggregation::sum_value(*value).unwrap_err());return;
             }
         // A node read a batch at a time (decision 0706 E1): the row waits with the step's others. Counted as
-        // gone past every step, so no factored step records it as failed while it waits.
-        if let Some(Some((_, rows))) = cx.batch.get_mut(i) && cx.pending.is_empty() {
+        // gone past every step, so no factored step records it as failed while it waits. Not while the walk holds a
+        // scratch text (`texts`): a slot may name it, and it is gone when its step returns, before the batch runs (a
+        // phase's `@cat("m", x)` of a node's text read `m.`, its tests ordered so the text came before the batched
+        // step, ec929805d0). A deferred symbol lives to the morsel's end, past the batches' flush.
+        // A view's test of a bound node against a constant whose bits its source built ahead (the filter's prepare):
+        // its apply is the node's bit. Not a first step (its rows are a cut's), a delta's, a fused or ranged one, or
+        // a screened one.
+        if let Some(Step::Atom { src, neg, keys, binds, tests }) = j.steps.get(i)
+            && i > 0 && i != cx.only_step && binds.is_empty() && !matches!(cx.vbits[i], Some(None))
+            && j.fused[i].is_none() && j.ranges[i].is_none() && cx.screen.is_none_or(|f| f.step != i)
+            && let Some(found) = cands::value_bits_test(j, src, keys, tests, slots, &mut cx.vbits[i], &mut cx.hints[i][0])
+        {
+            if found != *neg { go(cx, i + 1, slots); }
+            return;
+        }
+        if let Some(Some((_, rows))) = cx.batch.get_mut(i) && cx.pending.is_empty() && cx.texts.is_empty() {
             rows.extend_from_slice(slots);
             cx.deep = j.steps.len();
             if rows.len() >= kinds::BATCH * slots.len() { run_batch(cx, i); }
             return;
         }
         let Some(step) = j.steps.get(i) else {
-            cx.row.clear();
-            for o in &j.out {
-                let v = match o { Term::Slot(s) => slots[*s], Term::Const(c) => *c, Term::Cat(a, b) => cat(cx.syms, slots[*a], slots[*b]) };
-                cx.row.push(v);
-            }
-            cx.n += 1;
-            if let Some(c) = &mut cx.collect { c.extend_from_slice(&cx.row); return; }
-            // Decision 0462: no relation past the width cap. Its rows and those this walk made (an upper bound: some
-            // may repeat) stop at it; the run stops or cuts the probe (`width`), never fills memory.
-            let rel = &store.rels[cx.head];
-            if cx.fresh[cx.head].n + rel.n >= cx.cap { cx.error = Some(super::width::too_wide(&rel.table, cx.cap)); return; }
-            cx.fresh[cx.head].emitted += 1;
-            cx.fresh[cx.head].offer(&cx.row, rel);
+            emit_head(cx, slots);
             return;
         };
         /// The candidates: an input's index on exactly the key columns, a component relation's composite index, or
@@ -10063,8 +10501,23 @@ fn run_join_in_each_unframed(j: &JoinRule, head: usize, store: &Store, syms: &mu
                 if i > 0 && (*neg || binds.is_empty()) && i != cx.only_step && j.fused[i].is_none() && j.ranges[i].is_none()
                     && let Some(found) = cands::node_bits_test(j, src, keys, tests, cx.key.first().copied().unwrap_or(0), &mut cx.hints[i][0])
                 {
+                    if cx.clock.is_some() { count_match(j, i, u64::from(found), true); }
                     if found != *neg { go(cx, i + 1, slots); }
                     return;
+                }
+                // A derived input's lookup (`lookups`: its key measured to name at most one row): its one row read by its
+                // index, no candidates and no loop (`cands::read_one`). A view's lookup is batched (`kinds::OwnRead`). Not a
+                // first step, whose rows may be handed or cut, or a delta's.
+                if i > 0 && i != cx.only_step && j.lookups.get(i).copied().unwrap_or(false) {
+                    let mut row = [0i64; READ];
+                    if let Some(found) = cands::read_one(j, src, keys, tests, &cx.key, &mut row) {
+                        if cx.clock.is_some() { count_match(j, i, u64::from(found), true); }
+                        if found && !*neg {
+                            for &(c, s) in binds { slots[s] = row[c]; }
+                        }
+                        if found != *neg { go(cx, i + 1, slots); }
+                        return;
+                    }
                 }
                 // A test by several bound columns whose filter rejects its key (decision 0706 E2): no row holds it.
                 if i > 0 && (*neg || binds.is_empty()) && i != cx.only_step && j.fused[i].is_none() && j.ranges[i].is_none()
@@ -10127,7 +10580,9 @@ fn run_join_in_each_unframed(j: &JoinRule, head: usize, store: &Store, syms: &mu
                 }
                 if i == 0 && cx.budget != u64::MAX {
                     let mut list = rerail_blocks::vector::Vector::new();
+                    if cx.clock.is_some() { count_shape(j, i, SITE_LIST0, cands_kind(&cands), 0); }
                     cands.any(|id| { if only.as_ref().is_none_or(|o| o.has(id)) { list.push(id) } false });
+                    if cx.clock.is_some() && let Some(s) = j.shapes.get(i) { s[3 + SITE_LIST0].add(list.len() as u64); }
                     cx.list0 = Some((RowsOf::of(j, src), list.clone()));
                     cands = Cands::Owned(list);
                 }
@@ -10173,21 +10628,47 @@ fn run_join_in_each_unframed(j: &JoinRule, head: usize, store: &Store, syms: &mu
                         // (`cands::holds`), the row's values in the slots its keys read.
                         let mut asked = std::mem::take(&mut s.asked);
                         asked.resize_with(f.tests.len(), Default::default);
-                        let (j, store) = (cx.j, cx.store);
+                        let asked = std::cell::RefCell::new(asked);
+                        let (j, store, profiled) = (cx.j, cx.store, cx.clock.is_some());
+                        // Each test asked of the chunk at once (`cands::ask_chunk`): its input read by the key column in
+                        // one loop. Where it has no such read (`false`), `held` asks it row by row as the walk's test
+                        // step asks it (`look`, `holds`), the row's values in the slots its keys read.
+                        let ask = |t: usize, columns: &mut [rerail_blocks::vector::Vector<i64>], params: &[i64], alive: &mut [u64], n: usize, k: usize, looks: &[(usize, usize)]| {
+                            let test = &f.tests[t];
+                            let at = i + 1 + test.at;
+                            let step = &j.steps[at];
+                            match cands::ask_chunk(j, step, test, columns, params, alive, n, k, looks, &mut asked.borrow_mut()[t]) {
+                                Some((none, one)) => {
+                                    if profiled { count_asks(j, at, none, one); }
+                                    true
+                                }
+                                None => {
+                                    if profiled && let Some(c) = j.shapes.get(at) {
+                                        let live: u32 = alive.iter().map(|w| w.count_ones()).sum();
+                                        c[27 + cands::chunk_refusal(j, step, test)].add(u64::from(live));
+                                    }
+                                    false
+                                }
+                            }
+                        };
                         let held = |t: usize, r: usize, columns: &[rerail_blocks::vector::Vector<i64>], params: &[i64], out: &mut [i64]| {
                             let test = &f.tests[t];
+                            let at = i + 1 + test.at;
                             for &(slot, b) in &test.slots {
                                 slots[slot] = match b { rowcode::Bind::Column(k) => columns[k][r], rowcode::Bind::Param(k) => params[k] };
                             }
                             // A lookup: the one row its key names, its values of the columns it binds in `out`.
-                            if j.lookups.get(i + 1 + test.at).copied().unwrap_or(false) {
-                                return cands::look(j, &j.steps[i + 1 + test.at], store, slots, &mut asked[t], out);
-                            }
-                            cands::holds(j, &j.steps[i + 1 + test.at], store, slots, &mut asked[t])
+                            let found = if j.lookups.get(at).copied().unwrap_or(false) {
+                                cands::look(j, &j.steps[at], store, slots, &mut asked.borrow_mut()[t], out)
+                            } else {
+                                cands::holds(j, &j.steps[at], store, slots, &mut asked.borrow_mut()[t])
+                            };
+                            if profiled { count_asks(j, at, u64::from(!found), u64::from(found)); }
+                            found
                         };
                         let words: rerail_blocks::frame::InlineVec<u64, { rowcode::CHUNK / 64 }> =
-                            f.run(s, |m, n| if m + 1 < f.steps { bump(m + 1, n); added.set(added.get() + n) }, held).iter().copied().collect();
-                        s.asked = asked;
+                            { let _kind = rerail_prof::work::doing(rerail_prof::work::CHUNK); f.run(s, |m, n| if m + 1 < f.steps { bump(m + 1, n); added.set(added.get() + n) }, ask, held) }.iter().copied().collect();
+                        s.asked = asked.into_inner();
                         // The chunk's filter work is charged after its rows run (below): charged first, a chunk
                         // whose filters alone spend the budget cut before its first row, every run (no progress).
                         'rows: for (w, &word) in words.iter().enumerate() {
@@ -10202,6 +10683,10 @@ fn run_join_in_each_unframed(j: &JoinRule, head: usize, store: &Store, syms: &mu
                                     slots[slot] = match b { rowcode::Bind::Column(k) => s.columns[k][r], rowcode::Bind::Param(k) => s.params[k] };
                                 }
                                 if i == 0 { cx.at0 = s.ids[r]; cx.seen0 = true; }
+                                if cx.clock.is_some() && let Some(c) = j.shapes.get(i) {
+                                    let next = i + 1 + f.steps;
+                                    c[if next >= j.steps.len() { 24 } else if j.lookups.get(next).copied().unwrap_or(false) { 25 } else { 26 }].add(1);
+                                }
                                 go(cx, i + 1 + f.steps, slots);
                                 if cut.is_some_and(|made| cx.n > made) { break 'rows; }
                             }
@@ -10214,10 +10699,14 @@ fn run_join_in_each_unframed(j: &JoinRule, head: usize, store: &Store, syms: &mu
                     }
                     let cut = cut.then_some(made);
                     let witnessed = |cx: &Ctx<'_, '_>| cut.is_some_and(|made| cx.n > made);
+                    let shape = cx.clock.is_some().then(|| cands_kind(&cands));
+                    let (mut walked, mut matched) = (0u64, 0u64);
                     rows.each(cands, need, &mut last, |id, row| {
+                        walked += 1;
                         if cx.stop || witnessed(cx) { return true; }
                         if rows.dead(id) || only.as_ref().is_some_and(|o| !o.has(id)) { return false; }
                         if !keys.iter().all(|&(c, k)| exact >> c & 1 != 0 || row.at(c) == val(slots, k)) || !tests.iter().all(|&(c, c0)| row.at(c) == row.at(c0)) { return false; }
+                        matched += 1;
                         for &(k, c) in &f.gather { s.columns[k].push(row.at(c)); }
                         if i == 0 { s.ids.push(id); }
                         s.rows += 1;
@@ -10227,6 +10716,7 @@ fn run_join_in_each_unframed(j: &JoinRule, head: usize, store: &Store, syms: &mu
                         }
                         false
                     });
+                    if let Some(k) = shape { count_shape(j, i, SITE_GATHER, k, walked); count_match(j, i, matched, false); }
                     if s.rows > 0 && !cx.stop && !witnessed(cx) { flush(cx, i, f, &mut s, slots, cut); }
                     s.rows = 0;
                     s.ids.clear();
@@ -10244,12 +10734,16 @@ fn run_join_in_each_unframed(j: &JoinRule, head: usize, store: &Store, syms: &mu
                 // tested against `fv` by `$m` alone and every one rejected, where few distinct `$m` were tested.
                 let factor = if exists { None } else { cx.factor[i] };
                 if factor.is_some() { cx.failed[i].begin_probe(); }
+                let shape = cx.clock.is_some().then(|| cands_kind(&cands));
+                let (mut walked, mut matched) = (0u64, 0u64);
                 let found = rows.each(cands, need, &mut last, |id, row| {
                     cx.tally[1] += 1;
                     cx.tally[class + 1] += 1;
+                    walked += 1;
                     if cx.stop { return true; }
                     if rows.dead(id) || only.as_ref().is_some_and(|o| !o.has(id)) { return false; }
                     if !keys.iter().all(|&(c, k)| exact >> c & 1 != 0 || row.at(c) == val(slots, k)) || !tests.iter().all(|&(c, c0)| row.at(c) == row.at(c0)) { return false; }
+                    matched += 1;
                     if exists { return true; }
                     for &(c, s) in binds { slots[s] = row.at(c); }
                     if i == 0 { cx.at0 = id; cx.seen0 = true; }
@@ -10282,6 +10776,7 @@ fn run_join_in_each_unframed(j: &JoinRule, head: usize, store: &Store, syms: &mu
                     // step makes the same one again (`tail`).
                     i >= cx.cut_from && cx.n > made
                 });
+                if let Some(k) = shape { count_shape(j, i, SITE_WALK, k, walked); count_match(j, i, matched, false); }
                 if reads_delta { cx.only = only; }
                 cx.last[i] = Some(last);
                 if exists && found != *neg { go(cx, i + 1, slots); }
@@ -10532,6 +11027,7 @@ fn run_join_in_each_unframed(j: &JoinRule, head: usize, store: &Store, syms: &mu
             Step::Eq { a, b } => if val(slots, *a) == val(slots, *b) { go(cx, i + 1, slots) },
             Step::Ne { a, b } => if val(slots, *a) != val(slots, *b) { go(cx, i + 1, slots) },
             Step::Func { name, kinds, args, out, bind, texts, kept } => {
+                let _kind = rerail_prof::work::doing(rerail_prof::work::TEXT);
                 use crate::code_rule_dsl::logic::strings::functions::{eval, Kind};
                 use crate::code_rule_dsl::facts::vtab::NodeRead;
                 use rusqlite::types::Value;
@@ -10562,9 +11058,8 @@ fn run_join_in_each_unframed(j: &JoinRule, head: usize, store: &Store, syms: &mu
                     // A symbol's value, while the walk has deferred no text: the text's atom from its term, with no
                     // hash of the text (decision 0706 E1). A text deferred, it is read: the atom of a text deferred
                     // here would not be the deferred value.
-                    let as_atom = probe & (TEXT_OUT | UNREAD_OUT) == 0 && cx.syms.defers_none();
-                    let arena = Arc::as_ptr(&cx.syms.atoms).cast::<()>();
-                    let atom = if as_atom { nodes.and_then(|s| s.node_text_atom(name, val(slots, args[0]), arena)) } else { None };
+                    let as_atom = more.is_empty() && probe & (TEXT_OUT | UNREAD_OUT) == 0 && cx.syms.defers_none();
+                    let atom = if as_atom { nodes.and_then(|s| s.node_text_atom(name, val(slots, args[0]), (Arc::as_ptr(cx.syms.atoms()).cast(), cx.syms.atoms().database()))) } else { None };
                     if let Some(a) = atom {
                         kinds::count_term_atom_for_tests();
                         Some(a)
@@ -10763,11 +11258,11 @@ fn run_join_in_each_unframed(j: &JoinRule, head: usize, store: &Store, syms: &mu
                     let failed = factor.iter().map(|_| Default::default()).collect();
                     let mut w = Ctx { j, head, store, syms: &mut syms, fresh: &mut fresh, n: 0, key: rerail_blocks::vector::Vector::new(), row: rerail_blocks::vector::Vector::new(), error: None, cap, pending: Vec::new(),
                                       scratch: j.steps.iter().map(|_| rowcode::Scratch::default()).collect(), texts: Vec::new(),
-                                      collect: if collecting { Some(&mut rows) } else { None }, at0: 0, seen0: false, hints: vec![[0; runs::HINTS]; j.steps.len()], last: LastProbe::for_steps(j.steps.len()),
+                                      collect: if collecting { Some(&mut rows) } else { None }, at0: 0, seen0: false, hints: vec![[0; runs::HINTS]; j.steps.len()], vbits: vec![None; j.steps.len()], last: LastProbe::for_steps(j.steps.len()),
                                       factor, screen, batch: kinds::batches(j, share == u64::MAX || !collecting, screen.map(|f| f.step), None), screening: Default::default(), tally: [0; 10], failed, snap: rerail_blocks::vector::Vector::new(), skipped: 0, deep: 0, work: 0, budget: share, stop: false,
                                       only_step: usize::MAX, only: None, list0: None, cut_from,
                                       counts: j.counts.iter().map(|_| Default::default()).collect(), first: Some((rows_of_first(j, src, store), first)),
-                                      left0: None, clock: StepClock::start(j.steps.len()), extreme: extremes(j) };
+                                      left0: None, clock: StepClock::start(j, store.rels.get(head).map_or("", |r| &*r.table)), extreme: extremes(j) };
                     let mut slots = slots.to_vec();
                     go(&mut w, 0, &mut slots);
                     flush_batches(&mut w);
@@ -10868,6 +11363,7 @@ fn run_join_in_each_unframed(j: &JoinRule, head: usize, store: &Store, syms: &mu
     /// with their atoms in place of its deferred values, in the head's columns that may hold a made text
     /// (`made_columns`); then each morsel's rows settled, on the pool, as a morsel that made no text settles its own.
     fn settle_deferred(cx: &mut Ctx<'_, '_>, outs: &mut [(&mut Vec<String>, &mut Fresh, &mut Vector<i64>)]) {
+        let _kind = rerail_prof::work::doing(rerail_prof::work::HEAD);
         let mut order: Vec<&str> = Vec::new();
         let mut seen: HashMap<&str, usize> = HashMap::default();
         let at: Vec<Vector<usize>> = outs.iter().map(|(texts, _, _)| texts.iter().map(|t| *seen.entry(t.as_str()).or_insert_with(|| { order.push(t.as_str()); order.len() - 1 })).collect()).collect();
@@ -10966,12 +11462,12 @@ fn run_join_in_each_unframed(j: &JoinRule, head: usize, store: &Store, syms: &mu
         join_filter::JoinFilter::choose(j, store)
     } else { None };
     let no_collect = collect.is_none();
-    let mut cx = Ctx { j, head, store, syms, fresh, n: 0, key: rerail_blocks::vector::Vector::new(), row: rerail_blocks::vector::Vector::new(), error: None, cap: super::width::Limits::here().cap, pending: Vec::new(), scratch, texts: Vec::new(), collect, at0: 0, seen0: false, hints: vec![[0; runs::HINTS]; j.steps.len()], last: LastProbe::for_steps(j.steps.len()),
+    let mut cx = Ctx { j, head, store, syms, fresh, n: 0, key: rerail_blocks::vector::Vector::new(), row: rerail_blocks::vector::Vector::new(), error: None, cap: super::width::Limits::here().cap, pending: Vec::new(), scratch, texts: Vec::new(), collect, at0: 0, seen0: false, hints: vec![[0; runs::HINTS]; j.steps.len()], vbits: vec![None; j.steps.len()], last: LastProbe::for_steps(j.steps.len()),
                        factor, screen: screen.as_ref(), batch: kinds::batches(j, limit.is_none() || no_collect, screen.as_ref().map(|f| f.step), limit.as_ref().and_then(|l| l.only.as_ref()).map(|o| o.0)), screening: Default::default(), tally: [0; 10], failed, snap: rerail_blocks::vector::Vector::new(), skipped: 0, deep: 0,
                        work: 0, budget: limit.as_ref().map_or(u64::MAX, |l| l.budget), stop: false,
                        only_step: limit.as_ref().and_then(|l| l.only.as_ref()).map_or(usize::MAX, |o| o.0), only: limit.and_then(|l| l.only).map(|o| o.1), list0: None,
                        cut_from: usize::MAX, counts: j.counts.iter().map(|_| Default::default()).collect(), first: None, left0: None,
-                       clock: StepClock::start(j.steps.len()), extreme: extremes(j) };
+                       clock: StepClock::start(j, store.rels.get(head).map_or("", |r| &*r.table)), extreme: extremes(j) };
     if cx.collect.is_none() { cx.cut_from = tail(j); }
     let t_setup = t_call.map(|t| t.elapsed());
     let mut slots = vec![0i64; j.nslots];
@@ -11067,9 +11563,24 @@ fn run_join_in_each_unframed(j: &JoinRule, head: usize, store: &Store, syms: &mu
             Src::Delta(r) => format!("{} (delta)", store.rels[*r].table),
         };
         let mut key = format!("{entry}: {}", store.rels.get(head).map_or("-", |r| r.table.as_str()));
-        for st in &j.steps {
+        // How each step runs, as planned: an atom whose filters run as its chunk's row program (`fuses`) and those
+        // filters (`fused`, `rowcode`; a cut or a delta's step walks them), a lookup's one row (`look`), a batch of
+        // node reads, keyed probes or pairs (`own`, `keyed`, `pairs`, decision 0706), or the walk's row by row.
+        let form = |i: usize| -> &'static str {
+            if (0..i).any(|k| j.fused_at(k).is_some_and(|f| i <= k + f.steps)) { return "fused"; }
+            if j.fused_at(i).is_some() && matches!(cx.batch.get(i), Some(Some((kinds::Batched::Keyed(_), _)))) { return "span"; }
+            if j.fused_at(i).is_some() { return "fuses"; }
+            if j.lookups.get(i).copied().unwrap_or(false) { return "look"; }
+            match cx.batch.get(i) {
+                Some(Some((kinds::Batched::Own(_), _))) => "own",
+                Some(Some((kinds::Batched::Keyed(_), _))) => "keyed",
+                Some(Some((kinds::Batched::Held(_), _))) => "pairs",
+                _ => "walk",
+            }
+        };
+        for (i, st) in j.steps.iter().enumerate() {
             let what = match st { Step::Atom { src, .. } | Step::Scalar { src, .. } | Step::StrJoin { src, .. } => name_of(src), _ => String::new() };
-            key.push_str(&format!("\n{} {what}", shape_token(st)));
+            key.push_str(&format!("\n{} @{} {what}", shape_token(st), form(i)));
         }
         {
             let plans = crate::code_rule_dsl::logic::run::local::<WalkPlans>();
@@ -11879,6 +12390,33 @@ pub mod posted_tests {
         assert!(fresh.index[0].get().is_none(), "no index of the column in order");
     }
 
+    /// A derived input's key is measured once (`Csr::at_most_one`): one live row a key, or more; its one row is read
+    /// by the index a probe reads (`cands::read_one_in`), and a key with more rows has no such read.
+    #[test]
+    fn a_derived_inputs_key_of_one_row_is_measured_and_read() {
+        let made = |rows: &[[i64; 3]]| {
+            let mut r = Rel::new("r", b"iii");
+            for row in rows { r.push(row); } // copy: not block data (a test's input rows)
+            Arc::new(InRel::moved(r))
+        };
+        let unique = made(&[[1, 10, 100], [2, 20, 200], [3, 30, 300]]);
+        let twice = made(&[[1, 10, 100], [1, 11, 101], [3, 30, 300]]);
+        assert!(unique.index(&[0]).at_most_one(&unique));
+        assert!(!twice.index(&[0]).at_most_one(&twice), "1 has two rows");
+        assert!(twice.index(&[0, 1]).at_most_one(&twice), "(1, 10) and (1, 11) one each");
+        assert!(twice.index(&[2]).at_most_one(&twice));
+        let read = |rel: &InRel, cols: &[usize], key: &[i64]| {
+            let ix = rel.index(cols);
+            let keys: Vec<(usize, Key)> = cols.iter().zip(key).map(|(&c, &k)| (c, Key::Const(k))).collect();
+            let mut out = [0i64; READ];
+            cands::read_one_in(rel, &ix, &keys, &[], key, &mut out).map(|found| found.then(|| out[..3].to_vec()))
+        };
+        assert_eq!(read(&unique, &[0], &[2]), Some(Some(vec![2, 20, 200])));
+        assert_eq!(read(&unique, &[0], &[5]), Some(None), "no row");
+        assert_eq!(read(&twice, &[0, 1], &[1, 11]), Some(Some(vec![1, 11, 101])));
+        assert_eq!(read(&twice, &[0], &[1]), None, "two rows: no one-row read");
+    }
+
     /// A source with no statistics of its own, so `measured` measures it.
     struct Unknown(Arc<dyn crate::code_rule_dsl::facts::vtab::Source>);
     impl crate::code_rule_dsl::facts::vtab::Source for Unknown {
@@ -11911,7 +12449,7 @@ pub mod probe_tests {
     fn a_tested_result_reads_its_slot() {
         use steps::Step as Made;
         // The steps' plan, read as every reader reads it (`steps::Plan`'s view).
-        let plan = |steps: Vec<Made>| steps::Plan { steps, out: Vec::new(), nslots: 4, multi: Vec::new(), probes: Vec::new(), fused: Vec::new(), spec: 0, from: Vector::new(), plan_steps: 0, ranges: Vec::new(), lookups: Vec::new() }.encode();
+        let plan = |steps: Vec<Made>| steps::Plan { steps, out: Vec::new(), nslots: 4, multi: Vec::new(), probes: Vec::new(), fused: Vec::new(), spans: Vec::new(), spec: 0, from: Vector::new(), plan_steps: 0, ranges: Vec::new(), lookups: Vec::new(), one: Vec::new() }.encode();
         // Slots: 0 the whole, 1 and 2 its parts, 3 the text the function reads.
         let split = || Made::Split { whole: Key::Slot(0), a: Some(1), b: Some(2), ka: Key::Slot(1), kb: Key::Slot(2), last: false };
         let tested = |out| Made::Func { name: "substr", kinds: &[Kind::Text, Kind::Number, Kind::Number], args: vec![Key::Slot(3), Key::Const(0), Key::Const(1)], out, bind: false, texts: None, kept: None };
@@ -11938,7 +12476,7 @@ pub mod probe_tests {
         use steps::Step as Made;
         const DOT: i64 = 7;
         let plan = |steps: Vec<Made>, out: Vec<Term>| {
-            let mut plan = steps::Plan { steps, out, nslots: 4, multi: Vec::new(), probes: Vec::new(), fused: Vec::new(), spec: 0, from: Vector::new(), plan_steps: 0, ranges: Vec::new(), lookups: Vec::new() };
+            let mut plan = steps::Plan { steps, out, nslots: 4, multi: Vec::new(), probes: Vec::new(), fused: Vec::new(), spans: Vec::new(), spec: 0, from: Vector::new(), plan_steps: 0, ranges: Vec::new(), lookups: Vec::new(), one: Vec::new() };
             let s = plan.encode();
             plan.edit(last_splits(&s.steps, &s.out, |c| c == DOT));
             plan.encode()
@@ -12069,6 +12607,9 @@ pub struct SetfixCounts {
     /// Rows of chunks whose row program read a lookup's values with the chunk's others (`setfix::lookups`,
     /// `rowcode::ViewTest::looks`).
     pub view_looks: std::sync::atomic::AtomicU64,
+    /// A fused chunk's tests asked of it at once (`cands::ask_chunk`): by a node-keyed bit, by value, by a view's read.
+    /// And a derived input's whole key by its hash (`cands::ask_derived_chunk`).
+    pub chunk_asks: [std::sync::atomic::AtomicU64; 4],
 }
 
 /// The run's `SetfixCounts`.

@@ -1,6 +1,7 @@
 //! A step's candidates (moved out of `run_join_in_each`, the spike on a test asked as the probe alone): where an
 //! atom's rows are, and the rows a key finds there.
 
+use std::sync::Arc;
 use super::*;
 
 /// Where an atom's candidate tuples are: an input relation or a component relation, by id.
@@ -152,6 +153,7 @@ pub(super) fn exact_cols(j: &JoinRule, src: &Src, membership: bool) -> u64 {
 /// node-keyed index (one group found, `hint` the last, and one bit), not by probing an index and reading candidates.
 /// `None` when the input has no such index (`Csr::node_bits_has`): the step probes as before.
 pub(super) fn node_bits_test(j: &JoinRule, src: &Src, keys: &[(usize, Key)], tests: &[(usize, usize)], v: i64, hint: &mut u32) -> Option<bool> {
+    let _kind = rerail_prof::work::doing(rerail_prof::work::DERIVED);
     let Src::In(rel, ix) = src else { return None };
     if keys.len() != 1 || !tests.is_empty() {
         return None;
@@ -161,6 +163,82 @@ pub(super) fn node_bits_test(j: &JoinRule, src: &Src, keys: &[(usize, Key)], tes
         return None;
     }
     ix.node_bits_has(rel, v, hint)
+}
+
+/// Whether the prepare of a filter by a view's constant is read (`access::Kind::ValueBits`): `RERAIL_VALUE_BITS=off`
+/// reads the views' rows by node as before (a measurement aid).
+pub(super) fn value_bits_on() -> bool {
+    rerail_prof::code_rule_dsl::logic::profile::setting(|| std::env::var("RERAIL_VALUE_BITS").map_or(true, |v| v != "off"))
+}
+
+/// A view's test of a bound node against a constant (`kind(n, K)`): the source's columns of the bound node and of the
+/// constant, and the constant, where the view is unfiltered. The source says whether it keeps bits for them
+/// (`Source::value_bits`: the node column its own).
+pub(super) fn value_bits_need(j: &JoinRule, src: &Src, keys: &[(usize, Key)], tests: &[(usize, usize)]) -> Option<(usize, usize, i64)> {
+    let Src::In(rel, ix) = src else { return None };
+    if keys.len() != 2 || !tests.is_empty() {
+        return None;
+    }
+    let (rel, _) = j.src_in(rel, ix);
+    let v = rel.view.as_ref()?;
+    if v.ids.is_some() || !v.eqs.is_empty() {
+        return None;
+    }
+    let (node, (col, k)) = match (keys[0], keys[1]) {
+        ((a, Key::Slot(_)), (b, Key::Const(k))) | ((b, Key::Const(k)), (a, Key::Slot(_))) => (a, (b, k)),
+        _ => return None,
+    };
+    Some((v.cols[node], v.cols[col], k))
+}
+
+/// The apply of a filter by a view's constant (prepare and apply): the bit of the step's bound node in the bits the
+/// view's source built ahead for the constant (`Source::build_value_bits`), no row of the view read. `seen` is the
+/// walk's for the step: the bits' chunk found at its first test (`Some(None)`: none, the row is read as before).
+/// `None` where the step has no bits.
+#[inline]
+pub(super) fn value_bits_test(j: &JoinRule, src: &Src, keys: &[(usize, Key)], tests: &[(usize, usize)], slots: &[i64], seen: &mut Option<Option<crate::code_rule_dsl::facts::vtab::ValueBits>>, hint: &mut u32) -> Option<bool> {
+    if seen.is_none() {
+        let b = value_bits_on().then(|| value_bits_of(j, src, keys, tests)).flatten();
+        if crate::code_rule_dsl::prof::on() && value_bits_need(j, src, keys, tests).is_some() {
+            crate::code_rule_dsl::prof::count_named_args(format_args!("view bits: a walk's step {}", match &b { Some(b) if b.others.is_empty() => "found", Some(_) => "found, beside parts", None => "found none" }), 1);
+        }
+        *seen = Some(b);
+    }
+    let bits = seen.as_ref()?.as_ref()?;
+    let n = keys.iter().find_map(|&(_, k)| match k { Key::Slot(s) => Some(slots[s]), Key::Const(_) => None })?;
+    // A node of a document a part holds rows of: read as without the bits.
+    if !bits.others.is_empty() && bits.others.binary_search(&((n >> 32) as u32)).is_ok() {
+        return None;
+    }
+    #[cfg(any(test, feature = "test-hooks"))]
+    VALUE_BIT_TESTS.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+    if crate::code_rule_dsl::prof::on() {
+        crate::code_rule_dsl::prof::count_named_args(format_args!("view bits: tests"), 1);
+    }
+    // SAFETY: a chunk the source built and keeps in its block while it lives (`Source::value_bits`), which the walk's
+    // join holds.
+    Some(unsafe { rerail_blocks::relation::NodeIndex::in_chunk(bits.bits) }.has(n, hint))
+}
+
+/// The bits of `value_bits_need`'s constant, where the source has built them.
+fn value_bits_of(j: &JoinRule, src: &Src, keys: &[(usize, Key)], tests: &[(usize, usize)]) -> Option<crate::code_rule_dsl::facts::vtab::ValueBits> {
+    let (node, col, k) = value_bits_need(j, src, keys, tests)?;
+    let Src::In(rel, ix) = src else { return None };
+    let v = j.src_in(rel, ix).0.view.as_ref()?;
+    if v.src.value_bits_gen() == 0 {
+        return None;
+    }
+    v.src.value_bits(node, col, k)
+}
+
+/// Tests: the view tests answered by a bit (`value_bits_test`).
+#[cfg(any(test, feature = "test-hooks"))]
+pub(super) static VALUE_BIT_TESTS: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+
+/// Tests: the view tests a bit has answered in this process.
+#[cfg(any(test, feature = "test-hooks"))]
+pub fn value_bit_tests_for_tests() -> u64 {
+    VALUE_BIT_TESTS.load(std::sync::atomic::Ordering::Relaxed)
 }
 
 /// A membership test of a derived input by several bound columns (decision 0706 E2): whether the filter the level's
@@ -176,6 +254,7 @@ pub(super) fn filter_rejects(j: &JoinRule, src: &Src, keys: &[(usize, Key)], tes
 
 #[allow(clippy::too_many_arguments)]
 pub(super) fn candidates<'a>(j: &'a JoinRule, src: &'a Src, store: &'a Store, key: &[i64], keys: &[(usize, Key)], hints: &mut [u32; runs::HINTS], last: &mut LastProbe, need: u64, within: Within, stream: bool) -> (Rows<'a>, Cands<'a>) {
+    let _kind = rerail_prof::work::doing(rerail_prof::work::PROBE);
     match src {
         Src::In(rel, ix) => {
             let (rel, ix) = j.src_in(rel, ix);
@@ -359,6 +438,8 @@ pub(super) fn scan_within<'a>(rows: Rows<'a>, lo: u32, hi: u32, within: Within) 
 #[derive(Default)]
 pub(super) struct Asked {
     key: rerail_blocks::vector::Vector<i64>,
+    /// The test's view bits by its constant, found at its first test (`value_bits_test`).
+    bits: Option<Option<crate::code_rule_dsl::facts::vtab::ValueBits>>,
     hints: [u32; runs::HINTS],
     last: LastProbe,
 }
@@ -367,12 +448,16 @@ pub(super) struct Asked {
 /// a row matches its keys and its column pairs. The join's step for it (`enter`'s `Step::Atom`, a test) does the same
 /// inside a walk, with the walk's frames around it (decision 0561, "a test asked directly").
 pub(super) fn holds(j: &JoinRule, step: &Step, store: &Store, slots: &[i64], asked: &mut Asked) -> bool {
+    let _kind = rerail_prof::work::doing(rerail_prof::work::TEST);
     let Step::Atom { src, keys, tests, binds, .. } = step else { unreachable!("a test is an atom") };
     debug_assert!(binds.is_empty(), "a test binds nothing");
     let val = |k: Key| match k {
         Key::Slot(s) => slots[s],
         Key::Const(c) => c,
     };
+    if let Some(found) = value_bits_test(j, src, keys, tests, slots, &mut asked.bits, &mut asked.hints[0]) {
+        return found;
+    }
     asked.key.clear();
     asked.key.extend(keys.iter().map(|&(_, k)| val(k)));
     if let Some(found) = node_bits_test(j, src, keys, tests, asked.key.first().copied().unwrap_or(0), &mut asked.hints[0]) {
@@ -404,17 +489,281 @@ pub(super) fn holds(j: &JoinRule, step: &Step, store: &Store, slots: &[i64], ask
     })
 }
 
-/// A lookup's row a fused chunk's batch could not read (`rowcode::ViewTest::looks`, `found` 2: a values part's
-/// node), `slots` the row's values: whether its one row is there and holds its keys and tests, its values of the
-/// columns it binds in `out` (by column), probed, its first matching row's.
+/// A derived input's lookup's one row (`setfix::lookups`: its key measured to name at most one live row), read by
+/// its index (`read_one_in`): whether it holds the keys and `tests`, its columns in `out`. `None` where it has no
+/// such read now (it probes), and for a view: a view's row by its own id is read in batches by the loop around it
+/// (decision A: `kinds::OwnRead`, `rowcode::ViewTest`).
+pub(super) fn read_one(j: &JoinRule, src: &Src, keys: &[(usize, Key)], tests: &[(usize, usize)], key: &[i64], out: &mut [i64; super::READ]) -> Option<bool> {
+    let Src::In(rel, ix) = src else { return None };
+    if keys.len() > MAX_KEY {
+        return None;
+    }
+    let (rel, ix) = j.src_in(rel, ix);
+    if rel.view.is_some() {
+        return None;
+    }
+    read_one_in(rel, ix, keys, tests, key, out)
+}
+
+/// `read_one` of a derived input whose key has at most one live row (`Csr::at_most_one`): its row found by the index
+/// a probe reads (by value, a one-column key; else the sorted order), no candidates handed to a walk. Its columns in
+/// `out`; whether it is there and holds the keys and tests. `None` where neither index answers it.
+pub(super) fn read_one_in(rel: &InRel, ix: &Csr, keys: &[(usize, Key)], tests: &[(usize, usize)], key: &[i64], out: &mut [i64; super::READ]) -> Option<bool> {
+    let _kind = rerail_prof::work::doing(rerail_prof::work::DERIVED);
+    if rel.k > super::READ || !ix.at_most_one(rel) {
+        return None;
+    }
+    let mut hints = [0u32; runs::HINTS];
+    if keys.len() == 1 && ix.by_value_kind() && let Some(found) = ix.by_value(rel, key[0], &mut hints[0]) {
+        return Some(found.iter().any(|&id| one_row(rel, id, keys, tests, key, out)));
+    }
+    // Its index in the relation's block: the key's bucket, each row checked (`one_row`).
+    if ix.block.is_some() && keys.len() == ix.cols.len() {
+        return Some(ix.get(rel, key).iter().any(|&id| one_row(rel, id, keys, tests, key, out)));
+    }
+    let index = ix.runs(rel)?;
+    let m = index.cols.iter().take_while(|c| ix.cols.contains(c)).count();
+    if m == 0 {
+        return None;
+    }
+    let mut buf = [0i64; MAX_KEY];
+    let at = |c: usize| key[ix.cols.iter().position(|&x| x == c).expect("a key column")];
+    let found = index.find_at(&rel.rows, rel.k, permuted(&index.cols[..m], at, &mut buf), None, &mut hints);
+    Some(found.ids().any(|id| one_row(rel, id, keys, tests, key, out)))
+}
+
+/// Whether row `id` of `rel` is live and holds the step's keys (`key`, in `keys`' order) and tests: its columns then
+/// in `out`.
+fn one_row(rel: &InRel, id: u32, keys: &[(usize, Key)], tests: &[(usize, usize)], key: &[i64], out: &mut [i64; super::READ]) -> bool {
+    if is_dead(&rel.dead, id) {
+        return false;
+    }
+    let row = rel.at(id as usize);
+    if !keys.iter().zip(key).all(|(&(c, _), &k)| row.at(c) == k) || !tests.iter().all(|&(c, c0)| row.at(c) == row.at(c0)) {
+        return false;
+    }
+    for (c, o) in out.iter_mut().enumerate().take(rel.k) {
+        *o = row.at(c);
+    }
+    true
+}
+
+/// A fused test or lookup (`rowcode::Test`, step `step`) asked of every row of a chunk still `alive` at once, where
+/// its one key column is read by value: a loop over the key's column, not a probe a row. Its forms:
+/// - a test of a derived input (binds nothing): the input's node-keyed bit of each value (`Csr::node_bits_has`);
+/// - a lookup of a derived input: each value's row by its value-keyed index (`Csr::by_value`, at most one live row);
+///
+/// A view's test or lookup is not asked here: the chunk's nodes are read by the view in one batch (`rowcode::ViewTest`,
+/// `Source::read_own_batch`, decision A).
+///
+/// A row that passes gets 1 in column `verdict` and a lookup's values in `looks`' columns; one that fails is cleared
+/// in `alive`. Returns the rows it found no row for and those it found one for; `None` (nothing written) where the
+/// step has no such read: the caller asks row by row.
+#[allow(clippy::too_many_arguments)]
+pub(super) fn ask_chunk(j: &JoinRule, step: &Step, test: &rowcode::Test, columns: &mut [Vector<i64>], params: &[i64], alive: &mut [u64], n: usize, verdict: usize, looks: &[(usize, usize)], asked: &mut Asked) -> Option<(u64, u64)> {
+    let Step::Atom { src: Src::In(rel, ix), keys, tests, binds, neg } = step else { return None };
+    if j.src_in(rel, ix).0.view.is_some() {
+        return None;
+    }
+    let one_key = match keys.as_slice() {
+        [(col, Key::Slot(s))] if tests.is_empty() => Some((col, s)),
+        _ => None,
+    };
+    let (rel0, ix0) = j.src_in(rel, ix);
+    let _kind = rerail_prof::work::doing(rerail_prof::work::DERIVED);
+    let Some((col, s)) = one_key else { return ask_derived_chunk(rel0, ix0, keys, tests, *neg, !binds.is_empty(), test, columns, params, alive, n, verdict, looks) };
+    // The key's values: a column of the chunk (a test fused so reads the row, `rowcode::fused`).
+    let kc = test.slots.iter().find_map(|&(x, b)| match b { rowcode::Bind::Column(k) if x == *s => Some(k), _ => None })?;
+    let (rel, ix) = j.src_in(rel, ix);
+    let lookup = !binds.is_empty();
+    let hint = &mut asked.hints[0];
+    let (mut none, mut one) = (0u64, 0u64);
+    // Each alive row's verdict from `found(v)`, its look columns from `got` (input column `c`'s value).
+    let mut each = |columns: &mut [Vector<i64>], alive: &mut [u64], found: &mut dyn FnMut(i64, &mut [i64; super::READ]) -> bool| {
+        let mut got = [0i64; super::READ];
+        for r in 0..n {
+            if alive[r / 64] >> (r % 64) & 1 == 0 {
+                continue;
+            }
+            let hit = found(columns[kc][r], &mut got);
+            if hit { one += 1 } else { none += 1 }
+            if hit != *neg {
+                columns[verdict][r] = 1;
+                for &(k, c) in looks {
+                    columns[k][r] = got[c];
+                }
+            } else {
+                alive[r / 64] &= !(1u64 << (r % 64));
+            }
+        }
+    };
+    let hashed = |columns: &mut [Vector<i64>], alive: &mut [u64]| ask_derived_chunk(rel, ix, keys, tests, *neg, lookup, test, columns, params, alive, n, verdict, looks);
+    match &rel.view {
+        None if ix.cols.len() != 1 || ix.cols[0] != *col => return hashed(columns, alive),
+        None if !lookup => {
+            if ix.node_bits_has(rel, 0, &mut 0).is_none() {
+                return hashed(columns, alive);
+            }
+            run_counts().chunk_asks[0].fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+            each(columns, alive, &mut |v, _| ix.node_bits_has(rel, v, hint).unwrap_or(false));
+        }
+        None => {
+            if rel.k > super::READ || !ix.by_value_kind() || ix.by_value(rel, 0, &mut 0).is_none() {
+                return hashed(columns, alive);
+            }
+            run_counts().chunk_asks[1].fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+            each(columns, alive, &mut |v, got| {
+                let Some(&id) = ix.by_value(rel, v, hint).and_then(|ids| ids.first()) else { return false };
+                let row = rel.at(id as usize);
+                for (c, o) in got.iter_mut().enumerate().take(rel.k) {
+                    *o = row.at(c);
+                }
+                true
+            });
+        }
+        Some(_) => return None,
+    }
+    Some((none, one))
+}
+
+/// A chunk's alive words cleared past its `n` rows (its last word's high bits): a pass over their bits reads rows
+/// `0..n` alone, as a loop to `n` does.
+#[inline]
+fn chunk_rows_only(alive: &mut [u64], n: usize) {
+    if n % 64 != 0 && let Some(w) = alive.get_mut(n / 64) {
+        *w &= (1u64 << (n % 64)) - 1;
+    }
+}
+
+/// `ask_chunk` of a derived input by its whole key (every column of an index `ix`, from the chunk's columns, its
+/// parameters or constants): its keys hashed, a pass over each word of the chunk; their candidates found at once, by
+/// the input's sorted hash (`SortedHash::candidates_word`, the index a walk's test reads) or by its block's hashed
+/// index (`Relation::group`); each candidate checked against its row, a lookup's values written from it.
+#[allow(clippy::too_many_arguments)]
+fn ask_derived_chunk(rel: &InRel, ix: &Csr, keys: &[(usize, Key)], tests: &[(usize, usize)], neg: bool, lookup: bool, test: &rowcode::Test, columns: &mut [Vector<i64>], params: &[i64], alive: &mut [u64], n: usize, verdict: usize, looks: &[(usize, usize)]) -> Option<(u64, u64)> {
+    let _kind = rerail_prof::work::doing(rerail_prof::work::DERIVED);
+    if rel.view.is_some() || keys.is_empty() || keys.len() != ix.cols.len() || keys.len() > MAX_KEY || n > rowcode::CHUNK || (lookup && rel.k > super::READ) {
+        return None;
+    }
+    let sorted = ix.runs_kind() && sorted_hash_on();
+    let block = ix.block.as_ref().filter(|_| !sorted);
+    if !sorted && block.is_none() {
+        return None;
+    }
+    // Each key's value in the chunk, in the index's column order: one of its columns, else one value for the chunk.
+    let mut by = [(false, 0i64); MAX_KEY];
+    for (o, &c) in by.iter_mut().zip(ix.cols.iter()) {
+        let &(_, k) = keys.iter().find(|&&(kc, _)| kc == c)?;
+        *o = match k {
+            Key::Const(v) => (false, v),
+            Key::Slot(s) => match test.slots.iter().find(|&&(x, _)| x == s)?.1 {
+                rowcode::Bind::Column(k) => (true, k as i64),
+                rowcode::Bind::Param(p) => (false, params[p]),
+            },
+        };
+    }
+    let by = &by[..keys.len()];
+    let value = |columns: &[Vector<i64>], q: usize, r: usize| if by[q].0 { columns[by[q].1 as usize][r] } else { by[q].1 };
+    let hash = if sorted { Some(ix.hashed(rel)) } else { None };
+    chunk_rows_only(alive, n);
+    run_counts().chunk_asks[3].fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+    let (mut none, mut one) = (0u64, 0u64);
+    let (mut hs, mut found) = ([0u64; 64], [(0u32, 0u32); 64]);
+    for w in 0..n.div_ceil(64) {
+        let (base, live) = (w * 64, alive[w]);
+        let mut m = live;
+        while m != 0 {
+            let r = m.trailing_zeros() as usize;
+            m &= m - 1;
+            hs[r] = if sorted {
+                super::sorted_hash::hash_key((0..by.len()).map(|q| value(columns, q, base + r)))
+            } else {
+                (0..by.len()).fold(rerail_blocks::SEED, |h, q| rerail_blocks::mix(h, value(columns, q, base + r)))
+            };
+        }
+        if let Some(h) = hash {
+            h.candidates_word(&hs, live, &mut found);
+        }
+        let (mut pass, mut m) = (0u64, live);
+        while m != 0 {
+            let b = m.trailing_zeros() as usize;
+            m &= m - 1;
+            let r = base + b;
+            let cands: &[u32] = match (hash, block) {
+                (Some(h), _) => h.ids(found[b]),
+                (None, Some((ib, i))) => ib.relation().group(*i, hs[b]),
+                (None, None) => &[],
+            };
+            let hit = cands.iter().copied().find(|&id| {
+                if is_dead(&rel.dead, id) {
+                    return false;
+                }
+                let row = rel.at(id as usize);
+                ix.cols.iter().enumerate().all(|(q, &c)| row.at(c) == value(columns, q, r)) && tests.iter().all(|&(c, c0)| row.at(c) == row.at(c0))
+            });
+            if hit.is_some() { one += 1 } else { none += 1 }
+            if hit.is_some() != neg {
+                pass |= 1 << b;
+                columns[verdict][r] = 1;
+                if let Some(id) = hit && lookup {
+                    let row = rel.at(id as usize);
+                    for &(k, c) in looks {
+                        columns[k][r] = row.at(c);
+                    }
+                }
+            }
+        }
+        alive[w] = pass;
+    }
+    Some((none, one))
+}
+
+/// Why `ask_chunk` has no read of a step (profiled, `setfix::SHAPES` 27..34): its names.
+pub const CHUNK_REFUSALS: [&str; 7] = ["other", "view_ids", "derived_part_key", "view_no_read", "view_no_lead", "view_eqs", "derived_no_index"];
+
+/// The reason (`CHUNK_REFUSALS`) a step's chunk ask fell back to row by row: a view's (whose rows by their own id are
+/// read by the view, `rowcode::ViewTest`), or `ask_derived_chunk`'s conditions in turn.
+pub(super) fn chunk_refusal(j: &JoinRule, step: &Step, test: &rowcode::Test) -> usize {
+    let Step::Atom { src: Src::In(rel, ix), keys, .. } = step else { return 0 };
+    let (rel, ix) = j.src_in(rel, ix);
+    let in_chunk = |k: Key| matches!(k, Key::Slot(s) if test.slots.iter().any(|&(x, b)| x == s && matches!(b, rowcode::Bind::Column(_))));
+    match &rel.view {
+        Some(v) if !v.eqs.is_empty() => 5,
+        Some(v) if v.ids.is_some() => 1,
+        // A view's tests and lookups are read by the view a chunk at a time (`rowcode::ViewTest`, decision A): one
+        // asked here is a view that reads no rows by their own id in a column the chunk holds.
+        Some(_) => if keys.iter().any(|&(_, k)| in_chunk(k)) { 3 } else { 4 },
+        None if keys.is_empty() || keys.len() != ix.cols.len() => 2,
+        None => 6,
+    }
+}
+
+/// A lookup's row a fused chunk could not read at once (`rowcode::ViewTest::looks`, `found` 2: a values part's node;
+/// a derived input's, `Test::reads`, where `ask_chunk` has no read of it), `slots` the row's values: whether its one
+/// row is there and holds its keys and tests, its values of the columns it binds in `out` (by column). A derived
+/// input's read by its index (`read_one`); else probed, its first matching row's.
 pub(super) fn look(j: &JoinRule, step: &Step, store: &Store, slots: &[i64], asked: &mut Asked, out: &mut [i64]) -> bool {
+    let _kind = rerail_prof::work::doing(rerail_prof::work::TEST);
     let Step::Atom { src, keys, tests, binds, .. } = step else { unreachable!("a lookup is an atom") };
+    // A lookup that binds nothing is a test: a bit, where the view's bits by its constant are built.
+    if binds.is_empty() && let Some(found) = value_bits_test(j, src, keys, tests, slots, &mut asked.bits, &mut asked.hints[0]) {
+        return found;
+    }
     let val = |k: Key| match k {
         Key::Slot(s) => slots[s],
         Key::Const(c) => c,
     };
     asked.key.clear();
     asked.key.extend(keys.iter().map(|&(_, k)| val(k)));
+    let mut row = [0i64; super::READ];
+    if let Some(found) = read_one(j, src, keys, tests, &asked.key, &mut row) {
+        if found {
+            for &(c, _) in binds {
+                out[c] = row[c];
+            }
+        }
+        return found;
+    }
     let need = binds.iter().fold(0u64, |m, &(c, _)| m | 1 << c) | keys.iter().fold(0u64, |m, &(c, _)| m | 1 << c) | tests.iter().fold(0u64, |m, &(c, c0)| m | 1 << c | 1 << c0);
     let (rows, cands) = candidates(j, src, store, &asked.key, keys, &mut asked.hints, &mut asked.last, need, None, true);
     let mut found = false;

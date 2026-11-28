@@ -205,6 +205,9 @@ pub struct Plan {
     pub multi: Vec<Multi>,
     pub probes: Vec<u8>,
     pub fused: Vec<Option<Bound<rowcode::Fused>>>,
+    /// By step, a fused probe's spanning form (`rowcode::spanning`): its fusion over a chunk of many bindings' rows,
+    /// which the walk's keyed batch runs (decision 0706 E5). Empty: none.
+    pub spans: Vec<Option<Bound<rowcode::Fused>>>,
     pub spec: u64,
     #[archive(flat)]
     pub from: Vector<usize>,
@@ -216,6 +219,10 @@ pub struct Plan {
     /// place, no join loop. Empty: none.
     #[archive(flat)]
     pub lookups: Vec<bool>,
+    /// Per step, whether its key names at most one row (`setfix::at_most_one`): a test, a view's key, a derived
+    /// input's key measured so. Empty: none known.
+    #[archive(flat)]
+    pub one: Vec<bool>,
 }
 
 /// An edit an analysis of the plan's view asks for, made on the owned steps before they are encoded again.
@@ -343,11 +350,13 @@ impl Plan {
             multi: p.multi.iter().map(|m| Multi { rel: m.rel, cols: FlatDecode::decode(&m.cols) }).collect(),
             probes: p.probes.to_vec(),
             fused: p.fused.iter().map(|f| f.as_ref().map(|h| Bound(n.get(h)))).collect(),
+            spans: p.spans.iter().map(|f| f.as_ref().map(|h| Bound(n.get(h)))).collect(),
             spec: p.spec,
             from: FlatDecode::decode(&p.from),
             plan_steps: p.plan_steps,
             ranges: p.ranges.to_vec(),
             lookups: p.lookups.to_vec(),
+            one: p.one.to_vec(),
         }
     }
 }
