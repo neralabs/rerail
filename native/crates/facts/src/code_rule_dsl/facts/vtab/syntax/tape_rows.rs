@@ -137,10 +137,10 @@ pub(super) trait TapeRows: Send + Sync + 'static {
     /// The items (each with its document) a lookup of `value` on a `keyed` column may find, with a row or not: by the
     /// row's own id, its tape node; by a parent's, the nodes under it.
     fn find(&self, batch: &Batch, column: usize, value: i64, each: &mut dyn FnMut(usize, u32)) {
-        // Its document and local id, by its page (plan "Chunk node numbers").
-        let Some((doc, local)) = batch.docs.of_id(value) else { return };
+        let Some(doc) = batch.doc(rerail_blocks::located::Located::key_wide(value), &mut 0) else { return };
         let at = At { batch, doc };
         let p = at.p();
+        let Some(local) = p.local_of((value & 0xffff_ffff) as u32) else { return };
         if column == self.own() {
             let x = p.place_node(local);
             if x != NONE {
@@ -791,7 +791,7 @@ impl VisitIndex {
                     out[l as usize] = i;
                     order.push(l);
                 });
-                super::tree::keys_by_run(&order, |l| rerail_blocks::located::Located(p.located(l)).low() >> rerail_clif::ids::INDEX_BITS, out);
+                super::tree::keys_by_run(&order, |l| (p.global(l) as u32) >> rerail_clif::ids::INDEX_BITS, out);
                 n.max(1)
             })
             .expect("a projection's block holds a view's places")

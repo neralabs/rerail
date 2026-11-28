@@ -442,31 +442,7 @@ impl Reads {
     // Its parameter an address: the entry.
     rel_read!(cache_done, 72, (entry: u64) -> u32);
     rel_read!(dir_doc_of_row, 81, (k: u32, r: u32, memo: u32) -> u32);
-    // An id's document's row, its local id, its document's key: by its page (plan "Chunk node numbers").
-    rel_read!(dir_doc_of_id, 91, (id: u32) -> u32);
-    rel_read!(dir_local_of_id, 92, (id: u32) -> u32);
-    rel_read!(dir_key_of_id, 93, (id: u32) -> u32);
-
-    /// Id `v`'s document key (`docof`, `join_stages`' `doc_of`): its page's in directory `d`'s page table; a negative
-    /// value (no node), or no directory, its `>> 32` as the host's.
-    #[inline]
-    unsafe fn doc_of(self, d: *const ViewDir, v: i64) -> i64 {
-        if v < 0 || d.is_null() {
-            return v >> 32;
-        }
-        i64::from(self.dir_key_of_id(view_block(d), (*d).at, v as u32))
-    }
-
-    /// Node `key`'s document's row in directory `d` and its local id (`join_stages`' `doc_local`): `None` for a value
-    /// that is no id of the chunk, or a document `d` does not hold.
-    #[inline]
-    unsafe fn doc_local(self, d: *const ViewDir, key: i64) -> Option<(u32, u32)> {
-        if !(0..=i64::from(u32::MAX)).contains(&key) || (*d).ndocs == 0 {
-            return None;
-        }
-        let a = self.dir_doc_of_id(view_block(d), (*d).at, key as u32);
-        (a != NONE).then(|| (a, self.dir_local_of_id(view_block(d), (*d).at, key as u32)))
-    }
+    rel_read!(dir_doc_of_key, 82, (key: u32, memo: u32) -> u32);
     // A source's terminator's length at byte `at` (its home's address summed with the source's place).
     rel_read!(lines_terminator_length, 90, (at: u32) -> u32);
 
@@ -607,13 +583,13 @@ impl St<'_> {
     unsafe fn colval(&self, k: u32, t: u32, r: u32) -> i64 {
         let (s, k) = (self.s, k as usize);
         let v = if s.col_kind[k] == 0 { self.rget(r, s.col_idx[k]) } else { self.slot(s.col_idx[k], t) };
-        if s.col_doc[k] != 0 { self.rd.doc_of(s.v_dir, v) } else { v }
+        if s.col_doc[k] != 0 { v >> 32 } else { v }
     }
 
     unsafe fn parval(&self, k: u32, t: u32) -> i64 {
         let (s, k) = (self.s, k as usize);
         let v = if s.par_kind[k] == 0 { s.par_const[k] } else { self.slot(s.par_slot[k], t) };
-        if s.par_doc[k] != 0 { self.rd.doc_of(s.v_dir, v) } else { v }
+        if s.par_doc[k] != 0 { v >> 32 } else { v }
     }
 
     /// Arithmetic bind `j`'s value, as the CPU's checked arithmetic gives it: none on an overflow or a zero divisor.
@@ -722,9 +698,15 @@ impl St<'_> {
     /// A parent's children (`by_parent`) or a node's walk of `has` (`by_has`): its document, its numbered node.
     unsafe fn doc_node(&self, key: i64) -> Option<(*const ViewRow, u32)> {
         let d = self.s.v_dir;
-        let (a, local) = self.rd.doc_local(d, key)?;
+        if key < 0 || (*d).ndocs == 0 {
+            return None;
+        }
+        let a = self.rd.dir_doc_of_key(view_block(d), (*d).at, ((key as u64) >> 32) as u32, NONE);
+        if a == NONE {
+            return None;
+        }
         let e = view_rows(d).add(a as usize);
-        let l = self.rd.walk(NUMBER, d, e, local);
+        let l = self.rd.walk(NUMBER, d, e, key as u32);
         (l != NONE).then_some((e, l))
     }
 
@@ -1207,17 +1189,21 @@ enum NoText {
 }
 
 /// Node `key`'s text, read where its document's source lies (`join_stages`' `node_txt`, decision 0287 §2): its document
-/// and local id by its page (`doc_local`), its numbered node (`number`), its bytes' range in its own
+/// by the directory's search on its key (`dir_doc_of_key`), its numbered node (`number`), its bytes' range in its own
 /// source (`text_span`), read at the source's home. The stage's `node` view binds the directory (`Stage::v_dir`). With
 /// `lines` (`rr_node_text_any`'s), a document's `source` span or a `src_line` span (decision 0353 row 7) is its line's
 /// bytes there (`line_span`), less its terminator where it has one (`line_terminated`, `lines_terminator_length`).
 unsafe fn node_txt(rd: Reads, s: &Stage, key: i64, lines: bool) -> Result<Txt, NoText> {
     let d = s.v_dir;
-    if d.is_null() {
+    if key < 0 || d.is_null() || (*d).ndocs == 0 {
         return Err(NoText::Unheld);
     }
-    let Some((m, low)) = rd.doc_local(d, key) else { return Err(NoText::Unheld) };
+    let m = rd.dir_doc_of_key(view_block(d), (*d).at, ((key as u64) >> 32) as u32, NONE);
+    if m == NONE {
+        return Err(NoText::Unheld);
+    }
     let e = view_rows(d).add(m as usize);
+    let low = key as u64 as u32;
     let source = view_home(d, (*e).homes[2], (*e).source);
     let line = rd.walk64(LINE_SPAN, d, e, low);
     if line != u64::MAX {
@@ -2369,16 +2355,20 @@ unsafe fn fill_i64(dst: *mut i64, n: u32, v: i64) {
     }
 }
 
-/// `n` ids from `src` to `dst`, each as its document's key (`Reads::doc_of`: a load of its page).
-unsafe fn copy_docs(rd: Reads, d: *const ViewDir, src: *const i64, dst: *mut i64, n: u32) {
-    for i in 0..n as usize {
-        *dst.add(i) = rd.doc_of(d, *src.add(i));
+/// `n` values from `src` to `dst`: one copy, or each shifted to its document (`doc`: its high word), 2 a step.
+unsafe fn copy_col(src: *const i64, dst: *mut i64, n: u32, doc: bool) {
+    if !doc {
+        core::ptr::copy(src, dst, n as usize);
+        return;
     }
-}
-
-/// `n` values from `src` to `dst`: one copy.
-unsafe fn copy_col(src: *const i64, dst: *mut i64, n: u32) {
-    core::ptr::copy(src, dst, n as usize);
+    let mut i = 0;
+    while i + 2 <= n as usize {
+        vst1q_s64(dst.add(i), vshrq_n_s64::<32>(vld1q_s64(src.add(i))));
+        i += 2;
+    }
+    if i < n as usize {
+        *dst.add(i) = *src.add(i) >> 32;
+    }
 }
 
 /// Row `t`'s place in column `c` of a table of columns `stride` rows apart.
@@ -2537,7 +2527,7 @@ unsafe fn stage_scatter_range(st: &St, j: &Job, b: &Bufs, t0: u32, t1: u32) {
     kept_runs(offsets, o0, t0, t1.min(n), |t, a, len| {
         let len = below(a, len, s.cap_out);
         for k in 0..s.nslots {
-            copy_col(colp(st.l, k, s.cap_in, t), colp_mut(o, k, s.cap_out, a), len);
+            copy_col(colp(st.l, k, s.cap_in, t), colp_mut(o, k, s.cap_out, a), len, false);
         }
         for i in 0..len {
             st.write_binds(t + i, 0, o, a + i);
@@ -2557,10 +2547,10 @@ unsafe fn row_scatter_range(st: &St, j: &Job, b: &Bufs, t0: u32, t1: u32) {
     kept_runs(offsets, o0, t0, t1.min(n), |t, a, len| {
         let len = below(a, len, s.cap_out);
         for k in 0..s.nslots {
-            copy_col(colp(st.l, k, s.cap_in, t), colp_mut(o, k, s.cap_out, a), len);
+            copy_col(colp(st.l, k, s.cap_in, t), colp_mut(o, k, s.cap_out, a), len, false);
         }
         if op != 3 && op != 5 {
-            copy_col(b.v.add(t as usize), colp_mut(o, s.bind_slot[0], s.cap_out, a), len);
+            copy_col(b.v.add(t as usize), colp_mut(o, s.bind_slot[0], s.cap_out, a), len, false);
         }
     });
 }
@@ -2737,7 +2727,7 @@ unsafe fn dedup_scatter_range(rd: Reads, t: *const i64, totals: *mut u32, offset
     kept_runs(offsets, o0, x0, x1.min(n), |x, a, len| {
         let len = below(a, len, d.ocap);
         for c in 0..d.ncols.min(16) {
-            copy_col(colp(t, d.cols[c as usize], d.cap, x), colp_mut(o, c, d.ocap, a), len);
+            copy_col(colp(t, d.cols[c as usize], d.cap, x), colp_mut(o, c, d.ocap, a), len, false);
         }
         if d.seen != 0 {
             dedup_lanes::dedup_place_lanes::<{ stage_lanes::LANES }>(t, hb, d, x, len, had + a);
@@ -2746,7 +2736,7 @@ unsafe fn dedup_scatter_range(rd: Reads, t: *const i64, totals: *mut u32, offset
 }
 
 /// A stage's map of its bindings' columns: each bind's column over the range, a document's high words 2 a step.
-unsafe fn stage_map_range(rd: Reads, s: &Stage, bb: *mut i64, totals: *const u32, t0: u32, t1: u32) {
+unsafe fn stage_map_range(s: &Stage, bb: *mut i64, totals: *const u32, t0: u32, t1: u32) {
     let t1 = t1.min((*totals.add(s.in_slot as usize)).min(s.cap_in));
     if t0 >= t1 {
         return;
@@ -2758,18 +2748,12 @@ unsafe fn stage_map_range(rd: Reads, s: &Stage, bb: *mut i64, totals: *const u32
         if s.bind_kind[b] == 1 {
             if s.par_kind[k] == 0 {
                 let v = s.par_const[k];
-                fill_i64(dst, cnt, if s.par_doc[k] != 0 { rd.doc_of(s.v_dir, v) } else { v });
-            } else if s.par_doc[k] != 0 {
-                copy_docs(rd, s.v_dir, colp(bb, s.par_slot[k], s.cap_in, t0), dst, cnt);
+                fill_i64(dst, cnt, if s.par_doc[k] != 0 { v >> 32 } else { v });
             } else {
-                copy_col(colp(bb, s.par_slot[k], s.cap_in, t0), dst, cnt);
+                copy_col(colp(bb, s.par_slot[k], s.cap_in, t0), dst, cnt, s.par_doc[k] != 0);
             }
         } else {
-            if s.col_doc[k] != 0 {
-                copy_docs(rd, s.v_dir, colp(bb, s.col_idx[k], s.cap_in, t0), dst, cnt);
-            } else {
-                copy_col(colp(bb, s.col_idx[k], s.cap_in, t0), dst, cnt);
-            }
+            copy_col(colp(bb, s.col_idx[k], s.cap_in, t0), dst, cnt, s.col_doc[k] != 0);
         }
     }
 }
@@ -2795,7 +2779,7 @@ unsafe fn rows_copy_range(rd: Reads, src: *const u8, rf: *const u8, dst: *mut u8
         let d = colp_mut(dst as *mut i64, k, c.dst_stride, a);
         match c.src[k as usize] {
             NONE => fill_i64(d, t1 - t0, c.konst[k as usize]),
-            from => copy_col(colp(src as *const i64, from, c.src_stride, t0), d, t1 - t0),
+            from => copy_col(colp(src as *const i64, from, c.src_stride, t0), d, t1 - t0, false),
         }
     }
 }
@@ -3899,7 +3883,7 @@ impl Prog {
                 let (a, z) = ((4 * t0 as u64).min(end) as u32, (4 * t1 as u64).min(end) as u32);
                 fill_u32(b.h, a, z, NONE)
             }
-            PK_MAP => stage_map_range(rd, &*j.s, b.o, j.totals, t0, t1),
+            PK_MAP => stage_map_range(&*j.s, b.o, j.totals, t0, t1),
             PK_DEDUP_CLAIM => {
                 let d = &*j.dd;
                 let n = (*j.totals.add(d.in_slot as usize)).min(d.cap);
@@ -4108,13 +4092,11 @@ mod tests {
             ("view_up", super::UP),
             ("view_end", super::END),
             ("dir_doc_of_row", 81),
+            ("dir_doc_of_key", 82),
             ("view_text_span", super::TEXT_SPAN),
             ("view_line_span", super::LINE_SPAN),
             ("view_line_terminated", super::LINE_TERMINATED),
             ("lines_terminator_length", 90),
-            ("dir_doc_of_id", 91),
-            ("dir_local_of_id", 92),
-            ("dir_key_of_id", 93),
         ];
         for (name, at) in places {
             assert_eq!(rerail_clif::reads::READS[at].name, name, "READS[{at}]");

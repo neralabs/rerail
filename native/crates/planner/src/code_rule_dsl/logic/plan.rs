@@ -9063,17 +9063,9 @@ fn decoded_outputs_within(
                 .unwrap_or_default()
         };
         let text_domain = |i: usize| types.get(i).is_none_or(|&t| t == output::col::TEXT);
-        // A node leaves its chunk here (plan "Chunk node numbers", step 3): an output's node column holds it as its
-        // document's key and its low bits in the document's own numbering (`Numbering::located`), what every reader
-        // of an output reads, never the chunk's id.
-        let numbering = crate::code_rule_dsl::facts::numbering::of(db);
-        let located = |i: usize, v: i64| match (&numbering, types.get(i)) {
-            (Some(n), Some(&output::col::NODE)) => n.located(v),
-            _ => v,
-        };
         let cell = |i: usize, v: SqlValue| -> Result<Shown> {
             Ok(match v {
-                SqlValue::Integer(v) => decode(i, v).map_or_else(|| Shown::Int(located(i, v)), Shown::Text),
+                SqlValue::Integer(v) => decode(i, v).map_or(Shown::Int(v), Shown::Text),
                 SqlValue::Null if text_domain(i) => Shown::Text("None".to_owned()),
                 SqlValue::Null => Shown::Int(output::NULL),
                 SqlValue::Text(s) if text_domain(i) => Shown::Text(s),

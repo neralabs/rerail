@@ -135,7 +135,7 @@ fn a_joins_candidates_cost() {
     keys.sort_unstable();
     let ix = on1.index(&[0]);
     let order = ix.runs(&on1).expect("an order of runs");
-    let store = Store { rels: Vec::new(), syms: symbols(&db).unwrap(), docs: Default::default() };
+    let store = Store { rels: Vec::new(), syms: symbols(&db).unwrap() };
     // The one-row lookup's join, its second step's source: `lab_one` by its first column.
     let spec = JoinSpec::parse(&cases[1].1).unwrap().encode();
     let mut syms = Interner::for_loading(&store.syms);

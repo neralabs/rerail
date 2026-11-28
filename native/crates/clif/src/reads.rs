@@ -192,7 +192,6 @@ pub const READS: &[Read] = &[
     // read's number moves.
     Read { family: Family::Relation, name: "dir_doc_of_id", params: &[I32], ret: I32, hot: true, body: crate::view_reads::dir_doc_of_id },
     Read { family: Family::Relation, name: "dir_local_of_id", params: &[I32], ret: I32, hot: true, body: crate::view_reads::dir_local_of_id },
-    Read { family: Family::Relation, name: "dir_key_of_id", params: &[I32], ret: I32, hot: true, body: crate::view_reads::dir_key_of_id },
 ];
 
 /// The reads of format 16 alone: a side list's value, and a node's slot (16z's parent steps read it block by

@@ -275,8 +275,7 @@ impl Fused {
     /// The chunk's computed columns from its gathered ones, then the program over the chunk:
     /// calls `each` with each fused step's passed count (`counts`), then returns the output
     /// words of the rows that go on.
-    /// `docs`: the run's documents, a `Word::Doc`'s (`Store::docs`).
-    pub(super) fn run<'s>(&'s self, s: &'s mut Scratch, docs: &super::DocOf, mut each: impl FnMut(usize, u64)) -> &'s [u64] {
+    pub(super) fn run<'s>(&'s self, s: &'s mut Scratch, mut each: impl FnMut(usize, u64)) -> &'s [u64] {
         let n = s.rows;
         for (k, w) in self.columns.iter().enumerate() {
             if let Word::Doc(c) = *w {
@@ -289,7 +288,7 @@ impl Fused {
                     (&b[0], &mut a[k])
                 };
                 dst.clear();
-                dst.extend(src.iter().map(|&x| docs.key(x)));
+                dst.extend(src.iter().map(|&x| rerail_blocks::located::Located::key_wide(x)));
             }
         }
         // On the stack (decision 0687): a fused chunk's columns and outputs are few.

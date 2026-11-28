@@ -1058,6 +1058,29 @@ pub fn anon_in_block(k: usize, vals: &[i64]) -> InBlock {
 }
 
 
+/// The run table of a relation under key runs (`Part::over_key_runs`), for its writer.
+pub struct KeyRuns {
+    t: *mut u32,
+    runs: usize,
+    /// The relation whose block holds it.
+    part: Part,
+}
+
+impl KeyRuns {
+    /// Run `k`: its rows from `first` (past the run's before; the first's 0) hold ids of high bits `key`.
+    pub fn put(&self, k: usize, first: u32, key: u32) {
+        assert!(k < self.runs, "run {k} of {}", self.runs);
+        assert!(self.part.len() == 0, "a run set after its relation's rows");
+        // SAFETY: a table of `runs` runs in the relation's block, which `part` keeps; read only once rows are written.
+        unsafe { rerail_blocks::rows::put_run(self.t, k, first, key) };
+    }
+
+    /// Its offset in its block (a device writer's).
+    pub fn at(&self) -> usize {
+        self.part.facts.block.offset_of(self.t.cast_const())
+    }
+}
+
 /// A relation of `k` values a row, 8 bytes each, read in their order.
 fn spec(k: usize) -> Spec {
     spec_narrow(k, 0)
@@ -1825,15 +1848,24 @@ impl Part {
         part
     }
 
-    /// `with_index_room` of `k` columns of a chunk's ids (an axis's solve, decision 0494 step 7): each column 4 bytes
-    /// a row, a chunk's id whole (its document's base plus its local id, plan "Chunk node numbers").
-    pub fn of_ids(life: Life, k: usize, rows: usize) -> Part {
+    /// `with_index_room` of `k` columns of ids under key runs (an axis's solve, decision 0494 step 7): each column 4
+    /// bytes a row, its ids' low bits, their high bits (a document's key) the runs' of one table of `runs` runs in
+    /// the relation's block (`rows::ColDir`'s `runs`), which every column reads. The writer sets each run (`KeyRuns::put`)
+    /// before it writes a row.
+    pub fn over_key_runs(life: Life, k: usize, rows: usize, runs: usize) -> (Part, KeyRuns) {
         let spec = Spec { widths: vec![4; k], order: Vec::new(), indexes: Vec::new(), min_log: rerail_blocks::rows::MIN_LOG };
+        let table = 8 * (runs + 2) + 64;
         let indexes = rerail_blocks::relation::ADDED_INDEXES;
-        let mut part = Part::try_new_spec(life, spec, rows, index_room(indexes, rows as u64) + 64, false).unwrap_or_else(|e| panic!("an axis of {rows} rows: {e}"));
+        let mut part = Part::try_new_spec(life, spec, rows, index_room(indexes, rows as u64) + table, false).unwrap_or_else(|e| panic!("an axis of {rows} rows: {e}"));
         // Its rows' growth keeps the room (`ix_room`), as `with_index_room`'s.
         Arc::get_mut(&mut part.held).expect("a new relation's one holder").ix_room = indexes as u8;
-        part
+        let t = rerail_blocks::rows::alloc_runs(&part.facts.block, runs);
+        for c in 0..k {
+            // SAFETY: the table is in the relation's block, which it lives as long as; its runs are set before a row.
+            unsafe { part.rel().rows.set_runs(c, t) };
+        }
+        let keys = KeyRuns { t, runs, part: part.clone() };
+        (part, keys)
     }
 
     /// `for_writes` alone in a block with `room` bytes past its rows' (decision 0384 step 5): a relation the device

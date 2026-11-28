@@ -524,9 +524,25 @@ pub fn axis_in_place(views: &crate::code_rule_dsl::facts::vtab::ViewInPlace, nod
     };
     // SAFETY: the scanned starts, `n + 1` values.
     let start = unsafe { std::slice::from_raw_parts(block.ptr::<u32>(start_at), n + 1) };
-    // Alone in its block, with room for an index at every entry of its directory. Each column a chunk's ids, 4 bytes
-    // (plan "Chunk node numbers").
-    let out_rows = Part::of_ids(crate::code_rule_dsl::facts::rows::Life::Run, 2, total);
+    let runs_of = |put: &mut dyn FnMut(u32, u32)| {
+        for (i, r) in order.iter().map(|&o| &rows[o as usize]).enumerate() {
+            let end = order.get(i + 1).map_or(dir.ends[0], |&o| rows[o as usize].rows[0]) as usize;
+            let (from, to) = (start[r.rows[0] as usize], start[end.min(n)]);
+            if to > from {
+                put(from, r.key);
+            }
+        }
+    };
+    let mut runs = 0;
+    runs_of(&mut |_, _| runs += 1);
+    // Alone in its block, with room for an index at every entry of its directory (`Part::over_key_runs`). Each column
+    // its ids' low bits, under the documents' keys.
+    let (out_rows, keys) = Part::over_key_runs(crate::code_rule_dsl::facts::rows::Life::Run, 2, total, runs);
+    let mut k = 0;
+    runs_of(&mut |first, key| {
+        keys.put(k, first, key);
+        k += 1;
+    });
     if total > 0 {
         let needed = out_rows.rel().rows.needed.load(std::sync::atomic::Ordering::Relaxed);
         (params.rows_at, params.rows) = (out_rows.rows_at() as u64, total as u64);
