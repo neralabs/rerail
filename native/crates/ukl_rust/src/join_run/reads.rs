@@ -233,23 +233,47 @@ impl<'a> Doc<'a> {
         self.e.preorder != 0
     }
 
-    /// Numbered node `l`'s tape node.
+    /// Its entry's node table (`ViewDoc::node_table`: by local id, the numbered node's tape node and its id's low
+    /// bits, made with the entry), where it has one: the host's reads' (`tape_format::view_reads`), so a node is
+    /// one load, not a select or a granule's search.
+    #[inline(always)]
+    unsafe fn table(&self, l: u32) -> Option<[u32; 2]> {
+        (u64::from(l) < self.e.node_table.len).then(|| *items::<[u32; 2]>(&self.e.node_table).add(l as usize))
+    }
+
+    /// Numbered node `l`'s tape node: its node table's, else the numbering's select.
     #[inline]
     pub unsafe fn tape_node(&self, l: u32) -> u32 {
-        self.n.select(0, l)
+        match self.table(l) {
+            Some([x, _]) => x,
+            None => self.n.select(0, l),
+        }
     }
 
     /// Numbered node `l`'s id's low bits, its granule found from `hint` (`Numbering::low_of_near`): a walk's, whose
     /// nodes lie in one granule or its parents, the granules not searched again for each.
     #[inline]
     pub unsafe fn low_near(&self, l: u32, hint: &mut u32) -> u32 {
-        if self.local() { l } else { self.n.low_of_near(0, l, hint) }
+        if self.local() {
+            return l;
+        }
+        match self.table(l) {
+            Some([_, low]) => low,
+            None => self.n.low_of_near(0, l, hint),
+        }
     }
 
     /// Numbered node `l`'s id: the document's key, then its low bits (`l` itself where ids are local ids).
     #[inline]
     pub unsafe fn node_id(&self, l: u32) -> u64 {
-        let low = if self.local() { l } else { self.n.low_of(0, l) };
+        let low = if self.local() {
+            l
+        } else {
+            match self.table(l) {
+                Some([_, low]) => low,
+                None => self.n.low_of(0, l),
+            }
+        };
         u64::from(self.e.key) << 32 | u64::from(low)
     }
 
@@ -333,7 +357,10 @@ impl<'a> Doc<'a> {
         let low = if self.local() {
             l
         } else if l < e.nodes {
-            self.n.low_of(0, l)
+            match self.table(l) {
+                Some([_, low]) => low,
+                None => self.n.low_of(0, l),
+            }
         } else if l - e.nodes < e.tokens {
             self.n.low_of(1, l - e.nodes)
         } else {
@@ -537,6 +564,16 @@ impl<'a> Doc<'a> {
     pub unsafe fn number(&self, low: u32) -> u32 {
         let l = if self.local() {
             low
+        } else if self.e.node_by_id.len != 0 {
+            // Its entry's nodes by their ids' places (`ViewDoc::node_by_id`, made with the node table): the
+            // numbering's slot entry, then one load, as the host's `local_of`; the place's node checked by its id.
+            match self.n.own_place_of(low) {
+                Some(p) if u64::from(p) < self.e.node_by_id.len => {
+                    let l = *items::<u32>(&self.e.node_by_id).add(p as usize);
+                    if self.table(l).is_some_and(|[_, w]| w == low) { l } else { NO_ROW }
+                }
+                _ => NO_ROW,
+            }
         } else {
             match self.n.number_of(low) {
                 Some((0, l)) => l,
@@ -683,4 +720,91 @@ pub unsafe fn atoms_find(dir: *const u8, h: u64, len: u32, k: u32) -> u32 {
         }
     }
     u32::MAX
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// A document of `n` numbered nodes whose entry has its node tables (`ViewDoc::node_table`, `node_by_id`), its
+    /// numbering one granule whose nodes' ids are in another order than their numbers: the reads take a node's tape
+    /// node and id from the table, and an id's node from `node_by_id`, never the numbering's select or search.
+    struct Made {
+        e: Box<ViewDoc>,
+        n: Box<Numbering>,
+        _table: Vec<[u32; 2]>,
+        _by_id: Vec<u32>,
+        _by_slot: Vec<[u32; 3]>,
+        _nodes: Vec<u32>,
+        _tokens: Vec<u32>,
+    }
+
+    const SLOT: u32 = 3;
+    const KEY: u32 = 7;
+    /// Node `l`'s place among its granule's ids, and its tape node.
+    const PLACE: [u32; 5] = [2, 0, 4, 1, 3];
+    const TAPE: [u32; 5] = [0, 5, 9, 12, 20];
+
+    fn low(l: usize) -> u32 {
+        SLOT << INDEX_BITS | PLACE[l]
+    }
+
+    fn made() -> Made {
+        let n = PLACE.len();
+        let table: Vec<[u32; 2]> = (0..n).map(|l| [TAPE[l], low(l)]).collect();
+        let mut by_id = vec![0u32; n];
+        for l in 0..n {
+            by_id[PLACE[l] as usize] = l as u32;
+        }
+        let (by_slot, nodes, tokens) = (vec![[SLOT, 0, 0]], vec![0, n as u32], vec![0, 0]);
+        let mut m = Made { e: Box::default(), n: Box::default(), _table: table, _by_id: by_id, _by_slot: by_slot, _nodes: nodes, _tokens: tokens };
+        // SAFETY: each run points at a vector the test holds, from a field of a box it holds: none moves.
+        unsafe {
+            m.e.key = KEY;
+            m.e.nodes = n as u32;
+            Run::set(&raw mut m.e.node_table, m._table.as_ptr(), n);
+            Run::set(&raw mut m.e.node_by_id, m._by_id.as_ptr(), n);
+            m.n.granules = 1;
+            Run::set(&raw mut m.n.by_slot, m._by_slot.as_ptr(), 1);
+            Run::set(&raw mut m.n.nodes, m._nodes.as_ptr(), 2);
+            Run::set(&raw mut m.n.tokens, m._tokens.as_ptr(), 2);
+        }
+        m
+    }
+
+    fn doc(m: &Made) -> Doc<'_> {
+        // SAFETY: no read here reaches the tape, the lines or the source.
+        unsafe { Doc { e: &m.e, n: &m.n, tape: Tape { t: InPlace::new(std::ptr::null()), v: TapeView::default() }, lines: Lines(InPlace::new(std::ptr::null())), source: std::ptr::null() } }
+    }
+
+    #[test]
+    fn a_nodes_tape_node_and_id_are_its_node_tables() {
+        let m = made();
+        let d = doc(&m);
+        let mut hint = 0;
+        for l in 0..PLACE.len() {
+            // SAFETY: the document's runs are set (`made`).
+            unsafe {
+                assert_eq!(d.tape_node(l as u32), TAPE[l]);
+                assert_eq!(d.node_id(l as u32), u64::from(KEY) << 32 | u64::from(low(l)));
+                assert_eq!(d.low_near(l as u32, &mut hint), low(l));
+                assert_eq!(d.at_node_low(l as u32, TAPE[l], low(l)).col(1), d.node_id(l as u32));
+            }
+        }
+    }
+
+    #[test]
+    fn an_ids_node_is_its_node_by_id() {
+        let m = made();
+        let d = doc(&m);
+        // SAFETY: the document's runs are set (`made`).
+        unsafe {
+            for l in 0..PLACE.len() {
+                assert_eq!(d.number(low(l)), l as u32);
+            }
+            // A place past the granule's nodes, and a slot the numbering has none of: no node.
+            assert_eq!(d.number(SLOT << INDEX_BITS | PLACE.len() as u32), NO_ROW);
+            assert_eq!(d.number((SLOT + 1) << INDEX_BITS), NO_ROW);
+        }
+    }
 }
