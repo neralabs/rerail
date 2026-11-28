@@ -2,6 +2,7 @@
 // and what tier 1's phases say, which the token pass and tier 2's kernels read (the records, the refusal).
 
 #pragma once
+#include <ukl/backend.h>
 
 #if defined(UKL_CPU) || defined(UKL_VEC)
 typedef UKL_GLOBAL uint32_t* UklLexPool;

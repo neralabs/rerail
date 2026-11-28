@@ -1244,7 +1244,7 @@ fn json_rust_is_current() {
         assert!(std::fs::read_to_string(&path).is_ok_and(|have| have == rust), "json_aot's {file} is not the compiler's: RERAIL_BLESS=1");
     }
     let whole = json_rust().1;
-    assert!(whole.contains("pub unsafe fn run_range<D: Out>("), "tier 2 has its chunked form");
+    assert!(whole.contains("pub unsafe fn run_step<D: Out>(") && !whole.contains("pub unsafe fn run_range<"), "tier 2 has its form a record at a time, and no other walk from a place");
     // The serial walk's text: before its chunked form (decision 0726), which walks the same loop from any place.
     let tier2 = whole.split("\n// Parsing from the middle").next().expect("the tier").to_owned();
     // An empty object or array one leaf, at its call (decision 0553): at every call of each, a value's arm.
@@ -1360,7 +1360,9 @@ fn json_utf8_is_simdjsons_lookup() {
 /// place, a string with no escape written as its node and its content at once.
 #[test]
 fn json_tier2_is_walks_shape() {
-    let (_, tier2) = json_rust();
+    let (_, whole) = json_rust();
+    // The serial walk's text: before the walk from a place (its form a record at a time, the phases').
+    let tier2 = whole.split("\n// Parsing from the middle").next().expect("the tier").to_owned();
     // Each container's list one labeled loop, its separator back to the element inside it.
     let loops: Vec<&str> = tier2.lines().filter(|l| l.starts_with("'l") && l.ends_with(": loop {")).collect();
     assert_eq!(loops.len(), 2, "an object's and an array's loop: {loops:?}");
@@ -1386,12 +1388,12 @@ fn json_tier2_is_walks_shape() {
     // A value as `walk` decides it (decision 0602): at each of its three places (the root, a pair's value, an element)
     // a `match` on the byte with the containers' arms, and the rest one method's (`walk`'s `primitive`), its `_`. The
     // method is written once: the string's, the atoms' and the number's arms there alone.
-    assert_eq!(tier2.matches("fn value_primitive(").count(), 1, "the primitive written once");
+    assert_eq!(tier2.matches("fn value_primitive<D: Out>(").count(), 1, "the primitive written once");
     let calls: Vec<&str> = tier2.split("match peek(src, starts, i) {\n").skip(1).filter(|m| m.contains("value_primitive(")).collect();
     let places: Vec<&str> = tier2.split("let s = starts[i] as usize;\nmatch src[s] {\n0x7b => {").skip(1).collect();
     assert_eq!(places.len() + calls.len(), 3, "a value's decision at three places");
     assert_eq!(tier2.matches("_ => {\ne = unsafe { value_primitive(src, starts, d, &mut i, [").count(), 3, "each place's `_` the primitive");
-    let primitive = tier2.split("fn value_primitive(").nth(1).expect("the primitive").split("\nOk(e)\n}").next().expect("its body");
+    let primitive = tier2.split("fn value_primitive<D: Out>(").nth(1).expect("the primitive").split("\nOk(e)\n}").next().expect("its body");
     for arm in ["0x22 => {\ne = unsafe { string(", "0x74 if src[s..s + 4] == *b\"true\"", "0x66 if src[s..s + 5] == *b\"false\"", "0x6e if src[s..s + 4] == *b\"null\"", "let end = number_end(src, s)?;\ne = token(d, &mut i, "] {
         assert!(primitive.contains(arm), "`{arm}` the primitive's:\n{primitive}");
         assert_eq!(tier2.matches(arm).count(), 1, "`{arm}` written once");
@@ -1422,7 +1424,7 @@ fn json_tier2_is_walks_shape() {
     // A string read 32 bytes at a time on the backend chosen once (`run_best`), as `backslash_quote`.
     assert!(tier2.contains("x += 32;") && tier2.contains("s::marks32(") && tier2.contains("fn run_best("), "32 bytes a step, one dispatch");
     // A string with no escape: the node and its content at once.
-    let string = tier2.split("fn string(").nth(1).expect("string").split("\nOk(e)\n}").next().expect("its body");
+    let string = tier2.split("fn string<D: Out>(").nth(1).expect("string").split("\nOk(e)\n}").next().expect("its body");
     assert!(string.contains("leaf_in(d, "), "a plain string at once:\n{string}");
 }
 
@@ -1442,7 +1444,7 @@ fn json_escape_checks_are_tier2s() {
     for m in ["unicode", "r_m_hex", "r_m_dee", "high_2", "low_2", "r_m_low", "lone"] {
         assert!(!names.iter().any(|n| has(n, m)), "tier 1 still has `{m}`");
     }
-    let string = tier2.split("fn string(").nth(1).expect("string").split("\nOk(e)\n}").next().expect("its body");
+    let string = tier2.split("fn string<D: Out>(").nth(1).expect("string").split("\nOk(e)\n}").next().expect("its body");
     let at = string.split("let y = p + 1;\n").nth(1).expect("the checks at an escape");
     // The escape's second byte decided once, as `escaped_string`'s `c`: the `u`'s checks, the other words, else refused.
     assert!(at.starts_with("// Its second byte decided once: the words', the checks at the gate's.\nmatch src[y] {\n0x75 => {\n"), "at a `\\u` alone:\n{at}");

@@ -1288,6 +1288,13 @@ pub fn tier2_loop_reads(x: &Input<'_>) -> Result<(String, Option<u32>), String> 
     let out = loop_text(x, false)?;
     let split = loop_text(x, true)?;
     let phases = phases_of(&out, &split)?;
+    // The walk from a place and a chunk's write are the phases' a record at a time (`step_of`, from the split loop's):
+    // the whole loop's are no one's.
+    let mut out = out;
+    for head in ["pub unsafe fn run_range<D: Out>(", "pub unsafe fn write_range("] {
+        let (f, doc) = fn_text(&out, head).ok_or_else(|| format!("tier 2: no `{head}`"))?;
+        out = out.replacen(&format!("{doc}{f}"), "", 1);
+    }
     Ok((out + &step_of(&split)? + &phases, None))
 }
 

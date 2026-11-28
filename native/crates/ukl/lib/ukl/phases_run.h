@@ -3,7 +3,7 @@
 // its chunk, reading only its chunk, the arrays earlier phases wrote and its sum, and may write its leaf of the
 // phase's tree and an array. A tree is the exclusive prefix of its leaves by the phase's associative merge, in any
 // order of arrival: a leaf stores its record and arrives at its parent, the second child to arrive merging the two
-// (`<ukl/lex_run.h>`'s and `<ukl/middle_run.h>`'s arrival tree, here over records of any width and any merge); a
+// (`<ukl/lex_run.h>`'s arrival tree, here over records of any width and any merge); a
 // leaf's sum is walked down from the top in a later phase, the left siblings' values merged in file order. Nothing is
 // carried from one item to the next.
 //

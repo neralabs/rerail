@@ -13,7 +13,7 @@
 //           writing its records and each type's records' numbers there; each of its records' token none
 //           (`Token::NOT`), the token pass writing those of its types' records after.
 //
-// A scan's tree is as `<ukl/middle_run.h>`'s: a leaf stores its value and arrives at its parent, the second child to
+// A scan's tree is as `<ukl/phases_run.h>`'s: a leaf stores its value and arrives at its parent, the second child to
 // arrive composing it, so the root's value is the file's; a leaf's state is walked down from the top, a right child
 // its parent's after its left sibling's value. M's values are maps of lanes (`UKL_LEX_LANES` of 4 bits, lane `l`'s
 // end lane at bits `4l`), composed in file order; K's are each chunk's `UKL_LEX_TYPES + 2` counts (its records, each type's, its newlines), summed.
@@ -66,7 +66,7 @@ UKL_INLINE uint32_t ukl_lex_val(UKL_PRIVATE UklLex* r, uint32_t tr, uint32_t x, 
 {
     return r->m[tr == UKL_LEX_TM ? UKL_LEX_OM : UKL_LEX_OK] + x * ukl_lex_width(tr) + k;
 }
-// Node `x` of tree `tr` arrived at: whether its other child arrived first (`<ukl/middle_run.h>`'s `meet`: the run's
+// Node `x` of tree `tr` arrived at: whether its other child arrived first (`<ukl/phases_run.h>`'s `meet`: the run's
 // epoch exchanged into its word, which only ever holds an epoch).
 UKL_INLINE bool ukl_lex_meet(UKL_PRIVATE UklLex* r, uint32_t tr, uint32_t x)
 {

@@ -19,13 +19,13 @@ pub use tier2::{ENTRIES, WIDTHS};
 /// Tier 1's passes as UKL, printed from its Rust (decision 0726; `bitlex_lex_rust::ukl`, held by `json_rust_is_current`):
 /// kernels `json_t1_ends` and `json_t1_from`.
 pub const TIER1_UKL: &str = include_str!("tier1.uglykl");
-/// Tier 2's passes as UKL, printed from its Rust (decision 0726): kernels `json_t2_tokens` and `json_t2_write`.
+/// Tier 2's passes as UKL, printed from its Rust (decision 0726): kernels `json_t2_tokens`, and tier 2 as phases'
+/// `json_t2_phases` and `json_t2_zphases`.
 pub const TIER2_UKL: &str = include_str!("tier2.uglykl");
 
-/// Tier 2 from the middle (decision 0726): the walk from any place, the bracket scan, and the three passes over chunks
-/// of records.
+/// Tier 2 from the middle (decision 0726): the walk from any place, and tier 2 as phases over chunks of records.
 pub mod middle {
-    pub use crate::tier2::{At, CONT, CYCLE, CYCLES, Entry, Frame, Kinds, NONE, Out, RETS, ROOT, SEPS, Shadow, Span, Stop, TOKEN_FIRSTS, Token, Touch, Word, chunk_starts, depths, down, each, entries, in_order, kinds, parse_middle, run_range, scan, serial_entries, span, token_at, tokens, tree_of, write_range, Order, run_step, write_step, parse_phases, Phases, prefix, STEP_PLACES, STEP_RETS, STEP_CYCLES, STEP_CONT, STEP_CYCLE, STEP_DEPTH};
+    pub use crate::tier2::{At, CONT, CYCLE, CYCLES, Entry, Frame, NONE, Out, RETS, ROOT, Stop, TOKEN_FIRSTS, Token, each, in_order, token_at, tokens, Order, run_step, write_step, parse_phases, Phases, prefix, STEP_PLACES, STEP_RETS, STEP_CYCLES, STEP_CONT, STEP_CYCLE, STEP_DEPTH};
     /// Tier 2 as phases: each phase's summary and its merge.
     pub mod phases {
         pub use crate::tier2::{Depth, Event, Item, Kids, Last, Places, SHAPE_W, Shape, STEP_ENDS, STEP_REFUSED, places_merge, places_unit, shape_words};

@@ -3666,6 +3666,9 @@ mod tests {
         assert!(kinds.contains(&LZ4), "some pieces are LZ4 blocks");
         let want = z_of(&t16, &lz4_greedy).unwrap();
         assert!(got == want, "differs at byte {:?} of {} ({} bytes)", got.iter().zip(&want).position(|(a, b)| a != b), want.len(), got.len());
+        // And it decodes to the format 16 tape.
+        let t = Tape16Z::from_bytes(crate::Vector::from(&got[..])).unwrap();
+        assert!(t.decoded_whole().expect("decodes") == t16, "its 16z decodes to the tape");
     }
 
     /// The ops write the tape `write` writes from the same nodes, in 16 and 16z (decision 0434, R5); with the nodes
