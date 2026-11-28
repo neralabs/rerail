@@ -46,6 +46,25 @@ fn main() {
     let lean = |b: &[u8]| rerail_python_lean::token_count(b).unwrap_or(0);
     let strata = |b: &[u8]| strata::token_count(b).unwrap_or(0);
     let strata_b = |b: &[u8]| strata::token_count_with(b, Variant::B).unwrap_or(0);
+    if only == Some("starts") {
+        // The walk's token starts by masks against the serial walk's, block by block.
+        let (mut same, mut rare, mut differ, mut blocks) = (0, 0, 0, 0);
+        for (p, b) in &all {
+            if let Some((s, r, first)) = strata::starts::starts_are_the_walks(b) {
+                same += s;
+                rare += r;
+                blocks += b.len().div_ceil(64);
+                if let Some(e) = first {
+                    differ += 1;
+                    if differ <= 8 {
+                        println!("{} :: {e}", p.strip_prefix(dir).unwrap_or(p).display());
+                    }
+                }
+            }
+        }
+        println!("token starts by masks: {blocks} blocks, {same} the walk's, {rare} rare, {differ} files with a block that differs");
+        return;
+    }
     if only == Some("chunked") {
         // From the middle: each file in chunks of 1, 2, 3 and 16 blocks, each from the one before's exit, against the
         // serial lexer (variant B's).

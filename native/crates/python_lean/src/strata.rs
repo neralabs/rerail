@@ -22,6 +22,7 @@
 //!    is inside brackets one bit of `depth0`, not a count.
 
 pub mod middle;
+pub mod starts;
 
 use crate::lex::{self, Extra, Lexed, MAX_NESTING, Quote, Refusal, T, Tok};
 use rerail_simd::prelude::*;

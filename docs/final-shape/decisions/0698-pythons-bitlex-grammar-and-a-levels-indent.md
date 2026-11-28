@@ -804,3 +804,31 @@ statements and blocks end.
       with. The depth's application at an entry is a select (`Depth::apply_sel`).
     - **As measured:** stratum 1's compares in every block cost the serial lexer: B 0.95× the lean lexer, from
       1.02×. The corpus gives the same records and entries as before (1644 of 1644 from the middle).
+102. **The walk's token starts in code by masks** (as built: `strata::starts::code_starts`; the walk's pass 1 does
+    not read it yet).
+    - **Why:** the walk's pass 1 counts a chunk's records as the popcount of its token starts (the design page's
+      plan). So each start the serial walk makes is made by masks too, for every byte of a block at once. The
+      starts don't depend on the walk's lanes (`open`, `header`, the indents), so they are made once per block.
+    - **Operators:** the longest of `operator`'s at each byte comes from masks of the byte and the two after it. The
+      walk's choice among overlapping ones is a machine of three states (the next byte starts a token, or one or two
+      more are the token's), composed by Kogge–Stone over a window of two blocks.
+    - **Numbers** follow `lex::number_at`'s rules as runs found by carry additions: a digit run with single
+      underscores, a fraction after a `.`, an exponent and its sign, a suffix, and the digits of base 16, 8 and 2.
+      A number takes the `.`, the sign and the word-run starts it reads. A signed exponent's digits start a word run
+      but are the number's, so the numbers are made twice, the second time without them.
+    - **Names** are the other word runs' starts.
+    - **The walk's quirks, as it reads them:**
+      - A number that ends inside a word run (`1a`, `0x`, `0b15`) leaves a rest. The rest is a name where the
+        walk's run stops before another token starts (the walk's next run starts there); otherwise the walk passes
+        over it.
+      - A rest that starts a block is a start, since the walk's next block reads its first byte as a run's start.
+    - **Rare** (its chunk waits for the one before it; never given a wrong count):
+      - a byte the walk refuses, or one past ASCII, in the block;
+      - the run of non-blank code the window starts in reaches the block;
+      - a rest that crosses a block's edge, or starts with a digit;
+      - a `.` that starts a token at a block's last byte before a digit, which the walk reads as an operator;
+      - a fraction's `.` before another `.`;
+      - a signed exponent whose second reading takes another.
+    - **As tested:** the starts in code are the serial walk's on every block that isn't rare: the test texts, 4000
+      random texts of names, numbers and operators, and the corpus (223461 of 223857 blocks; 396 rare, 0
+      differ).

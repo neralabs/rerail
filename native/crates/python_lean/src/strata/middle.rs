@@ -1139,4 +1139,34 @@ mod tests {
             }
         }
     }
+
+    #[test]
+    fn token_starts_by_masks_are_the_walks() {
+        let mut blocks = 0;
+        let mut x = 0x9e37_79b9_7f4a_7c15u64;
+        let mut random: Vec<Vec<u8>> = Vec::new();
+        for len in [65usize, 130, 400, 1000] {
+            for _ in 0..1000 {
+                random.push(
+                    (0..len)
+                        .map(|_| {
+                            x ^= x << 13;
+                            x ^= x >> 7;
+                            x ^= x << 17;
+                            b"ab1_0.5e-+*=/<>.:x \n  (f)[]0x"[(x >> 8) as usize % 29]
+                        })
+                        .collect(),
+                );
+            }
+        }
+        for t in texts().iter().map(|t| t.as_bytes()).chain(random.iter().map(Vec::as_slice)) {
+            if let Some((same, _, first)) = super::super::starts::starts_are_the_walks(t) {
+                blocks += same;
+                if let Some(e) = first {
+                    panic!("{e}");
+                }
+            }
+        }
+        assert!(blocks > 100, "{blocks}");
+    }
 }
