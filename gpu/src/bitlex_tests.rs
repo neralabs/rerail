@@ -834,7 +834,7 @@ struct Ph {
 impl Ph {
     /// The program's phases, and those of group items (16z's ZP1 and ZP4).
     const PHASES: u32 = 62;
-    const GROUP: [u32; 2] = [44, 61];
+    const GROUP: [u32; 3] = [44, 58, 61];
     /// The sorts' stages (P2, P7, 16z's ZS: the library's sort of rows, `json_t2_sort`).
     const SORTS: [std::ops::Range<u32>; 3] = [3..15, 21..33, 45..57];
 

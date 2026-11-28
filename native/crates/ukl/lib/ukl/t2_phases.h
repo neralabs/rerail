@@ -30,7 +30,7 @@
 //   Z    16z by phases (`Writer::finish_by_phases_with` and the device's encoder, `lz4_greedy`), from the finished
 //        tape: ZP1 each piece's bytes where they lie, their hash and their LZ4 block's length (a group a piece, its
 //        table the group's); ZS the pieces sorted by their hash's low 16 bits (as P2); ZH each sorted piece's
-//        run of like hashes from its head (a Last scan) and ZF its first piece of the same bytes in it, compared; ZP3
+//        run of like hashes from its head (a Last scan) and ZF its first piece of the same bytes in it (a group a piece, its lanes comparing); ZP3
 //        each piece's stored bytes (a repeat's 4, its LZ4 block's, or its own) and their prefix sum; ZP3W each one's
 //        place; ZP4 each piece at its place (a group a piece: its LZ4 block made again, written), the head, the piece
 //        index and the tail's runs.
@@ -777,19 +777,6 @@ UKL_INLINE uint32_t ukl_t2z_hash(UklLz4Spans s, uint32_t n, uint32_t lane __UKL_
     return h ^ (h >> 16);
 }
 
-// Whether pieces `i` and `j` (of `n` bytes each) hold the same bytes.
-UKL_INLINE bool ukl_t2z_same(UKL_GLOBAL const uint8_t* t, UKL_PRIVATE const UklZ16P* p, uint32_t i, uint32_t j)
-{
-    uint32_t ni = 0u, nj = 0u;
-    UklLz4Spans a = ukl_z16_piece(t, p, i, &ni), b = ukl_z16_piece(t, p, j, &nj);
-    if (ni != nj)
-        return false;
-    for (uint32_t k = 0u; k < ni; k++)
-        if (ukl_lz4e_byte(a, k) != ukl_lz4e_byte(b, k))
-            return false;
-    return true;
-}
-
 // Phase `ph`'s items: the pieces (or their chunks), once the tape is finished; ZP4's the pieces, the head, the tail's
 // runs.
 UKL_INLINE uint32_t ukl_t2z_items(UKL_PRIVATE UklPh* r, uint32_t ph)
@@ -797,7 +784,7 @@ UKL_INLINE uint32_t ukl_t2z_items(UKL_PRIVATE UklPh* r, uint32_t ph)
     UklPhPool m = r->m;
     if (ukl_atomic_poll(&m[UKL_PH_FAIL]) != 0u || ukl_atomic_poll(&m[UKL_T2_DONE]) != 1u)
         return 0u;
-    if (ph == UKL_T2_PH_ZP1)
+    if (ph == UKL_T2_PH_ZP1 || ph == UKL_T2_PH_ZF)
         return m[UKL_T2_NP];
     if (ph == UKL_T2_PH_ZP4) {
         UklZ16P p = ukl_z16_placement(ukl_t2z_tape(r));
@@ -923,22 +910,6 @@ UKL_INLINE void ukl_t2z_item(UKL_PRIVATE UklPh* r, uint32_t ph, uint32_t c)
         leaf[0] = 0u;
         leaf[1] = v;
         ukl_ph_up(r, UKL_T2_TZH, c);
-    } else if (ph == UKL_T2_PH_ZF) {
-        UKL_GLOBAL const uint8_t* t = ukl_t2z_tape(r);
-        UklZ16P p = ukl_z16_placement(t);
-        uint32_t v = ukl_ph_sum(r, UKL_T2_TZH, c)[1];
-        for (uint32_t x = a; x < b; x++) {
-            if (x == 0u || items[3u * (x - 1u)] != items[3u * x])
-                v = x;
-            uint32_t j = items[3u * x + 1u], e = j;
-            if (items[3u * x + 2u] != 0u)
-                for (uint32_t k = v; k < x; k++)
-                    if (items[3u * k + 2u] != 0u && ukl_t2z_same(t, &p, items[3u * k + 1u], j)) {
-                        e = items[3u * k + 1u];
-                        break;
-                    }
-            rep[j] = e;
-        }
     } else if (ph == UKL_T2_PH_ZP3) {
         UKL_GLOBAL const uint32_t* zr = r->arrays + m[UKL_T2_O_ZR];
         UKL_GLOBAL const uint32_t* zl = r->arrays + m[UKL_T2_O_ZL];
@@ -965,10 +936,46 @@ UKL_INLINE void ukl_t2z_item(UKL_PRIVATE UklPh* r, uint32_t ph, uint32_t c)
     }
 }
 
+// ZF (group items), sorted piece `x`: the first piece of its run of like hashes (from its head: ZH's sum, then its
+// chunk's items before it) with the same bytes, compared by the group's lanes together; itself where none is.
+UKL_INLINE void ukl_t2z_zf(UKL_PRIVATE UklPh* r, uint32_t x, uint32_t lane __UKL_PARAMS)
+{
+    UklPhPool m = r->m;
+    UKL_GLOBAL const uint32_t* items = r->arrays + m[UKL_T2_O_ZITEMS];
+    uint32_t j = items[3u * x + 1u], e = j;
+    if (items[3u * x + 2u] != 0u) {
+        UKL_GLOBAL const uint8_t* t = ukl_t2z_tape(r);
+        UklZ16P p = ukl_z16_placement(t);
+        uint32_t size = m[UKL_T2_SIZE], c = x / size, v = ukl_ph_sum(r, UKL_T2_TZH, c)[1];
+        for (uint32_t y = c * size; y <= x; y++)
+            if (y == 0u || items[3u * (y - 1u)] != items[3u * y])
+                v = y;
+        uint32_t nj = 0u;
+        UklLz4Spans b = ukl_z16_piece(t, &p, j, &nj);
+        for (uint32_t k = v; k < x && e == j; k++) {
+            if (items[3u * k + 2u] == 0u)
+                continue;
+            uint32_t i = items[3u * k + 1u], ni = 0u;
+            UklLz4Spans a = ukl_z16_piece(t, &p, i, &ni);
+            if (ni != nj)
+                continue;
+            bool differs = false;
+            for (uint32_t q = lane; q < ni && !differs; q += UKL_SIMD_WIDTH)
+                differs = ukl_lz4e_byte(a, q) != ukl_lz4e_byte(b, q);
+            if (ukl_sg_count(differs __UKL_ARGS) == 0u)
+                e = i;
+        }
+    }
+    if (lane == 0u)
+        r->arrays[m[UKL_T2_O_ZREP] + j] = e;
+}
+
 UKL_INLINE void ukl_ph_item_sg(UKL_PRIVATE UklPh* r, uint32_t ph, uint32_t c, uint32_t lane __UKL_PARAMS)
 {
     if (ph == UKL_T2_PH_ZP1)
         ukl_t2z_zp1(r, c, lane __UKL_ARGS);
+    else if (ph == UKL_T2_PH_ZF)
+        ukl_t2z_zf(r, c, lane __UKL_ARGS);
     else
         ukl_t2z_zp4(r, c, lane __UKL_ARGS);
 }
