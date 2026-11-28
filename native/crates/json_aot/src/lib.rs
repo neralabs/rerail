@@ -19,8 +19,8 @@ pub use tier2::{ENTRIES, WIDTHS};
 /// Tier 1's passes as UKL, printed from its Rust (decision 0726; `bitlex_lex_rust::ukl`, held by `json_rust_is_current`):
 /// kernels `json_t1_ends` and `json_t1_from`.
 pub const TIER1_UKL: &str = include_str!("tier1.uglykl");
-/// Tier 2's token pass as UKL, printed from its Rust (decision 0726): kernel `json_t2_tokens`.
-pub const TOKENS_UKL: &str = include_str!("tokens.uglykl");
+/// Tier 2's passes as UKL, printed from its Rust (decision 0726): kernels `json_t2_tokens` and `json_t2_write`.
+pub const TIER2_UKL: &str = include_str!("tier2.uglykl");
 
 /// Tier 2 from the middle (decision 0726): the walk from any place, and the three passes over chunks of records.
 pub mod middle {

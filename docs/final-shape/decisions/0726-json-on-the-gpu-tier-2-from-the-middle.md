@@ -163,7 +163,15 @@ primitive's helpers (`string`, `value_primitive`, the number's check, their tabl
 each `Out` it runs with (here the pass's `Tok`), a `Result<usize, u32>` as a struct (`?` its test hoisted before the
 line), a `match` as tests in turn (C's `switch` would take `break`), and the `known` short cut dropped for an `Out` that
 keeps no answers. Its kernel `json_t2_tokens` reads a token a thread, at each record of tier 1's type lists as
-`json_t1_from` writes them (`json_aot/src/tokens.uglykl`, `TOKENS_UKL`).
+`json_t1_from` writes them.
+
+Pass 2 is printed with it, in one program (`json_aot/src/tier2.uglykl`, `TIER2_UKL`): the walk from a place
+(`run_range`) and its helpers, for the writer's cursor from the middle, `<ukl/writer_mid.h>`: `writer16`'s
+`Cursor<X, true>` op for op. Chunks write next to each other in one block, so each cell is stored at its width alone
+(a byte at a time), and a side-list mask's 64-bit word takes two 32-bit atomic ors (Metal has none of 64 bits). A
+labelled loop's `continue` past the innermost loop sets a jump word and leaves each loop up to the one it names (Metal
+has no `goto`). Its kernel `json_t2_write` runs a chunk a thread from its state: its frames copied into the chunk's
+room, as `resume` writes them, its levels into its row of the levels' room.
 
 ### 7. Every chunk on its own, in any order
 
@@ -206,7 +214,10 @@ LZ4's `LZ4_decompress_safe` decodes to the block; on UKL's CPU backend, compiled
 bytes to 69,804): each loads as a 16z tape and decodes to its tape. `rerail-gpu`'s `z_pieces_encode_in_place`: JSON
 tapes of several blocks with side lists (384 pieces, 388,473 bytes to 36,059), each piece counted and then written by a
 group from where it lies in the tape, at the places its counts give: each the greedy parse of its bytes, on the CPU
-backend, compiled and on the vector path. `rerail-gpu`'s `json_tokens_as_ukl_are_its_rust`: every record of the tier 1 test's files and of a file of the
+backend, compiled and on the vector path. `rerail-gpu`'s `json_tier2_writes_from_the_middle_as_its_rust`: the tier 1 test's files in chunks of 1, 3 and 16
+records, each chunk's state from Rust's passes 1 and 3, every chunk written by the device at once, counting and then
+writing, the writer's region taken back (`Writer::device_region`, `from_device_region`, a test's) and finished: the
+serial walk's tape, byte for byte (12 tapes, 10,467 chunks). `json_tokens_as_ukl_are_its_rust`: every record of the tier 1 test's files and of a file of the
 token errors (numbers, words, surrogate pairs, bad escapes): each token is Rust's `tokens`' (14,865 records, 11
 refused). `rerail-gpu`'s `json_tier1_as_ukl_is_its_rust`: JSON files (a list of 400 objects with escapes and multibyte text, a
 byte-order mark, 3,000 strings of backslashes, and the refusals: a control byte in a string, bad UTF-8, a string open at

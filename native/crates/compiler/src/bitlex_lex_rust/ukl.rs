@@ -34,6 +34,8 @@ pub(crate) enum Ty {
     Res,
     /// A pair of `u32`s (`marks`').
     Pair,
+    /// A struct by value, its C name.
+    Named(String),
 }
 
 impl Ty {
@@ -50,6 +52,7 @@ impl Ty {
             Ty::Out(c) => format!("UKL_PRIVATE {c}*"),
             Ty::Res => format!("{p}R"),
             Ty::Pair => "uint32_t".into(),
+            Ty::Named(c) => c.clone(),
         }
     }
 }
@@ -253,6 +256,12 @@ impl Parser {
                 }
             } else if self.is("[") {
                 self.i += 1;
+                if self.is("..") {
+                    self.i += 1;
+                    self.eat("]")?;
+                    a = E::Slice(Box::new(a), Box::new(E::Num("0".into())), None);
+                    continue;
+                }
                 let k = self.expr(0)?;
                 if self.is("..") {
                     self.i += 1;
@@ -482,8 +491,15 @@ impl Fx<'_> {
             E::Matches(..) => Ty::Bool,
             E::Try(_) => Ty::U32,
             E::Tuple(_) => Ty::Pair,
-            E::Slice(..) => Ty::Ptr("UKL_GLOBAL const uint8_t*".into()),
-            E::Field(_, _) => Ty::U64,
+            E::Slice(a, ..) => match self.ty(a) {
+                Ty::Ptr(c) => Ty::Ptr(c),
+                _ => Ty::Ptr("UKL_GLOBAL const uint8_t*".into()),
+            },
+            E::Field(a, f) => match self.ty(a) {
+                Ty::Named(c) if c.ends_with("Lx") && f == "starts" => Ty::Ptr("UKL_GLOBAL const uint32_t*".into()),
+                Ty::Named(_) => Ty::U32,
+                _ => Ty::U64,
+            },
             E::Index(a, _) => match self.ty(a) {
                 Ty::Arr(t) => *t,
                 Ty::Ptr(c) if c.contains("uint64_t") => Ty::U64,
@@ -587,6 +603,7 @@ impl Fx<'_> {
                 }
                 format!("({})", v.join(" || "))
             }
+            E::Slice(a, k, None) if matches!(&**k, E::Num(z) if z == "0") => self.c(a)?,
             E::Slice(a, k, None) => format!("({} + {})", self.c(a)?, self.c(k)?),
             E::Range(..) | E::Tuple(_) | E::Slice(..) | E::Bytes(_) => return Err("a range, tuple, slice or byte string the printer does not take here".into()),
             E::Method(a, m, args) if matches!(self.ty(a), Ty::Out(_)) => {
@@ -682,6 +699,10 @@ fn param_ty_of(t: &str, out: &str) -> Result<Ty, String> {
     if t == "&mut D" && !out.is_empty() {
         return Ok(Ty::Out(out.into()));
     }
+    // The levels' places: the chunk's room.
+    if t.starts_with("&mut [u8; ") {
+        return Ok(Ty::Ptr("UKL_GLOBAL uint8_t*".into()));
+    }
     Ok(match t {
         "u64" => Ty::U64,
         "u32" | "usize" => Ty::U32,
@@ -708,8 +729,12 @@ enum Frame {
     Fields(String, String),
     /// A `match`, as tests in turn of its value's variable: whether an arm is printed yet.
     Match(String, bool),
-    /// An arm of a `match`: its block.
-    Arm,
+    /// An arm of a `match`: its block (a loop's, closed with it, where `true`).
+    Arm(bool),
+    /// A loop, its label.
+    Loop(Option<String>),
+    /// A `match` of a `Result` as a value: its target and the result's variable.
+    ResMatch(String, String),
 }
 
 /// Function `name`'s body (`lines`, after its signature line, to its closing brace), printed.
@@ -721,6 +746,8 @@ fn body(fx: &mut Fx<'_>, lines: &[&str], ret: &str, out: &mut String) -> Result<
     let mut mark = 0usize;
     let mut skip = 0i32;
     let mut matches = 0u32;
+    // The labels of the loops met, a jump's word one past its place.
+    let mut labels: Vec<String> = Vec::new();
     for raw in lines {
         let pre = fx.take_pre();
         if !pre.is_empty() {
@@ -731,13 +758,53 @@ fn body(fx: &mut Fx<'_>, lines: &[&str], ret: &str, out: &mut String) -> Result<
             out.insert_str(mark, &pre);
         }
         mark = out.len();
-        let l = raw.trim();
+        // A walk's stop as its constructors' calls.
+        let stopped = raw
+            .trim()
+            .replace("Stop::At(Entry { i, e, depth, st })", "stop_at(i, e, depth, st)")
+            .replace("Stop::Read(Entry { i, e, depth, st })", "stop_read(i, e, depth, st)")
+            .replace("Stop::Done(Ok(()))", "stop_ok()")
+            .replace("Stop::Done(Err(", "stop_err((");
+        let l = stopped.as_str();
         let why = |e: String| format!("as UKL: `{l}`: {e}");
         if skip > 0 {
             skip += l.matches('{').count() as i32 - l.matches('}').count() as i32;
             continue;
         }
         if l.is_empty() || l.starts_with("debug_assert") || l.starts_with("let _ = ") {
+            continue;
+        }
+        // A `match` of a result as a value: its error's arm returns, its value's is the target's.
+        if let Some(Frame::ResMatch(_, r)) = frames.last() {
+            let r = r.clone();
+            if let Some(v) = l.strip_prefix("Ok(").and_then(|x| x.split_once(") => ")) {
+                if v.1.trim_end_matches(',') != v.0 {
+                    return Err(why("an `Ok` arm that is not its value".into()));
+                }
+                continue;
+            }
+            if let Some((x, rest)) = l.strip_prefix("Err(").and_then(|x| x.split_once(") => ")) {
+                let stmt = statement(fx, rest.trim_end_matches(',')).map_err(why)?;
+                let _ = writeln!(out, "if (!{r}.ok) {{\nuint32_t {x} = {r}.v;\n{stmt}\n}}");
+                continue;
+            }
+        }
+        if let Some((target, x)) = l.strip_suffix(" {").and_then(|r| r.split_once(" = match ")) {
+            let e = parse(x).map_err(why)?;
+            let r = fx.fresh();
+            let _ = writeln!(out, "{}R {r} = {};", fx.p, fx.c(&e).map_err(why)?);
+            frames.push(Frame::ResMatch(target.into(), r));
+            continue;
+        }
+        // A labelled loop's `continue`: the innermost loop's own, else the jump word set and each loop left up to it.
+        if let Some(label) = l.strip_prefix("continue '").and_then(|r| r.strip_suffix(';')) {
+            let inner = frames.iter().rev().find_map(|f| if let Frame::Loop(x) = f { Some(x.clone()) } else { None }).ok_or_else(|| why("a `continue` outside a loop".into()))?;
+            if inner.as_deref() == Some(label) {
+                out.push_str("continue;\n");
+            } else {
+                let id = labels.iter().position(|x| x == label).ok_or_else(|| why("a label not open".into()))? + 1;
+                let _ = writeln!(out, "jmp_ = {id}u;\nbreak;");
+            }
             continue;
         }
         // The token pass's answer, where the walk's `Out` keeps none: the walk reads the token itself.
@@ -784,8 +851,19 @@ fn body(fx: &mut Fx<'_>, lines: &[&str], ret: &str, out: &mut String) -> Result<
                 }
                 if rest == "{" {
                     let _ = writeln!(out, "{head} {{");
-                    frames.push(Frame::Arm);
+                    frames.push(Frame::Arm(false));
                     fx.scopes.push(Vec::new());
+                } else if let Some(label) = rest.strip_prefix('\'').and_then(|r| r.strip_suffix(": loop {")) {
+                    let _ = writeln!(out, "{head} {{\nwhile (true) {{");
+                    frames.push(Frame::Arm(true));
+                    fx.scopes.push(Vec::new());
+                    if !labels.iter().any(|x| x == label) {
+                        labels.push(label.into());
+                    }
+                    frames.push(Frame::Loop(Some(label.into())));
+                    fx.scopes.push(Vec::new());
+                } else if rest == "unreachable!()," {
+                    let _ = writeln!(out, "{head} {{}}");
                 } else if rest == "{}" {
                     let _ = writeln!(out, "{head} {{}}");
                 } else {
@@ -805,17 +883,38 @@ fn body(fx: &mut Fx<'_>, lines: &[&str], ret: &str, out: &mut String) -> Result<
             continue;
         }
         // The block's ends.
-        if l == "}" || l == "};" || l == "})" {
+        if l == "}" || l == "};" || l == "})" || l == "}," {
             let f = frames.pop().ok_or_else(|| why("a brace too many".into()))?;
-            if !matches!(f, Frame::Fields(..)) {
+            if !matches!(f, Frame::Fields(..) | Frame::ResMatch(..)) {
                 fx.scopes.pop();
             }
             match f {
                 Frame::Fields(_, after) => {
                     let _ = writeln!(out, "{after}");
                 }
-                // The match's own block.
-                Frame::Match(..) => out.push_str("}\n"),
+                Frame::ResMatch(target, r) => {
+                    let _ = writeln!(out, "{target} = {r}.v;");
+                }
+                Frame::Loop(_) => {
+                    out.push_str("}\n");
+                    // A jump past it: taken by the loop it names, else on out.
+                    if !labels.is_empty() {
+                        match frames.iter().rev().find_map(|f| if let Frame::Loop(x) = f { Some(x.clone()) } else { None }) {
+                            Some(Some(outer)) => {
+                                let id = labels.iter().position(|x| *x == outer).map_or(0, |k| k + 1);
+                                let _ = writeln!(out, "if (jmp_ != 0u) {{\nif (jmp_ == {id}u) {{\njmp_ = 0u;\ncontinue;\n}}\nbreak;\n}}");
+                            }
+                            Some(None) => out.push_str("if (jmp_ != 0u)\nbreak;\n"),
+                            None => {}
+                        }
+                    }
+                    // A loop that was its arm's body: the arm too.
+                    if l == "}," && matches!(frames.last(), Some(Frame::Arm(true))) {
+                        frames.pop();
+                        fx.scopes.pop();
+                        out.push_str("}\n");
+                    }
+                }
                 _ => out.push_str("}\n"),
             }
             continue;
@@ -844,7 +943,19 @@ fn body(fx: &mut Fx<'_>, lines: &[&str], ret: &str, out: &mut String) -> Result<
         }
         if l == "loop {" {
             out.push_str("while (true) {\n");
-            frames.push(Frame::Plain);
+            frames.push(Frame::Loop(None));
+            fx.scopes.push(Vec::new());
+            continue;
+        }
+        if let Some(label) = l.strip_prefix('\'').and_then(|r| r.strip_suffix(": loop {")) {
+            if labels.is_empty() {
+                out.push_str("uint32_t jmp_ = 0u;\n");
+            }
+            if !labels.iter().any(|x| x == label) {
+                labels.push(label.into());
+            }
+            out.push_str("while (true) {\n");
+            frames.push(Frame::Loop(Some(label.into())));
             fx.scopes.push(Vec::new());
             continue;
         }
@@ -930,7 +1041,7 @@ fn body(fx: &mut Fx<'_>, lines: &[&str], ret: &str, out: &mut String) -> Result<
             let (a, b) = range.split_once("..").ok_or_else(|| why("a loop's range".into()))?;
             let (a, b) = (parse(a).map_err(why)?, parse(b).map_err(why)?);
             let _ = writeln!(out, "for (uint32_t {v} = {}; {v} < {}; {v}++) {{", fx.c(&a).map_err(why)?, fx.c(&b).map_err(why)?);
-            frames.push(Frame::Plain);
+            frames.push(Frame::Loop(None));
             fx.scopes.push(vec![(v.into(), Ty::U32)]);
             continue;
         }
@@ -938,13 +1049,13 @@ fn body(fx: &mut Fx<'_>, lines: &[&str], ret: &str, out: &mut String) -> Result<
             let (v, x) = r.split_once(") = ").ok_or_else(|| why("a `while let`".into()))?;
             let x = fx.c(&parse(x).map_err(why)?).map_err(why)?;
             let _ = writeln!(out, "while ({x} != UKL_NONE) {{\nuint32_t {v} = {x};");
-            frames.push(Frame::Plain);
+            frames.push(Frame::Loop(None));
             fx.scopes.push(vec![(v.into(), Ty::U32)]);
             continue;
         }
         if let Some(c) = l.strip_prefix("while ").and_then(|r| r.strip_suffix(" {")) {
             let _ = writeln!(out, "while ({}) {{", fx.c(&parse(c).map_err(why)?).map_err(why)?);
-            frames.push(Frame::Plain);
+            frames.push(Frame::Loop(None));
             fx.scopes.push(Vec::new());
             continue;
         }
@@ -1350,9 +1461,16 @@ fn print_fn(lines: &[&str], f: &str, name: &str, out_c: &str, p: &str, names: &H
         }
         let part = part.strip_prefix("mut ").unwrap_or(part);
         let (n, t) = part.split_once(": ").ok_or_else(|| format!("as UKL: a parameter `{part}`"))?;
-        params.push((n.into(), param_ty_of(t, out_c)?));
+        // The walk's: tier 1's records and its place, by value.
+        let ty = match t {
+            "&crate::tier1::Lexed" => Ty::Named(format!("{p}Lx")),
+            "Entry" => Ty::Named(format!("{p}Entry")),
+            _ => param_ty_of(t, out_c)?,
+        };
+        params.push((n.into(), ty));
     }
     let (cret, kind) = match rett {
+        Some("Stop") => (format!("{p}Stop"), "stop"),
         None => ("void".to_string(), "void"),
         Some("Result<usize, u32>") => (format!("{p}R"), "value"),
         Some("Option<usize>" | "usize" | "u32" | "u8") => ("uint32_t".to_string(), "value"),
@@ -1363,6 +1481,10 @@ fn print_fn(lines: &[&str], f: &str, name: &str, out_c: &str, p: &str, names: &H
     let _ = writeln!(out, "UKL_INLINE {cret} {name}({plist})\n{{");
     let mut fx = Fx { p, names, returns, scopes: vec![params], consts: HashMap::new(), pre: Default::default(), tmp: Default::default(), known: false };
     body(&mut fx, item(lines, at)?, kind, out).map_err(|e| format!("`{f}`: {e}"))?;
+    // Past the walk's loop, which every way out of returns from.
+    if kind == "stop" {
+        let _ = writeln!(out, "return {p}stop_err(UKL_NONE);");
+    }
     out.push_str("}\n\n");
     Ok(())
 }
@@ -1390,16 +1512,22 @@ fn tables(lines: &[&str], p: &str, names: &mut HashMap<String, String>, out: &mu
 /// primitive's helpers printed for the pass's `Out` (`{p}Tok`, the first node's number, the nodes, the last one's
 /// start) and its kernel `{p}tokens`, a thread a record: the token at each record of `list` (tier 1's type lists, one
 /// buffer), its five words (`end`, `kind`, `nodes`, `last`, `err`) at the record's place in `tokens`.
-pub fn tier2_tokens(rust: &str, p: &str) -> Result<String, String> {
+pub fn tier2(rust: &str, p: &str) -> Result<String, String> {
     let lines: Vec<&str> = rust.lines().collect();
     let mut names: HashMap<String, String> = HashMap::new();
     let mut returns: HashMap<String, Ty> = HashMap::new();
     let mut out = String::new();
     let _ = writeln!(
         out,
-        "// Generated by native/crates/compiler/src/bitlex_lex_rust/ukl.rs from tier 2's Rust; do not edit. Tier 2's token pass\n// as UKL, a thread a record (decision 0726).\n\n#pragma once\n#include <ukl/blx64.h>\n#include <ukl/memory.h>\n"
+        "// Generated by native/crates/compiler/src/bitlex_lex_rust/ukl.rs from tier 2's Rust; do not edit. Tier 2's passes as\n// UKL (decision 0726): the token pass, a thread a record, and pass 2, a thread a chunk.\n\n#pragma once\n#include <ukl/blx64.h>\n#include <ukl/memory.h>\n#include <ukl/writer_mid.h>\n"
     );
     tables(&lines, p, &mut names, &mut out)?;
+    let depth = lines
+        .iter()
+        .find_map(|l| l.strip_prefix("const DEPTH: usize = ").and_then(|r| r.strip_suffix(';')))
+        .ok_or("as UKL: no DEPTH")?;
+    names.insert("DEPTH".into(), format!("{p}DEPTH"));
+    let _ = writeln!(out, "#define {p}DEPTH {depth}u");
     // The primitive: its name and its numbers' count; the tokens' first bytes.
     let prim = lines
         .iter()
@@ -1466,6 +1594,44 @@ UKL_INLINE void {p}Tok_leaf_in(UKL_PRIVATE {p}Tok* d, uint32_t number, uint32_t 
 }}
 UKL_INLINE void {p}Tok_close(UKL_PRIVATE {p}Tok* d, uint64_t end) {{}}
 
+// Tier 1's records: their starts (then the index's three last entries), their count, the file's length.
+typedef struct {p}Lx {{
+    UKL_GLOBAL const uint32_t* starts;
+    uint32_t count;
+    uint32_t len;
+}} {p}Lx;
+
+// The walk's state at a place: the next record, the last token's end, the levels open, the place.
+typedef struct {p}Entry {{
+    uint32_t i;
+    uint32_t e;
+    uint32_t depth;
+    uint32_t st;
+}} {p}Entry;
+
+// Where a walk stops (`Stop`): `kind` 0 at a place at or past its end, 1 where it closes a level it does not know,
+// 2 the file's end, 3 its refusal at byte `err`.
+typedef struct {p}Stop {{
+    uint32_t kind;
+    {p}Entry en;
+    uint32_t err;
+}} {p}Stop;
+UKL_INLINE {p}Stop {p}stop_of(uint32_t kind, uint32_t i, uint32_t e, uint32_t depth, uint32_t st, uint32_t err)
+{{
+    {p}Stop r;
+    r.kind = kind;
+    r.en.i = i;
+    r.en.e = e;
+    r.en.depth = depth;
+    r.en.st = st;
+    r.err = err;
+    return r;
+}}
+UKL_INLINE {p}Stop {p}stop_at(uint32_t i, uint32_t e, uint32_t depth, uint32_t st) {{ return {p}stop_of(0u, i, e, depth, st, 0u); }}
+UKL_INLINE {p}Stop {p}stop_read(uint32_t i, uint32_t e, uint32_t depth, uint32_t st) {{ return {p}stop_of(1u, i, e, depth, st, 0u); }}
+UKL_INLINE {p}Stop {p}stop_ok() {{ return {p}stop_of(2u, 0u, 0u, 0u, 0u, 0u); }}
+UKL_INLINE {p}Stop {p}stop_err(uint32_t x) {{ return {p}stop_of(3u, 0u, 0u, 0u, 0u, x); }}
+
 "#
     );
     // The helpers: those of no walk once, the walk's for its `Out`.
@@ -1481,11 +1647,22 @@ UKL_INLINE void {p}Tok_close(UKL_PRIVATE {p}Tok* d, uint64_t end) {{}}
         returns.insert(f.into(), Ty::Res);
     }
     returns.insert("ends".into(), Ty::Bool);
+    for f in ["stop_at", "stop_read", "stop_ok", "stop_err"] {
+        names.insert(f.into(), format!("{p}{f}"));
+    }
     for f in plain {
         print_fn(&lines, f, &format!("{p}{f}"), "", p, &names, &returns, &mut out)?;
     }
     for f in walk {
         print_fn(&lines, f, &format!("{p}{f}_Tok"), &format!("{p}Tok"), p, &names, &returns, &mut out)?;
+    }
+    // Pass 2's: each walk helper, then the walk from a place, on the writer's cursor from the middle.
+    let mut mid = names.clone();
+    for f in walk.iter().chain(&["run_range"]) {
+        mid.insert((*f).into(), format!("{p}{f}_Mid"));
+    }
+    for f in walk.iter().chain(&["run_range"]) {
+        print_fn(&lines, f, &format!("{p}{f}_Mid"), "UklWMid", p, &mid, &returns, &mut out)?;
     }
     let nums = (0..arity).map(|k| format!("{k}u")).collect::<Vec<_>>().join(", ");
     let _ = write!(
@@ -1532,8 +1709,61 @@ DEFINE_KERNEL2(tier2, {p}tokens,
     for (uint32_t k = 0u; k < 5u; k++)
         tokens[r * 5u + k] = t[k];
 }}
+
+typedef struct {p}WArgs {{
+    uint32_t chunks;
+    uint32_t count;
+    uint32_t len;
+    uint32_t write;
+}} {p}WArgs;
+UKL_REFLECT_STRUCT({p}WArgs, chunks, count, len, write)
+
+// Pass 2: chunk `c`'s nodes written from its state (`write_range`), through a cursor from the middle on the writer's
+// region `t` (its state at 0, its blocks made): counting its side-list entries (`args.write` 0), or writing them. Its
+// state, `ats`' {aw} words: its entry (`i`, `e`, `depth`, `st`), the record it stops at, its first node, the start
+// before it (two words), its frames' room in `f` (`FRAME` words each), the frames open at its entry (their count and
+// place in `frames`: node, children, last child, start's two words), and the levels it holds (their count and place in
+// `levels`, the innermost last). Where it stopped: `out`'s two words, its stop's kind and record.
+DEFINE_KERNEL2(tier2, {p}write,
+               ARGS,     {p}WArgs, args,   ,
+               ROBUFFER, uint8_t,  src,    "[len + 64]",
+               ROBUFFER, uint32_t, starts, "[count + 3]",
+               RWBUFFER, uint8_t,  t,      "[region]",
+               ROBUFFER, uint32_t, ats,    "[chunks * {aw}]",
+               ROBUFFER, uint32_t, frames, "[entry frames * 5]",
+               ROBUFFER, uint8_t,  levels, "[entry levels]",
+               RWBUFFER, uint32_t, f,      "[room * 5]",
+               RWBUFFER, uint8_t,  rets,   "[chunks * {p}DEPTH]",
+               RWBUFFER, uint32_t, out,    "[chunks * 2]",
+               GID0,     uint32_t, c,      )
+{{
+    if (c >= args.chunks)
+        return;
+    UKL_GLOBAL const uint32_t* a = ats + c * {aw}u;
+    UKL_GLOBAL uint32_t* room = f + a[8] * UKL_WMID_FRAME;
+    for (uint32_t k = 0u; k < a[9] * UKL_WMID_FRAME; k++)
+        room[k] = frames[a[10] * UKL_WMID_FRAME + k];
+    UKL_GLOBAL uint8_t* ret = rets + c * {p}DEPTH;
+    uint32_t base = a[2] - a[11];
+    for (uint32_t k = 0u; k < a[11]; k++)
+        ret[base + k] = levels[a[12] + k];
+    {p}Lx lx;
+    lx.starts = starts;
+    lx.count = args.count;
+    lx.len = args.len;
+    {p}Entry en;
+    en.i = a[0];
+    en.e = a[1];
+    en.depth = a[2];
+    en.st = a[3];
+    UklWMid d = ukl_wmid_resume(t, 0u, a[5], (uint64_t)a[6] | ((uint64_t)a[7] << 32), room, a[9], args.write == 0u);
+    {p}Stop r = {p}run_range_Mid(src, lx, &d, en, ret, 0u, a[4]);
+    out[c * 2u] = r.kind;
+    out[c * 2u + 1u] = r.en.i;
+}}
 "#,
         firsts = tests.join(" || "),
+        aw = 13,
     );
     Ok(out)
 }

@@ -134,7 +134,7 @@ struct T2Args {
 }
 unsafe impl Pod for T2Args {}
 
-/// Tier 2's token pass as UKL (`json_t2_tokens`) on the device, a thread a record of tier 1's type lists (one buffer,
+/// Tier 2's token pass as UKL (`json_t2_tokens`, of `TIER2_UKL`) on the device, a thread a record of tier 1's type lists (one buffer,
 /// as `json_t1_from` writes them): each record's token is Rust's `tokens`' (its end, first node's number, nodes, last
 /// node's start, or the byte it is refused at).
 #[test]
@@ -144,7 +144,7 @@ fn json_tokens_as_ukl_are_its_rust() {
         return;
     };
     let mut q = crate::device::ComputeQueue::new(&shared.queue);
-    let p = program("json_tokens.uglykl", rerail_json_aot::TOKENS_UKL).unwrap_or_else(|e| panic!("{}: {e}", crate::device::backend()));
+    let p = program("json_tier2.uglykl", rerail_json_aot::TIER2_UKL).unwrap_or_else(|e| panic!("{}: {e}", crate::device::backend()));
     let mut more: Vec<Vec<u8>> = vec![
         b"[1, -0, 0.5, 1e9, -12.75E-3, 01, 1., -, 1e, true, false, null, tru, nul, \"\\ud83d\\ude00\", \"\\ud83d\", \"\\ude00\", \"\\u12\", \"\\x\", \"\"]".to_vec(),
         b"{\"k\": 3truex}".to_vec(),
@@ -178,4 +178,107 @@ fn json_tokens_as_ukl_are_its_rust() {
         records += list.len();
     }
     eprintln!("{}: the token pass as UKL, {records} records: each token Rust's ({refused} refused)", crate::device::backend());
+}
+
+#[repr(C)]
+#[derive(Clone, Copy)]
+struct T2WArgs {
+    chunks: u32,
+    count: u32,
+    len: u32,
+    write: u32,
+}
+unsafe impl Pod for T2WArgs {}
+
+/// Tier 2's pass 2 as UKL (`json_t2_write`) on the device: each chunk's nodes written from its state by a cursor from
+/// the middle (`<ukl/writer_mid.h>`) on the writer's region, every chunk at once, counting its side-list entries and
+/// then writing them; the region taken back and finished is the serial walk's tape, byte for byte. Each chunk's state
+/// is Rust's passes 1 and 3 (`summaries`, `entries`), laid in the kernel's buffers.
+#[test]
+fn json_tier2_writes_from_the_middle_as_its_rust() {
+    use rerail_json_aot::middle;
+    let Some(shared) = crate::shared::get() else {
+        eprintln!("no device: tier 2's pass 2 as UKL did not run");
+        return;
+    };
+    let mut q = crate::device::ComputeQueue::new(&shared.queue);
+    let p = program("json_tier2.uglykl", rerail_json_aot::TIER2_UKL).unwrap_or_else(|e| panic!("{}: {e}", crate::device::backend()));
+    let entries = rerail_json_aot::ENTRIES.iter().map(|&(kind, field, classes)| rerail_tape_format::tape::Entry { kind, field, flags: 0, alias: None, classes: classes.to_vec() }).collect();
+    let lang = rerail_tape_format::f16::Lang::new(rerail_tape_format::tape::CodeTable::new(entries), rerail_json_aot::WIDTHS, 1).expect("a language");
+    let writer = |f: &[u8]| rerail_tape_format::f16::Writer::new(&lang, f, rerail_tape_format::newlines::Terminators::Newlines, 0, false, true, f.len() / 2 + 16);
+    const DEPTH: usize = 1024;
+    let (mut tapes, mut chunks_run, mut bytes_out) = (0usize, 0usize, 0usize);
+    for (k, f) in files().iter().enumerate() {
+        let buf = rerail_json_aot::padded(f);
+        let n = f.len();
+        let lx = rerail_json_aot::lex(&buf, n);
+        let mut w = writer(f);
+        if rerail_json_aot::parse_lexed(&buf, &lx, &mut w).is_err() {
+            continue;
+        }
+        let want = w.finish().expect("the serial tape").tape.as_bytes().to_vec();
+        let types = rerail_json_aot::lex_typed(&buf, n, 16).types;
+        for size in [1usize, 3, 16] {
+            let chunks = middle::chunk_starts(&buf, &lx, size, &middle::in_order);
+            let toks = middle::tokens(&buf, &lx, &types, &middle::in_order);
+            let sums = middle::summaries(&buf, &lx, &toks, size, &middle::in_order);
+            let ats = middle::entries(&sums, &middle::in_order);
+            let last = ats.last().cloned().flatten().expect("the file's end");
+            let mut m = writer(f);
+            m.reserve_run(1 + lx.count + lx.len, (DEPTH + 1) * 3 + 1);
+            m.final_as_written();
+            m.make_blocks(last.nodes as usize).expect("the blocks");
+            // Each chunk's state, its frames and levels, and its frames' room.
+            let (mut words, mut frames, mut levels, mut room) = (Vec::new(), Vec::<u32>::new(), Vec::<u8>::new(), 0usize);
+            for c in 0..chunks.len() {
+                let at = ats[c].as_ref().expect("a chunk's state");
+                let stop = chunks.get(c + 1).copied().unwrap_or(lx.count + 1);
+                words.extend([at.entry.i as u32, at.entry.e as u32, at.entry.depth as u32, u32::from(at.entry.st), stop as u32, at.nodes, at.prev_start as u32, (at.prev_start >> 32) as u32]);
+                words.extend([room as u32, at.frames.len() as u32, (frames.len() / 5) as u32, at.ret.len() as u32, levels.len() as u32]);
+                for fr in &at.frames {
+                    frames.extend([fr.node, fr.kids, fr.last, fr.start as u32, (fr.start >> 32) as u32]);
+                }
+                levels.extend(at.ret.iter());
+                room += at.frames.len() + 3 * (stop - at.entry.i) + 4;
+            }
+            let nc = chunks.len();
+            let region = m.device_region();
+            let (sb, stb, tb) = (buffer_of(&buf).unwrap(), buffer_of(&lx.starts).unwrap(), buffer_of(&region).unwrap());
+            frames.push(0);
+            levels.push(0);
+            let (ab, fb, lb) = (buffer_of(&words).unwrap(), buffer_of(&frames).unwrap(), buffer_of(&levels).unwrap());
+            let (roomb, rb, ob) = (alloc::<u32>(room * 5).unwrap(), alloc::<u8>(nc * DEPTH).unwrap(), alloc::<u32>(nc * 2).unwrap());
+            for write in [0u32, 1] {
+                let args = T2WArgs { chunks: nc as u32, count: lx.count as u32, len: n as u32, write };
+                launch(&q, p.function("json_t2_write").unwrap())
+                    .value("args", &args)
+                    .buffer("src", &sb)
+                    .buffer("starts", &stb)
+                    .buffer("t", &tb)
+                    .buffer("ats", &ab)
+                    .buffer("frames", &fb)
+                    .buffer("levels", &lb)
+                    .buffer("f", &roomb)
+                    .buffer("rets", &rb)
+                    .buffer("out", &ob)
+                    .run(&[nc as u64], &[1])
+                    .unwrap();
+                q.flush().await_().unwrap();
+                let out: Vec<u32> = read(&ob, nc * 2);
+                for c in 0..nc {
+                    let stop = chunks.get(c + 1).copied().unwrap_or(lx.count + 1);
+                    let fine = if c + 1 == nc { out[2 * c] == 2 } else { out[2 * c] == 0 && out[2 * c + 1] as usize == stop };
+                    assert!(fine, "{}: file {k}, chunks of {size}, run {write}: chunk {c} stopped as ({}, {})", crate::device::backend(), out[2 * c], out[2 * c + 1]);
+                }
+            }
+            m.from_device_region(&read::<u8>(&tb, region.len()));
+            m.end_middle(last.nodes as usize, last.prev_start);
+            let have = m.finish().expect("the tape from the middle").tape.as_bytes().to_vec();
+            assert!(have == want, "{}: file {k}, chunks of {size}: the tape differs at byte {:?} of {}", crate::device::backend(), have.iter().zip(&want).position(|(a, b)| a != b), want.len());
+            tapes += 1;
+            chunks_run += nc;
+            bytes_out += have.len();
+        }
+    }
+    eprintln!("{}: tier 2's pass 2 as UKL, {tapes} tapes in chunks of 1, 3 and 16 records ({chunks_run} chunks, each counted then written at once): the serial walk's tape, {bytes_out} bytes", crate::device::backend());
 }

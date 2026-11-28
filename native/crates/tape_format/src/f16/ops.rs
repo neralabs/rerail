@@ -418,6 +418,45 @@ impl Writer {
         unsafe { ops::w_end_middle(desc, n as u32, prev_start) };
     }
 
+    /// The writer's region as one buffer, for a test that runs cursors from the middle on the device (decision 0726): the
+    /// state, then each part at a 64-byte boundary as its buffer is, each part's place its offset from the state.
+    /// `from_device_region` takes it back.
+    #[cfg(any(test, feature = "test-hooks"))]
+    pub fn device_region(&self) -> Vec<u8> {
+        let mut state = *self.state;
+        let mut end = size_of::<State>().next_multiple_of(64);
+        let mut ats = [0usize; part::COUNT];
+        for (k, at) in ats.iter_mut().enumerate() {
+            *at = end;
+            end = (end + self.parts[k].len()).next_multiple_of(64);
+        }
+        let mut bytes = vec![0u8; end];
+        for (k, &at) in ats.iter().enumerate() {
+            // copy: not block data: a test's region handed to the device (the product's parts are the device's memory).
+            bytes[at..at + self.parts[k].len()].copy_from_slice(&self.parts[k]);
+            self.part_mut(&mut state, k).at = at as i64;
+        }
+        // SAFETY: the state is plain integers (`repr(C)`), and the region starts with its room.
+        unsafe { std::ptr::write_unaligned(bytes.as_mut_ptr().cast::<State>(), state) };
+        bytes
+    }
+
+    /// The region back from the device (`device_region`'s, as the device left it): each part's bytes and the state's
+    /// fields, each part's place its buffer's again.
+    #[cfg(any(test, feature = "test-hooks"))]
+    pub fn from_device_region(&mut self, bytes: &[u8]) {
+        // SAFETY: as `device_region`'s.
+        let state: State = unsafe { std::ptr::read_unaligned(bytes.as_ptr().cast::<State>()) };
+        for k in 0..part::COUNT {
+            let at = self.part_mut(&mut state.clone(), k).at as usize;
+            let len = self.parts[k].len();
+            // copy: not block data: a test's region read back from the device.
+            self.parts[k].copy_from_slice(&bytes[at..at + len]);
+        }
+        *self.state = state;
+        self.bind();
+    }
+
     /// The state's address: what code that calls the ops itself passes them (`reserve_run` first).
     pub fn state_address(&mut self) -> *mut u8 {
         std::ptr::from_mut::<State>(&mut self.state).cast::<u8>()
