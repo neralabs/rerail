@@ -522,3 +522,75 @@ fn field_and_text_forms_give_their_rules_rows() {
     assert!(refs.contains(&"os") && refs.contains(&"px") && !refs.contains(&"join") && !refs.contains(&"inner") && !refs.contains(&"x"), "{refs:?}");
     assert_eq!(ruled[1].iter().map(|r| r[2].as_str()).collect::<Vec<_>>(), ["join", "path"], "{:?}", ruled[1]);
 }
+
+/// python/points-to-file's `pt_wnear`: where a name's walk up its scopes starts, its nearest scope, a name within a
+/// call of `os.path.join` (standing in for a guest's) left out.
+const NEAR: &str = r#"#include "core.rerail"
+.decl scope(kind: symbol)
+scope("module"). scope("function_definition"). scope("class_definition"). scope("lambda").
+.decl ref(n: node, x: symbol)
+ref(n, x) :- kind(n, "identifier"), text(n, x), !field(_, "attribute", n), !field(_, "name", n).
+.decl hosted(n: node, h: node)
+hosted(n, c) :- kind(c, "call"), field(c, "function", g), text(g, "os.path.join"), within(n, c).
+.decl near(n: node, x: symbol, s: node)
+near(n, x, s) :- ref(n, x), nearest(n, s, scope), !hosted(n, _).
+.decl nears(b: number, x: symbol, sb: number, k: symbol)
+nears(b, x, sb, k) :- near(n, x, s), node(_, n, _, b, _), node(_, s, k, sb, _).
+.output nears
+"#;
+
+/// `pt_wnear`'s form gives its rules' rows, over its references' rules or their form.
+#[test]
+fn a_nearest_of_form_gives_its_rules_rows() {
+    let near = ".form near tape.nearest_of reads ref hosted args module function_definition class_definition lambda\n";
+    let refs = ".form ref tape.text args identifier / attribute name\n";
+    let ruled = names_rows(NEAR, "near-rules", &["nears"]);
+    assert_eq!(names_rows(&format!("{NEAR}{near}"), "near", &["nears"]), ruled);
+    assert_eq!(names_rows(&format!("{NEAR}{near}{refs}"), "near-refs", &["nears"]), ruled);
+    let at = |x: &str| ruled[0].iter().filter(|r| r[1] == x).map(|r| r[3].clone()).collect::<Vec<_>>();
+    // The `os` and `k` of `os.path.join(k, ...)` are left out.
+    assert_eq!((at("self"), at("os"), at("v")), (vec!["function_definition".to_owned(); 2], vec!["module".to_owned(); 2], vec!["module".to_owned()]), "{:?}", ruled[0]);
+    assert!(at("k").is_empty(), "{:?}", ruled[0]);
+}
+
+/// python/points-to-file's `pt_walk`: a name's walk out through its scopes, class scopes skipped, to the first that
+/// binds it, from its nearest scope (`near`) or, for a name in a call of `f` (standing in for a guest's),
+/// from the module (`far`).
+const WALK: &str = r#"#include "core.rerail"
+.decl scope(kind: symbol)
+scope("module"). scope("function_definition"). scope("class_definition"). scope("lambda").
+.decl fscope(kind: symbol)
+fscope("module"). fscope("function_definition"). fscope("lambda").
+.decl ref(n: node, x: symbol)
+ref(n, x) :- kind(n, "identifier"), text(n, x), !field(_, "attribute", n), !field(_, "name", n).
+.decl hosted(n: node, h: node)
+hosted(n, c) :- kind(c, "call"), field(c, "function", g), text(g, "f"), within(n, c).
+.decl near(n: node, x: symbol, s: node)
+near(n, x, s) :- ref(n, x), nearest(n, s, scope), !hosted(n, _).
+.decl far(n: node, x: symbol, s: node)
+far(n, x, m) :- ref(n, x), hosted(n, _), docof(n, d), kind(m, "module"), docof(m, d).
+.decl bound(s: node, x: symbol)
+bound(s, x) :- kind(f, "function_definition"), field(f, "name", n), text(n, x), nearest(f, s, scope).
+bound(f, x) :- kind(f, "function_definition"), field(f, "parameters", ps), child(ps, p, _), kind(p, "identifier"), text(p, x).
+.decl up(s: node, p: node)
+up(s, p) :- kind(s, k), scope(k), nearest(s, p, fscope).
+.decl walk(n: node, x: symbol, s: node)
+walk(n, x, s) :- near(n, x, s).
+walk(n, x, s) :- far(n, x, s).
+walk(n, x, p) :- walk(n, x, s), !bound(s, x), up(s, p).
+.decl walks(b: number, x: symbol, sb: number, k: symbol)
+walks(b, x, sb, k) :- walk(n, x, s), node(_, n, _, b, _), node(_, s, k, sb, _).
+.output walks
+"#;
+
+/// `pt_walk`'s form gives its rules' rows.
+#[test]
+fn a_walk_form_gives_its_rules_rows() {
+    let form = ".form walk rel.walk reads near far bound up\n";
+    let ruled = names_rows(WALK, "walk-rules", &["walks"]);
+    assert_eq!(names_rows(&format!("{WALK}{form}"), "walk", &["walks"]), ruled);
+    // `self` in `m` is bound there; `os` in `m` walks out, past the class, to the module.
+    let at = |x: &str| ruled[0].iter().filter(|r| r[1] == x).map(|r| r[3].clone()).collect::<Vec<_>>();
+    assert_eq!(at("self").iter().filter(|k| *k == "module").count(), 0, "{:?}", ruled[0]);
+    assert!(at("os").contains(&"module".to_owned()) && at("os").contains(&"function_definition".to_owned()), "{:?}", ruled[0]);
+}

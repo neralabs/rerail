@@ -669,6 +669,41 @@ fn write(v: &Version, d: &Declared, plan: &Plan, b: &mut Builder<'_>) -> Result<
             .collect();
         *value = words.join(" ");
     }
+    // A pass's instance of a relation with a form has the form too, its reads its rules' (`Renaming`); the host's
+    // setting stays where the host holds the relation.
+    let mut instances: Vec<(String, String)> = Vec::new();
+    for (_, value) in ProgramFields::settings(v).into_iter().filter(|(k, _)| k == "form") {
+        let Some(rel) = value.split_whitespace().next().map(|w| w.trim_matches('"').to_owned()) else { continue };
+        for (c, own) in plan.new.iter().filter(|(_, own)| own.contains(&rel)) {
+            let renaming = Renaming { v, d, pass: c, own: Some(own) };
+            let mut reads = false;
+            let words: Vec<String> = value
+                .split_whitespace()
+                .enumerate()
+                .map(|(i, w)| match w {
+                    _ if i == 0 => instance(c, &rel),
+                    "reads" => {
+                        reads = true;
+                        w.to_owned()
+                    }
+                    "args" => {
+                        reads = false;
+                        w.to_owned()
+                    }
+                    _ if reads => renaming.rename(w).unwrap_or_else(|| w.to_owned()),
+                    _ => w.to_owned(),
+                })
+                .collect();
+            instances.push(("form".to_owned(), words.join(" ")));
+        }
+    }
+    settings.retain(|(k, value)| {
+        k != "form" || value.split_whitespace().next().is_none_or(|rel| {
+            let rel = rel.trim_matches('"');
+            plan.host.contains(rel) || !plan.new.values().any(|own| own.contains(rel))
+        })
+    });
+    settings.extend(instances);
     for c in d.contexts.values().filter(|c| !c.made) {
         let exports: Vec<&str> = c.exports.iter().map(String::as_str).collect();
         // A set, as its exports are: the `.from` statements of two modules neither includes have no order, and the

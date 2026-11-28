@@ -74,6 +74,26 @@ fn a_forms_read_of_another_pass_reads_its_instance() {
     assert_eq!(forms, vec!["used tape.same_span reads rr_pass_annotation_ann_names bound args a b".to_owned()], "{}", v.show());
 }
 
+/// A pass's instance of a relation with a form has the form, reading what its rules read there: the host keeps its own
+/// (`name_node`, which `bound` reads), and a relation the pass alone holds (`ann_names`) has its instance's alone.
+#[test]
+fn a_pass_instance_of_a_relation_with_a_form_has_the_form() {
+    let text = PROGRAM.to_owned() + ".form name_node tape.reach reads bound args identifier.name\n.form ann_names tape.text reads name_node args identifier\n";
+    let v = parse_version(&text).unwrap();
+    let mut forms: Vec<String> = crate::code_rule_dsl::logic::program_image::fields::ProgramFields::settings(&*v).into_iter().filter(|(k, _)| k == "form").map(|(_, w)| w).collect();
+    forms.sort();
+    assert_eq!(
+        forms,
+        vec![
+            "name_node tape.reach reads bound args identifier.name".to_owned(),
+            "rr_pass_annotation_ann_names tape.text reads rr_pass_annotation_name_node args identifier".to_owned(),
+            "rr_pass_annotation_name_node tape.reach reads bound args identifier.name".to_owned(),
+        ],
+        "{}",
+        v.show()
+    );
+}
+
 /// A program that declares no pass is read as it is.
 #[test]
 fn a_program_without_passes_is_itself() {

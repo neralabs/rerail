@@ -23,7 +23,8 @@ pub struct FormCall<'a> {
 }
 
 /// A form's rows, flat, `width` cells each. A symbol cell holds `text`'s index of its text until the caller interns
-/// the texts (once, all together) and writes each one's atom in its place.
+/// the texts (once, all together) and writes each one's atom in its place; or an atom a relation it read holds
+/// (`atom`), kept as it is.
 pub struct FormRows {
     pub width: usize,
     pub cells: Vector<i64>,
@@ -42,6 +43,15 @@ impl FormRows {
     pub fn text(&mut self, s: String) -> i64 {
         self.texts.push(s);
         (self.texts.len() - 1) as i64
+    }
+    /// A symbol cell's value that is an atom already (a symbol column's value of a relation the form read).
+    pub fn atom(a: i64) -> i64 {
+        debug_assert!(a >= 0);
+        -a - 1
+    }
+    /// A symbol cell's atom, its text's index made `ids`' atom.
+    pub fn symbol(cell: i64, ids: &[i64]) -> i64 {
+        if cell < 0 { -cell - 1 } else { ids[cell as usize] }
     }
     pub fn len(&self) -> usize {
         self.cells.len() / self.width.max(1)
@@ -68,7 +78,7 @@ pub trait Form: Send + Sync {
 static FORMS: OnceLock<Vec<&'static dyn Form>> = OnceLock::new();
 
 /// The language-free forms.
-const TAPE: &[&dyn Form] = &[&SameSpan, &Unwrap, &NearestText, &Subtrees, &Reach, &FieldText, &FieldAndText, &Text, &Dotted];
+const TAPE: &[&dyn Form] = &[&SameSpan, &Unwrap, &NearestText, &Subtrees, &Reach, &FieldText, &FieldAndText, &Text, &Dotted, &NearestOf, &Walk];
 
 /// Registers a language's forms (once, at load), with the tape's.
 pub fn install_forms(forms: Vec<&'static dyn Form>) {
@@ -822,6 +832,140 @@ impl Form for Dotted {
                 }
                 if scopes.has(f.kind(x)) {
                     stack.push((f.subtree_end(x), n, paths));
+                }
+            }
+        }
+        Ok(())
+    }
+}
+
+/// `tape.nearest_of SCOPE… reads refs [except]`: `r(n, x, s)`, for each `refs(n, x)` whose `n` is no node of
+/// `except` (its first column), `s` the nearest ancestor of `n` of a `SCOPE` kind (Python's `pt_wnear`: where a name's
+/// walk up its scopes starts). One pass down each document, the scopes open on a stack. Made whole.
+pub struct NearestOf;
+
+impl Form for NearestOf {
+    fn name(&self) -> &'static str {
+        "tape.nearest_of"
+    }
+    fn version(&self) -> u32 {
+        1
+    }
+    fn columns(&self) -> &'static [&'static str] {
+        &["node", "sym", "node"]
+    }
+    fn keyed(&self) -> &'static [usize] {
+        &[]
+    }
+    fn rows(&self, call: &FormCall<'_>, _column: usize, out: &mut FormRows) -> Result<(), String> {
+        let (refs, except) = match call.reads {
+            [r] => (r, None),
+            [r, e] => (r, Some(e)),
+            _ => return Err("tape.nearest_of reads the references, then the nodes that are none".into()),
+        };
+        let mut scopes = KindSet::new(call.args);
+        let mut except: Vec<i64> = except.map_or_else(Vec::new, |e| (0..e.len()).map(|i| e.value(i, 0)).collect());
+        except.sort_unstable();
+        except.dedup();
+        let mut rows: Vec<(i64, i64)> = (0..refs.len()).map(|i| (refs.value(i, 0), refs.value(i, 1))).filter(|(n, _)| except.binary_search(n).is_err()).collect();
+        rows.sort_unstable();
+        rows.dedup();
+        let of_doc = |n: i64| (n >> 32) as u32;
+        // A document's references by local id, and the scopes open where the pass is.
+        let mut mine: Vec<(u32, i64, i64)> = Vec::new();
+        let mut stack: Vec<(u32, i64)> = Vec::new();
+        let mut lo = 0;
+        while lo < rows.len() {
+            let d = of_doc(rows[lo].0);
+            let hi = lo + rows[lo..].partition_point(|r| of_doc(r.0) == d);
+            let Some(i) = call.batch.docs.position(d).filter(|&i| !call.batch.docs.withheld(i)) else {
+                lo = hi;
+                continue;
+            };
+            let p = &call.batch.docs[i];
+            let f = p.f();
+            mine.clear();
+            let mut hint = NONE;
+            for &(n, x) in &rows[lo..hi] {
+                if let Some(l) = p.local_of_near(n as u32, &mut hint).filter(|&l| l < p.len()) {
+                    mine.push((l, n, x));
+                }
+            }
+            lo = hi;
+            mine.sort_unstable();
+            stack.clear();
+            let mut at = 0;
+            for &(l, n, x) in &mine {
+                // The scopes over `l`: those of every node before it, less those whose subtree ended.
+                while at < l {
+                    let y = p.node(at);
+                    while stack.last().is_some_and(|(end, _)| y >= *end) {
+                        stack.pop();
+                    }
+                    if scopes.has(f.kind(y)) {
+                        stack.push((f.subtree_end(y), p.global(at)));
+                    }
+                    at += 1;
+                }
+                let y = p.node(l);
+                while stack.last().is_some_and(|(end, _)| y >= *end) {
+                    stack.pop();
+                }
+                if let Some(&(_, s)) = stack.last() {
+                    out.push(&[n, FormRows::atom(x), s]);
+                }
+            }
+        }
+        Ok(())
+    }
+}
+
+/// `rel.walk reads starts… bound up`: `r(n, x, s)`, each `starts(n, x, s)`'s, and `r(n, x, p)` for `r(n, x, s)` where
+/// `bound(s, x)` is not and `up(s, p)` is (Python's `pt_walk`: a name's walk out through its scopes to the first that
+/// binds it). Over the relations alone, no tape: each start's walk taken once. Made whole.
+pub struct Walk;
+
+impl Form for Walk {
+    fn name(&self) -> &'static str {
+        "rel.walk"
+    }
+    fn version(&self) -> u32 {
+        1
+    }
+    fn columns(&self) -> &'static [&'static str] {
+        &["node", "sym", "node"]
+    }
+    fn keyed(&self) -> &'static [usize] {
+        &[]
+    }
+    fn rows(&self, call: &FormCall<'_>, _column: usize, out: &mut FormRows) -> Result<(), String> {
+        let [starts @ .., bound, up] = call.reads else { return Err("rel.walk reads its starts, then what binds, then the steps up".into()) };
+        if starts.is_empty() {
+            return Err("rel.walk reads its starts, then what binds, then the steps up".into());
+        }
+        let bound: rustc_hash::FxHashSet<(i64, i64)> = (0..bound.len()).map(|i| (bound.value(i, 0), bound.value(i, 1))).collect();
+        let mut up: Vec<(i64, i64)> = (0..up.len()).map(|i| (up.value(i, 0), up.value(i, 1))).collect();
+        up.sort_unstable();
+        up.dedup();
+        let mut walk: Vec<i64> = Vec::new();
+        let mut seen: Vec<i64> = Vec::new();
+        for st in starts {
+            for i in 0..st.len() {
+                let (n, x, s) = (st.value(i, 0), st.value(i, 1), st.value(i, 2));
+                walk.clear();
+                seen.clear();
+                walk.push(s);
+                while let Some(s) = walk.pop() {
+                    if seen.contains(&s) {
+                        continue;
+                    }
+                    seen.push(s);
+                    out.push(&[n, FormRows::atom(x), s]);
+                    if bound.contains(&(s, x)) {
+                        continue;
+                    }
+                    let lo = up.partition_point(|r| r.0 < s);
+                    walk.extend(up[lo..].iter().take_while(|r| r.0 == s).map(|r| r.1));
                 }
             }
         }

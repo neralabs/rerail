@@ -84,14 +84,18 @@ pub fn rename_reads(settings: &mut [(String, String)], rename: impl Fn(&str) -> 
     renamed
 }
 
-/// The version's declared forms, checked: each relation declared, each form registered with its relation's column
-/// types, each relation read declared, no relation twice.
+/// The version's declared forms, checked: each form registered with its relation's column types, each relation read
+/// declared, no relation twice. A form of a relation the version does not declare is another program's (a pack's
+/// settings go to each of the programs it is split into: its phases, a pass's instances) and is passed over.
 pub fn declared(v: &Version) -> Result<Vec<Declared>> {
     let mut out: Vec<Declared> = Vec::new();
     for text in ProgramFields::setting_values(v, SETTING) {
         let d = parse(&text)?;
         let bad = |why: String| format!("`.form {text}`: {why}");
-        let decl = v.decl_of(&d.rel).ok_or_else(|| bad(format!("{} is not declared", d.rel)))?;
+        let Some(decl) = v.decl_of(&d.rel) else {
+            crate::code_rule_dsl::logic::profile::decision("Rust forms of another program", || d.rel.clone());
+            continue;
+        };
         let types: Vec<&str> = decl.cols().map(|(_, t)| v.text(t)).collect();
         let form = forms::form(&d.form).ok_or_else(|| bad(format!("no Rust form {} is registered", d.form)))?;
         if form.columns() != types.as_slice() {

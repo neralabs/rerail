@@ -140,11 +140,18 @@ pt_bound_in(s, x) :- pt_ibind(s, x, _).
 
 // LEGB: from the nearest scope outwards, skipping class scopes, to the first that binds the name.
 .decl pt_walk(n: node, x: symbol, s: node)
-pt_walk(n, x, s) :- pt_nameref(n, x), nearest(n, s, pt_scope), !host_node(n, _).
+pt_walk(n, x, s) :- pt_wnear(n, x, s).
+// pt_wnear(n, x, s): a name outside a guest starts at its nearest scope.
+.decl pt_wnear(n: node, x: symbol, s: node)
+pt_wnear(n, x, s) :- pt_nameref(n, x), nearest(n, s, pt_scope), !host_node(n, _).
+.form pt_wnear tape.nearest_of reads pt_nameref host_node args module function_definition class_definition lambda
 // A name in a guest (a quoted annotation's code) is looked up from the string that holds it (pt_hstart), and steps
 // through the host's scopes (pt_up: a module has no step), which the annotation context reads finished.
-pt_walk(n, x, s) :- pt_nameref(n, x), host_node(n, h), pt_hstart(h, s).
+pt_walk(n, x, s) :- pt_whost(n, x, s).
+.decl pt_whost(n: node, x: symbol, s: node)
+pt_whost(n, x, s) :- pt_nameref(n, x), host_node(n, h), pt_hstart(h, s).
 pt_walk(n, x, p) :- pt_walk(n, x, s), !pt_bound_in(s, x), pt_up(s, p).
+.form pt_walk rel.walk reads pt_wnear pt_whost pt_bound_in pt_up
 .decl pt_hstart(h: node, s: node)
 pt_hstart(h, s) :- ann_host(h, t), nearest(t, s, pt_scope).   // h: a tree's host node (python/annotation)
 .decl pt_up(s: node, p: node)

@@ -912,10 +912,10 @@ impl<'a> Run<'a, '_> {
         }
         let symbols: Vec<usize> = form.columns().iter().enumerate().filter(|(_, t)| **t == "sym").map(|(i, _)| i).collect();
         if !symbols.is_empty() && !out.is_empty() {
-            let ids = super::native::intern_batch(&self.db, out.texts.iter().map(String::as_str))?;
+            let ids = if out.texts.is_empty() { rerail_blocks::vector::Vector::new() } else { super::native::intern_batch(&self.db, out.texts.iter().map(String::as_str))? };
             for row in out.cells.chunks_mut(width) {
                 for &c in &symbols {
-                    row[c] = ids[row[c] as usize];
+                    row[c] = forms::FormRows::symbol(row[c], &ids);
                 }
             }
         }
