@@ -236,7 +236,8 @@ describe("a checkout's declared submodules while Git runs past its time limit re
     // The listing's Git answers on the thread first: the learning's 200 ms limit is a timer this thread runs only after it.
     const owners = new CheckoutOwners();
     expect(owners.declaredSubmodules(alpha)).toEqual([sub]);
-    expect(await learning).toEqual(offThread === "answers" ? [sub] : []);
+    // A learning gives each path relative to the checkout.
+    expect(await learning).toEqual(offThread === "answers" ? ["sub"] : []);
 
     expect(owners.declaredSubmodules(alpha)).toEqual([sub]);
     expect([git.blocking, git.asks]).toEqual([2, 1]);
