@@ -253,9 +253,7 @@ fn place(cfg: &Config, p: &rerail_blocks::ledger::Placed, dev: usize, w: bool, n
     let source = match &p.path {
         Some(path) => format!("file:{}", path.display()),
         None => {
-            if len as u64 > cfg.budget {
-                return Err(std::io::Error::other(format!("a block of {} MB, past the capture's budget", len >> 20)));
-            }
+            within_budget(cfg, *written, len as u64)?;
             // SAFETY: the block's used bytes, before the launch.
             let bytes = unsafe { std::slice::from_raw_parts(p.start as *const u8, len) };
             let (source, n) = write_block(cfg, bytes)?;
@@ -441,7 +439,9 @@ fn write_before(cfg: &Config, id: u64, labels: &[Label], reach: &Reached<'_>) ->
     }
     // The sparse regions' runs, and each address word as (region, offset, region it points into, offset there).
     for r in regions.iter().filter(|r| r.sparse()) {
-        written += write_runs(&dir.join(&r.source), r, &r.runs())?;
+        let runs = r.runs();
+        within_budget(cfg, written, runs.iter().map(|&(_, n)| n as u64).sum())?;
+        written += write_runs(&dir.join(&r.source), r, &runs)?;
     }
     let mut relocs: Vec<u8> = Vec::new();
     // Address words no region holds: memory no ledger knew (a replay that reads one fails there).
@@ -528,6 +528,16 @@ fn write_before(cfg: &Config, id: u64, labels: &[Label], reach: &Reached<'_>) ->
     Ok(Pending { dir, root: cfg.dir.clone(), regions })
 }
 
+/// Whether `more` bytes fit the capture's budget past what its launches wrote and this one has (`written`): else
+/// an error, which abandons the launch's capture (its directory removed), the budget never passed by a before-image.
+fn within_budget(cfg: &Config, written: u64, more: u64) -> std::io::Result<()> {
+    let done = chosen().0.lock().unwrap_or_else(|e| e.into_inner()).bytes;
+    if done + written + more > cfg.budget {
+        return Err(std::io::Error::other(format!("past the capture's budget of {} MB: {} MB written, {} MB more", cfg.budget >> 20, (done + written) >> 20, more >> 20)));
+    }
+    Ok(())
+}
+
 /// A block's used bytes as a block file (`blocks/<digest>.blk`), its header frozen at its length
 /// (`rerail_blocks::block::freeze_copy`), once a directory: its source (`blocks/<digest>.blk`) and the bytes written
 /// (0 where it was there). The bytes are read once, the digest the copy's: a block another thread writes meanwhile
@@ -561,11 +571,14 @@ impl Pending {
 
     fn write_after(&self) -> std::io::Result<()> {
         let mut w = std::fs::OpenOptions::new().append(true).open(self.dir.join("wave.txt"))?;
+        // Its after-images, written whatever the budget (its before-images are), counted in it: a launch after is
+        // refused past it.
         let cfg = Config { dir: self.root.clone(), only: None, min: 0, budget: u64::MAX };
+        let mut written = 0u64;
         for r in self.regions.iter().filter(|r| r.written) {
             let source = if r.sparse() {
                 let s = format!("{}.after.zst", r.name);
-                write_runs(&self.dir.join(&s), r, &r.runs())?;
+                written += write_runs(&self.dir.join(&s), r, &r.runs())?;
                 s
             } else if r.source.starts_with("file:") {
                 // A mapped file's block, written in place: its bytes after are the file's.
@@ -573,11 +586,14 @@ impl Pending {
             } else {
                 // SAFETY: the block's used bytes, its launch done.
                 let bytes = unsafe { std::slice::from_raw_parts(r.base as *const u8, r.len) };
-                write_block(&cfg, bytes)?.0
+                let (source, n) = write_block(&cfg, bytes)?;
+                written += n;
+                source
             };
             writeln!(w, "after {} {}", r.name, source)?;
         }
         writeln!(w, "done")?;
+        chosen().0.lock().unwrap_or_else(|e| e.into_inner()).bytes += written;
         Ok(())
     }
 }
