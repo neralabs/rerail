@@ -7,8 +7,8 @@
 // Five phases: `sort` (one item) sorts the source in the trace's canonical order and sums each row's diffs into the
 // rows out; `kills` (a row out an item) finds each gone row's live row below; `layer` (one item) writes the layer's
 // relations and freezes them; `sketch` (a column an item) its statistics; `seal` (one item) the header and control.
-// They write the Open encoding of a trace of no declared indexes and no levels (`layer::Shape::run`, every executor
-// trace's); a launch of another shape is refused (`FAULT`).
+// They write the Open encoding of a trace of no levels whose declared indexes are `Hash` ones (`layer::Shape::run`'s,
+// every executor trace's); a launch of another shape is refused (`FAULT`).
 #include <ukl/delta/trace.h>
 #include <ukl/delta/runs.h>
 #include <ukl/delta/relw.h>
@@ -105,9 +105,45 @@ UKL_INLINE bool src_less(Src s, uint32_t i, uint32_t j) {
 }
 DELTA_SORT(sort_items, Src, src_less)
 
-// Whether the kernels write the source's shape: Open, no declared index, no levels.
+// Declared index `x` of the shape: its kind, and its key's columns.
+UKL_INLINE uint32_t shape_ix_kind(CBlk shape, uint32_t x) { return U32(shape, SHAPE_INDEXES_AT + x * SHAPE_INDEX_BYTES); }
+UKL_INLINE uint32_t shape_ix_key(CBlk shape, uint32_t x, UKL_PRIVATE uint32_t* key) {
+    uint32_t at = SHAPE_INDEXES_AT + x * SHAPE_INDEX_BYTES, nk = U32(shape, at + 4u);
+    for (uint32_t t = 0u; t < nk; t++) key[t] = shape[at + 8u + t];
+    return nk;
+}
+
+// Whether the kernels write the source's shape: Open, no levels, its declared indexes `Hash` ones (the relation's own,
+// built at its freeze).
 UKL_INLINE bool src_written(Src s) {
-    return U32(s.shape, SHAPE_ENCODING_AT) == ENC_OPEN && U32(s.shape, SHAPE_NIDX_AT) == 0u && U32(s.shape, SHAPE_LEVELS_AT) == 0u && src_arity(s) <= MAX_KEY;
+    bool hashed = true;
+    for (uint32_t x = 0u; x < U32(s.shape, SHAPE_NIDX_AT); x++) hashed = hashed && shape_ix_kind(s.shape, x) == IX_HASH;
+    return hashed && U32(s.shape, SHAPE_ENCODING_AT) == ENC_OPEN && U32(s.shape, SHAPE_LEVELS_AT) == 0u && src_arity(s) <= MAX_COLS;
+}
+
+// The layer's hashed indexes' keys (`LayerSpec::rows`): each `Hash` index's, then its row index (every column, when
+// they are at most `MAX_KEY` and no `Hash` index is it). Their count.
+typedef struct Keys {
+    uint32_t n, len[MAX_IX + 1u], cols[MAX_IX + 1u][MAX_KEY];
+} Keys;
+
+UKL_INLINE Keys keys_of(Src s) {
+    Keys k;
+    k.n = 0u;
+    uint32_t a = src_arity(s);
+    bool every = false;
+    for (uint32_t x = 0u; x < U32(s.shape, SHAPE_NIDX_AT); x++) {
+        uint32_t nk = shape_ix_key(s.shape, x, k.cols[k.n]);
+        bool all = nk == a;
+        for (uint32_t t = 0u; t < nk && all; t++) all = k.cols[k.n][t] == t;
+        every = every || all;
+        k.len[k.n++] = nk;
+    }
+    if (a <= MAX_KEY && !every) {
+        for (uint32_t t = 0u; t < a; t++) k.cols[k.n][t] = t;
+        k.len[k.n++] = a;
+    }
+    return k;
 }
 
 // ---- the work, past the header in the new block's body --------------------------------------------------------------
@@ -168,32 +204,52 @@ UKL_INLINE void phase_sort(Src s, Work w, UKL_GLOBAL uint32_t* meter) {
     U32(w.b, W_NADD) = added;
 }
 
-// The live row of the state at `head` equal to item `i` in every column, or NONE: each layer's own row of its key
-// (its row index's bucket, or its one sorted column searched), taken when no layer above kills it.
-UKL_INLINE uint32_t live_row(Src s, uint32_t head, uint32_t i) {
-    uint32_t a = src_arity(s);
+// Whether layer `l`'s row `id` is item `i`, in every column.
+UKL_INLINE bool row_is(Src s, Layer l, uint32_t id, uint32_t i) {
+    for (uint32_t c = 0u, a = src_arity(s); c < a; c++)
+        if (layer_get(l, id, c) != src_get(s, i, c)) return false;
+    return true;
+}
+
+// Layer `l`'s own row that is item `i`, or NONE: found by its rows' first index on that index's key (an ordered one's
+// range by binary search on its column; a hashed one's bucket), else among them all.
+UKL_INLINE uint32_t own_row(Src s, Layer l, uint32_t i) {
+    if (l.end == l.start) return NONE;
+    if (U32(l.rows, REL_NINDEX_AT) == 0u) {
+        for (uint32_t id = l.start; id < l.end; id++)
+            if (row_is(s, l, id, i)) return id;
+        return NONE;
+    }
+    CBlk ix = l.rows + span_at(l.rows, REL_INDEXES_AT, 8u);
+    uint32_t nk = U32(ix, INDEX_NCOLS_AT);
+    if (U32(ix, INDEX_ORDERED_AT) != 0u) {
+        uint32_t c = *(CLIF_BLOCK_SPACE const uint16_t*)(ix + INDEX_KEY_AT);
+        int64_t v = src_get(s, i, c);
+        uint32_t lo = l.start, hi = l.end;
+        while (lo < hi) {
+            uint32_t m = (lo + hi) / 2u;
+            if (layer_get(l, m, c) < v) lo = m + 1u; else hi = m;
+        }
+        for (; lo < l.end && layer_get(l, lo, c) == v; lo++)
+            if (row_is(s, l, lo, i)) return lo;
+        return NONE;
+    }
     uint64_t h = KEY_SEED;
-    for (uint32_t c = 0u; c < a; c++) h = clif_rel_key_mix((CLIF_BLOCK_SPACE const uint8_t*)0, 0u, h, (uint64_t)src_get(s, i, c));
+    for (uint32_t t = 0u; t < nk; t++) h = clif_rel_key_mix(l.rows, 0u, h, (uint64_t)src_get(s, i, *(CLIF_BLOCK_SPACE const uint16_t*)(ix + INDEX_KEY_AT + 2u * t)));
+    uint64_t g = clif_rel_group(l.rows, 0u, 0u, h);
+    for (uint32_t q = 0u; q < (uint32_t)g; q++) {
+        uint32_t id = clif_rel_group_row(l.rows, 0u, 0u, (uint32_t)(g >> 32) + q);
+        if (row_is(s, l, id, i)) return id;
+    }
+    return NONE;
+}
+
+// The live row of the state at `head` that is item `i`, or NONE: a layer's own row of it, taken when no layer above
+// kills it.
+UKL_INLINE uint32_t live_row(Src s, uint32_t head, uint32_t i) {
     for (uint32_t k = head; k != NONE;) {
         Layer l = layer_of(s.t, k);
-        uint32_t found = NONE;
-        if (a == 1u) {
-            int64_t v = src_get(s, i, 0u);
-            uint32_t lo = l.start, hi = l.end;
-            while (lo < hi) {
-                uint32_t m = (lo + hi) / 2u;
-                if (layer_get(l, m, 0u) < v) lo = m + 1u; else hi = m;
-            }
-            found = lo < l.end && layer_get(l, lo, 0u) == v ? lo : NONE;
-        } else if (l.end > l.start) {
-            uint64_t g = clif_rel_group(l.rows, 0u, 0u, h);
-            for (uint32_t q = 0u; q < (uint32_t)g && found == NONE; q++) {
-                uint32_t id = clif_rel_group_row(l.rows, 0u, 0u, (uint32_t)(g >> 32) + q);
-                bool same = true;
-                for (uint32_t c = 0u; c < a && same; c++) same = layer_get(l, id, c) == src_get(s, i, c);
-                found = same ? id : NONE;
-            }
-        }
+        uint32_t found = own_row(s, l, i);
         if (found != NONE && state_live(s.t, head, found)) return found;
         k = l.below;
     }
@@ -227,7 +283,7 @@ UKL_INLINE uint64_t item_digest(Src s, uint32_t i) {
 }
 
 // `layer`: the layer's three relations made in its block (its rows continuing the layer below), its rows added
-// written, each partition's change and its kills ascending, each column's range, the row index, each frozen; the
+// written, each partition's change and its kills ascending, each column's range, its hashed indexes, each frozen; the
 // header laid out, open. Its room claimed from the block's front.
 UKL_INLINE void phase_layer(Src s, Work w, Blk out, UKL_GLOBAL uint32_t* meter) {
     if (U32(w.b, W_REFUSED) != 0u) return;
@@ -243,7 +299,7 @@ UKL_INLINE void phase_layer(Src s, Work w, Blk out, UKL_GLOBAL uint32_t* meter) 
         Layer lb = layer_of(s.t, s.below);
         rel_continue_far(out, rows, s.below, (uint32_t)U64(blk(s.t, s.below), LAYER_ROWS_AT), lb.end);
     }
-    if (!rel_open(out, meter, T_OUT, rows, 1u, true) || !rel_open(out, meter, T_OUT, parts, 0u, false) || !rel_open(out, meter, T_OUT, gone, 0u, false)) return;
+    if (!rel_open(out, meter, T_OUT, rows, keys_of(s).n, true) || !rel_open(out, meter, T_OUT, parts, 0u, false) || !rel_open(out, meter, T_OUT, gone, 0u, false)) return;
     if (!rel_claim_rows(out, meter, T_OUT, rows, n_add) || !rel_claim_rows(out, meter, T_OUT, gone, n_gone)) return;
     for (uint32_t o = 0u; o < n_out; o++)
         if (W(w, sgn, o) == 1u)
@@ -273,8 +329,10 @@ UKL_INLINE void phase_layer(Src s, Work w, Blk out, UKL_GLOBAL uint32_t* meter) 
     for (uint32_t c = 0u; c < a; c++) rel_stat(out, rows, c);
     for (uint32_t c = 0u; c < 6u; c++) rel_stat(out, parts, c);
     for (uint32_t c = 0u; c < 2u; c++) rel_stat(out, gone, c);
-    if (!rel_row_index(out, meter, T_OUT, rows)) return;
-    rel_seal(out, rows, s.shape[SHAPE_ORDER_AT], 1u);
+    Keys keys = keys_of(s);
+    for (uint32_t x = 0u; x < keys.n; x++)
+        if (!rel_index(out, meter, T_OUT, rows, x, keys.cols[x], keys.len[x])) return;
+    rel_seal(out, rows, s.shape[SHAPE_ORDER_AT], keys.n);
     rel_seal(out, parts, 0u, 0u);
     rel_seal(out, gone, 0u, 0u);
     // The header, open: its relations, its shape.

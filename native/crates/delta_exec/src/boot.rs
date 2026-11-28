@@ -451,3 +451,24 @@ pub fn run(l1: &L1, inst: &mut Instance, l0: &str, module: &str, globals: Atoms,
     }
     Ok((pins, doc, work))
 }
+
+/// l0's K-form by meaning after a cold run of it (B§8's first two lines, no pins) on `bench`, from a root of its own
+/// under `base` holding l0: each relation's rows at its trace's head, in `RELATIONS`' order. What a device's run is
+/// checked against the CPU's by.
+#[cfg(any(test, feature = "test-hooks"))]
+pub fn cold_k_form(bench: &mut Bench, base: &std::path::Path) -> Result<Vec<std::collections::BTreeSet<Vec<i64>>>, String> {
+    const PATH: &str = "bootstrap-l0.rerail";
+    let root = base.join("root");
+    std::fs::create_dir_all(&root).map_err(|e| e.to_string())?;
+    // Written a minute ago: past the window in which a file's stat does not tell an edit.
+    std::fs::write(root.join(PATH), crate::L0).map_err(|e| e.to_string())?;
+    let f = std::fs::File::options().write(true).open(root.join(PATH)).map_err(|e| e.to_string())?;
+    f.set_modified(std::time::SystemTime::now() - std::time::Duration::from_secs(60)).map_err(|e| e.to_string())?;
+    let store = crate::files::Store::open(&base.join("store"))?;
+    let atoms = Atoms::new(&mut bench.dir);
+    let world = World::new(root, store, &bench.dir, [None; 3])?;
+    let mut inst = Instance::new(&L1, &mut bench.dir)?;
+    let mut docs = DocSet::new(world, &bench.dir, None, None)?;
+    run(&L1, &mut inst, PATH, "bootstrap-l0", atoms, &mut docs, bench, None)?;
+    inst.outs.iter().map(|t| crate::contract::oracle_rows(&bench.dir, t, t.head())).collect()
+}

@@ -829,7 +829,12 @@ pub struct Bench {
 impl Bench {
     /// A bench in the run's memory: nothing lasts past it.
     pub fn new() -> Result<Bench, String> {
-        Ok(Bench { ops: Runner::new()?, dir: Directory::default(), blobs: BlobRows::new() })
+        Ok(Bench::on(Runner::new()?))
+    }
+
+    /// A bench in the run's memory whose operations `ops` runs (a device's runner, `Runner::on`).
+    pub fn on(ops: Runner) -> Bench {
+        Bench { ops, dir: Directory::default(), blobs: BlobRows::new() }
     }
 
     /// A bench over the kept blocks in folder `kept` (a store's, `files::Store::kept`): each mapped where it lies, at

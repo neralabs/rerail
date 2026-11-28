@@ -250,3 +250,26 @@ fn every_ukl_version_checks_against_its_twin() {
     let gpu = Gpu::host().expect("the tests' device");
     Runner::on(Box::new(gpu)).unwrap_or_else(|e| panic!("{e}"));
 }
+
+/// l0's cold boot run on the tests' device, and on runners that pick the device or the CPU for each launch by a seed:
+/// each one's K-form is the CPU run's, by meaning.
+#[test]
+fn the_boot_run_on_the_device_or_mixed_is_the_cpus() {
+    use rerail_delta_exec::boot::cold_k_form;
+    use rerail_delta_exec::contract::Bench;
+    device();
+    let base = |name: &str| std::env::temp_dir().join(format!("rerail-boot-{}-{name}", std::process::id()));
+    let want = cold_k_form(&mut Bench::new().unwrap(), &base("cpu")).unwrap_or_else(|e| panic!("{e}"));
+    assert!(want.iter().map(|r| r.len()).sum::<usize>() > 0, "l0 has a K-form");
+    let on = Runner::on(Box::new(Gpu::host().expect("the tests' device"))).unwrap_or_else(|e| panic!("{e}"));
+    let got = cold_k_form(&mut Bench::on(on), &base("device")).unwrap_or_else(|e| panic!("{e}"));
+    assert!(got == want, "the device's K-form is the CPU's");
+    for seed in 1..=3u64 {
+        let mut bench = Bench::on(Runner::mixed(Box::new(Gpu::host().expect("the tests' device")), seed).unwrap_or_else(|e| panic!("{e}")));
+        let got = cold_k_form(&mut bench, &base(&format!("mixed-{seed}"))).unwrap_or_else(|e| panic!("seed {seed}: {e}"));
+        let [cpu, dev] = bench.ops.mixed_launches().expect("a mixed runner");
+        eprintln!("seed {seed}: {cpu} launches on the CPU, {dev} on the device");
+        assert!(cpu > 0 && dev > 0, "seed {seed}: launches on both ({cpu} on the CPU, {dev} on the device)");
+        assert!(got == want, "seed {seed}: a mixed run's K-form is the CPU's ({cpu} launches on the CPU, {dev} on the device)");
+    }
+}

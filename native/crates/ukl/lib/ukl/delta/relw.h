@@ -133,26 +133,28 @@ UKL_INLINE void rel_stat(Blk b, uint32_t at, uint32_t c) {
 }
 
 // A key's hash (`rerail_blocks::key_hash`): its values mixed in order into the seed, as every probe hashes it.
-UKL_INLINE uint64_t own_hash(CBlk b, uint32_t at, uint32_t i, uint32_t ncols) {
+// Own row `i`'s hash on the `nk` columns `key` (`hash::key_hash`), and whether rows `i` and `j` agree on them.
+UKL_INLINE uint64_t own_hash(CBlk b, uint32_t at, uint32_t i, UKL_PRIVATE const uint32_t* key, uint32_t nk) {
     uint64_t h = KEY_SEED;
-    for (uint32_t c = 0u; c < ncols; c++) h = clif_rel_key_mix(b, 0u, h, (uint64_t)rel_own(b, at, i, c));
+    for (uint32_t t = 0u; t < nk; t++) h = clif_rel_key_mix(b, 0u, h, (uint64_t)rel_own(b, at, i, key[t]));
     return h;
 }
-UKL_INLINE bool own_same(CBlk b, uint32_t at, uint32_t i, uint32_t j, uint32_t ncols) {
-    for (uint32_t c = 0u; c < ncols; c++)
-        if (rel_own(b, at, i, c) != rel_own(b, at, j, c)) return false;
+UKL_INLINE bool own_same(CBlk b, uint32_t at, uint32_t i, uint32_t j, UKL_PRIVATE const uint32_t* key, uint32_t nk) {
+    for (uint32_t t = 0u; t < nk; t++)
+        if (rel_own(b, at, i, key[t]) != rel_own(b, at, j, key[t])) return false;
     return true;
 }
 
-// The row index (`layer_write::index` of the rows' every column, its directory's entry 0; `build_one_index`): sorted
-// on its one column, an ordered entry; else its rows in buckets by their key's hash, `2^k` of them for its distinct
-// rows, in id order within each, and each place's mark (decision 0671). False when the block has no room.
-UKL_INLINE bool rel_row_index(Blk b, UKL_GLOBAL uint32_t* meter, uint32_t k, uint32_t at) {
-    uint32_t a = U32(b, at + REL_ARITY_AT), live = rel_own_len(b, at), br = U32(b, at + REL_BASE_ROWS_AT);
-    uint32_t ix = span_at(b, at + REL_INDEXES_AT, 8u);
-    U32(b, ix + INDEX_NCOLS_AT) = a;
-    for (uint32_t c = 0u; c < a; c++) *(CLIF_BLOCK_SPACE uint16_t*)(b + ix + INDEX_KEY_AT + 2u * c) = (uint16_t)c;
-    if (a == 1u && U32(b, at + REL_NOKEY_AT) == 1u && *(CLIF_BLOCK_SPACE uint16_t*)(b + at + REL_OKEY_AT) == 0u) {
+// Hashed index `x` on the `nk` columns `key`, into its directory's entry (`layer_write::index`, `build_one_index`): a
+// key of the one sort column an ordered entry; else its rows in buckets by their key's hash, in id order within each,
+// and each place's mark (decision 0671). `2^k` buckets for its rows (the CPU's for its distinct keys, at most as
+// many: a reader takes the mask the entry holds). False when the block has no room.
+UKL_INLINE bool rel_index(Blk b, UKL_GLOBAL uint32_t* meter, uint32_t k, uint32_t at, uint32_t x, UKL_PRIVATE const uint32_t* key, uint32_t nk) {
+    uint32_t live = rel_own_len(b, at), br = U32(b, at + REL_BASE_ROWS_AT);
+    uint32_t ix = span_at(b, at + REL_INDEXES_AT, 8u) + x * INDEX_BYTES;
+    U32(b, ix + INDEX_NCOLS_AT) = nk;
+    for (uint32_t t = 0u; t < nk; t++) *(CLIF_BLOCK_SPACE uint16_t*)(b + ix + INDEX_KEY_AT + 2u * t) = (uint16_t)key[t];
+    if (nk == 1u && U32(b, at + REL_NOKEY_AT) == 1u && *(CLIF_BLOCK_SPACE uint16_t*)(b + at + REL_OKEY_AT) == key[0]) {
         U32(b, ix + INDEX_ORDERED_AT) = 1u;
         return true;
     }
@@ -161,25 +163,25 @@ UKL_INLINE bool rel_row_index(Blk b, UKL_GLOBAL uint32_t* meter, uint32_t k, uin
     uint32_t offs = claim(meter, k, 4u * (cap + 1u), 8u), rows = claim(meter, k, 8u * (live > 1u ? live : 1u), 8u);
     if (offs == NONE || rows == NONE) return false;
     uint32_t marks = rows + 4u * live;
-    for (uint32_t x = 0u; x <= cap; x++) U32(b, offs + 4u * x) = 0u;
-    for (uint32_t j = 0u; j < live; j++) U32(b, offs + 4u * (((uint32_t)own_hash(b, at, j, a) & (cap - 1u)) + 1u)) += 1u;
-    for (uint32_t x = 0u; x < cap; x++) U32(b, offs + 4u * (x + 1u)) += U32(b, offs + 4u * x);
+    for (uint32_t q = 0u; q <= cap; q++) U32(b, offs + 4u * q) = 0u;
+    for (uint32_t j = 0u; j < live; j++) U32(b, offs + 4u * (((uint32_t)own_hash(b, at, j, key, nk) & (cap - 1u)) + 1u)) += 1u;
+    for (uint32_t q = 0u; q < cap; q++) U32(b, offs + 4u * (q + 1u)) += U32(b, offs + 4u * q);
     // Each row placed after its bucket's rows before it, in id order: its bucket's start, and the rows of it before it.
     for (uint32_t j = 0u; j < live; j++) {
-        uint64_t h = own_hash(b, at, j, a);
+        uint64_t h = own_hash(b, at, j, key, nk);
         uint32_t bucket = (uint32_t)h & (cap - 1u), place = U32(b, offs + 4u * bucket);
-        for (uint32_t q = 0u; q < j; q++) place += ((uint32_t)own_hash(b, at, q, a) & (cap - 1u)) == bucket ? 1u : 0u;
+        for (uint32_t q = 0u; q < j; q++) place += ((uint32_t)own_hash(b, at, q, key, nk) & (cap - 1u)) == bucket ? 1u : 0u;
         U32(b, rows + 4u * place) = br + j;
         U32(b, marks + 4u * place) = (uint32_t)(h >> 32) & ~INDEX_MARK_SAME;
     }
     // A place's mark says whether its bucket's previous place of its tag, among the `MARK_REACH` before it, holds its key.
-    for (uint32_t x = 0u; x < cap; x++) {
-        uint32_t lo = U32(b, offs + 4u * x), hi = U32(b, offs + 4u * (x + 1u));
+    for (uint32_t q = 0u; q < cap; q++) {
+        uint32_t lo = U32(b, offs + 4u * q), hi = U32(b, offs + 4u * (q + 1u));
         for (uint32_t p = lo; p < hi; p++) {
             uint32_t tag = U32(b, marks + 4u * p) & ~INDEX_MARK_SAME;
             for (uint32_t u = p; u > lo && u + INDEX_MARK_REACH > p; u--) {
                 if ((U32(b, marks + 4u * (u - 1u)) & ~INDEX_MARK_SAME) != tag) continue;
-                if (own_same(b, at, U32(b, rows + 4u * (u - 1u)) - br, U32(b, rows + 4u * p) - br, a)) U32(b, marks + 4u * p) |= INDEX_MARK_SAME;
+                if (own_same(b, at, U32(b, rows + 4u * (u - 1u)) - br, U32(b, rows + 4u * p) - br, key, nk)) U32(b, marks + 4u * p) |= INDEX_MARK_SAME;
                 break;
             }
         }

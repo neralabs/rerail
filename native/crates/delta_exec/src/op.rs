@@ -697,6 +697,14 @@ pub struct Runner {
     reg: Registry,
     /// The device it runs on (`Runner::on`), each operation's checked UKL version there; none: the CPU, the twins.
     device: Option<Box<dyn Kernels>>,
+    /// A mixed runner's seed (`Runner::mixed`), then each launch's, and its launches on the CPU and on the device.
+    mix: Option<Mix>,
+}
+
+/// Each launch of a mixed runner on the CPU or its device, by a seed (`Runner::mixed`).
+struct Mix {
+    seed: std::sync::atomic::AtomicU64,
+    on: [std::sync::atomic::AtomicU64; 2],
 }
 
 impl Runner {
@@ -710,7 +718,7 @@ impl Runner {
         crate::k0::register(&mut reg)?;
         crate::drop::register(&mut reg)?;
         crate::semi::register(&mut reg)?;
-        Ok(Runner { reg, device: None })
+        Ok(Runner { reg, device: None, mix: None })
     }
 
     /// A runner on `device`: every operation's UKL version checked there against its twin and registered
@@ -725,7 +733,22 @@ impl Runner {
     /// A runner of a test's own registry (its own operations and versions).
     #[cfg(any(test, feature = "test-hooks"))]
     pub fn of(reg: Registry) -> Runner {
-        Runner { reg, device: None }
+        Runner { reg, device: None, mix: None }
+    }
+
+    /// A runner on `device` (`Runner::on`) that runs each launch there or on the CPU, picked by `seed`: both read and
+    /// write the same blocks where they lie, so a run's result is the same whichever runs each launch.
+    #[cfg(any(test, feature = "test-hooks"))]
+    pub fn mixed(device: Box<dyn Kernels>, seed: u64) -> Result<Runner, String> {
+        let mut r = Runner::on(device)?;
+        r.mix = Some(Mix { seed: seed.into(), on: [0.into(), 0.into()] });
+        Ok(r)
+    }
+
+    /// A mixed runner's launches so far, on the CPU and on its device.
+    pub fn mixed_launches(&self) -> Option<[u64; 2]> {
+        use std::sync::atomic::Ordering::Relaxed;
+        self.mix.as_ref().map(|m| [m.on[0].load(Relaxed), m.on[1].load(Relaxed)])
     }
 
     /// Its registry: what is declared and registered (to check a version against the reference, to list versions).
@@ -748,7 +771,14 @@ impl Runner {
     /// Runs the operation `sig` declares on the CPU (`run_cpu`): on the blocks `slots` name, with `params`' bytes,
     /// its phases cut by `tiling`.
     pub fn run(&self, dir: &Directory, sig: &'static Signature, slots: &[BlockId], params: &[u8], tiling: Tiling) -> Result<(), String> {
-        match &self.device {
+        let device = self.device.as_ref().filter(|_| {
+            let Some(m) = &self.mix else { return true };
+            use std::sync::atomic::Ordering::Relaxed;
+            let s = rerail_blocks::layer::mix(m.seed.fetch_add(1, Relaxed));
+            m.on[(s & 1) as usize].fetch_add(1, Relaxed);
+            s & 1 == 1
+        });
+        match device {
             Some(d) => run_on(&self.reg, dir, self.op(sig)?, &**d, slots, params, tiling),
             None => run_cpu(&self.reg, dir, self.op(sig)?, slots, params, tiling),
         }

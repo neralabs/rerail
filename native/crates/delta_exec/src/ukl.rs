@@ -72,7 +72,7 @@ const VERSIONS: &[Ukl] = &[
     Ukl { sig: &NAMED_BLOCKS, module: "k0", cases: &[named_blocks_case], shape: None },
     Ukl { sig: &INTERN, module: "intern", cases: &[intern_case], shape: None },
     Ukl { sig: &K0_PASS, module: "k0", cases: &[k0_pass_case, k0_refused_case], shape: None },
-    Ukl { sig: &CONSOLIDATE, module: "trace", cases: &[consolidate_first_case, consolidate_case, consolidate_one_col_case], shape: Some(&crate::trace::TRACE_UKL) },
+    Ukl { sig: &CONSOLIDATE, module: "trace", cases: &[consolidate_first_case, consolidate_case, consolidate_one_col_case, consolidate_wide_case], shape: Some(&crate::trace::TRACE_UKL) },
     Ukl { sig: &MERGE, module: "trace", cases: &[merge_case], shape: Some(&crate::trace::TRACE_UKL) },
 ];
 
@@ -434,6 +434,20 @@ fn consolidate_one_col_case(dir: &mut Directory) -> Case {
     consolidate_launch(dir, &t, &pairs)
 }
 
+/// A trace of twelve columns (past `MAX_KEY`: no row index) with a `Hash` index on its second, as the tape port's: a
+/// layer over two below killing rows of both, found through that index.
+fn consolidate_wide_case(dir: &mut Directory) -> Case {
+    let mut shape = Shape::run([ColType::I32, ColType::I32].into_iter().chain(std::iter::repeat_n(ColType::I64, 10)).collect(), (0..12).collect(), Some(0));
+    shape.indexes = vec![rerail_blocks::layer::IndexSpec::Hash(vec![1])];
+    // Row `i`: its document, its path (shared with others: one key of the index many rows), its values its own.
+    let row = |i: i64| -> Vec<i64> { [i % 4, i % 9].into_iter().chain((0..10).map(|c| i * 31 + c)).collect() };
+    let first: Vec<(Vec<i64>, i32)> = (0..40).map(|i| (row(i), 1)).collect();
+    let second: Vec<(Vec<i64>, i32)> = (0..8).map(|i| (row(i), -1)).chain((40..60).map(|i| (row(i), 1))).collect();
+    let t = trace_of(dir, shape, &[first, second]);
+    let pairs: Vec<(Vec<i64>, i32)> = [10, 11, 45, 50].iter().map(|&i| (row(i), -1)).chain((60..70).map(|i| (row(i), 1))).collect();
+    consolidate_launch(dir, &t, &pairs)
+}
+
 /// The newest two layers of three merged over the first: rows added and killed among them cancel, a row killed below
 /// stays killed.
 fn merge_case(dir: &mut Directory) -> Case {
@@ -588,6 +602,9 @@ pub fn layout() -> Vec<(&'static str, usize)> {
         ("SHAPE_ENCODING_AT", offset_of!(ShapeW, encoding)),
         ("SHAPE_NIDX_AT", offset_of!(ShapeW, nidx)),
         ("SHAPE_TYPES_AT", offset_of!(ShapeW, types)),
+        ("SHAPE_INDEXES_AT", offset_of!(ShapeW, indexes)),
+        ("SHAPE_INDEX_BYTES", size_of::<rerail_blocks::layer::IndexW>()),
+        ("IX_HASH", rerail_blocks::layer::IX_HASH as usize),
         ("RUNS_SHAPE_AT", BODY_AT + offset_of!(RunsHead, shape)),
         // `rerail_delta_twins::trace`'s control, and a column's sketch (`rerail_delta_core::sketch`'s kept form).
         ("TRACE_CONTROL_BYTES", rerail_delta_twins::trace::CONTROL_BYTES),
