@@ -321,7 +321,12 @@ run, then an edit, its revert and the edit again, in one store (instructions ret
 | the call in the cross-file part | 782.6 G | 91.0 G | 68.3 G | 18.9 G |
 
 The edit asks 2,260 requests. 2,154 are answered by the last run's answers, and the call enters 1 file (9 ms). The
-cold run took 777.1 G to 782.6 G over four runs, with peak memory from 611 MB to 740 MB (no call: 569 MB to 609 MB).
+cold run took 777.1 G to 782.6 G over four runs (no call: 770.7 G to 776.3 G). Peak memory was 611, 617, 732 and
+740 MB, and without the call 609, 649, 651 and 737 MB: the call adds none that four runs tell apart. The peak is
+not where the call acts. It is in the last phase, the policy's rules over each file's chunks, and how high it goes
+is how many large chunks run at once (`memory.tsv`, every run's peak sample): about 580 MB sampled with one or two
+in `magic_pt_tm_same_bf`, `look/miss/walk`, `pt_icall` and the like, about 700 MB with four or five. The points-to
+phase, where the call is, peaked at 567 to 629 MB with it and 550 to 616 MB without.
 Every run gave the same 5 findings.
 Tests: `rerail-tests-corpus` (281 passed), `rerail-tests-rr` (299, with
 `an_edit_asks_again_only_into_the_file_it_changed`), its callable tests with the cone asking (`RERAIL_CALLS_IN_CONE=on`,
