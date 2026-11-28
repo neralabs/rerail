@@ -602,7 +602,8 @@ describe("a clone's remote, kept while the files Git reads it from read the same
     const main = repository(join(root, "main"));
     git(main, "remote", "add", "origin", "https://example.invalid/team/main.git");
     const failed = { status: null, stdout: "", stderr: "", error: new Error("Git ran past its time limit") };
-    vi.mocked(runGit).mockReturnValueOnce(failed).mockReturnValueOnce(failed);
+    // The read ends at the first ask Git gives no answer to.
+    vi.mocked(runGit).mockReturnValueOnce(failed);
 
     expect(readRemoteAddress(main)).toBeUndefined();
     expect(readRemoteAddress(main)).toEqual({ name: "origin", url: "https://example.invalid/team/main.git" });
