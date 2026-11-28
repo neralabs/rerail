@@ -1233,7 +1233,9 @@ fn json_rust() -> (String, String) {
 #[test]
 fn json_rust_is_current() {
     let (tier1, tier2) = json_rust();
-    for (file, rust) in [("tier1.rs", tier1), ("tier2.rs", tier2)] {
+    // Tier 1's passes as UKL, printed from its Rust (decision 0726).
+    let tier1_ukl = rerail_bitlex::bitlex_lex_rust::ukl::tier1(&tier1, "json_t1_").unwrap_or_else(|e| panic!("{e}"));
+    for (file, rust) in [("tier1.rs", tier1), ("tier2.rs", tier2), ("tier1.uglykl", tier1_ukl)] {
         let path = format!("{}/../json_aot/src/{file}", env!("CARGO_MANIFEST_DIR"));
         if std::env::var_os("RERAIL_BLESS").is_some() {
             std::fs::write(&path, &rust).expect("writes");

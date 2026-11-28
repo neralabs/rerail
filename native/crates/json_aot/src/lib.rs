@@ -16,6 +16,9 @@ mod tier2;
 pub use tier1::{Carries, LANES, Lexed, PADDING, TYPE_NAMES, TYPES, Typed, entries, entries_in, lane_carries, lane_of, lex, lex_chunked, lex_typed, lex_typed_in, stage1_ends_best, stage1_from_best};
 /// The code table tier 2's numbers are of: each number's kind, field and supertypes.
 pub use tier2::{ENTRIES, WIDTHS};
+/// Tier 1's passes as UKL, printed from its Rust (decision 0726; `bitlex_lex_rust::ukl`, held by `json_rust_is_current`):
+/// kernels `json_t1_ends` and `json_t1_from`.
+pub const TIER1_UKL: &str = include_str!("tier1.uglykl");
 
 /// Tier 2 from the middle (decision 0726): the walk from any place, and the three passes over chunks of records.
 pub mod middle {

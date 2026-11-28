@@ -142,7 +142,23 @@ once counting (`write` false: its length alone), then, after a scan of the lengt
 encoder's room check is exact, so a piece given the room its count found fits it. `f16::lz4_greedy` is the serial
 parse, the one reference the device and `z_of` are held to.
 
-### 6. Every chunk on its own, in any order
+### 6. Tier 1's passes as UKL: a printer of its Rust's lines
+
+Tier 1's passes are written in a narrow form: words of 64 bits a block, the 64-byte blocks' operations of
+`rerail_simd8::portable` (`s::`), loops over the blocks and the lanes, and a few shapes of their own (a lane met, a
+lane's end, the pass's verdict). `bitlex_lex_rust::ukl::tier1` reads its functions (`lane_carries`, `write_exact`,
+`write_numbers`, `stage1_ends`, `stage1_from`) line by line and prints each line as UKL: its expressions parsed and
+printed with every operation in parentheses (Rust's `&` binds tighter than `==`; C's does not), each binding's type
+from its value, a name bound again in its own scope assigned. A line it does not know is an error, so the form stays
+closed: a change to tier 1 the printer does not take fails `json_rust_is_current`, never a kernel. `<ukl/blx64.h>` is
+the block's operations byte by byte, as `s::` defines them.
+
+The kernels are printed with it, a thread a chunk: `json_t1_ends` (pass 1, each lane's end) and `json_t1_from` (pass
+2, counting, or writing each record at its index and each type's records' numbers into one buffer, each type's list
+after the types before it). `json_aot/src/tier1.uglykl` is the printer's, held to it by `json_rust_is_current`
+(`TIER1_UKL`).
+
+### 7. Every chunk on its own, in any order
 
 The user (2026-11-27): "run the blocks in random order (including the prefix sum). This should allow us to validate the
 shape." Every pass of both tiers runs its chunks in the order an `Order` gives (a permutation asked each time a pass
@@ -158,10 +174,10 @@ The tests run them in seeded random orders, a new permutation at each ask: the a
 chunk reads what another wrote but through a scan's rounds, and the shape is the device's: one launch a pass or a
 scan round, each chunk a thread or a group.
 
-### 7. Still to build (the design's stages)
+### 8. Still to build (the design's stages)
 
 - S6's scan of the piece lengths and its tail as device phases (the pieces' count and write are built).
-- The UKL printers in `bitlex_lex_rust` and `one_loop`, the phases on the work queue, and Metal.
+- The UKL printer in `one_loop` (tier 2's passes and the token pass), the phases on the work queue, and Metal.
 
 ## Tests
 
@@ -183,4 +199,8 @@ LZ4's `LZ4_decompress_safe` decodes to the block; on UKL's CPU backend, compiled
 bytes to 69,804): each loads as a 16z tape and decodes to its tape. `rerail-gpu`'s `z_pieces_encode_in_place`: JSON
 tapes of several blocks with side lists (384 pieces, 388,473 bytes to 36,059), each piece counted and then written by a
 group from where it lies in the tape, at the places its counts give: each the greedy parse of its bytes, on the CPU
-backend, compiled and on the vector path. `rerail-clif`'s `the_writer_headers_constants_are_the_ops` holds `<ukl/writer.h>`'s side area to the ops'.
+backend, compiled and on the vector path. `rerail-gpu`'s `json_tier1_as_ukl_is_its_rust`: JSON files (a list of 400 objects with escapes and multibyte text, a
+byte-order mark, 3,000 strings of backslashes, and the refusals: a control byte in a string, bad UTF-8, a string open at
+the end) in chunks of 1 and 3 blocks (1,275 chunks): each chunk's end from each lane's entry, its counts and its
+verdict are the Rust's, and the records and their types written at the places a scan of the counts gives are
+`lex_typed`'s (29,638 records); on UKL's CPU backend, compiled and on the vector path. `rerail-clif`'s `the_writer_headers_constants_are_the_ops` holds `<ukl/writer.h>`'s side area to the ops'.

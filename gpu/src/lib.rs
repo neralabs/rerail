@@ -24,6 +24,8 @@ mod device_tests;
 #[cfg(test)]
 mod library_tests;
 #[cfg(test)]
+mod bitlex_tests;
+#[cfg(test)]
 mod matrix_tests;
 
 /// A device's preprocessing of UKL (`rerail_ukl`), which the device layer, below the preprocessor, does not do.

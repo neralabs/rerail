@@ -34,6 +34,9 @@ mod reader;
 pub mod middle;
 #[path = "bitlex_lex_rust/chunked.rs"]
 mod chunked;
+// Tier 1's passes as UKL (decision 0726).
+#[path = "bitlex_lex_rust/ukl.rs"]
+pub mod ukl;
 
 /// What the generator reads: the lexer's statements and the compiler's tables.
 pub struct Input<'a> {
