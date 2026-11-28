@@ -162,12 +162,6 @@ impl<'a> Doc<'a> {
         // the same block, which lives as long as the entry.
         unsafe { &self.entry.numbering.as_slice::<Numbering>()[0] }
     }
-    /// SPIKE (A): the entry's node table, empty where it has none.
-    #[inline(always)]
-    fn node_table(&self) -> &'a [[u32; 2]] {
-        // SAFETY: the entry's run, set where it was made to `[u32; 2]`s in its block, or empty.
-        unsafe { self.entry.node_table.as_slice::<[u32; 2]>() }
-    }
     #[inline(always)]
     fn items(&self, run: &'a rerail_clif::ids::Run) -> &'a [u32] {
         // SAFETY: one of the entry's runs of u32s, set where it was made, in its block.
@@ -192,13 +186,9 @@ impl<'a> Doc<'a> {
         if s.l == l {
             return s.x;
         }
-        // The node table's entry (one load), else a scan's next row: the next numbered node from the last one, no
-        // sample read.
+        // A scan's next row: the next numbered node from the last one, no sample read.
         // SAFETY: the entry's numbering (`numbering`).
-        let x = match self.node_table() {
-            [] => unsafe { if s.l != u32::MAX && s.l + 1 == l { self.numbering().next_at(0, s.x + 1) } else { self.numbering().select(0, l) } },
-            t => t[l as usize][0],
-        };
+        let x = unsafe { if s.l != u32::MAX && s.l + 1 == l { self.numbering().next_at(0, s.x + 1) } else { self.numbering().select(0, l) } };
         self.last.set(Selected { l, x, field_row: u32::MAX });
         x
     }
@@ -218,11 +208,8 @@ impl<'a> Doc<'a> {
     #[inline]
     pub fn node_id(&self, l: u32) -> i64 {
         let low = match self.entry.preorder {
-            0 => match self.node_table() {
-                // SAFETY: as `tape_node`.
-                [] => unsafe { self.numbering().low_of(0, l) },
-                t => t[l as usize][1],
-            },
+            // SAFETY: as `tape_node`.
+            0 => unsafe { self.numbering().low_of(0, l) },
             rerail_clif::view_reads::IDS_TAPE => self.tape_node(l),
             _ => l,
         };

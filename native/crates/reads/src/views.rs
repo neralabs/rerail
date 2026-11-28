@@ -70,22 +70,12 @@ pub struct ViewDoc {
     /// children are its numbered tape children, walked as any parent's (`child_first`, `child_next`); 0 where a
     /// numbered node's parent is left out, its `child` parent the root.
     pub parented: u32,
-    /// SPIKE (shared strata work, A): by local id, the numbered node's tape node and its id's low bits (`[u32; 2]`s),
-    /// derived once at the entry's making in its block; empty: read by the numbering (`num_select`, `num_low_of`).
-    pub node_table: Run,
-    /// SPIKE (local fixes, 1): the numbered nodes' local ids by their place among every granule's own nodes, in
-    /// granule order (`Numbering::own_place_of`, `own_numbers`), derived once with `node_table`: an id's local is the
-    /// numbering's slot entry and then one load, not a search of the granule's children. Empty where `node_table` is.
-    pub node_by_id: Run,
-    /// SPIKE (id lookups, 1b): the numbering's slot entries by bucket (`Numbering::slot_buckets`), derived once with
-    /// `node_table`: an id's slot entry is its bucket's first and a step or two (`own_place_by_buckets`). Empty: the
-    /// numbering's guess and search (`slot_entry`).
+    /// The numbering's slot entries by bucket (`Numbering::slot_buckets`, about two words a slot entry), derived once
+    /// at the entry's making in its block: an id's slot entry is its bucket's first and a step or two
+    /// (`number_of_by_buckets`). Empty (a document numbered by preorder or tape position): no slots.
     pub slot_buckets: Run,
-    /// SPIKE (id lookups, 2): by `field` row, the fielded node's tape node and its number (`[u32; 2]`s), derived once
-    /// with `node_table`: a field row's reads select and rank nothing. Empty: read by the numbering.
-    pub field_table: Run,
 }
-const _: () = assert!(std::mem::size_of::<ViewDoc>() == 16 + 16 * 4 + 16 + 24 + 16 * 7 + 16 + 16 + 16 + 32);
+const _: () = assert!(std::mem::size_of::<ViewDoc>() == 16 + 16 * 4 + 16 + 24 + 16 * 7 + 16 + 16);
 
 /// `ViewDoc::place`'s kinds.
 pub const PLACE_NAMED: u32 = 1;

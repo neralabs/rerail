@@ -555,92 +555,32 @@ impl Numbering {
         }
     }
 
-    /// SPIKE (local fixes, 1): the node whose id's low bits are `low`, as its place among every granule's own nodes in
-    /// granule order (`nodes[g] + k`); `None` for a token's or no item's. A table by that place (`own_numbers`) is
-    /// then the node's number in one load, with no search of the granule's children (`number_in`).
+    /// `number_of_near` with its slot's entry found by its bucket (`slot_buckets`, `ViewDoc::slot_buckets`): the
+    /// first entry of the slots whose high bits are the slot's, then a step past each lower slot of its bucket, no guess
+    /// and no bisection. `buckets` holds a power of two buckets and one; empty: `hint`, as `number_of_near`.
     ///
     /// # Safety
     /// As every read's.
     #[inline]
-    pub unsafe fn own_place_of(&self, low: u32) -> Option<u32> {
+    pub unsafe fn number_of_by_buckets(&self, low: u32, buckets: &[u32], hint: &mut u32) -> Option<(u32, u32)> {
         // SAFETY: the caller's.
         unsafe {
-            let (g, item, k) = self.granule_of_low(low)?;
-            (item == 0).then(|| Self::of::<u32>(&self.nodes)[g as usize].wrapping_add(k))
-        }
-    }
-
-    /// `own_place_of`, its slot's entry first looked for at `hint` (`granule_of_low_near`).
-    ///
-    /// # Safety
-    /// As every read's.
-    #[inline]
-    pub unsafe fn own_place_of_near(&self, low: u32, hint: &mut u32) -> Option<u32> {
-        // SAFETY: the caller's.
-        unsafe {
-            let (g, item, k) = self.granule_of_low_near(low, hint)?;
-            (item == 0).then(|| Self::of::<u32>(&self.nodes)[g as usize].wrapping_add(k))
-        }
-    }
-
-    /// SPIKE (local fixes, 1): each granule's own nodes' numbers, by place (`own_place_of`), into `out` (as long as
-    /// the last granule's `nodes` entry); returns how many.
-    ///
-    /// # Safety
-    /// As every read's.
-    pub unsafe fn own_numbers(&self, out: &mut [u32]) -> usize {
-        // SAFETY: the caller's.
-        unsafe {
-            let nodes = Self::of::<u32>(&self.nodes);
-            let mut n = 0;
-            for g in 0..nodes.len().saturating_sub(1) {
-                let (a, b) = (nodes[g], nodes[g + 1]);
-                for k in 0..b.wrapping_sub(a) {
-                    if let Some(o) = out.get_mut((a + k) as usize) {
-                        *o = self.number_in(g as u32, 0, k, None);
-                        n = n.max((a + k) as usize + 1);
-                    }
+            if buckets.len() > 1 {
+                let slot = low >> INDEX_BITS;
+                let by_slot = Self::of::<[u32; 3]>(&self.by_slot);
+                let i = (slot >> (SLOT_BITS - (buckets.len() as u32 - 1).trailing_zeros())) as usize;
+                let (mut at, end) = (buckets[i], buckets[i + 1]);
+                while at < end && by_slot[at as usize][0] < slot {
+                    at += 1;
                 }
+                *hint = at;
             }
-            n
+            self.number_of_near(low, hint)
         }
     }
 
-    /// SPIKE: the own places `own_numbers` fills: the last granule's `nodes` entry.
-    ///
-    /// # Safety
-    /// As every read's.
-    pub unsafe fn own_places(&self) -> usize {
-        // SAFETY: the caller's.
-        unsafe { Self::of::<u32>(&self.nodes).last().copied().unwrap_or(0) as usize }
-    }
-
-    /// SPIKE (id lookups, 1b): `own_place_of_near` with the slot's entry found by its bucket (`slot_buckets`): the
-    /// first entry of the slots whose high bits are the slot's, then a step past each lower slot of its bucket, no
-    /// guess and no bisection. `buckets` holds a power of two buckets and one.
-    ///
-    /// # Safety
-    /// As every read's.
-    #[inline]
-    pub unsafe fn own_place_by_buckets(&self, low: u32, buckets: &[u32]) -> Option<u32> {
-        // SAFETY: the caller's.
-        unsafe {
-            let slot = low >> INDEX_BITS;
-            let by_slot = Self::of::<[u32; 3]>(&self.by_slot);
-            let nb = buckets.len().saturating_sub(1) as u32;
-            let i = slot >> (SLOT_BITS - nb.trailing_zeros());
-            let (mut at, end) = (*buckets.get(i as usize)?, *buckets.get(i as usize + 1)?);
-            while at < end && by_slot[at as usize][0] < slot {
-                at += 1;
-            }
-            let mut hint = at;
-            let (g, item, k) = self.granule_of_low_near(low, &mut hint)?;
-            (item == 0).then(|| Self::of::<u32>(&self.nodes)[g as usize].wrapping_add(k))
-        }
-    }
-
-    /// SPIKE (id lookups, 1b): how many words `slot_buckets` fills: a power of two buckets, about two an entry of
-    /// `by_slot` (at most a slot each), and one past.
+    /// How many words `slot_buckets` fills: a power of two buckets, about two an entry of `by_slot` (at most a slot
+    /// each), and one past.
     ///
     /// # Safety
     /// As every read's.
@@ -650,8 +590,8 @@ impl Numbering {
         (2 * n.max(1)).next_power_of_two().min(1 << SLOT_BITS) + 1
     }
 
-    /// SPIKE (id lookups, 1b): each bucket's first entry of `by_slot`, the bucket of a slot its high bits
-    /// (`own_place_by_buckets`), into `out` (`slot_buckets_len` long).
+    /// Each bucket's first entry of `by_slot`, the bucket of a slot its high bits (`number_of_by_buckets`), into
+    /// `out` (`slot_buckets_len` long).
     ///
     /// # Safety
     /// As every read's.

@@ -2583,28 +2583,20 @@ impl Projected {
     pub fn local_of_near(&self, low: u32, hint: &mut u32) -> Option<u32> {
         match &self.defs {
             Some(_) if granules::span_of(low).is_some() => granules::span_of(low).map(|i| self.len() + self.ranks.count(Item::Token) + i),
-            // SPIKE (local fixes, 1): a node's, from the entry's nodes by id where it is made (`ViewDoc::node_by_id`).
-            Some(_) if let Some(l) = self.node_by_id(low) => Some(l),
-            Some(d) => d.table.number_of_near(&self.ranks, low, hint).map(|(item, k)| if item == Item::Node { k } else { self.len() + k }),
+            Some(d) => d.table.number_of_near(&self.ranks, self.slot_buckets(), low, hint).map(|(item, k)| if item == Item::Node { k } else { self.len() + k }),
             None if self.tape => self.tape_local(low),
             None => Some(low),
         }
     }
-    /// SPIKE (local fixes, 1): the node whose id's low bits are `low`, from the entry's nodes by place (`ViewDoc::
-    /// node_by_id`) once the entry is made: the numbering's slot entry, then one load. `None` for no such node (a
-    /// token's id), or no table.
+    /// The entry's slot buckets (`ViewDoc::slot_buckets`) once it is made, else none: an id's slot entry by its
+    /// bucket (`Numbering::number_of_by_buckets`).
     #[inline]
-    fn node_by_id(&self, low: u32) -> Option<u32> {
-        self.codes.get()?;
-        // SAFETY: the entry's run, set where it was made (before `codes` was) to cells of its block, or empty; the
-        // numbering is the projection's, read as every read of it.
-        unsafe {
-            let by = self.entry.node_by_id.as_slice::<u32>();
-            if by.is_empty() {
-                return None;
-            }
-            by.get(self.ranks.numbering().own_place_of(low)? as usize).copied()
+    fn slot_buckets(&self) -> &[u32] {
+        if self.codes.get().is_none() {
+            return &[];
         }
+        // SAFETY: the entry's run, set where it was made (before `codes` was) to cells of its block, or empty.
+        unsafe { self.entry.slot_buckets.as_slice::<u32>() }
     }
     /// The node, token or span whose id's low bits are `low`, where ids are tape positions: a rank, no select.
     #[inline]
