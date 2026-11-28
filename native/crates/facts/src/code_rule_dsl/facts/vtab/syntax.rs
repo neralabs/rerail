@@ -5457,6 +5457,10 @@ impl Source for Viewed {
     fn keys_documents(&self, column: usize) -> bool {
         matches!((self.view, column), (View::Node | View::Core, 0) | (View::Loc(Place::Docof), 1))
     }
+    /// A column of a known kind other than a node's (a kind, a position, an atom, a key) holds no node id.
+    fn keys_nodes(&self, column: usize) -> bool {
+        matches!(self.col_kind(column), Some(made::ColKind::Node) | None)
+    }
     /// A place's `docof` is its file's (a program's host's); every other view's columns are its documents' own.
     fn rows_of_own_documents(&self) -> bool {
         !matches!(self.view, View::Loc(_))

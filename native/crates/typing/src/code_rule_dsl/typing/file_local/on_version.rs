@@ -3123,7 +3123,12 @@ pub(super) fn crossing(v: &Version, f: Fields<'_>, local: &BTreeSet<String>, vie
         let reads = native_reads(rel);
         f.native(rel).is_some_and(|n| matches!(n.spec, ArchivedNativeSpec::MatchAll { .. } | ArchivedNativeSpec::Rank { .. })) && !reads.is_empty() && reads.iter().all(|r| views.contains(r))
     };
-    let view = |rel: &str| is_local(rel) && (views.contains(rel) || at_values(rel));
+    // Not one whose rules read a node (`pt_aclosed_l_0` over `kind`, `field`): derived in the cross part, it read every
+    // file's nodes there (decision 0727: no node reaches the cross part). Its rows are its files', handed on as an
+    // export, through its located form.
+    let holds_node = |rel: &str| f.columns(rel).is_some_and(|c| c.iter().any(|(_, t)| super::node_crossings::NODE_TYPES.contains(t)));
+    let reads_nodes = |rel: &str| v.rel(rel).is_some_and(|id| v.heads(id).any(|r| r.reads().any(|a| holds_node(v.rel_name(a.rel())))));
+    let view = |rel: &str| is_local(rel) && (views.contains(rel) || at_values(rel)) && !reads_nodes(rel);
     let mut work: Vec<String> = cross_reads.iter().filter(|r| view(r)).cloned().collect();
     while let Some(x) = work.pop() {
         if !projected.insert(x.clone()) {

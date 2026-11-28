@@ -265,6 +265,9 @@ impl Source for Places {
     fn keys_documents(&self, column: usize) -> bool {
         self.view.keys_documents(column)
     }
+    fn keys_nodes(&self, column: usize) -> bool {
+        self.view.keys_nodes(column)
+    }
     fn lookup_cost(&self, column: usize) -> f64 {
         self.view.lookup_cost(column).max(self.spans.lookup_cost(column))
     }
