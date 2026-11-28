@@ -70,11 +70,22 @@ export class AttachRetry<Context> {
     clearTimeout(this.#timer);
     this.#failures = 0;
     this.#requested = context;
-    return this.#attachAs(context, ++this.#generation, rebuild).catch((error: unknown) => {
+    const generation = ++this.#generation;
+    return this.#attachAs(context, generation, rebuild).catch((error: unknown) => {
       const line = autostartOffLine(error);
       if (line === undefined) throw error;
-      this.#host.say(context, line);
+      // An attach a newer one, a cancel or a stop overtook says nothing: the host has left its context.
+      if (generation === this.#generation) this.#say(context, line);
     });
+  }
+
+  /** Shows `line` in `context`; a host that cannot show it fails no attach, whose tries go on either way. */
+  #say(context: Context, line: string): void {
+    try {
+      this.#host.say(context, line);
+    } catch {
+      // The line is lost; the session still attaches once the person starts the daemon.
+    }
   }
 
   async #attachAs(context: Context, generation: number, rebuild: boolean): Promise<void> {

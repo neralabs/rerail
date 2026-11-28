@@ -55,4 +55,35 @@ describe("an attach RERAIL_AUTOSTART=0 kept from a daemon it may use", () => {
     expect(retry.failing()).toBeUndefined();
     expect(stderr).toHaveBeenCalledWith("Rerail attached after 2 failed attempt(s)\n");
   });
+
+  const overtakers = {
+    "a newer attach": (retry: AttachRetry<string>) => retry.attach("next"),
+    "a cancel": (retry: AttachRetry<string>) => { retry.cancel(); },
+    "a stop": (retry: AttachRetry<string>) => { retry.stop("left"); },
+  };
+  it.each(Object.keys(overtakers) as Array<keyof typeof overtakers>)("says nothing for an attach that %s overtook", async overtaker => {
+    const held = Promise.withResolvers<void>();
+    const { host, said } = extension(async context => { if (context === "left") await held.promise; });
+    const retry = new AttachRetry(host);
+
+    const left = retry.attach("left");
+    await overtakers[overtaker](retry);
+    held.reject(new AutostartOffError());
+
+    await expect(left).resolves.toBeUndefined();
+    expect(said).toEqual([]);
+  });
+
+  it("attaches all the same where the host cannot show its line", async () => {
+    vi.useFakeTimers();
+    vi.spyOn(process.stderr, "write").mockReturnValue(true);
+    const { host, tries } = extension(async (_context, attempt) => { if (attempt === 1) throw new AutostartOffError(); });
+    const retry = new AttachRetry({ ...host, say: () => { throw new Error("the session's context is gone"); } });
+
+    await expect(retry.attach("session")).resolves.toBeUndefined();
+    await vi.advanceTimersByTimeAsync(1_000);
+
+    expect(tries).toEqual(["session", "session"]);
+    expect(retry.failing()).toBeUndefined();
+  });
 });
