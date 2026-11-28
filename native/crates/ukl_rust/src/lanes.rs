@@ -67,22 +67,6 @@ where
     }
     Simd::from_array(v)
 }
-/// Each lane's entry `ix` of a packed map (`rerail_reads::packed`) of `words` words at `p`: its block's least value
-/// and its byte's word, two gathers, then the byte; `packed::NONE` for an escape or past the last.
-#[inline(always)]
-pub unsafe fn packed_get<const N: usize>(p: *const u32, words: u32, ix: R<N>) -> R<N>
-where
-    LaneCount<N>: SupportedLaneCount,
-{
-    use rerail_reads::packed::{BLOCK, NONE, SHIFT};
-    let at = (ix >> s32(SHIFT)) * s32(BLOCK as u32);
-    let ok = (at + s32(BLOCK as u32)).simd_le(s32(words));
-    let at = ok.select(at, s32(0));
-    let base = gather32_ix(p.cast::<u8>(), at, 2);
-    let w = gather32_ix(p.cast::<u8>(), at + s32(1) + ((ix >> s32(2)) & s32(3)), 2);
-    let byte = (w >> ((ix & s32(3)) << s32(3))) & s32(0xff);
-    (ok & byte.simd_ne(s32(0xff))).select(base + byte, s32(NONE))
-}
 /// The word at `base + (ix << s)` for each lane (`gather64_ix`).
 #[inline(always)]
 pub unsafe fn gather32_ix<const N: usize>(base: *const u8, ix: R<N>, s: u32) -> R<N>

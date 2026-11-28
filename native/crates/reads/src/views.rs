@@ -67,21 +67,12 @@ pub struct ViewDoc {
     /// children are its numbered tape children, walked as any parent's (`child_first`, `child_next`); 0 where a
     /// numbered node's parent is left out, its `child` parent the root.
     pub parented: u32,
-    /// The numbering's slot entries by bucket (`Numbering::slot_buckets`, about two words a slot entry), derived once
-    /// at the entry's making in its block: an id's slot entry is its bucket's first and a step or two
-    /// (`number_of_by_buckets`). Empty (a document numbered by preorder or tape position): no slots.
-    pub slot_buckets: Run,
-    /// Packed maps (`crate::packed`, about 1.25 bytes an entry; `node_low` two clusters a block, `packed::two`, 2
-    /// bytes), derived once at the entry's making in its block: by number, a numbered node's tape node (`node_x`)
-    /// and its id's low bits (`node_low`); by own place, a node's
-    /// number (`by_place`, `Numbering::number_of_packed`); by `field` row, its node's tape node (`field_x`). An
-    /// escaped entry, or an empty map, is read from the numbering.
+    /// A packed map (`crate::packed`, about 1.25 bytes an entry), derived once at the entry's making in its block:
+    /// by number, a numbered node's tape node (`node_x`), its id under tape ids. An escaped entry, or an empty map, is
+    /// read from the numbering.
     pub node_x: Run,
-    pub node_low: Run,
-    pub by_place: Run,
-    pub field_x: Run,
 }
-const _: () = assert!(std::mem::size_of::<ViewDoc>() == 16 + 16 * 2 + 16 + 24 + 16 * 7 + 16 + 16 + 16 * 4);
+const _: () = assert!(std::mem::size_of::<ViewDoc>() == 16 + 16 * 2 + 16 + 24 + 16 * 7 + 16 + 16);
 
 /// A language's place in the codes' directory (decision 0697, `rerail_tape_format::codes_dir`, in the binary): by
 /// tape tag, the offsets from the directory's first byte of its codes' kind atoms and field atoms (u32s, by the tape's

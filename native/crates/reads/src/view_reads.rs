@@ -259,11 +259,8 @@ impl<'a> Doc<'a> {
     #[inline]
     pub fn node_id(&self, l: u32) -> i64 {
         let low = match self.entry.preorder {
-            0 => match crate::packed::two::get(self.items(&self.entry.node_low), l) {
-                // SAFETY: as `tape_node`.
-                crate::packed::NONE => unsafe { self.low_of(l) },
-                low => low,
-            },
+            // SAFETY: as `tape_node`.
+            0 => unsafe { self.low_of(l) },
             crate::views::IDS_TAPE => self.tape_node(l),
             _ => l,
         };

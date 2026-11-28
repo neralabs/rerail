@@ -29,9 +29,8 @@ pub struct Filled {
     _placed: Option<Cells<u64>>,
     /// An embedder's program's segments (`ViewDoc::segments`).
     _segments: Option<Cells<u32>>,
-    /// The numbering's slot buckets and packed maps (`ViewDoc::slot_buckets`, `node_x`, `node_low`, `by_place`,
-    /// `field_x`).
-    _maps: [Option<Cells<u32>>; 5],
+    /// The packed map of a numbered node's tape node (`ViewDoc::node_x`).
+    _node_x: Option<Cells<u32>>,
 }
 
 impl ViewEntry {
@@ -90,46 +89,12 @@ impl ViewEntry {
             ),
             _ => None,
         });
-        // The numbering's slot entries by bucket (`number_of_by_buckets`): a granule numbering's alone.
-        let slot_buckets = (p.defs.is_some() && p.len() > 0).then(|| {
-            let num = p.ranks().numbering();
-            // SAFETY: the projection's numbering, read as every read of it.
-            let n = unsafe { num.slot_buckets_len() };
-            // copy: derived (each slot bucket's first entry, computed once from the numbering: about two words a
-            // granule's slot, no word a node)
-            Cells::build(block, n, |out: &mut [u32]| unsafe { num.slot_buckets(out) }).expect("a batch's block holds its entries")
-        });
-        // The packed maps (`rerail_clif::packed`, about 1.25 bytes an entry): a numbered node's tape node and id's low
-        // bits by number, a node's number by own place, a field row's tape node.
-        let pack = |vals: &[u32]| {
+        // The packed map (`rerail_clif::packed`, about 1.25 bytes an entry): a numbered node's tape node by number.
+        let node_x = (p.len() > 0).then(|| {
+            let xs: Vec<u32> = super::granules::ids(p.table(), p.ranks(), super::ranks::Item::Node, p.len()).map(|(_, x, _)| x).collect();
             // copy: derived (the numbering's answers, computed once from it, a byte an entry)
-            Cells::build(block, rerail_clif::packed::words(vals.len()), |out: &mut [u32]| rerail_clif::packed::build(vals, out).0)
+            Cells::build(block, rerail_clif::packed::words(xs.len()), |out: &mut [u32]| rerail_clif::packed::build(&xs, out).0)
                 .expect("a batch's block holds its entries")
-        };
-        let (mut xs, mut lows) = (vec![0u32; p.len() as usize], vec![0u32; p.len() as usize]);
-        for (l, x, low) in super::granules::ids(p.table(), p.ranks(), super::ranks::Item::Node, p.len()) {
-            (xs[l as usize], lows[l as usize]) = (x, low);
-        }
-        let node_x = (p.len() > 0).then(|| pack(&xs));
-        // An id's low bits jump where consecutive numbers lie in different granules (a slot is a hash): two clusters a
-        // block (`packed::two`).
-        let node_low = (p.defs.is_some() && p.len() > 0).then(|| {
-            // copy: derived (each node's id's low bits, computed once from the numbering, two bytes an entry)
-            Cells::build(block, rerail_clif::packed::two::words(lows.len()), |out: &mut [u32]| rerail_clif::packed::two::build(&lows, out).0)
-                .expect("a batch's block holds its entries")
-        });
-        let by_place = slot_buckets.as_ref().map(|_| {
-            let num = p.ranks().numbering();
-            // SAFETY: the projection's numbering, read as every read of it.
-            let mut places = vec![0u32; unsafe { num.own_places() }];
-            unsafe { num.own_numbers(&mut places) };
-            pack(&places)
-        });
-        let field_x = (p.len() > 0).then(|| {
-            let num = p.ranks().numbering();
-            // SAFETY: the projection's numbering, read as every read of it.
-            let fx: Vec<u32> = (0..num.count[2]).map(|r| unsafe { num.select(2, r) }).collect();
-            pack(&fx)
         });
         let d = desc.as_ptr();
         // SAFETY: the entry is written by this alone (inside its projection's `OnceLock`), and its runs point at cells
@@ -139,13 +104,8 @@ impl ViewEntry {
             (*d).nodes = p.len();
             // Every numbered node's tape parent numbered (its root's too): the root's children walked as any parent's.
             (*d).parented = u32::from(p.parented() == p.len());
-            if let Some(t) = &slot_buckets {
-                Run::set(&raw mut (*d).slot_buckets, t.as_ptr(), t.len());
-            }
-            for (run, cells) in [(&raw mut (*d).node_x, &node_x), (&raw mut (*d).node_low, &node_low), (&raw mut (*d).by_place, &by_place), (&raw mut (*d).field_x, &field_x)] {
-                if let Some(c) = cells {
-                    Run::set(run, c.as_ptr(), c.len());
-                }
+            if let Some(c) = &node_x {
+                Run::set(&raw mut (*d).node_x, c.as_ptr(), c.len());
             }
             Run::set(&raw mut (*d).numbering, p.ranks().desc().cast::<rerail_clif::ids::Numbering>(), 1);
             if let Some(names) = &names {
@@ -200,7 +160,7 @@ impl ViewEntry {
                 }
             }
         }
-        Filled { _names: names, _placed: placed, _segments: segments, _maps: [slot_buckets, node_x, node_low, by_place, field_x] }
+        Filled { _names: names, _placed: placed, _segments: segments, _node_x: node_x }
     }
 
     /// `p`'s positions where the views' reads answer its `Loc` rows: core.rerail's; a guest's through its host's
