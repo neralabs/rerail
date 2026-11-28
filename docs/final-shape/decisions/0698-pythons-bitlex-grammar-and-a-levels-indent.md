@@ -1204,3 +1204,22 @@ statements and blocks end.
       before) and 9637 to 13817 on x86-64 (12914). All have 0 conditional branches and 0 calls.
     - **As measured** (3 passes, on the M1 Max at load 4 to 7, both builds there): the walk's summaries went from
       1821M to 1380M cycles at 16 blocks a chunk, and from 9163M to 7239M instructions.
+120. **The walk's byte classes carried from block to block; the layout's folds stay scalar** (as built:
+    `starts::ClsCarry`, `cls_first`, `cls_next`).
+    - **The carry:** a block's `Cls` holds the classes of the block below, the block and the block after, and
+      the strings' classes of the block and the block after. All but those of the block after are the last
+      block's. The walk's accumulator carries them, and each block classifies only the block after it: 1
+      `classes` and 1 `sclasses` a block, not 3 and 2. The loop over blocks reads the carry into a chunk's
+      first block. The tests' builds assert that each block's carried classes are its own as read afresh.
+    - **The layout's folds, tried as vector compares and not kept:** `cond`'s test that a read is kept already,
+      and `line`'s levels at most `m`. First as compares of the arrays loaded as vectors, then with the levels
+      and the reads held in vectors (each written by a select on its lane, the top read by a masked reduce,
+      against the store of one lane then the load of all). Both passed the tests. Neither cut the walk's cycles:
+      1382M and 1397M against 1380M, with more instructions retired (7356M and 7527M against 7239M). The two
+      folds are about 4% of the run's samples.
+    - **As tested:** the 30 tests pass on AArch64 and x86-64. From the middle is still the serial lexer's in
+      1644 of 1644 files. The 4 instances of `walk_block` have 7120 to 9696 instructions on AArch64 (8080 to
+      13072 before) and 8899 to 11417 on x86-64. All have 0 conditional branches and 0 calls.
+    - **As measured** (3 passes, on the M1 Max at load 4 to 5, both builds there): the walk's summaries went from
+      1380M to 1290M cycles at 16 blocks a chunk, and from 7239M to 6650M instructions. At 1 block a chunk, where
+      every block is a chunk's first, they went from about 3417M to 3344M.

@@ -47,7 +47,7 @@ static OPC: [[u8; 64]; 2] = {
 };
 
 /// A block's byte classes the starts read, from its bytes and the two after each.
-#[derive(Clone, Copy, Default)]
+#[derive(Clone, Copy, Default, PartialEq, Eq, Debug)]
 struct Bytes {
     digit: u64,
     dot: u64,
@@ -85,15 +85,51 @@ impl Bytes {
 }
 
 /// The byte classes of the block below `r.bi` (its own where it is the text's first), of the block and of the block
-/// after: what the starts in code read (for code and for interpolations' code alike).
+/// after: what the starts in code read (for code and for interpolations' code alike); and the strings' classes of
+/// the block and the block after.
 #[derive(Clone, Copy)]
-pub(super) struct Cls([Bytes; 3]);
+pub(super) struct Cls {
+    b: [Bytes; 3],
+    s: [SBytes; 2],
+}
 
 /// Block `r.bi`'s `Cls`.
 #[inline(always)]
 pub(super) fn cls<const S: bool>(r: &Win<'_, S>) -> Cls {
+    let mut k = cls_first(r);
+    cls_next(r, &mut k)
+}
+
+/// What a block's `Cls` carries to the next block's: the classes of the block below and of the block, and the
+/// strings' classes of the block (all the next one's `Cls` holds but those of the block after it).
+#[derive(Clone, Copy, Default)]
+pub(super) struct ClsCarry {
+    lo: Bytes,
+    mid: Bytes,
+    s: SBytes,
+}
+
+/// The carry into block `r.bi` where no block before it was read.
+#[inline(always)]
+pub(super) fn cls_first<const S: bool>(r: &Win<'_, S>) -> ClsCarry {
     let at = 64 * r.bi;
-    Cls([classes(r, at.saturating_sub(64)), classes(r, at), classes(r, at + 64)])
+    ClsCarry { lo: classes(r, at.saturating_sub(64)), mid: classes(r, at), s: sclasses(r, at) }
+}
+
+/// Block `r.bi`'s `Cls` from the carry `k` into it, its classes of the block after it read (each byte classified
+/// once in each form); `k` left the carry into the block after.
+#[inline(always)]
+pub(super) fn cls_next<const S: bool>(r: &Win<'_, S>, k: &mut ClsCarry) -> Cls {
+    let at = 64 * r.bi;
+    // The tests' builds: the carry is the block's classes as read afresh (the block before was the last read).
+    if cfg!(debug_assertions) {
+        let f = cls_first(r);
+        assert!((f.lo, f.mid, f.s) == (k.lo, k.mid, k.s), "block {}'s classes carried are not its own", r.bi);
+    }
+    let (up, s_up) = (classes(r, at + 64), sclasses(r, at + 64));
+    let c = Cls { b: [k.lo, k.mid, up], s: [k.s, s_up] };
+    *k = ClsCarry { lo: k.mid, mid: up, s: s_up };
+    c
 }
 
 /// A block's reads in the walk's pass 1, by value: the text, and the masks of the block below, the block and the one
@@ -360,7 +396,7 @@ fn starts_in<const S: bool>(r: &Win<'_, S>, cl: &Cls, code: u128, one_by_one: bo
     let keep = 0u64.wrapping_sub(u64::from(bi > 0));
     // The classes at each byte, and at the bytes one, two, three after it: the blocks' classes shifted (a local
     // macro: a closure called three times may be a call).
-    let [lo, mid, up] = &cl.0;
+    let [lo, mid, up] = &cl.b;
     macro_rules! at {
         ($d:expr) => {
             (Bytes::from(lo, mid, $d), Bytes::from(mid, up, $d))
@@ -579,7 +615,7 @@ pub fn string_starts_are_the_walks(src: &[u8]) -> Option<(usize, usize, Option<S
 }
 
 /// A string's byte classes the string starts read, of the byte at `at`.
-#[derive(Clone, Copy, Default)]
+#[derive(Clone, Copy, Default, PartialEq, Eq, Debug)]
 struct SBytes {
     r: u64,
     b: u64,
@@ -724,10 +760,10 @@ pub(super) fn string_starts_w<const S: bool, const INTERP: bool>(win: &Win<'_, S
 #[inline(always)]
 pub(super) fn string_starts_c<const S: bool, const INTERP: bool>(win: &Win<'_, S>, cl: &Cls, c: &mut StrCarry) -> (u64, u32) {
     debug_assert!(INTERP || !interp_may(win, c), "a block of interpolations read without");
-    let (b, bi) = (win.b, win.bi);
-    let at = 64 * bi;
-    // The block's bytes' classes and the next block's, once; those of the bytes 1 to 5 after each byte from them.
-    let (n0, up_n) = (sclasses(win, at), sclasses(win, at + 64));
+    let b = win.b;
+    // The block's bytes' classes and the next block's (carried, each block classified once); those of the bytes 1
+    // to 5 after each byte from them.
+    let [n0, up_n] = cl.s;
     let n: [SBytes; 6] = [n0, SBytes::from(&n0, &up_n, 1), SBytes::from(&n0, &up_n, 2), SBytes::from(&n0, &up_n, 3), SBytes::from(&n0, &up_n, 4), SBytes::from(&n0, &up_n, 5)];
     let hi = |x: u64| u128::from(x);
     let bool128 = |x: bool| u128::from(x);

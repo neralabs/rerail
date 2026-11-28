@@ -1548,6 +1548,8 @@ struct WalkAcc {
     /// The last block's events and tokens `layout_block` left (`walk_more`'s).
     rest: u128,
     k: u64,
+    /// The byte classes the last block carries to this one (`starts::cls_next`).
+    cls: super::starts::ClsCarry,
 }
 
 /// One block of the walk's pass 1 by masks, from its reads `r`, in the chunk's range `lo..hi` (and its eof's `n`):
@@ -1561,7 +1563,7 @@ fn walk_block<const S: bool, const INTERP: bool>(r: &Win<'_, S>, lo: usize, hi: 
     let mk = |x: usize| pick(x >= 64, !0u64, (1u64 << (x & 63)).wrapping_sub(1));
     let range = mk(hi.saturating_sub(64 * bi)) & !mk(lo.saturating_sub(64 * bi));
     // The block's byte classes once, for its starts in code and in interpolations' code.
-    let cl = super::starts::cls(r);
+    let cl = super::starts::cls_next(r, &mut acc.cls);
     let (cs, r1) = super::starts::code_starts_c(r, &cl);
     let (ss, r2) = super::starts::string_starts_c::<S, INTERP>(r, &cl, &mut acc.carry);
     let (xs, r3) = super::starts::extra_starts_w(r);
@@ -1617,6 +1619,7 @@ pub fn walk_summary_masks(src: &[u8], from: usize, to: usize, rb: RB, depth: i8,
             bad: 0,
             rest: 0,
             k: 0,
+            cls: super::starts::ClsCarry::default(),
         };
         // Each block's first content past its window, from the right: the first its windows above read in their
         // upper halves (to the chunk's last and the walk's), then the chunks' after it (`after`).
@@ -1645,6 +1648,9 @@ pub fn walk_summary_masks(src: &[u8], from: usize, to: usize, rb: RB, depth: i8,
                 }
             }};
         }
+        // The byte classes into the first block: no block before it in the chunk was read.
+        let first = b0.min(nb.saturating_sub(1));
+        acc.cls = if n < 64 { super::starts::cls_first(&m.win::<true>(first)) } else { super::starts::cls_first(&m.win::<false>(first)) };
         for bi in b0..=b1 {
             let far = fars[bi - b0];
             if n < 64 {
