@@ -1994,7 +1994,7 @@ fn node_texts_read_as_term_atoms_give_the_texts_rows() {
 .decl doc(d: number, path: symbol, module: symbol)
 .decl node(d: number, n: node, kind: symbol, start: number, end: number)
 .decl node_text(n: node, s: symbol)
-.decl line(n: loc, l: number)
+.decl line(n: node, l: number)
 .input doc, node, node_text, line
 .decl ids(l: number, s: symbol)
 ids(l, s) :- node(_, n, "identifier", _, _), node_text(n, s), line(n, l).
