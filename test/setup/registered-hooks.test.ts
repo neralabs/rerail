@@ -3,6 +3,7 @@ import { mkdtemp } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
+import { registerHarnesses } from "../../src/setup/harness-registration.js";
 import { missingClaudeHookScripts, runRegisteredClaudeHook } from "../../src/setup/registered-hooks.js";
 import { removeFolder } from "../support/platform/remove-folder.js";
 import { fromDriveRoot } from "../support/platform/windows-paths.js";
@@ -36,6 +37,35 @@ describe("Claude Code hook scripts that are gone", () => {
       join(gone, "hosts", "claude", "claude-hook.js"),
       join(gone, "hosts", "claude", "claude-status.js"),
     ].sort());
+  });
+
+  it("names the status line's script as registration writes the command, read as Claude Code's shell reads it", async () => {
+    const home = await mkdtemp(join(tmpdir(), "rerail-registered-"));
+    homes.push(home);
+    // An install whose scripts are gone: its package.json and an empty dist/.
+    const root = join(home, "install");
+    mkdirSync(join(root, "dist"), { recursive: true });
+    writeFileSync(join(root, "package.json"), JSON.stringify({ name: "@neralabs/rerail", version: "1.0.0" }));
+    mkdirSync(join(home, ".claude"));
+    await registerHarnesses({ root, home, harnesses: ["claude-code"] });
+    // On Windows the status line starts node on claude-status.js, its path quoted for Git Bash with each backslash
+    // written twice; on macOS and Linux it sources claude-status.sh.
+    const script = join(root, "dist", "hosts", "claude", process.platform === "win32" ? "claude-status.js" : "claude-status.sh");
+    expect(missingClaudeHookScripts(home)).toContain(script);
+  });
+
+  // A relative path ends as an install's script would, and resolves against whatever folder Claude Code runs in.
+  it.each([
+    ["an absolute path outside any Rerail package", (home: string) => join(home, "bin", "claude-status.sh")],
+    ["a relative path", () => join(".rerail", "current", "dist", "hosts", "claude", "claude-status.sh")],
+  ])("names no missing status line script of the person's own, sourced by %s", async (_, scriptIn) => {
+    const home = await mkdtemp(join(tmpdir(), "rerail-registered-"));
+    homes.push(home);
+    mkdirSync(join(home, ".claude"));
+    // Quoted for the shell as registration quotes a word (`hookWord`), so the command has the shape registration writes.
+    const command = `. "${scriptIn(home).replace(/(["\\$`])/gu, "\\$1")}"`;
+    writeFileSync(join(home, ".claude", "settings.json"), JSON.stringify({ statusLine: { type: "command", command } }));
+    expect(missingClaudeHookScripts(home)).toEqual([]);
   });
 
   it("names nothing when the settings are missing or unreadable", async () => {

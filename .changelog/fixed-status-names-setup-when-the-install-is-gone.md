@@ -1,0 +1,1 @@
+When the version folders of Rerail's install are gone, `rerail status` now says so first for every coding agent connected to it and names `npx @neralabs/rerail setup`, which installs a version, where it named nothing missing for Codex, Cursor or Pi and `rerail install --refresh` for Claude Code. It also names Claude Code's missing status line script.

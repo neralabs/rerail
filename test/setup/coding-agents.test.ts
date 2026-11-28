@@ -1,12 +1,14 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { mkdir, mkdtemp, readdir, readFile, rm, symlink, writeFile } from "node:fs/promises";
+import { chmod, lstat, mkdir, mkdtemp, readdir, readFile, rm, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { dirname, join, win32 } from "node:path";
 import {
-  codingAgentStates, connectCodingAgents, forgetSeenCodingAgents, recordSeenCodingAgents, refreshCodingAgents, seenCodingAgents, type DataAccessOptions,
+  codingAgentStates, connectCodingAgents, forgetSeenCodingAgents, managedInstall, recordSeenCodingAgents, refreshCodingAgents, registrationRoot,
+  seenCodingAgents, type DataAccessOptions,
 } from "../../src/setup/coding-agents.js";
 import { pinnedNodePath } from "../../src/setup/node-path.js";
 import { CODEX_HOOK_EVENTS, NODE_HOOK_FALLBACK_NOTE, registerHarnesses, unregisterHarnesses, type Harness } from "../../src/setup/harness-registration.js";
+import { NO_POSIX_MODES, POSIX_MODES } from "../support/platform/file-mode.js";
 import { removeFolder } from "../support/platform/remove-folder.js";
 
 // Each look for a program on PATH, passed through and watched: it checks a file in each PATH entry.
@@ -438,5 +440,22 @@ describe("seen coding agents", () => {
     expect(seenCodingAgents(home)).toBeUndefined();
     await recordSeenCodingAgents(home, ["claude-code"]);
     expect(seenCodingAgents(home)).toEqual(["claude-code"]);
+  });
+});
+
+describe("the managed install at <rerail home>/current", () => {
+  it("reads a current this account cannot look at as gone, not absent, and registers the running package for it", async ({ skip }) => {
+    skip(!POSIX_MODES, NO_POSIX_MODES);
+    const home = await mkdtemp(join(tmpdir(), "rerail-managed-"));
+    temporaryDirectories.push(home);
+    await symlink(join("versions", "0.2.2"), join(home, "current"));
+    // No search permission, as in a Rerail home another account made private: the lstat of `current` fails with EACCES.
+    await chmod(home, 0o600);
+    try {
+      skip(await lstat(join(home, "current")).then(() => true, () => false), "this process reads past mode 600");
+      expect([managedInstall(home), registrationRoot(home, "/package")]).toEqual(["gone", "/package"]);
+    } finally {
+      await chmod(home, 0o700);
+    }
   });
 });

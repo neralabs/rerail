@@ -7,6 +7,7 @@ import { isAbsolute, join } from "node:path";
 import { spawn } from "../engine/child-process.js";
 import { removeScratch } from "../engine/file-replace.js";
 import { programOnPath } from "../engine/system-programs.js";
+import { claudeStatusScript } from "./harness-registration.js";
 
 /** Rerail's hook scripts, as a registration names them in a hook's command or arguments. */
 const RERAIL_HOOK_SCRIPT = /[\\/]dist[\\/](?:harness[\\/]hook-launcher|hosts[\\/]claude[\\/]claude-(?:hook|status))\.js$/u;
@@ -40,8 +41,19 @@ export function missingClaudeHookScripts(home: string): string[] {
     return [];
   }
   const record = settings !== null && typeof settings === "object" && !Array.isArray(settings) ? settings : {};
-  const named = strings([record.hooks ?? null, record.statusLine ?? null]).flatMap(pathsIn);
-  return [...new Set(named.filter(path => RERAIL_HOOK_SCRIPT.test(path) && !existsSync(path)))];
+  const named = strings([record.hooks ?? null, record.statusLine ?? null]).flatMap(pathsIn).filter(path => RERAIL_HOOK_SCRIPT.test(path));
+  return [...new Set([...named, ...statusLineScript(record.statusLine)].filter(path => !existsSync(path)))];
+}
+
+/**
+ * The script a status line Rerail wrote runs, read as Claude Code's shell reads the command: on Windows each backslash
+ * of its POSIX-quoted path is written twice, and on macOS and Linux it sources `claude-status.sh`, so `pathsIn` and
+ * `RERAIL_HOOK_SCRIPT` find neither as written.
+ */
+function statusLineScript(statusLine: Json | undefined): string[] {
+  if (statusLine === null || typeof statusLine !== "object" || Array.isArray(statusLine) || typeof statusLine.command !== "string") return [];
+  const script = claudeStatusScript(statusLine.command);
+  return script === undefined ? [] : [script];
 }
 
 /** A Claude Code hook entry as settings.json holds it: a command line, or a command with its own arguments. */
