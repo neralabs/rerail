@@ -2227,3 +2227,30 @@ fn not_inside_a_field_of_any_parent_finds_ws_roots() {
     assert_eq!(found[0][0], expected, "the wave's formula roots are W's");
     assert_eq!(program.roots(&tape).unwrap(), expected);
 }
+
+/// A domain of kinds (`domain`, its set made from the code table's index by kind) is the nodes whose kind
+/// (`transducer_kind`) is one of them, in order: each kind of a tape with syntax errors, `ERROR_SYMBOL` (whose nodes'
+/// codes may be of any kind), several kinds at once, a kind the tape lacks, and a domain within a set.
+#[test]
+fn a_domain_of_kinds_is_the_nodes_of_those_kinds() {
+    use super::compile_matcher::Domain;
+    use crate::code_rule_dsl::tape::ERROR_SYMBOL;
+    let tape = python_tape("def f(x):\n    return x +\nclass C:\n    def g(self): pass\n)\nprint(f(1), [y for y in z])\n");
+    let kinds: BTreeSet<u16> = (0..tape.transducer_len() as u32).map(|n| tape.transducer_kind(n)).collect();
+    assert!(kinds.contains(&ERROR_SYMBOL), "the tape has error nodes");
+    let scan = |of: &[u16]| -> Vec<u32> { (0..tape.transducer_len() as u32).filter(|&n| of.contains(&tape.transducer_kind(n))).collect() };
+    let absent = (1..u16::MAX).find(|k| !kinds.contains(k)).expect("a kind the tape lacks");
+    let mut cases: Vec<Vec<u16>> = kinds.iter().map(|&k| vec![k]).collect();
+    cases.push(kinds.iter().copied().step_by(2).collect());
+    cases.push(vec![absent]);
+    cases.push(vec![absent, ERROR_SYMBOL]);
+    for of in cases {
+        let mut sorted = of.clone();
+        sorted.sort_unstable();
+        let set = super::compile_sets::Set::All;
+        for d in [Domain::Kinds(sorted.iter().copied().collect()), Domain::Within(Some(sorted.iter().copied().collect()), set)] {
+            let got: Vec<u32> = domain(&d, &tape, &[]).collect();
+            assert_eq!(got, scan(&of), "kinds {of:?}");
+        }
+    }
+}

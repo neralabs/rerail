@@ -2948,11 +2948,25 @@ fn walked_with(label: &Label, walk: &Micro, texts: &[Vector<u64>], tape: &TapeDo
 
 /// The nodes of `tape` in `domain`, in preorder.
 pub fn domain<'a>(domain: &'a Domain, tape: &'a TapeDoc, sets: &'a [Vector<u64>]) -> impl Iterator<Item = u32> + 'a {
-    (0..tape.transducer_len() as u32).filter(move |&node| match domain {
-        Domain::All => true,
-        Domain::Kinds(_) | Domain::Within(..) => domain.admits_kind(tape.transducer_kind(node)),
-        Domain::Label(label) => has(sets, *label, node),
-    })
+    // A domain of kinds is the nodes whose codes are of those kinds, read by the tape's code-set match (64 codes at
+    // once), in order, the set made from the table's index by kind. A node's kind read one at a time, for every node
+    // of the tape for each clause, was 1,049 samples of idc's trace (2026-11-27).
+    let kinds = match domain {
+        Domain::Kinds(kinds) | Domain::Within(Some(kinds), _) => Some(kinds),
+        Domain::All | Domain::Label(_) | Domain::Within(None, _) => None,
+    };
+    let listed = kinds.map(|kinds| {
+        let mut nodes = Vector::new();
+        tape.transducer_nodes_of_kinds(kinds, &mut nodes);
+        nodes
+    });
+    let each = kinds.is_none().then(|| {
+        (0..tape.transducer_len() as u32).filter(move |&node| match domain {
+            Domain::Label(label) => has(sets, *label, node),
+            _ => true,
+        })
+    });
+    listed.into_iter().flat_map(|nodes| (0..nodes.len()).map(move |i| nodes[i])).chain(each.into_iter().flatten())
 }
 
 /// One program's words, with the clause's labels it adds to.

@@ -901,11 +901,12 @@ impl Reader<'_> {
             Set::Kind(kind) => self.postings(self.kinds().get(*kind)),
             Set::Field(field) => self.postings(self.fields().get(*field)),
             Set::Flags { mode, arg } => {
+                // A word of 64 nodes' tests in a register, stored once: a branch, a load of the word and a store a
+                // node made this arm `made`'s most sampled loop (idc's trace, 2026-11-27).
+                let (mode, arg) = (*mode, *arg);
                 let mut bits = rerail_blocks::vector![0_u64; words];
-                for (node, &flags) in self.flags().iter().enumerate() {
-                    if flags & mode == *mode && flags & arg == 0 {
-                        bits[node / 64] |= 1 << (node % 64);
-                    }
+                for (word, flags) in bits.iter_mut().zip(self.flags().chunks(64)) {
+                    *word = flags.iter().enumerate().fold(0, |w, (k, &f)| w | u64::from(f & mode == mode && f & arg == 0) << k);
                 }
                 bits
             }

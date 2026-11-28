@@ -2509,6 +2509,35 @@ impl TapeDoc {
     }
 
     /// The abstract grammar classes (supertypes) each node belongs to, as `(node, kind)` sorted.
+    /// The nodes whose kind (`transducer_kind`'s) is one of `kinds`, in order, onto `out`: `transducer_nodes_where`
+    /// with its codes' set made from the table's index of codes by kind and its list of error codes, so no other
+    /// code's entry is read. A set of a few kinds made from every entry, for each clause of a wave on each tape, was
+    /// 0.9 s of idc's trace (2026-11-27).
+    pub fn transducer_nodes_of_kinds(&self, kinds: &[u16], out: &mut Vector<u32>) {
+        let t = self.t();
+        let table = t.table();
+        let mut bits = rerail_blocks::vector![0u32; table.set_words()];
+        let mut put = |code: u32| bits[code as usize / 32] |= 1 << (code % 32);
+        for &kind in kinds {
+            // An error node's kind is `ERROR_SYMBOL`, whatever its code's: its codes are the error list's.
+            if kind == ERROR_SYMBOL {
+                table.errors().numbers().unwrap_or_default().iter().for_each(|&code| put(code));
+            }
+            for &code in table.of_kind(kind).numbers().unwrap_or_default() {
+                if table.kind_field(code).2 & CODE_ERROR == 0 {
+                    put(code);
+                }
+            }
+        }
+        let set = CodeSet::Dense(&bits, table.len() as u32);
+        t.match_groups(&set, |base, mut m| {
+            while m != 0 {
+                out.push((base + m.trailing_zeros() as usize) as u32);
+                m &= m - 1;
+            }
+        });
+    }
+
     /// The nodes whose code passes `admits` (its kind, as `transducer_kind`, and its classes), in order, onto `out`:
     /// the codes tested once each, the nodes found from the tape's code bytes 64 at a time (`Tape::match_groups`).
     pub fn transducer_nodes_where(&self, admits: impl Fn(u16, &[u16]) -> bool, out: &mut Vector<u32>) {
