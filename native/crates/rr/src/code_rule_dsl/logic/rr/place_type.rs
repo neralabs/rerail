@@ -33,6 +33,9 @@ use crate::code_rule_dsl::logic::front::Error;
 /// The place types: a variable is at most one of them.
 const PLACES: [&str; 5] = ["node", "line", "match", "token", "place"];
 
+/// The types a variable is at most one of: the places, and a document key (decision 0729), which is no place.
+const TYPED: [&str; 6] = ["node", "line", "match", "token", "place", "doc"];
+
 /// Whether a written column type is a place (decision 0724 §3): an id the engine holds as a node's.
 pub fn is_place(ty: &str) -> bool {
     PLACES.contains(&ty)
@@ -114,7 +117,7 @@ struct Seen<'f, F: Reads> {
 
 impl<F: Reads> Seen<'_, F> {
     fn add(&mut self, v: &str, t: &str) {
-        if let Some(p) = PLACES.iter().find(|p| **p == t) {
+        if let Some(p) = TYPED.iter().find(|p| **p == t) {
             self.types.entry(v.to_owned()).or_default().insert(p);
         }
     }
@@ -325,6 +328,7 @@ fn check_clause<F: Reads>(f: &F, n: u32, line: usize, decls: &BTreeMap<String, V
         for h in f.heads_at(n) {
             seen.args(decls.get(&h.rel), &h.args, true);
         }
+        let body_lits = body.clone();
         seen.lits(decls, body.clone(), line)?;
         let mut matches = Vec::new();
         text_matches(f, body, &mut matches);
@@ -343,6 +347,25 @@ fn check_clause<F: Reads>(f: &F, n: u32, line: usize, decls: &BTreeMap<String, V
                 break;
             }
         }
+        // A head's `doc` column is bound by a `doc` column of the body (decision 0729 §2.1): a document key is read,
+        // never computed or taken from a number.
+        let mut body = Seen { f, own, types: BTreeMap::new(), same: seen.same.clone() };
+        body.lits(decls, body_lits.clone(), line)?;
+        body.join();
+        for h in f.heads_at(n) {
+            let Some(cols) = decls.get(&h.rel) else { continue };
+            for (a, t) in h.args.iter().zip(cols) {
+                if t == "doc"
+                    && let Some(v) = seen.var(a)
+                    && !body.types.get(&v).is_some_and(|ts| ts.contains("doc"))
+                {
+                    return Err(Error::Syntax(format!(
+                        "line {line}: {v} fills {}'s `doc` column but no `doc` column of the body binds it: read it from `docof(n, {v})`, `doc({v}, …)` or another relation's `doc` column (decision 0729)",
+                        h.rel
+                    )));
+                }
+            }
+        }
         for (v, types) in &seen.types {
             // A `place` column holds any place: it agrees with the one type the variable's other columns give it.
             let types: BTreeSet<&&str> = types.iter().filter(|t| **t != "place").collect();
@@ -350,7 +373,7 @@ fn check_clause<F: Reads>(f: &F, n: u32, line: usize, decls: &BTreeMap<String, V
                 let mut ts = types.iter().copied();
                 let (a, b) = (ts.next().unwrap_or(&""), ts.next().unwrap_or(&""));
                 return Err(Error::Syntax(format!(
-                    "line {line}: {v} is a {a} in one column and a {b} in another: give each column one type, and convert with a function (node_to_line, line_to_node, match_to_node, node_to_first_token, …: decision 0724 §4)"
+                    "line {line}: {v} is a {a} in one column and a {b} in another: give each column one type, and convert with a function (node_to_line, line_to_node, match_to_node, node_to_first_token, docof, …: decisions 0724 §4, 0729)"
                 )));
             }
         }

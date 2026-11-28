@@ -1,0 +1,162 @@
+.policy "rr-document-columns" revision 1
+.description "Placement is declared, never inferred: a cross-file relation reads relations that name their document, holds no place, and a per-file rule reads it only when staged (decision 0729)."
+.language rr
+.mode steer
+.scope include "**/*.rerail"
+
+// Decision 0729: a relation not declared `cross_file` is per file, and each of its rules is over one document. A
+// `cross_file` relation spans files, and nothing becomes one by reading one. The rules here check the declarations
+// alone, as the engine does when it loads a program:
+//
+//   RR320  a cross-file relation's rule reads a per-file relation that names no document (no `doc` column)
+//   RR321  a cross-file relation declares a place column (`node`, `line`, `match`, `token`, `place`)
+//   RR322  a per-file relation's rule reads a cross-file relation that is not `staged`
+//
+// RR301 (rr-cross-part-reads-a-base-relation) finds a cross-file rule reading a base relation.
+//
+//   .decl imp(d: doc, m: symbol)                     per file, names its document
+//   imp(d, m) :- kind(i, "import"), text(i, m), docof(i, d).
+//   .decl dep(a: doc, b: doc) cross_file
+//   dep(a, b) :- imp(a, m), mod_doc(b, m).          fine: both name their document
+//   .decl named(m: symbol) cross_file staged         a relation of names, derived before the program
+//   named(m) :- imp(_, m).
+//   .violation UNUSED(at: node) …
+//   UNUSED(i) :- kind(i, "import"), text(i, m), !named(m).   fine: a staged relation is a route into a file
+//
+// A relation no rule of its program derives is an input (a setting, an earlier phase's export: `py_names__reads_at`),
+// and a relation derived from those and facts alone is a run constant: both are read anywhere. Each library file
+// (`lib/`) is one program, the library, whose relations every other file sees; each other file is a program of its
+// own beside it.
+
+// ---- each file's program ---------------------------------------------------------------------------------------
+
+// dc_lib(p): p is a library file: the library is one program.
+.decl dc_lib(p: symbol)
+dc_lib(p) :- doc(_, p, _), match("(?:.*/)?lib/.*", p).
+
+// dc_key(d, k): document d's rules are program k's: "lib" for the library, else its own path.
+.decl dc_key(d: doc, k: symbol)
+dc_key(d, "lib") :- doc(d, p, _), dc_lib(p).
+dc_key(d, p) :- doc(d, p, _), !dc_lib(p).
+
+.decl dc_prog(k: symbol)
+dc_prog(k) :- dc_key(_, k).
+
+// ---- what each program declares -------------------------------------------------------------------------------
+
+// dc_decl(x, k, r): declaration x of program k declares r: a `.decl`, or a `.violation`, whose findings are made in
+// their files (0727 §3).
+.decl dc_decl(x: node, k: symbol, r: symbol)
+dc_decl(x, k, r) :- kind(x, "declaration"), field(x, "name", n), text(n, r), docof(x, d), dc_key(d, k).
+dc_decl(x, k, r) :- kind(x, "violation_declaration"), field(x, "name", n), text(n, r), docof(x, d), dc_key(d, k).
+
+.decl dc_declared(k: symbol, r: symbol)
+dc_declared(k, r) :- dc_decl(_, k, r).
+
+// dc_qual(k, r, q): program k declares r with qualifier q.
+.decl dc_qual(k: symbol, r: symbol, q: symbol)
+dc_qual(k, r, q) :- dc_decl(x, k, r), field(x, "modifier", w), text(w, q).
+
+// dc_cross(k, r): program k declares r `cross_file`, or `staged` (a cross-file relation of names).
+.decl dc_cross(k: symbol, r: symbol)
+dc_cross(k, r) :- dc_qual(k, r, "cross_file").
+dc_cross(k, r) :- dc_qual(k, r, "staged").
+
+// dc_col(x, k, r, t): declaration x of program k gives r a column of type t.
+.decl dc_col(x: node, k: symbol, r: symbol, t: symbol)
+dc_col(x, k, r, t) :- dc_decl(x, k, r), kind(x, "declaration"), field(x, "columns", cl), child(cl, col, _), field(col, "type", ty),
+    field(ty, "name", tn), text(tn, t).
+
+.decl dc_has_doc(k: symbol, r: symbol)
+dc_has_doc(k, r) :- dc_col(_, k, r, "doc").
+
+.decl dc_place_type(t: symbol)
+dc_place_type("node").
+dc_place_type("line").
+dc_place_type("match").
+dc_place_type("token").
+dc_place_type("place").
+
+// dc_vis(k, r, o): r as program k reads it is program o's: its own declaration's, else the library's.
+.decl dc_vis(k: symbol, r: symbol, o: symbol)
+dc_vis(k, r, k) :- dc_declared(k, r).
+dc_vis(k, r, "lib") :- dc_prog(k), dc_declared("lib", r), !dc_declared(k, r).
+
+// ---- rules ------------------------------------------------------------------------------------------------------
+
+// dc_read(a, k, h, r): atom a of a rule of program k with head h reads r at a variable (positive, negated or in an
+// aggregate).
+.decl dc_read(a: node, k: symbol, h: symbol, r: symbol)
+dc_read(a, k, h, r) :- kind(c, "clause"), field(c, "head", hd), field(hd, "relation", hn), text(hn, h),
+    field(c, "body", b), kind(a, "atom"), within(a, b), dc_has_var(a), field(a, "relation", an), text(an, r),
+    docof(c, d), dc_key(d, k).
+
+.decl dc_has_var(a: node)
+dc_has_var(a) :- kind(a, "atom"), field(a, "arguments", al), child(al, v, _), kind(v, "variable").
+
+// dc_defined(k, r): a clause of program k derives r (a rule or a fact).
+.decl dc_defined(k: symbol, r: symbol)
+dc_defined(k, r) :- kind(c, "clause"), field(c, "head", hd), field(hd, "relation", hn), text(hn, r), docof(c, d),
+    dc_key(d, k).
+
+// dc_base(r): a document's own facts: core.rerail's `.input`s but the repository's, which are settings.
+.decl dc_base(r: symbol)
+dc_base(r) :- kind(io, "io_directive"), text(io, s), match("\\.input.*", s), field(io, "relation", ir),
+    field(ir, "name", n), text(n, r), docof(io, d), doc(d, p, _), match("(?:.*/)?lib/core\\.rerail", p),
+    !dc_setting(r).
+dc_base(r) :- dc_decl(_, k, r), doc(d, p, _), dc_key(d, k), match("(?:.*/)?lib/core\\.rerail", p),
+    !dc_defined("lib", r), !dc_setting(r), !dc_function(r).
+
+// dc_setting(r): the repository's and the run's facts: one value for the run, the same beside every file.
+.decl dc_setting(r: symbol)
+dc_setting("git_root_repo").
+dc_setting("git_root_view").
+dc_setting("git_repository").
+dc_setting("git_source_tree").
+dc_setting("git_source_commit").
+dc_setting("git_rev").
+dc_setting("source_grammar_suffix").
+dc_setting("source_grammar_registry").
+dc_setting("source_tape_version").
+dc_setting("file").
+dc_setting("package").
+dc_setting("package_export").
+dc_setting("package_for").
+dc_setting("package_field").
+dc_setting("tsconfig").
+dc_setting("tsconfig_for").
+dc_setting("tsconfig_path").
+dc_setting("option").
+dc_setting("option_item").
+dc_setting("signed_list").
+dc_setting("input_error").
+dc_setting("env").
+
+// dc_function(r): core's functions of strings, which are no document's rows.
+.decl dc_function(r: symbol)
+dc_function("parse_of").
+dc_function("unparse_of").
+dc_function("splice_of").
+dc_function("split_dot").
+
+// dc_rows(o, r): program o's r holds a document's rows: it reads a base relation, or a relation that does. A
+// relation that does not is an input (derived by no rule) or a run constant, read anywhere.
+.decl dc_rows(o: symbol, r: symbol)
+dc_rows(o, r) :- dc_read(_, o, r, b), dc_base(b), !dc_declared(o, b).
+dc_rows(o, r) :- dc_read(_, o, r, x), dc_vis(o, x, o2), dc_rows(o2, x).
+
+// ---- the findings ----------------------------------------------------------------------------------------------
+
+.violation per_file_read_names_no_document(at: node, h: symbol, r: symbol) code "RR320"
+    "A cross-file relation's rule reads this per-file relation, whose rows name no document: declare a `doc` column on it and fill it from `docof` or `doc` (decision 0729)"
+per_file_read_names_no_document(a, h, r) :- dc_read(a, k, h, r), dc_vis(k, h, oh), dc_cross(oh, h),
+    dc_vis(k, r, o), !dc_cross(o, r), dc_rows(o, r), !dc_has_doc(o, r).
+
+.violation cross_file_holds_a_place(at: node, r: symbol, t: symbol) code "RR321"
+    "A cross-file relation declares a place column: no node, line, match or token crosses (decisions 0677, 0727). Hand on a symbol, a document key or a node path"
+cross_file_holds_a_place(x, r, t) :- dc_col(x, k, r, t), dc_place_type(t), dc_cross(k, r).
+
+.violation per_file_reads_cross_file(at: node, h: symbol, r: symbol) code "RR322"
+    "A per-file relation's rule reads a cross-file relation that is not staged: declare it `staged` (a relation of names, derived before the program) or this relation `cross_file` (decision 0729)"
+per_file_reads_cross_file(a, h, r) :- dc_read(a, k, h, r), dc_vis(k, h, oh), !dc_cross(oh, h), dc_vis(k, r, o),
+    dc_cross(o, r), !dc_qual(o, r, "staged").

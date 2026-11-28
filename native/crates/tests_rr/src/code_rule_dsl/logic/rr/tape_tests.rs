@@ -847,8 +847,9 @@ fn cross_base_root(name: &str, files: &[(&str, &str)]) -> std::path::PathBuf {
     root
 }
 
-/// A cross-file relation's rule reading `doc` is found; one reading what the files derive from it is not, nor a
-/// per-file rule reading a staged relation of names (`CYC` over `closes`), whose own rule's read is found.
+/// A cross-file relation's rule reading `doc` is found; one reading what the files derive from it is not. What is
+/// cross-file is what is declared so (decision 0729): `closes`, declared `staged`, is, and its read of `doc` is found;
+/// `reach` is not, and its rules are per file.
 #[test]
 fn a_cross_part_read_of_a_base_relation_is_found() {
     let bad = r#".decl dep_from(a: number, m: symbol)
@@ -857,7 +858,7 @@ dep_from(a, m) :- impmod(i, m), docof(i, a).
 dep(a, b) :- dep_from(a, m), doc(b, _, m).
 .decl reach(a: number, b: number)
 reach(a, b) :- dep(a, b).
-.decl closes(ma: symbol, m: symbol)
+.decl closes(ma: symbol, m: symbol) staged
 closes(ma, m) :- dep_from(a, m), doc(a, _, ma), reach(_, a).
 .violation CYC(at: node) code "CYC" "x"
 CYC(i) :- impmod(i, m), docof(i, a), doc(a, _, ma), closes(ma, m).
@@ -874,6 +875,86 @@ dep(a, b) :- dep_from(a, m), mod_doc(b, m).
     let _ = std::fs::remove_dir_all(&root);
     let _ = std::fs::remove_dir_all(root.with_extension("out"));
     assert_eq!(found, ["bad.rerail:4 dep reads doc", "bad.rerail:8 closes reads doc"]);
+}
+
+/// Decision 0729 checked with rules (`packs/rr/rr-document-columns.rerail`): the findings over `root`, each `file:line
+/// code` and the finding's relations (its head and the relation read, or the relation and its place type).
+fn document_findings(root: &std::path::Path, out: &std::path::Path) -> Vec<String> {
+    let rule = crate::source_tree::native().join("../docs/rule-syntax/packs/rr/rr-document-columns.rerail");
+    let report = crate::code_rule_dsl::tools::run_rr(&rule, root, out, &serde_json::Value::Null).unwrap();
+    let mut found: Vec<String> = report["diagnostics"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|d| {
+            let file = d["file"].as_str().or(d["path"].as_str()).unwrap_or("");
+            let line = d["line"].as_i64().or(d["start"]["line"].as_i64()).unwrap_or(-1);
+            let code = d["code"].as_str().or(d["rule"].as_str()).unwrap_or("?");
+            let p = &d["parameters"];
+            let names: Vec<&str> = ["h", "r", "t"].iter().filter_map(|k| p[*k].as_str()).collect();
+            format!("{file}:{line} {code} {}", names.join(" "))
+        })
+        .collect();
+    found.sort();
+    found.dedup();
+    found
+}
+
+/// Each break of 0729's rules is found, and none in the same program written to them: a cross-file relation reading a
+/// per-file one that names no document (RR320), one holding a node (RR321), a per-file rule reading a cross-file
+/// relation not staged (RR322). An input (`py_names__reads_at`, derived by no rule) and a run constant are read
+/// anywhere; a staged relation is a route into a file.
+#[test]
+fn a_relation_that_names_no_document_is_found() {
+    let bad = r#".decl imp(m: symbol)
+imp(m) :- kind(i, "import"), text(i, m).
+.decl dep(a: doc, m: symbol) cross_file
+dep(a, m) :- imp(m), mod_doc(a, m).
+.decl mod_doc(d: doc, m: symbol)
+mod_doc(d, m) :- doc(d, _, m).
+.decl held(n: node, m: symbol) cross_file
+held(n, m) :- defs(n, m).
+.decl defs(d: doc, n: node, m: symbol)
+defs(d, n, m) :- kind(n, "def"), text(n, m), docof(n, d).
+.decl late(m: symbol)
+late(m) :- dep(_, m).
+"#;
+    let good = r#".decl imp(d: doc, m: symbol)
+imp(d, m) :- kind(i, "import"), text(i, m), docof(i, d).
+.decl mod_doc(d: doc, m: symbol)
+mod_doc(d, m) :- doc(d, _, m).
+.decl dep(a: doc, b: doc) cross_file
+dep(a, b) :- imp(a, m), mod_doc(b, m).
+.decl named(m: symbol) staged
+named(m) :- imp(_, m), dep(_, _).
+.decl py_names__reads_at(p: symbol, m: symbol)
+.decl sides(s: symbol)
+sides("left").
+.decl seen(m: symbol) cross_file
+seen(m) :- py_names__reads_at(_, m), sides(_), named(m).
+.violation UNUSED(at: node) code "U" "x"
+UNUSED(i) :- kind(i, "import"), text(i, m), !named(m), py_names__reads_at(_, m).
+"#;
+    let root = cross_base_root("rr-doc-columns", &[("bad.rerail", bad), ("good.rerail", good)]);
+    let found = document_findings(&root, &root.with_extension("out"));
+    let _ = std::fs::remove_dir_all(&root);
+    let _ = std::fs::remove_dir_all(root.with_extension("out"));
+    assert_eq!(found, ["bad.rerail:12 RR322 late dep", "bad.rerail:4 RR320 dep imp", "bad.rerail:7 RR321 held node"]);
+}
+
+/// The rule files of the repository against 0729's rules: every finding, by rule, as the size of the rewrite. Each
+/// must be fixed; until then the count is printed and the test fails.
+#[test]
+fn no_rule_file_breaks_the_document_rules() {
+    let root = crate::source_tree::native().join("..");
+    let out = crate::code_rule_dsl::fixtures::temp().with_extension("rr-doc-columns-shipped");
+    let found: Vec<String> = document_findings(&root, &out).into_iter().filter(|f| !f.starts_with("packs/data-layer/upstream/") && !f.starts_with("tmp/") && !f.contains("/tmp/")).collect();
+    let _ = std::fs::remove_dir_all(&out);
+    let mut by_code: std::collections::BTreeMap<&str, usize> = std::collections::BTreeMap::new();
+    for f in &found {
+        *by_code.entry(f.split(' ').nth(1).unwrap_or("?")).or_default() += 1;
+    }
+    assert!(found.is_empty(), "{} rules break decision 0729 ({by_code:?}):\n{}", found.len(), found.join("\n"));
 }
 
 /// No rule file of the repository reads a base relation in its cross part: the rule over every `.rerail` file under
@@ -894,6 +975,28 @@ fn no_rule_file_reads_a_base_relation_in_its_cross_part() {
 /// refuses, and run no cross part: the engine's check is the run's (`corpus.rs`). Nor the programs of `NOT_RUN`.
 #[test]
 fn no_test_program_reads_a_base_relation_in_its_cross_part() {
+    let found = test_program_findings("rr-cross-base-tests", cross_base_reads, |f, h| f.contains(&format!(" {h} reads ")));
+    assert!(found.is_empty(), "{} cross-file rules of the tests' programs read a base relation (decision 0727):\n{}", found.len(), found.join("\n"));
+}
+
+/// No program a test runs breaks 0729's rules (`no_rule_file_breaks_the_document_rules`, over the tests' programs as
+/// `no_test_program_reads_a_base_relation_in_its_cross_part` reads them).
+#[test]
+fn no_test_program_breaks_the_document_rules() {
+    let found = test_program_findings("rr-doc-columns-tests", document_findings, |f, h| f.split(" | ").nth(1).is_some_and(|g| g.split(' ').nth(2) == Some(h)));
+    let mut by_code: std::collections::BTreeMap<&str, usize> = std::collections::BTreeMap::new();
+    for f in &found {
+        *by_code.entry(f.split(" RR").nth(1).map_or("?", |c| &c[..3])).or_default() += 1;
+    }
+    assert!(found.is_empty(), "{} rules of the tests' programs break decision 0729 (RR3xx: {by_code:?}):\n{}", found.len(), found.join("\n"));
+}
+
+/// The findings of `rule` over every program a test runs: each string of the tests' sources that holds a `.decl`, as
+/// a rule file of its own beside the library, with the test source its program is in and its rule's line. Not the
+/// split's own unit tests (`typing/file_local`, the preparation's passes, the demand), whose programs cross files on
+/// purpose to test what the split moves and refuses, and run no cross part. Nor the programs of `NOT_RUN`: a finding
+/// `of_head` its head.
+fn test_program_findings(name: &str, rule: fn(&std::path::Path, &std::path::Path) -> Vec<String>, of_head: fn(&str, &str) -> bool) -> Vec<String> {
     let crates = crate::source_tree::native().join("crates");
     let analysis_only = |p: &std::path::Path| {
         let p = p.to_string_lossy();
@@ -908,7 +1011,7 @@ fn no_test_program_reads_a_base_relation_in_its_cross_part() {
             if p.is_dir() {
                 stack.push(p);
             } else if p.extension().is_some_and(|x| x == "rs") && !p.ends_with("tests_rr/src/code_rule_dsl/logic/rr/tape_tests.rs") && !analysis_only(&p) {
-                // Not this file: its programs are the rule's examples, the bad among them.
+                // Not this file: its programs are the rules' examples, the bad among them.
                 let src = std::fs::read_to_string(&p).unwrap_or_default();
                 let rel = p.strip_prefix(crate::source_tree::native()).unwrap().to_string_lossy().replace(['/', '.'], "_");
                 for (i, s) in rust_strings(&src).into_iter().filter(|s| s.contains(".decl ")).enumerate() {
@@ -921,9 +1024,8 @@ fn no_test_program_reads_a_base_relation_in_its_cross_part() {
     }
     let text: std::collections::BTreeMap<&str, &str> = files.iter().map(|(p, s)| (p.as_str(), s.as_str())).collect();
     let files: Vec<(&str, &str)> = files.iter().map(|(p, s)| (p.as_str(), s.as_str())).collect();
-    let root = cross_base_root("rr-cross-base-tests", &files);
-    // Each finding with the test source its program is in, and its rule's line.
-    let found: Vec<String> = cross_base_reads(&root, &root.with_extension("out"))
+    let root = cross_base_root(name, &files);
+    let found: Vec<String> = rule(&root, &root.with_extension("out"))
         .into_iter()
         .map(|f| {
             let (at, _) = f.split_once(' ').unwrap_or((&f, ""));
@@ -931,11 +1033,11 @@ fn no_test_program_reads_a_base_relation_in_its_cross_part() {
             let rule = text.get(file).and_then(|t| t.lines().nth(line.parse::<usize>().unwrap_or(1).saturating_sub(1))).unwrap_or("").trim();
             format!("{} | {f} | {rule}", origin.get(file).map_or("?", String::as_str))
         })
-        .filter(|f| !NOT_RUN.iter().any(|(src, head, _)| f.starts_with(&format!("{src} | ")) && f.contains(&format!(" {head} reads "))))
+        .filter(|f| !NOT_RUN.iter().any(|(src, head, _)| f.starts_with(&format!("{src} | ")) && of_head(f, head)))
         .collect();
     let _ = std::fs::remove_dir_all(&root);
     let _ = std::fs::remove_dir_all(root.with_extension("out"));
-    assert!(found.is_empty(), "{} cross-file rules of the tests' programs read a base relation (decision 0727):\n{}", found.len(), found.join("\n"));
+    found
 }
 
 /// The tests' programs no run reads, by source and head, and why: the input of a rewrite or of an analysis, whose

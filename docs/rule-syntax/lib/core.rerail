@@ -36,33 +36,37 @@
 // below. The one value made from a node that may cross into the cross-file part (0677 as amended); the store maps its
 // atom as a symbol's (column type `p`).
 .type node_path <: number
+// A document's key (decision 0729): a function of its path. A variable in a `doc` column is bound by one (`doc`,
+// `docof`, a relation's declared `doc` column) and stands in no column of a place type. A per-file relation the
+// cross part reads declares one.
+.type doc <: number
 
 // ---- the tape ----------------------------------------------------------------------------------------------------
 // Facts about documents. A document is one parsed source file; `d` is its integer id.
 // doc(d, "src/app/main.py", "app.main"): the module name is derived from the path; "" when the file has none.
-.decl doc(d: number, path: symbol, module: symbol)  // one row per document; module is the dotted module name, or ""
+.decl doc(d: doc, path: symbol, module: symbol)  // one row per document; module is the dotted module name, or ""
 // Keyed by d alone: a guest document's path is its host file's (decision 0055), so a path is no key (0361 step 6's
 // check at the writes found it broken on corpus0, 2026-11-20).
 .layout doc key(d) size(per document) values(module, many)
 // pkg(d, "app") for src/app/main.py: the dotted Python package holding the document.
-.decl pkg(d: number, p: symbol)                          // the package a document belongs to (Python)
+.decl pkg(d: doc, p: symbol)                          // the package a document belongs to (Python)
 // unpackaged(d): no regular package holds Python document d: it is a file of the root, or its folder has no
 // `__init__.py`. Ruff names such a module by its file's stem and resolves no relative import from it; Python can
 // still import it as a namespace package's module, by `doc`'s name.
-.decl unpackaged(d: number)                              // a Python file outside every regular package
+.decl unpackaged(d: doc)                              // a Python file outside every regular package
 // tape_error(d): document d's tree holds a tree-sitter ERROR or MISSING node: the tape's own verdict, which
 // `syntax_error` (CPython's) is not. The document keeps its tree.
-.decl tape_error(d: number)
+.decl tape_error(d: doc)
 // For "src/app/main.py": path_part(d, "src"), path_part(d, "app"), path_part(d, "main.py"). Lets rules test
 // "is this file under a `tests` directory" without regex on the whole path.
-.decl path_part(d: number, s: symbol)                    // each directory of the document's path, and its file name
+.decl path_part(d: doc, s: symbol)                    // each directory of the document's path, and its file name
 // file_name(d, "main.py") for the same document.
-.decl file_name(d: number, s: symbol)                    // the last component of the document's path
+.decl file_name(d: doc, s: symbol)                    // the last component of the document's path
 // `.layout r …` (decision 0361) states what a relation's rows are, for the planner: a key (a probe on it returns
 // one row at most), a fan-out class, a size, local (no row crosses documents), an order, a tree, a column's values.
 // Every node of every document, with its grammar kind and byte range [start, end). Offsets are what the
 // tree relations below compare: a is an ancestor of n exactly when a's range encloses n's.
-.decl node(d: number, n: node, kind: symbol, start: number, end: number)
+.decl node(d: doc, n: node, kind: symbol, start: number, end: number)
 .layout node key(n) size(per n) local
 .layout node values(d, documents) values(kind, kinds) values(start, many) values(end, many)
 // kind(n, "call_expression"): the tree-sitter node type. Kind names are the grammar's own (see .language).
@@ -91,7 +95,7 @@
 .decl op(n: node, s: symbol)                             // an anonymous token child: operators, keywords, punctuation
 .layout op fanout(n -> s, few) local values(s, ~100)
 // docof(n, d): the document node n was parsed from. Joins a node to doc(d, path, module).
-.decl docof(n: place, d: number)
+.decl docof(n: place, d: doc)
 .layout docof key(n) local values(d, documents)
 // line(n, 12): used in messages ("at line {outer.line}") and line-based suppressions.
 .decl line(n: place, l: number)                           // 1-based start line
@@ -171,14 +175,14 @@
 // U+2029 too for C# (Roslyn); a form feed too for CSS. A \n\r is two line ends wherever \r is one. src_line and every
 // place (line, end_line, col of a node, token, comment, match or line) are read off those lines.
 // source(d, sp): the whole file as one span. match_all over it gives spans with lines.
-.decl source(d: number, sp: line)
+.decl source(d: doc, sp: line)
 // src_line(d, 12, sp): line 12, without its terminator, the empty line after a final terminator included: the
 // lines line(n, l) numbers. A script's own splitting is a rule's over them (lib/data-layer/pub-lines.rerail's
 // py_line: Python's str.splitlines()).
-.decl src_line(d: number, l: number, sp: line)
+.decl src_line(d: doc, l: number, sp: line)
 // line_count(d, k): the lines a linter counts (ESLint's max-lines, pylint's too-many-lines): src_line's, the empty
 // line after a final terminator left out, so an empty file has none.
-.decl line_count(d: number, k: number)
+.decl line_count(d: doc, k: number)
 // end_line(n, l): the line holding n's end offset, as `layout` counts: its last character's, except that a node
 // ending with a line terminator (a module) ends on the line after it.
 .decl end_line(n: place, l: number)
@@ -210,7 +214,7 @@
 // tape_syntax_error(d)). Other languages use tree-sitter's ERROR and MISSING
 // nodes. The document is withheld from the policy and its outcome is Unknown(parse); a policy can also report it
 // (`.on syntax_error`, at the end).
-.decl syntax_error(d: number, l: number, msg: symbol)
+.decl syntax_error(d: doc, l: number, msg: symbol)
 .input source, src_line, line_count, end_line, col, node_text, op_at, prev_token, token
 .input syntax_error
 // Tokens: the leaves of the parse tree, named or anonymous, in source order. Comments are not tokens, as in
@@ -247,21 +251,21 @@
 .decl node_to_token_after(n: node, t: token)             // the token just after n
 .decl node_to_end_position(n: node, p: node)             // the point where n ends (end_point's)
 .decl match_to_node(m: match, n: node)                   // each node whose span is exactly m's; none when none is
-.decl document_line(d: number, l: line)                  // each line of document d (src_line's)
-.decl document_source(d: number, l: line)                // d's whole source, a line of its own (source's)
-.decl document_line_by_number(d: number, k: number, l: line)  // line l of document d, numbered k (src_line's)
+.decl document_line(d: doc, l: line)                  // each line of document d (src_line's)
+.decl document_source(d: doc, l: line)                // d's whole source, a line of its own (source's)
+.decl document_line_by_number(d: doc, k: number, l: line)  // line l of document d, numbered k (src_line's)
 .decl line_number(l: line, k: number)                    // l's 1-based number; 0 for a document's whole source
 .decl line_text(l: line, s: symbol)                      // l's text, without its terminator
-.decl line_document(l: line, d: number)
+.decl line_document(l: line, d: doc)
 .decl token_text(t: token, s: symbol)
-.decl token_document(t: token, d: number)
+.decl token_document(t: token, d: doc)
 .decl token_line_number(t: token, k: number)
 .decl token_end_line_number(t: token, k: number)
 .decl token_start_column(t: token, c: number)
 .decl token_previous(t: token, p: token)                 // the token just before t
 .decl token_next(t: token, x: token)                     // the token just after t
 .decl match_text(m: match, s: symbol)
-.decl match_document(m: match, d: number)
+.decl match_document(m: match, d: doc)
 .decl match_line_number(m: match, k: number)
 .decl match_end_line_number(m: match, k: number)
 .decl match_start_column(m: match, c: number)
@@ -269,7 +273,7 @@
 // node or a regex's group binds) takes any of them in a rule's head; read from it, a value is a `place`, no other.
 .decl place_to_node(p: place, n: node)                   // p, where p is a node; none where it is not
 .decl place_text(p: place, s: symbol)
-.decl place_document(p: place, d: number)
+.decl place_document(p: place, d: doc)
 .decl place_line_number(p: place, k: number)
 .decl place_end_line_number(p: place, k: number)
 .decl place_start_column(p: place, c: number)
@@ -360,8 +364,8 @@
 // Guests have no source, src_line or line_count rows.
 .decl parsed(s: node, grammar: symbol, root: node)       // root of string s parsed as `grammar` ("annotation", …)
 .decl sub_tape(at: node, grammar: symbol, t: tape)       // the tape (content key) of the guest at `at`
-.decl tape_of(d: number, t: tape)                        // document d places tape t; equal texts share a tape
-.decl doc_grammar(d: number, grammar: symbol)           // the grammar file d was parsed with
+.decl tape_of(d: doc, t: tape)                        // document d places tape t; equal texts share a tape
+.decl doc_grammar(d: doc, grammar: symbol)           // the grammar file d was parsed with
 .decl guest_policy(k: symbol, v: symbol)                 // the program's `.on guest_error` settings
 .decl host_node(n: node, h: node)                        // h is the innermost host node over guest node n
 .decl guest_of(n: node, s: node)                         // n is a node of the code parsed at s (decision 0431); a

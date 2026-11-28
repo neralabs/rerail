@@ -135,7 +135,7 @@ fn column_type(ty: &str) -> &str {
     match ty {
         "symbol" | "sym" => "sym",
         t if super::super::place_type::is_place(t) => "node",
-        "number" | "int" => "int",
+        "number" | "int" | "doc" => "int",
         other => other,
     }
 }
