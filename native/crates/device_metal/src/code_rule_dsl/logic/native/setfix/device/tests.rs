@@ -2003,6 +2003,28 @@ use rerail_blocks::vector::Vector;
         }
     }
 
+    /// `image`'s nodes written again by format 16's writer (`f16::write`) with no room: the same tape, in a vector of
+    /// its own, which no device reads (as `tests_tape`'s `rewritten` writes one).
+    fn unplaced(image: &crate::code_rule_dsl::tape::TapeImage, source: &str) -> crate::code_rule_dsl::tape::TapeImage {
+        use rerail_tape_format::tape::Tape;
+        let lang = image.lang().expect("its language's table");
+        let tag = crate::code_rule_dsl::language::tape_tag(image.language).expect("its tag");
+        let nodes: Vec<rerail_tape_format::f16::Node> = rerail_tape_format::with_tape!(image.tape(), |t| {
+            let mut s = 0;
+            (0..t.len())
+                .map(|i| {
+                    s = t.start_next(i, s);
+                    rerail_tape_format::f16::Node { number: t.code(i), start: s, end: t.end_with_start(i, s), subtree_end: t.subtree_end(i) }
+                })
+                .collect()
+        });
+        let terminators = crate::code_rule_dsl::lines::terminators(image.language);
+        let tape = rerail_tape_format::f16::write(lang, nodes.len(), source.as_bytes(), terminators, tag, false, |i| nodes[i]).unwrap();
+        let image = crate::code_rule_dsl::tape::TapeImage::written_16(rerail_tape_format::f16::Finished { tape }, image.language, source, None, &|| false).unwrap();
+        assert!(image.room().is_none(), "a tape in no room");
+        image
+    }
+
     /// Decision 0353 steps 4 and 6: a view whose tapes the device does not read is neither made on the device (no view
     /// is made from the tape's answers) nor uploaded: its stratum is refused, named, and runs on the CPU, which reads
     /// its rows where they lie. Nothing of it is encoded into the batch.
@@ -2016,14 +2038,16 @@ use rerail_blocks::vector::Vector;
         if !mj::available() {
             return;
         }
-        // Tapes held in vectors of their own, not where the device reads them (a parse not placed): the batch's views
-        // are not read in place (decision 0353 step 4d).
+        // Tapes held in vectors of their own, not where the device reads them: the batch's views are not read in place
+        // (decision 0353 step 4d). A parse places its tape where a device reads tapes (`placed::device`), so each is
+        // written again by format 16's writer, which with no room writes its own vector (`unplaced`).
         let lang = crate::code_rule_dsl::language::dialect_by_label("python").unwrap();
         let grammar = Arc::new(crate::code_rule_dsl::tape::Grammar::new(lang).unwrap());
         let docs: Vec<Document> = ["import os\nx = f(1, y=2)\n", "class C(B):\n    def m(self, a):\n        return a\n"].iter().enumerate().map(|(at, source)| {
             let path = format!("r{at}.py");
             let source = Arc::new(crate::code_rule_dsl::tape::Text::from(*source));
-            let image = crate::code_rule_dsl::tape::TapeImage::parse(&grammar, &source, &|| false).unwrap().unwrap().primary;
+            let placed = crate::code_rule_dsl::tape::TapeImage::parse(&grammar, &source, &|| false).unwrap().unwrap().primary;
+            let image = unplaced(&placed, &source);
             let lines = Arc::new(crate::code_rule_dsl::lines::LineTable::new(&source, crate::code_rule_dsl::lines::terminators(lang)));
             let facts = Arc::new(core::from_image(source, &grammar, image, lines).unwrap());
             Document { key: (5 + 2 * at) as u32, core: format!("/w#core:{path}"), digest: core::digest(&facts), path, facts, tape: None, guest: None, module: None, unpackaged: false }
@@ -2143,7 +2167,8 @@ use rerail_blocks::vector::Vector;
             let _evaluation_batch = rerail_accel::gpu::launch::LaunchScope::enter();
             let mut batch = mj::Batch::new().expect("the device");
             let mut rep = super::Report::default();
-            let (dev, ix, _, _) = super::resident(rel, &[], &[2], mj::JOIN, &mut batch, &mut rep).expect("resident");
+            // By `start`: a probe by `kind` reads the batches' kind lists and builds no index (decision 0706's step 0).
+            let (dev, ix, _, _) = super::resident(rel, &[], &[3], mj::JOIN, &mut batch, &mut rep).expect("resident");
             batch.finish().unwrap();
             assert!(dev.view.is_some() && ix.is_some(), "a view read in place, by its index");
             (rep.sorts, rep.sort_hits, rep.in_place)
