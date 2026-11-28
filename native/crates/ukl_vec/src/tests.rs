@@ -1728,3 +1728,21 @@ fn the_kernels_rust_at_32_lanes_is_the_checked_in_one() {
         assert!(kept == rust, "{at} is not the kernel's Rust (UKL_RS_WRITE=1 writes it)");
     }
 }
+
+/// Arrays of one name declared in sibling blocks of one function (a macro's `do { const int64_t row_[] = {…}; … }`,
+/// each its own size), each read through a pointer by an inlined function: each block's array is its own.
+#[test]
+fn arrays_of_one_name_in_sibling_blocks_are_each_their_own() {
+    let prelude = "UKL_INLINE uint32_t sum(UKL_PRIVATE const int64_t* row, uint32_t n) { uint32_t s = 0u; for (uint32_t c = 0u; c < n; c++) s = s * 10u + (uint32_t)row[c]; return s; }\n#define PUT(n, ...) do { const int64_t row_[] = {__VA_ARGS__}; acc = acc * 7u + sum(row_, n); } while (0)\n";
+    let out = ran_with(prelude, "    uint32_t acc = 0u;\n    PUT(3u, 1, 2, lid % 3u);\n    PUT(6u, 4, 5, 6, 7, 8, lid % 5u);\n    PUT(2u, 9, lid % 2u);\n    out[lid] = acc;");
+    let want: Vec<u32> = (0..64u32)
+        .map(|l| {
+            let mut acc = 0u32;
+            for row in [vec![1, 2, l % 3], vec![4, 5, 6, 7, 8, l % 5], vec![9, l % 2]] {
+                acc = acc.wrapping_mul(7).wrapping_add(row.iter().fold(0u32, |s, &v| s.wrapping_mul(10).wrapping_add(v)));
+            }
+            acc
+        })
+        .collect();
+    assert_eq!(out, want);
+}

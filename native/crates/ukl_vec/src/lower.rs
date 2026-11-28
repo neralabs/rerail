@@ -602,18 +602,23 @@ impl L<'_> {
         Ok(())
     }
 
+    /// An array declared without its length (`T a[] = {…}`, `char s[] = "…"`) given its initializer's; any other type as
+    /// it is.
+    fn sized_by(&mut self, ty: Ty, init: Option<usize>) -> R<Ty> {
+        let (Ty::Array(e, 0), Some(i)) = (&ty, init) else { return Ok(ty) };
+        let n = match self.c.kind(i) {
+            "string_literal" => self.string(i)?.len() as u64 + 1,
+            "initializer_list" => self.named(i).len() as u64,
+            _ => 0,
+        };
+        Ok(Ty::Array(e.clone(), n))
+    }
+
     /// A variable of static storage: its bytes in the program's constant memory, from its initializer.
     fn global(&mut self, x: usize, base: Ty, d: usize) -> R<Var> {
-        let (name, mut ty) = self.declarator(x, base)?;
+        let (name, ty) = self.declarator(x, base)?;
         let init = if self.c.kind(x) == "init_declarator" { self.c.child(x, "value") } else { None };
-        if let (Ty::Array(e, 0), Some(i)) = (&ty, init) {
-            let n = match self.c.kind(i) {
-                "string_literal" => self.string(i)?.len() as u64 + 1,
-                "initializer_list" => self.named(i).len() as u64,
-                _ => 0,
-            };
-            ty = Ty::Array(e.clone(), n);
-        }
+        let ty = self.sized_by(ty, init)?;
         let (size, _) = ty.layout(&self.structs);
         let at = self.data.len().next_multiple_of(16);
         self.data.resize(at + size as usize, 0);
@@ -1085,6 +1090,7 @@ impl L<'_> {
                 continue;
             }
             let (name, ty) = self.declarator(x, base.clone())?;
+            let ty = self.sized_by(ty, if self.c.kind(x) == "init_declarator" { self.c.child(x, "value") } else { None })?;
             if self.has_attr(d, "ukl_local") {
                 // A threadgroup's own storage (a `SHARED` row's).
                 let (size, align) = ty.layout(&self.structs);

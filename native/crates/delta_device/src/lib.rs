@@ -192,7 +192,7 @@ impl OnDevice for GpuBound {
             Some(p) => *p,
             None => {
                 let text = format!("#include <ukl/backend.h>\n{}{PRELUDE}{source}", rerail_blocks::gens::DESC_READS);
-                let p = rerail_gpu::kernels::program("delta_version.uglykl", &text)?;
+                let p = rerail_gpu::kernels::program(&format!("delta_{entry}.uglykl"), &text)?;
                 self.programs.insert(source.as_ptr() as usize, p);
                 p
             }
