@@ -273,6 +273,65 @@ fn no_shipped_rule_makes_a_text_only_for_strlen() {
     assert!(found.is_empty(), "texts made only for strlen; measure with @text_len: {found:#?}");
 }
 
+/// The shapes that hand a node to the cross-file part are found in a rule file (`packs/rr/rr-no-node-crosses-files.rerail`,
+/// decision 0727): a `cross_file` relation holding a node (RR301), a `@place` in a `.decl`'s node column (RR302), and
+/// a relation of nodes reading an input that names no document (RR303). Their fixes are not reported: a relation of
+/// names the file joins, the place made in the `.violation`'s own head, an input keyed by its document.
+#[test]
+fn a_rule_handing_a_node_to_the_cross_part_is_found_in_a_rule_file() {
+    let root = crate::code_rule_dsl::fixtures::temp().with_extension("rr-no-node-crosses-files");
+    let _ = std::fs::remove_dir_all(&root);
+    std::fs::create_dir_all(&root).unwrap();
+    let rules = [
+        ".decl used_at(n: node, q: symbol) cross_file",
+        "used_at(n, q) :- kind(n, \"call\"), text(n, q).",
+        ".decl used(q: symbol) cross_file",
+        "used(q) :- kind(n, \"call\"), text(n, q).",
+        ".decl listed(c: node, at: node)",
+        "listed(c, @place(f, 1)) :- kind(c, \"comment\"), docof(c, d), doc(d, f, _).",
+        ".violation Listed(at: node) \"listed\"",
+        "Listed(@place(f, 1)) :- kind(c, \"comment\"), docof(c, d), doc(d, f, _).",
+        ".decl ignored(path: symbol)",
+        ".input ignored",
+        ".decl ignored_doc(d: number)",
+        ".input ignored_doc",
+        ".decl unpublished(n: node)",
+        "unpublished(n) :- kind(n, \"program\"), docof(n, d), doc(d, f, _), ignored(f).",
+        ".decl unpublished_doc(n: node)",
+        "unpublished_doc(n) :- kind(n, \"program\"), docof(n, d), ignored_doc(d).",
+    ];
+    std::fs::write(root.join("a.rerail"), rules.join("\n") + "\n").unwrap();
+    let rule = crate::source_tree::native().join("../docs/rule-syntax/packs/rr/rr-no-node-crosses-files.rerail");
+    let report = crate::code_rule_dsl::tools::run_rr(&rule, &root, &root.join("out"), &serde_json::Value::Null).unwrap();
+    let _ = std::fs::remove_dir_all(&root);
+    let mut found: Vec<(String, i64)> = report["diagnostics"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|d| (d["code"].as_str().unwrap_or("").to_owned(), d["line"].as_i64().or(d["start"]["line"].as_i64()).unwrap_or(-1)))
+        .collect();
+    found.sort();
+    let want: Vec<(String, i64)> = [("RR301", 1), ("RR302", 6), ("RR303", 14)].iter().map(|(c, l)| ((*c).to_owned(), *l)).collect();
+    assert_eq!(found, want, "used_at, listed and unpublished: {report:#}");
+}
+
+/// No shipped rule hands a node to the cross-file part in a shape `rr-no-node-crosses-files` finds (decision 0727).
+#[test]
+fn no_shipped_rule_hands_a_node_to_the_cross_part() {
+    let tree = crate::source_tree::native().join("../docs/rule-syntax");
+    let rule = tree.join("packs/rr/rr-no-node-crosses-files.rerail");
+    let out = crate::code_rule_dsl::fixtures::temp().with_extension("rr-no-node-crosses-shipped");
+    let report = crate::code_rule_dsl::tools::run_rr(&rule, &tree, &out, &serde_json::Value::Null).unwrap();
+    let _ = std::fs::remove_dir_all(&out);
+    let found: Vec<String> = report["diagnostics"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|d| format!("{} {}:{}", d["code"].as_str().unwrap_or(""), d["file"].as_str().or(d["path"].as_str()).unwrap_or(""), d["line"].as_i64().or(d["start"]["line"].as_i64()).unwrap_or(-1)))
+        .collect();
+    assert!(found.is_empty(), "nodes handed to the cross part: {found:#?}");
+}
+
 /// The text facts of a `.rerail` tape: `name` of identifiers and variables, `str` and `value` of strings, numbers and
 /// backtick literals, `op` of anonymous tokens, `comment`, and `syntax_error` with the message running it gives.
 #[test]
