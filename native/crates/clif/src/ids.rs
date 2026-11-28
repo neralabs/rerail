@@ -483,11 +483,20 @@ impl Numbering {
         // the nodes' lows (12% on it, 58% within 4); stepped to it one entry at a time, the steps' exit mispredicted (a
         // mean of 3.45 steps, and 15% past eight bisected the whole table). Where it lies outside the window (the
         // entries either side of it say so), the table is bisected.
+        // A window of a fixed length where the table holds one (unrolled, no tail), and its edges' entries read at
+        // clamped places and combined without a branch: as a loop of the window's length and short-circuited tests,
+        // their tail and branches were a fifth of `local_of`'s samples.
         const WINDOW: u32 = 32;
+        if n == 0 {
+            return None;
+        }
         let lo = guess.saturating_sub(WINDOW / 2).min(n.saturating_sub(WINDOW));
         let hi = (lo + WINDOW).min(n);
-        let below = by_slot[lo as usize..hi as usize].iter().fold(0u32, |c, e| c + u32::from(e[0] < slot));
-        let inside = (lo == 0 || by_slot[lo as usize - 1][0] < slot) && (hi == n || by_slot[hi as usize][0] >= slot);
+        let below = match by_slot[lo as usize..].first_chunk::<{ WINDOW as usize }>() {
+            Some(w) => w.iter().fold(0u32, |c, e| c + u32::from(e[0] < slot)),
+            None => by_slot[lo as usize..hi as usize].iter().fold(0u32, |c, e| c + u32::from(e[0] < slot)),
+        };
+        let inside = ((lo == 0) | (by_slot[lo.saturating_sub(1) as usize][0] < slot)) & ((hi == n) | (by_slot[hi.min(n - 1) as usize][0] >= slot));
         let at = if inside { lo + below } else { bisect(0, n, |i| by_slot[i as usize][0] < slot) };
         let &[s, g, c] = by_slot.get(at as usize)?;
         if s != slot {
