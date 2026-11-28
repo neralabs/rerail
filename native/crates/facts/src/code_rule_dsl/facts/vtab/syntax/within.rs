@@ -1282,6 +1282,42 @@ impl Source for Within {
         self.lookup_each(column, values, &mut |r| out.push(r));
         Some(out)
     }
+    /// `nearest`'s by `n`: a batch of nodes, each one's row (its nearest ancestor of the set, at most one) read, from
+    /// the batch's solve where lookups read it, else made by lookup. `rf_crossing`'s `rr_nearest_rf_fnl(i, f)` of each
+    /// function read inside the reads' scan program, not a step of 672 rows of its own.
+    fn read_own_batch(&self, column: usize, values: &[i64], reads: &[usize], out: &mut [i64], found: &mut [u8], cursor: &mut crate::code_rule_dsl::facts::vtab::ProbeCursor) -> bool {
+        let _ = cursor;
+        if column != 0 || self.mode != Mode::Axis(Axis::Nearest) {
+            return false;
+        }
+        let k = reads.len();
+        for (i, &v) in values.iter().enumerate() {
+            found[i] = 0;
+            let row = &mut out[i * k..(i + 1) * k];
+            let mut first = None;
+            if !(k <= 2 && self.lookup_read(0, v, reads, &mut |r, got| {
+                if first.is_none() {
+                    first = Some(r);
+                    row.copy_from_slice(got);
+                }
+            })) {
+                self.lookup_each(0, &[v], &mut |r| {
+                    if first.is_none() {
+                        first = Some(r);
+                    }
+                });
+                if let Some(r) = first {
+                    for (o, &c) in row.iter_mut().zip(reads) {
+                        *o = self.value(r, c);
+                    }
+                }
+            }
+            if first.is_some() {
+                found[i] = 1;
+            }
+        }
+        true
+    }
     fn lookup_each(&self, column: usize, values: &[i64], each: &mut dyn FnMut(usize)) -> bool {
         let _kind = rerail_prof::work::doing(rerail_prof::work::VIEW);
         let outer = each;

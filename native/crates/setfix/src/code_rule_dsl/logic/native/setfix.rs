@@ -8526,6 +8526,48 @@ fn last_splits(steps: &[Step], is_dot: impl Fn(i64) -> bool) -> Vec<Edit> {
     edits
 }
 
+/// A concatenation's inverse (`concat_inverses`: `$x = @str_between($v, before, after)` beside `$v = cat(.., $x, ..)`)
+/// where the plan made `$v` from its parts: `$v`'s text is `before`, `$x`, `after`, so stripping `before` and `after`
+/// leaves `$x`, true by construction; unused. `rf_method`'s `$q = @concat(@concat($b, "."), $f)` tested both its parts
+/// back out of `$q` (32 rows each). A part is a slot, or a constant other than `""` (`is_empty`), a concatenation
+/// made by an earlier step read as its own parts; the test is held only where the parts are the same, in order.
+fn held_inverses(steps: &[Step], is_empty: impl Fn(i64) -> bool) -> Vec<Edit> {
+    let mut made: std::collections::HashMap<usize, [Key; 2]> = std::collections::HashMap::new();
+    let parts = |k: Key, made: &std::collections::HashMap<usize, [Key; 2]>| {
+        let (mut out, mut todo) = (Vec::new(), vec![k]);
+        while let Some(k) = todo.pop() {
+            match k {
+                Key::Slot(s) if let Some(&[a, b]) = made.get(&s) => todo.extend([b, a]),
+                Key::Const(c) if is_empty(c) => {}
+                k => out.push(k),
+            }
+        }
+        out
+    };
+    let mut edits = Vec::new();
+    for (i, st) in steps.iter().enumerate() {
+        if let Step::Cat { a, b, out, bind: true } = st {
+            made.insert(*out, [*a, *b]);
+            continue;
+        }
+        let Step::Func { name, args, out, bind, .. } = st else { continue };
+        match (name.as_str(), *bind, args.as_slice()) {
+            ("str_concat", true, &[a, b]) => {
+                made.insert(*out, [a, b]);
+            }
+            ("str_between", false, &[Key::Slot(v), before, after]) if made.contains_key(&v) => {
+                let mut want = parts(before, &made);
+                want.push(Key::Slot(*out));
+                want.extend(parts(after, &made));
+                if parts(Key::Slot(v), &made) == want {
+                    edits.push(Edit::Unused(i, crate::code_rule_dsl::logic::analysis::Decision::new(true, "a concatenation's inverse holds of the parts it was made from")));
+                }
+            }
+            _ => {}
+        }
+    }
+    edits
+}
 
 /// A native join: its plan, in a section (`steps::Plan`), and what its walks count and keep as they run.
 /// `counts`: per step, the bindings that entered it and those it passed on, since `set_fixpoint_steps` last read
@@ -9334,17 +9376,23 @@ fn join_rule_bound(conn: impl Scoped, spec: &ArchivedJoinSpec, syms: &mut Intern
     };
     let multi = multi.into_iter().map(|(rel, cols)| steps::Multi { rel, cols }).collect();
     let plan = steps::Plan { steps, out, nslots: bound.len(), multi, probes: Vec::new(), fused: Vec::new(), spans: Vec::new(), spec: level::digest(spec), from, plan_steps, ranges: Vec::new(), lookups: Vec::new(), one: Vec::new() };
-    Ok(JoinRule::encoded(analysed(plan, !env_set!("RERAIL_NO_ROW_PROGRAMS"), |c| syms.name(c) == ".")))
+    Ok(JoinRule::encoded(analysed(plan, !env_set!("RERAIL_NO_ROW_PROGRAMS"), |c| syms.name(c) == ".", |c| syms.name(c).is_empty())))
 }
 
 /// `plan`'s section, its analyses made on its view and their edits on its steps (`steps::Edit`): the splits at the
-/// last "." (`last_splits`, a constant `is_dot`), the sums and copies no one reads elided (`liveness`), the scalars'
+/// last "." (`last_splits`, a constant `is_dot`), the inverses of a concatenation made from its parts (`held_inverses`,
+/// a constant `is_empty`), the sums, copies and concatenations no one reads elided (`liveness`), the scalars'
 /// bags (`scalars`), the ranged probes' orders (`ranges`), and then what is read by step: the texts only probed (`probes`) and, where `fuse`, the row programs (`rowcode`).
-fn analysed(mut plan: steps::Plan, fuse: bool, is_dot: impl Fn(i64) -> bool) -> Section<steps::Plan> {
+fn analysed(mut plan: steps::Plan, fuse: bool, is_dot: impl Fn(i64) -> bool, is_empty: impl Fn(i64) -> bool) -> Section<steps::Plan> {
     let mut s = plan.encode();
     let last = last_splits(&s.steps, is_dot);
     if !last.is_empty() {
         plan.edit(last);
+        s = plan.encode();
+    }
+    let held = held_inverses(&s.steps, is_empty);
+    if !held.is_empty() {
+        plan.edit(held);
         s = plan.encode();
     }
     let unused = liveness::sums(&s.steps, &s.out);
@@ -12366,6 +12414,41 @@ pub mod probe_tests {
         // A test of another text.
         let s = plan(vec![split(), test(8)], Vec::new());
         assert!(!last(&s.steps));
+    }
+
+    /// `rf_method`'s `$q = @concat(@concat($b, "."), $f)` with its inverses (`concat_inverses`) after it: `$b` and `$f`
+    /// tested back out of the `$q` made from them hold by construction, unused, and the concatenations only they read
+    /// are elided (`liveness`); `$q`'s, which the head reads, stays. An inverse of a `$q` the plan did not make, or one
+    /// whose parts are not `$q`'s, is a test still.
+    #[test]
+    fn a_concatenations_inverse_after_it_is_unused() {
+        use steps::Step as Made;
+        const DOT: i64 = 7;
+        const EMPTY: i64 = 0;
+        let plan = |steps: Vec<Made>| {
+            let mut plan = steps::Plan { steps, out: vec![Term::Slot(0), Term::Slot(1), Term::Slot(3)], nslots: 6, multi: Vec::new(), probes: Vec::new(), fused: Vec::new(), spans: Vec::new(), spec: 0, from: Vector::new(), plan_steps: 0, ranges: Vec::new(), lookups: Vec::new(), one: Vec::new() };
+            let s = plan.encode();
+            plan.edit(held_inverses(&s.steps, |c| c == EMPTY));
+            let s = plan.encode();
+            plan.edit(liveness::sums(&s.steps, &s.out));
+            plan.encode()
+        };
+        let cat = |a, b, out| Made::Func { name: "str_concat", kinds: &[Kind::Text, Kind::Text], args: vec![a, b], out, bind: true, texts: None, kept: None };
+        let between = |v, before, after, out| Made::Func { name: "str_between", kinds: &[Kind::Text, Kind::Text, Kind::Text], args: vec![Key::Slot(v), before, after], out, bind: false, texts: None, kept: None };
+        let unused = |s: &Section<steps::Plan>| s.steps.iter().map(|st| matches!(st, Step::Unused { .. })).collect::<Vec<_>>();
+        let made = || vec![cat(Key::Slot(0), Key::Const(DOT), 2), cat(Key::Slot(2), Key::Slot(1), 3)];
+        let inverses = |after_b: i64| {
+            let mut steps = made();
+            steps.extend([cat(Key::Const(after_b), Key::Slot(1), 4), between(3, Key::Const(EMPTY), Key::Slot(4), 0), cat(Key::Slot(0), Key::Const(DOT), 5), between(3, Key::Slot(5), Key::Const(EMPTY), 1)]);
+            steps
+        };
+        assert_eq!(unused(&plan(inverses(DOT))), [false, false, true, true, true, true]);
+        // `$b`'s inverse strips `"," + $f`, not `"." + $f`: not `$q`'s parts, a test (its `@concat` read by it).
+        assert_eq!(unused(&plan(inverses(8))), [false, false, false, false, true, true]);
+        // `$q` not made by the plan (an atom's, here the head's slot 3 taken as given): both tests stay.
+        let mut given = inverses(DOT);
+        given.drain(..2);
+        assert_eq!(unused(&plan(given)), [false, false, false, false]);
     }
 }
 

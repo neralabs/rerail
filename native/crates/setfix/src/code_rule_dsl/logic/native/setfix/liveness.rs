@@ -71,6 +71,20 @@ pub(super) fn sums(steps: &[Step], head: &[Term]) -> Vec<Edit> {
                     "An unused slot copy introduces no observation of its input",
                 ))
             }
+            // A concatenation has a value for any texts: one no step reads (a held inverse's, `held_inverses`) keeps
+            // every row it is made for.
+            Step::Cat { out, bind: true, .. } if !live.contains(out) => {
+                Some(crate::code_rule_dsl::logic::analysis::Decision::new(
+                    true,
+                    "An unread concatenation keeps every row: it has a value for any texts",
+                ))
+            }
+            Step::Func { name, out, bind: true, .. } if name.as_str() == "str_concat" && !live.contains(out) => {
+                Some(crate::code_rule_dsl::logic::analysis::Decision::new(
+                    true,
+                    "An unread concatenation keeps every row: it has a value for any texts",
+                ))
+            }
             _ => None,
         };
         if let Some(proof) = proof.filter(|p| p.proven) {
