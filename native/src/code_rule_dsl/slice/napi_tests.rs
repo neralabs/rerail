@@ -26,7 +26,7 @@ fn the_napi_slice_audits_and_applies_as_the_slice_does() {
         .filter(|policy| crate::code_rule_dsl::rule_api::compile(&policy.source, &policy.format, CAPABILITIES).is_ok())
         .collect::<Vec<_>>();
     let store = temp("napi-store").with_extension("sqlite");
-    let mut slice = super::napi::CodeRuleSlice::new(store.to_string_lossy().into_owned(), sources, CAPABILITIES.to_owned(), "cpu".to_owned()).unwrap();
+    let mut slice = super::napi::CodeRuleSlice::open(store.to_string_lossy().into_owned(), sources, CAPABILITIES.to_owned(), "cpu".to_owned()).unwrap();
     assert!(slice.clauses() > 0);
     let found = |json: &str| -> (Keys, usize, u64) {
         let value: serde_json::Value = serde_json::from_str(json).unwrap();

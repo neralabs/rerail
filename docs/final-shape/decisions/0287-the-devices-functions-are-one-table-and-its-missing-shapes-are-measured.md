@@ -2,8 +2,8 @@
 
 Numbered 0286 where it was written: django-bugs has its own 0286.
 
-Status: partly built (audited 2026-11-23). Left: §2–§4 drafts: node texts read from source on the device, made texts
-inside recursion, remaining functions (deferred until a workload shows gain). §1 built (2026-11-15); §2–§4 draft, not
+Status: partly built (audited 2026-11-23; §2 built 2026-11-24). Left: §3–§4 drafts: made texts
+inside recursion, remaining functions (deferred until a workload shows gain). §1 built (2026-11-15), §2 built (2026-11-24); §3–§4 draft, not
 to be built before a workload shows their gain. Refines the device's placement (`plan::placement`, decision 0095) and
 its compile (`setfix::device`).
 
@@ -84,7 +84,38 @@ argument count against the table for every form; before, only arithmetic was che
 Test: `caps::tests::the_planners_names_and_the_devices_are_one_table`. Each `.rr` name reaches its form, and each
 form takes as many arguments as the native engine's function.
 
-### §2 Node texts read from the source on the device (draft)
+### §2 Node texts read from the source on the device (built 2026-11-24)
+
+Built: `@rr_node_text_any` and `@rr_node_text` are text functions of the device (`caps::TextFn::NodeTextAny`,
+`NodeText`; `TEXTFN_NODE_TEXT_ANY`, `TEXTFN_NODE_TEXT`). No upload: the views' directory names each document's own
+source as a home of its row (`ViewRow::source`, `homes[2]`), and the stage reads a node's bytes there. The node's
+document is found by its key, then its numbered node, then its range in its own source (`view_text_span`, written
+once in CLIF for the JIT, the kernels and the Rust reads). The bytes are made into the arena by `row_text_one`, as
+any text function's. The stage's probed relation is the batch's `node` view (`Source::node_view`, from the run's
+binding of the long-text nodes, `LongTexts`), which binds the directory and makes the sources' slabs resident. A
+batch whose sources the device does not read (`ViewsInPlace::sources`), and a node the directory does not hold (a
+comment span, another batch's), run on the host. Tests: `a_nodes_text_on_the_device_is_read_where_its_source_lies`
+(the CPU's rows are the host's `node_read`, the device's rows and counts per step the CPU's, on CUDA),
+`the_view_reads_are_the_hosts_rows` (the span and the text, every node, both formats).
+
+A line's text too (2026-11-24, 0353 row 7). `@rr_node_text_any` of a document's `source` span or a `src_line` span
+(read so on the host since b6c6e26f34) is read where its source lies on the device, from three reads written once in
+CLIF beside the node's:
+- `view_line_span(low)` decodes the span's id (`rerail_clif::ids::LINE_SLOT`, the facts' `ExtraSpan::Line` slot,
+  asserted one) and gives the line's bytes from its first to one past its terminator's last, by the lines' index;
+- `view_line_terminated(low)` says whether the line ends with a terminator;
+- `lines_terminator_length(last)`, a read of the lines' family whose base is the source's home (`homes[2]`), reads
+  the terminator's length off the source's bytes, as `newlines::length_ending_at`.
+
+A guest's lines are its host's, so its line spans are read on the host (`NO_SPAN`), and so is any line where a
+document has no core.rerail positions (`own_text` 0). `@rr_node_text` (the long-text twin) has no row for a line, as
+the host's `long_text`. The Rust twins are `Doc::line_span`, `line_terminated` and `line_text`. Tests:
+`the_view_reads_are_the_hosts_rows` (every line's span and terminator, the JIT's and the Rust reads', and its text
+`LineTable::text_of`'s, with CRLF, a lone CR, U+2028 and no final terminator among its cases), and
+`a_nodes_text_on_the_device_is_read_where_its_source_lies` (each document's line spans among the nodes asked, in
+core.rerail's shape: the device's rows and counts per step are the CPU's, on CUDA).
+
+The draft as written:
 
 - `@rr_node_text(n)` is the node's byte range in its document's source: `node(d, n, _, start, end)`.
 - The device's compile would rewrite the step as a keyed read of `node` (binding `start` and `end`), followed by a

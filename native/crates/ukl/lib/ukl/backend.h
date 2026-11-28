@@ -56,7 +56,15 @@ typedef uint32_t ukl_mask_t;
 // here; calls on CUDA and OpenCL (decision 0576 §22). A rare case's body, called on every
 // backend but OpenCL: `UKL_RARE`.
 #define UKL_SHARED UKL_INLINE
+// On the Apple G13 (the M1s: the `apple7-g13` target's `UKL_METAL_G13`, decision 0645) a large body is a call:
+// inlined, the interpreter's task, steps and evaluators numbered their loops' exits past 255 in one function (412 in
+// `run_batch`, 807 in `label_sweep`), and the G13's back end tests an exit's number by its low byte, so a thread past
+// 255 left its loop as though it had returned (decision 0672). Called, each function's highest is under 190.
+#if defined(UKL_METAL_G13)
+#define UKL_LARGE UKL_ONCE
+#else
 #define UKL_LARGE UKL_INLINE
+#endif
 #define UKL_RARE UKL_COLD
 #define UKL_GLOBAL device
 #define UKL_COHERENT device coherent(device)
@@ -163,6 +171,14 @@ UKL_INLINE float ukl_f16_to_f32_native(uint32_t h) { return float(as_type<half>(
 #define UKL_SHARED static __device__ __noinline__
 #define UKL_LARGE UKL_SHARED
 #define UKL_RARE UKL_COLD
+// A poll of another group's progress (a work queue's idle take, `ukl_wq_idle_sg`): a short sleep, so the groups with
+// nothing to take do not hammer the queue's counters while the few with work run (a chain of requests, one ready at a
+// time: its GPU time varied 2-5 times run to run on a GB10 with every other group spinning, 2026-11-25).
+#if defined(UKL_HIP)
+#define ukl_poll_yield() __builtin_amdgcn_s_sleep(2)
+#else
+#define ukl_poll_yield() __nanosleep(128)
+#endif
 #define UKL_GLOBAL
 #define UKL_COHERENT volatile
 #define UKL_LOCAL

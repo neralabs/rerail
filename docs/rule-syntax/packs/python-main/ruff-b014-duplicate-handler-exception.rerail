@@ -8,7 +8,7 @@
 // B014(n): a finding at node n, from clause `duplicate-handler-exception`.
 // Each rule below is one way the JSON `rule` can match.
 // Columns after `at` are the metavariables the JSON's message, anchor or `each` names: one finding per distinct row.
-.violation B014(at: node, name: loc) "Exception handler with duplicate exception: `{name}`"
+.violation B014(at: node, name: node) "Exception handler with duplicate exception: `{name}`"
     suppress noqa "B014"
 B014(n, NAME) :- kind(n, "tuple"), b014_handler_type(n), child(n, c1, _), b014_element(c1, NAME),
     precedes(c1, s2), b014_same_element(s2, NAME).
@@ -27,14 +27,14 @@ b014_dotted_name(n) :- kind(n, "attribute"), child(n, c9, _), kind(c9, "attribut
 
 // element(n): the JSON util `element`, used where the JSON says `matches: "element"`
 //   NAME: metavariable this relation binds for the calling rule
-.decl b014_element(n: node, name: loc)
+.decl b014_element(n: node, name: node)
 b014_element(n, NAME) :- b014_dotted_name(n), node(_, n, _, _, _), NAME = n.
 b014_element(n, NAME) :- kind(n, "parenthesized_expression"), child(n, c1, _),
     b014_element(c1, NAME).
 
 // same_element(n): the JSON util `same-element`, used where the JSON says `matches: "same-element"`
 //   NAME: metavariable this relation binds for the calling rule
-.decl b014_same_element(n: node, name: loc)
+.decl b014_same_element(n: node, name: node)
 b014_same_element(n, NAME) :- node(_, n, _, _, _), NAME = n.
 b014_same_element(n, NAME) :- kind(n, "parenthesized_expression"), child(n, c1, _),
     b014_same_element(c1, NAME).

@@ -78,6 +78,13 @@
         assert_eq!(plans.pairs, ["wide"]);
         assert_eq!(plans.shared.len(), 1);
         let (hot, factor) = (declared(&made, "_hot"), declared(&made, "_factor"));
+        // Neither is asked for by its readers' demand: the factor's endpoints are the hot ones already, and a demand
+        // made from the pairs rule's other part binds the witness through the key the head projects away (RUF051's
+        // `call_q`: every requested call times every expression of its qualified name, 52 M rows over 50 files).
+        let qualifiers = F::qualifiers(&*made);
+        for rel in [&hot, &factor] {
+            assert!(qualifiers.get(rel).is_some_and(|q| q.contains("no_magic") && q.contains("no_inline")), "{rel}: {qualifiers:?}");
+        }
         let made = with_outputs(&made, &[&hot, &factor]);
         let mut actual = execute(&made, "deferred-adaptive");
         assert_eq!(actual.remove(&hot).unwrap(), [["1"]]);
@@ -213,8 +220,130 @@ noted(c, x) :- comment(c, x).
             let (made, plan) = rewritten(&v);
             (F::declared_names(&*made).into_iter().any(|r| r.starts_with(DEFERRED_PAIRS)), plan.cross)
         };
-        assert_eq!(deferred("remark(x, l, k) :- noted(c, x), defined(_, x), line(c, l), col(c, k)."), (false, vec!["defined".to_owned()]), "across files");
-        assert_eq!(deferred("remark(x, l, k) :- noted(c, x), defined(d, x), field(d, \"body\", c), line(c, l), col(c, k)."), (true, Vec::new()), "within one document");
+        assert_eq!(deferred("remark(x, l, k) :- noted(c, x), defined(_, x), node_line_number(c, l), node_start_column(c, k)."), (false, vec!["defined".to_owned()]), "across files");
+        assert_eq!(deferred("remark(x, l, k) :- noted(c, x), defined(d, x), field(d, \"body\", c), node_line_number(c, l), node_start_column(c, k)."), (true, Vec::new()), "within one document");
+    }
+
+    /// A file's join asked for only at columns that hold none of its locations (RUF057's `call_q(c, q)` by `q`, from
+    /// `param_slot`) is left as written: its requests name no document, so the split makes them once over every file,
+    /// and the join they guard with them, its nodes in the cross-file part (decision 0677). Asked for at its node, it
+    /// is driven by its readers.
+    #[test]
+    fn a_files_join_asked_at_no_location_is_left_as_written() {
+        let deferred = |readers: &str| {
+            let v = parse(&format!(r#"
+.decl kind(n: node, k: symbol)
+.decl field(n: node, f: symbol, c: node)
+.decl qual(n: node, q: symbol)
+.decl arg(c: node, i: number, v: node)
+.decl mark(c: node)
+.input kind, field, qual, arg, mark
+.decl slot(q: symbol, i: number)
+slot("round", 0). slot("abs", 0).
+.decl called(c: node, q: symbol)
+called(c, q) :- kind(c, "call"), field(c, "function", f), qual(f, q).
+.decl hit(c: node)
+.decl arg_of(c: node, v: node)
+{readers}
+.output hit, arg_of
+"#));
+            let (made, plan) = rewritten(&v);
+            (F::declared_names(&*made).into_iter().any(|r| r.starts_with(DEFERRED_PAIRS)), plan.unlocated)
+        };
+        assert_eq!(
+            deferred("hit(c) :- called(c, \"round\").\narg_of(c, v) :- slot(q, i), called(c, q), arg(c, i, v)."),
+            (false, vec!["called".to_owned()]),
+            "asked by the name alone"
+        );
+        assert_eq!(deferred("hit(c) :- mark(c), called(c, _).\narg_of(c, v) :- mark(c), called(c, _), arg(c, 0, v)."), (true, Vec::new()), "asked at the node");
+    }
+
+    /// A constant's join (decision 0665: of facts and settings alone, React's `deps_on`) is left as written: a file's
+    /// request would make the constant read every file's rows, while it is the same for every file and made once. The
+    /// same join over a file's rows is driven by its readers.
+    #[test]
+    fn a_constants_join_is_not_restricted_by_its_readers_requests() {
+        let deferred = |package_dep: &str| {
+            let v = parse(&format!(r#"
+.decl doc(d: number, path: symbol, module: symbol)
+.decl package_for(path: symbol, dir: symbol)
+.decl package_field(dir: symbol, key: symbol, v: symbol)
+.decl kind(n: node, k: symbol)
+.decl text(n: node, x: symbol)
+.input doc, package_for, package_field, kind, text
+.decl dep_package(m: symbol, r: symbol)
+dep_package("react", "react"). dep_package("vue", "other").
+.decl package_dep(dir: symbol, m: symbol)
+{package_dep}
+.decl deps_on(dir: symbol, r: symbol)
+deps_on(dir, r) :- package_dep(dir, m), dep_package(m, r).
+.decl other_jsx(d: number)
+other_jsx(d) :- doc(d, p, _), package_for(p, dir), deps_on(dir, "other").
+.output other_jsx
+"#));
+            let (made, plan) = rewritten(&v);
+            (F::declared_names(&*made).into_iter().any(|r| r.starts_with(DEFERRED_PAIRS)), plan.constants)
+        };
+        assert_eq!(deferred("package_dep(dir, m) :- package_field(dir, \"dependencies\", m)."), (false, vec!["deps_on".to_owned()]), "settings alone");
+        let (driven, constants) = deferred("package_dep(dir, m) :- kind(n, \"import\"), text(n, m), doc(_, dir, _).");
+        assert!(constants.is_empty(), "{constants:?}");
+        let _ = driven;
+    }
+
+    /// A reader that reaches the key only through its document and its order (`earlier(i, c)` as the lowering writes
+    /// it: `node(d, i, _, _, _), visit_index(i, a), …, a < b`) asks for every node of the document before some point:
+    /// the request restricts nothing the producer does not, and costs a join of the document's nodes with the other
+    /// side (versioned-merged-identity's alias before its call, nodes × calls in each file). The join is left as
+    /// written. A reader that narrows the key otherwise still drives it.
+    #[test]
+    fn a_reader_reaching_the_key_by_order_alone_leaves_the_join_as_written() {
+        let requested = |narrow: &str| {
+            let v = parse(&format!(r#"
+.decl node(d: number, n: node, k: symbol, s: number, e: number)
+.decl visit_index(n: node, i: number)
+.decl kind(n: node, k: symbol)
+.decl field(n: node, f: symbol, c: node)
+.decl text(n: node, x: symbol)
+.decl marked(n: node)
+.decl docof(n: node, d: number)
+.input node, visit_index, kind, field, text, marked, docof
+.decl alias(i: node, x: symbol)
+alias(i, x) :- kind(i, "import"), field(i, "alias", a), text(a, x).
+.decl ctor(c: node)
+ctor(c) :- kind(c, "call"), field(c, "function", f), node(d, c, _, _, _), visit_index(c, b), node(d, i, _, _, _), visit_index(i, a), a < b{narrow}, alias(i, x), text(f, x).
+.output ctor
+"#));
+            let (made, _) = rewritten(&v);
+            F::columns_of(&*made, &format!("{DEFERRED_PAIRS}alias")).is_some()
+        };
+        assert!(!requested(""), "the reader reaches the alias by order alone");
+        assert!(!requested(", docof(i, e), docof(c, e)"), "and by its document");
+        assert!(requested(", marked(i)"), "marked narrows the aliases");
+    }
+
+    /// A join of a file's nodes with a constant (ASYNC115/116's `async_sleep_call`) is a lookup in the constant, made in
+    /// each file: left as written, it makes no request, factor or pair cache that holds the file's nodes in the
+    /// cross-file part (decision 0677). Driven by its readers, its keys were a table of every file's values there.
+    #[test]
+    fn a_lookup_of_a_files_nodes_in_a_constant_is_left_as_written() {
+        let v = parse(r#"
+.decl kind(n: node, k: symbol)
+.decl text(n: node, x: symbol)
+.input kind, text
+.decl call(c: node, q: symbol)
+call(c, q) :- kind(c, "call"), text(c, q).
+.decl sleep_arg(q: symbol, x: symbol)
+sleep_arg("asyncio.sleep", "delay"). sleep_arg("trio.sleep", "seconds").
+.decl sleep_call(c: node, x: symbol)
+sleep_call(c, x) :- call(c, q), sleep_arg(q, x).
+.decl found(c: node)
+found(c) :- kind(c, "call"), text(c, x), sleep_call(c, x).
+.output found
+"#);
+        let (made, plan) = rewritten(&v);
+        let requests: Vec<String> = F::declared_names(&*made).into_iter().filter(|r| r.starts_with(DEFERRED_PAIRS)).collect();
+        assert!(requests.is_empty(), "{requests:?}");
+        assert_eq!(plan.constants, vec!["sleep_call".to_owned()]);
     }
 
     /// A reader that asks for every key the producer makes (through an atom of the producer's own rule) makes the
@@ -256,6 +385,44 @@ a(c) :- marked(c), exc_call(c, _).
         }
     }
 
+    /// A request keeps the document its dropped read ties (decision 0652): `pair(a, f)` holds one call's two nodes in
+    /// every row, and its reader joins `f`'s path with `a`'s text, a value. Asked for by `a` alone, the request drops
+    /// `pair`, and with it the tie: every name met every path of the corpus (UP008's `super_first`). Given `pair`'s
+    /// columns as one document's, the request says `@doc(a) = @doc(f)`, and the split places it in the chunks.
+    #[test]
+    fn a_request_keeps_the_document_its_dropped_read_ties() {
+        let v = parse(
+            r#"
+            .decl node(d: number, n: node, kind: symbol, start: number, end: number)
+            .decl child(p: node, c: node, i: number)
+            .decl text(n: node, s: symbol)
+            .input node, child, text
+            .decl pair(a: node, f: node)
+            pair(a, f) :- node(_, c, "call", _, _), child(c, a, 0), child(c, f, 1).
+            .decl path(f: node, p: symbol)
+            path(f, p) :- node(_, f, "class", _, _), text(f, p).
+            .decl named(a: node, f: node)
+            named(a, f) :- pair(a, f), path(f, p), text(a, p).
+            .output named
+        "#,
+        );
+        let first: &[usize] = &[0];
+        let requests = vec![("pair".to_owned(), first)];
+        let every = |_: &str, _: &[usize], _: &Version, _: &[upstream::Proof]| true;
+        let request = format!("{DEFERRED_PAIRS}pair");
+        let split = |p: &Program<'_>| crate::code_rule_dsl::logic::program_image::manager::analysis::<crate::code_rule_dsl::typing::file_local::FileLocal>(p.made.as_ref().unwrap()).unwrap();
+        let mut tied = Program::of(&v);
+        let same_doc = BTreeMap::from([("pair".to_owned(), rerail_blocks::vector![0, 1])]);
+        assert_eq!(upstream::install_requests(&mut tied, &requests, DEFERRED_PAIRS, &same_doc, &every).unwrap(), [true]);
+        let rules = tied.shown(Some(&request));
+        assert!(!rules.is_empty() && rules.iter().all(|r| r.contains("@doc($a) = @doc($f)")), "{rules:#?}");
+        assert!(split(&tied).local.contains(&request), "{:?}", split(&tied).causes.get(&request));
+        let mut open = Program::of(&v);
+        assert_eq!(upstream::install_requests(&mut open, &requests, DEFERRED_PAIRS, &Default::default(), &every).unwrap(), [true]);
+        assert!(!split(&open).local.contains(&request), "without the tie the request meets every file's paths");
+        assert_eq!(execute(tied.made.as_ref().unwrap(), "deferred-tied"), execute(&v, "deferred-tied-control"));
+    }
+
     #[test]
     fn requests_installed_in_rounds_are_those_installed_one_at_a_time() {
         // `wide`'s one reader is `awide`'s producer, which names `wide`'s key only once `awide`'s install guards it: so
@@ -278,10 +445,10 @@ a(c) :- marked(c), exc_call(c, _).
         let requests: Vec<(String, &[usize])> = ["awide", "wide", "wide2"].iter().map(|r| (r.to_string(), both)).collect();
         let every = |_: &str, _: &[usize], _: &Version, _: &[upstream::Proof]| true;
         let mut rounds = Program::of(&v);
-        let installed = upstream::install_requests(&mut rounds, &requests, DEFERRED_PAIRS, &every).unwrap();
+        let installed = upstream::install_requests(&mut rounds, &requests, DEFERRED_PAIRS, &Default::default(), &every).unwrap();
         let mut alone = Program::of(&v);
         let one_at_a_time: Vec<bool> =
-            requests.iter().flat_map(|r| upstream::install_requests(&mut alone, std::slice::from_ref(r), DEFERRED_PAIRS, &every).unwrap()).collect();
+            requests.iter().flat_map(|r| upstream::install_requests(&mut alone, std::slice::from_ref(r), DEFERRED_PAIRS, &Default::default(), &every).unwrap()).collect();
         assert_eq!(installed, one_at_a_time, "{:#?}", alone.shown(None));
         assert_eq!(installed, [true, true, true]);
         assert_eq!(rounds.shown(None), alone.shown(None));

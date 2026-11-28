@@ -18,9 +18,31 @@ fn pack() -> PathBuf {
     pack_test_data("packs/data-layer/upstream/lint/authored/packs/data-layer/candidates")
 }
 
-/// The authored overlay's files (`convert` module doc): `<rule-id>.rerail`.
+/// The authored overlay's files (`convert` module doc): `<rule-id>.rerail`. Each is the staged copy where the tree
+/// stages one (`publish/`, what `npm run fixtures:stage` wrote for the next archive: the tree's code reads it, as 0612's
+/// `src_line` for `tape_line`), else the pulled one: a directory of links to them, made once a process.
 fn authored() -> PathBuf {
-    pack().join("datalog").join("authored")
+    static DIR: std::sync::OnceLock<PathBuf> = std::sync::OnceLock::new();
+    DIR.get_or_init(|| {
+        let pulled = pack().join("datalog").join("authored");
+        let staged = crate::source_tree::native().join("../packs/data-layer/upstream/lint/publish/authored/packs/data-layer/candidates/datalog/authored");
+        if !staged.is_dir() {
+            return pulled;
+        }
+        let dir = crate::code_rule_dsl::fixtures::temp().with_extension("authored-staged");
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let names: BTreeSet<std::ffi::OsString> = [&pulled, &staged].iter().flat_map(|d| std::fs::read_dir(d).unwrap().map(|e| e.unwrap().file_name())).collect();
+        for name in names {
+            let from = if staged.join(&name).exists() { staged.join(&name) } else { pulled.join(&name) };
+            #[cfg(unix)]
+            std::os::unix::fs::symlink(&from, dir.join(&name)).unwrap();
+            #[cfg(not(unix))]
+            std::fs::copy(&from, dir.join(&name)).unwrap();
+        }
+        dir
+    })
+    .clone()
 }
 
 /// What one rule's conversion gave: its program, and per clause whether it converted or is authored, and why not.
@@ -1605,7 +1627,7 @@ executor_parameters_def("function_definition").
 .decl executor_parameters_run(f: node)
 executor_parameters_run(f) :- node(_, f, "function_definition", _, _), field(f, "name", x), text(x, "run").
 violation("data-layer-serverplan-target-architecture", "executor-parameters", "SPTA006", p, l) :-
-    node(d, s, "if_statement", _, _), inside(s, f, executor_parameters_def), executor_parameters_run(f), in_scope(d), doc(d, p, _), line(s, l).
+    node(d, s, "if_statement", _, _), inside(s, f, executor_parameters_def), executor_parameters_run(f), in_scope(d), doc(d, p, _), node_line_number(s, l).
 .decl required_contracts_module(d: number)
 required_contracts_module(d) :- node(d, _, "module", _, _).
 violation("data-layer-serverplan-target-architecture", "required-contracts", "SPTA001", p, 1) :- required_contracts_module(d), in_scope(d), doc(d, p, _).
@@ -1684,7 +1706,7 @@ fn the_report_gate_is_given() {
 .decl report_when_gt(k: number)
 .decl violation(rule: symbol, clause: symbol, code: symbol, path: symbol, line: number)
 .decl usage_0_witness(p: symbol, l: number)
-usage_0_witness(p, l) :- node(d, n, "call", _, _), in_scope(d), doc(d, p, _), line(n, l).
+usage_0_witness(p, l) :- node(d, n, "call", _, _), in_scope(d), doc(d, p, _), node_line_number(n, l).
 .decl usage_0_quiet(k: number)
 usage_0_quiet(k) :- report_when_gt(k), c = count : {{ usage_0_witness(_, _) }}, c <= k.
 violation("{ID}", "usage-0", "escape_hatch", p, l) :- usage_0_witness(p, l), !usage_0_quiet(_).
@@ -1738,7 +1760,7 @@ fn the_options_are_given() {
 .decl violation(rule: symbol, clause: symbol, code: symbol, path: symbol, line: number)
 .decl category_1_def(n: node, s: symbol)
 category_1_def(n, s) :- node(_, n, "function_definition", _, _), field(n, "name", x), text(x, s).
-violation("{ID}", "category-1", "TEST", p, l) :- option_on("oracleAnalyzer"), category_1_def(n, s), option_item("category-LEGITIMATE", _, s), node(d, n, _, _, _), in_scope(d), doc(d, p, _), line(n, l).
+violation("{ID}", "category-1", "TEST", p, l) :- option_on("oracleAnalyzer"), category_1_def(n, s), option_item("category-LEGITIMATE", _, s), node(d, n, _, _, _), in_scope(d), doc(d, p, _), node_line_number(n, l).
 "#
     );
     let dir = crate::code_rule_dsl::fixtures::temp().with_extension("options");
@@ -2151,12 +2173,12 @@ fn an_overlay_includes_the_python_library() {
 .decl in_scope(d: number)
 .decl violation(rule: symbol, clause: symbol, code: symbol, path: symbol, line: number)
 .decl library_at(n: node, p: symbol, l: number)
-library_at(n, p, l) :- docof(n, d), in_scope(d), doc(d, p, _), line(n, l).
+library_at(n, p, l) :- docof(n, d), in_scope(d), doc(d, p, _), node_line_number(n, l).
 violation("{TARGET_ID}", "executor-parameters", cat("cmp ", o), p, l) :- cmp_pair(c, _, o, _, _), library_at(c, p, l).
 violation("{TARGET_ID}", "executor-parameters", cat("param ", cat(x, cat(" ", k))), p, l) :- sig_param(_, _, nm, _, k, _, _), text(nm, x),
     library_at(nm, p, l).
 violation("{TARGET_ID}", "executor-parameters", cat("latest ", cat(x, cat(" ", to_string(la)))), p, l) :- latest_assign(n, x, a),
-    line(a, la), library_at(n, p, l).
+    node_line_number(a, la), library_at(n, p, l).
 violation("{TARGET_ID}", "executor-parameters", cat("owner ", s), p, l) :- owner_path(f, s), library_at(f, p, l).
 violation("{TARGET_ID}", "executor-parameters", cat("call ", x), p, l) :- call_name(c, x), library_at(c, p, l).
 "#
@@ -2215,10 +2237,10 @@ fn authored_match_built_ins_print_and_run() {
         r#"
 .decl in_scope(d: number)
 .decl violation(rule: symbol, clause: symbol, code: symbol, path: symbol, line: number)
-violation("{TARGET_ID}", "executor-parameters", "SPTA006", p, l) :- in_scope(d), doc(d, p, _), source(d, sp),
-    match_all("{re}", sp, m), match_group("{re}", sp, m, "arg", g), text(g, "step"), line(m, l), (col(m, c), c = 7 ; col(m, c), c > 10).
+violation("{TARGET_ID}", "executor-parameters", "SPTA006", p, l) :- in_scope(d), doc(d, p, _), document_source(d, sp),
+    line_regex_match("{re}", sp, m), line_regex_group("{re}", sp, m, "arg", g), place_text(g, "step"), place_line_number(m, l), (place_start_column(m, c), c = 7 ; place_start_column(m, c), c > 10).
 violation("{TARGET_ID}", "executor-parameters", "SPTA006", p, l) :- in_scope(d), doc(d, p, _), node(d, call, "call", _, _),
-    line(call, l), col(call, c), src_line(d, l, sp), match_all("{re}", sp, m), col(m, c), match_group("{re}", sp, m, "arg", g), text(g, "step").
+    node_line_number(call, l), node_start_column(call, c), document_line(d, sp), line_number(sp, l), line_regex_match("{re}", sp, m), place_start_column(m, c), line_regex_group("{re}", sp, m, "arg", g), place_text(g, "step").
 violation("{TARGET_ID}", "required-contracts", "SPTA001", p, 1) :- in_scope(d), doc(d, p, _), node(d, _, "module", _, _).
 "#
     );

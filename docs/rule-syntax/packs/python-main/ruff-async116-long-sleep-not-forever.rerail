@@ -10,7 +10,7 @@
 // number(n): the JSON util `number`, used where the JSON says `matches: "number"`
 .decl async116_number(n: node)
 async116_number(n) :- (kind(n, "integer") ; kind(n, "float")), value(n, v1),
-    (value_type(v1, "int") ; value_type(v1, "float")), to_number(v1) > 86400.
+    (value_type_of(n, "int") ; value_type_of(n, "float")), to_number(v1) > 86400.
 async116_number(n) :- kind(n, "parenthesized_expression"), child(n, c2, _), async116_number(c2).
 
 // ASYNC116(n, detail): findings from clauses `trio-sleep`, `anyio-sleep`. Their messages differ only in

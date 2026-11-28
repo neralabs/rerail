@@ -35,6 +35,10 @@ build counted as its batch ended) where about 15 M would build each once. By wha
    its room makes the home again with room for twice as many (at most a relation's 16), in its source's place, so
    every later stratum finds the index built there. Before, each such probe built its index in a home of its own,
    found by no one after (`kind` by its fifth key: 80 times).
+   *Merged (2026-11-26) into the spike-shared-caches line:* the room is the hub's instead (roll-up 126): a view's
+   home is made once with room for a relation's 16 added indexes (`Part::for_device_indexed(0, rows, ADDED_INDEXES)`),
+   address space alone, its pages taken as they are written. No home is made again, so `rows::IndexHome` and the
+   source's `grows` are gone; what point 2 asks (every later stratum finds the index where it was built) holds.
 3. **The planner builds a level's indexes before its strata run** (`indexes_first`): the indexes its seed joins'
    device stages probe, in one batch of the device's, done before any of the level's strata (the level's waves and
    the issued components, where the count tables and the level's joins are prefetched). Each stratum finds each

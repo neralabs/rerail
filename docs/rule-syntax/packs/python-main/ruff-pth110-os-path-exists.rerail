@@ -10,7 +10,7 @@
 // PTH110(n): a finding at node n, from clause `os-path-exists`.
 // Each rule below is one way the JSON `rule` can match.
 // Columns after `at` are the metavariables the JSON's message, anchor or `each` names: one finding per distinct row.
-.violation PTH110(at: loc, f: node, s: loc) "Use `Path({s}).exists()` from pathlib instead of `os.path.exists({s})`; leave it for bytes paths, file descriptors, or a value that can be an empty string (`Path('')` is `.`)."
+.violation PTH110(at: node, f: node, s: node) "Use `Path({s}).exists()` from pathlib instead of `os.path.exists({s})`; leave it for bytes paths, file descriptors, or a value that can be an empty string (`Path('')` is `.`)."
     suppress noqa "PTH110"
 PTH110(F, n, S) :- kind(n, "call"), field(n, "function", c1), pth110_callee(c1, F),
     pth110_arg_path_1(n, a2), S = a2,
@@ -27,7 +27,7 @@ pth110_target(n) :- (kind(n, "identifier") ; kind(n, "attribute")),
 
 // callee(n): the JSON util `callee`, used where the JSON says `matches: "callee"`
 //   F: metavariable this relation binds for the calling rule
-.decl pth110_callee(n: node, f: loc)
+.decl pth110_callee(n: node, f: node)
 pth110_callee(n, F) :- pth110_target(n), node(_, n, _, _, _), F = n.
 pth110_callee(n, F) :- kind(n, "parenthesized_expression"), child(n, c1, _), pth110_callee(c1, F).
 
@@ -37,7 +37,7 @@ pth110_arg_name(n) :- kind(n, "identifier"), !pth110_alt_9(n).
 
 // ann_string(n): the JSON util `ann-string`, used where the JSON says `matches: "ann-string"`
 //   F, S: metavariables this relation binds for the calling rule
-.decl pth110_ann_string(n: node, f: loc, s: loc)
+.decl pth110_ann_string(n: node, f: node, s: node)
 pth110_ann_string(n, F, S) :- kind(n, "string"),
     count : { has(n, c1, "escape_sequence"), node(_, c1, _, _, _) } = 0,
     parsed(n, "annotation", r2), within(c3, r2), pth110_alt_10(c3, F, S).
@@ -192,7 +192,7 @@ pth110_alt_3(n) :- pth110_alt_1(n).
 
 // alt_5(n): the JSON `any`: n matches if any one of these rules does
 //   S: metavariable this relation binds for the calling rule
-.decl pth110_alt_5(n: node, s: loc)
+.decl pth110_alt_5(n: node, s: node)
 pth110_alt_5(n, S) :- !pth110_alt_3(n), node(_, n, _, _, _), S = n.
 pth110_alt_5(n, S) :- kind(n, "keyword_argument"), child(n, c1, _), kind(c1, "identifier"),
     glob("path", c1), pth110_tok_precedes_2(c1, s3), node(_, s3, _, _, _), S = s3.
@@ -204,7 +204,7 @@ pth110_alt_9(n) :- pth110_tok_precedes_4(n), child(p15, n, _), kind(p15, "keywor
 
 // alt_10(n): the JSON `any`: n matches if any one of these rules does
 //   F, S: metavariables this relation binds for the calling rule
-.decl pth110_alt_10(n: node, f: loc, s: loc)
+.decl pth110_alt_10(n: node, f: node, s: node)
 // S: not bound by this rule, so empty (unset) here, as in ast-grep.
 pth110_alt_10(n, F, S) :- kind(n, "call"), child(n, c1_5, _), pth110_callee(c1_5, F), next_sibling(c1_5, s2_5), (kind(s2_5, "generator_expression") ; kind(s2_5, "argument_list"), k2_2_5 = count : { child(s2_5, c1_2_5, _), !pth110_alt_1(c1_2_5) }, k2_2_5 >= 1, k2_2_5 <= 1, child(s2_5, c3_2_5, _), pth110_alt_5(c3_2_5, S)),
     unset(S).
@@ -217,6 +217,6 @@ pth110_alt_12(n) :- has(n, c1, "identifier"), !pth110_tok_follows_6(c1), node(_,
 
 // alt_13(n): the JSON `any`: n matches if any one of these rules does
 //   F, S: metavariables this relation binds for the calling rule
-.decl pth110_alt_13(n: node, f: loc, s: loc)
+.decl pth110_alt_13(n: node, f: node, s: node)
 pth110_alt_13(n, F, S) :- kind(n, "call"),child(n, c1_6, _),pth110_callee(c1_6, F),next_sibling(c1_6, s2_6), (kind(s2_6, "generator_expression"), unset(S) ; kind(s2_6, "argument_list"), k2_2_6 = count : { child(s2_6, c1_2_6, _), !pth110_alt_1(c1_2_6) }, k2_2_6 >= 1, k2_2_6 <= 1, child(s2_6, c3_2_6, _), pth110_alt_5(c3_2_6, S), count : { kind(s2_6, "generator_expression") } = 0),child(n, c1, _),pth110_callee(c1, F),pth110_alt_12(c1),count : { child(n, c10, _), (kind(c10, "generator_expression") ; kind(c10, "argument_list"), k2_4 = count : { child(c10, c1_4, _), !pth110_alt_1(c1_4) }, k2_4 >= 1, k2_4 <= 1, child(c10, c3_4, _), pth110_alt_5(c3_4, S)), within(c11, c10), pth110_arg_name(c11), count : { node(_, c11, _, _, _), H = c11 } = 0 } = 0.
 pth110_alt_13(n, F, S) :- pth110_ann_string(n, F, S).

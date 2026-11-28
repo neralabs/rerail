@@ -23,7 +23,8 @@ export const CODEX_NOT_RUNNING = "Rerail ✕ not running · start it with: rerai
 
 /**
  * A session that starts with no daemon says so in that line: as in Claude Code, why and that nothing is recorded until
- * it runs where `RERAIL_AUTOSTART` kept one from starting (`answerAutostartOff`), else `CODEX_NOT_RUNNING`.
+ * one it may use runs where `RERAIL_AUTOSTART` kept one from starting or being replaced (`answerAutostartOff`), else
+ * `CODEX_NOT_RUNNING`.
  */
 export async function runCodexHook(input: HookInput, options: HookOptions = {}): Promise<HookOutput> {
   if (!supportsCodexHook(input)) return {};

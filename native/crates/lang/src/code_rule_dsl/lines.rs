@@ -19,7 +19,7 @@ pub struct Span {
 }
 
 /// The line terminators of a language's ecosystem, the tape's (`rerail_tape_format::newlines`, decision 0612).
-pub use rerail_tape_format::newlines::Terminators;
+pub use rerail_tape_format::newlines::{Terminators, index_into};
 
 /// The terminators a language's ecosystem ends a line at (`Adapter::TERMINATORS`, decision 0612).
 pub fn terminators(language: GrammarDialect) -> Terminators {
@@ -121,7 +121,7 @@ impl LineTable {
         } else {
             let mut v = rerail_blocks::vector![0u8; room];
             fill(&mut v).expect("an index");
-            rerail_tape_format::home::Home::Own(v)
+            rerail_tape_format::home::Home::from(v)
         };
         Self { home: Index::Own(home), at: 0, len }
     }

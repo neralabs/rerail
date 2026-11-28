@@ -36,7 +36,7 @@ mapped(f) :- doc(_, f, _), match(".*(?<e>\\.[^./]+)", f), option(cat("executable
 node_shebang(d) :- runner(d, x), src_shebang(d, t), match(cat(cat("#!.*/usr/bin/env(\\s*(-(-\\S*|[ivS]+|[Pu](\\s+|=)\\S+)(\\s+|$)|\\w+=(\"([^\"\\\\]|\\\\.)*\"|\\w+)))*\\s*",
     x), "( .*)?\\s*"), t).
 
-.violation hashbang(at: loc, msg: symbol) code "n/hashbang" "{msg}"
+.violation hashbang(at: node, msg: symbol) code "n/hashbang" "{msg}"
     suppress eslint "n/hashbang"
 hashbang(@place(f, 1), "Remove the byte order mark before the shebang; a bin executable's first bytes must be #!, or the system cannot run it.") :-
     node_shebang(d), src_bom(d), doc(d, f, _).

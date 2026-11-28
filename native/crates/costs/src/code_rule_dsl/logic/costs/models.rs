@@ -18,15 +18,28 @@ use std::path::Path;
 
 const MODEL: &str = "cost_model";
 
-/// The chain of the file's kept facts, as a content store's (`schema.rs`), and the table the model left.
+/// The chain of the file's kept facts, as a content store's (`schema.rs`, its `bytes` too: the kept facts' writer
+/// records each file's), and the table the model left.
 pub(super) const SCHEMA: &str = "CREATE TABLE IF NOT EXISTS facts_chain(
     space BLOB NOT NULL CHECK(length(space) = 32),
     seq INTEGER NOT NULL CHECK(seq >= 1),
     name TEXT NOT NULL,
     tag INTEGER NOT NULL,
+    bytes INTEGER NOT NULL DEFAULT -1,
     PRIMARY KEY(space, seq)
 ) STRICT;
 DROP TABLE IF EXISTS models;";
+
+/// `SCHEMA` on `db`: a file whose chain predates its `bytes` gains the column (the file is shared by every build, and
+/// an older one's rows, which do not name it, take its default).
+pub(super) fn create(db: &Connection) -> rusqlite::Result<()> {
+    db.execute_batch(SCHEMA)?;
+    let has: bool = db.query_row("SELECT EXISTS(SELECT 1 FROM pragma_table_info('facts_chain') WHERE name = 'bytes')", [], |r| r.get(0))?;
+    if !has {
+        db.execute_batch("ALTER TABLE facts_chain ADD COLUMN bytes INTEGER NOT NULL DEFAULT -1")?;
+    }
+    Ok(())
+}
 
 fn space() -> [u8; 32] {
     Sha256::digest(b"rerail.cost-models-space/v1").into()
@@ -140,7 +153,7 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("costs.sqlite");
         let mut db = Connection::open(&path).unwrap();
-        db.execute_batch(SCHEMA).unwrap();
+        create(&db).unwrap();
         assert!(read(&db, &path, "m1").is_none());
         let a = Saved { at: 1.5e9, trained_on: 1234, comparison: "beats the rates by 12%".into(), model: (0..=250u8).collect() };
         write(&mut db, &path, "m1", Some(&a)).unwrap();

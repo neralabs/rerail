@@ -205,6 +205,9 @@ pub struct Plan {
     pub multi: Vec<Multi>,
     pub probes: Vec<u8>,
     pub fused: Vec<Option<Bound<rowcode::Fused>>>,
+    /// By step, a fused probe's spanning form (`rowcode::spanning`): its fusion over a chunk of many bindings' rows,
+    /// which the walk's keyed batch runs (decision 0706 E5). Empty: none.
+    pub spans: Vec<Option<Bound<rowcode::Fused>>>,
     pub spec: u64,
     #[archive(flat)]
     pub from: Vector<usize>,
@@ -212,6 +215,14 @@ pub struct Plan {
     pub plan_steps: usize,
     #[archive(flat)]
     pub ranges: Vec<Option<Ranged>>,
+    /// Per step, whether it is a lookup (`setfix::lookups`): an atom whose rows are the one row of a key, read in
+    /// place, no join loop. Empty: none.
+    #[archive(flat)]
+    pub lookups: Vec<bool>,
+    /// Per step, whether its key names at most one row (`setfix::at_most_one`): a test, a view's key, a derived
+    /// input's key measured so. Empty: none known.
+    #[archive(flat)]
+    pub one: Vec<bool>,
 }
 
 /// An edit an analysis of the plan's view asks for, made on the owned steps before they are encoded again.
@@ -220,7 +231,8 @@ pub enum Edit {
     Unused(usize, Decision),
     /// The scalar step's summaries are its bag's (`scalars::plan`).
     Bag(usize, Arc<scalars::Bag>),
-    /// The atom, aggregate or string join reads its derived relation through this index (`index_then`, `indexed`).
+    /// The step (an atom, a count, a min or max, a strjoin) probes its input through this index (`index_then`), its
+    /// keys in the index's column order (`in_index_order`, t50 step 9).
     Index(usize, Arc<Csr>),
     /// The split is at the last "." alone (`last_splits`).
     Last(usize),
@@ -238,7 +250,8 @@ impl Plan {
                     }
                 }
                 Edit::Index(i, ix) => {
-                    if let Step::Atom { src: Src::In(_, at), .. } | Step::Scalar { src: Src::In(_, at), .. } | Step::StrJoin { src: Src::In(_, at), .. } = &mut self.steps[i] {
+                    if let Step::Atom { src: Src::In(_, at), keys, .. } | Step::Scalar { src: Src::In(_, at), keys, .. } | Step::StrJoin { src: Src::In(_, at), keys, .. } = &mut self.steps[i] {
+                        super::in_index_order(&ix, keys);
                         *at = Bound(ix);
                     }
                 }
@@ -337,10 +350,13 @@ impl Plan {
             multi: p.multi.iter().map(|m| Multi { rel: m.rel, cols: FlatDecode::decode(&m.cols) }).collect(),
             probes: p.probes.to_vec(),
             fused: p.fused.iter().map(|f| f.as_ref().map(|h| Bound(n.get(h)))).collect(),
+            spans: p.spans.iter().map(|f| f.as_ref().map(|h| Bound(n.get(h)))).collect(),
             spec: p.spec,
             from: FlatDecode::decode(&p.from),
             plan_steps: p.plan_steps,
             ranges: p.ranges.to_vec(),
+            lookups: p.lookups.to_vec(),
+            one: p.one.to_vec(),
         }
     }
 }

@@ -5,7 +5,7 @@
 .scope include "**/*"
 
 #include "tsx/eslint-a-control.rerail"
-//   deparen, token_text, else_of
+//   deparen, node_tokens_text, else_of
 
 // ESLint's no-dupe-else-if: an `else if` whose condition can only be true when an earlier condition of the same
 // chain was, so its branch never runs.
@@ -64,8 +64,8 @@ in_part(a, o) :- cand(_, o, q), leaf(q, "&&", a), leaf(o, "&&", b), same(a, b).
 ask(a, b) :- cand(_, o, q), leaf(q, "&&", a), leaf(o, "&&", b).
 ask(x, y) :- ask(a, b), logic(a, o, l1, r1), logic(b, o, l2, r2), (x = l1, y = l2 ; x = r1, y = r2 ;
     x = l1, y = r2 ; x = r1, y = l2).
-token_text_ask(a) :- (ask(a, _) ; ask(_, a)).
+node_tokens_text_ask(a) :- (ask(a, _) ; ask(_, a)).
 .decl same(a: node, b: node)
-same(a, b) :- ask(a, b), !logic(a, _, _, _), token_text(a, s), token_text(b, s).
+same(a, b) :- ask(a, b), !logic(a, _, _, _), node_tokens_text(a, s), node_tokens_text(b, s).
 same(a, b) :- ask(a, b), logic(a, o, l1, r1), logic(b, o, l2, r2),
     (same(l1, l2), same(r1, r2) ; same(l1, r2), same(r1, l2)).

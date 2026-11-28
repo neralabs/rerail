@@ -332,8 +332,8 @@ impl Builder {
                             if let Some((path, line)) = rel.image.place(v) {
                                 let path = path.to_owned();
                                 self.place(v, &path, line);
-                            } else if v >= 0 && let Some(doc) = rel.image.doc(v >> 32) {
-                                self.doc(v >> 32, &doc);
+                            } else if v >= 0 && let Some(doc) = rel.image.doc(rerail_blocks::located::Located::key_wide(v)) {
+                                self.doc(rerail_blocks::located::Located::key_wide(v), &doc);
                             }
                             v
                         }
@@ -676,14 +676,14 @@ impl<'a> Rel<'a> {
                 None => h.word(v as u64),
             },
             col::NODE if v >= 0 => {
-                let (path, first) = self.image.doc_words(v >> 32);
+                let (path, first) = self.image.doc_words(rerail_blocks::located::Located::key_wide(v));
                 if path == NONE && first == NONE {
                     // A guest's node (no such document): its value.
                     h.word(NONE);
                     h.word(v as u64);
                 } else {
-                    h.word(seen.doc(self.image, v >> 32, path, first));
-                    h.word((v & 0xffff_ffff) as u64);
+                    h.word(seen.doc(self.image, rerail_blocks::located::Located::key_wide(v), path, first));
+                    h.word(u64::from(rerail_blocks::located::Located(v).low()));
                 }
             }
             _ => h.word(v as u64),
@@ -960,7 +960,7 @@ impl Image {
         if v < 0 {
             return Node::Other(v);
         }
-        let (doc, local) = (v >> 32, v & 0xffff_ffff);
+        let (doc, local) = (rerail_blocks::located::Located::key_wide(v), i64::from(rerail_blocks::located::Located(v).low()));
         let (path, first) = self.doc_words(doc);
         if path == NONE && first == NONE {
             return Node::Guest { doc, local };

@@ -308,8 +308,10 @@ mod ops {
     /// `declare_func_in_func`): the JIT's (`jit::Writer`), and a module whose own code calls the ops (tier 2's,
     /// decision 0434 §6, R17). Each op's id and signature, by name. `near`: the module's code is in one arena (or one
     /// object), so an op's call of another is a direct branch; else a long-range call, as two of a JIT's mappings may
-    /// be farther apart than a `bl` reaches.
-    pub fn define_ops<M: cranelift_module::Module>(module: &mut M, linkage: cranelift_module::Linkage, near: bool) -> Result<std::collections::HashMap<&'static str, (cranelift_module::FuncId, Signature)>, String> {
+    /// be farther apart than a `bl` reaches. `cc`: the ops' calling convention, the platform's for ops Rust calls (the
+    /// JIT's); tier 2 takes `PreserveMost`, as its own cold calls (decision 0696 §2), so that a node written in a
+    /// loop of its words (JSON's string loop) leaves the loop's state in its registers.
+    pub fn define_ops<M: cranelift_module::Module>(module: &mut M, linkage: cranelift_module::Linkage, near: bool, cc: CallConv) -> Result<std::collections::HashMap<&'static str, (cranelift_module::FuncId, Signature)>, String> {
         use cranelift_module::FuncId;
         // An op's call of another: the module's function of that name, by its id.
         struct ByName<'m> {
@@ -323,7 +325,6 @@ mod ops {
                 func.import_function(ir::ExtFuncData { name: ir::ExternalName::User(name), signature, colocated: self.near })
             }
         }
-        let cc = module.isa().default_call_conv();
         let mut ids = std::collections::HashMap::new();
         for op in OPS {
             let s = signature(op, cc);

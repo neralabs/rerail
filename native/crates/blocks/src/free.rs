@@ -42,9 +42,10 @@ mod tests {
         Block::anon(kind::FACTS, 8 << 20).with_free_list()
     }
 
-    /// A chunk given back is taken by the next chunk of its size, zeroed; one of another size is not.
+    /// A chunk given back is taken by the next chunk of its size, not zeroed (it says it is not fresh); one of another
+    /// size is not.
     #[test]
-    fn a_freed_chunk_is_taken_by_the_next_of_its_size_zeroed() {
+    fn a_freed_chunk_is_taken_by_the_next_of_its_size() {
         let b = block();
         let a = b.try_alloc_chunk(4096, 64).unwrap();
         unsafe { std::ptr::write_bytes(b.ptr::<u8>(a), 0xab, 4096) };
@@ -53,11 +54,10 @@ mod tests {
         assert_eq!(b.free_bytes(), free + 4096);
         let other = b.try_alloc_chunk(8192, 64).unwrap();
         assert_ne!(other, a, "another size does not take it");
-        let again = b.try_alloc_chunk(4096, 64).unwrap();
+        let (again, fresh) = b.try_alloc_chunk_fresh(4096, 64).unwrap();
         assert_eq!(again, a, "the next of its size takes it");
+        assert!(!fresh, "a reused chunk is not fresh");
         assert_eq!(b.free_bytes(), free);
-        let bytes = unsafe { std::slice::from_raw_parts(b.ptr::<u8>(again), 4096) };
-        assert!(bytes.iter().all(|&x| x == 0), "a reused chunk reads zero, as a fresh one");
         assert_eq!(b.used(), top + 8192, "only the other size bumped");
     }
 
@@ -121,24 +121,6 @@ mod tests {
         b.free_chunk(c, PAGE / 2);
         assert!(crate::mem::tests::modified(b.ptr::<u8>(a)), "its free chunk a page, under GIVE_MIN: kept");
         assert_eq!(b.try_alloc_chunk(PAGE, 64), Some(page), "the merged page taken again");
-    }
-
-    /// A block keeping pages below a size (`keeping_pages_below`, a thread's large room): a chunk freed under it keeps
-    /// its pages for the next; one at or past it gives them back, as every block's does.
-    #[cfg(target_vendor = "apple")]
-    #[test]
-    fn a_chunk_under_the_resident_size_keeps_its_pages() {
-        let b = block().keeping_pages_below(4 * PAGE);
-        let small = b.try_alloc_chunk(PAGE, 64).unwrap();
-        let big = b.try_alloc_chunk(8 * PAGE, 64).unwrap();
-        drain(&b);
-        unsafe { std::ptr::write_bytes(b.ptr::<u8>(small), 0xab, PAGE) };
-        unsafe { std::ptr::write_bytes(b.ptr::<u8>(big), 0xab, 8 * PAGE) };
-        assert_eq!(b.free_chunk(small, PAGE), 0, "nothing given to the OS");
-        assert!(crate::mem::tests::modified(b.ptr::<u8>(small)), "its page kept");
-        assert!(b.free_chunk(big, 8 * PAGE) > 0, "a chunk past the size gives its pages back");
-        assert!(!crate::mem::tests::modified(b.ptr::<u8>(big)));
-        assert_eq!(b.try_alloc_chunk(PAGE, 64), Some(small), "the kept page taken again");
     }
 
     /// A block made for a chunk (`facts::rows`' `2 * need` and its 1 MB margin) holds it: a large chunk lies aligned
@@ -230,22 +212,20 @@ mod tests {
         assert_eq!(unsafe { (*f.ptr::<u64>(before), *f.ptr::<u64>(after)) }, (7, 9));
     }
 
-    /// A chunk written before it is read (a relation's rows) is taken again as it was left: no bytes are zeroed
-    /// for it. One asked zeroed is, and the bytes zeroed are counted (the run's count: other tests zero too).
+    /// A chunk taken again is never zeroed, and says it is not fresh; one from the front of a new block is fresh
+    /// (it reads zero, as the mapping gave it), and a holder's clear state is written only where it is not.
     #[test]
-    fn a_chunk_written_before_read_is_not_zeroed() {
-        let _run = rerail_context::test_run();
+    fn a_chunk_taken_again_is_not_zeroed() {
         let b = block();
-        let a = b.try_alloc_chunk(4096, 64).unwrap();
+        let (a, fresh) = b.try_alloc_chunk_fresh(4096, 64).unwrap();
+        assert!(fresh, "from the front of a new block");
         unsafe { std::ptr::write_bytes(b.ptr::<u8>(a), 0xab, 4096) };
-        b.free_chunk(a, 4096);
-        let zeroed = crate::block::zeroed_bytes();
-        assert_eq!(b.try_alloc_chunk_any(4096, 64), Some(a));
-        assert_eq!(unsafe { *b.ptr::<u8>(a + 100) }, 0xab, "left as it was");
-        assert_eq!(crate::block::zeroed_bytes(), zeroed, "nothing zeroed");
-        b.free_chunk(a, 4096);
-        assert_eq!(b.try_alloc_chunk(4096, 64), Some(a));
-        assert_eq!(unsafe { *b.ptr::<u8>(a + 100) }, 0, "zeroed when asked");
-        assert!(crate::block::zeroed_bytes() >= zeroed + 4096, "and counted");
+        b.free_chunk_resident(a, 4096);
+        let (again, fresh) = b.try_alloc_chunk_fresh(4096, 64).unwrap();
+        assert_eq!(again, a);
+        assert!(!fresh, "taken again");
+        assert_ne!(unsafe { *b.ptr::<u8>(a + 100) }, 0, "not zeroed");
+        unsafe { b.clear_where_used(a, 4096, fresh) };
+        assert_eq!(unsafe { *b.ptr::<u8>(a + 100) }, 0, "a clear state written where it is not fresh");
     }
 }

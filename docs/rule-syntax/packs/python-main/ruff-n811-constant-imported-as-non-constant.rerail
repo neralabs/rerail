@@ -8,7 +8,7 @@
 // N811(n): a finding at node n, from clause `constant-imported-as-non-constant`.
 // Each rule below is one way the JSON `rule` can match.
 // Columns after `at` are the metavariables the JSON's message, anchor or `each` names: one finding per distinct row.
-.violation N811(at: node, asname: loc, name: loc) "Drop `as {asname}` or use an UPPER_CASE alias for the constant `{name}`, and update its uses; keep the alias if `{name}` is really a class."
+.violation N811(at: node, asname: node, name: node) "Drop `as {asname}` or use an UPPER_CASE alias for the constant `{name}`, and update its uses; keep the alias if `{name}` is really a class."
     suppress noqa "N811"
 N811(n, ASNAME, NAME) :- kind(n, "aliased_import"), field(n, "name", c1),
     kind(c1, "dotted_name"), child(c1, c2, _), kind(c2, "identifier"),

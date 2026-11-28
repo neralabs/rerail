@@ -16,14 +16,14 @@
 //   if (a, b) {}                   → reported;   if ((a, b)) {}   fine
 //   () => (a, b)                   → reported;   () => ((a, b))   fine
 // allowInParentheses: false reports every one outside for heads.
-.violation no_sequences(at: loc) code "no-sequences" "Unexpected use of comma operator."
+.violation no_sequences(at: line) code "no-sequences" "Unexpected use of comma operator."
     suppress eslint "no-sequences"
     suppress oxlint "no-sequences"
     suppress biome "lint/complexity/noCommaOperator"
 // At s's own `,` (the tape keeps none): the line where the code after its first operand x starts. A finding is
 // keyed by its line.
 no_sequences(t) :- kind(s, "sequence_expression"), !in_for_head(s), !intended(s), child(s, x, 0), after_line(x, l),
-    node(d, s, _, _, _), src_line(d, l, t).
+    node(d, s, _, _, _), document_line(d, t), line_number(t, l).
 layout_at(x) :- kind(s, "sequence_expression"), child(s, x, 0).
 
 .decl in_for_head(s: node)  // for (a, b; ; c, d): the initialiser or the update

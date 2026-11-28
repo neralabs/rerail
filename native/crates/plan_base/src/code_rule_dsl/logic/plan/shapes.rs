@@ -70,9 +70,14 @@ pub const BROKEN_BY: f64 = 8.0;
 pub const LEAST_PROBES: u64 = 64;
 
 /// The facts a run's rows broke (step 6), by relation: the first broken, as shown; and the probes checked against a
-/// fact (`RERAIL_PLAN_CACHE_COUNTS`). A run's own (`run::local`).
+/// fact (`RERAIL_PLAN_CACHE_COUNTS`). A run's own (`run::local`). With them, the shapes `Shapes::for_run` last made:
+/// the shapes it was given, how many relations were broken then, and what it made.
 #[derive(Default)]
-pub struct Broken(parking_lot::Mutex<BTreeMap<String, String>>, pub std::sync::atomic::AtomicU64);
+pub struct Broken(parking_lot::Mutex<BTreeMap<String, String>>, pub std::sync::atomic::AtomicU64, parking_lot::Mutex<Option<ForRun>>);
+
+/// `Shapes::for_run`'s last answer: its shapes (held, so no other can take their address), the broken relations'
+/// count it saw (they only grow, so the count names the set), and the shapes without them.
+type ForRun = (std::sync::Arc<Shapes>, usize, std::sync::Arc<Shapes>);
 
 impl Broken {
     /// Notes `rel`'s fact `fact` broken; whether it is the first of `rel` this run.
@@ -269,17 +274,29 @@ impl Shapes {
     }
 
     /// These shapes in the run: without the relations whose facts its rows broke (`Broken`), nor any whose facts were
-    /// inferred from one left out. The same shapes where the run broke none of theirs.
+    /// inferred from one left out. The same shapes where the run broke none of theirs. Made once for the same shapes
+    /// and broken relations: each chunk asks it of every source it measures, and each `without` decodes and encodes
+    /// the whole section (1.4 s of the 300-file bench's main thread, `sample` on the M1 Max).
     pub fn for_run(s: std::sync::Arc<Shapes>) -> std::sync::Arc<Shapes> {
         // Outside a run (a plan made for a test, a tool's), no rows were checked.
         if s.is_empty() || crate::code_rule_dsl::logic::run::current().is_none() {
             return s;
         }
-        let broken = run_broken().relations();
+        let run = run_broken();
+        let broken = run.relations();
         if broken.is_empty() {
             return s;
         }
-        s.without(&broken).map_or(s, std::sync::Arc::new)
+        let mut last = run.2.lock();
+        if let Some((given, n, made)) = last.as_ref()
+            && std::sync::Arc::ptr_eq(given, &s)
+            && *n == broken.len()
+        {
+            return std::sync::Arc::clone(made);
+        }
+        let made = s.without(&broken).map_or_else(|| std::sync::Arc::clone(&s), std::sync::Arc::new);
+        *last = Some((s, broken.len(), std::sync::Arc::clone(&made)));
+        made
     }
 
     /// These shapes without `broken`'s relations and every one whose facts were inferred from one left out; `None`

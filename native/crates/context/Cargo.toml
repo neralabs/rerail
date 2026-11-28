@@ -15,5 +15,9 @@ rayon = "=1.12.0"
 rayon-core = "=1.13.0"
 rustc-hash = "=2.1.3"
 
+# The profile's CPU sampler reads each thread's CPU clock (`work`).
+[target.'cfg(unix)'.dependencies]
+libc = "0.2.189"
+
 [dev-dependencies]
 rerail-context = { path = ".", features = ["test-hooks"] }

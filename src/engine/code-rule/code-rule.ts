@@ -1,6 +1,8 @@
 import type { SteerRule } from "../adapter-contract.js";
 import type { AuditFailure, AuditMode, AuditOwner, AuditScope } from "../audit/audit.js";
+import type { WorktreeListLearning, WorktreeRegistry } from "../catalog/repository-identity.js";
 import type { RuleMode } from "../catalog/rule-mode.js";
+import type { GitReads } from "../git.js";
 import { sensitiveByName } from "../path-boundary.js";
 import type { CodeRuleDialectLabel, CodeRuleLanguageId } from "./code-rule-languages.js";
 import type { CodeRuleDslSemanticAstRuleFields, CodeRuleDslSemanticCompareText, CodeRuleDslSuppress } from "./code-rule-semantic.js";
@@ -890,7 +892,7 @@ export interface CodeRuleDslFormatArgs {
 }
 
 /** The sub-grammars `parse` applies (the engine's `literal::Grammar`). */
-export type CodeRuleDslParseGrammar = "percentFormat" | "braceFormat" | "annotation" | "eslintDirective" | "printfFormat" | "scanfFormat" | "phpDoc" | "rustFormat" | "identifierWords" | "pythonFString";
+export type CodeRuleDslParseGrammar = "percentFormat" | "braceFormat" | "annotation" | "eslintDirective" | "printfFormat" | "scanfFormat" | "phpDoc" | "rustFormat" | "identifierWords" | "pythonFString" | "regex";
 
 /**
  * A string literal parsed by a sub-grammar, and a rule of that grammar's kinds matched on the parsed tree's root: the
@@ -1590,7 +1592,24 @@ export interface IgnoredEditMatch {
 }
 
 /** What a walk of the session's folder asks of each file and folder it finds (`CodeRuleAuditor.walkView`). */
-export type WalkView = Pick<CodeRuleAuditor, "acceptsPath" | "ignoresPath">;
+export interface WalkView extends Pick<CodeRuleAuditor, "acceptsPath" | "ignoresPath" | "sourceRoot"> {
+  /**
+   * The walk listed the folder `path` (as for `acceptsPath`), and the listing named a `.git` entry or none
+   * (`holdsGitEntry`); told before the walk asks about any entry the listing named. Absent: the view learns nothing
+   * from a listing.
+   */
+  folderListed?(path: string, holdsGitEntry: boolean): void;
+}
+
+/**
+ * Puts `item` last in the list `groups` holds for `key`, starting one for a new key. The list grows in place, so
+ * grouping n items costs n steps; a copy of the list for each item would cost n * n / 2 element copies.
+ */
+export function appendToGroup<K, V>(groups: Map<K, V[]>, key: K, item: V): void {
+  const group = groups.get(key);
+  if (group === undefined) groups.set(key, [item]);
+  else group.push(item);
+}
 
 export interface CodeRuleAuditor {
   openWorkspace(sessionId: string): Promise<void>;
@@ -1620,11 +1639,12 @@ export interface CodeRuleAuditor {
    */
   ignoresPath?(path: string, directory: boolean): boolean;
   /**
-   * `acceptsPath` and `ignoresPath` for one walk, which asks them only of the files and folders it found, never of a
-   * link. It may keep what it learns of a folder for the rest of the walk, so a walk costs a lookup per folder where
-   * the auditor would make one per file. Absent: the walk asks the auditor itself.
+   * `acceptsPath`, `ignoresPath` and `sourceRoot` for one walk, which asks them only of the files and folders it found,
+   * never of a link, reaching each through folders from `root` (absolute), where it starts. It may keep what it learns
+   * of a folder for the rest of the walk, and what each listing told it (`WalkView.folderListed`), so a walk costs a
+   * lookup per folder holding `.git` where the auditor would make one per file. Absent: the walk asks the auditor itself.
    */
-  walkView?(): WalkView;
+  walkView?(root?: string): WalkView;
   /**
    * Why an edit of the file `path` (as for `acceptsPath`) goes unchecked though the rules would read it: the pattern
    * by which Git ignores it, while the session follows `.gitignore`, with its file (absolute) and line. Undefined for a
@@ -1636,8 +1656,23 @@ export interface CodeRuleAuditor {
    * when undefined or absent.
    */
   sourceRoot?(path: string): string | undefined;
-  /** The repository's other worktrees (physical) a source walk covers as well as the session folder; none when absent. */
-  worktreeRoots?(): readonly string[];
+  /**
+   * The repository's other worktrees (physical) a source walk covers as well as the session folder; none when absent.
+   * `registry`: the list {@link CodeRuleAuditor.learnWorktreeRoots} gave as stored, in the same synchronous run.
+   */
+  worktreeRoots?(registry?: WorktreeRegistry): readonly string[];
+  /**
+   * `worktreeRoots`, with turns of the event loop while it reads checkouts it has not read before; `worktreeRoots` when
+   * absent. Undefined when the auditor was interrupted between two turns: no list of the worktrees, only part of it.
+   */
+  worktreeRootsInTurns?(registry?: WorktreeRegistry): Promise<readonly string[] | undefined>;
+  /**
+   * Learns what {@link CodeRuleAuditor.worktreeRoots} would ask Git, through `git` as processes no thread waits on, so its
+   * next call finds Git's list kept while the registry's contents stay as they were: what to wait for, or the list
+   * stored for the registry, with nothing started, for a call in the same synchronous run to take. Undefined, with
+   * nothing started, where there is nothing to learn. Never throws, and what it gives to wait on never rejects.
+   */
+  learnWorktreeRoots?(git: GitReads): WorktreeListLearning | undefined;
   /**
    * The folder where Git registers the repository's linked worktrees (`worktrees` in its common Git folder), physical, as
    * `worktreeRoots` last found it: a change there may add one of them. Undefined when unknown; none when absent.

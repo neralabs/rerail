@@ -26,7 +26,7 @@
 #include "data-layer/boot-python.rerail"     // callee_name, deco_word, ann_word_s, ann_value_word, ann_slice_word
 
 // sbc_param(f, nm, x, a): parameter x (name node nm) of def f, any kind, self and cls aside; a its annotation or unset.
-.decl sbc_param(f: node, nm: node, x: symbol, a: loc)
+.decl sbc_param(f: node, nm: node, x: symbol, a: node)
 sbc_param(f, nm, x, a) :- kind(f, "function_definition"), sig_param(f, _, nm, _, _, a, _), text(nm, x),
     x != "self", x != "cls".
 .decl sbc_lazy(f: node)  // a def named …_lazy

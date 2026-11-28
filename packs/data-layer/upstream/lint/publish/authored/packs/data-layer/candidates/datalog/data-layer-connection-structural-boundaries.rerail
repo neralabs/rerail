@@ -254,16 +254,16 @@ cs_lifecycle_method_ok(d, m) :- cs_entry(e), e != "_lifecycle_violations", cs_me
 cs_hit(d, "CSB001", 1) :- cs_role("connection", p), cs_valid(d, p), cs_over(d, 900).
 cs_hit(d, "CSB010", 1) :- cs_role("sql", p), cs_valid(d, p), cs_over(d, 6000).
 cs_hit(d, "CSB020", 1) :- cs_valid(d, p), cs_big_backend(p), cs_over(d, 3000).
-cs_hit(d, "CSB002", l) :- cs_role("connection", p), cs_valid(d, p), cs_top(d, n, _, s), cs_residual(s), line(n, l).
-cs_hit(d, "CSB012", l) :- cs_role("sql", p), cs_valid(d, p), cs_top(d, n, _, s), cs_sql_residual(s), line(n, l).
-cs_hit(d, "CSB021", l) :- cs_valid(d, p), cs_big_backend(p), cs_top(d, n, _, s), cs_mixin(s), line(n, l).
-cs_hit(d, "CSB003", l) :- cs_role("connection", p), cs_valid(d, p), cs_last_class(d, c, "_DatabaseConnectionCore"), cs_base(c, _, s), !cs_good_base(s), line(c, l).
+cs_hit(d, "CSB002", l) :- cs_role("connection", p), cs_valid(d, p), cs_top(d, n, _, s), cs_residual(s), node_line_number(n, l).
+cs_hit(d, "CSB012", l) :- cs_role("sql", p), cs_valid(d, p), cs_top(d, n, _, s), cs_sql_residual(s), node_line_number(n, l).
+cs_hit(d, "CSB021", l) :- cs_valid(d, p), cs_big_backend(p), cs_top(d, n, _, s), cs_mixin(s), node_line_number(n, l).
+cs_hit(d, "CSB003", l) :- cs_role("connection", p), cs_valid(d, p), cs_last_class(d, c, "_DatabaseConnectionCore"), cs_base(c, _, s), !cs_good_base(s), node_line_number(c, l).
 cs_hit(d, "CSB011", 1) :- cs_role("sql", p), cs_valid(d, p), k = count : { cs_top(d, _, _, _) }, k > 90.
-cs_hit(d, "CSB013", l) :- cs_role("sql", p), cs_valid(d, p), cs_last_class(d, c, "_SqlConnectionCore"), cs_entry(e), e != "_sql_connection_violations", k = count : { cs_base(c, _, _) }, k > 6, line(c, l).
-cs_hit(d, "CSB013", l) :- cs_role("sql", p), cs_valid(d, p), cs_last_class(d, c, "_SqlConnectionCore"), cs_entry("_sql_connection_violations"), k = count : { cs_all_base(c, _) }, k > 6, line(c, l).
-cs_hit(d, "CSB030", l) :- cs_lifecycle_file(p), cs_valid(d, p), cs_method(d, _, "_ConnectionLifecycleMixin", m, mn), (mn = "__enter__" ; mn = "__aenter__"), cs_lifecycle_method_ok(d, m), cs_self_connect(m), line(m, l).
-cs_hit(d, "CSB031", l) :- cs_valid(d, p), cs_backend(p), cs_method(d, _, cn, m, mn), cs_backend_class(cn), cs_lifecycle_method(mn), line(m, l).
-cs_hit(d, "CSB032", l) :- cs_valid(d, p), cs_backend(p), cs_method(d, _, cn, m, "connect_async"), cs_backend_class(cn), cs_sync_target(m), line(m, l).
-cs_hit(d, "CSB033", l) :- cs_valid(d, p), cs_backend(p), cs_method(d, _, cn, m, mn), cs_backend_class(cn), !cs_connect_method(mn), cs_self_connect(m), line(m, l).
+cs_hit(d, "CSB013", l) :- cs_role("sql", p), cs_valid(d, p), cs_last_class(d, c, "_SqlConnectionCore"), cs_entry(e), e != "_sql_connection_violations", k = count : { cs_base(c, _, _) }, k > 6, node_line_number(c, l).
+cs_hit(d, "CSB013", l) :- cs_role("sql", p), cs_valid(d, p), cs_last_class(d, c, "_SqlConnectionCore"), cs_entry("_sql_connection_violations"), k = count : { cs_all_base(c, _) }, k > 6, node_line_number(c, l).
+cs_hit(d, "CSB030", l) :- cs_lifecycle_file(p), cs_valid(d, p), cs_method(d, _, "_ConnectionLifecycleMixin", m, mn), (mn = "__enter__" ; mn = "__aenter__"), cs_lifecycle_method_ok(d, m), cs_self_connect(m), node_line_number(m, l).
+cs_hit(d, "CSB031", l) :- cs_valid(d, p), cs_backend(p), cs_method(d, _, cn, m, mn), cs_backend_class(cn), cs_lifecycle_method(mn), node_line_number(m, l).
+cs_hit(d, "CSB032", l) :- cs_valid(d, p), cs_backend(p), cs_method(d, _, cn, m, "connect_async"), cs_backend_class(cn), cs_sync_target(m), node_line_number(m, l).
+cs_hit(d, "CSB033", l) :- cs_valid(d, p), cs_backend(p), cs_method(d, _, cn, m, mn), cs_backend_class(cn), !cs_connect_method(mn), cs_self_connect(m), node_line_number(m, l).
 violation("data-layer-connection-structural-boundaries", "connection-structure", code, p, l) :- cs_hit(d, code, l), cs_entry(e), !cs_entry_case(e), doc(d, p, _).
 violation("data-layer-connection-structural-boundaries", "connection-structure", code, p, l) :- cs_hit(d, code, l), cs_entry(e), cs_entry_issue(e, code), doc(d, p, _).

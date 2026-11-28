@@ -30,9 +30,9 @@
 .input doc, text, src_line
 .output violation
 in_scope(d) :- doc(d, p, _), glob("l2070_batching/executor.py", p).
-pyl_extra(d, l, k) :- src_line(d, l, sp), text(sp, s), py_line_sep(s), k = @count_matches("[\\x0b\\x0c\\x1c-\\x1e\\x85\\x{2028}\\x{2029}]", s).
+pyl_extra(d, l, k) :- document_line(d, sp), line_number(sp, l), line_text(sp, s), py_line_sep(s), k = @count_matches("[\\x0b\\x0c\\x1c-\\x1e\\x85\\x{2028}\\x{2029}]", s).
 py_line_sep(s) :- pyl_rest(_, _, _, s), match("(?s).*[\\x0b\\x0c\\x1c-\\x1e\\x85\\x{2028}\\x{2029}].*", s).
-pyl_rest(d, l, 0, s) :- src_line(d, l, sp), text(sp, s).
+pyl_rest(d, l, 0, s) :- document_line(d, sp), line_number(sp, l), line_text(sp, s).
 pyl_rest(d, l, @add(j, 1), a) :- pyl_rest(d, l, j, r), match("[^\\x0b\\x0c\\x1c-\\x1e\\x85\\x{2028}\\x{2029}]*[\\x0b\\x0c\\x1c-\\x1e\\x85\\x{2028}\\x{2029}](?<a>(?s).*)", r), a = @rx_group(r, "^(?:[^\\x0b\\x0c\\x1c-\\x1e\\x85\\x{2028}\\x{2029}]*[\\x0b\\x0c\\x1c-\\x1e\\x85\\x{2028}\\x{2029}](?<a>(?s).*))$", "a").
 rr_ctx2(d, l) :- pyl_rest(d, l, 0, s).
 rr_agg1(d, k, l, m) :- rr_demand_agg_rr_agg1(d, l), rr_ctx2(d, l), pyl_extra(d, m, k), m < l.

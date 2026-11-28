@@ -35,7 +35,7 @@ pt014_values(n) :- (kind(n, "list") ; kind(n, "tuple")), node(_, n, _, _, _), L 
 
 // repeated_slot(n): the JSON util `repeated-slot`, used where the JSON says `matches: "repeated-slot"`
 //   E: metavariable of the calling rule, passed in (bound by the caller)
-.decl pt014_repeated_slot(n: node, e: loc)
+.decl pt014_repeated_slot(n: node, e: node)
 pt014_repeated_slot(n, E) :- pt014_demand_repeated_slot(n, E), child(p1, n, _), pt014_values(p1),
     precedes(s2, n), !pt014_alt_4(s2), node(_, s2, _, _, _), F = s2, value(F, t3), value(E, t3).
 pt014_repeated_slot(n, E) :- pt014_demand_repeated_slot(n, E), child(p5, n, _),
@@ -104,7 +104,7 @@ pt014_arg_no_argvalues_1(n) :- kind(n, "call"), field(n, "arguments", l),
     !pt014_args_kwp(l, "argvalues", _), !pt014_args_pos(l, _, 1).
 
 // demand_repeated_slot: the rows of repeated_slot its callers ask for (the metavariable columns they pass in)
-.decl pt014_demand_repeated_slot(n: node, e: loc)
+.decl pt014_demand_repeated_slot(n: node, e: node)
 pt014_demand_repeated_slot(n, E) :- node(_, n, _, _, _), E = n.
 pt014_demand_repeated_slot(p5, E) :- pt014_demand_repeated_slot(n, E), child(p5, n, _),
     kind(p5, "parenthesized_expression").

@@ -9,7 +9,7 @@
 // Each rule below is one way the JSON `rule` can match.
 // Columns after `at` are the metavariables the JSON's message, anchor or `each` names: one finding per distinct row.
 // The JSON `constraints` on CALL are added to every rule.
-.violation PT027(at: node, assertion: loc) "Use `pytest.raises` instead of `{assertion}`: a regex goes in `match=` and an `as` target's `.exception` becomes `.value`. Leave it in tests that don't run under pytest."
+.violation PT027(at: node, assertion: node) "Use `pytest.raises` instead of `{assertion}`: a regex goes in `match=` and an `as` target's `.exception` becomes `.value`. Leave it in tests that don't run under pytest."
     suppress noqa "PT027"
 PT027(n, ASSERTION) :- kind(n, "attribute"), field(n, "attribute", c1),
     node(_, c1, _, _, _), ASSERTION = c1,
@@ -18,7 +18,7 @@ PT027(n, ASSERTION) :- kind(n, "attribute"), field(n, "attribute", c1),
 
 // callee_position(n): the JSON util `callee-position`, used where the JSON says `matches: "callee-position"`
 //   CALL: metavariable this relation binds for the calling rule
-.decl pt027_callee_position(n: node, call: loc)
+.decl pt027_callee_position(n: node, call: node)
 pt027_callee_position(n, CALL) :- child(p1, n, _), kind(p1, "call"), node(_, p1, _, _, _), CALL = p1,
     next_sibling(n, s2),
     (kind(s2, "argument_list") ; kind(s2, "generator_expression")).

@@ -15,7 +15,7 @@
 //   - a name that starts with `$` (a route parameter, `$userId`) is not checked;
 //   - other punctuation is kept and allowed, but not next to a dash: `[foo-bar].js` is fine, `[-a].js` is not.
 // The folders are those of the path in the repository. No options: the policy fixes kebabCase.
-.violation filename_case(at: loc) code "unicorn/filename-case"
+.violation filename_case(at: node) code "unicorn/filename-case"
     "Rename this file or folder to kebab-case, for example cart-total.js."
 filename_case(@place(f, 1)) :- doc(d, f, _), checked(d, t), not_kebab(t).
 

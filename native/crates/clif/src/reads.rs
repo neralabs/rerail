@@ -37,11 +37,14 @@ pub enum Family {
     /// A view's (`view_*`, decision 0353 step 4): a document's entry (`view_reads::ViewDoc`, in its batch's block,
     /// a load of it aligned as a relation's), the tape's base and its view, its lines' base. A view read calls the
     /// numbering's reads with the descriptor its entry refers to, the tape's with the tape's base and view, the
-    /// lines' with their base.
+    /// lines' with their base, the codes' with their directory.
     View,
     /// A document's lines' (`lines_*`, decisions 0353 step 4d and 0612): the base of its line index
     /// (`rerail_tape_format::newlines`: its tape's, or one of its own in a slab's room), an offset from it.
     Lines,
+    /// The codes' (`codes_*`, decision 0697): the codes' directory (`view_reads::CodesLang` by tape tag, in the
+    /// binary: `rerail_tape_format::codes_dir`), its loads aligned.
+    Codes,
 }
 
 impl Family {
@@ -49,8 +52,8 @@ impl Family {
     pub fn pointers(self) -> usize {
         match self {
             Family::Tape => 2,
-            Family::Relation | Family::Lines => 1,
-            Family::View => 4,
+            Family::Relation | Family::Lines | Family::Codes => 1,
+            Family::View => 5,
         }
     }
 }
@@ -164,19 +167,38 @@ pub const READS: &[Read] = &[
     Read { family: Family::View, name: "view_tape", params: &[I32, I32], ret: I64, hot: true, body: crate::view_reads::tape },
     Read { family: Family::View, name: "view_depth", params: &[I32, I32], ret: I64, hot: true, body: crate::view_reads::depth },
     Read { family: Family::View, name: "view_order", params: &[I32, I32], ret: I64, hot: true, body: crate::view_reads::order },
+    // `op` read in place (decision 0353 row 7, the hub's `Item::Op` rows): after `view_order`, as `VIEWS` has it.
+    Read { family: Family::View, name: "view_op", params: &[I32, I32], ret: I64, hot: true, body: crate::view_reads::op },
     // The views' directory's searches (decision 0353 step 3 on the CPU, step 2): the descriptor is the directory, in
     // its batch's block; each takes its caller's memo. Last, so no other read's number moves.
     Read { family: Family::Relation, name: "dir_doc_of_row", params: &[I32, I32, I32], ret: I32, hot: false, body: crate::view_reads::dir_doc_of_row },
     Read { family: Family::Relation, name: "dir_doc_of_key", params: &[I32, I32], ret: I32, hot: false, body: crate::view_reads::dir_doc_of_key },
     // A named node's place among its named siblings, in the tape's auxiliary index in its home (decision 0656 step
-    // 4): `child`'s place. Last, so no other read's number moves.
+    // 4): `child`'s place. Last but the one below, so no other read's number moves.
     Read { family: Family::Tape, name: "tape_place", params: &[I32], ret: I32, hot: false, body: place },
     Read { family: Family::Tape, name: "tape_place_past_comments", params: &[I32], ret: I32, hot: false, body: place_past_comments },
+    // A hashed index's place's mark (decision 0671). Last, so no other read's number moves.
+    Read { family: Family::Relation, name: "rel_group_mark", params: &[I32, I32], ret: I32, hot: true, body: crate::relation::rel_group_mark },
     // A string's atom by its hash in a directory of runs of atoms (decision 0666): the descriptor is an
     // `AtomsDirRoot`. Last, so no other read's number moves.
     Read { family: Family::Relation, name: "atoms_find", params: &[I64, I32, I32], ret: I32, hot: false, body: crate::atoms_reads::atoms_find },
-    // A hashed index's place's mark (decision 0671). Last, so no other read's number moves.
-    Read { family: Family::Relation, name: "rel_group_mark", params: &[I32, I32], ret: I32, hot: true, body: crate::relation::rel_group_mark },
+    // A node's text read in place (decision 0287 §2): its bytes' range in its document's own source. After the reads
+    // above, so no earlier read's number moves.
+    Read { family: Family::View, name: "view_text_span", params: &[I32], ret: I64, hot: false, body: crate::view_reads::text_span },
+    // A line's text read in place (decision 0353 row 7): its bytes' range in its document's own source, and its
+    // terminator's length, read off the source's bytes (a read of the lines' family whose base is the source's).
+    Read { family: Family::View, name: "view_line_span", params: &[I32], ret: I64, hot: false, body: crate::view_reads::line_span },
+    Read { family: Family::View, name: "view_line_terminated", params: &[I32], ret: I32, hot: false, body: crate::view_reads::line_terminated },
+    Read { family: Family::Lines, name: "lines_terminator_length", params: &[I32], ret: I32, hot: false, body: terminator_length },
+    // A code's kind atom and field atom in its language's run of the codes' directory (decision 0697), by tape tag and
+    // code: the `node` view's kind, the `field` view's field. After the reads above, so no earlier read's number moves.
+    Read { family: Family::Codes, name: "codes_kind", params: &[I32, I32], ret: I32, hot: true, body: codes_kind },
+    Read { family: Family::Codes, name: "codes_field", params: &[I32, I32], ret: I32, hot: true, body: codes_field },
+    // An id's document and local id in a batch's numbering (plan "Chunk node numbers", step 1): its page's, in the
+    // views' directory's page table (the descriptor is the directory, as the searches' above). Last, so no other
+    // read's number moves.
+    Read { family: Family::Relation, name: "dir_doc_of_id", params: &[I32], ret: I32, hot: true, body: crate::view_reads::dir_doc_of_id },
+    Read { family: Family::Relation, name: "dir_local_of_id", params: &[I32], ret: I32, hot: true, body: crate::view_reads::dir_local_of_id },
     // `doc` read in place: a file's row of its key and its path's and module's atoms, in its entry. Last, so no other
     // read's number moves.
     Read { family: Family::View, name: "view_doc", params: &[I32, I32], ret: I64, hot: true, body: crate::view_reads::doc },
@@ -198,6 +220,7 @@ pub fn read(name: &str) -> Option<&'static Read> {
 pub fn ukl_call(read: &Read) -> Option<(&'static str, String)> {
     let source = match read.family {
         Family::Lines => "ukl/reads/lines.h",
+        Family::Codes => "ukl/reads/codes.h",
         Family::Relation if numbering(read) => "ukl/reads/ids.h",
         Family::Relation => "ukl/reads/relation.h",
         Family::Tape | Family::View => return None,
@@ -246,12 +269,12 @@ pub fn build_formats(read: &Read, call_conv: CallConv, name: UserFuncName, calle
     f.switch_to_block(entry);
     let params = f.block_params(entry).to_vec();
     let pointers = read.family.pointers();
-    let (view, doc_tape, lines) = match read.family {
-        Family::Tape => (Some(params[1]), None, None),
-        Family::Relation | Family::Lines => (None, None, None),
-        Family::View => (None, Some((params[1], params[2])), Some(params[3])),
+    let (view, doc_tape, lines, codes) = match read.family {
+        Family::Tape => (Some(params[1]), None, None, None),
+        Family::Relation | Family::Lines | Family::Codes => (None, None, None, None),
+        Family::View => (None, Some((params[1], params[2])), Some(params[3]), Some(params[4])),
     };
-    let mut b = B { f, tape: params[0], view, doc_tape, lines, args: params[pointers..].to_vec(), call_conv, callee, format, z, slot: None };
+    let mut b = B { f, tape: params[0], view, doc_tape, lines, codes, args: params[pointers..].to_vec(), call_conv, callee, format, z, slot: None };
     let value = (read.body)(&mut b);
     b.f.ins().return_(&[value]);
     b.f.seal_all_blocks();
@@ -288,7 +311,7 @@ pub fn view_ukl_source() -> Result<(String, String), String> {
     let (header, body) = crate::ukl::translate_view_reads(&funcs, "clif_")?;
     let (head, rest) = header.split_at(crate::ukl::HELPERS.len());
     let made = generated("view_ukl_source", "the views' reads in CLIF (decision 0353 step 4c, 0576)", "the_view_kernels_reads_are_these");
-    Ok((format!("{made}{head}#include <ukl/reads/tape_z.h>\n#include <ukl/reads/aux_index_tape.h>\n#include <ukl/reads/ids.h>\n#include <ukl/reads/lines.h>\n{}{rest}", crate::view_reads::ukl()), format!("{made}{body}")))
+    Ok((format!("{made}{head}#include <ukl/reads/tape_z.h>\n#include <ukl/reads/aux_index_tape.h>\n#include <ukl/reads/ids.h>\n#include <ukl/reads/lines.h>\n#include <ukl/reads/codes.h>\n{}{rest}", crate::view_reads::ukl()), format!("{made}{body}")))
 }
 
 /// A document's lines' reads as UKL (decision 0612): `<ukl/reads/lines.h>`, its line index read at its base, which the
@@ -475,6 +498,8 @@ pub struct B<'a, 'c> {
     doc_tape: Option<(Value, Value)>,
     /// A view read's lines' base (the view's family alone).
     lines: Option<Value>,
+    /// A view read's codes' directory (the view's family alone).
+    codes: Option<Value>,
     args: Vec<Value>,
     call_conv: CallConv,
     callee: &'c mut dyn Callee,
@@ -795,6 +820,16 @@ impl B<'_, '_> {
     /// The lines' read `name` called by a view read, with its lines' base.
     pub(crate) fn call_lines(&mut self, name: &str, args: &[Value]) -> Value {
         let base = self.lines.expect("a view read");
+        let tape = std::mem::replace(&mut self.tape, base);
+        let held = self.view.take();
+        let value = self.call(name, args);
+        self.tape = tape;
+        self.view = held;
+        value
+    }
+    /// The codes' read `name` called by a view read, with the codes' directory.
+    pub(crate) fn call_codes(&mut self, name: &str, args: &[Value]) -> Value {
+        let base = self.codes.expect("a view read");
         let tape = std::mem::replace(&mut self.tape, base);
         let held = self.view.take();
         let value = self.call(name, args);
@@ -2317,6 +2352,42 @@ fn child(b: &mut B<'_, '_>) -> Value {
     b.f.block_params(done)[0]
 }
 
+// ---- codes: each language's codes' atoms, in the binary (decision 0697) ----------------------------------------
+
+/// Run `k` (0 kinds, 1 fields) of tag `arg(0)`'s place in the codes' directory, at code `arg(1)`: a u32.
+fn codes_item(b: &mut B<'_, '_>, k: i64) -> Value {
+    let (tag, code) = (b.arg(0), b.arg(1));
+    let tag = b.f.ins().uextend(I64, tag);
+    let place = b.f.ins().imul_imm(tag, std::mem::size_of::<crate::view_reads::CodesLang>() as i64);
+    let place = b.f.ins().iadd(b.tape, place);
+    let run = b.word_at(I32, place, 4 * k as i32);
+    let run = b.f.ins().uextend(I64, run);
+    let run = b.f.ins().iadd(b.tape, run);
+    let at = b.item(run, code, 4);
+    b.word_at(I32, at, 0)
+}
+
+fn codes_kind(b: &mut B<'_, '_>) -> Value {
+    codes_item(b, 0)
+}
+
+fn codes_field(b: &mut B<'_, '_>) -> Value {
+    codes_item(b, 1)
+}
+
+/// The codes' reads as UKL (decision 0697): `<ukl/reads/codes.h>`, which the views' reads call; made again by
+/// `the_codes_reads_are_these`.
+pub fn codes_ukl_source() -> Result<String, String> {
+    let funcs: Vec<(u32, Function, &str)> = READS
+        .iter()
+        .enumerate()
+        .filter(|(_, read)| read.family == Family::Codes)
+        .map(|(k, read)| (k as u32, build(read, CallConv::SystemV, UserFuncName::user(0, k as u32), &mut ByIndex), read.name))
+        .collect();
+    let body = crate::ukl::translate_reads(&funcs, "clif_", Family::Codes)?;
+    Ok(format!("{}{body}", generated("codes_ukl_source", "the codes' reads in CLIF (decision 0697)", "the_codes_reads_are_these")))
+}
+
 // ---- lines: a document's line index (`rerail_tape_format::newlines`, decision 0612) ----------------------------
 
 /// Where the line index starts: the tape's reads find it at the view's `lines` (a document's own, in its tape or
@@ -2765,6 +2836,43 @@ fn lines_line(b: &mut B<'_, '_>) -> Value {
     b.f.ins().iadd_imm(line, 1)
 }
 
+/// `lines_terminator_length(last)`: the length of the line terminator whose last byte is byte `last` of a source, its
+/// base this read's pointer (`newlines::length_ending_at`: CRLF and NEL's two bytes, LS's and PS's three, else one):
+/// its bytes alone say it, whatever the language's set. A line's text ends that many bytes before one past `last`.
+fn terminator_length(b: &mut B<'_, '_>) -> Value {
+    let last = b.arg(0);
+    let zero = b.c32(0);
+    let x = b.u8(zero, last);
+    let one = b.c32(1);
+    let after_first = b.f.ins().icmp_imm(IntCC::UnsignedGreaterThanOrEqual, last, 1);
+    b.either(I32, after_first, |b| {
+        let at = b.f.ins().iadd_imm(last, -1);
+        let zero = b.c32(0);
+        let p1 = b.u8(zero, at);
+        let is = |b: &mut B<'_, '_>, v: Value, k: i64| b.f.ins().icmp_imm(IntCC::Equal, v, k);
+        let (lf, cr) = (is(b, x, 0x0a), is(b, p1, 0x0d));
+        let crlf = b.f.ins().band(lf, cr);
+        let (nel, c2) = (is(b, x, 0x85), is(b, p1, 0xc2));
+        let nel = b.f.ins().band(nel, c2);
+        let two = b.f.ins().bor(crlf, nel);
+        let (a8, a9, e80) = (is(b, x, 0xa8), is(b, x, 0xa9), is(b, p1, 0x80));
+        let sep = b.f.ins().bor(a8, a9);
+        let sep = b.f.ins().band(sep, e80);
+        let after_second = b.f.ins().icmp_imm(IntCC::UnsignedGreaterThanOrEqual, last, 2);
+        let sep = b.f.ins().band(sep, after_second);
+        let three = b.either(I32, sep, |b| {
+            let at = b.f.ins().iadd_imm(last, -2);
+            let zero = b.c32(0);
+            let p2 = b.u8(zero, at);
+            let e2 = b.f.ins().icmp_imm(IntCC::Equal, p2, 0xe2);
+            let (three, one) = (b.c32(3), b.c32(1));
+            b.f.ins().select(e2, three, one)
+        }, |b| b.c32(1));
+        let two_v = b.c32(2);
+        b.f.ins().select(two, two_v, three)
+    }, |_| one)
+}
+
 /// `lines_count()`: the document's lines, one more than its line ends (`LineTable::count`).
 fn lines_count(b: &mut B<'_, '_>) -> Value {
     let m = lines_field(b, 0);
@@ -2815,8 +2923,20 @@ mod tests {
             params.extend(a.params.iter().enumerate().filter(|p| *p.1).map(|(k, _)| (read.name, k)));
         }
         assert_eq!(results, ["rows_col", "col_at", "rows_at", "atoms_at", "text_find", "text_open", "verdict_entry", "cache_open"]);
-        // `rel_get`'s third, `far`: the block its relation's chain reaches (decision 0353 step 6).
+        // `rel_get`'s far base (decision 0353 step 6): an address, as a kernel binds it.
         assert_eq!(params, [("rel_get", 2), ("cache_done", 0)]);
+    }
+
+    /// The codes' reads are these, as UKL (`<ukl/reads/codes.h>`): written again with `RERAIL_WRITE_READS=1`.
+    #[test]
+    fn the_codes_reads_are_these() {
+        let path = format!("{}/codes.h", super::ukl_reads());
+        let source = super::codes_ukl_source().unwrap();
+        if std::env::var_os("RERAIL_WRITE_READS").is_some() {
+            std::fs::write(&path, &source).unwrap();
+        }
+        let held = std::fs::read_to_string(&path).unwrap_or_default();
+        assert!(held == source, "{path} is not the reads' UKL: RERAIL_WRITE_READS=1 cargo test -p rerail-clif the_codes_reads_are_these");
     }
 
     /// The numbering's kernels' reads are these, as UKL (`<ukl/reads/ids.h>`): written again with `RERAIL_WRITE_READS=1`.

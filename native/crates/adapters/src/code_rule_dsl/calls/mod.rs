@@ -1256,6 +1256,7 @@ pub fn summarize<D: Doc>(
     known: Option<&ScopeTable>,
 ) -> (Summary, Option<ScopeTable>) {
     let built = known.is_none().then(|| {
+        let _span = rerail_prof::code_rule_dsl::logic::profile::span(|| "W's reference graph: a file's scope table".into());
         ScopeTable::build_in(
             root.clone(),
             language,
@@ -1268,6 +1269,7 @@ pub fn summarize<D: Doc>(
     });
     let table = known.or(built.as_ref().and_then(Option::as_ref));
     let mut summary = {
+        let _span = rerail_prof::code_rule_dsl::logic::profile::span(|| "W's reference graph: a file's summary walk".into());
         let pack = language_pack::pack(Family::of(language));
         language_pack::calls_summary(pack, &root, path, module, table, has_errors)
     };

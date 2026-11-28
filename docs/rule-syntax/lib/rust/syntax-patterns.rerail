@@ -34,9 +34,9 @@ rest_pat(p, r) :- (kind(p, "tuple_pattern") ; kind(p, "tuple_struct_pattern") ; 
 
 // A `_` element is `_` written as a whole element: `(_,`, `, _,`, `, _)`. `&_`, `x @ _` and `_ | 0` are other
 // patterns. Elements are p's named children (comments aside) and its own `_` tokens, in source order (elem_*).
-.decl wild_before(x: loc, w: span)
+.decl wild_before(x: place, w: token)
 wild_before(x, w) :- elem_loc(p, i, x), elem_wild(p, i - 1, w).
-.decl wild_after(x: loc, w: span)
+.decl wild_after(x: place, w: token)
 wild_after(x, w) :- elem_loc(p, i, x), elem_wild(p, i + 1, w).
 
 // `c: _` has a name and no pattern node: its `_` is no node, and the tape keeps it nowhere.
@@ -62,9 +62,9 @@ top_pattern(p) :- kind(c, "closure_parameters"), child(c, p, _), !kind(p, "param
 // Elements, in source order: p's named children (comments and a tuple struct's path aside) and p's own `_`
 // tokens, which the tape keeps (a `_` is one of the grammar's pattern choices): `(_, 1)` has two.
 .stored seq_pat "the opener is read only beside a `_` element (elem_wild): a gap holding a `_` is not the implied word, so the tape keeps its tokens"
-.decl seq_pat(p: node, open: span)   // p's elements follow token `open`: `(`, `[`, or `S(`
-seq_pat(p, o) :- (kind(p, "tuple_pattern"), !paren_pat(p, _) ; kind(p, "slice_pattern")), first_token(p, o).
-seq_pat(p, o) :- kind(p, "tuple_struct_pattern"), field(p, "type", t), token_after(t, o).
+.decl seq_pat(p: node, open: token)   // p's elements follow token `open`: `(`, `[`, or `S(`
+seq_pat(p, o) :- (kind(p, "tuple_pattern"), !paren_pat(p, _) ; kind(p, "slice_pattern")), node_to_first_token(p, o).
+seq_pat(p, o) :- kind(p, "tuple_struct_pattern"), field(p, "type", t), node_to_token_after(t, o).
 .decl elem_child(p: node, c: node)
 elem_child(p, c) :- seq_pat(p, _), child(p, c, _), kind(c, k), !comment_kind(k), !field(p, "type", c).
 .decl elem_pos(p: node, s: number)   // an element of p starts at offset s
@@ -81,10 +81,11 @@ elem_is_wild(p, i) :- (kind(p, "tuple_pattern") ; kind(p, "slice_pattern") ; kin
 // The `_` token itself, a span to report at: the token after the opener, or after the separator that follows
 // the element before. The tape keeps the tokens beside a `_` (its separators and brackets) with it.
 .stored elem_wild "a gap holding a `_` is not the implied word, so the tape keeps the opener, the separators and the `_`"
-.decl elem_wild(p: node, i: number, w: span)
-elem_wild(p, 0, w) :- elem_is_wild(p, 0), seq_pat(p, o), token_after(o, w).
-elem_wild(p, i, w) :- elem_is_wild(p, i), i > 0, elem_loc(p, i - 1, x), token_after(x, k), token_after(k, w).
-.decl elem_loc(p: node, i: number, x: loc)
+.decl elem_wild(p: node, i: number, w: token)
+elem_wild(p, 0, w) :- elem_is_wild(p, 0), seq_pat(p, o), token_next(o, w).
+elem_wild(p, i, w) :- elem_is_wild(p, i), i > 0, elem_node(p, i - 1, x), node_to_token_after(x, k), token_next(k, w).
+elem_wild(p, i, w) :- elem_is_wild(p, i), i > 0, elem_wild(p, i - 1, x), token_next(x, k), token_next(k, w).
+.decl elem_loc(p: node, i: number, x: place)
 elem_loc(p, i, c) :- elem_node(p, i, c).
 elem_loc(p, i, w) :- elem_wild(p, i, w).
 .decl elem_key(p: node, i: number, k: symbol, rest: number)

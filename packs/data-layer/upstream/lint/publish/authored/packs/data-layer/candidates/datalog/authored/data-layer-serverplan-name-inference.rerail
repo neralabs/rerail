@@ -16,7 +16,7 @@
 
 // The text of the line node n starts on.
 .decl column_shape_line_of(n: node, s: symbol)
-column_shape_line_of(n, s) :- node(d, n, _, _, _), line(n, l), src_line(d, l, sp), text(sp, s).
+column_shape_line_of(n, s) :- node(d, n, _, _, _), node_line_number(n, l), document_line(d, sp), line_number(sp, l), line_text(sp, s).
 
 // ---- column-shape (SPNI001) ----
 // A comparison_operator with a `==` or `!=` token among its children (`has` stopBy neighbor: every child, anonymous
@@ -29,7 +29,7 @@ violation("data-layer-serverplan-name-inference", "column-shape", "SPNI001", p, 
     column_shape_cmp(n),
     node_text(n, t), match("(?s:.*)(?:column|\.keys\s*\(|set\s*\(\s*(?:row|rows|value)\s*\))(?s:.*)", t),
     column_shape_line_of(n, s), match("(?s:.*)['\"](?:count|deleted_count|ok|message|__exists|__result)['\"](?s:.*)", s),
-    node(d, n, _, _, _), in_scope(d), !out_scope(d), doc(d, p, _), line(n, l).
+    node(d, n, _, _, _), in_scope(d), !out_scope(d), doc(d, p, _), node_line_number(n, l).
 
 // ---- the calls `x.<method>(…)`: function an attribute whose attribute field is the method name ----
 // (`has` field function / field attribute, stopBy neighbor: the field's child itself.)
@@ -47,7 +47,7 @@ violation("data-layer-serverplan-name-inference", "reference-parse", "SPNI002", 
     field(n, "arguments", g), child(g, s, _), node(_, s, "string", _, _), node_text(s, t),
     match("^['\"](?:\.raw|\.raw_rows|\.write|\.updated_rows|\.updated_count|_count|_updated_rows|_updated_count)['\"]$", t),
     column_shape_line_of(n, ls), match("(?s:.*)ref[^\n]*?\.(?:endswith|partition|removeprefix|removesuffix|rpartition|rsplit|split|startswith)\s*\((?s:.*)", ls),
-    node(d, n, _, _, _), in_scope(d), !out_scope(d), doc(d, p, _), line(n, l).
+    node(d, n, _, _, _), in_scope(d), !out_scope(d), doc(d, p, _), node_line_number(n, l).
 
 // ---- reference-synthesis (SPNI003) ----
 // `x.get/pop/setdefault(f"…{…ref…}….raw…")`: the f-string the arguments' first named child (`nthChild: 1`). W's
@@ -66,7 +66,7 @@ violation("data-layer-serverplan-name-inference", "reference-synthesis", "SPNI00
     field(n, "arguments", g), child(g, s, 0), node(_, s, "string", st, _), !reference_synthesis_comment_before(g, st), node_text(s, t),
     match("f['\"][^\n]*?\{[^}]*ref[^}]*\}[^\n]*?(?:\.raw|\.raw_rows|\.write|\.updated_rows|\.updated_count|_count|_updated_rows|_updated_count)(?s:.*)", t),
     column_shape_line_of(n, ls), match("(?s:.*)ref[^\n]*?\.(?:get|pop|setdefault)\s*\((?s:.*)", ls),
-    node(d, n, _, _, _), in_scope(d), !out_scope(d), doc(d, p, _), line(n, l).
+    node(d, n, _, _, _), in_scope(d), !out_scope(d), doc(d, p, _), node_line_number(n, l).
 
 // ---- column-type (SPNI004) ----
 // In sql_column_type_hints.py, a string-method call on a line with `column` before it.
@@ -74,4 +74,4 @@ violation("data-layer-serverplan-name-inference", "column-type", "SPNI004", p, l
     reference_parse_call(n),
     column_shape_line_of(n, ls), match("(?s:.*)column[^\n]*?\.(?:endswith|partition|removeprefix|removesuffix|rpartition|rsplit|split|startswith)\s*\((?s:.*)", ls),
     node(d, n, _, _, _), doc(d, path, _), match("(?:(?s:.*)/)?sql_column_type_hints\.py", path),
-    in_scope(d), !out_scope(d), doc(d, p, _), line(n, l).
+    in_scope(d), !out_scope(d), doc(d, p, _), node_line_number(n, l).

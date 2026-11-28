@@ -9,7 +9,7 @@
 
 // bad_mode(n): the JSON util `bad-mode`, used where the JSON says `matches: "bad-mode"`
 //   LIT: metavariable this relation binds for the calling rule
-.decl ruf064_bad_mode(n: node, lit: loc)
+.decl ruf064_bad_mode(n: node, lit: node)
 ruf064_bad_mode(n, LIT) :- kind(n, "integer"), node(_, n, _, _, _), LIT = n,
     match("(?:0[xXbB][0-9a-fA-F_]+|[0-9][0-9_]*)", n), !glob("0", n).
 ruf064_bad_mode(n, LIT) :- kind(n, "parenthesized_expression"), child(n, c1, _),
@@ -87,7 +87,7 @@ ruf064_kw_mode(n) :- kind(n, "keyword_argument"), ruf064_tok_has_2(n).
 
 // kw_parent_mode(n): the JSON util `kw-parent-mode`, used where the JSON says `matches: "kw-parent-mode"`
 //   LIT: metavariable this relation binds for the calling rule
-.decl ruf064_kw_parent_mode(n: node, lit: loc)
+.decl ruf064_kw_parent_mode(n: node, lit: node)
 ruf064_kw_parent_mode(n, LIT) :- kind(n, "argument_list"), child(n, c1, _),
     kind(c1, "keyword_argument"), ruf064_tok_has_3(c1), field(c1, "value", c10),
     ruf064_bad_mode(c10, LIT).
@@ -98,7 +98,7 @@ ruf064_arg(n) :- node(_, n, _, _, _), !kind(n, "comment"), !kind(n, "line_contin
 
 // kw_bad(n): the JSON util `kw-bad`, used where the JSON says `matches: "kw-bad"`
 //   LIT: metavariable this relation binds for the calling rule
-.decl ruf064_kw_bad(n: node, lit: loc)
+.decl ruf064_kw_bad(n: node, lit: node)
 ruf064_kw_bad(n, LIT) :- child(n, c1, _), ruf064_kw_mode(c1), field(c1, "value", c2),
     ruf064_bad_mode(c2, LIT).
 
@@ -108,7 +108,7 @@ ruf064_no_kw(n) :- node(_, n, _, _, _), count : { child(n, c1, _), ruf064_kw_mod
 
 // mode_at_0(n): the JSON util `mode-at-0`, used where the JSON says `matches: "mode-at-0"`
 //   LIT: metavariable this relation binds for the calling rule
-.decl ruf064_mode_at_0(n: node, lit: loc)
+.decl ruf064_mode_at_0(n: node, lit: node)
 ruf064_mode_at_0(n, LIT) :- kind(n, "argument_list"),
     ( ruf064_kw_bad(n, LIT)
     ; ruf064_no_kw(n), child(n, c1, _), ruf064_bad_mode(c1, LIT), child(p1, c1, _), ruf064_counted(c1), k1 = count : { child(p1, s1, _), precedes(s1, c1), ruf064_counted(s1) }, k1 = 0, count : { precedes(s2, c1), kind(s2, "list_splat") } = 0
@@ -117,7 +117,7 @@ ruf064_mode_at_0(n, LIT) :- kind(n, "argument_list"),
 
 // mode_at_1(n): the JSON util `mode-at-1`, used where the JSON says `matches: "mode-at-1"`
 //   LIT: metavariable this relation binds for the calling rule
-.decl ruf064_mode_at_1(n: node, lit: loc)
+.decl ruf064_mode_at_1(n: node, lit: node)
 ruf064_mode_at_1(n, LIT) :- kind(n, "argument_list"),
     ( ruf064_kw_bad(n, LIT)
     ; ruf064_no_kw(n), child(n, c1, _), ruf064_bad_mode(c1, LIT), child(p1, c1, _), ruf064_counted(c1), k1 = count : { child(p1, s1, _), precedes(s1, c1), ruf064_counted(s1) }, k1 = 1, count : { precedes(s2, c1), kind(s2, "list_splat") } = 0
@@ -126,7 +126,7 @@ ruf064_mode_at_1(n, LIT) :- kind(n, "argument_list"),
 
 // mode_at_2(n): the JSON util `mode-at-2`, used where the JSON says `matches: "mode-at-2"`
 //   LIT: metavariable this relation binds for the calling rule
-.decl ruf064_mode_at_2(n: node, lit: loc)
+.decl ruf064_mode_at_2(n: node, lit: node)
 ruf064_mode_at_2(n, LIT) :- kind(n, "argument_list"),
     ( ruf064_kw_bad(n, LIT)
     ; ruf064_no_kw(n), child(n, c1, _), ruf064_bad_mode(c1, LIT), child(p1, c1, _), ruf064_counted(c1), k1 = count : { child(p1, s1, _), precedes(s1, c1), ruf064_counted(s1) }, k1 = 2, count : { precedes(s2, c1), kind(s2, "list_splat") } = 0
@@ -136,7 +136,7 @@ ruf064_mode_at_2(n, LIT) :- kind(n, "argument_list"),
 // RUF064(n): findings from clauses `non-octal-mode`, `non-octal-parent-mode`, which say the same.
 // Each rule is one way a JSON `rule` can match.
 // Columns after `at` are the metavariables the JSON's message, anchor or `each` names: one finding per distinct row.
-.violation RUF064(at: loc, lit: node) "Write `{lit}` as an octal literal: if its digits read as a mode (644, 755), add the `0o` prefix; otherwise write the same value in octal (decimal 420 is `0o644`, `0x1ff` is `0o777`)."
+.violation RUF064(at: node, lit: node) "Write `{lit}` as an octal literal: if its digits read as a mode (644, 755), add the `0o` prefix; otherwise write the same value in octal (decimal 420 is `0o644`, `0x1ff` is `0o777`)."
     suppress noqa "RUF064"
 RUF064(LIT, n) :- kind(n, "call"),
     ( within_stop(c1, n, ruf064_stop_1), ruf064_umask_fn(c1), child(n, c2, _), ruf064_mode_at_0(c2, LIT)

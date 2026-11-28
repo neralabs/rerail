@@ -10,13 +10,13 @@
 // LOG015(n): a finding at node n, from clause `root-logger-call`.
 // Each rule below is one way the JSON `rule` can match.
 // Columns after `at` are the metavariables the JSON's message, anchor or `each` names: one finding per distinct row.
-.violation LOG015(at: node, m: loc) "Replace this root logger `{m}()` call with the same call on a module-level `logger = logging.getLogger(__name__)`; root logger messages carry no source information. Leave it in a one-off script."
+.violation LOG015(at: node, m: node) "Replace this root logger `{m}()` call with the same call on a module-level `logger = logging.getLogger(__name__)`; root logger messages carry no source information. Leave it in a one-off script."
     suppress noqa "LOG015"
 LOG015(n, M) :- kind(n, "call"), field(n, "function", c1), log015_root_callee(c1, M).
 
 // root_callee(n): the JSON util `root-callee`, used where the JSON says `matches: "root-callee"`
 //   M: metavariable this relation binds for the calling rule
-.decl log015_root_callee(n: node, m: loc)
+.decl log015_root_callee(n: node, m: node)
 log015_root_callee(n, M) :- kind(n, "identifier"), sym_of(n, q1), log015_set_1(q1), node(_, n, _, _, _), M = n.
 log015_root_callee(n, M) :- kind(n, "attribute"), sym_of(n, q2), log015_set_1(q2),
     field(n, "attribute", c3), node(_, c3, _, _, _), M = c3.

@@ -1,4 +1,4 @@
-//! Named-only tapes (RER-131): which tokens the writer stores (`TokenGrammar::stored_children`).
+//! Named-only tapes (decision 0161): which tokens the writer stores (`TokenGrammar::stored_children`).
 
 use super::tokens::{TokenGrammar, grammar_json};
 use super::{Grammar, TapeDoc, TapeImage};
@@ -137,7 +137,7 @@ fn stored_tokens_are_tree_sitters_in_order() {
     }
 }
 
-/// RER-131 census (ignored): per language, tree-sitter's nodes and tokens, and how many the tape
+/// Decision 0161 census (ignored): per language, tree-sitter's nodes and tokens, and how many the tape
 /// stores. `RERAIL_TOKEN_CENSUS=<dialect>=<file list>[:<max>];...`; with `RERAIL_TOKEN_IMPLIED=<dir>`, each
 /// dialect's implied token texts and counts to `<dir>/<dialect>.tsv`.
 #[test]

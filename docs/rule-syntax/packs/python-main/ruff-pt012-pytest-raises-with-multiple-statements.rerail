@@ -21,7 +21,7 @@ pt012_raises_call(n) :- (kind(n, "parenthesized_expression") ; kind(n, "as_patte
 
 // raises_with(n): the JSON util `raises-with`, used where the JSON says `matches: "raises-with"`
 //   S: metavariable this relation binds for the calling rule
-.decl pt012_raises_with(n: node, s: loc)
+.decl pt012_raises_with(n: node, s: match)
 pt012_raises_with(n, S) :- kind(n, "with_statement"), child(n, c1, _),
     kind(c1, "with_clause"), child(c1, c2, _), kind(c2, "with_item"),
     field(c2, "value", c3),
@@ -77,7 +77,7 @@ pt012_ellipsis_stmt(n) :- kind(n, "expression_statement"), child(n, c1, _),
 // PT012(n, detail): findings from clauses `raises-with-multiple-statements`, `raises-with-compound-statement`. Their messages differ only in
 // `detail`: each rule's head gives its clause's words. Each rule is one way a JSON `rule` can match.
 // Columns after `at` are the metavariables the JSON's message, anchor or `each` names: one finding per distinct row.
-.violation PT012(at: loc, s: node, detail: symbol) "{detail} is needed to trigger the error."
+.violation PT012(at: match, s: node, detail: symbol) "{detail} is needed to trigger the error."
     suppress noqa "PT012"
 PT012(S, n, "Keep only the statement that should raise inside `pytest.raises`; move setup and follow-up statements before or after the `with` block, unless each one") :- pt012_raises_with(n, S),
     field(n, "body", c1), kind(c1, "block"), pt012_many_stmts(c1).

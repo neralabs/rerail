@@ -57,7 +57,7 @@ b007_uncertain(n) :- b007_demand_uncertain(n), b007_up_1(n, p1), child(p1, c2, _
 // B007(n, detail): findings from clauses `unused-loop-control-variable`, `unused-loop-control-variable-uncertain`. Their messages differ only in
 // `detail`: each rule's head gives its clause's words. Each rule is one way a JSON `rule` can match.
 // Columns after `at` are the metavariables the JSON's message, anchor or `each` names: one finding per distinct row.
-.violation B007(at: node, name: loc, detail: symbol) "Loop control variable `{name}` {detail} used within loop body"
+.violation B007(at: node, name: node, detail: symbol) "Loop control variable `{name}` {detail} used within loop body"
     suppress noqa "B007"
 B007(n, NAME, "not") :- kind(n, "identifier"), node(_, n, _, _, _), NAME = n,
     !match("(_+|(_+[a-zA-Z0-9_]*[a-zA-Z0-9]+?))", n), b007_in_target(n), !b007_uncertain(n).

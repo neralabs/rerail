@@ -34,6 +34,7 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{LazyLock, Mutex};
 
 pub mod author_joins;
+pub mod dropped;
 pub mod analysis;
 pub mod analysis_report;
 pub mod kinds;
@@ -51,7 +52,11 @@ pub use roofline::Unit;
 struct On(bool);
 impl Default for On {
     fn default() -> Self {
-        On(setting(|| std::env::var_os("RERAIL_PROFILE").is_some()))
+        let on = setting(|| std::env::var_os("RERAIL_PROFILE").is_some());
+        if on {
+            rerail_prof::work::start();
+        }
+        On(on)
     }
 }
 
@@ -72,6 +77,9 @@ pub fn on() -> bool {
 /// Turns profiling of this caller's runs on or off (a test that profiles without the environment variable), for the
 /// rest of the extent under way here.
 pub fn set(on: bool) {
+    if on {
+        rerail_prof::work::start();
+    }
     bind_here(On(on));
 }
 
@@ -142,6 +150,10 @@ pub struct State {
     /// By (span path, plan text): per step, and last its head's rows made, the CPU seconds its walks spent there
     /// (`setfix::step_cpu`), where the engine timed them.
     pub native_step_cpu: BTreeMap<(String, String), Vec<f64>>,
+    /// By (span path, a join's steps as setfix names them): per step, its `Rows::each` calls' shapes
+    /// (`setfix::SHAPES`: calls and candidates walked by call site, calls by candidates' kind, calls by candidates
+    /// walked), where the engine counted them.
+    pub native_shapes: BTreeMap<(String, String), Vec<Vec<u64>>>,
     pub notes: BTreeMap<String, String>,
     pub join_rows: BTreeMap<String, (usize, usize)>,
     /// Run-level decisions by (topic, text): how many times made, or stated by a reused version that made them
@@ -221,6 +233,9 @@ impl State {
         }
         for (k, t) in o.native_step_cpu {
             add_cpu(self.native_step_cpu.entry(k).or_default(), &t);
+        }
+        for (k, t) in o.native_shapes {
+            add_shapes(self.native_shapes.entry(k).or_default(), &t);
         }
         for (k, t) in o.notes {
             self.notes.entry(k).or_insert(t);
@@ -538,7 +553,7 @@ pub struct Stratum {
 
 /// One planned step: the literal, how it is read, from what, and the rows the planner expects after it; for a join,
 /// the joins it passed over there, each with the rows a binding it was priced at (why this one was taken).
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, Default)]
 pub struct StepPlan {
     pub literal: String,
     pub access: String,
@@ -551,6 +566,9 @@ pub struct StepPlan {
     /// The rule the step's rows a binding were priced by (`plan_search`'s `atom_rows`): postings, observed,
     /// absence proof, membership, and the containment share applied, so a misprediction names its rule.
     pub basis: String,
+    /// The literal's variables, as it shows them (`$x`): what the rows-dropped analysis (`dropped`) reads to tell a
+    /// variable no later step reads and to write a rewrite's helper.
+    pub vars: Vec<String>,
 }
 
 /// A rule's plan as the planner chose it: estimated work and rows, and its search (subsets kept, candidates priced).
@@ -563,6 +581,9 @@ pub struct RulePlan {
     pub steps: Vec<StepPlan>,
     /// The join shape directives that held back a step of its search (`.shape`, O-join-shape-directives).
     pub shaped: Vec<String>,
+    /// The head as shown (`p($x, @f($y))`), and the variables it reads (`dropped`).
+    pub head: String,
+    pub head_vars: Vec<String>,
 }
 
 #[derive(Default)]
@@ -701,6 +722,8 @@ pub fn merged() -> Held {
 }
 
 pub struct Open {
+    /// Its id in the CPU sampler's words (`rerail_prof::work`; 0 off): the span path's, as the heap sampler's.
+    work: u32,
     path: String,
     start: f64,
     children: f64,
@@ -1579,7 +1602,12 @@ fn open(path: String) -> Span {
             0
         };
         rerail_prof::heap::set_span(heap);
-        s.opens.push(Open { path, start, children: 0.0, alloc, peak: memory::peak_sampled(), children_alloc: 0, children_rise: 0, heap, ticks: ticks(), accounted: accounted() });
+        // The CPU sampler's word of what this thread is doing: this span from now (`rerail_prof::work`).
+        let work = if rerail_context::work::on() { if heap != 0 { heap } else { rerail_prof::heap::intern(&path) } } else { 0 };
+        if work != 0 {
+            rerail_context::work::set_part(rerail_context::work::SPAN, u64::from(work));
+        }
+        s.opens.push(Open { work, path, start, children: 0.0, alloc, peak: memory::peak_sampled(), children_alloc: 0, children_rise: 0, heap, ticks: ticks(), accounted: accounted() });
     });
     Span(true)
 }
@@ -1605,6 +1633,9 @@ impl Drop for Span {
                 None => 0,
             };
             rerail_prof::heap::set_span(after);
+            if open.work != 0 {
+                rerail_context::work::set_part(rerail_context::work::SPAN, u64::from(s.opens.last().map_or(0, |o| o.work)));
+            }
             let total = now - open.start;
             account_scope(open.accounted, ticks().wrapping_sub(open.ticks), total);
             if s.opens.is_empty() {
@@ -1721,7 +1752,7 @@ const INSIDE: u8 = 2;
 #[derive(Clone, Copy, Default)]
 struct Stage(u8);
 
-pub use rerail_context::{var, var_os, vars, Switches, AnyArc, Cores, is_main_thread, cores_scope, cores_spawn, cores_spawn_fifo, cores_threads, on_cores, Bound, Caller, Machine, bind, bind_here, bound, caller, holds, job_run, with_bound, RUN, RunOwn, RunValues, Shared, default_shared, engine_thread, enter, left_run, run_ended, local, local_if_any, machine, misses, run_own, setting, shared, shared_here, shared_object, starter_object, with_local, with_shared, within};
+pub use rerail_context::{var, var_os, vars, Switches, AnyArc, Cores, is_main_thread, cores_scope, cores_spawn, cores_spawn_fifo, cores_threads, on_cores, Bound, Caller, Machine, bind, bind_here, bound, caller, holds, job_run, with_bound, read_bound, RUN, RunOwn, RunValues, Shared, default_shared, engine_pool, engine_thread, enter, left_run, run_ended, local, local_if_any, machine, misses, run_own, setting, shared, shared_here, shared_object, starter_object, with_local, with_shared, within};
 
 /// A run starts on this thread (`plan::corpus`): before its first wave, unless it is nested in a run inside its
 /// waves, until the guard drops.
@@ -2166,6 +2197,29 @@ pub fn work(unit: Unit, n: u64) {
 /// made 243,092 rows as 1 (`kind__sup0`, O125).
 pub fn plan_work(steps: &[(u64, u64)]) -> u64 {
     steps.iter().map(|(a, _)| a).sum::<u64>() + steps.last().map_or(0, |s| s.1)
+}
+
+/// Adds `add`'s per-step counts to `to`'s.
+fn add_shapes(to: &mut Vec<Vec<u64>>, add: &[Vec<u64>]) {
+    if to.len() < add.len() {
+        to.resize(add.len(), Vec::new());
+    }
+    for (t, a) in to.iter_mut().zip(add) {
+        if t.len() < a.len() {
+            t.resize(a.len(), 0);
+        }
+        for (x, y) in t.iter_mut().zip(a) {
+            *x += y;
+        }
+    }
+}
+
+/// Adds a join's `Rows::each` call shapes per step (`setfix::SHAPES`), `join` its steps as setfix names them, to the
+/// current span.
+pub fn native_shapes(join: String, steps: &[Vec<u64>]) {
+    let path = current();
+    let mut state = state();
+    add_shapes(state.native_shapes.entry((path, join)).or_default(), steps);
 }
 
 /// Adds a native plan's rows in and out per step, its probes' CPU seconds, and their CPU seconds per step and last
@@ -3290,21 +3344,22 @@ pub struct Report {
     pub stages: u32,
     pub submissions: u32,
     pub dispatches: u32,
-    /// Of the launches, programs launched again (decision 0648): a stack's next, where a program's walk went on past
-    /// its stack, and an arena's, where a size script parked and the arena's pages were mapped for it.
+    /// Of the launches, programs launched again (decisions 0603 point 5, 0674): a budget's, where a launch's chain
+    /// ran its dispatches with phases left, and an arena's, where a size script parked and the arena's pages were
+    /// mapped for it; the programs' items taken over all their launches; and a launch's budget of dispatches, the
+    /// least of theirs.
     pub relaunches: u32,
     pub remaps: u32,
     /// Of the remaps, a gate's rooms' (a recursive component's rows mapped as its rounds reach them).
     pub room_remaps: u32,
+    pub taken: u64,
+    pub launch_items: u64,
     /// Of those, the ones that grew a lattice head's key map.
     pub maps_grown: u32,
     /// Its programs: one a stratum (a wave's first stratum's report, its wave's).
     pub programs: u32,
     /// Runs again from an overflowing stage.
     pub reruns: u32,
-    /// Times it waited for the device's memory before it encoded (`gpu::shared::admit`, Q203), and the seconds.
-    pub admit_waits: u32,
-    pub admit_seconds: f64,
     pub gpu_seconds: f64,
     /// This thread's CPU: encoding (sorts' encoding included), waiting, and reading the rows back into
     /// the store.

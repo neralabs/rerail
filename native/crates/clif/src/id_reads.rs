@@ -284,7 +284,7 @@ pub fn select(b: &mut B<'_, '_>) -> Value {
         |b| b.c32(NONE),
         |b| {
             let samples = b.run_k(at::SAMPLES, item);
-            let s = b.f.ins().ushr_imm(r, 6);
+            let s = b.f.ins().ushr_imm(r, i64::from(crate::ids::SAMPLE.trailing_zeros()));
             let g0 = b.u32_of(samples, s);
             let (head, done) = (b.f.create_block(), b.f.create_block());
             b.f.append_block_param(head, I32);

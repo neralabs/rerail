@@ -24,7 +24,7 @@
 //     negated(e)              e is `!x`, `a != b` or `a !== b` (through parentheses)
 //     assignment(a)           a is an assignment expression: `=`, `+=`, `||=`, …
 //
-// Builds on tsx/eslint-a-common (deparen, deparen_count, function_node, token_text; also used by the rules),
+// Builds on tsx/eslint-a-common (deparen, deparen_count, function_node, node_tokens_text; also used by the rules),
 // tsx/statements (body, block_stmt, single_statement, prev_stmt, is_comment, var_decl) and core (tokens, nearest,
 // within, earlier).
 #include "tsx/eslint-a-common.rerail"

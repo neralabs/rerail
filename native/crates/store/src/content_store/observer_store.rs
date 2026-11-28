@@ -21,14 +21,12 @@ impl Store for Provider {
     }
 
     fn file_read(&self, db: &rusqlite::Connection, path: &Path, space: &[u8; 32], f: &mut dyn FnMut(Option<&dyn KeptRead>)) -> StoreResult<()> {
-        let rows = super::kept_facts::chain_rows(db, space)?;
-        if rows.is_empty() {
-            f(None);
-            return Ok(());
+        // The rows and the files they name read as one commit's (`KeptSpace::read`): a commit between the two that
+        // swept the files is read again, not failed.
+        match super::kept_facts::KeptSpace::read(path, db, space)? {
+            Some(kept) => f(Some(&kept.view())),
+            None => f(None),
         }
-        let kept = super::kept_facts::KeptSpace::open(path, space, &rows)?;
-        let chain = kept.view();
-        f(Some(&chain));
         Ok(())
     }
 

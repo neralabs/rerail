@@ -7,10 +7,10 @@ use crate::code_rule_dsl::logic::front::name::List;
 use crate::code_rule_dsl::logic::front::Value;
 use crate::code_rule_dsl::logic::plan::body::{VarSet, atom_vars, lit_vars, term_vars};
 use crate::code_rule_dsl::logic::program_facts::Field;
-use crate::code_rule_dsl::logic::program_image::{AggRef, AtomRef, Lit, RuleId, RuleRef, T, TermRef, Version, t_of};
+use crate::code_rule_dsl::logic::program_image::{AggRef, AtomRef, Lit, RuleId, RuleRef, Slot, T, TermRef, Version, t_of};
 use std::collections::{BTreeMap, BTreeSet};
 
-pub(super) const PREFIX: &str = "rr_reader_demand_";
+pub(super) const PREFIX: &str = crate::code_rule_dsl::logic::plan::body::READER_DEMAND;
 
 fn is_demand(rel: &str) -> bool {
     rel.starts_with(PREFIX) || rel.starts_with(PRODUCT)
@@ -38,6 +38,35 @@ pub(super) fn eligible(program: &Program<'_>, rel: &str) -> bool {
 fn keys<'v>(atom: AtomRef<'v>, columns: &[usize]) -> Option<Vec<TermRef<'v>>> {
     let args: Vec<TermRef<'v>> = atom.args().collect();
     columns.iter().map(|&i| args.get(i).copied().filter(|t| plain(*t))).collect()
+}
+
+/// The ties a demand for `read` keeps (decision 0652): `read`'s location columns `locs` hold one document's nodes in
+/// every row, so where the demand's positive reads (`parts`) bind two of their variables, the rows it asks for are
+/// those whose two are of one document too, `@doc(x) = @doc(y)`. A superset still of what the reader joins, and the
+/// split sees the demand on one document, as the reader is (UP008's `super_first(a, f)` asked for by `a` alone, with
+/// `f`'s class path: every name met every class path of the corpus).
+fn same_document_ties(rule: RuleRef<'_>, read: AtomRef<'_>, locs: &[usize], parts: &[Part]) -> Vec<(usize, usize)> {
+    let mut bound = VarSet::default();
+    for part in parts {
+        if let Part::Lit(j) = *part
+            && let Some(a) = rule.body().nth(j).and_then(|l| l.atom())
+            && !a.neg()
+            && !a.gated()
+        {
+            bound.extend(&atom_vars(a));
+        }
+    }
+    let args: Vec<TermRef<'_>> = read.args().collect();
+    let mut seen: Vec<(usize, Slot)> = Vec::new();
+    for &c in locs {
+        if let Some(TermRef::Var(s)) = args.get(c).copied()
+            && bound.contains(s)
+            && !seen.iter().any(|(_, t)| *t == s)
+        {
+            seen.push((c, s));
+        }
+    }
+    seen.iter().skip(1).map(|&(c, _)| (seen[0].0, c)).collect()
 }
 
 fn vars_of(terms: &[TermRef<'_>]) -> VarSet {
@@ -143,10 +172,12 @@ pub struct Proof {
     pub(super) read: usize,
     own: bool,
     pub(super) parts: Vec<Part>,
+    /// Pairs of the read's columns its demand ties to one document (`same_document_ties`): `@doc(x) = @doc(y)`.
+    ties: Vec<(usize, usize)>,
 }
 
 fn install(program: &mut Program<'_>, rel: &str, cols: &[usize], products: &BTreeSet<String>, require_anchor: bool) -> Result<bool, String> {
-    install_alone(program, rel, cols, &Ask { products, require_anchor, prefix: PREFIX }, &|_, _| true)
+    install_alone(program, rel, cols, &Ask { products, require_anchor, prefix: PREFIX, same_doc: None }, &|_, _| true)
 }
 
 /// What a restriction is installed under: the products its demand leaves out, whether a read must anchor it, and its
@@ -156,6 +187,9 @@ struct Ask<'a> {
     products: &'a BTreeSet<String>,
     require_anchor: bool,
     prefix: &'a str,
+    /// Each relation one document's in every row, with its location columns (`FileLocal::row_documents`): a demand
+    /// keeps the tie its dropped read made between them (`same_document_ties`).
+    same_doc: Option<&'a BTreeMap<String, rerail_blocks::vector::Vector<usize>>>,
 }
 
 /// A restriction `install` writes, planned on the program as it is: `rel`'s guard `name` at its columns `cols`, the
@@ -181,7 +215,7 @@ fn plan(
     dependent: &BTreeSet<String>,
     restricts: &dyn Fn(&Version, &[Proof]) -> bool,
 ) -> Option<Plan> {
-    let Ask { products, require_anchor, prefix } = *ask;
+    let Ask { products, require_anchor, prefix, same_doc } = *ask;
     let name = format!("{prefix}{rel}");
     if program.columns(&name).is_some() {
         return None;
@@ -235,7 +269,8 @@ fn plan(
                     }
                 });
             }
-            proofs.push(Proof { rule: rule.id(), read: i, own, parts });
+            let ties = same_doc.and_then(|m| m.get(rel)).map(|locs| same_document_ties(rule, read, locs, &parts)).unwrap_or_default();
+            proofs.push(Proof { rule: rule.id(), read: i, own, parts, ties });
         }
     }
     if producers.is_empty() || readers == 0 || (require_anchor && !anchored) || !restricts(v, &proofs) {
@@ -299,7 +334,8 @@ fn derive_plans(program: &Program<'_>, plans: &[Plan]) -> Result<std::sync::Arc<
                     } else {
                         Vec::new()
                     };
-                    write_demand(v, r, b, &plan.name, &head, (&plan.name, &guard), &proof.parts)?;
+                    let ties: Vec<(T<'_>, T<'_>)> = proof.ties.iter().map(|&(x, y)| (t_of(r, read.args().nth(x).expect("a location column")), t_of(r, read.args().nth(y).expect("a location column")))).collect();
+                    write_demand(v, r, b, &plan.name, &head, (&plan.name, &guard), &proof.parts, &ties)?;
                 }
             }
             b.fields().set_field(Field::Qualifiers(&qualifiers));
@@ -352,10 +388,11 @@ pub fn install_requests(
     program: &mut Program<'_>,
     requests: &[(String, &[usize])],
     prefix: &str,
+    same_doc: &BTreeMap<String, rerail_blocks::vector::Vector<usize>>,
     restricts: &dyn Fn(&str, &[usize], &Version, &[Proof]) -> bool,
 ) -> Result<Vec<bool>, String> {
     let none = BTreeSet::new();
-    let ask = Ask { products: &none, require_anchor: false, prefix };
+    let ask = Ask { products: &none, require_anchor: false, prefix, same_doc: Some(same_doc) };
     let mut installed = vec![false; requests.len()];
     let mut next = 0;
     while next < requests.len() {
@@ -401,7 +438,7 @@ fn node_columns(program: &Program<'_>, rel: &str) -> Vector<usize> {
         .unwrap_or_default()
         .iter()
         .enumerate()
-        .filter(|(_, (_, ty))| matches!(ty.as_str(), "node" | "loc"))
+        .filter(|(_, (_, ty))| matches!(ty.as_str(), "node" | "place"))
         .map(|(i, _)| i)
         .collect()
 }
@@ -411,6 +448,7 @@ pub fn restrict(program: &mut Program<'_>, rel: &str, products: &BTreeSet<String
         return Ok(false);
     }
     let nodes = node_columns(program, rel);
+    let of_nodes = !nodes.is_empty();
     if tuple && nodes.len() > 1 && install(program, rel, &nodes, products, require_anchor)? {
         return Ok(true);
     }
@@ -419,7 +457,11 @@ pub fn restrict(program: &mut Program<'_>, rel: &str, products: &BTreeSet<String
             return Ok(true);
         }
     }
-    // A symbol can also bound a read, for example a requested qualified name.
+    // A symbol can also bound a read, for example a requested qualified name. Of a relation of a file's nodes, only
+    // where what asks is constants (`asked_by_constants`): a demand fed by a file's rows is a table of every file's
+    // values, and the relation's rules, reading it at their nodes, went to the cross part (decision 0677, the data
+    // layer's `vmi_callee(f, x)` asked for by each file's aliases).
+    let facts = program.f.facts.clone();
     let symbols: Vector<usize> = program
         .columns(rel)
         .unwrap_or_default()
@@ -429,11 +471,32 @@ pub fn restrict(program: &mut Program<'_>, rel: &str, products: &BTreeSet<String
         .map(|(i, _)| i)
         .collect();
     for i in symbols {
-        if install(program, rel, &[i], products, true)? {
+        let installed = if of_nodes {
+            install_alone(program, rel, &[i], &Ask { products, require_anchor: true, prefix: PREFIX, same_doc: None }, &|v, proofs| asked_by_constants(v, proofs, &facts))?
+        } else {
+            install(program, rel, &[i], products, true)?
+        };
+        if installed {
             return Ok(true);
         }
     }
     Ok(false)
+}
+
+/// Whether a demand's rules read constants alone: relations of stated facts no rule derives, and comparisons. Such a
+/// demand is the same in every file.
+fn asked_by_constants(v: &Version, proofs: &[Proof], facts: &BTreeSet<String>) -> bool {
+    let derived: BTreeSet<&str> = v.rules().filter(|r| r.body().next().is_some()).map(|r| v.rel_name(r.head().rel())).collect();
+    proofs.iter().all(|proof| {
+        let rule = v.rule(proof.rule).expect("a reader of the version");
+        proof.parts.iter().all(|part| match *part {
+            Part::Guard => false,
+            Part::Lit(j) => rule.body().nth(j).and_then(|l| l.atom()).is_none_or(|a| {
+                let r = v.rel_name(a.rel());
+                facts.contains(r) && !derived.contains(r)
+            }),
+        })
+    })
 }
 
 /// Anchor the readers of a mandatory product before its own demand is derived.

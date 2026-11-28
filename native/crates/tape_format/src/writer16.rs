@@ -91,6 +91,9 @@ pub struct Part {
     pub len: u64,
 }
 
+/// The record of a document's nodes a walk keeps as it writes them (`Cursor::recording`).
+pub use crate::aux_index::Nodes;
+
 /// The writer's state: the document's constants, the writer's variables, its parts (`rerail_clif::writer::State`).
 #[repr(C)]
 #[derive(Clone, Copy, Debug, Default)]
@@ -1760,6 +1763,12 @@ pub struct Cursor<X: CellWidths> {
     source_len: u64,
     opens: usize,
     open_len: u32,
+    /// The writer's record of its nodes (`f16::Writer::cursor_parts`), each pushed as it is written, so the tape's
+    /// auxiliary index is laid from it, not read back off the tape; null where the walk keeps none.
+    rec: *mut crate::aux_index::Nodes,
+    /// The writer's language's number of each of the walk's own (`number`); none where they are the language's.
+    numbers: *const u32,
+    numbers_len: usize,
     x: core::marker::PhantomData<X>,
 }
 
@@ -1784,7 +1793,44 @@ impl<X: CellWidths> Cursor<X> {
                 let b = st.block((st.n - 1) / Z);
                 (b.room, b.area)
             };
-            Cursor { s, room, area, n: st.n, prev_start: st.prev_start, source_len: st.source_len, opens: st.part(part::OPEN), open_len: st.open_len, x: core::marker::PhantomData }
+            Cursor { s, room, area, n: st.n, prev_start: st.prev_start, source_len: st.source_len, opens: st.part(part::OPEN), open_len: st.open_len, rec: std::ptr::null_mut(), numbers: std::ptr::null(), numbers_len: 0, x: core::marker::PhantomData }
+        }
+    }
+
+    /// `begin`, each node pushed to the writer's record `rec` as it is written (`f16::Writer::cursor_parts`), and
+    /// the walk's own numbers the writer's language's `numbers` (`number`; empty: the walk's are the language's).
+    ///
+    /// # Safety
+    /// As `begin`'s; `rec` is the writer's record, which nothing else reads or writes while the cursor is held, and
+    /// `numbers` outlives the cursor and holds every number the walk writes.
+    #[inline(always)]
+    pub unsafe fn recording(desc: *mut u8, rec: *mut crate::aux_index::Nodes, numbers: &[u32]) -> Self {
+        // SAFETY: the caller's.
+        let mut cursor = unsafe { Self::begin(desc) };
+        cursor.rec = rec;
+        cursor.numbers = numbers.as_ptr();
+        cursor.numbers_len = numbers.len();
+        cursor
+    }
+
+    /// The writer's language's number of the walk's own `number` (`recording`'s table).
+    #[inline(always)]
+    pub fn number(&self, number: u32) -> u32 {
+        if self.numbers_len == 0 {
+            return number;
+        }
+        debug_assert!((number as usize) < self.numbers_len, "a number the walk's table holds");
+        // SAFETY: `recording`'s: the table holds every number the walk writes.
+        unsafe { *self.numbers.add(number as usize) }
+    }
+
+    /// Node `self.n` in the record, where it is kept: its code, its subtree's end (`u32::MAX` until it closes), its
+    /// start and its end.
+    #[inline(always)]
+    fn record(&mut self, code: u32, subtree: u32, start: u64, end: u64) {
+        if !self.rec.is_null() {
+            // SAFETY: `recording`'s: the record is the cursor's while held.
+            unsafe { (*self.rec).push(code, subtree, start as u32, end as u32) };
         }
     }
 
@@ -1907,6 +1953,7 @@ impl<X: CellWidths> Cursor<X> {
     /// As `begin`'s.
     #[inline(always)]
     pub unsafe fn open(&mut self, number: u32, start: u64) {
+        self.record(number, u32::MAX, start, 0);
         // SAFETY: the caller's.
         unsafe {
             if self.n == 0 {
@@ -1931,6 +1978,7 @@ impl<X: CellWidths> Cursor<X> {
     #[inline(always)]
     pub unsafe fn leaf(&mut self, number: u32, start: u64, end: u64) {
         debug_assert!(end >= start && end <= self.source_len, "a leaf's end past its start, in the source");
+        self.record(number, self.n + 1, start, end);
         // SAFETY: the caller's.
         unsafe {
             if self.n == 0 {
@@ -1958,6 +2006,8 @@ impl<X: CellWidths> Cursor<X> {
     #[inline(always)]
     pub unsafe fn leaf_in(&mut self, number: u32, child: u32, start: u64, cs: u64, ce: u64, end: u64) {
         debug_assert!(cs >= start && ce >= cs && end >= ce && end <= self.source_len, "the node's and its child's bounds in order");
+        self.record(number, self.n + 2, start, end);
+        self.record(child, self.n + 2, cs, ce);
         // SAFETY: the caller's.
         unsafe {
             if self.n == 0 {
@@ -2014,6 +2064,12 @@ impl<X: CellWidths> Cursor<X> {
             let t = self.opens + (self.open_len as usize - 1) * OPEN as usize;
             let (i, start) = (ld32(t), ld64(t + 16));
             debug_assert!(end >= start && end <= self.source_len, "a close's end past its node's start, in the source");
+            if !self.rec.is_null() {
+                // `recording`'s: its subtree ends here, and its span.
+                let rec = &mut *self.rec;
+                rec.end[i as usize] = self.n;
+                rec.stop[i as usize] = end as u32;
+            }
             // The node in the held block: its cells there, and no block to settle.
             if i / Z == (self.n - 1) / Z {
                 self.open_len -= 1;

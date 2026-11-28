@@ -10,7 +10,7 @@
 // YTT302(n): a finding at node n, from clause `sys-version-cmp-str10`.
 // Each rule below is one way the JSON `rule` can match.
 // Columns after `at` are the metavariables the JSON's message, anchor or `each` names: one finding per distinct row.
-.violation YTT302(at: loc, c: node) "Compare `sys.version_info` to a tuple such as `sys.version_info >= (3,)` instead of comparing `sys.version` to a one-character string; string order misjudges a two-digit major version."
+.violation YTT302(at: node, c: node) "Compare `sys.version_info` to a tuple such as `sys.version_info >= (3,)` instead of comparing `sys.version` to a one-character string; string order misjudges a two-digit major version."
     suppress noqa "YTT302"
 YTT302(C, n) :- ytt302_target(n), node(_, n, _, _, _), C = n.
 YTT302(C, n) :- ytt302_in_string(n, C).
@@ -18,7 +18,7 @@ YTT302(C, n) :- ytt302_in_string(n, C).
 // one_byte_string(n): the JSON util `one-byte-string`, used where the JSON says `matches: "one-byte-string"`
 .decl ytt302_one_byte_string(n: node)
 ytt302_one_byte_string(n) :- (kind(n, "string") ; kind(n, "concatenated_string")),
-    value(n, v1), value_type(v1, "str"), match("[\\x00-\\x7f]", v1),
+    value(n, v1), value_type_of(n, "str"), match("[\\x00-\\x7f]", v1),
     count : { has(n, c2, "string_start"), glob("**[fFtT]**", c2) } = 0, !ytt302_alt_1(n).
 ytt302_one_byte_string(n) :- kind(n, "parenthesized_expression"), child(n, c4, _),
     ytt302_one_byte_string(c4).
@@ -46,7 +46,7 @@ ytt302_target(n) :- (kind(n, "identifier") ; kind(n, "attribute")), sym_of(n, "s
 
 // in_string(n): the JSON util `in-string`, used where the JSON says `matches: "in-string"`
 //   C: metavariable this relation binds for the calling rule
-.decl ytt302_in_string(n: node, c: loc)
+.decl ytt302_in_string(n: node, c: node)
 ytt302_in_string(n, C) :- (kind(n, "string") ; kind(n, "concatenated_string")),
     parsed(n, "annotation", r1), within(c2, r1), ytt302_alt_5(c2, C).
 
@@ -75,6 +75,6 @@ ytt302_counted(n) :- node(_, n, _, _, _), !kind(n, "comment"), !kind(n, "line_co
 
 // alt_5(n): the JSON `any`: n matches if any one of these rules does
 //   C: metavariable this relation binds for the calling rule
-.decl ytt302_alt_5(n: node, c: loc)
+.decl ytt302_alt_5(n: node, c: node)
 ytt302_alt_5(n, C) :- ytt302_target(n), C = n.
 ytt302_alt_5(n, C) :- ytt302_in_string(n, C).

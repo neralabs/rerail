@@ -201,7 +201,7 @@ import_syntax(i, s) :- import_member(i, m, 0, _), !kind(m, "namespace_import"),
 .decl import_prev(i: node, p: node, gap: number)
 import_prev(i, p, g) :- import_decl(i), docof(i, d), visit_index(i, vi),
     j = max j2 : { import_decl(o), docof(o, d), visit_index(o, j2), j2 < vi },
-    import_decl(p), docof(p, d), visit_index(p, j), line(i, a), end_line(p, b), g = max(a - b - 1, 0).
+    import_decl(p), docof(p, d), visit_index(p, j), node_line_number(i, a), node_end_line_number(p, b), g = max(a - b - 1, 0).
 // import_group(i, g): imports separated by no line form a group; g is its first import.
 //   import a from "a";             group of a
 //   import b from "b";             group of a

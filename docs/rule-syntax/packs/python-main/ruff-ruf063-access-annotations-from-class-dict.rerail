@@ -8,7 +8,7 @@
 // annotations_literal(n): the JSON util `annotations-literal`, used where the JSON says `matches: "annotations-literal"`
 .decl ruf063_annotations_literal(n: node)
 ruf063_annotations_literal(n) :- (kind(n, "string") ; kind(n, "concatenated_string")),
-    value(n, v1), value_type(v1, "str"), v1 = "__annotations__",
+    value(n, v1), value_type_of(n, "str"), v1 = "__annotations__",
     count : { has(n, c2, "string_start"), glob("**[fFtT]**", c2) } = 0.
 ruf063_annotations_literal(n) :- kind(n, "parenthesized_expression"), child(n, c3, _),
     ruf063_annotations_literal(c3).
@@ -49,20 +49,20 @@ ruf063_subscript_access(n) :- kind(n, "subscript"), child(n, c1, _), ruf063_dict
 
 // get_in_string(n): the JSON util `get-in-string`, used where the JSON says `matches: "get-in-string"`
 //   HIT: metavariable this relation binds for the calling rule
-.decl ruf063_get_in_string(n: node, hit: loc)
+.decl ruf063_get_in_string(n: node, hit: node)
 ruf063_get_in_string(n, HIT) :- (kind(n, "string") ; kind(n, "concatenated_string")),
     parsed(n, "annotation", r1), within(c2, r1), ruf063_alt_2(c2, HIT).
 
 // subscript_in_string(n): the JSON util `subscript-in-string`, used where the JSON says `matches: "subscript-in-string"`
 //   HIT: metavariable this relation binds for the calling rule
-.decl ruf063_subscript_in_string(n: node, hit: loc)
+.decl ruf063_subscript_in_string(n: node, hit: node)
 ruf063_subscript_in_string(n, HIT) :- (kind(n, "string") ; kind(n, "concatenated_string")),
     parsed(n, "annotation", r1), within(c2, r1), ruf063_alt_3(c2, HIT).
 
 // RUF063(n, detail): findings from clauses `annotations-from-dict-get`, `annotations-from-dict-subscript`. Their messages differ only in
 // `detail`: each rule's head gives its clause's words. Each rule is one way a JSON `rule` can match.
 // Columns after `at` are the metavariables the JSON's message, anchor or `each` names: one finding per distinct row.
-.violation RUF063(at: loc, hit: node, detail: symbol) "Use `annotationlib.get_annotations(obj)` (3.14+), `inspect.get_annotations(obj)` (3.10+) or `typing_extensions.get_annotations(obj)` instead of {detail}."
+.violation RUF063(at: node, hit: node, detail: symbol) "Use `annotationlib.get_annotations(obj)` (3.14+), `inspect.get_annotations(obj)` (3.10+) or `typing_extensions.get_annotations(obj)` instead of {detail}."
     suppress noqa "RUF063"
 RUF063(HIT, n, "`__dict__.get(\"__annotations__\")`") :- ruf063_get_call(n), node(_, n, _, _, _), HIT = n.
 RUF063(HIT, n, "`__dict__.get(\"__annotations__\")`") :- ruf063_get_in_string(n, HIT).
@@ -129,12 +129,12 @@ ruf063_alt_1(n) :- node(_, n, _, _, _), glob("[(),]", n).
 
 // alt_2(n): the JSON `any`: n matches if any one of these rules does
 //   HIT: metavariable this relation binds for the calling rule
-.decl ruf063_alt_2(n: node, hit: loc)
+.decl ruf063_alt_2(n: node, hit: node)
 ruf063_alt_2(n, HIT) :- ruf063_get_call(n), HIT = n.
 ruf063_alt_2(n, HIT) :- ruf063_get_in_string(n, HIT).
 
 // alt_3(n): the JSON `any`: n matches if any one of these rules does
 //   HIT: metavariable this relation binds for the calling rule
-.decl ruf063_alt_3(n: node, hit: loc)
+.decl ruf063_alt_3(n: node, hit: node)
 ruf063_alt_3(n, HIT) :- ruf063_subscript_access(n), HIT = n.
 ruf063_alt_3(n, HIT) :- ruf063_subscript_in_string(n, HIT).

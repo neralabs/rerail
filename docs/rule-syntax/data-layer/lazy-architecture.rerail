@@ -232,7 +232,7 @@ la_setattr("setattr"). la_setattr("builtins.setattr"). la_setattr("__setattr__")
 // la_first(F, what, l): the line of F's first entry of a list (the script's lists are in walk order).
 .decl la_first(f: node, what: symbol, l: number)
 la_first(f, w, l) :- la_item(f, w, _), i = min j : { la_item(f, w, m), visit_index(m, j) },
-    la_item(f, w, n), visit_index(n, i), line(n, l).
+    la_item(f, w, n), visit_index(n, i), node_line_number(n, l).
 .decl la_has(f: node, what: symbol)
 la_has(f, w) :- la_item(f, w, _).
 
@@ -259,7 +259,7 @@ la_as(t, t) :- la_canon(t).
 la_as(c, t) :- la_stands(c, t).
 // la_edge_line(G, i, l): the line of G's call at visit index i.
 .decl la_edge_line(g: node, i: number, l: number)
-la_edge_line(g, i, l) :- la_edge(g, _, i), la_call(g, c), visit_index(c, i), line(c, l).
+la_edge_line(g, i, l) :- la_edge(g, _, i), la_call(g, c), visit_index(c, i), node_line_number(c, l).
 
 // The targets each search looks for.
 .decl la_t_io(m: node)
@@ -293,9 +293,9 @@ la_intr(t, 3, l) :- la_sens(t), la_first(t, "state_write", l).
 la_intr(t, 4, l) :- la_sens(t), la_first(t, "reach", l).
 la_intr(t, 5, l) :- la_first(t, "io", l).
 la_intr(t, 6, l) :- la_first(t, "native", l).
-la_intr(t, 7, l) :- la_legacy(t), line(t, l).
-la_intr(t, 8, l) :- la_fn(t), is_async(t), !la_pure(t), line(t, l).
-la_intr(t, 9, l) :- la_fact(t, _, _, _, x), suffix("_async", x), line(t, l).
+la_intr(t, 7, l) :- la_legacy(t), node_line_number(t, l).
+la_intr(t, 8, l) :- la_fn(t), is_async(t), !la_pure(t), node_line_number(t, l).
+la_intr(t, 9, l) :- la_fact(t, _, _, _, x), suffix("_async", x), node_line_number(t, l).
 .decl la_intr_line(t: node, l: number)
 la_intr_line(t, l) :- la_intr(t, _, _), r = min k : { la_intr(t, k, _) }, la_intr(t, r, l).
 .decl la_sens(f: node)
@@ -356,14 +356,18 @@ la_at(f, w, l) :- la_canon_of(f, g), la_line(g, w, l).
 // la_find(c, p, l, sym): a finding with code c at line l of file p; sym is the allowlist symbol. la_ffind gives
 // the findings of a fact (its symbol, its file); la_nfind those at a node.
 .decl la_find(c: symbol, p: symbol, l: number, sym: symbol)
-la_find(c, p, l, s) :- la_ffind(c, f, l), la_fact(f, d, s, _, _), doc(d, p, _).
-la_find(c, p, l, s) :- la_nfind(c, n, s), docof(n, d), doc(d, p, _), line(n, l).
+la_find(c, p, l, s) :- la_hit(c, d, l, s), doc(d, p, _).
+// la_hit(c, d, l, sym): la_find at its document's id, which places it in its file: the budget counts these across
+// files (la_over), where la_find, placed by its path, is the findings' (decision 0695).
+.decl la_hit(c: symbol, d: number, l: number, sym: symbol)
+la_hit(c, d, l, s) :- la_ffind(c, f, l), la_fact(f, d, s, _, _).
+la_hit(c, d, l, s) :- la_nfind(c, n, s), docof(n, d), node_line_number(n, l).
 .decl la_nfind(c: symbol, n: node, sym: symbol)
 .decl la_ffind(c: symbol, f: node, l: number)
 la_ffind("LA-001", f, l) :- la_pure(f), la_at(f, "io", l).
 la_ffind("LA-010", f, l) :- la_fact(f, _, _, _, x0), x = @lower(x0), contains("lazy", x),
-    (contains("async", x) ; contains("sync", x)), line(f, l).
-la_ffind("LA-009", f, l) :- la_sens(f), la_exec_ctx(f), line(f, l).
+    (contains("async", x) ; contains("sync", x)), node_line_number(f, l).
+la_ffind("LA-009", f, l) :- la_sens(f), la_exec_ctx(f), node_line_number(f, l).
 la_ffind("LA-009", f, l) :- la_sens(f), la_first(f, "internal_read", l).
 la_ffind("LA-009", f, l) :- la_sens(f), la_first(f, "state_write", l).
 la_ffind("LA-009", f, l) :- la_sens(f), la_first(f, "reach", l).
@@ -372,9 +376,15 @@ la_ffind("LA-011", f, l) :- la_fact(f, d, _, _, x), la_server_phase(x), la_in(d,
 la_ffind("LA-011", f, l) :- la_fact(f, d, _, _, _), la_in(d, "server_plan"), la_first(f, "hydrate", l).
 la_ffind("LA-012", f, l) :- la_fact(f, _, _, _, _), !la_legacy(f), la_first(f, "lazy_resolve", l).
 // *_lazy without @pure_lazy, deferring to a delegate whose own calls do plan I/O: at the first such deferral.
-la_ffind("LA-009", f, l) :- la_fact(f, _, _, _, x), suffix("_lazy", x), !la_pure(f),
-    i = min j : { la_deferred(f, c2, s2), la_eager_delegate(s2), visit_index(c2, j) },
-    la_deferred(f, c, s), la_eager_delegate(s), visit_index(c, i), line(c, l).
+// la_defer(d, s, k, j, l, t): such a fact, of file d, allowlist symbol s and line k, defers to symbol t at the call
+// of visit index j and line l. Found in the fact's file; the delegate, maybe another file's, is joined by its
+// symbol in the cross-file part, and the finding is a document key and a line (decision 0677), a hit the budget
+// counts (la_hit, decision 0695).
+.decl la_defer(d: number, s: symbol, k: number, j: number, l: number, t: symbol)
+la_defer(d, s, k, j, l, t) :- la_fact(f, d, s, _, x), suffix("_lazy", x), !la_pure(f), node_line_number(f, k),
+    la_deferred(f, c, t), visit_index(c, j), node_line_number(c, l).
+la_hit("LA-009", d, l, s) :- la_defer(d, s, k, i, l, t), la_eager_delegate(t),
+    i = min j : { la_defer(d, s, k, j, _, t2), la_eager_delegate(t2) }.
 la_ffind("LA-002", f, l) :- la_at(f, "intent", _), la_at(f, "io", l).
 la_ffind("LA-003", f, l) :- la_fact(f, d, _, _, _), la_in(d, "feature"), la_is(f, "public"), !la_lazy(f),
     la_at(f, "io", l), !la_at(f, "intent", _).
@@ -383,32 +393,33 @@ la_ffind("LA-005", f, l) :- la_fact(f, d, _, _, _), la_in(d, "native_orch"),
     (la_at(f, "dolt", l) ; !la_at(f, "dolt", _), la_at(f, "native", l)).
 la_ffind("LA-006", f, l) :- la_first(f, "io_conn", l).
 la_ffind("LA-007", f, l) :- la_fact(f, _, _, _, x), prefix("prepare_", x), la_at(f, "io", l).
-la_ffind("LA-013", f, l) :- la_pure(f), la_item(f, "forbidden", c), line(c, l).
+la_ffind("LA-013", f, l) :- la_pure(f), la_item(f, "forbidden", c), node_line_number(c, l).
 la_ffind("LA-013", f, l) :- la_pure(f), la_at(f, "legacy", l).
 la_ffind("LA-009", f, l) :- la_pure(f), !la_skip(f), la_at(f, "eager", l).
 la_ffind("LA-013", f, l) :- la_lazy(f), !la_skip(f), la_at(f, "nonlazy", l).
-la_ffind("LA-015", f, l) :- !la_skip(f), la_is(f, "bootstrap"), la_item(f, "lr_of", s), line(s, l).
-la_ffind("LA-016", f, l) :- !la_skip(f), la_is(f, "bootstrap"), la_item(f, "mutation", n), line(n, l).
+la_ffind("LA-015", f, l) :- !la_skip(f), la_is(f, "bootstrap"), la_item(f, "lr_of", s), node_line_number(s, l).
+la_ffind("LA-016", f, l) :- !la_skip(f), la_is(f, "bootstrap"), la_item(f, "mutation", n), node_line_number(n, l).
 la_ffind("LA-017", f, l) :- !la_skip(f), la_is(f, "recon"), la_fact(f, d, _, q, _), doc(d, p, _),
-    la_set("SCHEMA_RECONCILIATION_FORBIDDEN_SURFACES", cat(p, "::", q)), line(f, l).
-la_ffind("LA-017", f, l) :- !la_skip(f), la_is(f, "recon"), la_item(f, w, n), (w = "recon" ; w = "absent"), line(n, l).
-la_ffind("LA-017", f, l) :- !la_skip(f), la_is(f, "recon_terminal"), la_item(f, "lazy_resolve", c), line(c, l).
+    la_set("SCHEMA_RECONCILIATION_FORBIDDEN_SURFACES", cat(p, "::", q)), node_line_number(f, l).
+la_ffind("LA-017", f, l) :- !la_skip(f), la_is(f, "recon"), la_item(f, w, n), (w = "recon" ; w = "absent"), node_line_number(n, l).
+la_ffind("LA-017", f, l) :- !la_skip(f), la_is(f, "recon_terminal"), la_item(f, "lazy_resolve", c), node_line_number(c, l).
 la_ffind("LA-014", f, l) :- !la_skip(f), la_fact(f, d, _, _, _), la_in(d, "service"), la_item(f, w, c),
-    (w = "payload" ; w = "dispatch"), line(c, l).
+    (w = "payload" ; w = "dispatch"), node_line_number(c, l).
 .decl la_server_phase(x: symbol)
 la_server_phase("lower"). la_server_phase("compile"). la_server_phase("preprocess"). la_server_phase("pre_op").
 la_server_phase("post_op").
-// la_eager_delegate(s): fact s does plan I/O itself, or calls something whose symbol ends in a plan I/O name.
-// Cross-file: a symbol deferred in one file, its facts in another (decision 0652).
-.decl la_eager_delegate(s: symbol) cross_file
-la_eager_delegate(s) :- la_deferred(_, _, s), la_fact(t, _, s, _, _), la_canon(t), la_has(t, "io").
-la_eager_delegate(s) :- la_deferred(_, _, s), la_fact(t, _, s, _, _), la_canon(t), la_call(t, c), la_func(c, g),
+// la_eager_delegate(s): fact s does plan I/O itself, or calls something whose symbol ends in a plan I/O name. The
+// linter looks a deferred symbol up in every file's facts (facts_by_symbol): this is the set of those names, each
+// file's own, and a deferring file reads it by name (a stage, decision 0709; decision 0695).
+.decl la_eager_delegate(s: symbol)
+la_eager_delegate(s) :- la_fact(t, _, s, _, _), la_canon(t), la_has(t, "io").
+la_eager_delegate(s) :- la_fact(t, _, s, _, _), la_canon(t), la_call(t, c), la_func(c, g),
     la_local_last(t, g, x), la_set("PLAN_IO_NAMES", x).
 
 // LA-008: in a transaction module, f (the last fact named f) and f_async: f uses grammar calls, f_async async
 // plan or grammar calls, each directly or down its calls. At f.
 la_ffind("LA-008", f, l) :- la_byname(d, x, f), la_in(d, "transaction"), la_byname(d, cat(x, "_async"), a),
-    la_at(f, "grammar", _), la_at(a, "async", _), line(f, l).
+    la_at(f, "grammar", _), la_at(a, "async", _), node_line_number(f, l).
 .decl la_byname(d: number, x: symbol, f: node)
 la_byname(d, x, f) :- la_fact(f, d, _, _, x), count : { la_fact(g, d, _, _, x), g > f } = 0.
 
@@ -430,9 +441,9 @@ la_bare_callee(c, x) :- la_func(c, g), kind(g, "identifier"), text(g, x).
 la_bare_callee(c, a) :- la_func(c, g), attr_of(g, _, a).
 // LA-018: the first line of each file (outside scripts/) that contains a deleted surface's name. Only scan_files
 // runs it, and it is not counted against the budget.
-.violation LA_018(at: loc, sym: symbol) code "LA-018" "{sym}: deleted cold-bootstrap surface"
+.violation LA_018(at: node, sym: symbol) code "LA-018" "{sym}: deleted cold-bootstrap surface"
 LA_018(@place(p, l), x) :- doc(d, p, _), !prefix("scripts/", p), la_dead_surface(x),
-    l = min k : { src_line(d, k, sp), text(sp, t), contains(x, t) }, !la_allowed(cat("LA-018::", x)).
+    l = min k : { document_line(d, sp), line_number(sp, k), line_text(sp, t), contains(x, t) }, !la_allowed(cat("LA-018::", x)).
 .decl la_dead_surface(x: symbol)
 la_dead_surface(x) :- la_set("COLD_BOOTSTRAP_DELETED_SURFACES", x).
 la_dead_surface(x) :- la_set("DELETED_SCHEMA_SIDECAR_SURFACES", x).
@@ -452,11 +463,11 @@ allow_sig("lazy_architecture", "lint_lazy_architecture", s) :- la_script_line(_,
 
 // One finding per code and symbol: the first line in its file. (A symbol names one fact, so one file, except
 // the whole-file scans' imported names and callees; those keep the first line in each file.)
-.violation LA(at: loc, c: symbol, sym: symbol) code {c} "{sym}: {c}"
+.violation LA(at: node, c: symbol, sym: symbol) code {c} "{sym}: {c}"
 LA(@place(p, l), c, s) :- la_find(c, p, _, s), !la_allowed(cat(c, "::", s)), l = min k : { la_find(c, p, k, s) }.
 
 // The plugin checks the signature before reporting; a list that fails it is the only finding.
-.violation LA_000(at: loc) code "LA-000" "The lazy-architecture allowlist has been modified without re-signing."
+.violation LA_000(at: node) code "LA-000" "The lazy-architecture allowlist has been modified without re-signing."
 LA_000(@place("scripts/lint_lazy_architecture.py", 1)) :- allow_sig("lazy_architecture", _, _),
     !allow_status("lazy_architecture", "valid").
 .gate LA_000
@@ -470,11 +481,13 @@ LA_000(@place("scripts/lint_lazy_architecture.py", 1)) :- allow_sig("lazy_archit
 .decl la_ceil(code: symbol, n: number)
 la_ceil(c, n) :- la_ceiling(c, n).
 la_ceil(c, 0) :- la_ceiling(_, _), (c = "LA-013" ; c = "LA-017"), !la_ceiling(c, _).
-.violation LA_budget(at: loc, c: symbol) code {c} "{c} count exceeds signed budget"
-LA_budget(@place(".ratchet-baselines/lint_lazy_architecture.json", 1), c) :- la_ceil(c, n),
-    count : { la_find(c, _, _, _) } > n.
+.violation LA_budget(at: node, c: symbol) code {c} "{c} count exceeds signed budget"
+LA_budget(@place(".ratchet-baselines/lint_lazy_architecture.json", 1), c) :- la_over(c).
+// la_over(c): code c's sites in every file, counted against its ceiling: a crossing meant (decision 0695).
+.decl la_over(c: symbol) cross_file
+la_over(c) :- la_ceil(c, n), count : { la_hit(c, _, _, _) } > n.
 // Like the signature check, only where the script itself is present.
-.violation LA_000_budget(at: loc) code "LA-000" "Could not load the lazy-architecture budget."
+.violation LA_000_budget(at: node) code "LA-000" "Could not load the lazy-architecture budget."
 .gate LA_000_budget
 LA_000_budget(@place(".ratchet-baselines/lint_lazy_architecture.json", 1)) :- allow_sig("lazy_architecture", _, _),
     la_set("RULES", c), !la_ceil(c, _).

@@ -20,7 +20,7 @@ up030_permuted(n) :- up030_demand_permuted(n), up030_plain_string(n), parsed(n, 
     count : { child(r1, c3, _), kind(c3, "error") } = 0,
     count : { within(c4, r1), (kind(c4, "auto") ; kind(c4, "name")) } = 0,
     count : { has(r1, c5, "format_spec"), child(c5, c6, _), kind(c6, "field") } = 0,
-    count : { has(r1, c7, "index"), value(c7, v8), (value_type(v8, "int") ; value_type(v8, "float")), to_number(v8) > 15 } = 0,
+    count : { has(r1, c7, "index"), value(c7, v8), (value_type_of(c7, "int") ; value_type_of(c7, "float")), to_number(v8) > 15 } = 0,
     count : { has(r1, c9, "index"), !up030_alt_1(c9) } = 0,
     count : { child(r1, c40, _), kind(c40, "field"), I1 = c40, precedes(c40, s41), kind(s41, "field"), I2 = s41, value(I1, t42), value(I2, t42) } = 0.
 up030_permuted(n) :- up030_demand_permuted(n), kind(n, "parenthesized_expression"),
@@ -41,7 +41,7 @@ UP030(n) :- field(n, "function", c1), field(c1, "object", c2), up030_permuted(c2
 // UP030_format_literals_annotation(n): a finding at node n, from clause `format-literals-annotation`.
 // Each rule below is one way the JSON `rule` can match.
 // Columns after `at` are the metavariables the JSON's message, anchor or `each` names: one finding per distinct row.
-.violation UP030_format_literals_annotation(at: loc, call: node) code "UP030" "Replace the explicit indices (`{{0}}`, `{{1}}`) with automatic `{{}}` fields; if they are out of order, also reorder the arguments to match, unless that would change the order of side effects."
+.violation UP030_format_literals_annotation(at: node, call: node) code "UP030" "Replace the explicit indices (`{{0}}`, `{{1}}`) with automatic `{{}}` fields; if they are out of order, also reorder the arguments to match, unless that would change the order of side effects."
     suppress noqa "UP030"
 UP030_format_literals_annotation(CALL, n) :- (kind(n, "string") ; kind(n, "concatenated_string")),
     parsed(n, "annotation", r1), has(r1, c2, "call"), CALL = c2, child(c2, c3, _),

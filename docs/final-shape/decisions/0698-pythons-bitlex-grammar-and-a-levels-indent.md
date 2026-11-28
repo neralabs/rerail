@@ -1,0 +1,601 @@
+# 0698: Python's Bitlex grammar, and a level's indent
+
+Status: building (the user, 2026-11-25: "now, I want to switch to Python. Please get the .bitlex file for Python
+both correct and performant. Once again, we proceed by addressing differences with the lean version.").
+Follows 0163 (the lean Python parser), 0305 (Kotlin's grammar against its lean parser) and 0685 (tier 2 has the
+lean parser's functions).
+
+## Intro
+
+Python has a lean parser (`rerail_python_lean`, 0163) that writes tree-sitter-python's tape directly, and a Bitlex
+lexer that is a document only (`docs/parser-generators/lexers/python.bitlex`). No test compiles that document, and
+it uses constructs Bitlex has since removed (back fills, 0416). Kotlin and `.rr` each have a grammar, lexer and tree
+in one `.bitlex` file. It compiles to tier 1 and tier 2, and its tapes are checked node for node against the lean
+parser's.
+
+Python needs one thing those grammars did not: layout. A block is the lines indented past its header's, and it ends
+at the first line indented less. tree-sitter's scanner keeps a stack of widths, and gives INDENT, NEWLINE and DEDENT
+tokens from it. The lean lexer does the same. None of those tokens is a node on the tape. They only decide where
+statements and blocks end.
+
+## Decisions
+
+1. **A crate of its own.** `rerail-python-parser` (`native/crates/python_parser`) holds `python.bitlex`, compiled as
+   Kotlin's is (`rerail_kotlin_parser`). Its tests compare each tape with the lean parser's: kinds, fields, supertypes,
+   the extra flag and spans. A file the grammar does not read is refused, to the lean parser. The corpus is a folder
+   of `.py` files (`RERAIL_PYTHON_CORPUS`). Tier 2 as Rust gets its own crate once the grammar reads a corpus, as
+   `rerail-kotlin-aot` holds Kotlin's.
+2. **The lexer is written anew** in the constructs the compiler has: regions for strings and comments, the token
+   loop's rows, keywords, pairs. The document keeps its place as the design study it is.
+3. **Line breaks inside brackets are blanks, in tier 1.** A bracket depth over code (`count`) leaves a line break
+   inside `()`, `[]` or `{}` no mark, as tree-sitter's scanner gives no NEWLINE there. So an expression that goes
+   on over lines (`(a\n + b)`) is read with no mark in it.
+4. **A statement ends at `newline`**, a mark at each line break of code outside brackets and not after a line
+   continuation, and at the file's end. Blank and comment lines between two tokens are one mark.
+5. **A level's indent.** Each level holds a width, its indent. A nested level starts with its caller's indent and
+   gives it back when it ends, as a remembered word is (`remember`). A level named by `indented` (`indented block`,
+   a statement of the tree, as `remember` is) sets its indent, at its first token, to that token's column: the word
+   `INDENT`, after the `PUSH` of each call into it. The interpreter keeps it beside each return; the JIT keeps it in
+   the return's high 16 bits (`Mem::Indent`), and refuses a column past them.
+6. **Two questions compare a column with the indent.** `, deeper` holds where the column of the token the mark is
+   before is past the asking level's indent. `, shallower` holds where it is less. Each level asks with its own
+   indent. So a level that ends at a `shallower` mark (`ends`) leaves it to its caller, which asks again with its own
+   indent:
+   - `mark indent = …, deeper`: a block's start, after its header's `:`. The header takes it (`':' indent
+     consequence: block`), so it is asked with the header's indent; the block then sets its own. A block that took
+     it itself would ask it with the indent it had just set.
+   - `mark dedent = …, shallower, ends`: the end of every block wider than the line, one level after another.
+   Each mark's question is a table of the program (`markcolumn K C`, `Words::mark_columns`).
+   A block's statements then go on while the next line's column is at least the block's indent, which is
+   tree-sitter's rule. A line indented past the block but not after a header is a statement of the block, as
+   tree-sitter's scanner gives NEWLINE there and no INDENT. A dedent to a width between two blocks' widths ends the
+   inner one only, as the scanner pops widths while the line is less.
+7. **A column** is the token's start less its line's start: the byte after the last line break before it. The bytes
+   between the record before a token and the token are blanks and line breaks only, so tier 2 finds that line break
+   in that gap, a word at a time, as `first_on_line` finds a terminator. A line whose indentation holds a tab or a
+   form feed is refused for now, since those count as tree-sitter's scanner counts them (to the next multiple of
+   8; back to 0).
+8. **The Rust tier 2 refuses an `indented` grammar for now** (`bitlex_rust::tier2`). The JIT and the interpreter read
+   it; Metal runs the JIT's tier 2 on its records, so it needs nothing of its own.
+9. **Strings: one reader over four regions.** A region per quote kind and length (`s1`, `d1`, `s3`, `d3`). A raw
+   string closes as any string does, at a quote no backslash escapes, so it is no region of its own. `in_raw`, a fill
+   from a raw opener, says which strings' backslashes are text. One reader (`string_start`) reads them all, as
+   Kotlin's reads its strings and raw strings: a triple's two more quotes are a part (`quote2`), and every escape is
+   one part (`escape_sequence`, `last` its last byte). A backslash that starts no escape is a part and a leaf of its
+   own (lean's `Backslash`). The closer is `string_end`. A prefix (one or two prefix letters at a word's start, then a
+   quote) is a token of its own; the tree merges it, the opener and `quote2` into one `string_start` leaf (`merge`).
+   Not read yet, so refused: f-strings, `\N{…}`, `\N`, `\u` and `\U` in bytes strings, carriage returns in strings,
+   a prefix of three letters, a triple opened or closed by four quotes or more, and a raw string of backslashes
+   only, whose end the lean lexer starts at its first backslash.
+10. **The provers evaluate each value once per choice** (`bitlex_prove::Proof::memo`). A block program's ops are a
+    graph: a mask that many others read (a region's fill, `escaped`) was evaluated once for every path to it, at every
+    step of the search. Python's string masks made one question run for minutes. Each value at a lag is kept for the
+    bytes and carried values chosen now, and dropped when a choice changes. Its first evaluation sets the search's
+    open choice where it was unknown, so the answers and the search's steps are the ones it had.
+11. **A node's supertypes are its slot's and its kind's** (lean's `class(kind, ctx)`). tree-sitter gives a node the
+    supertypes from the slot it stands in down to its kind: in an expression's slot an `identifier` is an `expression`
+    and a `primary_expression`, a `comparison_operator` an `expression` only; in a call's `function` slot an
+    `identifier` is a `primary_expression` only. So a node holds one slot, the outermost supertype the grammar
+    reached it through (its one `NODE_SUPER`), and its classes are a table of the program's (`superclass S K C…`,
+    `grammar::super_classes`): for each supertype `S` and each kind `K` that may stand in its slot (its choice's
+    symbols, through the choices in it, and the kinds a node's rule retags it to), the supertypes from `S` down to
+    `K`. A kind the table has no row for in its slot is in no supertype.
+    - **A wrap moves the slot.** The wrapper stands where the moved node stood: it takes the moved node's field and
+      its slot, and its classes are its own kind's in that slot; a wrapper that is no member of the slot (a
+      `keyword_argument` where an expression was, an `expression_list`) has none. The moved node takes field `F` and
+      the slot `in S` names (`wrap K F [as M] [in S] REST`); none without `in`, as no field without `F`.
+    - **In the JIT the slot is the top bits of the row's field** (`SLOT_SHIFT`), so it moves with the row and a wrap
+      copies it with the field. A field written to a node made earlier (a relabel, a reread) keeps them. The slot is
+      part of the node's code key, so the classes are found once per code, where `finish` writes the code table, not
+      once per node. This replaces the list of (node, supertype) records the passes, shifts and drops kept in node
+      order, and its room checks. A grammar of more supertypes than `MAX_CLASSES` is refused, as before.
+    - The Rust tier 2 (`bitlex_rust`) still keeps the path's supertypes: no grammar it compiles wraps a node in a slot.
+12. **Two rules or choices of one name are refused** (`grammar::build_shaped`). A choice named as the root node made the
+    follow analysis's fixpoint run forever.
+13. **Statements, imports and primaries.** The simple statements, imports (`from __future__` a statement of its own,
+    by a token mark, `__future__` a soft keyword), and a primary's attributes, calls and subscripts, each a wrap of the
+    primary so far. An assignment's target is read as an expression and moved into its `left`, slot `pattern`. A
+    trailing comma is a token mark before the closer (`trail`), as Kotlin's: the lean parser keeps that comma and the
+    closer. In a type, a name before `[` (a token mark, `generic`) starts a `generic_type`; anything else is an
+    expression.
+14. **`retag K inner G A`: the open wrap's first node takes a field.** On entering `A`, the innermost open node, a
+    wrap, becomes a `K`, and the node it holds first (the one it moved) takes field `G` (`NODE_FIELD m=5`). A
+    parameter `a: int` is a `typed_parameter` whose name has no field; `a: int = 1` a `typed_default_parameter` whose
+    name is `name:`, and only the `=` past the type says which. The moved node is the open node's first row in the
+    JIT (the head marks refuse a wrap of a wrap, as `inner` does), the open frame's base in the interpreter; the
+    "moved" state can not serve, since the type's own wraps (`a.B`) move other nodes first. The Rust tier 2 refuses
+    it. A wrap's heads in the supertype table include the kinds its body retags it to.
+15. **An indented level's node keeps the comment lines as deep as its indent** (`CLOSE m=2`). tree-sitter's scanner
+    gives no DEDENT before a comment line at least as deep as the block (`first_comment_indent_length`): the block
+    holds it, and the dedent comes at the first line less deep, comment or code. The dedent mark's bit is at the
+    first line break, so those comments are pending after it when the block closes: its node's close settles the
+    leading ones with a column at least the level's indent, and leaves the rest to its caller, which asks again
+    with its own. It is the indented level's own node only: a statement it closes on the way out (an inner `if`)
+    takes none. `newline` and `dedent` settle (`, settles`), so a comment before a statement's line break is the
+    statement's block's. Whether a dedent comes at all stays the next code line's column, as the scanner's.
+16. **Operators by precedence, as Kotlin's.** Each level's operator is a wrap of the operand so far, whose right side
+    is a `nested` choice of the tighter levels: `power` (`**`, right-associative), the unary operators, then `*`,
+    `+`, `<<`, `&`, `^`, `|`, each a `binary_operator` in slot `primary_expression`. A comparison wraps a primary
+    (`comparison_operator`, slot `expression`), its operators `operators:`; `not in` and `is not` are one node over
+    their two leaves (`wrap 'not in' _ 'in'`: a wrap's kind may be quoted). `not`, `and`, `or` and the conditional
+    expression are in slot `expression`. `expression` is `nested`, and so is the comparison's rest: a wrap stays at
+    its caller's level, and the part after it is a level of its own, else the follow analysis finds a call whose
+    uses differ in its hidden marks.
+17. **A supertype's rows merge across its choices** (`grammar::super_classes`): each `(supertype, kind)` pair is one
+    row, whatever choices name the supertype, as the table is sorted by it.
+18. **A call-only state may close first.** Tier 2's verifier lets a state that only calls begin with `CLOSE`, as a
+    level ending at a wrap's end then enters the next.
+19. **A number is one `integer` token; a float is a test of its bytes** (`mark real = empty, at integer when
+    count(n_dot | exp_at) at least 1`, as Kotlin's `real`). Its bytes: the word from its first digit, a `.` and the
+    word after it, a `.` before a digit not after a word (`.5`), an exponent's sign and the word after it. A hex
+    number takes its digits, an exponent its `e`, a last `j`; `_` between digits. Octal, binary, `L` and the rest
+    are refused. A back fill (whether a later `.` makes the number a float) is not Bitlex's (decision 0416).
+20. **A mark's waiting field and supertypes go past it** (`grammar::build`, `SPECIAL` states). A mark makes no
+    node, so where a slot's first token is a mark (`real integer as float` in an expression's slot) the field and
+    supertypes go to a state past the mark, its position's with them, and the next token's leaf takes them. Where
+    the level may end past the mark, the grammar is refused.
+21. **An extra's reader gives its mark where a mark tests a token** (`Reader::retag`). The token loop passes over an
+    extra's tokens by its mark, which only a reader gives; a comment whose first byte (`#`) gives its kind had no
+    retag. Where a mark's token test exists, the extra's reader now gives its own kind with the mark.
+22. **An f-string is regions and their tails** (`python.bitlex`). Each of the eight quotes (`'`, `"`, triple, with an
+    `f` or `t` prefix or not) is a region. An f-string's region closes at its quote or at an interpolation's `{`
+    (`or i_open`: a `{` that is not part of a `{{`). Past the interpolation's code, a tail region (`ts1 = rbrace ..
+    sq_c or i_open resumes fs1`) continues the string's token record (decision 0600). A format spec is one region,
+    `spec = colon .. next(rbrace) after fs1 fd1 fs3 fd3`: it opens only where the last region closed at its
+    template's `{`. The tape is the lean parser's: `string_start` (the prefix and quote), `string_content` with
+    `escape_interpolation`, `interpolation` (`expression:`, `type_conversion:`, `format_specifier:`), and
+    `string_end`. The braces and the spec's text are implied tokens of their nodes. What is not read yet is refused
+    by an escape, never a wrong tape: a nested spec, a raw f-string, `=`, a `:` in brackets, braces or `#` in an
+    interpolation's code, an empty interpolation or spec, a `}` alone, a run of three braces.
+23. **One reader reads resumed and plain regions** (`bitlex_masks`). A first byte gives one reader, so `"` reads the
+    plain string and the f-string's tails at once. The resumed regions share one template, and the plain ones have
+    none. Where the two kinds are mixed, a resumed region opens only past its template (`prev(f_K)`).
+24. **An `after` region's reader opens at its taken opener** (`o_K`). A spec's `:` is a code token's too, so the
+    reader opens only where the walk opened the region, and the code's `:` is the other rule's. A plain region's
+    reader keeps its opener's bytes, which the token loop tests without the walk.
+25. **A start mask an arm reads stays made** (`BlockNative::readers_tags`). A reader's tag replaces its start masks
+    on the CPU, but where an arm's opener, closer, last or template is such a mask, the token loop reads its row.
+26. **The token loop's punctuation shortcut gives way to a reader's tag** (`native_cpu_block`). Where a byte is a
+    reader's opener as well as punctuation (a spec's `:`), the tag is taken first.
+27. **A node moved into a slot is one of the slot's kinds** (`NODE_SUPER m=1`, both tiers). A wrap moves the
+    expression read so far into its slot (an assignment's `left` into `pattern`). Where the slot has no row for the
+    node's kind (a list as a target, which tree-sitter reads as a `list_pattern`), the file is refused at that pc.
+28. **A union over a generic is a `union_type`** (`choice types = type (wrap type _ wrap union_type _ '|' type)*`),
+    as the lean parser's annotation reads it: an expression operand takes every `|` itself (`int | None` a
+    `binary_operator`), so only after a generic does a `|` start a union. Each step is a `type` of its own around a
+    `union_type`, left to right. An annotation, a return type and a generic's arguments are `types`.
+29. **A wrap inside a wrap of the same node goes inside it** (`stream.rs`, `WRAP`). A wrap's moved node is the head
+    of its base's chain where it wraps the node so far; one run inside an open wrap moves the node that wrap moved,
+    so its wrapper stands just outside that node in the chain, and its size counts none of the wrappers outside it.
+    The JIT's wraps nested so already.
+30. **`try`, `with` and `for`.** A handler's `except` and its `:` are leaves, its block and `finally`'s have no
+    field; `with` is a leaf, its items a `with_clause`. `as` binds an `as_pattern` in the expression's slot (its
+    target a primary). A loop's target is a `pattern`, a name and its attributes and subscripts, or a
+    `pattern_list` of them: not an expression, whose comparison takes `in`. `expressions` is `nested`, as the loop
+    reads it before `:` and a statement before its line break. Not read yet, refused: `async`, a parenthesized
+    `with` (a token mark no state takes), a tuple or list as a target.
+31. **A comprehension is its bracket's node retagged** (`relabel body retag list_comprehension comprehension ']'`).
+    Past the first item, a `for` makes the item `body:` (the node made last: an expression, or a dictionary's
+    `pair`) and the open node a `list_comprehension`, `set_comprehension`, `dictionary_comprehension` or
+    `generator_expression`; a call's only argument's generator stands for its `argument_list`. A `for_in_clause`
+    keeps `for` and `async` as leaves; its right side, and an `if_clause`'s, is an expression with no conditional,
+    as the next clause's `if` is no `else`'s. The kinds a relabel's rest retags the node to are in the supertype
+    table (`grammar::super_classes`), as a node's own rule's are.
+32. **`await`, `...` and `async`.** `await` is a primary over a primary (slot `primary_expression`). `...` is a token
+    of its own (`ellipsis`) from the first dot of a run, as the lean lexer reads it; two dots are two operators.
+    `async` is a leaf before `def`, `for` or `with`, the node retagged by the word after it.
+33. **A list whose one item is a splat is refused.** tree-sitter reads `[*b]` with the splat a primary (`[*b.c()]`:
+    the call's object), not a list item.
+34. **Targets, slices, lambdas, yields and concatenations.**
+    - A statement's first expression is moved into a `pattern_list` at its comma, the rest patterns (a
+      `list_splat_pattern` among them), and only an assignment follows. A bare `a, b` statement (its expressions
+      the statement's own) and a tuple target are refused. A target list's trailing comma is a leaf, as a list's
+      (`trail` before `=`).
+    - A slice is a node whose `:` are leaves, the expression before it moved in.
+    - A `lambda` is in slot `expression` (not a primary), its parameters `lambda_parameters`.
+    - `yield` is a node, not an expression, its keyword and `from` leaves; a statement or an assignment's right
+      side.
+    - Strings side by side are a `concatenated_string` of them, the first moved in.
+35. **A parenthesized `with` clause by a token mark** (`w_paren`, after `with` at its `(`): a run to a comma at the
+    parentheses' depth with more after it. Then `(` is a leaf, `)` implied, and a trailing comma's `,` and `)`
+    leaves, as the lean parser's. The lean parser asks for a `:` after the `)` too; a pattern holds one run, so
+    where none follows (`with (a, b) as c:`) the clause's reading refuses at the `as`.
+36. **A region's first part takes its record's marks** (`stream.rs`, the parts a reader splits a record into). The
+    parts' own pass measures the first part's gap from the file's start, so a string after a block's indent took
+    that line break's newline, indent and dedent, and its level ended before a concatenation. The JIT's parts had
+    the record's.
+37. **A subscript's trailing comma** keeps `,` and `]` as leaves (`trail_bracket`), as a list's.
+38. **A header's body is a `suite`**: an indented block, or the line's simple statements retagged `block`
+    (`def f(): ...`, `if a: b`), as the lean parser's one-line bodies.
+39. **`a := b` is a wrap in the expression's slot** (`walrus`): a `named_expression`, its name with field `name`
+    and its value with `value`.
+40. **Tuple and list patterns** (`tuple_pattern`, `list_pattern`) are patterns, so a loop's target takes them, and
+    a target list's items after the first. A statement's first `(` or `[` is one where a token mark
+    (`target_paren`) finds an `=` after its closer at its depth; else it is an expression. `(a) = b` is a
+    `tuple_pattern` too, as the lean parser's.
+41. **A parenthesized tuple takes splats** (`paren_item`), first or after a comma.
+42. **Type parameters** (`[T]`) after a class's or a function's name are a `type_parameter`, as a generic's.
+43. **A splat that begins an unbracketed expression list, or is a list's only item, is a primary** (`star_item`):
+    `list_splat` around a bare name, its postfixes after it (`[*a.b()]` an attribute of the splat), as the lean
+    parser reads `x = *a, b`, `return *a, b` and `[*a]`. A list's first splat stays a `list_splat` among its items
+    where a token mark (`l_many`) finds a comma after it at its depth.
+44. **`*a, b = c`**: a statement's first `*` is a `list_splat_pattern` in a `pattern_list`. `()` is an empty
+    `tuple_pattern`; `except*` has its `*` a leaf; a lambda's lone `*` is a `keyword_separator`.
+45. **`type X = …`** is a `type_alias_statement` where `type` comes before a name (`t_alias`), its word and `=`
+    no leaves, each side a `type`.
+46. **`match`** is a statement where its word comes before a `:` on its line at its depth (`m_stmt`, a run of
+    tokens `without newline`); else it is a name. Its body is a `block` of `alternative: case_clause`s, and the
+    patterns are the lean parser's: each pattern in a `case_pattern` (a union's alternatives not), `_` alone an
+    empty one, names `dotted_name`s, `p as x` a `case_pattern` around an `as_pattern`.
+47. **A node may start at the end of the record before its first token** (`node K attached`, a comment's
+    included), as the lean parser's match body starts at its `:`'s end. `Act::Open`'s `attached`, `OPEN m=1`:
+    the interpreter's `last_end`, the JIT's `Mem::LastEnd`. The Rust writer refuses an `attached` node, not
+    lowered there yet.
+48. **A run's `~(…)` takes `with M` and `without M`** (syntax, evaluator and tier 2): any other token, with or
+    without the mark. Decision 0673 step 4 had them on a run of kinds and words only.
+49. **A match's subjects and a keyword pattern's union**: `match a, b:` has a `subject` field on each, and a
+    keyword pattern's value may be a union, its `as` wrapping the keyword pattern. `match` before its `:`
+    (`match: int = 1`) is an annotation's name (`unless before "match" ":"`).
+50. **Octal and binary numbers** (`0o7`, `0b1`) are an `integer`, their letter after their `0`; a digit past
+    the base, or no digit, is an escape.
+51. **A quadruple quote is a triple's own**: the escape for a triple closed by four quotes asks only a
+    triple-quoted string of that quote (`"a''''b"` is text).
+52. **Braces in an f-string's text pair from the first of each run** (`escaped()`, as backslashes do): `{{{a}}}`
+    is an `escape_interpolation`, an interpolation and another; an odd run's last `{` opens the interpolation.
+    The tail's `}` opener is no text's, so a run after it pairs from the next.
+53. **A raw f-string's tails are raw too**: from its opener to the next f-string's that is not raw.
+54. **An interpolation's braces are brackets**: the depth counts its `{` and its tail's `}`, so a line break in
+    it (a triple-quoted f-string's) is a blank. A comment or a brace in it is still an escape.
+55. **A class pattern's trailing comma** keeps `,` and `)` as leaves (`trail_paren`).
+56. What is left of Python's escapes is the regions' walk's: an interpolation's code holds no bracket count (a
+    `:` in its brackets, a brace in it) and no second f-string (a nested one ends the outer one's template).
+57. **The regions' walk counts a bracket level in a template's code** (`regions H level O to C max N else D`,
+    `block::Level`). The user asked for the level to be tracked. From a template's opening to its string's
+    end, each `O` outside the regions adds one and each `C` takes one away (none at zero). A kind with
+    `after` opens only at level zero: `{a[1:2]}` has no format spec, and `{ {k: v} }`'s first `}` is the
+    dict's. An `O` past `N` (1 to 15) is `D`, an escape in Python's grammar (`i_deep`, `N` 15). The escapes
+    for a `:` in an interpolation's brackets and a brace in an interpolation are gone.
+58. **A walk with a level has no rounds form.** No fixed point of masks counts brackets. The rounds' body
+    counts no level and makes `D` empty, so it is the walk only where no template's code has a bracket.
+    The evaluator walks such regions (`Eval::walk_regions`), as the interpreter's walk and the JIT's do.
+    The JIT keeps the level in four bits above the last template's kind in the walk's state. The lowering
+    to Rust refuses a level, as it refuses an `attached` node.
+59. **Templates nest, at most four deep** (`regions … level … nest M depth A B`, `Level::nest`). The user asked
+    for a bound of 1, 2 or 4, to keep the state small; it is 4. A plain kind's region in a template's code
+    that closes at its `or` opens a template inside it: `f"{', '.join(f'{a}' for a in b)}"`. The outer
+    template's kind and level wait, and go on when the inner string ends. One past `M` is `D` at its closer,
+    the same escape as a level past `max`.
+    - The JIT keeps a frame of eight bits a template, the open one's lowest; a push shifts it up.
+    - `A` and `B` are each region's depth at its opener, two bits: the templates around it, or for a tail,
+      around its string.
+    - The token loop keeps the record a template left open by that depth (`Reader::nest`). The JIT's
+      `open_slot` holds a word a depth, chosen by the depth bits in the read's flags (`DEPTH_SHIFT`). A
+      token read again finds its own depth's word, as one slot did before. Tier 1's interpreter already
+      kept a stack, now bounded by `M`. Tier 2 counts open strings, so it nests as it is.
+60. **A level's rounds count its frames, so Metal's form is the walk's** (`regions()`). Before, the rounds counted no
+    level: its deep and depth values were empty, and its tails opened after any template. On the posthog corpus that
+    form differed from the walk in 181 of 1642 files. Now the rounds hold two counts, as bit-planes:
+    - `nest`: the templates open (opened at a plain kind's second closer, closed at a tail's own closer);
+    - `lv`: every frame in templates' code, each template's and each bracket's. A bracket counts only in a template's
+      code (`nest` above 0), and not at a byte a kind opens at (a tail's `}`).
+
+    Each template kind has a carry: "the innermost frame before the byte is a template of this kind". It is computed
+    per level `L` of `lv`, as "the count before is `L`, and the last frame opened at `L` was this kind's template",
+    with a `prev` on every way. A tail opens only where a kind it names holds; this replaces the "string ended" carry
+    that a walk without a level keeps. The depth bits are `nest`'s planes before the opener (one fewer for a tail).
+    `deep` is `lv` past `max`, `nest` past its bound, or a close with a template's frame on top.
+
+    The rounds form fixed two rules, and the three walks (the interpreter's, the evaluator's, the JIT's) now keep
+    them as well:
+    - `max` bounds all of the open templates' frames together, not each template's brackets;
+    - a close with no bracket of the code's to close is deep (the walk had ignored it).
+
+    The Python tests and the corpus check every output as rounds against the walk.
+61. **Python's `max` is 7.** The regions group is 168 operations without the counts, and with them 657 at `max 15`,
+    418 at 7 and 379 at 6. The counts barely change the rounds: on the corpus, 2.49 rounds a block before, 2.53
+    after; 6.10 and 6.33 where 32 blocks round together, as Metal's SIMD group does. At 7 the corpus reads every file
+    it read at 15.
+62. **Python as Rust: `rerail-python-aot`**, as Kotlin's crate: `tier1.rs` from `bitlex_lex_rust`, `tier2.rs` from
+    `bitlex_rust`, checked by python_parser's `rust_is_current` (`RERAIL_BLESS=1` writes them). Every Python test
+    compares it with the interpreter and the lean parser: tier 1's records (`tier1_differs`), then the tape, and a
+    refusal where the interpreter refuses. What the lowerings lacked, and how each is lowered now:
+    - **A level** (item 58 refused it). The token loop keeps `level`, `frames` and `depth` as the walk does, and the
+      walk's `frame(…)` masks are one pass over the count's bytes. A template opened inside another pushes the outer
+      one's kind, level and held record first, then becomes the template: the other order pushed the new kind, and
+      the outer template never came back after an f-string in a dict's braces.
+    - **The walk's `deep`** is the escape, not one of the hidden set's parts: a string or comment is not refused for it.
+      A walk a refusal reads is never gated to test builds.
+    - **Supertypes**, as the interpreter's `NODE_SUPER`. A node's slot is in its key's bits from `CLASS_SHIFT` while tier 2
+      parses: a call to a `supertype` choice sets the slot of the node made last (`slot_made`, the outermost call
+      last); a wrap takes the moved node's slot, and the moved node takes the wrap's `in S` (`slot_moved`). A kind its
+      slot does not hold refuses the file there (`f() = 1`, `(a, b), c = d`). At the end `Writer::map_code_keys` maps
+      each code's key to its classes by slot and kind (`classes`, from `super_classes`). The tests read the format's
+      key, not the lean parser's layout.
+    - **`indented` levels and `, deeper`/`, shallower` marks**: a level's function saves its caller's indent and takes
+      its first token's column; a mark's column question is asked at each ask, past the token's cache; the node
+      closes with the comments pending at least as deep as its indent (`close_indented`).
+    - **A closer's record kind** where the records keep it at one reader only (`interp_open`, in both of a string's
+      readers): that piece's kind in the other reader, not its byte's (`{` is punct).
+    - **`at starts` assumes must hold in the token loop**, which test builds check at every start. Python's two were
+      false: a name's start excludes a string prefix's first letter, and an operator's excludes an ellipsis's and a
+      conversion's second byte. The token loop asks the rows whose start reads a region's `open` first, so a tail's
+      `}` is a tail and not punct.
+63. **The AOT's checks run in the tests, and the corpus reads it.** The parsers' test builds depend on their AOT crates
+    with `test-hooks` (Python, Kotlin, JSON; rr's already did), so the generated checks (`code_l` against the walk's
+    `code`, the `at starts` assumes) run in every test. They had not, and the corpus found two faults they hold:
+    - a read that resumes a string clears its bytes from the loop's code, as a record does;
+    - after an element, a repetition goes on as a `*`, also for a `+` (`sites`, `code`). Read as the `+` itself, the
+      rest could not end, so a block's last statement had none of the marks that end the block in its follow. The
+      optional `else` of a `while` inside it was then asked without `dedent`, and took an outer `if`'s `else` after a
+      dedent of two levels.
+
+    The corpus test checks the AOT where the interpreter matches the lean parser: tier 1's records, then the tape. It
+    matches on all 1642 posthog files. The comparison with the lean parser is python_lean's example `compare_aot`, which
+    builds the AOT without its checks.
+64. **Tier 1 makes the masks of its regions in passes over the words, as stage 1 makes the rest.** Each mask made
+    of the regions had been a pass of its own over the file, into a vector of its own: 142 of them in Python's tier 1,
+    84 in Kotlin's. The lean lexer reads each byte once. The masks now go into the pass written last (`Gen::fuse`):
+    each word of a mask is a local of the pass's step (`w_NAME`), a `prev` reads the word before it (`p_NAME`), and
+    `fill`, `escaped` and `toggle` keep their carries (`c_NAME`) from step to step, as stage 1's nodes do. A vector is
+    kept only for a mask that code outside the pass reads. A mask starts a new pass where it would read words not yet
+    made: a `next` of a mask in the same pass, or a mask that the code after the pass's start writes or makes, such as
+    the walk's masks, the token loop's `code_l` or another pass's masks. Python's tier 1 now has 11 passes and
+    Kotlin's 4. JSON's and rr's had no masks of regions. A pass is one statement of the walk (`gate_walk`), and makes
+    each of its masks.
+65. **Tier 2 asks the marks that end a part only at a token whose word an arm has.** Lean has `NEWLINE`, `INDENT`
+    and `DEDENT` as tokens, so `while self.peek() == T::And` asks one token. Tier 2's marks are questions about the
+    token (`m_newline`, `m_dedent`, its column), and its loops and options asked them first, at every token:
+    `while !(newline || dedent) && word == AND`. Now:
+    - a loop's or an option's word or kind test comes first, and its end's marks are asked after it (`while word == AND
+      && !(…)`). A `match` of the word asks them in each arm's guard, its `_` the loop's end
+      (`moves::exits_after_words`);
+    - a loop that ends an `indented` level (`block = statement+`, `match_block`) ends at the level's ending marks
+      alone, as lean's `while !matches!(peek, Dedent | Eof) { statement }`. It no longer asks a statement's whole first
+      set at every statement. A token that is neither refuses in the statement, as in lean. An expression level is no
+      such loop: its callers' tokens (`)`) end it too.
+66. **A string's parts are found in one scan of their starts, to the string's closer.** Tier 2's split of a string
+    asked each part's mask apart with `first_bit`, which reads to the mask's next bit wherever it is, the file's end
+    where there is none. That was once a part, for each of a string's parts, for every string, so it was quadratic in
+    a file's strings. `first_of` reads the union of the parts' masks, a word at a time, up to the closer and no
+    further, as the lean lexer's string reader looks no further than its quote. Each part then asks its own mask at
+    the one byte found. `advance`'s look for a template's `}` that resumes a string reads up to the next record in the
+    same way.
+67. **The token's code is kept as the token is reached (`cur`), for every grammar.** `word()` and `kind()` had asked
+    whether the token was past the last record and whether it was a piece of a split record, then read either one,
+    at every ask. Now they read `cur`, one field, as the lean parser's `peek` reads its token. `arrive` sets it after a
+    record's split, `take` sets it at a piece after another, and `advance` sets it after resuming a string. Past the
+    last record it is `END_CODE` (word 0 and kind 255, which no token has). Grammars with no string read in parts had
+    this already; it is now the runtime's own.
+68. **The masks of the loop's code are a lane of the token loop, not passes after it.** The escapes made of `code`
+    alone (Python's six of its numbers) read the loop's `code_l`, and were 7 passes over the file after the loop. The
+    loop goes over the blocks in order, and a region token clears its bytes from `code_l` before the loop moves past
+    them. So every block before the loop's is final. The lane makes those masks a word at a time behind the loop
+    (`Gen::lane_passes`, `render_passes`):
+    - at each block the loop comes to, the lane makes each word whose next block the loop has passed (`lane + 2 <=
+      b`);
+    - each of its passes makes the word one behind the pass before, whose `next` it reads;
+    - after the loop, it makes the words left;
+    - an escape is tested as its word is made (`refused |= w_X != 0`), so no vector is kept for it.
+
+    This is the first step to one pass over the file. The walk's masks, which the string escapes read, and stage 1
+    still run before the loop.
+69. **The token loop writes the regions' masks as it reads each region.** These are the masks the walk makes: each
+    region's opener `o_K` and fill `f_K`, and `hidden`. They are written with the walk's own writes, in `lw_…`
+    vectors (`Gen::walk_writes`, `with_walk_writes`). A grammar gets them when every region is read by a row (`read`,
+    or `read … parts`), none has an `else` form, and it is not lexed in the one pass (0619).
+    - `hidden` ends at the region's own last, not at the token's. A template's `${` is the token's closer, two bytes,
+      but the region closes at its `$`.
+    - A test build asserts each `lw_…` equals the walk's mask on every file not refused.
+
+    This is the second step to one pass. Next, the regional escapes and tier 2's regional masks are made from these
+    in the lane, and the walk runs only in test builds.
+70. **A compile asks every prover question through the kept answers, and writes the Rust tiers only for a caller
+    that reads them.** A test's compile of Python took 18 s on the M1 Max, and Kotlin's Rust-writing compile 25 s,
+    with every answer already kept. Three causes:
+    - `last_row` and `token_ops_back` asked the provers directly. They skipped the answers (0414) and rebuilt the
+      prover's operations for each row of each check: 11 s of Python's compile. They now ask through
+      `Lowering::never` and `settled_never`, as `token_row` does. Kotlin's shipped answers hold the new questions.
+    - The Rust writers ran in every compile. Only `rust_is_current` reads their text. `Symbols::rust` asks for it:
+      Python's and Kotlin's `tiers_rust` set it, and the parsers' `compiled`, JSON's and the C directives' do not.
+    - Tier 1's writer expanded a named mask again at each reader in `in_region_of`, so a mask DAG became a tree:
+      22 s of Kotlin's. `Gen::region_memo` keeps each named mask's answer by region, part and context. `region_gen`
+      goes up at each change of `regional` or `fills`, so the memo never answers from an older state.
+
+    A test's compile is now 3.7 s: bitlex 1.5 s, Cranelift 2.1 s. nextest runs each test in a process of its own,
+    which compiles the grammar again, so Python's suite takes 26 s and Kotlin's 51 s.
+71. **A test binary's processes compile the grammar once.** nextest runs each test in a process of its own. The
+    Bitlex compiler's half of each compile (`bitlex_output`) is now kept in the answers directory
+    (`answers::kept_output`), and the rest of each process reads it. The key is the grammar text and the test
+    binary's path, size and time, since the binary's code is the compiler, so a rebuild misses. The first process to
+    miss compiles under the family's lock, and the others wait, then read. Only `compiled()` reads the kept output:
+    the tests of the shipped answers and of a cold compile call `compile_timed` and still compile.
+
+    A test's own work is now Cranelift's code for both tiers, 2.1 s of its 2.3 s.
+72. **A number is a run over a class, and a check at the token.** This is the lean lexer's `number()`: a number's
+    bytes are run, then its grammar is read once. About 15 derived masks and six escapes are gone.
+    - `token based = start based_at run word` and `token integer = start int_start | dot_start run num_run`. The
+      starts are `assume … at starts`, so the loop reads three byte terms.
+    - `check based` and `check integer` hold the numbers' grammar: hex, octal and binary digits after `0x`, `0o` and
+      `0b`; a decimal's `.`, its exponent and its `j`/`l` suffix; `_` between digits.
+    - The float mark is `count(dot & number | exp_l & number & ~based_n)` at `integer`. A `.` operator is no
+      number's byte, so the mark never holds at one.
+    - `based` and `integer` share a kind, as no tree rule tells them apart. The tree reads a based number as
+      `based as integer`.
+    - Tier 1 as Rust is about 420 lines shorter. Its row arm calls `check_K` at the token
+      (`bitlex_check_rust::Checks`), the same writer tier 2 as one loop uses.
+73. **A check may loop through states that its bytes tell apart.** `check_parts` splits the check's machine into
+    its strongly connected parts. A cycle whose states each have their own entering bytes is lowered as one fill
+    over the cycle's bytes. Each state's mask is that fill, masked by its own bytes. A cycle in which one byte
+    enters two states is still refused.
+74. **A kind that two rows share is named by both.** Tier 2's symbols list a moved row's name as a second name of
+    its kind, so a tree rule may name either. A moved row with a check keeps its moved byte in the check's set, when
+    the check takes any of its real first bytes.
+75. **A pass carries a mask's last word only where one of its live masks reads it.** The dead carry warned in
+    Python's tier 1, and Kotlin's had two.
+76. **A token's tests wait for the blocks they read.** The token loop runs a part at a time between blocks, for the
+    tokens that start in the blocks already final. A delayed output's word is final only after the next block is
+    made. A test whose output is read from the rows, not from the bytes, read the token's last block before it was
+    final. A float such as `1024.0` across a block's edge lost its `.` there. `tested` now takes the part's
+    `Limit`: a token whose last block is not final waits for it, as a run's search past the final blocks does.
+77. **A token starts in code, and a quote or a `#` at a start opens its region.** These are rr's assumes:
+    - `code = ~empty`, `o_str = quote` and `o_cmt = hash` at starts;
+    - an ellipsis's start is three dots, the first after none, without `code`.
+
+    Tier 1 as Rust no longer works out, at each token, which region it opens: a row's start never asks again
+    whether a region opened there. A conversion's start (`conv_at`), a tail's `}` and a spec's `:` depend on the
+    interpolation's level. Tier 1 as Rust refuses an assume that reads a region's mask, so those wait for the
+    f-string reader.
+78. **A name runs over its word, and a byte no token begins with is a `bad` token.** As rr's:
+    - `token identifier = start word_start run word`. `name_more` and its assume are gone.
+    - `class junk`: the control bytes, `$`, `?`, the backtick, `\` and 0x7f. `token bad = start bad_first pair empty`,
+      with `bad_first = junk` assumed at starts. The tree has `untaken bad`, so no rule takes one and the file is
+      refused, as the lean lexer fails at a byte its operators do not take. The `error … by tokens` is gone.
+    - A byte past ASCII is no `junk`. Its escape refuses the file in code, and its bytes stay free for the kinds a
+      reader moves (0509). With them in `junk`, `spec_text` had no byte left.
+
+79. **An ellipsis is a run of dots, and its check is three.** `token ellipsis = start ell_at run dot`, with
+    `check ellipsis = '.' '.' '.'`, in place of the run over `ell`. A pairs triple, as the lean lexer's table has it,
+    cannot hold `...`: a triple's first two bytes must be a pair, and Python's `..` is two tokens. Four dots or more
+    are refused to the lean parser, which reads `....` as an ellipsis and a `.`. None is in the corpus.
+80. **The loop skips a class.** `skip ws`, as rr's, Kotlin's and JSON's, in place of `skip code & (blank | lf)`.
+    Between tokens the loop is always in code: a region's bytes are its token's.
+81. **A string's escape is a part read by its check.** `check escape_sequence = '\\' (u_l hex hex hex hex | uu_l
+    hex hex hex hex hex hex hex hex | x_l hex hex | digit [digit [digit]] | esc_one)` is the lean lexer's `escape`,
+    one byte at a time. A reader's part `escape_sequence = esc check else '\\'` reads it at a backslash: where the
+    check matches, an escape through the match's last byte; where it does not, a lone `\`. The masks e2 to e_last
+    are gone.
+    - Bitlex (`Parts::checked`) makes two masks of the check: `P_ok`, where the check matches from, and `P_last`,
+      the last byte of each match. The masks path reads the two parts, `E & P_ok` through `P_last` and `E & ~P_ok`
+      one byte.
+    - A check read this way has no loop. A choice's arms start with distinct bytes, and a `[…]` is not first, so
+      the lexer reads each choice at the next byte without going back. Its `check` statement is the part's, not a
+      token's.
+    - The writers that read a part as the lexer does get the kind, the grammar and the other part from
+      `Parts::checked`.
+82. **Tier 2 as Rust reads a checked part as the lean lexer does.** A reader's checked part is one part at `E`
+    (`Reader::checks`). At it, `check_P(&src[e..])` gives the escape through its match's end, and none gives `K`'s
+    one byte, as the lean lexer's `backslash` calls `escape`. The check's function is `bitlex_check_rust`'s, the one
+    tier 1 uses for a token's check. Tier 1 gives tier 2 the `E` mask, not `E & P_ok`, `E & ~P_ok` and `P_last`, so
+    it no longer makes the check's masks.
+83. **A string is a reader in the regions, `read string { … }`.** It says what the lean lexer's `string` reads, and
+    Python's grammar no longer writes `or`, `resumes`, `after`, `level` or `nest`:
+    - `prefix pfx max 2 after word`: one or two letters starting a word, then a quote;
+    - `flags raw = raw_l, bytes = bytes_l, format = f_l, template = t_l`: a quote after a prefix with such a letter
+      (`raw_q`, `bytes_q`, `format_q`, `template_q`);
+    - `quotes sq | dq triple` and `escape bslash`: one quote or three, and a closer no backslash escapes;
+    - `interpolation format lbrace .. rbrace spec colon level …`: where `format` holds, the code from a lone `{`
+      to its `}`, a spec from a `:` at its level zero, and the level and nest of its code.
+
+    Bitlex (`string_reader`) lowers it to the kinds the walk reads: each quote's (`s1`, `d3`), the format ones
+    (`fs1`, closed at the `{` too), their tails (`ts1`, which resume them), `spec`, and their unions (`o_str`,
+    `f_str`, `o_f`, `f_f`, `o_t`, `f_t`). The masks path runs the same walk. `Regions::readers` keeps the reader
+    for the writers that read strings as the lean lexer does. Kotlin's templates keep `or` and `resumes`.
+84. **A string's token starts at its prefix.** `token string_start = start str_at prefix pfx max 2 read …` reads
+    the prefix letters as the string's own first bytes, as the lean lexer's `string_prefix` is one leaf with its
+    quote. `str_prefix` and the tree's `str_prefix merge string_start` are gone. `word_start` still excludes the
+    prefix letters (`~p1 & ~p2`).
+    - Bitlex (`Parts::prefix`, `Parts::reach`): each region's row starts where its opener is reached,
+      `o | next(o)&P | next(o, 2)&P&next(P)`, and its last is the opener. The content after it is `f_K & ~o_K`.
+      Without a prefix the rows stay as they were (`start & o_K`).
+    - The masks path: the reader's opener is that reach, and its closers exclude the openers, because the search
+      for a closer starts at the byte after the token's start, before the quote. `Reader::open_last` is the
+      openers' output. The first piece runs from the token's start to its first bit, and the parts start after it.
+      Every split reads it: `records::read_parts`, the JIT's `split_enter` and `read_in_parts`, tier 2 as Rust's
+      `split_R`. The JIT's depth bits of a template that nests (`Reader::nest`) are read at the opener, not at
+      the prefix, which lies in the outer template's code. It is renumbered to an output with the readers' other
+      masks and printed as `recopen K O`.
+    - Tier 1 as Rust reads the region from its opener (`first_bit(&o_K, s)`) and the record from the token's start.
+85. **The string reader writes a string's pieces, tokens and refusals.** Its clauses now say all that the lean
+    lexer's `string` decides, so a writer that reads strings as the lean lexer does reads them from one statement:
+    - `start K`: a triple's two more quotes, a piece. `text K`: the text. `close K`: the closing quotes.
+    - `escape K = E check else L unless F`: an escape read by `check K`, else an `L`; none in a raw string.
+    - `braces K`: `{{` and `}}`.
+    - `interpolation F K = O .. J = C level …`, `conversion K = B L`, `spec K = S`.
+    - `refuse "W" at A [if F | unless F] [X]`: what is not read, where `A` is: the opener, the fill, the text, an
+      escape, a raw string of backslashes only, a brace alone, an interpolation's code, its end, an empty one, its
+      spec, the spec's start, past the level's bounds. `X` is a mask of the bytes alone. A name `Q…` in it is each
+      quote's.
+
+    Bitlex (`string_reader`) writes what the grammar wrote, as text it reads after the regions: the pieces' masks
+    (`in_raw`, `t_open`, `s_body`, `body`, `esc`, `fb`, `i_at`, `icode`, `esc_ib`, `conv_at`) and an escape of each
+    refusal. `token K = start E read R` writes the four tokens (the string's in parts, the tail's, the spec's, the
+    conversion's) in its place, in the grammar's order of rows. Tier 2 as Rust is the same as before, word for word.
+    Two masks are now read as their bytes say, with the same answers:
+    - `conv_at`'s `code & !` is `~hidden & !`;
+    - an interpolation's `=` is `eq & ~prev(eq | bang | lt_gt)`, not inside `icode`, at the byte before its end.
+86. **A line break is a statement's end where the loop's bracket depth is 0.** The marks read `lf & code &
+    depth.eq(0)`, and `in_br` and its frame pass over the file go. The masks path reads `C.eq(k)` from the count's
+    planes. Tier 1 as Rust reads it as the lean lexer knows its depth at a line break:
+    - A gap mark `X & C.eq(k)` is `g_C == k && …X over the gap…`. `g_C` is the count as the token before left it:
+      no bit of the count is in a gap, and the token's own brackets count after its gap.
+    - The count goes on at a string token, where its `up` or `down` reads a region's opener, fill or hidden bytes where
+      they hold (Python's `o_t`, `prev(f_f | f_t)`; not rr's `~region`). It goes down one where `down`
+      holds at the token's start (a tail's `}`). It goes up one where `up` holds at its last byte, as each closer
+      leaves it (an interpolation's `{`). Neither may hold in its body or at its closer's other bytes; a closer that
+      holds at none of this region's closers is not one of its (as `closer_last` reads them).
+    - Its closer is kept (`close`) only where the count reads it.
+
+    A test has a line break straight before a closer, in code and in an interpolation; it fails where the gap reads
+    the count after the token.
+87. **Tier 1 as Rust reads a string reader's strings in its one pass, and writes their pieces as records.** A grammar
+    with `read R { … }` is lexed in one pass of the token loop (`bitlex_lex_rust/reader.rs`), as JSON's and rr's
+    are, and as the lean lexer's `string` reads a string, from stop to stop of stage 1's masks:
+    - The string's arm reads its prefix's flags at its quote and its triple, then its text to its closer or an
+      interpolation's `{`. Its stops are the quotes, the escape, and in a format string the braces.
+    - It writes each piece: the opener (its record, from the prefix to the quote), a triple's two more quotes, the
+      text, each escape by its check (else `\`), `{{` and `}}`, the closer or the interpolation's `{`. The first is
+      the loop's record, with its marks; the others are written after it, of their kind alone. A pause (stage 1 has
+      not made the blocks) writes nothing, and the token is read again.
+    - The reader's state is in the loop: the template open (its quote, its flags, its code's bracket level), the
+      templates around it (`nest`), every template's frames (`max`), and where the interpolation's code began.
+    - At a template's level 0, its `}`, its spec's `:` and its conversion's `!x` are the reader's rows, picked
+      before the rows' pick. The tail's `}` record has no word and no marks, and the gap is the next token's, as the
+      interpreter resumes it. A token of code in a template counts its brackets, as the walk does.
+    - Each refusal is tested in the arm where its place is: the opener, the fill and the text over each segment,
+      an escape, a raw string's backslashes, a `}` alone, the code since the `{` (to the file's end too), an end,
+      an empty one, the spec and its start, the bounds. A refusal by a mask first lets stage 1 make the blocks after;
+      a count's is the file's.
+    - The count of brackets (`depth`) goes up at the interpolation's `{` and down at its `}` in the arms.
+
+    A piece is no token of code, as the lean lexer's (`IOpen`, `Text`) are not: a lookahead counts no
+    interpolation's `{` as a bracket, and no `,` of a string's text. The interpreter's parts carry the words of
+    their bytes, which its tier 2 takes and no lookahead of its reads, because it reads the records.
+
+    Tier 2 as Rust reads the pieces as records: it no longer splits a string (`split_0`, `resume_1` and their masks
+    go). The interpreter's token stream is `stream::tokens`, which is `run_seen`'s split of the records, the parts'
+    codes the records' pass's. The tests compare tier 1's records with it, a piece after the first by its kind.
+    Tier 1 reads the source padded, as rr's: `parse(buf, n)`, `lex(buf, n)`, `padded`.
+
+    Three things the writer reads generically:
+    - A row's token test reads its kind's `in KIND` assumptions, as its run does. The integer's float test is
+      `dot | exp_l`, not the walk's `number`.
+    - A row's start reads a string reader's regions as none: its arms read them.
+    - The regions are numbered for the counts' reads, but the loop opens none.
+
+88. **Python's tier 1 as Rust has no stage 1: each block's masks are made where the loop reads them.** As rr's and
+    JSON's, the loop makes each block's words from one load and its classes (`block_classes`), and a read past the
+    block reads windows of the bytes. No mask of the whole file is made before the loop, and the reader's arms read
+    their stops, quotes and refusals the same way. What the bytes form needed:
+    - **The escapes no token reads** (`sinks`: a tab or a form feed in a line's indentation, or starting the file)
+      are tested in the loop, over each gap and its token (`at` to the token's last byte), and over the gap after the
+      last token once after the loop. Every byte is read once. Stage 1's check of them after its blocks goes.
+    - **A search of `A & F`, `F` a `fill`** reads `A`'s bits (its block's word, then windows), and tests `F` at each
+      bit by walking back over the bytes `E` does not hold to one `S` holds, as the lean lexer reads a line's indent
+      at its line break. `fill(S, E)` at a byte holds where `S` holds there, or `E` does not and it holds a byte back.
+    - **`escaped(B)` at one byte** is whether the run of `B`s before it is odd. A window searched from a byte inside
+      the token starts its carry the same way, so its windows need not start at the token's first byte. A window
+      reading `escaped(B)` a byte on shifts the window's escapes down a byte, with the carry out as its last bit, and a
+      window reading the same escapes twice computes them once.
+    - **A pairs mask a byte back** (`prev(two_start)`, `two_start = two & ~escaped(two)`) is `escaped(two)`: a byte is
+      escaped exactly where the byte before is a `two` not escaped itself.
+    - **A conjunction with a side that holds nowhere** (`i_open & prev(empty)`) holds nowhere, so it reads none of
+      its other side.
+    - **A complement a few bytes on or back** in a block's word masks with the bytes valid there, not the block's own:
+      `~prev(~empty)` holds at the file's first byte.
+    - **The counts' scans** of the tokens' bytes stay where the loop reads a count past them: `depth`, for the line
+      breaks' marks (`depth.eq(0)`) and the string reader's bound.
+    - **The reader's code** reads one mask a call: the stops by the format flag, each quote's mask by the quote, a
+      brace's run by which brace it is.
+
+    Tier 2 asks the token marks the loop no longer records (`trail`, `future`: `UNRECORDED`), as rr's tier 2 does.
+    The tests compare the records without those bits, as rr's do.

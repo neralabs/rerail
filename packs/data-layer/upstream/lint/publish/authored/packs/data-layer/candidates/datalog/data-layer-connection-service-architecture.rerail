@@ -227,7 +227,7 @@ out_scope(d) :- doc(d, p, _), glob("**/tests/**", p).
 out_scope(d) :- doc(d, p, _), glob("**/test_*.py", p).
 out_scope(d) :- doc(d, p, _), glob("**/*_test.py", p).
 tape_syntax_error(d) :- syntax_error(d).
-violation("data-layer-connection-service-architecture", "source-syntax", "NATIVE-SYNTAX", p, l) :- node(_, n, "module", _, _), node(v1, n, _, _, _), doc(v1, v2, _), never(_), node(d, n, _, _, _), in_scope(d), syntax_error(d), !out_scope(d), doc(d, p, _), line(n, l).
+violation("data-layer-connection-service-architecture", "source-syntax", "NATIVE-SYNTAX", p, l) :- node(_, n, "module", _, _), node(v1, n, _, _, _), doc(v1, v2, _), never(_), node(d, n, _, _, _), in_scope(d), syntax_error(d), !out_scope(d), doc(d, p, _), node_line_number(n, l).
 connection_entry(e) :- option_value("entryPoint", e).
 connection_doc(d, p) :- doc(d, p, _), in_scope(d), !out_scope(d), !tape_syntax_error(d).
 connection_analysis_path(p) :- connection_doc(_, p), prefix("l2000_connection/", p).
@@ -341,21 +341,21 @@ connection_in_method(x, m) :- connection_smethod(_, _, _, m, _), connection_name
 connection_in_method(x, m) :- connection_smethod(_, _, _, m, _), node(_, dd, "decorated_definition", _, _), field(dd, "definition", m), child(dd, dc, _), node(_, dc, "decorator", _, _), connection_named(x, _), inside(x, dc, connection_decorator_kind).
 connection_in_function(x, f) :- node(_, f, "function_definition", _, _), node(_, x, "attribute", _, _), inside(x, f, connection_fdef).
 connection_in_function(x, f) :- node(_, f, "function_definition", _, _), node(_, dd, "decorated_definition", _, _), field(dd, "definition", f), child(dd, dc, _), node(_, dc, "decorator", _, _), node(_, x, "attribute", _, _), inside(x, dc, connection_decorator_kind).
-connection_analysis(d, "CONN102", l) :- connection_doc(d, _), node(d, f, "function_definition", _, _), field(f, "name", x), text(x, s), connection_lookup_helper(s), line(f, l).
-connection_analysis(d, "CONN600", l) :- connection_doc(d, _), node(d, f, "function_definition", _, _), field(f, "name", x), text(x, s), connection_immediate_reader(s), line(f, l).
-connection_analysis(d, "CONN101", l) :- connection_doc(d, _), node(d, a, "attribute", _, _), field(a, "attribute", x), text(x, s), connection_slot_name(s), !connection_target(a), line(a, l).
-connection_analysis(d, "CONN102", l) :- connection_doc(d, _), node(d, c, "call", _, _), connection_call(c, _, s), connection_lookup_helper(s), line(c, l).
-connection_analysis(d, "CONN500", l) :- connection_doc(d, p), p != "l2000_connection/deferred_imports.py", p != "l2000_connection/schema_transaction_deferred_imports.py", node(d, c, "call", _, _), connection_call(c, _, "load_python_module"), line(c, l).
-connection_analysis(d, "CONN102", l) :- connection_doc(d, _), node(d, i, "import_from_statement", _, _), field(i, "name", x), connection_import_name(x, s), connection_lookup_helper(s), line(i, l).
-connection_analysis(d, "CONN100", l) :- connection_doc(d, _), connection_probe(c), node(d, c, _, _, _), line(c, l).
-connection_analysis(d, "CONN601", l) :- connection_doc(d, "impl/read_through/connection.py"), node(d, c, "call", _, _), connection_call(c, _, "getattr"), connection_arg_at(c, 0, v), node(_, v, "attribute", _, _), field(v, "attribute", x), text(x, s), (s = "_cache" ; s = "_upstream"), field(v, "object", o0), connection_un(o0, o), node(_, o, "identifier", _, _), text(o, "self"), line(c, l).
-connection_analysis(d, "CONN200", l) :- connection_latest(d, c, cn, m, mn), !connection_abstract(c), !connection_tx_class(cn), !suffix("_async", mn), connection_twin_name(mn), an = @concat(mn, "_async"), connection_latest(d, c, _, a, an), connection_body_count(m, k), k >= 5, connection_body_count(a, ak), ak >= 5, line(m, l).
-connection_analysis(d, "CONN103", l) :- connection_smethod(d, _, cn, m, mn), contains("Connection", cn), !prefix("_", mn), connection_in_method(x, m), connection_named(x, s), connection_probe_name(s), line(m, l).
-connection_analysis(d, "CONN103", l) :- connection_smethod(d, _, cn, m, mn), contains("Connection", cn), !prefix("_", mn), connection_async(m), connection_returns_bool(m), connection_positional(m, "table_name"), connection_positional(m, "column_name"), line(m, l).
-connection_analysis(d, "CONN300", l) :- connection_owner(d, m, cn, mn), !suffix("Service", cn), k = count : { connection_owner(d, _, _, mn) }, k > 1, line(m, l).
-connection_analysis(d, "CONN400", l) :- connection_legacy(d, m, _, stub), !connection_stub_body(m, stub), line(m, l).
-connection_analysis(d, "CONN401", l) :- connection_legacy(d, m, _, _), !connection_counterpart(m, _), line(m, l).
-connection_analysis(d, "CONN402", l) :- connection_legacy(d, m, _, _), connection_counterpart(m, z), !connection_name_deco(z, _, "pure_lazy"), line(z, l).
+connection_analysis(d, "CONN102", l) :- connection_doc(d, _), node(d, f, "function_definition", _, _), field(f, "name", x), text(x, s), connection_lookup_helper(s), node_line_number(f, l).
+connection_analysis(d, "CONN600", l) :- connection_doc(d, _), node(d, f, "function_definition", _, _), field(f, "name", x), text(x, s), connection_immediate_reader(s), node_line_number(f, l).
+connection_analysis(d, "CONN101", l) :- connection_doc(d, _), node(d, a, "attribute", _, _), field(a, "attribute", x), text(x, s), connection_slot_name(s), !connection_target(a), node_line_number(a, l).
+connection_analysis(d, "CONN102", l) :- connection_doc(d, _), node(d, c, "call", _, _), connection_call(c, _, s), connection_lookup_helper(s), node_line_number(c, l).
+connection_analysis(d, "CONN500", l) :- connection_doc(d, p), p != "l2000_connection/deferred_imports.py", p != "l2000_connection/schema_transaction_deferred_imports.py", node(d, c, "call", _, _), connection_call(c, _, "load_python_module"), node_line_number(c, l).
+connection_analysis(d, "CONN102", l) :- connection_doc(d, _), node(d, i, "import_from_statement", _, _), field(i, "name", x), connection_import_name(x, s), connection_lookup_helper(s), node_line_number(i, l).
+connection_analysis(d, "CONN100", l) :- connection_doc(d, _), connection_probe(c), node(d, c, _, _, _), node_line_number(c, l).
+connection_analysis(d, "CONN601", l) :- connection_doc(d, "impl/read_through/connection.py"), node(d, c, "call", _, _), connection_call(c, _, "getattr"), connection_arg_at(c, 0, v), node(_, v, "attribute", _, _), field(v, "attribute", x), text(x, s), (s = "_cache" ; s = "_upstream"), field(v, "object", o0), connection_un(o0, o), node(_, o, "identifier", _, _), text(o, "self"), node_line_number(c, l).
+connection_analysis(d, "CONN200", l) :- connection_latest(d, c, cn, m, mn), !connection_abstract(c), !connection_tx_class(cn), !suffix("_async", mn), connection_twin_name(mn), an = @concat(mn, "_async"), connection_latest(d, c, _, a, an), connection_body_count(m, k), k >= 5, connection_body_count(a, ak), ak >= 5, node_line_number(m, l).
+connection_analysis(d, "CONN103", l) :- connection_smethod(d, _, cn, m, mn), contains("Connection", cn), !prefix("_", mn), connection_in_method(x, m), connection_named(x, s), connection_probe_name(s), node_line_number(m, l).
+connection_analysis(d, "CONN103", l) :- connection_smethod(d, _, cn, m, mn), contains("Connection", cn), !prefix("_", mn), connection_async(m), connection_returns_bool(m), connection_positional(m, "table_name"), connection_positional(m, "column_name"), node_line_number(m, l).
+connection_analysis(d, "CONN300", l) :- connection_owner(d, m, cn, mn), !suffix("Service", cn), k = count : { connection_owner(d, _, _, mn) }, k > 1, node_line_number(m, l).
+connection_analysis(d, "CONN400", l) :- connection_legacy(d, m, _, stub), !connection_stub_body(m, stub), node_line_number(m, l).
+connection_analysis(d, "CONN401", l) :- connection_legacy(d, m, _, _), !connection_counterpart(m, _), node_line_number(m, l).
+connection_analysis(d, "CONN402", l) :- connection_legacy(d, m, _, _), connection_counterpart(m, z), !connection_name_deco(z, _, "pure_lazy"), node_line_number(z, l).
 connection_import_name(x, s) :- node(_, x, "dotted_name", _, _), name(x, s).
 connection_import_name(x, s) :- node(_, x, "aliased_import", _, _), field(x, "name", dn), name(dn, s).
 connection_twin_name(s) :- connection_latest(_, _, _, _, s), connection_schema_owned(s).
@@ -418,7 +418,7 @@ connection_backend_hit(d) :- connection_doc(d, p), connection_backend(p, o), con
 connection_broad_owner(d, m, p, cn, mn) :- connection_entry("all"), connection_owner(d, m, cn, mn), connection_doc(d, p), connection_analysis_path(p).
 connection_broad_owner(d, m, p, cn, mn) :- connection_entry(e), e != "all", connection_owner(d, m, cn, mn), connection_doc(d, p).
 connection_owner_pair(mn, p, cn) :- connection_broad_owner(_, _, p, cn, mn).
-connection_cross(d, l) :- connection_broad_owner(d, m, _, cn, mn), !suffix("Service", cn), k = count : { connection_owner_pair(mn, _, _) }, k > 1, line(m, l).
+connection_cross(d, l) :- connection_broad_owner(d, m, _, cn, mn), !suffix("Service", cn), k = count : { connection_owner_pair(mn, _, _) }, k > 1, node_line_number(m, l).
 schema_facade_class(d, cn) :- connection_first_class_named(d, cn), connection_tx_class(cn).
 schema_facade_complete(d) :- connection_doc(d, _), k = count : { schema_facade_class(d, _) }, k = 3.
 schema_first_method(d, cn, m, mn) :- connection_first_method(d, _, cn, m, mn).

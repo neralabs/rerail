@@ -151,7 +151,7 @@ out_scope(d) :- doc(d, p, _), glob("**/node_modules/**", p).
 out_scope(d) :- doc(d, p, _), glob("**/tmp/**", p).
 out_scope(d) :- doc(d, p, _), glob("**/browser_build/**", p).
 tape_syntax_error(d) :- syntax_error(d).
-violation("data-layer-schema-bootstrap-contracts", "source-syntax", "NATIVE-SYNTAX", p, l) :- node(_, n, "module", _, _), node(d, n, _, _, _), in_scope(d), syntax_error(d), !out_scope(d), doc(d, p, _), line(n, l).
+violation("data-layer-schema-bootstrap-contracts", "source-syntax", "NATIVE-SYNTAX", p, l) :- node(_, n, "module", _, _), node(d, n, _, _, _), in_scope(d), syntax_error(d), !out_scope(d), doc(d, p, _), node_line_number(n, l).
 bootstrap_doc(d) :- doc(d, _, _), in_scope(d), !out_scope(d), !tape_syntax_error(d), !cpython_syntax_error(d, _, _).
 bootstrap_fn(f, x) :- node(d, f, "function_definition", _, _), bootstrap_doc(d), field(f, "name", nm), text(nm, t), x = @nfkc(t).
 bootstrap_kwname(i) :- node(_, k, "keyword_argument", _, _), field(k, "name", i).
@@ -202,7 +202,7 @@ bootstrap_elem_any(t) :- bootstrap_elem_name(t, _).
 bootstrap_readonly(t) :- bootstrap_elem_any(t), !bootstrap_elem_scalar(t).
 bootstrap_elem_scalar(t) :- bootstrap_elem_name(t, x), bootstrap_scalar(x).
 bootstrap_broad_other(t) :- bootstrap_ann(t, x), bootstrap_broad(x), x != "Sequence".
-bootstrap_at(n, p, l) :- node(d, n, _, _, _), doc(d, p, _), line(n, l).
+bootstrap_at(n, p, l) :- node(d, n, _, _, _), doc(d, p, _), node_line_number(n, l).
 bootstrap_deco_expr(f, e) :- bootstrap_fn(f, _), field(dd, "definition", f), child(dd, dc, _), node(_, dc, "decorator", _, _), child(dc, e, 0).
 bootstrap_deco_expr(f, i) :- bootstrap_deco_expr(f, e), node(_, e, "parenthesized_expression", _, _), child(e, i, 0).
 bootstrap_deco_expr(f, g) :- bootstrap_deco_expr(f, e), node(_, e, "call", _, _), field(e, "function", g).

@@ -39,7 +39,7 @@ pub fn wanted(options: &serde_json::Value, typing: &Typing, t_facts: Option<&Pat
 /// The run's key: everything it is a function of besides what it consults.
 /// Switches that change how a run is measured or held, never what it outputs: left out of the key. A profile's path
 /// differs every run, so with it in the key no profiled run ever found the last run's record.
-const NOT_OUTPUTS: &[&str] = &["RERAIL_TAPE_CACHE", "RERAIL_PROFILE", "RERAIL_REUSE_TRACE", "RERAIL_DEADLINE", "RERAIL_SQL_STRICT", "RERAIL_WARM", "RERAIL_WRITE_QUEUE_MB", "RERAIL_WRITES", "RERAIL_STATS_KEEP_TRACE", "RERAIL_JOURNAL_TRACE", "RERAIL_UPKEEP", "RERAIL_UPKEEP_CPU", "RERAIL_UPKEEP_MB", "RERAIL_UPKEEP_IDLE", "RERAIL_UPKEEP_BATTERY", "RERAIL_UPKEEP_JOBS", "RERAIL_UPKEEP_LOG", "RERAIL_JOINS", "RERAIL_JOINS_LOG", "RERAIL_JOIN_SLOW", "RERAIL_JOIN_SLOW_ROWS", "RERAIL_JOIN_CRITICAL", "RERAIL_JOIN_EXPLORE", "RERAIL_JOIN_MARGIN", "RERAIL_JOIN_SEED", "RERAIL_OBSERVE_TRACE",
+const NOT_OUTPUTS: &[&str] = &["RERAIL_TAPE_CACHE", "RERAIL_PROFILE", "RERAIL_W_JOINS", "RERAIL_REUSE_TRACE", "RERAIL_DEADLINE", "RERAIL_SQL_STRICT", "RERAIL_WARM", "RERAIL_WRITE_QUEUE_MB", "RERAIL_WRITES", "RERAIL_STATS_KEEP_TRACE", "RERAIL_JOURNAL_TRACE", "RERAIL_UPKEEP", "RERAIL_UPKEEP_CPU", "RERAIL_UPKEEP_MB", "RERAIL_UPKEEP_IDLE", "RERAIL_UPKEEP_BATTERY", "RERAIL_UPKEEP_JOBS", "RERAIL_UPKEEP_LOG", "RERAIL_JOINS", "RERAIL_JOINS_LOG", "RERAIL_JOIN_SLOW", "RERAIL_JOIN_SLOW_ROWS", "RERAIL_JOIN_CRITICAL", "RERAIL_JOIN_EXPLORE", "RERAIL_JOIN_MARGIN", "RERAIL_JOIN_SEED", "RERAIL_OBSERVE_TRACE",
     // A profile's and the heap sampler's (`profile::memory`, `rerail_prof`): a measurement's cold runs sample the heap
     // and its warm runs do not, so with these in the key no warm run found the cold run's record (decision 0376).
     "RERAIL_PROF", "RERAIL_PROFILE_EACH", "RERAIL_HEAP_SAMPLE", "RERAIL_HEAP_AT", "RERAIL_HEAP_FRAMES", "RERAIL_PROF_MEMORY_MS", "RERAIL_TIMELINE",
@@ -291,7 +291,7 @@ pub fn reused(given: &super::Texts<'_>, key: &[u8; 32], root: &Path, out: &Path,
 /// The kept outputs of the run's frame `key`, given its texts where they are read (`reused`), or none: a command's
 /// frame led to it (`command`), whose rule files, as recorded, make the same texts and graphs.
 #[allow(clippy::too_many_arguments)]
-fn applied(given: Option<&super::Texts<'_>>, key: &[u8; 32], root: &Path, out: &Path, typing: &Typing, options: &serde_json::Value, mut captured: Option<&mut Vec<u8>>) -> Result<Option<Report>> {
+fn applied(given: Option<&super::Texts<'_>>, key: &[u8; 32], root: &Path, out: &Path, typing: &Typing, options: &serde_json::Value, captured: Option<&mut Vec<u8>>) -> Result<Option<Report>> {
     // A run an analysis run owns (decision 0547) publishes what it recorded as the owner finishes: a hit re-owns the
     // manifests the recorded run wrote (`own_recorded_manifests`), below. Skipped instead, every `logic` command's
     // warm run evaluated again (each begins an analysis run).
@@ -356,7 +356,7 @@ fn applied(given: Option<&super::Texts<'_>>, key: &[u8; 32], root: &Path, out: &
     let mut report = Report { plans, ..Report::default() };
     let name = crate::code_rule_dsl::logic::plan::output::FILE;
     let bytes = &kept.image;
-    if let Some(target) = captured.as_deref_mut() {
+    if let Some(target) = captured {
         target.extend_from_slice(bytes);
     } else {
         crate::code_rule_dsl::logic::plan::output::replace(out, &[bytes]).map_err(|e| Error::Plan(format!("{name}: {e}")))?;

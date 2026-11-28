@@ -91,7 +91,7 @@ impl Language for GrammarDialect {
 
     /// A dialect whose patterns are its parser's own trees (Blade's, Forte's) builds them so
     /// (`tape::TreeParser::build_pattern`); every other dialect's are tapes of tree-sitter trees, written as
-    /// documents are: no token the grammar implies (`tape::pattern_doc`, RER-131).
+    /// documents are: no token the grammar implies (`tape::pattern_doc`, decision 0161).
     fn build_pattern(&self, builder: &PatternBuilder) -> Result<Pattern, PatternError> {
         match crate::code_rule_dsl::tape::tree_parser(*self)
             .and_then(|parser| parser.build_pattern(builder))
@@ -452,7 +452,7 @@ pub fn rule_pattern(
 }
 
 /// The patterns one compilation of a query has compiled, by language and text (`pattern_key`). A pattern's tree is
-/// tree-sitter's parse of its text written as a tape (`tape::pattern_doc`, RER-131): a parse, an encode and a
+/// tree-sitter's parse of its text written as a tape (`tape::pattern_doc`, decision 0161): a parse, an encode and a
 /// restore. A query asks for the same pattern several times (the comparisons' captures for each of its dialects,
 /// its declared captures, the matcher), so its compilation compiles each once and hands out copies. The table is
 /// the compilation's and goes with it: nothing outlives the query (no process-wide memo, decision 0104). One that
@@ -562,10 +562,19 @@ pub fn fragments() -> &'static [(&'static str, GrammarDialect, &'static str, u8)
     FRAGMENTS
 }
 
-/// The grammar a guest's kinds are named in: a fragment's dialect's label, an on-demand embedding's one dialect's
-/// (`vue-expression`: TypeScript, decision 0597), else the grammar itself (a dialect's label).
+/// The grammar a guest's kinds are named in: a fragment's dialect's label, an embedding's one dialect's, built on
+/// demand (`vue-expression`: TypeScript, decision 0597) or at the file's load (`compiled-view`: a Blade template's
+/// PHP), else the grammar itself (a dialect's label).
 pub fn kinds_label(grammar: &str) -> &str {
-    fragment(grammar).and_then(|(dialect, _)| label(dialect)).or_else(|| demand_dialect(grammar).and_then(label)).unwrap_or(grammar)
+    fragment(grammar).and_then(|(dialect, _)| label(dialect)).or_else(|| embedding_dialect(grammar).and_then(label)).unwrap_or(grammar)
+}
+
+/// The one dialect an embedding of id `via` gives, built on demand or at its host's load; `None` for another name,
+/// or an embedding of several.
+fn embedding_dialect(via: &str) -> Option<GrammarDialect> {
+    let mut of = GrammarDialect::ALL.iter().flat_map(|d| d.embeds().iter().chain(d.demand_embeds())).filter(|(v, _)| v.id() == via).map(|&(_, d)| d);
+    let first = of.next()?;
+    of.all(|d| d == first).then_some(first)
 }
 
 /// The one dialect an on-demand embedding of id `via` gives (`GrammarDialect::demand_embeds`); `None` for another

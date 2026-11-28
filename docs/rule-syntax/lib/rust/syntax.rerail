@@ -70,10 +70,10 @@ format_string(s) :- macro_args(m, t), macro_name(m, x), format_pos(x, k), child(
 // closing bracket is not, so the end is read from the offsets: no token of t between s and t's last byte.
 .decl whole_arg(t: node, s: node)
 .stored whole_arg "inside a token_tree every token but the closing bracket is stored: each is one of the grammar's token choices"
-whole_arg(t, s) :- child(t, s, _), token_before(s, b), (first_token(t, b) ; text(b, ",")), arg_end(t, s).
+whole_arg(t, s) :- child(t, s, _), node_to_token_before(s, b), (node_to_first_token(t, b) ; token_text(b, ",")), arg_end(t, s).
 .decl arg_end(t: node, s: node)
 .stored arg_end "inside a token_tree every token but the closing bracket is stored: the comma read is on the tape"
-arg_end(t, s) :- child(t, s, _), token_after(s, a), text(a, ",").
+arg_end(t, s) :- child(t, s, _), node_to_token_after(s, a), token_text(a, ",").
 arg_end(t, s) :- child(t, s, i), !child(t, _, i + 1), node(_, s, _, _, e), !tail_token(t, e).
 .decl tail_token(t: node, e: number)   // t has a token at or after offset e, its closing bracket aside
 tail_token(t, e) :- macro_args(_, t), child(t, s, _), node(_, s, _, _, e), node(_, t, _, _, te),
@@ -88,13 +88,13 @@ macro_args(m, t) :- kind(m, "macro_invocation"), child(m, t, _), kind(t, "token_
 // arg_index(t, c, k): element c of token tree t is in argument k, from 0.
 .decl arg_index(t: node, c: node, k: number)
 arg_index(t, c, 0) :- format_args(t), child(t, c, 0).
-arg_index(t, d, k + w) :- arg_index(t, c, k), next_sibling(c, d), w = count : { gap_token(c, g), text(g, ",") }.
+arg_index(t, d, k + w) :- arg_index(t, c, k), next_sibling(c, d), w = count : { gap_token(c, g), token_text(g, ",") }.
 .decl format_args(t: node)
 format_args(t) :- macro_args(m, t), macro_name(m, x), format_pos(x, _).
-.decl gap_token(c: node, g: span)   // the tokens between element c and the next one
+.decl gap_token(c: node, g: token)   // the tokens between element c and the next one
 .stored gap_token "inside a token_tree every token but the closing bracket is stored: the commas counted are on the tape"
-gap_token(c, g) :- format_args(t), child(t, c, _), token_after(c, g), next_sibling(c, d), !first_token(d, g).
-gap_token(c, h) :- gap_token(c, g), token_after(g, h), next_sibling(c, d), !first_token(d, h).
+gap_token(c, g) :- format_args(t), child(t, c, _), node_to_token_after(c, g), next_sibling(c, d), !node_to_first_token(d, g).
+gap_token(c, h) :- gap_token(c, g), token_next(g, h), next_sibling(c, d), !node_to_first_token(d, h).
 .decl opaque_macro(m: node)
 opaque_macro(m) :- macro_name(m, x), (x = "concat" ; x = "stringify" ; x = "env" ; x = "option_env" ;
     prefix("include", x)).

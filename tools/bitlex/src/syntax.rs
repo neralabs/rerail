@@ -20,7 +20,7 @@ enum Tok {
 /// `(C)*` (`Many`, decision 0416), any number of tokens of `C`'s choices (or of none of them, for
 /// a `C` that is one `~`), then the elements after
 /// it from any of them on (as a forward scan for the first place they hold), the only choice of
-/// its element, one a run and never its last. A run's `nest` counts depths (`Nest`); its `ending
+/// its element, never the first or last element nor right after another run. A run's `nest` counts depths (`Nest`); its `ending
 /// (C)` (the third field) tries the elements after it only where its last token, or the token
 /// before it where it took none, is one of `C` (Q342).
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -71,9 +71,12 @@ pub struct GapPattern {
 pub struct Nest {
     pub open: Vec<TokenElem>,
     pub close: Vec<TokenElem>,
+    /// `(O to C whole)` (decision 0633): inside it, any token is the run's (its choices and marks
+    /// asked only where this depth is 0), as the lean parsers read a bracket's contents in full.
+    pub whole: bool,
 }
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
 pub enum Arg {
     E(Expr),
     N(u64),
@@ -136,7 +139,9 @@ pub enum TokenRule {
     /// A token of a region read in parts (`ReadParts`): `last` its last-byte mask. The reader
     /// starts it, not the token loop: no first byte ends it by a rule. With the reader's kind
     /// (its opener's), and whether it closes the region: its tokens come only between the two.
-    Inside(Expr, String, bool),
+    /// Last, its scope: a mask its starts are all in, its region's fill or its closer's first
+    /// byte. Two rows whose scopes are apart are apart, one question for every such pair.
+    Inside(Expr, String, bool, Expr),
 }
 
 /// A region's parts (`TokenRule::ReadParts`): each part's kind, start mask and bytes, and the
@@ -149,6 +154,15 @@ pub struct Parts {
     /// from the closer's first; the others are the reader's kind (Kotlin's string, closed by
     /// a `"` or by a template's `${`).
     pub closes: Vec<(String, Expr, u8)>,
+    /// `P = E check else K`: the parts read by their `check P = G`, as a lexer reads an escape by its grammar from the
+    /// byte `E` holds at. Each is two of `parts`: `P` where `G` matches from there, through its match's last byte
+    /// (`last`), and `K` one byte where it does not. Its kind, `E`, its grammar and `K`, for the writers that read
+    /// the part as the lexer does (at `E`, the check's match or `K`); the masks path reads the two parts.
+    pub checked: Vec<(String, Expr, Gram, String)>,
+    /// `prefix P max M` before `read`: the token starts at a run of at most `M` bytes of `P` before its region's
+    /// opener, as the lean lexer reads a string's prefix letters with the string. Its own record runs from its start
+    /// through the opener; each region's row starts where that region's opener is reached (`Parts::reach`).
+    pub prefix: Option<(Expr, u8)>,
 }
 
 /// How far a part of a region read in parts runs (`Parts`): `bytes N`, or `last L`, through the
@@ -190,6 +204,23 @@ impl Parts {
         last
     }
 
+    /// Where an opener `o` is reached from a token's start (`prefix P max M`): `o` itself, or the first of a run of
+    /// `k` bytes of `P` before it, `k` up to `M`: `o | next(o) & P | next(o, 2) & P & next(P) | …`. No prefix: `o`.
+    pub fn reach(&self, o: Expr) -> Expr {
+        let Some((p, m)) = &self.prefix else { return o };
+        let and = |a: Expr, b: Expr| Expr::And(Box::new(a), Box::new(b));
+        let next = |e: Expr, k: u8| if k == 1 { Expr::Call("next".into(), vec![Arg::E(e)]) } else { Expr::Call("next".into(), vec![Arg::E(e), Arg::N(u64::from(k))]) };
+        let mut out = o.clone();
+        for k in 1..=*m {
+            let mut at = and(next(o.clone(), k), p.clone());
+            for j in 1..k {
+                at = and(at, next(p.clone(), j));
+            }
+            out = Expr::Or(Box::new(out), Box::new(at));
+        }
+        out
+    }
+
     /// The regions' fill: `f_K`, or each's, `|`ed.
     fn fill(rs: &[Region]) -> Expr {
         rs.iter().fold(None, |a, r| Some(or_of(a, Expr::Name(format!("f_{}", r.kind))))).expect("a region")
@@ -224,11 +255,14 @@ impl Parts {
         let not = |a: Expr| Expr::Not(Box::new(a));
         let next = |e: Expr| Expr::Call("next".into(), vec![Arg::E(e)]);
         let f = Expr::Name(format!("f_{}", r.kind));
-        let body = and(f.clone(), not(s.clone()));
+        // After its opener (with a `prefix`, the token's start is before it).
+        let body = if self.prefix.is_some() { and(f.clone(), not(Expr::Name(format!("o_{}", r.kind)))) } else { and(f.clone(), not(s.clone())) };
         let closer = Self::closer(std::slice::from_ref(r));
         let reader = kind;
-        let closing = |kind: &str, start: Expr, last: Expr, closes: bool| Stmt::Token { kind: kind.to_owned(), start, through: None, last: Some(last.clone()), rule: Some(TokenRule::Inside(last, reader.to_owned(), closes)) };
-        let token = |kind: &str, start: Expr, last: Expr| closing(kind, start, last, false);
+        let row = |kind: &str, start: Expr, last: Expr, closes: bool, scope: &Expr| Stmt::Token { kind: kind.to_owned(), start, through: None, last: Some(last.clone()), rule: Some(TokenRule::Inside(last, reader.to_owned(), closes, scope.clone())) };
+        // A closing row starts at the closer's first byte; the others, in the fill.
+        let closing = |kind: &str, start: Expr, last: Expr, closes: bool| row(kind, start, last, closes, &closer);
+        let token = |kind: &str, start: Expr, last: Expr| row(kind, start, last, false, &f);
         // The reader's own row is its token's, the opener; the closer is its kind's too, but
         // where a `closes` mask holds: that one's kind's, its bytes.
         let mut out = vec![];
@@ -387,7 +421,7 @@ fn read_last(regions: &[Region], open: bool) -> Expr {
     out.unwrap_or(Expr::Empty)
 }
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
 pub enum Expr {
     Name(String),
     Empty,
@@ -427,6 +461,144 @@ pub struct Regions {
     /// The hidden bytes' name: the carry.
     pub hidden: String,
     pub kinds: Vec<Region>,
+    /// `level O to C max N else D` (after `H`): the bracket level in a template's code.
+    pub level: Option<RegionLevel>,
+    /// `read R { … }`: the strings read as the lean lexer reads them, which make the kinds above (`StringReader`).
+    pub readers: Vec<StringReader>,
+}
+
+/// `read R { … }` in `regions`: a string as the lean lexer's `string` reads one, each clause one of its decisions
+/// (decision 0698):
+///
+/// - `prefix P max M after W`: its prefix's letters, `P`, at most `M`, starting a word (no `W` before);
+/// - `flags F = L, …`: how it reads where a letter of class `L` is in its prefix (`F_q`, at its quote);
+/// - `quotes Q | … triple`: its quote, one or three;
+/// - `start K`: a triple's two more quotes after its first, a piece of their own;
+/// - `text K`: its text's pieces;
+/// - `escape K = E check else L unless F`: an escape at an `E` no `E` escapes, read by `check K`, else a `L` of
+///   one byte; none where `F` holds (a raw string), and an `E` keeps a quote from closing it all the same;
+/// - `braces K`: where an interpolation may be, its opener or closer twice, one piece;
+/// - `close K`: its closing quotes' piece;
+/// - `interpolation F K = O .. J = C level …`: where `F` holds, an interpolation from an `O` (its piece `K`) to its
+///   `C` (its piece `J`, which goes on as the string's text), and the bracket level and nest of its code;
+/// - `conversion K = B L`: a `B` and an `L` before the interpolation's end, at its level zero;
+/// - `spec K = S`: a format spec from an `S` at its level zero to the interpolation's end;
+/// - `refuse "W" at A [if F | unless F] [X]`: what the grammar does not read, to the lean parser: where `A` is (its
+///   opener, its fill, its text, an escape, an interpolation's code, its end, its spec…), each byte where `X` holds,
+///   `X` a mask of the bytes alone (`Refusal`).
+///
+/// The walk reads the kinds it makes (`string_reader`), the masks and the escapes after the regions, and the tokens
+/// a `token K = start E read R` makes; the writers that read strings as the lean lexer does read this.
+#[derive(Clone, Debug)]
+pub struct StringReader {
+    pub name: String,
+    /// `P`, `M`, `W`.
+    pub prefix: Option<(String, u8, String)>,
+    pub flags: Vec<(String, String)>,
+    pub quotes: Vec<String>,
+    pub triple: bool,
+    /// `start K`.
+    pub more: Option<String>,
+    /// `text K`.
+    pub text: String,
+    /// `escape K = E check else L unless F`: `E`, `K`, `L`, `F`.
+    pub escape: String,
+    pub escape_kind: String,
+    pub escape_else: String,
+    pub raw: Option<String>,
+    /// `braces K`.
+    pub braces: Option<String>,
+    /// `close K`.
+    pub close: String,
+    pub interpolation: Option<Interpolation>,
+    pub refusals: Vec<Refusal>,
+    /// The masks and the escapes it makes after the regions, by name and why: the walk's, which a writer that reads
+    /// strings as the lean lexer does makes none of.
+    pub made: Vec<String>,
+    pub escapes: Vec<String>,
+    /// The kinds it makes (`s1`, …, `spec`).
+    pub kinds: Vec<String>,
+}
+
+/// `interpolation F K = O .. J = C`, and its `conversion` and `spec` (`StringReader`).
+#[derive(Clone, Debug)]
+pub struct Interpolation {
+    pub flag: String,
+    pub open: String,
+    pub open_kind: String,
+    pub close: String,
+    pub close_kind: String,
+    /// `conversion K = B L`: `K`, `B`, `L`.
+    pub conversion: Option<(String, String, String)>,
+    /// `spec K = S`.
+    pub spec: Option<(String, String)>,
+}
+
+/// `refuse "W" at A [if F | unless F] [X]` (`StringReader`): where the string reader refuses, as the escape `W` of the
+/// walk's mask of `A` (`F_q`'s strings, or of three quotes or one: `if triple`), `&`ed with `X`. A name `Q…` in `X` is
+/// each quote's (`Q`, `Q3_c`), at its strings' bytes.
+#[derive(Clone, Debug)]
+pub struct Refusal {
+    pub why: String,
+    pub at: RefuseAt,
+    /// `if F` (true) or `unless F` (false); `F` a flag or `triple`.
+    pub when: Option<(bool, String)>,
+    pub expr: Option<Expr>,
+}
+
+/// Where a `refuse` holds (`Refusal`).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum RefuseAt {
+    /// Its opening quote (`o_str`).
+    Open,
+    /// Its bytes from its opener to its closer, an interpolation's code apart (`f_str`).
+    Fill,
+    /// Its text: its fill but its opener's bytes (`s_body`).
+    Text,
+    /// An escape's `E` (`esc`).
+    Escape,
+    /// A raw string's text whose bytes are all `E`s and the bytes they step over (`X`): the lean lexer then ends the
+    /// string at its first `E`.
+    RawBackslashes,
+    /// An interpolation's opener or closer in the text not twice.
+    BraceAlone,
+    /// An interpolation's code, from its opener to the first end or spec of any interpolation (`icode`).
+    Code,
+    /// An interpolation's end: its closer, its spec's start, its conversion's first byte.
+    End,
+    /// An end straight after the interpolation's opener.
+    EndEmpty,
+    /// A spec's bytes (`f_spec`).
+    Spec,
+    /// A spec's first byte.
+    SpecStart,
+    /// Past the level's bound, or the nest's (its `else`).
+    Deep,
+}
+
+/// `regions H level O to C max N else D { … }`: from where a plain kind's region closes at its
+/// `or` (a template opens) to where a kind that `resumes` closes at its own closer (its string
+/// ends), each byte of `O` outside the regions adds one to the level and each of `C` takes one
+/// away (none at zero). A kind with `after` opens only at level zero, as the lean lexer's
+/// string reader takes back only the `}` its template's own `{` opened (`{a[1:2]}` has no
+/// format spec, `{ {k: v} }` one template). An `O` past `N` (1 to 15) is `D`: the level stays
+/// `N`. Not a fixed point of masks: the evaluator and the backends walk such regions (the
+/// rounds' body makes `D` empty and counts no level).
+///
+/// `nest M depth A B` (after `max N`): templates nest, `M` (2 to 4) deep, as the lean lexer's
+/// string stack does (`f"{f'{a}'}"`). A plain kind's region in a template's code closed at its
+/// `or` opens a template inside it; the outer one's kind and level wait until the inner string
+/// ends. One past `M` is `D` at its closer. `A` and `B` are the bits, low first, of each
+/// region's depth at its opener: the templates around it (a kind that resumes: around its
+/// string), which the token loop's records of strings open over a template's code are kept by.
+#[derive(Clone, Debug)]
+pub struct RegionLevel {
+    pub opens: Expr,
+    pub closes: Expr,
+    pub max: u8,
+    pub deep: String,
+    /// `nest M depth A B`: `M`, and the depth bits' names.
+    pub nest: Option<(u8, String, String)>,
 }
 
 /// A kind of region (`Regions`).
@@ -435,6 +607,9 @@ pub struct Region {
     /// Its name `K`: the openers taken are `o_K`, the fill `f_K`.
     pub kind: String,
     pub opener: Expr,
+    /// `O bytes N`: the opener's bytes (1 to 3), past which its closer is found: a raw string's
+    /// `"""`, as the lean lexer looks for its closer from the opener's end (`string_end`).
+    pub opens: u8,
     pub closer: Expr,
     /// `bytes N`: the closer's bytes, from its first (1 to 3).
     pub bytes: u8,
@@ -460,6 +635,12 @@ pub struct Region {
     /// ends that token's record, or, closed at its own second closer, leaves it open over the
     /// next template's code. Tier 2 reads the template's code's records inside the string's.
     pub resumes: bool,
+    /// `nests D else E`: the region nests itself, as the lean lexer's `block_comment_end` counts
+    /// a block comment's: in it, an opener (not at a closer) opens a level and a closer closes
+    /// the innermost; the region closes at a closer with none open. A level opens at the byte
+    /// after its opener's first, which is no closer (a `/*`'s `*`). `E`: the byte after an
+    /// opener past `D` levels (1 to 15). No `or`, `outside`, `else` or `after`.
+    pub nests: Option<(u8, String)>,
     /// `open K`: an opener with no closer after it anywhere in the file is a token of kind `K` to
     /// the file's end, as a lexer that finds no closer makes one bad token of the rest (`Bad`).
     /// Without it such a file is refused. Not with `else`, `outside` or an `or`. `K` is the
@@ -475,7 +656,7 @@ impl Regions {
     /// carry H      = empty
     /// mask o_K     = O & ~H [& K_later]
     /// mask E       = O & ~H & ~K_later                # with `else E`
-    /// mask f_K     = fill(o_K, C)
+    /// mask f_K     = fill(o_K, C)                     # `O bytes N`: C & ~prev(o_K) … & ~prev(o_K, N - 1)
     /// next H       = prev(f_K) | … | prev(f_K, N)     # `outside`: prev(f_K) & ~C
     ///              | prev(E) | … | prev(E, M - 1)
     /// ```
@@ -490,6 +671,7 @@ impl Regions {
     /// (`prev(c & ~C2)`, the string ended), from the round before, among the `B`s and no opener.
     pub fn body(&self) -> Vec<Stmt> {
         let name = |s: &str| Expr::Name(s.to_string());
+        let deep = self.level.iter().flat_map(|l| std::iter::once(l.deep.clone()).chain(l.nest.iter().flat_map(|n| [n.1.clone(), n.2.clone()]))).map(|d| Stmt::Mask(d, Expr::Empty));
         let and = |a: Expr, b: Expr| Expr::And(Box::new(a), Box::new(b));
         let not = |a: Expr| Expr::Not(Box::new(a));
         let call = |f: &str, args: Vec<Arg>| Expr::Call(f.to_string(), args);
@@ -557,7 +739,38 @@ impl Regions {
                 }
                 None => out.push(Stmt::Mask(o.clone(), open)),
             }
-            out.push(Stmt::Mask(f.clone(), call("fill", vec![Arg::E(name(&o)), Arg::E(r.closers())])));
+            match &r.nests {
+                // A kind that nests itself: its levels from the round before (`K_lv{j}`), the
+                // innermost open before each byte (`K_in{j}`); it closes at a closer with none open.
+                Some((d, e)) => {
+                    let klv = |j: u8| format!("{}_lv{j}", r.kind);
+                    let kin = |j: u8| format!("{}_in{j}", r.kind);
+                    for j in 1..=*d {
+                        out.push(Stmt::Carry(klv(j), Expr::Empty));
+                    }
+                    out.push(Stmt::Mask(kin(0), not(prev(&klv(1), 1))));
+                    for j in 1..=*d {
+                        let open = prev(&klv(j), 1);
+                        let e = if j < *d { and(open, not(prev(&klv(j + 1), 1))) } else { open };
+                        out.push(Stmt::Mask(kin(j), e));
+                    }
+                    let past = r.closers_past(&o);
+                    out.push(Stmt::Mask(f.clone(), call("fill", vec![Arg::E(name(&o)), Arg::E(and(past.clone(), name(&kin(0))))])));
+                    // An opener in it, not at a closer (the lean lexer's closer comes first): its
+                    // level opens at the byte after its first, never a closer. So a `prev` of the
+                    // fill is on the way from every carry, though the opener reads ahead.
+                    let inner = format!("{}_io", r.kind);
+                    let io = and(r.opener.clone(), not(r.closers()));
+                    out.push(Stmt::Mask(inner.clone(), and(call("prev", vec![Arg::E(io)]), prev(&f, 2))));
+                    for j in 1..=*d {
+                        let push = and(name(&inner), name(&kin(j - 1)));
+                        let pop = and(past.clone(), name(&kin(j)));
+                        out.push(Stmt::Next(klv(j), call("fill", vec![Arg::E(push), Arg::E(pop)])));
+                    }
+                    out.push(Stmt::Mask(e.clone(), and(name(&inner), name(&kin(*d)))));
+                }
+                None => out.push(Stmt::Mask(f.clone(), call("fill", vec![Arg::E(name(&o)), Arg::E(r.closers_past(&o))]))),
+            }
             if r.outside {
                 or(and(prev(&f, 1), not(r.closer.clone())));
             } else if let Some((c2, m)) = &r.or {
@@ -590,6 +803,7 @@ impl Regions {
         if resumes {
             out.push(Stmt::Next(ended, call("prev", vec![Arg::E(ends.unwrap_or(Expr::Empty))])));
         }
+        out.extend(deep);
         out
     }
 }
@@ -598,6 +812,15 @@ impl Region {
     /// The name of its `else`'s mask: whether a byte of the closer comes after a byte.
     pub fn later(&self) -> String {
         format!("{}_later", self.kind)
+    }
+
+    /// Its closers past an opener's bytes (`opens`), from its openers `o`: `C & ~prev(o) & …
+    /// & ~prev(o, N - 1)`, its `closers` with an opener of one byte.
+    pub fn closers_past(&self, o: &str) -> Expr {
+        (1..self.opens).fold(self.closers(), |c, k| {
+            let p = if k == 1 { Expr::Call("prev".into(), vec![Arg::E(Expr::Name(o.to_string()))]) } else { Expr::Call("prev".into(), vec![Arg::E(Expr::Name(o.to_string())), Arg::N(u64::from(k))]) };
+            Expr::And(Box::new(c), Box::new(Expr::Not(Box::new(p))))
+        })
     }
 
     /// Its closers: `C`, or `C | C2` with `or C2`.
@@ -658,13 +881,18 @@ pub enum Gram {
     /// `retag K A`: on entering `A`, the innermost open node becomes a `K` (its kind decided by
     /// the token `A` starts with).
     Retag(String, Box<Gram>),
+    /// `retag K inner G A`: on entering `A`, the node the innermost open node, a wrap, holds
+    /// first (the node it moved) takes field `G` (`a: int` a `typed_parameter`, its name of no
+    /// field; `a: int = 1` a `typed_default_parameter`, its name `name`).
+    Inner { field: String, body: Box<Gram> },
     /// `merge 'K' A`, `A` a token: its leaf and the leaf just before it become one leaf of kind
     /// `K`, from the first's start to its end (`.` and `decl`, `.decl`).
     Merge(String, Box<Gram>),
-    /// `wrap K F [as M] REST…`: a node `K` around the node just made at this level (the last
+    /// `wrap K F [as M] REST…` (`K` a name or quoted): a node `K` around the node just made at this level (the last
     /// child of the innermost open node) and what `REST` matches. `K` takes the moved node's
-    /// field; the moved node takes field `F` (`_`: none) and, with `as M`, kind `M`.
-    Wrap { kind: String, field: Option<String>, moved: Option<String>, body: Box<Gram> },
+    /// field and its slot; the moved node takes field `F` (`_`: none), with `as M` kind `M`, and
+    /// with `in S`: the moved node's slot, supertype `S` (none without it; decision 0698).
+    Wrap { kind: String, field: Option<String>, moved: Option<String>, slot: Option<String>, body: Box<Gram> },
     /// `balanced K OPEN CLOSE`: one leaf of kind `K` from an `OPEN` token through its matching
     /// `CLOSE` (pairs inside counted), every token between part of its text.
     Balanced { kind: String, open: String, close: String },
@@ -689,6 +917,10 @@ pub enum Gram {
     Flag { flag: String, set: bool, body: Box<Gram> },
     /// `unless F A`: `A` where flag `F` is clear; where it is set, as if `A` were not there.
     Unless { flag: String, body: Box<Gram> },
+    /// `leaf K R`: one leaf of kind `K` over the tokens rule `R` reads, as the lean parser reads a JSON object's braces
+    /// and checks its text. `R` and the rules it reaches are choices of tokens and rules, and make no node
+    /// (`desugar_leaves`).
+    Leaf { kind: String, rule: String },
 }
 
 /// What a `reading` does with a node of a kind it names.
@@ -713,6 +945,14 @@ pub struct Reading {
     /// `root gone`, `root as M`: what becomes of the node read itself, whatever its kind; the
     /// kinds then name only the nodes inside it.
     pub root: Option<ReadKind>,
+}
+
+/// What a `speculate` statement states (decision 0654).
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum Speculation {
+    /// `gap ends`: every token ends at the next token's start less the blanks (`skip`) before it, or
+    /// at the file's end less them (decision 0411's claims).
+    GapEnds,
 }
 
 #[derive(Clone, Debug)]
@@ -780,6 +1020,11 @@ pub enum Stmt {
     /// `{`, after its string's `${`), and a fill from the byte after it (`fill(prev(NAME), E)`) is
     /// the loop's to keep, from that token to the next byte of `E`.
     AssumeEnds { why: String, name: String },
+    /// `speculate "WHY" FACT` (decision 0654): a fact the compiler uses with no proof, which every
+    /// build checks while it runs: a file where it fails is refused, as an `escape` refuses it, and
+    /// goes to the fallback. Sound in every build (an `assume` is checked by test builds only); a
+    /// fact false on many files costs their fallbacks. It changes no mask.
+    Speculate { why: String, fact: Speculation },
     /// `escape "WHY" at KIND when count(E) at least N` (or `run(E)`): a test of each token of
     /// the kind over its own bytes, as a lexer checks a token it reads (decision 0177): `count`,
     /// `E`'s bits in the token at least `N`; `run`, `E` at each of its first `N` bytes (the token
@@ -792,8 +1037,10 @@ pub enum Stmt {
     /// root. `nested`: it may contain itself, and runs on a stack frame (doc 18 §1).
     /// `whole`: the root spans the whole file, from byte 0, and may hold no token. `whole
     /// padded`: from its first token or comment (none: the file's end), as tree-sitter's root
-    /// starts past the file's leading blanks, its padding.
-    Node { kind: String, nested: bool, whole: bool, padded: bool, body: Gram },
+    /// starts past the file's leading blanks, its padding. `attached`: it starts where the record
+    /// before its first token ends (a comment's included), not at that token, as tree-sitter's
+    /// match body starts at its `:`'s end.
+    Node { kind: String, nested: bool, attached: bool, whole: bool, padded: bool, body: Gram },
     /// `choice NAME [supertype S] = A | B …`: no node of its own; each alternative's node has
     /// supertype `S`.
     /// `choice N [supertype S] [nested] = …`: `nested`, a level of its own, called where it is
@@ -851,13 +1098,18 @@ pub enum Stmt {
     /// `, passes M`: taken, it passes mark `M` too, though `M` comes after it: a mark tested
     /// before `M` where both hold (an annotation's line break before `semi`), which leaves no
     /// `M` at the token, as a line break that is no semicolon leaves none.
-    Mark { kind: String, at: Expr, end: bool, unless: Vec<Vec<u8>>, unplaced: Option<String>, checks: Vec<MarkCheck>, settles: bool, ends: bool, next: Vec<(bool, Vec<Vec<TokenElem>>)>, drops: Vec<GapPattern>, loses: Vec<GapPattern>, refuses: Vec<GapPattern>, refuses_taken: Vec<GapPattern>, passes: Vec<String> },
+    ///
+    /// `, deeper` and `, shallower` (decision 0698): the column of the token the mark is before
+    /// past the asking level's indent, or less than it (`Column`). Each level that asks for the
+    /// mark asks with its own indent (`indented`).
+    Mark { kind: String, at: Expr, end: bool, unless: Vec<Vec<u8>>, unplaced: Option<String>, checks: Vec<MarkCheck>, settles: bool, ends: bool, next: Vec<(bool, Vec<Vec<TokenElem>>)>, drops: Vec<GapPattern>, loses: Vec<GapPattern>, refuses: Vec<GapPattern>, refuses_taken: Vec<GapPattern>, passes: Vec<String>, column: Option<Column> },
     /// `mark KIND = tokens [after E] E …` (decision 0129): a mark before a token that begins a
     /// run of tokens, each one of an element's choices (`|`): a token kind (a name) or a word
     /// (a string), the extras between them skipped. `after`: the token before is one of
     /// `before`'s, or (`after ~E`) none of them, or no token at all. The mark is at the first
-    /// element's token. `, unless before E …`: none where one of these runs is the tokens from
-    /// the mark's on, as a mark's (`Mark::next`, the unless ones).
+    /// element's token. `, before E …`: another run that holds it, any one of them (decision
+    /// 0633); `, unless before E …`: none where one of these runs is the tokens from the mark's
+    /// on, as a mark's (`Mark::next`).
     TokenMark { kind: String, before: Vec<TokenElem>, seq: Vec<Vec<TokenElem>>, next: Vec<(bool, Vec<Vec<TokenElem>>)> },
     /// `hidden KIND …` (in a tree): marks taken where the grammar can take them and skipped
     /// elsewhere. A mark not hidden, where the grammar can not take it, refuses the file.
@@ -871,13 +1123,14 @@ pub enum Stmt {
     Refuse { mark: String, levels: Vec<String> },
     /// `reading NAME = ITEM, …` (in a tree): a way to read a made node (`reread`).
     Reading { name: String, reading: Reading },
-    /// `provisional FIELD …` (in a tree): fields a node holds only until a later token decides
-    /// what it is; a node that holds one at the file's end refuses the file.
-    Provisional(Vec<String>),
     /// `remember CHOICE …` (in a tree): choices of tokens whose token is remembered at its
     /// level; `as CHOICE` (and a reading's `K as CHOICE`) then names that token's kind. A nested
     /// level starts with its caller's and gives it back when it ends.
     Remember(Vec<String>),
+    /// `indented RULE …` (in a tree, decision 0698): nested levels that hold an indent of their
+    /// own, the column of their first token. Every other level holds its caller's (the root's
+    /// is 0), as a remembered word is held: a mark's `deeper` and `shallower` compare with it.
+    Indented(Vec<String>),
     /// `flag F …` (in a tree): flags a level runs with (`with F A`, `unless F A`), clear in the
     /// root's.
     Flags(Vec<String>),
@@ -897,6 +1150,16 @@ pub enum Stmt {
     /// parser's question after a call: `literal`'s `retag_atom` where its `term` was a call alone, a negation's
     /// failure where its operand was a comparison (decision 0668).
     Ending { rule: String, kind: String, ending: Ending },
+}
+
+/// A mark's question of the column of the token it is before, against the asking level's indent
+/// (`Stmt::Indented`, decision 0698).
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub enum Column {
+    /// `, deeper`: past the indent.
+    Deeper,
+    /// `, shallower`: less than the indent.
+    Shallower,
 }
 
 /// What `ending` does with the node made last where its level ends.
@@ -947,9 +1210,9 @@ fn apply_implied(body: &mut [Stmt]) -> Result<(), String> {
                 }
             }
             // A token given a kind of its own, or merged, is a node's: not implied.
-            Gram::As(..) | Gram::Merge(..) | Gram::Balanced { .. } | Gram::Any(_) => {}
+            Gram::As(..) | Gram::Merge(..) | Gram::Balanced { .. } | Gram::Any(_) | Gram::Leaf { .. } => {}
             Gram::Seq(gs) | Gram::Alt(gs) => gs.iter_mut().for_each(|g| mark(g, tokens, found)),
-            Gram::Opt(a) | Gram::Star(a) | Gram::Plus(a) | Gram::Field(_, a) | Gram::Retag(_, a) => mark(a, tokens, found),
+            Gram::Opt(a) | Gram::Star(a) | Gram::Plus(a) | Gram::Field(_, a) | Gram::Retag(_, a) | Gram::Inner { body: a, .. } => mark(a, tokens, found),
             Gram::Wrap { body, .. } | Gram::Relabel { body, .. } | Gram::Fold { body, .. } | Gram::Reread { body, .. } | Gram::Flag { body, .. } | Gram::Unless { body, .. } => mark(body, tokens, found),
         }
     }
@@ -1108,9 +1371,26 @@ struct P {
     classed: Vec<u8>,
     /// The `pairs` read so far, by name, for a token's `pair` (`TokenRule::Pairs`).
     pair_sets: Vec<(String, Vec<Vec<u8>>, bool)>,
+    /// The classes read so far, by name, and the `check`s: a part read by its check (`Parts::checked`) reads its
+    /// grammar's bytes.
+    classes: Vec<(String, Vec<(u32, u32)>)>,
+    checks: Vec<(String, Gram)>,
+    /// The kinds of the parts read by their checks: their `check` statements are the parts', not a token's.
+    part_checks: Vec<String>,
+    /// The string readers read so far (`StringReader`), for a token's `read R`.
+    readers: Vec<StringReader>,
 }
 
 type R<T> = Result<T, String>;
+
+/// A kind as a grammar writes it: a name, else a quoted literal (`'\\'`).
+fn kind_lit(k: &str) -> String {
+    if !k.is_empty() && k.chars().all(|c| c.is_ascii_alphanumeric() || c == '_') {
+        k.to_owned()
+    } else {
+        format!("'{}'", k.replace('\\', "\\\\").replace('\'', "\\'"))
+    }
+}
 
 /// For the IR's tests of its backward pass (decision 0416): the masks and numbers named in
 /// `names`, each written `fill(…)`, made `back_fill(…)`, as a region's `else` makes one
@@ -1251,12 +1531,16 @@ impl P {
         // `(C | …)*`: a run of them (`Many`), alone in its element.
         if self.eat_p("(") {
             let inner = self.token_choices()?;
+            // `with M`, `without M`: each token of the run with or without mark `M`, as the lean parser's
+            // `on_line` asks of each word it reads (a `~`'s too: any other token without it).
+            let inner = self.with_marks(inner)?;
             self.want_p(")")?;
             self.want_p("*")?;
             // Kinds and words, or one `~` of them: a run of any other tokens.
-            let not = matches!(inner.as_slice(), [TokenElem::Not(_)]);
-            if !not && inner.iter().any(|c| !matches!(c, TokenElem::Kind(_) | TokenElem::Word(_))) {
-                return self.err("a run of kinds and words, or of a `~` of them");
+            let marks = |c: &[TokenElem]| c.iter().all(|x| matches!(x, TokenElem::With(_) | TokenElem::Without(_)));
+            let not = matches!(inner.as_slice(), [TokenElem::Not(_), rest @ ..] if marks(rest));
+            if !not && inner.iter().any(|c| !matches!(c, TokenElem::Kind(_) | TokenElem::Word(_) | TokenElem::With(_) | TokenElem::Without(_))) {
+                return self.err("a run of kinds and words (`with`, `without` a mark), or of a `~` of them");
             }
             // `nest (O to C) …`: the depths it counts (`Nest`).
             let mut nests = vec![];
@@ -1267,12 +1551,13 @@ impl P {
                         return self.err("`to` between a depth's openers and its closers");
                     }
                     let close = self.token_choices()?;
+                    let whole = self.eat_kw("whole");
                     self.want_p(")")?;
                     let plain = |c: &[TokenElem]| c.iter().all(|x| matches!(x, TokenElem::Kind(_) | TokenElem::Word(_)));
                     if !plain(&open) || !plain(&close) || open.iter().any(|o| close.contains(o)) {
                         return self.err("a depth's openers and closers: kinds and words, none both");
                     }
-                    nests.push(Nest { open, close });
+                    nests.push(Nest { open, close, whole });
                 }
                 if nests.is_empty() || nests.len() > 4 {
                     return self.err("`nest` and one to four `(O to C)`");
@@ -1315,6 +1600,15 @@ impl P {
                 continue;
             }
             match self.peek().cloned() {
+                // `kind "N"`: the token kind of a quoted name (`token '"'`), not a word.
+                Some(Tok::Ident(k)) if k == "kind" && matches!(self.peek_at(1), Some(Tok::Str(_))) => {
+                    self.i += 1;
+                    let n = self.string()?;
+                    match String::from_utf8(n) {
+                        Ok(n) => out.push(TokenElem::Kind(n)),
+                        Err(_) => return self.err("a kind's name in UTF-8"),
+                    }
+                }
                 Some(Tok::Str(s)) => {
                     self.i += 1;
                     out.push(TokenElem::Word(s));
@@ -1331,7 +1625,13 @@ impl P {
         }
     }
     /// An element's `with M` and `without M`, after its choices of kinds and words.
-    fn with_marks(&mut self, mut c: Vec<TokenElem>) -> R<Vec<TokenElem>> {
+    fn with_marks(&mut self, c: Vec<TokenElem>) -> R<Vec<TokenElem>> {
+        self.marked(c, false)
+    }
+
+    /// `with_marks`, where `on_not` also after a `~` (a run's: `(~(A | B) without M)*`, each other token without `M`).
+    fn marked(&mut self, mut c: Vec<TokenElem>, on_not: bool) -> R<Vec<TokenElem>> {
+        let plain = |x: &TokenElem| matches!(x, TokenElem::Kind(_) | TokenElem::Word(_) | TokenElem::Without(_) | TokenElem::With(_));
         loop {
             let with = if self.eat_kw("without") {
                 false
@@ -1340,7 +1640,9 @@ impl P {
             } else {
                 return Ok(c);
             };
-            if !c.iter().all(|x| matches!(x, TokenElem::Kind(_) | TokenElem::Word(_) | TokenElem::Without(_) | TokenElem::With(_))) {
+            // A run's `~(…)` takes them too (`(~("def") without newline)*`).
+            let first_not = matches!(c.first(), Some(TokenElem::Not(_)));
+            if !c.iter().enumerate().all(|(i, x)| matches!(x, TokenElem::Kind(_) | TokenElem::Word(_) | TokenElem::Without(_) | TokenElem::With(_)) || (i == 0 && first_not)) {
                 return self.err("`with` or `without` after an element of kinds and words");
             }
             let m = self.ident()?;
@@ -1373,9 +1675,10 @@ impl P {
         }
         Ok(GapPattern { unless, since, after, before })
     }
-    /// One element of a gap pattern (`gap_pattern`).
+    /// One element of a gap pattern (`gap_pattern`): of kinds and words, or of marks and first
+    /// bytes alone (`starting "B"`, `with M`: any record).
     fn gap_elem(&mut self) -> R<Vec<TokenElem>> {
-        let mut c = if self.is_kw("starting") { vec![] } else { self.token_choices()? };
+        let mut c = if self.is_kw("starting") || self.is_kw("with") || self.is_kw("without") { vec![] } else { self.token_choices()? };
         if matches!(c.as_slice(), [TokenElem::Many(..)]) || c.contains(&TokenElem::End) {
             return self.err("a gap pattern's element of kinds and words, or a `~` of them");
         }
@@ -1400,7 +1703,8 @@ impl P {
         }
     }
     /// A run of elements, as a token mark's (`tokens`) or a mark's `before`: each an element of
-    /// choices, a `~` or a run; one run at most, never first or last; an `end` only last.
+    /// choices, a `~` or a run; a run never first or last, nor right after another; an `end`
+    /// only last.
     fn token_seq(&mut self) -> R<Vec<Vec<TokenElem>>> {
         let mut seq = vec![];
         while matches!(self.peek(), Some(Tok::Ident(_) | Tok::Str(_) | Tok::P("~") | Tok::P("("))) {
@@ -1413,8 +1717,8 @@ impl P {
         if seq.is_empty() {
             return self.err("a token");
         }
-        if runs.len() > 1 || runs.first().is_some_and(|&i| i == 0 || i + 1 == seq.len()) {
-            return self.err("one run of tokens at most, after the first token and before the last");
+        if runs.windows(2).any(|w| w[1] == w[0] + 1) || runs.iter().any(|&i| i == 0 || i + 1 == seq.len()) {
+            return self.err("runs of tokens after the first token, before the last, none right after another");
         }
         if seq[..seq.len() - 1].iter().any(|c| c.contains(&TokenElem::End)) {
             return self.err("an `end` only last");
@@ -1459,14 +1763,16 @@ impl P {
     fn gram_seq(&mut self) -> R<Gram> {
         let mut items = vec![];
         while matches!(self.peek(), Some(Tok::Str(_) | Tok::Ident(_) | Tok::P("(") | Tok::P("["))) {
-            // `wrap K F [as M]`: the rest of the sequence is its body.
+            // `wrap K F [as M] [in S]`: the rest of the sequence is its body.
             if matches!(self.peek(), Some(Tok::Ident(w)) if w == "wrap") {
                 self.i += 1;
-                let kind = self.ident()?;
+                // A quoted kind: one no name spells (`'not in'`).
+                let kind = self.kind()?;
                 let field = Some(self.ident()?).filter(|f| f != "_");
                 let moved = if self.eat_kw("as") { Some(self.kind()?) } else { None };
+                let slot = if self.eat_kw("in") { Some(self.ident()?) } else { None };
                 let body = Box::new(self.gram_seq()?);
-                items.push(Gram::Wrap { kind, field, moved, body });
+                items.push(Gram::Wrap { kind, field, moved, slot, body });
                 break;
             }
             // `relabel F [as M]`: the rest of the sequence is its body.
@@ -1551,6 +1857,11 @@ impl P {
         if self.eat_p(":") {
             return Ok(Gram::Field(name, Box::new(self.gram_atom()?)));
         }
+        // `implied 'A'`: this one token makes no leaf, as the lean parser's `implied()` where another place of the same
+        // rule writes it (`anon()`); `implied RULE 'A'` marks every one of a rule's.
+        if name == "implied" && matches!(self.peek(), Some(Tok::Str(_))) {
+            return Ok(Gram::As(IMPLIED.into(), Box::new(Gram::Lit(self.kind()?))));
+        }
         match name.as_str() {
             "with" | "without" => {
                 let flag = self.ident()?;
@@ -1562,6 +1873,10 @@ impl P {
             }
             "retag" => {
                 let kind = self.ident()?;
+                if self.eat_kw("inner") {
+                    let field = self.ident()?;
+                    return Ok(Gram::Retag(kind, Box::new(Gram::Inner { field, body: Box::new(self.gram_atom()?) })));
+                }
                 Ok(Gram::Retag(kind, Box::new(self.gram_atom()?)))
             }
             "merge" => {
@@ -1580,11 +1895,18 @@ impl P {
                 }
                 Ok(Gram::Any(except))
             }
+            // `refused`: no way on, as the lean parser's `Err(())`: a choice with no alternative.
+            "refused" => Ok(Gram::Alt(vec![])),
             "balanced" => {
                 let kind = self.kind()?;
                 let open = self.kind()?;
                 let close = self.kind()?;
                 Ok(Gram::Balanced { kind, open, close })
+            }
+            "leaf" => {
+                let kind = self.kind()?;
+                let rule = self.ident()?;
+                Ok(Gram::Leaf { kind, rule })
             }
             _ => Ok(Gram::Sym(name)),
         }
@@ -1721,18 +2043,82 @@ impl P {
     }
 
     // --- statements ---
-    /// `regions H { K = O .. C [bytes N] [outside] [else E bytes M] [open K] … }` (`Regions`).
+    /// `regions H [level O to C max N else D] { K = O .. C [bytes N] [outside] [else E bytes M]
+    /// [open K] … }` (`Regions`).
     fn regions(&mut self) -> R<Regions> {
         let hidden = self.ident()?;
+        let mut level = self.level_clause()?;
         self.want_p("{")?;
         self.nls();
         let mut kinds = Vec::new();
+        let mut readers = Vec::new();
+        // The statements its readers write after it, read next as the grammar's (`string_reader`).
+        let mut written: Vec<Tok> = Vec::new();
         while !self.eat_p("}") {
+            if self.eat_kw("read") {
+                let (ks, lv, rd, made) = self.string_reader(&hidden)?;
+                if lv.is_some() && level.is_some() {
+                    return self.err("one `level`: the regions' or a reader's");
+                }
+                level = level.or(lv);
+                kinds.extend(ks);
+                readers.push(rd);
+                written.extend(made);
+                self.nls();
+                continue;
+            }
             let kind = self.ident()?;
             self.want_p("=")?;
             let opener = self.expr()?;
+            let opens = if self.eat_kw("bytes") { self.int()? } else { 1 };
             self.want_p("..")?;
             let closer = self.expr()?;
+            kinds.push(self.region_rest(kind, opener, opens, closer)?);
+            self.nls();
+        }
+        if kinds.is_empty() {
+            return self.err("a region");
+        }
+        if !written.is_empty() {
+            written.insert(0, Tok::Nl);
+            let at = self.i;
+            self.t.splice(at..at, written);
+        }
+        self.readers.extend(readers.iter().cloned());
+        self.regions_checked(hidden, kinds, level, readers)
+    }
+
+    /// `level O to C max N [nest M depth A B] else D`, if any.
+    fn level_clause(&mut self) -> R<Option<RegionLevel>> {
+        Ok(if self.eat_kw("level") {
+            let opens = self.expr()?;
+            self.want_kw("to")?;
+            let closes = self.expr()?;
+            self.want_kw("max")?;
+            let max = self.int()?;
+            if !(1..=15).contains(&max) {
+                return self.err("a level's max from 1 to 15");
+            }
+            let nest = if self.eat_kw("nest") {
+                let m = self.int()?;
+                if !(2..=4).contains(&m) {
+                    return self.err("a nest from 2 to 4");
+                }
+                self.want_kw("depth")?;
+                Some((m as u8, self.ident()?, self.ident()?))
+            } else {
+                None
+            };
+            self.want_kw("else")?;
+            Some(RegionLevel { opens, closes, max: max as u8, deep: self.ident()?, nest })
+        } else {
+            None
+        })
+    }
+
+    /// A region's clauses after `K = O [bytes N] .. C` (`opens`: its opener's bytes).
+    fn region_rest(&mut self, kind: String, opener: Expr, opens: u64, closer: Expr) -> R<Region> {
+        {
             let bytes = if self.eat_kw("bytes") { self.int()? } else { 1 };
             let or = if self.eat_kw("or") {
                 let c = self.expr()?;
@@ -1752,9 +2138,20 @@ impl P {
             } else {
                 None
             };
+            let nests = if self.eat_kw("nests") {
+                let d = self.int()?;
+                self.want_kw("else")?;
+                let e = self.ident()?;
+                if !(1..=15).contains(&d) || or.is_some() || outside || empty.is_some() {
+                    return self.err("`nests` of 1 to 15 levels, on a kind with no `or`, `outside` or `else`");
+                }
+                Some((d as u8, e))
+            } else {
+                None
+            };
             let open = if self.eat_kw("open") { Some(self.ident()?) } else { None };
-            if open.is_some() && (outside || empty.is_some() || or.is_some()) {
-                return self.err("`open` on a kind with no `outside`, `else` or `or`");
+            if open.is_some() && (outside || empty.is_some() || or.is_some() || nests.is_some()) {
+                return self.err("`open` on a kind with no `outside`, `else`, `or` or `nests`");
             }
             let mut after = Vec::new();
             let resumes = self.eat_kw("resumes");
@@ -1762,19 +2159,22 @@ impl P {
                 while matches!(self.peek(), Some(Tok::Ident(_))) {
                     after.push(self.ident()?);
                 }
-                if after.is_empty() || outside || empty.is_some() || open.is_some() {
+                if after.is_empty() || outside || empty.is_some() || nests.is_some() || open.is_some() {
                     return self.err("`after` or `resumes` and the kinds it names, on a kind with no `outside` or `else`");
                 }
+            }
+            if !(1..=3).contains(&opens) || opens > 1 && (outside || empty.is_some()) {
+                return self.err("an opener of 1 to 3 bytes (more than 1: no `outside` or `else`)");
             }
             if !(1..=3).contains(&bytes) || (outside && bytes != 1) || (outside && or.is_some()) || empty.as_ref().is_some_and(|e| !(1..=3).contains(&e.1)) {
                 return self.err("a closer of 1 to 3 bytes (`outside`: 1, and no `or`), an `else` of 1 to 3");
             }
-            kinds.push(Region { kind, opener, closer, bytes: bytes as u8, outside, empty: empty.map(|(e, m)| (e, m as u8)), or, after, resumes, open });
-            self.nls();
+            Ok(Region { kind, opener, opens: opens as u8, closer, bytes: bytes as u8, outside, empty: empty.map(|(e, m)| (e, m as u8)), or, after, resumes, nests, open })
         }
-        if kinds.is_empty() {
-            return self.err("a region");
-        }
+    }
+
+    /// The regions' checks, once their kinds are read.
+    fn regions_checked(&mut self, hidden: String, kinds: Vec<Region>, level: Option<RegionLevel>, readers: Vec<StringReader>) -> R<Regions> {
         // `after` names kinds of these regions with no `after` of their own and with an `or` (a
         // template's closer); at most 15 kinds.
         for r in &kinds {
@@ -1791,7 +2191,476 @@ impl P {
         if kinds.len() > 15 && kinds.iter().any(|r| !r.after.is_empty()) {
             return Err("regions with `after`: at most 15 kinds".into());
         }
-        Ok(Regions { hidden, kinds })
+        // A level orders what opens in a template's code: a kind with `after` (at level zero), or a tail that
+        // `resumes` its string (at the `}` that closes its template).
+        if level.is_some() && !kinds.iter().any(|r| !r.after.is_empty() || r.resumes) {
+            return self.err("a `level` on regions with a kind with `after` or one that `resumes`");
+        }
+        Ok(Regions { hidden, kinds, level, readers })
+    }
+
+    /// `read R { … }` in `regions` (`StringReader`): its kinds, its level, and the reader. The masks its kinds read
+    /// are made before the regions, the unions of its kinds after them:
+    ///
+    /// ```text
+    /// mask pw    = P & ~prev(W)                       # a prefix's first letter
+    /// mask p1    = pw & next(Q)                       # one letter, then a quote (Q: any of the quotes)
+    /// mask p2    = pw & next(P) & next(Q, 2)          # two (`max 2`)
+    /// mask F_q   = Q & (prev(p1 & L) | prev(p2 & L, 2) | prev(L & prev(p2)))   # a quote after a prefix with an `L`
+    /// mask q3    = q & next(q) & next(q, 2)           # `triple`, each quote `q`
+    /// mask q_c   = q & ~escaped(E)                    # a closer: a quote no escape escapes
+    /// mask q3_c  = q3 & ~next(q, 3) & ~escaped(E)     # a triple's: the last three of its run
+    /// mask i_open = O & ~next(O) & ~escaped(O)        # an interpolation's `O` (`OO` is text)
+    /// x1  = q & ~q3 & ~F_q .. q_c                     # each quote's kinds (`x`: its name's first letter)
+    /// x3  = q3 & ~F_q .. q3_c bytes 3
+    /// fx1 = q & ~q3 & F_q .. q_c or i_open            # an interpolating one closes at its `O` too
+    /// fx3 = q3 & F_q .. q3_c bytes 3 or i_open
+    /// tx1 = C .. q_c or i_open resumes fx1            # its tail after the code, from the `C`
+    /// tx3 = C .. q3_c bytes 3 or i_open resumes fx3
+    /// spec = S .. next(C) after fx1 … fx3             # a spec, at the code's level zero
+    /// mask o_f = o_fx1 | …   o_t = o_tx1 | …   f_f   f_t
+    /// mask o_str = o_x1 | … | o_f   f_str = f_x1 | … | f_f | f_t
+    /// ```
+    fn string_reader(&mut self, hidden: &str) -> R<(Vec<Region>, Option<RegionLevel>, StringReader, Vec<Tok>)> {
+        let name = self.ident()?;
+        self.want_p("{")?;
+        let (mut prefix, mut flags, mut quotes, mut triple, mut level) = (None, Vec::new(), Vec::new(), false, None);
+        let (mut more, mut text, mut escape, mut braces, mut close, mut interpolation) = (None, None, None, None, None, None::<Interpolation>);
+        let (mut conversion, mut spec, mut refusals) = (None, None, Vec::new());
+        // Each refusal's mask's tokens, for the statements it writes.
+        let mut refusal_toks: Vec<Vec<Tok>> = Vec::new();
+        loop {
+            self.nls();
+            if self.eat_p("}") {
+                break;
+            }
+            if self.eat_kw("prefix") {
+                let p = self.ident()?;
+                self.want_kw("max")?;
+                let m = self.int()?;
+                if !(1..=2).contains(&m) {
+                    return self.err("a prefix of at most 1 or 2 letters");
+                }
+                self.want_kw("after")?;
+                prefix = Some((p, m as u8, self.ident()?));
+            } else if self.eat_kw("flags") {
+                loop {
+                    let f = self.ident()?;
+                    self.want_p("=")?;
+                    flags.push((f, self.ident()?));
+                    if !self.eat_p(",") {
+                        break;
+                    }
+                }
+            } else if self.eat_kw("quotes") {
+                quotes.push(self.ident()?);
+                while self.eat_p("|") {
+                    quotes.push(self.ident()?);
+                }
+                triple = self.eat_kw("triple");
+            } else if self.eat_kw("start") {
+                more = Some(self.kind()?);
+            } else if self.eat_kw("text") {
+                text = Some(self.kind()?);
+            } else if self.eat_kw("escape") {
+                let k = self.kind()?;
+                self.want_p("=")?;
+                let e = self.ident()?;
+                self.want_kw("check")?;
+                self.want_kw("else")?;
+                let other = self.kind()?;
+                let unless = if self.eat_kw("unless") { Some(self.ident()?) } else { None };
+                escape = Some((k, e, other, unless));
+            } else if self.eat_kw("braces") {
+                braces = Some(self.kind()?);
+            } else if self.eat_kw("close") {
+                close = Some(self.kind()?);
+            } else if self.eat_kw("interpolation") {
+                let flag = self.ident()?;
+                let open_kind = self.kind()?;
+                self.want_p("=")?;
+                let open = self.ident()?;
+                self.want_p("..")?;
+                let close_kind = self.kind()?;
+                self.want_p("=")?;
+                let close = self.ident()?;
+                level = self.level_clause()?;
+                if level.is_none() {
+                    return self.err("an interpolation's `level`");
+                }
+                interpolation = Some(Interpolation { flag, open, open_kind, close, close_kind, conversion: None, spec: None });
+            } else if self.eat_kw("conversion") {
+                let k = self.kind()?;
+                self.want_p("=")?;
+                let b = self.ident()?;
+                conversion = Some((k, b, self.ident()?));
+            } else if self.eat_kw("spec") {
+                let k = self.kind()?;
+                self.want_p("=")?;
+                spec = Some((k, self.ident()?));
+            } else if self.eat_kw("refuse") {
+                let why = match self.peek() {
+                    Some(Tok::Str(w)) => String::from_utf8(w.clone()).map_err(|_| "a refusal's why in UTF-8".to_owned())?,
+                    _ => return self.err("a refusal's why, a string"),
+                };
+                self.i += 1;
+                self.want_kw("at")?;
+                let at = match self.ident()?.as_str() {
+                    "open" => RefuseAt::Open,
+                    "fill" => RefuseAt::Fill,
+                    "text" => RefuseAt::Text,
+                    "escape" => RefuseAt::Escape,
+                    "raw" => {
+                        self.want_kw("backslashes")?;
+                        RefuseAt::RawBackslashes
+                    }
+                    "brace" => {
+                        self.want_kw("alone")?;
+                        RefuseAt::BraceAlone
+                    }
+                    "code" => RefuseAt::Code,
+                    "end" if self.eat_kw("empty") => RefuseAt::EndEmpty,
+                    "end" => RefuseAt::End,
+                    "spec" if self.eat_kw("start") => RefuseAt::SpecStart,
+                    "spec" => RefuseAt::Spec,
+                    "deep" => RefuseAt::Deep,
+                    _ => return self.err("a refusal's place: open, fill, text, escape, raw backslashes, brace alone, code, end, end empty, spec, spec start or deep"),
+                };
+                let when = if self.eat_kw("if") {
+                    Some((true, self.ident()?))
+                } else if self.eat_kw("unless") {
+                    Some((false, self.ident()?))
+                } else {
+                    None
+                };
+                let (expr, toks) = if matches!(self.peek(), None | Some(Tok::Nl) | Some(Tok::P("}"))) {
+                    (None, Vec::new())
+                } else {
+                    let a = self.i;
+                    let e = self.expr()?;
+                    (Some(e), self.t[a..self.i].to_vec())
+                };
+                let needs = matches!(at, RefuseAt::Open | RefuseAt::Fill | RefuseAt::Text | RefuseAt::Escape | RefuseAt::RawBackslashes | RefuseAt::Code | RefuseAt::End | RefuseAt::Spec | RefuseAt::SpecStart);
+                if needs != expr.is_some() && !(matches!(at, RefuseAt::Open) && when.is_some()) {
+                    return Err(format!("reader {name}: refusal {why:?}: a mask where its place has one, none where it has not"));
+                }
+                refusals.push(Refusal { why, at, when, expr });
+                refusal_toks.push(toks);
+            } else {
+                return self.err("a reader's `prefix`, `flags`, `quotes`, `start`, `text`, `escape`, `braces`, `close`, `interpolation`, `conversion`, `spec` or `refuse`");
+            }
+        }
+        let Some((escape_kind, escape, escape_else, raw)) = escape else { return self.err("a reader's `escape K = E check else L`") };
+        let (Some(text), Some(close)) = (text, close) else { return self.err("a reader's `text` and `close`") };
+        if quotes.is_empty() || !triple {
+            return self.err("a reader's `quotes … triple`");
+        }
+        if let Some(i) = &mut interpolation {
+            if !flags.iter().any(|(g, _)| *g == i.flag) {
+                return Err(format!("reader {name}: `interpolation {}`, not one of its flags", i.flag));
+            }
+            i.conversion = conversion.take();
+            i.spec = spec.take();
+        } else if conversion.is_some() || spec.is_some() || braces.is_some() {
+            return Err(format!("reader {name}: a `conversion`, `spec` or `braces` with no `interpolation`"));
+        }
+        if !flags.is_empty() && prefix.is_none() {
+            return Err(format!("reader {name}: flags with no prefix"));
+        }
+        if let Some(f) = &raw {
+            if !flags.iter().any(|(g, _)| g == f) {
+                return Err(format!("reader {name}: `unless {f}`, not one of its flags"));
+            }
+        }
+        for r in &refusals {
+            if let Some((_, f)) = &r.when {
+                if f != "triple" && !flags.iter().any(|(g, _)| g == f) {
+                    return Err(format!("reader {name}: refusal {:?}: `{f}`, not one of its flags", r.why));
+                }
+            }
+            if matches!(r.at, RefuseAt::RawBackslashes) && raw.is_none() {
+                return Err(format!("reader {name}: refusal {:?}: a raw string's, with no `unless` on its escape", r.why));
+            }
+            if matches!(r.at, RefuseAt::BraceAlone | RefuseAt::Code | RefuseAt::End | RefuseAt::EndEmpty | RefuseAt::Spec | RefuseAt::SpecStart | RefuseAt::Deep) && interpolation.is_none() {
+                return Err(format!("reader {name}: refusal {:?}: an interpolation's, with none", r.why));
+            }
+            if matches!(r.at, RefuseAt::Spec | RefuseAt::SpecStart) && interpolation.as_ref().is_none_or(|i| i.spec.is_none()) {
+                return Err(format!("reader {name}: refusal {:?}: a spec's, with none", r.why));
+            }
+        }
+        let n = |x: &str| Expr::Name(x.to_owned());
+        let and = |a: Expr, b: Expr| Expr::And(Box::new(a), Box::new(b));
+        let not = |a: Expr| Expr::Not(Box::new(a));
+        let next = |e: Expr, k: u64| Expr::Call("next".into(), if k == 1 { vec![Arg::E(e)] } else { vec![Arg::E(e), Arg::N(k)] });
+        let escaped = |e: Expr| Expr::Call("escaped".into(), vec![Arg::E(e)]);
+        let any_of = |names: &[String]| names.iter().map(|q| n(q)).reduce(|a, b| Expr::Or(Box::new(a), Box::new(b))).expect("a name");
+        let q_any = any_of(&quotes);
+        if let Some((p, m, w)) = &prefix {
+            self.before.push(Stmt::Mask("pw".into(), and(n(p), not(prev(n(w), 1)))));
+            self.before.push(Stmt::Mask("p1".into(), and(n("pw"), next(q_any.clone(), 1))));
+            if *m == 2 {
+                self.before.push(Stmt::Mask("p2".into(), and(and(n("pw"), next(n(p), 1)), next(q_any.clone(), 2))));
+            }
+            for (f, l) in &flags {
+                let mut at = prev(and(n("p1"), n(l)), 1);
+                if *m == 2 {
+                    at = Expr::Or(Box::new(at), Box::new(prev(and(n("p2"), n(l)), 2)));
+                    at = Expr::Or(Box::new(at), Box::new(prev(and(n(l), prev(n("p2"), 1)), 1)));
+                }
+                self.before.push(Stmt::Mask(format!("{f}_q"), and(q_any.clone(), at)));
+            }
+        }
+        for q in &quotes {
+            self.before.push(Stmt::Mask(format!("{q}3"), and(and(n(q), next(n(q), 1)), next(n(q), 2))));
+        }
+        for q in &quotes {
+            self.before.push(Stmt::Mask(format!("{q}_c"), and(n(q), not(escaped(n(&escape))))));
+        }
+        for q in &quotes {
+            self.before.push(Stmt::Mask(format!("{q}3_c"), and(and(n(&format!("{q}3")), not(next(n(q), 3))), not(escaped(n(&escape))))));
+        }
+        let x = |q: &str| q.chars().next().unwrap_or('q').to_string();
+        let mut kinds = Vec::new();
+        let region = |kind: String, opener: Expr, closer: Expr, bytes: u8, or: Option<(Expr, u8)>, after: Vec<String>, resumes: bool| Region { kind, opener, opens: 1, closer, bytes, outside: false, empty: None, or, after, resumes, nests: None, open: None };
+        let fq = interpolation.as_ref().map(|i| format!("{}_q", i.flag));
+        let plain = |q: &str| match &fq {
+            Some(f) => and(and(n(q), not(n(&format!("{q}3")))), not(n(f))),
+            None => and(n(q), not(n(&format!("{q}3")))),
+        };
+        let plain3 = |q: &str| match &fq {
+            Some(f) => and(n(&format!("{q}3")), not(n(f))),
+            None => n(&format!("{q}3")),
+        };
+        for q in &quotes {
+            kinds.push(region(format!("{}1", x(q)), plain(q), n(&format!("{q}_c")), 1, None, vec![], false));
+        }
+        for q in &quotes {
+            kinds.push(region(format!("{}3", x(q)), plain3(q), n(&format!("{q}3_c")), 3, None, vec![], false));
+        }
+        let mut after = Vec::new();
+        if let (Some(i), Some(f)) = (&interpolation, &fq) {
+            let (o, c) = (&i.open, &i.close);
+            self.before.push(Stmt::Mask("i_open".into(), and(and(n(o), not(next(n(o), 1))), not(escaped(n(o))))));
+            let or = Some((n("i_open"), 1));
+            for q in &quotes {
+                kinds.push(region(format!("f{}1", x(q)), and(and(n(q), not(n(&format!("{q}3")))), n(f)), n(&format!("{q}_c")), 1, or.clone(), vec![], false));
+            }
+            for q in &quotes {
+                kinds.push(region(format!("f{}3", x(q)), and(n(&format!("{q}3")), n(f)), n(&format!("{q}3_c")), 3, or.clone(), vec![], false));
+            }
+            for q in &quotes {
+                kinds.push(region(format!("t{}1", x(q)), n(c), n(&format!("{q}_c")), 1, or.clone(), vec![format!("f{}1", x(q))], true));
+            }
+            for q in &quotes {
+                kinds.push(region(format!("t{}3", x(q)), n(c), n(&format!("{q}3_c")), 3, or.clone(), vec![format!("f{}3", x(q))], true));
+            }
+            if let Some((_, sp)) = &i.spec {
+                let fs: Vec<String> = kinds.iter().filter(|k| k.or.is_some() && !k.resumes).map(|k| k.kind.clone()).collect();
+                kinds.push(region("spec".into(), n(sp), next(n(c), 1), 1, None, fs, false));
+            }
+            let of = |pre: &str, group: char| -> Vec<String> { kinds.iter().filter(|k| k.kind.starts_with(group) && k.kind != "spec").map(|k| format!("{pre}_{}", k.kind)).collect() };
+            after.push(Stmt::Mask("o_f".into(), any_of(&of("o", 'f'))));
+            after.push(Stmt::Mask("o_t".into(), any_of(&of("o", 't'))));
+            after.push(Stmt::Mask("f_f".into(), any_of(&of("f", 'f'))));
+            after.push(Stmt::Mask("f_t".into(), any_of(&of("f", 't'))));
+        }
+        let plain_kinds: Vec<String> = kinds.iter().filter(|k| k.or.is_none() && k.after.is_empty()).map(|k| k.kind.clone()).collect();
+        let with = |pre: &str, more: &[&str]| -> Expr {
+            let mut v: Vec<String> = plain_kinds.iter().map(|k| format!("{pre}_{k}")).collect();
+            if interpolation.is_some() {
+                v.extend(more.iter().map(|m| m.to_string()));
+            }
+            any_of(&v)
+        };
+        after.push(Stmt::Mask("o_str".into(), with("o", &["o_f"])));
+        after.push(Stmt::Mask("f_str".into(), with("f", &["f_f", "f_t"])));
+        self.after.extend(after);
+        // The walk's masks of its pieces and its refusals, after the regions: the statements a grammar writes of them,
+        // as text read next.
+        let ks = |pre: &str, pick: &dyn Fn(&Region) -> bool| -> String { kinds.iter().filter(|k| k.kind != "spec" && pick(k)).map(|k| format!("{pre}_{}", k.kind)).collect::<Vec<_>>().join(" | ") };
+        let interp = interpolation.is_some();
+        let mut text_out = String::new();
+        let mut made: Vec<String> = Vec::new();
+        let mut mask = |name: &str, e: String, made: &mut Vec<String>| {
+            text_out.push_str(&format!("mask {name} = {e}\n"));
+            made.push(name.to_owned());
+        };
+        if let Some(r) = &raw {
+            let e = if interp { format!("fill({r}_q & o_str, ~f_str) | f_t & fill({r}_q & o_f, o_f & ~{r}_q)") } else { format!("fill({r}_q & o_str, ~f_str)") };
+            mask("in_raw", e, &mut made);
+        }
+        mask("t_open", ks("o", &|k: &Region| k.bytes == 3 && !k.resumes), &mut made);
+        mask("t_more", "prev(t_open) | prev(t_open, 2)".into(), &mut made);
+        mask("s_body", if interp { "f_str & ~o_str & ~o_t & ~t_more".into() } else { "f_str & ~o_str & ~t_more".into() }, &mut made);
+        match &raw {
+            Some(_) => {
+                mask("body", "s_body & ~in_raw".into(), &mut made);
+                mask("r_body", "s_body & in_raw".into(), &mut made);
+            }
+            None => mask("body", "s_body".into(), &mut made),
+        }
+        mask("esc", format!("body & {escape} & ~escaped({escape})"), &mut made);
+        if let Some(i) = &interpolation {
+            let (o, c) = (&i.open, &i.close);
+            mask("fb", "f_f & ~o_f & ~t_more | f_t & ~o_t".into(), &mut made);
+            mask("i_at", "i_open & prev(f_f | f_t)".into(), &mut made);
+            mask("icode", if i.spec.is_some() { "fill(prev(i_at), o_t | o_spec)".into() } else { "fill(prev(i_at), o_t)".into() }, &mut made);
+            if braces.is_some() {
+                mask("lb_t", format!("fb & {o}"), &mut made);
+                mask("rb_t", format!("fb & {c}"), &mut made);
+                mask("esc_ib", "lb_t & next(lb_t) & ~escaped(lb_t) | rb_t & next(rb_t) & ~escaped(rb_t)".into(), &mut made);
+            }
+            if let Some((_, b, l)) = &i.conversion {
+                let ends = if i.spec.is_some() { "o_t | o_spec" } else { "o_t" };
+                mask("conv_at", format!("~{hidden} & {b} & next({l}) & next({ends}, 2)"), &mut made);
+            }
+        }
+        let mut written = lex(&text_out)?;
+        let mut escapes = Vec::new();
+        let qname = |t: &Tok, q: &str| match t {
+            Tok::Ident(m) if m.starts_with('Q') => Tok::Ident(format!("{q}{}", &m[1..])),
+            other => other.clone(),
+        };
+        for (r, toks) in refusals.iter().zip(&refusal_toks) {
+            let (fs, ts) = (|k: &Region| k.bytes == 1, |k: &Region| k.bytes == 3);
+            let fills = |q: Option<&str>| -> String {
+                let pick = |k: &Region| {
+                    let quote = q.is_none_or(|q| matches!(&k.closer, Expr::Name(c) if *c == format!("{q}_c") || *c == format!("{q}3_c")));
+                    let len = match &r.when {
+                        Some((true, f)) if f == "triple" => ts(k),
+                        Some((false, f)) if f == "triple" => fs(k),
+                        _ => true,
+                    };
+                    quote && len
+                };
+                format!("({})", ks("f", &pick))
+            };
+            let flag = |base: &str| match &r.when {
+                Some((true, f)) if f != "triple" => format!("{base} & {f}_q"),
+                _ => base.to_owned(),
+            };
+            let place: String = match r.at {
+                RefuseAt::Open => match &r.when {
+                    Some((true, f)) if f == "triple" => "t_open".into(),
+                    _ => flag("o_str"),
+                },
+                RefuseAt::Fill => if r.when.is_some() { fills(None) } else { "f_str".into() },
+                RefuseAt::Text => if r.when.is_some() { format!("s_body & {}", fills(None)) } else { "s_body".into() },
+                RefuseAt::Escape => match &r.when {
+                    Some((true, f)) => format!("esc & fill({f}_q, ~f_str)"),
+                    _ => "esc".into(),
+                },
+                RefuseAt::RawBackslashes => {
+                    let t = lex(&format!("mask r_plain = r_body & ~{escape} & ~(escaped({escape}) & ("))?;
+                    written.extend(t);
+                    written.extend(toks.iter().cloned());
+                    written.extend(lex("))\nmask r_none = fill(r_body & ~prev(r_body) & ~r_plain, r_plain | ~r_body)\n")?);
+                    made.extend(["r_plain".to_owned(), "r_none".to_owned()]);
+                    "r_none & r_body & ~next(r_body) & ~r_plain".into()
+                }
+                RefuseAt::BraceAlone => {
+                    let c = &interpolation.as_ref().expect("checked: an interpolation").close;
+                    if braces.is_some() { format!("fb & {c} & ~esc_ib & ~prev(esc_ib)") } else { format!("fb & {c}") }
+                }
+                RefuseAt::Code => "icode".into(),
+                RefuseAt::End => {
+                    let i = interpolation.as_ref().expect("checked: an interpolation");
+                    let mut v = vec!["o_t"];
+                    if i.spec.is_some() {
+                        v.push("o_spec");
+                    }
+                    if i.conversion.is_some() {
+                        v.push("conv_at");
+                    }
+                    format!("({})", v.join(" | "))
+                }
+                RefuseAt::EndEmpty => {
+                    let i = interpolation.as_ref().expect("checked: an interpolation");
+                    if i.spec.is_some() { "(o_t | o_spec) & prev(i_at)".into() } else { "o_t & prev(i_at)".into() }
+                }
+                RefuseAt::Spec => "f_spec".into(),
+                RefuseAt::SpecStart => "o_spec".into(),
+                RefuseAt::Deep => level.as_ref().expect("checked: an interpolation's level").deep.clone(),
+            };
+            written.push(Tok::Ident("escape".into()));
+            written.push(Tok::Str(r.why.as_bytes().to_vec()));
+            written.push(Tok::Ident("when".into()));
+            written.extend(lex(&place)?);
+            if r.expr.is_some() && !matches!(r.at, RefuseAt::RawBackslashes) {
+                let quoted = toks.iter().any(|t| matches!(t, Tok::Ident(m) if m.starts_with('Q')));
+                if quoted {
+                    if !matches!(r.at, RefuseAt::Fill | RefuseAt::Text) {
+                        return Err(format!("reader {name}: refusal {:?}: a quote's names (`Q…`) at a string's fill or text only", r.why));
+                    }
+                    // Each quote's strings, its names in `X`.
+                    written.extend(lex(" & (")?);
+                    for (j, q) in quotes.iter().enumerate() {
+                        if j > 0 {
+                            written.push(Tok::P("|"));
+                        }
+                        written.extend(lex(&format!("{} & (", fills(Some(q))))?);
+                        written.extend(toks.iter().map(|t| qname(t, q)));
+                        written.push(Tok::P(")"));
+                    }
+                    written.push(Tok::P(")"));
+                } else {
+                    written.extend(lex(" & (")?);
+                    written.extend(toks.iter().cloned());
+                    written.push(Tok::P(")"));
+                }
+            }
+            written.push(Tok::Nl);
+            escapes.push(r.why.clone());
+        }
+        let own = kinds.iter().map(|k| k.kind.clone()).collect();
+        Ok((kinds, level, StringReader { name, prefix, flags, quotes, triple, more, text, escape, escape_kind, escape_else, raw, braces, close, interpolation, refusals, made, escapes, kinds: own }, written))
+    }
+
+    /// The tokens of a `token K = start E read R` of string reader `rd` (`StringReader`), as text: its string's token
+    /// in parts, from its prefix, of each kind its reader makes but the tails; the tails' token (`interpolation`'s
+    /// `J`), which goes on as the string's text after an interpolation's code; the spec's; the conversion's.
+    fn reader_tokens(rd: &StringReader, kinds: &[Region]) -> String {
+        let lit = kind_lit;
+        let quotes = rd.quotes.join(" | ");
+        let of = |pick: &dyn Fn(&Region) -> bool, pre: &str, sep: &str| -> String { kinds.iter().filter(|k| k.kind != "spec" && rd.kinds.contains(&k.kind) && pick(k)).map(|k| format!("{pre}{}", k.kind)).collect::<Vec<_>>().join(sep) };
+        let strings = |k: &Region| !k.resumes;
+        let tails = |k: &Region| k.resumes;
+        let parts = |head: bool| -> String {
+            let mut v = Vec::new();
+            if head {
+                if let Some(m) = &rd.more {
+                    v.push(format!("  {} = prev(t_open) bytes 2\n", lit(m)));
+                }
+            }
+            v.push(format!("  {} = esc check else {}\n", lit(&rd.escape_kind), lit(&rd.escape_else)));
+            if let Some(b) = &rd.braces {
+                v.push(format!("  {} = esc_ib bytes 2\n", lit(b)));
+            }
+            v.concat()
+        };
+        let closes = |pick: &dyn Fn(&Region) -> bool| -> String {
+            let mut v = String::new();
+            let three = of(&|k: &Region| pick(k) && k.bytes == 3, "f_", " | ");
+            let one = of(&|k: &Region| pick(k) && k.bytes == 1, "f_", " | ");
+            v.push_str(&format!("  {} = prev({three}) & ({quotes}) bytes 3\n", lit(&rd.close)));
+            v.push_str(&format!("  {} = prev({one}) & ({quotes}) bytes 1\n", lit(&rd.close)));
+            if let Some(i) = &rd.interpolation {
+                v.push_str(&format!("  {} = i_at bytes 1\n", lit(&i.open_kind)));
+            }
+            v
+        };
+        let prefix = rd.prefix.as_ref().map_or(String::new(), |(p, m, _)| format!(" prefix {p} max {m}"));
+        let mut out = format!("{prefix} read {} parts {{\n{}}} else {} closes {{\n{}}}\n", of(&strings, "", " | "), parts(true), lit(&rd.text), closes(&strings));
+        if let Some(i) = &rd.interpolation {
+            out.push_str(&format!("token {} = start {} read {} parts {{\n{}}} else {} closes {{\n{}}}\n", lit(&i.close_kind), of(&tails, "o_", " | "), of(&tails, "", " | "), parts(false), lit(&rd.text), closes(&tails)));
+            if let Some((k, _)) = &i.spec {
+                out.push_str(&format!("token {} = start o_spec read spec\n", lit(k)));
+            }
+            if let Some((k, ..)) = &i.conversion {
+                out.push_str(&format!("token {} = start conv_at run prev(conv_at)\n", lit(k)));
+            }
+        }
+        out
     }
 
     fn block(&mut self) -> R<Vec<Stmt>> {
@@ -1810,6 +2679,148 @@ impl P {
         }
         Ok(out)
     }
+    /// A part read by its check (`Parts::checked`), `P = E check else K` with `check P = G`: the masks of `G`'s match,
+    /// as a lexer reads it from the byte `E` holds at, one byte at a time, each choice at the next byte (LL(1)), with no
+    /// loop, so of a few paths (`check_paths`). Each path is its classes at their offsets, and where it passes a `[A]`
+    /// by, `A`'s first bytes not at the offset, as a lexer takes `A` where it can. Its mask `ok_p` is those, `next`ed to
+    /// the path's first byte; its last byte `prev(E & ok_p, n - 1)`, `n` its bytes. `P_ok`: the paths' `ok_p`, `|`ed;
+    /// `P_last`: their last bytes. Both named, made before the reader's token. A match never holds a byte of `E` after
+    /// its first, so the matches from two of them are apart.
+    fn part_check(&mut self, kind: &str, start: &Expr, g: &Gram) -> R<(Expr, Expr)> {
+        let and = |a: Expr, b: Expr| Expr::And(Box::new(a), Box::new(b));
+        let at = |e: Expr, k: u32| match k {
+            0 => e,
+            1 => Expr::Call("next".into(), vec![Arg::E(e)]),
+            k => Expr::Call("next".into(), vec![Arg::E(e), Arg::N(u64::from(k))]),
+        };
+        let ident: String = kind.chars().map(|c| if c.is_ascii_alphanumeric() { c } else { '_' }).collect();
+        let paths = self.check_paths(g)?;
+        let (mut ok, mut last): (Option<Expr>, Option<Expr>) = (None, None);
+        for (items, n) in paths {
+            let mut p: Option<Expr> = None;
+            for (e, k, is) in items {
+                let x = at(e, k);
+                let x = if is { x } else { Expr::Not(Box::new(x)) };
+                p = Some(match p {
+                    Some(p) => and(p, x),
+                    None => x,
+                });
+            }
+            let p = p.ok_or("a part's check that matches no byte")?;
+            let n = u8::try_from(n).map_err(|_| "a part's check of at most 255 bytes".to_owned())?;
+            last = Some(or_of(last, prev(and(start.clone(), p.clone()), n - 1)));
+            ok = Some(or_of(ok, p));
+        }
+        let (ok_name, last_name) = (format!("{ident}_ok"), format!("{ident}_last"));
+        self.before.push(Stmt::Mask(ok_name.clone(), ok.ok_or("a part's check of no path")?));
+        self.before.push(Stmt::Mask(last_name.clone(), last.ok_or("a part's check of no path")?));
+        Ok((Expr::Name(ok_name), Expr::Name(last_name)))
+    }
+
+    /// A check's grammar's paths (`part_check`): each its tests, a class or a first bytes' mask at an offset, holding
+    /// or not, and its bytes. At most 64.
+    fn check_paths(&mut self, g: &Gram) -> R<Vec<(Vec<(Expr, u32, bool)>, u32)>> {
+        type Path = (Vec<(Expr, u32, bool)>, u32);
+        let shift = |p: &Path, by: u32| -> Path { (p.0.iter().map(|(e, k, is)| (e.clone(), k + by, *is)).collect(), p.1 + by) };
+        let out: Vec<Path> = match g {
+            Gram::Lit(t) if !t.is_empty() => {
+                let items = t.as_bytes().iter().enumerate().map(|(k, &b)| (self.byte_class(b), k as u32, true)).collect();
+                vec![(items, t.len() as u32)]
+            }
+            Gram::Sym(_) => {
+                let (c, _) = self.check_first(g)?;
+                vec![(vec![(c, 0, true)], 1)]
+            }
+            Gram::Seq(v) => {
+                let mut acc: Vec<Path> = vec![(vec![], 0)];
+                for x in v {
+                    let tails = self.check_paths(x)?;
+                    let mut next = Vec::new();
+                    for a in &acc {
+                        for t in &tails {
+                            let t = shift(t, a.1);
+                            next.push((a.0.iter().cloned().chain(t.0).collect(), t.1));
+                        }
+                    }
+                    acc = next;
+                    if acc.len() > 64 {
+                        return self.err("a part's check of more than 64 paths");
+                    }
+                }
+                acc
+            }
+            Gram::Alt(v) => {
+                self.check_first(g)?;
+                let mut out = Vec::new();
+                for x in v {
+                    out.extend(self.check_paths(x)?);
+                }
+                out
+            }
+            Gram::Opt(x) => {
+                let (f, _) = self.check_first(x)?;
+                let mut out = self.check_paths(x)?;
+                out.push((vec![(f, 0, false)], 0));
+                out
+            }
+            _ => return self.err("a part's check of bytes, classes, sequences, choices and `[…]`, no loop"),
+        };
+        if out.len() > 64 {
+            return self.err("a part's check of more than 64 paths");
+        }
+        Ok(out)
+    }
+
+    /// A byte's class, one a byte, made once (`classed`), as a `pairs`' are.
+    fn byte_class(&mut self, b: u8) -> Expr {
+        let name = format!("pair_byte_{b:02x}");
+        if !self.classed.contains(&b) {
+            self.classed.push(b);
+            self.before.push(Stmt::Class(name.clone(), vec![(u32::from(b), u32::from(b))]));
+            self.classes.push((name.clone(), vec![(u32::from(b), u32::from(b))]));
+        }
+        Expr::Name(name)
+    }
+
+    /// A check's grammar's first bytes (`part_check`): their mask and their set. A choice's arms' first bytes are
+    /// apart; no element may match no byte but a `[…]` after another.
+    fn check_first(&mut self, g: &Gram) -> R<(Expr, [bool; 256])> {
+        let or = |a: Expr, b: Expr| Expr::Or(Box::new(a), Box::new(b));
+        Ok(match g {
+            Gram::Lit(t) if !t.is_empty() => {
+                let b = t.as_bytes()[0];
+                let mut set = [false; 256];
+                set[usize::from(b)] = true;
+                (self.byte_class(b), set)
+            }
+            Gram::Sym(n) => {
+                let items = self.classes.iter().rev().find(|(k, _)| k == n).map(|(_, v)| v.clone()).ok_or_else(|| format!("a part's check: `{n}` is no class"))?;
+                let mut set = [false; 256];
+                for (lo, hi) in items {
+                    for b in lo..=hi.min(255) {
+                        set[b as usize] = true;
+                    }
+                }
+                (Expr::Name(n.clone()), set)
+            }
+            Gram::Seq(v) if !v.is_empty() => self.check_first(&v[0])?,
+            Gram::Alt(v) if !v.is_empty() => {
+                let (mut e, mut set) = self.check_first(&v[0])?;
+                for a in &v[1..] {
+                    let (f, s) = self.check_first(a)?;
+                    if (0..256).any(|b| set[b] && s[b]) {
+                        return self.err("a part's check whose choices share a first byte (it reads each choice at the next byte)");
+                    }
+                    (0..256).for_each(|b| set[b] |= s[b]);
+                    e = or(e, f);
+                }
+                (e, set)
+            }
+            Gram::Opt(_) => return self.err("a part's check with an optional first element: its first bytes are its own"),
+            _ => return self.err("a part's check of bytes, classes, sequences, choices and `[…]`, no loop"),
+        })
+    }
+
     /// `pairs P = "AB" … "ABC" …`: the mask of the pairs' first bytes, a run's every other from
     /// the left (`two & ~escaped(two)`, `two` each pair's first byte where its second is next), of
     /// hidden classes one a byte; with triples, `P_three` too: where `P` holds and a triple's
@@ -1995,12 +3006,20 @@ impl P {
             "class" => {
                 let n = self.ident()?;
                 self.want_p("=")?;
-                Stmt::Class(n, self.class_items()?)
+                let items = self.class_items()?;
+                self.classes.push((n.clone(), items.clone()));
+                Stmt::Class(n, items)
             }
             "pairs" => {
                 let n = self.ident()?;
                 self.want_p("=")?;
                 self.pairs(n)?
+            }
+            "speculate" => {
+                let why = String::from_utf8_lossy(&self.string()?).into_owned();
+                self.want_kw("gap")?;
+                self.want_kw("ends")?;
+                Stmt::Speculate { why, fact: Speculation::GapEnds }
             }
             "assume" => {
                 let why = String::from_utf8_lossy(&self.string()?).into_owned();
@@ -2198,10 +3217,11 @@ impl P {
             "node" => {
                 let kind = self.kind()?;
                 let nested = self.eat_kw("nested");
+                let attached = self.eat_kw("attached");
                 let whole = self.eat_kw("whole");
                 let padded = whole && self.eat_kw("padded");
                 self.want_p("=")?;
-                Stmt::Node { kind, nested, whole, padded, body: self.gram()? }
+                Stmt::Node { kind, nested, attached, whole, padded, body: self.gram()? }
             }
             "choice" => {
                 let name = self.ident()?;
@@ -2213,7 +3233,9 @@ impl P {
             "check" => {
                 let kind = self.kind()?;
                 self.want_p("=")?;
-                Stmt::Check { kind, body: self.gram()? }
+                let body = self.gram()?;
+                self.checks.push((kind.clone(), body.clone()));
+                Stmt::Check { kind, body }
             }
             "ending" => {
                 let rule = self.ident()?;
@@ -2298,6 +3320,16 @@ impl P {
                 }
                 Stmt::Flags(names)
             }
+            "indented" => {
+                let mut names = vec![];
+                while matches!(self.peek(), Some(Tok::Ident(_))) {
+                    names.push(self.ident()?);
+                }
+                if names.is_empty() {
+                    return self.err("indented RULE …");
+                }
+                Stmt::Indented(names)
+            }
             "remember" => {
                 let mut names = vec![];
                 while matches!(self.peek(), Some(Tok::Ident(_))) {
@@ -2326,16 +3358,6 @@ impl P {
                     self.want_p(",")?;
                 }
                 Stmt::Recover { node, clauses }
-            }
-            "provisional" => {
-                let mut fields = vec![];
-                while matches!(self.peek(), Some(Tok::Ident(_))) {
-                    fields.push(self.ident()?);
-                }
-                if fields.is_empty() {
-                    return self.err("provisional FIELD …");
-                }
-                Stmt::Provisional(fields)
             }
             "extra" | "hidden" | "untaken" => {
                 let mut kinds = vec![];
@@ -2368,15 +3390,19 @@ impl P {
                         return self.err("a mark's token of kinds and words, and `end` only last");
                     }
                     let mut next = Vec::new();
+                    // `, before S`: another run the mark holds at (any one of them, decision 0633);
+                    // `, unless before S`: none where it holds.
                     while self.eat_p(",") {
                         self.nls();
-                        self.want_kw("unless")?;
+                        let unless = self.eat_kw("unless");
                         self.want_kw("before")?;
                         let seq = self.token_seq()?;
-                        if seq[0].iter().any(|c| !matches!(c, TokenElem::Kind(_) | TokenElem::Word(_))) {
-                            return self.err("an `unless before`'s first token of kinds and words");
+                        // Its first token as the mark's own: kinds, words, `with` and `without`
+                        // (decision 0635).
+                        if special(&seq[0]) {
+                            return self.err("a `before`'s first token of kinds and words");
                         }
-                        next.push((true, seq));
+                        next.push((unless, seq));
                     }
                     let s = Stmt::TokenMark { kind, before, seq, next };
                     self.end_stmt()?;
@@ -2396,8 +3422,17 @@ impl P {
                 let (mut end, mut unplaced, mut checks, mut settles, mut ends, mut drops, mut loses, mut refuses, mut refuses_taken) = (false, None, vec![], false, false, vec![], vec![], vec![], vec![]);
                 let mut next: Vec<(bool, Vec<Vec<TokenElem>>)> = Vec::new();
                 let mut passes = Vec::new();
+                let mut column = None;
                 while self.eat_p(",") {
                     self.nls();
+                    if self.eat_kw("deeper") {
+                        column = Some(Column::Deeper);
+                        continue;
+                    }
+                    if self.eat_kw("shallower") {
+                        column = Some(Column::Shallower);
+                        continue;
+                    }
                     let not = self.eat_kw("unless");
                     if not || self.is_kw("before") {
                         self.want_kw("before")?;
@@ -2443,13 +3478,27 @@ impl P {
                 if !drops.is_empty() && !settles {
                     return self.err("`drops` on a mark that settles");
                 }
-                Stmt::Mark { kind, at, end, unless, unplaced, checks, settles, ends, next, drops, loses, refuses, refuses_taken, passes }
+                Stmt::Mark { kind, at, end, unless, unplaced, checks, settles, ends, next, drops, loses, refuses, refuses_taken, passes, column }
             }
             "token" => {
+                let stmt_at = self.i - 1;
                 let kind = self.kind()?;
                 self.want_p("=")?;
                 self.want_kw("start")?;
+                let start_at = self.i;
                 let start = self.expr()?;
+                let start_end = self.i;
+                let prefix = if self.eat_kw("prefix") {
+                    let p = self.expr()?;
+                    self.want_kw("max")?;
+                    let m = self.int()?;
+                    if !(1..=3).contains(&m) || !self.is_kw("read") {
+                        return self.err("`prefix P max M` (1 to 3) before a `read … parts`");
+                    }
+                    Some((p, m as u8))
+                } else {
+                    None
+                };
                 let through = if self.eat_kw("through") { Some(self.expr()?) } else { None };
                 let mut last = if through.is_none() && self.eat_kw("last") { Some(self.expr()?) } else { None };
                 let rule = if through.is_some() || last.is_some() {
@@ -2467,6 +3516,22 @@ impl P {
                         _ => Some(TokenRule::Pair(e)),
                     }
                 } else if self.eat_kw("read") {
+                    // `read R` of a string reader: its tokens, as text read in its place (`reader_tokens`).
+                    if let Some(rd) = match self.peek() {
+                        Some(Tok::Ident(r)) => self.readers.iter().find(|x| x.name == *r).cloned(),
+                        _ => None,
+                    } {
+                        if prefix.is_some() {
+                            return self.err("a string reader's token, its prefix its reader's");
+                        }
+                        self.i += 1;
+                        let mut toks = lex(&format!("token {} = start ", kind_lit(&kind)))?;
+                        toks.extend(self.t[start_at..start_end].iter().cloned());
+                        toks.extend(lex(&Self::reader_tokens(&rd, &self.regions))?);
+                        self.t.splice(stmt_at..self.i, toks);
+                        self.i = stmt_at;
+                        return self.stmt();
+                    }
                     let mut regions = vec![];
                     loop {
                         let k = self.ident()?;
@@ -2484,6 +3549,7 @@ impl P {
                         }
                         self.want_p("{")?;
                         let mut parts = vec![];
+                        let mut checked = vec![];
                         loop {
                             self.nls();
                             if self.eat_p("}") {
@@ -2492,6 +3558,21 @@ impl P {
                             let p = self.kind()?;
                             self.want_p("=")?;
                             let e = self.expr()?;
+                            if self.eat_kw("check") {
+                                self.want_kw("else")?;
+                                let other = self.kind()?;
+                                let g = self.checks.iter().rev().find(|(k, _)| *k == p).map(|(_, g)| g.clone()).ok_or_else(|| format!("part `{p}` read by its check: `check {p} = …` before its reader"))?;
+                                let (ok, last) = self.part_check(&p, &e, &g)?;
+                                parts.push((p.clone(), Expr::And(Box::new(e.clone()), Box::new(ok.clone())), PartLen::Last(last)));
+                                parts.push((other.clone(), Expr::And(Box::new(e.clone()), Box::new(Expr::Not(Box::new(ok)))), PartLen::Bytes(1)));
+                                checked.push((p.clone(), e, g, other));
+                                if !self.part_checks.contains(&p) {
+                                    self.part_checks.push(p);
+                                }
+                                self.nls();
+                                let _ = self.eat_p(",");
+                                continue;
+                            }
                             let len = if self.eat_kw("last") {
                                 PartLen::Last(self.expr()?)
                             } else {
@@ -2529,8 +3610,11 @@ impl P {
                                 let _ = self.eat_p(",");
                             }
                         }
-                        Some(TokenRule::ReadParts(regions, Parts { parts, content, closes }))
+                        Some(TokenRule::ReadParts(regions, Parts { parts, content, closes, checked, prefix: prefix.clone() }))
                     } else {
+                        if prefix.is_some() {
+                            return self.err("a `prefix` on a region read in parts");
+                        }
                         Some(TokenRule::Read(regions))
                     }
                 } else {
@@ -2552,15 +3636,15 @@ impl P {
                 if let Some(TokenRule::ReadParts(rs, parts)) = &rule {
                     // Several regions: the opener a row in each's mode too, at its own openers
                     // (`start & o_K`), all of the one reader (`ReadParts`).
-                    if rs.len() > 1 {
-                        let at = |r: &Region| Expr::And(Box::new(start.clone()), Box::new(Expr::Name(format!("o_{}", r.kind))));
+                    // With a `prefix`, each from where its opener is reached, through the opener.
+                    if rs.len() > 1 || parts.prefix.is_some() {
+                        let at = |r: &Region| Expr::And(Box::new(start.clone()), Box::new(parts.reach(Expr::Name(format!("o_{}", r.kind)))));
+                        let to = |r: &Region| if parts.prefix.is_some() { Expr::Name(format!("o_{}", r.kind)) } else { at(r) };
                         for r in &rs[1..] {
-                            let s = at(r);
-                            self.after.push(Stmt::Token { kind: kind.clone(), start: s.clone(), through: None, last: Some(s), rule: rule.clone() });
+                            self.after.push(Stmt::Token { kind: kind.clone(), start: at(r), through: None, last: Some(to(r)), rule: rule.clone() });
                         }
                         self.after.extend(parts.rows(&kind, rs, &start));
-                        let s = at(&rs[0]);
-                        return Ok(Stmt::Token { kind, start: s.clone(), through: None, last: Some(s), rule });
+                        return Ok(Stmt::Token { kind, start: at(&rs[0]), through: None, last: Some(to(&rs[0])), rule });
                     }
                     self.after.extend(parts.rows(&kind, rs, &start));
                 }
@@ -2703,7 +3787,7 @@ pub fn prefix_of(stmts: &[Stmt]) -> Result<Option<Vec<u8>>, String> {
 }
 
 pub fn parse(src: &str) -> Result<Vec<Stmt>, String> {
-    let mut p = P { t: lex(src)?, i: 0, regions: vec![], before: vec![], after: vec![], classed: vec![], pair_sets: vec![] };
+    let mut p = P { t: lex(src)?, i: 0, regions: vec![], before: vec![], after: vec![], classed: vec![], pair_sets: vec![], classes: vec![], checks: vec![], part_checks: vec![], readers: vec![] };
     p.nls();
     let mut out = vec![];
     while p.peek().is_some() {
@@ -2712,6 +3796,141 @@ pub fn parse(src: &str) -> Result<Vec<Stmt>, String> {
         out.push(st);
         out.append(&mut p.after);
         p.nls();
+    }
+    out.retain(|s| !matches!(s, Stmt::Check { kind, .. } if p.part_checks.contains(kind)));
+    Ok(out)
+}
+
+/// A tree's statements with each `leaf K R` as the grammar's other elements say it, for the machine and the reference
+/// (decision 0673 step 6): `R` read again with its first token a leaf of `K` and every token after it merged into that
+/// leaf, a copy of each rule it reaches with its tokens merged, fields dropped. A `refuse M in L` holds in `L`'s copies
+/// too. The Rust writer keeps `leaf`: the rules then read the tokens and make nothing, and the leaf is made after them.
+pub fn desugar_leaves(stmts: &[Stmt]) -> Result<Vec<Stmt>, String> {
+    fn walk(g: &Gram, f: &mut dyn FnMut(&Gram)) {
+        f(g);
+        match g {
+            Gram::Seq(v) | Gram::Alt(v) => v.iter().for_each(|x| walk(x, f)),
+            Gram::Opt(a) | Gram::Star(a) | Gram::Plus(a) | Gram::Field(_, a) | Gram::Retag(_, a) | Gram::Inner { body: a, .. } | Gram::Merge(_, a) | Gram::As(_, a) => walk(a, f),
+            Gram::Wrap { body, .. } | Gram::Relabel { body, .. } | Gram::Fold { body, .. } | Gram::Reread { body, .. } | Gram::Flag { body, .. } | Gram::Unless { body, .. } => walk(body, f),
+            Gram::Lit(_) | Gram::Sym(_) | Gram::Balanced { .. } | Gram::Any(_) | Gram::Leaf { .. } => {}
+        }
+    }
+    let mut any = false;
+    for s in stmts {
+        if let Stmt::Node { body, .. } | Stmt::Choice { body, .. } = s {
+            walk(body, &mut |g| any |= matches!(g, Gram::Leaf { .. }));
+        }
+    }
+    if !any {
+        return Ok(stmts.to_vec());
+    }
+    let rule = |n: &str| -> Option<(&Gram, bool, bool)> {
+        stmts.iter().find_map(|s| match s {
+            Stmt::Node { kind, nested, body, .. } if kind == n => Some((body, *nested, true)),
+            Stmt::Choice { name, nested, body, .. } if name == n => Some((body, *nested, false)),
+            _ => None,
+        })
+    };
+    let name = |r: &str, k: &str, first: bool| format!("{r}\u{0}{} {k}", if first { "first" } else { "leaf" });
+    // Each copy to write: the rule, the leaf's kind, whether the copy's first token opens the leaf.
+    let mut todo: Vec<(String, String, bool)> = Vec::new();
+    struct Cx<'b> {
+        kind: &'b str,
+        todo: &'b mut Vec<(String, String, bool)>,
+    }
+    fn copy<'s>(g: &Gram, first: bool, cx: &mut Cx<'_>, rule: &dyn Fn(&str) -> Option<(&'s Gram, bool, bool)>, name: &dyn Fn(&str, &str, bool) -> String) -> Result<Gram, String> {
+        let k = cx.kind.to_owned();
+        let token = |t: Gram| if first { Gram::As(k.clone(), Box::new(t)) } else { Gram::Merge(k.clone(), Box::new(t)) };
+        Ok(match g {
+            // A token, or any token but some (`any except '(' ')'`).
+            Gram::Lit(_) | Gram::Any(_) => token(g.clone()),
+            Gram::Sym(n) => match rule(n) {
+                Some((_, _, true)) => return Err(format!("leaf {k}: rule `{n}` makes a node")),
+                Some(_) => {
+                    if !cx.todo.iter().any(|t| t.0 == *n && t.2 == first) {
+                        cx.todo.push((n.clone(), k.clone(), first));
+                    }
+                    Gram::Sym(name(n, &k, first))
+                }
+                None => token(g.clone()),
+            },
+            Gram::Seq(v) => {
+                let mut out = Vec::new();
+                for (i, x) in v.iter().enumerate() {
+                    out.push(copy(x, first && i == 0, cx, rule, name)?);
+                }
+                Gram::Seq(out)
+            }
+            Gram::Alt(v) => Gram::Alt(v.iter().map(|x| copy(x, first, cx, rule, name)).collect::<Result<_, _>>()?),
+            Gram::Opt(_) | Gram::Star(_) if first => return Err(format!("leaf {k}: its first token may be none")),
+            Gram::Opt(a) => Gram::Opt(Box::new(copy(a, false, cx, rule, name)?)),
+            Gram::Star(a) => Gram::Star(Box::new(copy(a, false, cx, rule, name)?)),
+            Gram::Plus(a) if first => Gram::Seq(vec![copy(a, true, cx, rule, name)?, Gram::Star(Box::new(copy(a, false, cx, rule, name)?))]),
+            Gram::Plus(a) => Gram::Plus(Box::new(copy(a, false, cx, rule, name)?)),
+            // The leaf's kind is every token's; a field is the leaf's caller's.
+            Gram::Field(_, a) | Gram::As(_, a) | Gram::Merge(_, a) => copy(a, first, cx, rule, name)?,
+            Gram::Flag { flag, set, body } => Gram::Flag { flag: flag.clone(), set: *set, body: Box::new(copy(body, first, cx, rule, name)?) },
+            Gram::Unless { flag, body } => Gram::Unless { flag: flag.clone(), body: Box::new(copy(body, first, cx, rule, name)?) },
+            _ => return Err(format!("leaf {k}: its rules make nodes")),
+        })
+    }
+    let mut out = Vec::new();
+    for s in stmts {
+        out.push(match s {
+            Stmt::Node { kind, nested, attached, whole, padded, body } => Stmt::Node { kind: kind.clone(), nested: *nested, attached: *attached, whole: *whole, padded: *padded, body: leaves_in(body, &mut todo, &name)? },
+            Stmt::Choice { name: n, supertype, nested, body } => Stmt::Choice { name: n.clone(), supertype: supertype.clone(), nested: *nested, body: leaves_in(body, &mut todo, &name)? },
+            s => s.clone(),
+        });
+    }
+    // `leaf K R` in `g`: the first copy of `R`.
+    fn leaves_in(g: &Gram, todo: &mut Vec<(String, String, bool)>, name: &dyn Fn(&str, &str, bool) -> String) -> Result<Gram, String> {
+        let mut d = |x: &Gram| leaves_in(x, todo, name);
+        Ok(match g {
+            Gram::Leaf { kind, rule } => {
+                if !todo.iter().any(|t| t.0 == *rule && t.1 == *kind && t.2) {
+                    todo.push((rule.clone(), kind.clone(), true));
+                }
+                Gram::Sym(name(rule, kind, true))
+            }
+            Gram::Seq(v) => Gram::Seq(v.iter().map(&mut d).collect::<Result<_, _>>()?),
+            Gram::Alt(v) => Gram::Alt(v.iter().map(&mut d).collect::<Result<_, _>>()?),
+            Gram::Opt(a) => Gram::Opt(Box::new(d(a)?)),
+            Gram::Star(a) => Gram::Star(Box::new(d(a)?)),
+            Gram::Plus(a) => Gram::Plus(Box::new(d(a)?)),
+            Gram::Field(f, a) => Gram::Field(f.clone(), Box::new(d(a)?)),
+            Gram::Retag(k, a) => Gram::Retag(k.clone(), Box::new(d(a)?)),
+            Gram::Inner { field, body } => Gram::Inner { field: field.clone(), body: Box::new(d(body)?) },
+            Gram::Merge(k, a) => Gram::Merge(k.clone(), Box::new(d(a)?)),
+            Gram::As(k, a) => Gram::As(k.clone(), Box::new(d(a)?)),
+            Gram::Wrap { kind, field, moved, slot, body } => Gram::Wrap { kind: kind.clone(), field: field.clone(), moved: moved.clone(), slot: slot.clone(), body: Box::new(d(body)?) },
+            Gram::Relabel { field, moved, inner, body } => Gram::Relabel { field: field.clone(), moved: moved.clone(), inner: inner.clone(), body: Box::new(d(body)?) },
+            Gram::Fold { kind, body } => Gram::Fold { kind: kind.clone(), body: Box::new(d(body)?) },
+            Gram::Reread { reading, body } => Gram::Reread { reading: reading.clone(), body: Box::new(d(body)?) },
+            Gram::Flag { flag, set, body } => Gram::Flag { flag: flag.clone(), set: *set, body: Box::new(d(body)?) },
+            Gram::Unless { flag, body } => Gram::Unless { flag: flag.clone(), body: Box::new(d(body)?) },
+            Gram::Lit(_) | Gram::Sym(_) | Gram::Balanced { .. } | Gram::Any(_) => g.clone(),
+        })
+    }
+    let mut done = 0;
+    let mut copies: Vec<(String, String)> = Vec::new();
+    while done < todo.len() {
+        let (r, k, first) = todo[done].clone();
+        done += 1;
+        let Some((body, nested, node)) = rule(&r) else { return Err(format!("leaf {k}: no rule `{r}`")) };
+        if node {
+            return Err(format!("leaf {k}: rule `{r}` makes a node"));
+        }
+        let mut cx = Cx { kind: &k, todo: &mut todo };
+        let body = copy(body, first, &mut cx, &rule, &name)?;
+        copies.push((r.clone(), name(&r, &k, first)));
+        out.push(Stmt::Choice { name: name(&r, &k, first), supertype: None, nested, body });
+    }
+    // A mark refused in a rule is refused in its copies.
+    for s in &mut out {
+        if let Stmt::Refuse { levels, .. } = s {
+            let more: Vec<String> = copies.iter().filter(|(r, _)| levels.contains(r)).map(|(_, c)| c.clone()).collect();
+            levels.extend(more);
+        }
     }
     Ok(out)
 }
@@ -2723,6 +3942,33 @@ mod tier2_tests {
     /// `back_fill` is refused, as a mask's and as a number's, with what to write instead
     /// (decision 0416), with or without the old `deprecated back_fill`; `backward` makes one for
     /// the IR's tests.
+    /// A string reader (`read R { … }`) makes the walk's kinds of each quote, its tails and its spec, and their
+    /// masks, as the regions written out would be.
+    #[test]
+    fn a_string_reader_makes_its_kinds() {
+        let src = "lexer t\nclass word = 'a'..'z'\nclass pfx = 'f' 'r'\nclass f_l = 'f'\nclass raw_l = 'r'\nclass sq = '\\''\nclass dq = '\"'\nclass bslash = '\\\\'\nclass lb = '{'\nclass rb = '}'\nclass colon = ':'\nclass opens = '('\nclass closes = ')'\nregions hidden {\n  read string {\n    prefix pfx max 2 after word\n    flags raw = raw_l, format = f_l\n    quotes sq | dq triple\n    start quote2\n    text str_text\n    escape esc_seq = bslash check else '\\\\' unless raw\n    braces esc_ib\n    close string_end\n    interpolation format i_open_k = lb .. i_end_k = rb level opens to closes max 7 nest 4 depth a b else deep\n    conversion conv = bang word\n    spec spec_text = colon\n    refuse \"a carriage return\" at fill rb\n    refuse \"deep\" at deep\n  }\n}\ncheck esc_seq = '\\\\' word\nmask str_at = pw | o_str\ntoken string_start = start str_at read string\n";
+        let stmts = parse(src).expect("parses");
+        let masks: Vec<&str> = stmts.iter().filter_map(|s| if let Stmt::Mask(n, _) = s { Some(n.as_str()) } else { None }).collect();
+        assert_eq!(masks[..18], ["pw", "p1", "p2", "raw_q", "format_q", "sq3", "dq3", "sq_c", "dq_c", "sq3_c", "dq3_c", "i_open", "o_f", "o_t", "f_f", "f_t", "o_str", "f_str"]);
+        // Its pieces' masks, after the regions, as a grammar writes them; its check's, with each of its tokens.
+        assert_eq!(masks[18..], ["in_raw", "t_open", "t_more", "s_body", "body", "r_body", "esc", "fb", "i_at", "icode", "lb_t", "rb_t", "esc_ib", "conv_at", "str_at", "esc_seq_ok", "esc_seq_last", "esc_seq_ok", "esc_seq_last"]);
+        let escapes: Vec<String> = stmts.iter().filter_map(|s| if let Stmt::Escape(w, e) = s { Some(format!("{w}: {e:?}")) } else { None }).collect();
+        assert_eq!(escapes.len(), 2);
+        assert!(escapes[0].starts_with("a carriage return: And(Name(\"f_str\"), Name(\"rb\"))"), "{}", escapes[0]);
+        // Its tokens: the string's, the tail's, the spec's, the conversion's.
+        let tokens: Vec<&str> = stmts.iter().filter_map(|s| if let Stmt::Token { kind, .. } = s { Some(kind.as_str()) } else { None }).collect();
+        assert!(tokens.contains(&"string_start") && tokens.contains(&"i_end_k") && tokens.contains(&"spec_text") && tokens.contains(&"conv"), "{tokens:?}");
+        let Some(Stmt::Rounds { regions: Some(r), .. }) = stmts.iter().find(|s| matches!(s, Stmt::Rounds { regions: Some(_), .. })) else { panic!("no regions") };
+        let kinds: Vec<&str> = r.kinds.iter().map(|k| k.kind.as_str()).collect();
+        assert_eq!(kinds, ["s1", "d1", "s3", "d3", "fs1", "fd1", "fs3", "fd3", "ts1", "td1", "ts3", "td3", "spec"]);
+        assert!(r.kinds[8].resumes && r.kinds[8].after == ["fs1"] && r.kinds[4].or.is_some());
+        assert_eq!(r.kinds[12].after, ["fs1", "fd1", "fs3", "fd3"]);
+        assert_eq!(r.level.as_ref().and_then(|l| l.nest.as_ref()).map(|n| n.0), Some(4));
+        assert_eq!(r.readers.len(), 1);
+        // An interpolation on a flag the reader has not: refused.
+        assert!(parse(&src.replace("flags raw = raw_l, format = f_l", "flags raw = raw_l")).is_err());
+    }
+
     #[test]
     fn back_fill_is_refused() {
         for body in ["mask m = back_fill(q, sp)\n", "number n = back_fill(q, sp, position)\n"] {
@@ -2761,10 +4007,24 @@ mod tier2_tests {
         );
         assert!(mark("mark k = lf, before ~\"}\"").is_err());
         assert!(mark("mark k = lf, before end").is_err());
-        // A run first or last, two runs, a run of a `~`: refused.
+        // A run first or last, two runs side by side, a run of a `~` and more: refused. Two runs
+        // with a token between them, and a run's `without`, are read (decision 0632).
         assert!(mark("mark k = lf, before (name)* \"->\"").is_err());
         assert!(mark("mark k = lf, before \"{\" (name)*").is_err());
-        assert!(mark("mark k = lf, before \"{\" (name)* \",\" (name)* \"->\"").is_err());
+        assert!(mark("mark k = lf, before \"{\" (name)* (\",\")* \"->\"").is_err());
+        let many = |e: Vec<TokenElem>| TokenElem::Many(e, vec![], vec![]);
+        assert_eq!(
+            mark("mark k = lf, before \"{\" (name)* \",\" (name)* \"->\""),
+            Ok((vec![(false, vec![vec![word("{")], vec![many(vec![name.clone()])], vec![word(",")], vec![many(vec![name.clone()])], vec![word("->")]])], false))
+        );
+        assert!(mark("mark k = lf, before \"{\" (~name without k)* \"->\"").is_ok());
+        // `kind "N"`: a kind with a quoted name, not a word (decision 0634).
+        assert_eq!(mark("mark k = lf, before kind '\"' | \"a\""), Ok((vec![(false, vec![vec![TokenElem::Kind("\"".into()), word("a")]])], false)));
+        let whole = Nest { open: vec![word("(")], close: vec![word(")")], whole: true };
+        assert_eq!(
+            mark("mark k = lf, before \"{\" (name)* nest (\"(\" to \")\" whole) \"->\""),
+            Ok((vec![(false, vec![vec![word("{")], vec![TokenElem::Many(vec![name.clone()], vec![whole], vec![])], vec![word("->")]])], false))
+        );
         assert!(mark("mark k = lf, before \"{\" (~name | \",\")* \"->\"").is_err());
         assert_eq!(
             mark("mark k = lf, before \"{\" (~(name | \",\"))* \"->\""),
@@ -2772,8 +4032,8 @@ mod tier2_tests {
         );
         assert!(parse("lexer t\nmark k = tokens \"{\" (name | \",\")* \"->\"\n").is_ok());
         // A run that counts depths (Q339): each `(O to C)` one; none, a token both, a `~`: refused.
-        let angle = Nest { open: vec![word("<")], close: vec![word(">")] };
-        let paren = Nest { open: vec![word("(")], close: vec![word(")")] };
+        let angle = Nest { open: vec![word("<")], close: vec![word(">")], whole: false };
+        let paren = Nest { open: vec![word("(")], close: vec![word(")")], whole: false };
         assert_eq!(
             mark("mark k = lf, before \"<\" (name | \"<\" | \">\" | \"(\" | \")\")* nest (\"<\" to \">\") (\"(\" to \")\") \">\" \"(\""),
             Ok((vec![(false, vec![vec![word("<")], vec![TokenElem::Many(vec![name.clone(), word("<"), word(">"), word("("), word(")")], vec![angle, paren.clone()], vec![])], vec![word(">")], vec![word("(")]])], false))
@@ -2787,6 +4047,16 @@ mod tier2_tests {
             Ok((vec![(false, vec![vec![word("@")], vec![TokenElem::Many(vec![TokenElem::Not(vec![word("{")])], vec![paren.clone()], vec![name.clone(), word(")")])], vec![TokenElem::Not(vec![word(".")])]])], false))
         );
         assert!(mark("mark k = lf, before \"@\" (name)* ending (~name) \".\"").is_err());
+        // Each token of a run without a mark (decision 0673 step 4); after a `~` too (decision 0698).
+        assert_eq!(
+            mark("mark k = lf, before \"{\" (name | \",\" without k)* \"}\""),
+            Ok((vec![(false, vec![vec![word("{")], vec![TokenElem::Many(vec![name.clone(), word(","), TokenElem::Without("k".into())], vec![], vec![])], vec![word("}")]])], false))
+        );
+        assert_eq!(
+            mark("mark k = lf, before \"{\" (~name without k)* \"}\""),
+            Ok((vec![(false, vec![vec![word("{")], vec![TokenElem::Many(vec![TokenElem::Not(vec![name.clone()]), TokenElem::Without("k".into())], vec![], vec![])], vec![word("}")]])], false))
+        );
+        assert!(mark("mark k = lf, before \"{\" (name with k without k ~name)* \"}\"").is_err());
     }
 
     /// A settling mark's `drops` (decision 0416, its questions 0451): parsed with `settles`,

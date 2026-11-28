@@ -17,10 +17,13 @@ pub mod buffer_observation;
 pub mod lane;
 pub mod launch;
 /// The preprocessor's evaluation arena and its kernels' one UKL source (decisions 0448, 0468).
+#[cfg(feature = "device-pp")]
 pub mod pp_arena;
 /// The preprocessor's evaluator over tapes (decision 0436).
+#[cfg(feature = "device-pp")]
 pub mod pp_eval;
 /// Macro expansion on the device (decision 0448).
+#[cfg(feature = "device-pp")]
 pub mod pp_expand;
 /// The preprocessing words on the device (decision 0348, stage 5).
 /// Pre-pinned blocks (decision 0039): the device's scratch buffers, made once and reused.
@@ -80,11 +83,15 @@ pub fn every_kernel_ahead() -> bool {
 /// preprocessor's passes (`pp_arena`), asked for as their use asks for them, so their use then finds them compiled. A
 /// block program's kernels are its own (the forward carry's, `block_program::serial`), compiled behind its first batch.
 pub fn kernels_ahead() -> Vec<rerail_gpu::kernels::Ahead> {
+    #[cfg(feature = "device-pp")]
     use rerail_accel_gpu::gpu::{ahead, caught, released};
+    #[allow(unused_mut)]
     let mut v = Vec::new();
     // The preprocessor's passes only on the CPU, where they run (every preprocessor run is the CPU's for now). A GPU's
     // compiler does not compile their source in bounded time: NVRTC grew past 90 GB resident on a DGX Spark, Intel's
     // OpenCL (an Arc 140V) was still compiling at 90 s, and the CPU's compiler takes 7 s.
+    // Parked (`device-pp`, t51 §8): nothing to compile ahead without it.
+    #[cfg(feature = "device-pp")]
     if rerail_gpu::device::backend() == "CPU" || every_kernel_ahead() {
         v.push(ahead("pp passes", || released(|| caught(|| _ = pp_arena::kernel("pp_run")))));
     }

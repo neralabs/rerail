@@ -17,7 +17,7 @@
 //   Object.defineProperty(o, "a", { set(v) {} })       → Getter is not present in property descriptor.
 // Options: setWithoutGet (default true), getWithoutSet (false), enforceForClassMembers (true),
 // enforceForTSTypes (false).
-.violation accessor_pairs(at: loc, msg: symbol) code "accessor-pairs" "{msg}"
+.violation accessor_pairs(at: place, msg: symbol) code "accessor-pairs" "{msg}"
     suppress eslint "accessor-pairs"
     suppress oxlint "accessor-pairs"
 accessor_pairs(at, cat(cat(y, " is not present for "), cat(where, cat(s, ".")))) :-

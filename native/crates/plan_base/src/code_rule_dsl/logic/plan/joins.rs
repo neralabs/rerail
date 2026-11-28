@@ -937,6 +937,8 @@ pub struct Candidate {
     pub order: Vec<Step>,
     pub est: f64,
     pub steps: Vec<rerail_accel::join_model::StepSample>,
+    /// A cross product while a connected join remains (`Body::crosses`): never explored, its price the least sure.
+    pub crosses: bool,
 }
 
 /// One line's choice in a round: its candidates (the search's best first), and what was chosen.
@@ -1078,7 +1080,11 @@ fn choose_with(round: &mut [Choice], predicted: Option<&Vec<Vector<f64>>>, memo:
                 }
             }
         }
-        let best = (0..costs.len()).min_by(|&a, &b| costs[a].total_cmp(&costs[b])).unwrap_or(0);
+        // Decision 0038: an order that crosses while a connected join remains replaces the search's choice only once it
+        // has measured: priced by the statistics alone, its rows are the least sure (`rf_qn`'s took 2.8 M rows into
+        // three string functions each before `nearest` kept 75, 7.4 s on all, its connected order measured over price).
+        let eligible = |i: usize| i == 0 || !c.candidates[i].crosses || note.is_some_and(|n| n.tried(&steps(&c.candidates[i].order)).is_some());
+        let best = (0..costs.len()).filter(|&i| eligible(i)).min_by(|&a, &b| costs[a].total_cmp(&costs[b])).unwrap_or(0);
         if best != 0 {
             c.chosen = best;
             c.why = if note.is_some() { "corrected by what its orders measured" } else { "the batch prediction's least" };
@@ -1087,7 +1093,7 @@ fn choose_with(round: &mut [Choice], predicted: Option<&Vec<Vector<f64>>>, memo:
         // Decision 0354: where the learned model chose, a share of its choices take another candidate within the
         // margin, so that the steps it learns from are not only the orders it picks.
         if note.is_none() && predicted.is_some() {
-            let near: Vector<usize> = (0..costs.len()).filter(|&i| i != best && costs[i] <= margin() * costs[best].max(1.0)).collect();
+            let near: Vector<usize> = (0..costs.len()).filter(|&i| i != best && !c.candidates[i].crosses && costs[i] <= margin() * costs[best].max(1.0)).collect();
             let mut rng = Rng::new(c.key as u64 ^ 0x6a6f_696e);
             if !near.is_empty() && costs[best] <= explore_rows() && rng.unit() < explore_rate() {
                 c.chosen = near[rng.below(near.len())];
@@ -1100,7 +1106,9 @@ fn choose_with(round: &mut [Choice], predicted: Option<&Vec<Vector<f64>>>, memo:
         if n.critical < critical_share() && n.slow == 0 {
             continue;
         }
-        let untried: Vector<usize> = (0..costs.len()).filter(|&i| i != best && costs[i] <= margin() * costs[best].max(1.0) && n.tried(&steps(&c.candidates[i].order)).is_none()).collect();
+        // Never a cross product while a connected join remains (decision 0038): within the margin by its price, it read
+        // 11 M rows for 89 (`rf_qn` on all, 22 s of the run's CPU, explored in 13 chunks before any measured it).
+        let untried: Vector<usize> = (0..costs.len()).filter(|&i| i != best && !c.candidates[i].crosses && costs[i] <= margin() * costs[best].max(1.0) && n.tried(&steps(&c.candidates[i].order)).is_none()).collect();
         if untried.is_empty() {
             continue;
         }

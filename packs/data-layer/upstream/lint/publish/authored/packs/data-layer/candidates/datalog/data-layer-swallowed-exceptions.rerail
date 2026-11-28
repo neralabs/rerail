@@ -91,8 +91,8 @@ swe_uses(e) :- swe_alias(e, s), swe_ref(x, s), swe_in_block(e, x).
 swe_uses(e) :- swe_alias(e, s), field(e, "value", v), swe_ref(v, s).
 swe_uses(e) :- swe_alias(e, s), field(e, "value", v), node(_, v, _, vs, ve), swe_ref(x, s), nearest(x, e, swe_stop_target), node(_, x, _, xs, xe), xs >= vs, xe <= ve.
 swe_handled(e) :- swe_uses(e), !swe_deep(e).
-violation("data-layer-swallowed-exceptions", "except-warning", "WARNING", p, l) :- swe_clause(_, p, e), !swe_reraises(e), !swe_deep(e), swe_uses(e), line(e, l).
-violation("data-layer-swallowed-exceptions", "except-critical", "CRITICAL", p, l) :- swe_clause(_, p, e), !swe_reraises(e), !swe_handled(e), line(e, l).
+violation("data-layer-swallowed-exceptions", "except-warning", "WARNING", p, l) :- swe_clause(_, p, e), !swe_reraises(e), !swe_deep(e), swe_uses(e), node_line_number(e, l).
+violation("data-layer-swallowed-exceptions", "except-critical", "CRITICAL", p, l) :- swe_clause(_, p, e), !swe_reraises(e), !swe_handled(e), node_line_number(e, l).
 swe_with_call(w, c) :- node(_, w, "with_statement", _, _), child(w, wc, _), node(_, wc, "with_clause", _, _), child(wc, it, _), node(_, it, "with_item", _, _), field(it, "value", c), node(_, c, "call", _, _).
 swe_with_call(w, c) :- node(_, w, "with_statement", _, _), child(w, wc, _), node(_, wc, "with_clause", _, _), child(wc, it, _), node(_, it, "with_item", _, _), field(it, "value", v), node(_, v, "as_pattern", _, _), child(v, c, _), node(_, c, "call", _, _).
 swe_one_protocol(c) :- field(c, "arguments", al), child(al, a, _), swe_protocol(a), !swe_second(al).
@@ -100,13 +100,13 @@ swe_one_keyerror(c) :- field(c, "arguments", al), child(al, a, _), node(_, a, "i
 swe_suppress_name(c) :- field(c, "function", f), node(_, f, "identifier", _, _), text(f, "suppress").
 swe_contextlib_suppress(c) :- field(c, "function", f), swe_attr(f, "contextlib", "suppress").
 swe_async_with(w) :- node(_, w, "with_statement", _, _), node_text(w, s), match("(?s)async\\b.*", s).
-violation("data-layer-swallowed-exceptions", "suppress-legacy", "CRITICAL", p, l) :- swe_doc(d, p), node(d, w, "with_statement", _, _), !swe_async_with(w), swe_with_call(w, c), swe_suppress_name(c), !swe_one_protocol(c), line(w, l).
-violation("data-layer-swallowed-exceptions", "suppress-legacy", "CRITICAL", p, l) :- swe_doc(d, p), node(d, w, "with_statement", _, _), !swe_async_with(w), swe_with_call(w, c), swe_contextlib_suppress(c), !swe_one_protocol(c), line(w, l).
+violation("data-layer-swallowed-exceptions", "suppress-legacy", "CRITICAL", p, l) :- swe_doc(d, p), node(d, w, "with_statement", _, _), !swe_async_with(w), swe_with_call(w, c), swe_suppress_name(c), !swe_one_protocol(c), node_line_number(w, l).
+violation("data-layer-swallowed-exceptions", "suppress-legacy", "CRITICAL", p, l) :- swe_doc(d, p), node(d, w, "with_statement", _, _), !swe_async_with(w), swe_with_call(w, c), swe_contextlib_suppress(c), !swe_one_protocol(c), node_line_number(w, l).
 swe_ctx_import(d, i, s, e) :- node(d, i, "import_from_statement", s, e), field(i, "module_name", m), node(_, m, "dotted_name", _, _), node_text(m, "contextlib").
 swe_imports_suppress(i) :- swe_ctx_import(_, i, _, _), child(i, x, _), node(_, x, "dotted_name", _, _), node_text(x, "suppress").
 swe_imports_suppress(i) :- swe_ctx_import(_, i, _, _), child(i, x, _), node(_, x, "aliased_import", _, _), field(x, "name", y), node(_, y, "dotted_name", _, _), node_text(y, "suppress").
 swe_before(w, i) :- node(d, w, "with_statement", ws, _), swe_ctx_import(d, i, _, ie), ws >= ie.
 swe_shadowed(w, i) :- swe_before(w, i), swe_ctx_import(d, i, _, ie), swe_ctx_import(d, j, js, je), js >= ie, node(d, w, _, ws, _), ws >= je, j != i.
 swe_imported_suppress(w) :- swe_before(w, i), swe_imports_suppress(i), !swe_shadowed(w, i).
-violation("data-layer-swallowed-exceptions", "suppress-critical", "CRITICAL", p, l) :- swe_doc(d, p), node(d, w, "with_statement", _, _), swe_with_call(w, c), swe_contextlib_suppress(c), !swe_one_keyerror(c), line(w, l).
-violation("data-layer-swallowed-exceptions", "suppress-critical", "CRITICAL", p, l) :- swe_doc(d, p), node(d, w, "with_statement", _, _), swe_with_call(w, c), swe_suppress_name(c), swe_imported_suppress(w), !swe_one_keyerror(c), line(w, l).
+violation("data-layer-swallowed-exceptions", "suppress-critical", "CRITICAL", p, l) :- swe_doc(d, p), node(d, w, "with_statement", _, _), swe_with_call(w, c), swe_contextlib_suppress(c), !swe_one_keyerror(c), node_line_number(w, l).
+violation("data-layer-swallowed-exceptions", "suppress-critical", "CRITICAL", p, l) :- swe_doc(d, p), node(d, w, "with_statement", _, _), swe_with_call(w, c), swe_suppress_name(c), swe_imported_suppress(w), !swe_one_keyerror(c), node_line_number(w, l).

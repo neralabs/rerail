@@ -113,6 +113,13 @@ alt(m, e, a) :- written(m, e), struct__ann(m, e, a, _).
 hexpr(m, e, "None", "builtins.None") :- head_of(m, e, "None").
 hexpr(m, e, h, d) :- head_of(m, e, h), !contains(".", h), binds(m, h, d).
 hexpr(m, e, h, d) :- head_of(m, e, h), !contains(".", h), !mbound(m, h), binds("builtins", h, d).
+// A builtin class no builtins stub was read for (no typeshed): the class by its name, as P3 names a workspace
+// annotation's (`pt_dtype`), and as None is above.
+hexpr(m, e, h, d) :- head_of(m, e, h), bclass(h), !contains(".", h), !mbound(m, h), !binds("builtins", h, _),
+    d = cat("builtins.", h).
+.decl bclass(x: symbol)
+bclass("int"). bclass("float"). bclass("complex"). bclass("str"). bclass("bytes"). bclass("bytearray"). bclass("bool").
+bclass("list"). bclass("dict"). bclass("set"). bclass("frozenset"). bclass("tuple").
 hexpr(m, e, h, d) :- head_of(m, e, h), contains(".", h), x = @head(h), binds(m, x, d0), r = substr(h, strlen(x) + 1, strlen(h) - strlen(x) - 1),
     t = @dot(d0, r), res(t, d).
 .decl rexpr(m: symbol, e: symbol, d: symbol)
@@ -123,6 +130,7 @@ rexpr(m, e, d) :- hexpr(m, e, _, d).
 .decl hclass(m: symbol, e: symbol, h: symbol)
 hclass(m, e, h) :- hexpr(m, e, h, d), struct__def(d, "class").
 hclass(m, e, "None") :- head_of(m, e, "None").
+hclass(m, e, h) :- hexpr(m, e, h, d), bclass(h), d = cat("builtins.", h), !struct__def(d, _).
 .decl unresolved(m: symbol, e: symbol)
 unresolved(m, e) :- written(m, e), !head_of(m, e, _).
 unresolved(m, e) :- head_of(m, e, h), !hclass(m, e, h).

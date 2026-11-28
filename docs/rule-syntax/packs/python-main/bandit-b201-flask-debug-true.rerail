@@ -18,7 +18,7 @@ B201(n) :- n ~ `$APP.run($$$ARGS)`, kind(n, "call"), b201_arg_debug_1(n, a1), DE
 
 // flask_instance(n): the JSON util `flask-instance`, used where the JSON says `matches: "flask-instance"`
 //   CTOR: metavariable this relation binds for the calling rule
-.decl b201_flask_instance(n: node, ctor: loc)
+.decl b201_flask_instance(n: node, ctor: node)
 b201_flask_instance(n, CTOR) :- n ~ `$CTOR($$$)`.
 
 // args_plain: a is child i of argument list l and a positional argument (not `k=v`, `*`, `**`, a comment)

@@ -1,4 +1,4 @@
-import { ADAPTER_CAPABILITIES, type ConflictNotice, type RerailHost, type SteerRule } from "../adapter-contract.js";
+import { ADAPTER_CAPABILITIES, type ConflictNotice, type RerailHost, type SessionNoteRules, type SteerRule } from "../adapter-contract.js";
 import type { RuleMode } from "../catalog/rule-mode.js";
 
 /**
@@ -357,7 +357,9 @@ function linkedLine(header: string, url: string | undefined, word: string, style
   const text = style === "markdown" ? inlineCode(marked) : marked;
   if (url === undefined) return text;
   const target = url.replace(CONTROL, "");
-  if (style === "hyperlink") return `${text}  ·  \u001b]8;;${target}\u0007${word}\u001b]8;;\u0007`;
+  // Underlined (SGR 4, ended by 24 so colour stays): many terminals, iTerm2's CPU renderer among them, draw an OSC 8
+  // link like the text around it until it is hovered, so the underline is what says the word is a link.
+  if (style === "hyperlink") return `${text}  ·  \u001b]8;;${target}\u0007\u001b[4m${word}\u001b[24m\u001b]8;;\u0007`;
   if (style === "markdown") return `${text}  ·  [${word}](${target})`;
   return `${text}  ·  ${word} → ${target}`;
 }
@@ -382,8 +384,7 @@ export function sessionPageUrl(origin: string, host: string, sessionId: string):
 /** The `customType` OMP and Pi record the hidden session-start note under. */
 export const SESSION_NOTE_MESSAGE_TYPE = "rerail.session-note";
 
-/** What the session-start note says about the repository's rules: how many are on, or that it is not set up yet. */
-export type SessionNoteRules = { setUp: true; ruleCount: number | null } | { setUp: false };
+export type { SessionNoteRules } from "../adapter-contract.js";
 
 const rulesOn = (count: number): string => `${count} ${count === 1 ? "rule is" : "rules are"} on`;
 

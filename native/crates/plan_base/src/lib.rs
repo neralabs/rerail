@@ -121,6 +121,8 @@ pub mod code_rule_dsl {
             pub mod layouts;
             pub mod manager;
             pub mod passes;
+            /// The image as the engine's inputs (decision 0701 §5.1).
+            pub mod view;
             pub use analyses::{Edges, Strata};
         }
         // The profile's report and watch read the planner's placements; the rest is `rerail-prof`'s.
@@ -145,7 +147,7 @@ pub mod code_rule_dsl {
         pub mod rr {
             pub use rerail_rr::code_rule_dsl::logic::rr::lower;
             pub use rerail_rr::code_rule_dsl::logic::rr::lower::{FILE_SYSTEM, WORLD};
-            pub use rerail_rr::code_rule_dsl::logic::rr::lower::findings::UNPLACED;
+            pub use rerail_rr::code_rule_dsl::logic::rr::lower::findings::{UNPLACED, UNPLACED_NODE, UNPLACED_THROUGH};
             pub use rerail_rr::code_rule_dsl::logic::rr::aggregate_demand;
             pub use rerail_rr::code_rule_dsl::logic::rr::print::{self, print_version};
             pub use rerail_rr_syntax::syntax::quote;
@@ -223,3 +225,9 @@ mod test_load {
     #[cfg_attr(not(any(target_vendor = "apple", windows)), unsafe(link_section = ".init_array"))]
     static LOAD: extern "C" fn() = load;
 }
+
+// The crate's own tests make their folders the user's alone, as the engine's test binaries do (decision 0574): a
+// host's umask of `002` made a fixture's folder `775`, which the mapped files' rules refuse (`output::tests`).
+#[cfg(test)]
+#[path = "../../../src/test_private_folders.rs"]
+mod test_private_folders;

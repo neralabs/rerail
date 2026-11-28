@@ -10,7 +10,7 @@
 // C408(n): a finding at node n, from clause `unnecessary-collection-call`.
 // Each rule below is one way the JSON `rule` can match.
 // Columns after `at` are the metavariables the JSON's message, anchor or `each` names: one finding per distinct row.
-.violation C408(at: loc, call: node) "Replace the call with a literal: `{{}}` for `dict()`, `{{\"a\": 1}}` for `dict(a=1)`, `[]` for `list()`, `()` for `tuple()`."
+.violation C408(at: node, call: node) "Replace the call with a literal: `{{}}` for `dict()`, `{{\"a\": 1}}` for `dict(a=1)`, `[]` for `list()`, `()` for `tuple()`."
     suppress noqa "C408"
 C408(CALL, n) :- c408_target(n), node(_, n, _, _, _), CALL = n.
 C408(CALL, n) :- c408_in_annotation(n, CALL).
@@ -57,7 +57,7 @@ c408_target(n) :- kind(n, "call"),
 
 // in_annotation(n): the JSON util `in-annotation`, used where the JSON says `matches: "in-annotation"`
 //   CALL: metavariable this relation binds for the calling rule
-.decl c408_in_annotation(n: node, call: loc)
+.decl c408_in_annotation(n: node, call: node)
 c408_in_annotation(n, CALL) :- (kind(n, "string") ; kind(n, "concatenated_string")),
     parsed(n, "annotation", r1), within(c2, r1), c408_alt_4(c2, CALL).
 
@@ -110,6 +110,6 @@ c408_alt_2(n) :- node(_, n, _, _, _), glob("[\\[\\](),]", n).
 
 // alt_4(n): the JSON `any`: n matches if any one of these rules does
 //   CALL: metavariable this relation binds for the calling rule
-.decl c408_alt_4(n: node, call: loc)
+.decl c408_alt_4(n: node, call: node)
 c408_alt_4(n, CALL) :- c408_target(n), CALL = n.
 c408_alt_4(n, CALL) :- c408_in_annotation(n, CALL).

@@ -11,7 +11,7 @@
 // Each rule below is one way the JSON `rule` can match.
 // Columns after `at` are the metavariables the JSON's message, anchor or `each` names: one finding per distinct row.
 // `options` carries JSON settings that have no .rerail form yet.
-.violation FBT001(at: node, name: loc) "Make the boolean parameter `{name}` keyword-only by moving it after `*` and update positional callers; keep it positional only when a parent signature or callback protocol requires it."
+.violation FBT001(at: node, name: node) "Make the boolean parameter `{name}` keyword-only by moving it after `*` and update positional callers; keep it positional only when a parent signature or callback protocol requires it."
     suppress noqa "FBT001"
 FBT001_raw(n, NAME) :- kind(n, "identifier"), node(_, n, _, _, _), NAME = n, !fbt001_tok_follows_5(n),
     child(p8, n, _),
@@ -36,13 +36,13 @@ fbt001_override(n) :-
 
 // fn_ref(n): the JSON util `fn-ref`, used where the JSON says `matches: "fn-ref"`
 //   FN: metavariable this relation binds for the calling rule
-.decl fbt001_fn_ref(n: node, fn: loc)
+.decl fbt001_fn_ref(n: node, fn: node)
 fbt001_fn_ref(n, FN) :- kind(n, "identifier"), node(_, n, _, _, _), FN = n.
 fbt001_fn_ref(n, FN) :- kind(n, "parenthesized_expression"), child(n, c1, _), fbt001_fn_ref(c1, FN).
 
 // setter(n): the JSON util `setter`, used where the JSON says `matches: "setter"`
 //   FN: metavariable this relation binds for the calling rule
-.decl fbt001_setter(n: node, fn: loc)
+.decl fbt001_setter(n: node, fn: node)
 fbt001_setter(n, FN) :- kind(n, "attribute"), fbt001_tok_has_1(n), field(n, "object", c9),
     fbt001_fn_ref(c9, FN).
 fbt001_setter(n, FN) :- kind(n, "parenthesized_expression"), child(n, c10, _),
@@ -220,5 +220,5 @@ fbt001_alt_10(n) :- kind(n, "typed_parameter"), child(n, c1, _),
     kind(c1, "list_splat_pattern").
 
 // main's file condition {"notRegex": "\\.pyi$"}
-.decl FBT001_raw(at: node, name: loc)
+.decl FBT001_raw(at: node, name: node)
 FBT001(v0, v1) :- FBT001_raw(v0, v1), rr_d = @doc(v0), doc(rr_d, rr_p, _), !match("\\.pyi$", rr_p).

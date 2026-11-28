@@ -99,7 +99,7 @@ pub fn facts(native: &Structure, widths: rerail_tape_format::Widths, tag: u8) ->
     let part_kinds: Vec<usize> = records.map_or(Vec::new(), |r| r.retags.iter().filter(|t| t.part).map(|t| usize::from(t.kind)).collect());
     let words = &native.structural;
     let framed = words.iter().any(|b| matches!(b.operation, Op::Wrap { .. } | Op::Reread { .. } | Op::Retag { on: On::Made, .. } | Op::NodeField { on: On::Made | On::MadeUnset | On::Inner, .. }));
-    let context = words.iter().any(|b| matches!(b.operation, Op::Remember { .. } | Op::Flag { .. } | Op::Push { flag: Some(_), .. }));
+    let context = words.iter().any(|b| matches!(b.operation, Op::Remember { .. } | Op::Indent | Op::Flag { .. } | Op::Push { flag: Some(_), .. }));
     let mut entries: BTreeSet<usize> = BTreeSet::from([0]);
     for (pc, b) in words.iter().enumerate() {
         if let Op::Push { .. } = b.operation {
@@ -126,9 +126,6 @@ pub fn facts(native: &Structure, widths: rerail_tape_format::Widths, tag: u8) ->
             one.most = st.unwrap_or(0);
         }
         facts.coded = coded(&facts);
-    }
-    if facts.coded && !native.readings.provisional.is_empty() {
-        return Err("format 16 ahead of time: provisional fields, which `ACCEPT` reads from the rows".into());
     }
     if let Some(fx) = &facts.fetch {
         for (pc, word) in words.iter().enumerate() {
@@ -246,7 +243,7 @@ pub fn coded(x: &StreamFacts<'_>) -> bool {
 }
 
 /// The key bits node word `pc`'s key gets from the words after it that make no node (`coded`):
-/// each supertype's class (`native_cpu_tape::commit`'s), and a field set there (in `kf`'s
+/// its slot (`native_cpu_tape::slot_key`), and a field set there (in `kf`'s
 /// place, above its kind). Of a node with its field in the next word (`field_after`), that one
 /// is its own already.
 pub fn key_after(x: &StreamFacts<'_>, pc: usize) -> (u32, u32) {
@@ -256,11 +253,8 @@ pub fn key_after(x: &StreamFacts<'_>, pc: usize) -> (u32, u32) {
     for _ in 0..words.len() {
         let &[t] = plain_succ(x, q).as_slice() else { break };
         match words[t].operation {
-            Op::NodeSuper { kind } => {
-                if let Some(j) = x.classes.iter().position(|&c| c == kind) {
-                    bits |= 1 << (16 + j);
-                }
-            }
+            // Its slot (decision 0698), as `native_cpu_tape::slot_key` keys a node.
+            Op::NodeSuper { kind, on: On::Here } => bits = crate::stream_analysis::slot_of(&x.classes, kind) << 16,
             Op::NodeField { field: f, on: On::Here } => field = u32::from(f) << 16,
             Op::Goto { .. } | Op::Span { .. } => {}
             _ => break,
@@ -428,7 +422,7 @@ impl Fetched {
 pub fn direct_keys(native: &Structure, widths: rerail_tape_format::Widths, tag: u8) -> Option<Vec<(u32, u32)>> {
     let x = facts(native, widths, tag).ok()?;
     // A program whose statements recover takes a statement's nodes back (decision 0650): not one written at its words.
-    let plain = native.extras.is_empty() && native.readings.provisional.is_empty() && native.recover.is_empty() && !native.structural.iter().any(|w| matches!(w.operation, Op::Leaf { deferred: true, .. } | Op::Leaf { extra: true, .. }));
+    let plain = native.extras.is_empty() && native.recover.is_empty() && !native.structural.iter().any(|w| matches!(w.operation, Op::Leaf { deferred: true, .. } | Op::Leaf { extra: true, .. }));
     (x.coded && plain).then(|| (0..native.structural.len()).map(|pc| key_after(&x, pc)).collect())
 }
 
@@ -539,7 +533,7 @@ pub fn plain_succ(x: &StreamFacts<'_>, pc: usize) -> Vec<usize> {
 /// Whether rows carry marks (`head`): where a field is set on a wrap's inner node, or a reread
 /// may meet a dropped row's place (`native_cpu_stream::TableFns` keeps the same).
 pub fn marks(n: &Structure) -> bool {
-    n.structural.iter().any(|b| matches!(b.operation, Op::NodeField { on: On::Inner, .. } | Op::Reread { .. }))
+    n.structural.iter().any(|b| matches!(b.operation, Op::NodeField { on: On::Inner | On::OpenFirst, .. } | Op::Reread { .. }))
 }
 
 /// The field the word after a node's sets on it (`NODE_FIELD` on the node just made), stored

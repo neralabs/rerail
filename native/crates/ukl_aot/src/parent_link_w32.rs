@@ -444,10 +444,16 @@ unsafe fn stjf_u64(v: [uint32x4_t; 16], mut at: impl FnMut(usize) -> *mut u8) {
 		(at(j) as *mut u64).write_unaligned((x[32 + j] as u64) << 32 | x[j] as u64);
 	}
 }
-/// Each lane's address of its halves `lo` and `hi`; a lane mask `k` has off, the first on's.
+/// Where a load reads when no lane of its mask runs (a block entered under a uniform branch none of its lanes
+/// takes): zeros, as a store's lanes that are off write to a sink. Its loads' constant offsets lie inside it.
+static NO_LANE: [u8; 4096] = [0; 4096];
+/// Each lane's address of its halves `lo` and `hi`; a lane mask `k` has off, the first on's (none on: `NO_LANE`).
 #[inline(always)]
 unsafe fn addrs(lo: [uint32x4_t; 8], hi: [uint32x4_t; 8], k: [uint32x4_t; 8]) -> [usize; 32] {
 	let (l, h, b) = (words8(lo), words8(hi), bits(&k));
+	if b == 0 {
+		return [NO_LANE.as_ptr() as usize; 32];
+	}
 	let f = b.trailing_zeros() as usize % 32;
 	core::array::from_fn(|j| {
 		let j = if b >> j & 1 != 0 { j } else { f };

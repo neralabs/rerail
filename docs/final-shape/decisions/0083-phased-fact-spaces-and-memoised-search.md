@@ -501,6 +501,31 @@ the hub's inline pricing makes it run past 590 s, with or without the phases):
 The analysis phase's typing on the 50 files (a probe rule over `possible_type` and `call_target`): 8,587 nodes
 typed, 985 calls resolved. `leg-083-typed` runs both phases and P3 in 22 s, and finds nothing in these files.
 
+## Built: an untyped library's bodies are typed as the workspace's (2026-11-27)
+
+§1 and §8 above say P1 reads no function body, that a library document never enters P3, and that untyped library
+`.py` files are read "only by P1". Those lines were a draft's (this record is "Proposed"), not the user's. Under them
+a call of an installed package's unannotated function (`version()`, whose body returns `"1.0"`) was open, where the
+program before P3 typed it `str`. Of three ways (only a body's literal returns; the bodies typed as the workspace's;
+left open), the user (2026-11-27): "do B", the second.
+
+- Phase 1 hands on the libraries read from their source (`sources.rerail`'s `source_library`, by path: the `untyped`
+  layer of python/modules.rerail, only under `python.untyped = read`).
+- A program that reads `sources__source_library` takes those documents as its own, and no other library's
+  (`corpus.rs`, beside `sources__library`'s every library). python/points-to-solve reads it, so the phase `points_to`
+  and `calls_p3` type those bodies as they type the workspace's: the package's module is one of the phase's
+  (`pt_wsmod`), a call of its function is a target, and the function's return is inferred from its body (`pt_fret`).
+- The interface (`call_target`, `type_of`, ...) is about the checked documents' calls and value positions alone
+  (`pt_chk`); the internal relations (`pt_call_target_all`, ...) hold the library's too, so a library function's
+  own calls feed the call graph. A rule that reads the answers (python/points-to) declares none of this and takes no
+  library as its document.
+- What is typed: every function of the untyped files the imports reach (phase 1 loads those alone). Narrowing it to
+  the functions the workspace's calls reach is the demand narrowing still to build (the policy's scope analysis).
+
+Tests: `declarations_and_installed_sources_type_calls_without_declared_ret_facts` expects `version()`'s `str` again,
+its call a target placed in `site-packages/vendor/__init__.py`; `a_rule_reads_an_untyped_librarys_return_through_the_phase`,
+the same through the phase a rule reads, no row about vendor's nodes; `a_reader_of_the_source_libraries_takes_those_alone`.
+
 ## Prior work consulted
 
 **SQL index prototype design index:**

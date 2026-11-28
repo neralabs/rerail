@@ -10,14 +10,14 @@
 // YTT303(n): a finding at node n, from clause `sys-version-slice1`.
 // Each rule below is one way the JSON `rule` can match.
 // Columns after `at` are the metavariables the JSON's message, anchor or `each` names: one finding per distinct row.
-.violation YTT303(at: loc, c: node) "Use `sys.version_info.major` (an int, so compare it to ints, not strings) instead of `sys.version[:1]`, which is only the first digit of a two-digit major version."
+.violation YTT303(at: node, c: node) "Use `sys.version_info.major` (an int, so compare it to ints, not strings) instead of `sys.version[:1]`, which is only the first digit of a two-digit major version."
     suppress noqa "YTT303"
 YTT303(C, n) :- ytt303_target(n), node(_, n, _, _, _), C = n.
 YTT303(C, n) :- ytt303_in_string(n, C).
 
 // one_literal(n): the JSON util `one-literal`, used where the JSON says `matches: "one-literal"`
 .decl ytt303_one_literal(n: node)
-ytt303_one_literal(n) :- kind(n, "integer"), value(n, v1), value_type(v1, "int"), v1 = 1.
+ytt303_one_literal(n) :- kind(n, "integer"), value(n, v1), value_type_of(n, "int"), v1 = 1.
 ytt303_one_literal(n) :- kind(n, "parenthesized_expression"), child(n, c2, _),
     ytt303_one_literal(c2).
 
@@ -49,7 +49,7 @@ ytt303_target(n) :- (kind(n, "identifier") ; kind(n, "attribute")), sym_of(n, "s
 
 // in_string(n): the JSON util `in-string`, used where the JSON says `matches: "in-string"`
 //   C: metavariable this relation binds for the calling rule
-.decl ytt303_in_string(n: node, c: loc)
+.decl ytt303_in_string(n: node, c: node)
 ytt303_in_string(n, C) :- (kind(n, "string") ; kind(n, "concatenated_string")),
     parsed(n, "annotation", r1), within(c2, r1), ytt303_alt_4(c2, C).
 
@@ -92,6 +92,6 @@ ytt303_counted(n) :- node(_, n, _, _, _), !kind(n, "comment"), !kind(n, "line_co
 
 // alt_4(n): the JSON `any`: n matches if any one of these rules does
 //   C: metavariable this relation binds for the calling rule
-.decl ytt303_alt_4(n: node, c: loc)
+.decl ytt303_alt_4(n: node, c: node)
 ytt303_alt_4(n, C) :- ytt303_target(n), C = n.
 ytt303_alt_4(n, C) :- ytt303_in_string(n, C).

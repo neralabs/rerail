@@ -28,7 +28,7 @@ fn render(src: &str, nodes: &[Node]) -> String {
     out
 }
 
-/// Decision 0061's example, on a named-only tape (RER-131): the tokens the grammar implies (`decl`, `(`, `,`, `:`,
+/// Decision 0061's example, on a named-only tape (decision 0161): the tokens the grammar implies (`decl`, `(`, `,`, `:`,
 /// `:-`, `!`, `)`, the clause's `.`) are left out (`docs/parser-generators/32-named-only-rr-tapes.md`). The
 /// declaration's `.` is stored: its modifiers may hold a `.`.
 #[test]
@@ -123,7 +123,7 @@ fn a_bad_statement_is_one_error_and_parsing_resumes() {
 
 /// Every `.rerail` file in the repository tapes. Its tape has an ERROR exactly when running it fails to parse, every
 /// node's span holds its children's, and the leaves and comments cover every byte but whitespace and the tokens the
-/// grammar implies, once (a named-only tape, RER-131).
+/// grammar implies, once (a named-only tape, decision 0161).
 #[test]
 fn every_rule_file_tapes_and_its_leaves_cover_it() {
     let root = crate::source_tree::native().join("../docs/rule-syntax");
@@ -275,6 +275,30 @@ errors(l, m) :- syntax_error(_, l, m).
     assert_eq!(errors[0][0], "2", "{errors:?}");
 }
 
+/// `op`'s names are the batch's vocabulary's (decision 0353 row 7): a text test of an operator, `glob("<*", o)`,
+/// finds the operators of that name, read through the `op` view and its names in each document's entry.
+#[test]
+fn a_text_test_of_an_operator_finds_its_name() {
+    let root = crate::code_rule_dsl::fixtures::temp().with_extension("op-glob");
+    std::fs::create_dir_all(&root).unwrap();
+    std::fs::write(root.join("a.py"), "a = 1 < 2\nb = 3 >= 4\nc = 5 <= 6\n").unwrap();
+    let rule = r#".language python
+.decl ops(o: symbol)
+ops(o) :- node(_, n, "comparison_operator", _, _), op(n, o), glob("<*", o).
+.output ops
+"#;
+    let path = root.with_extension("rule.rerail");
+    std::fs::write(&path, rule).unwrap();
+    let program = print_version(&parse_file_version(&path).unwrap()).unwrap();
+    let out = root.join("out");
+    crate::code_rule_dsl::logic::plan::corpus::run(&program, &root, None, &out, "program", crate::code_rule_dsl::typing::file_local::Binding::Cpu, 1 << 18).unwrap();
+    let mut ops = crate::code_rule_dsl::logic::plan::output::shown(&out, "ops").unwrap_or_default();
+    ops.sort();
+    let _ = std::fs::remove_dir_all(&root);
+    let _ = std::fs::remove_file(&path);
+    assert_eq!(ops, [["<"], ["<="]]);
+}
+
 /// O105: a Python policy and an `rr` policy over one repository (`tools::run_policies`). Each reads its own
 /// language's documents through the one store, and the findings of both come back together.
 #[test]
@@ -374,6 +398,45 @@ fn a_batchs_policies_of_one_language_run_as_one_pack() {
     assert!(any(&w0, "\"ev\"") && !any(&w0, "\"ex\""), "{w0:?}");
     assert!(any(&w2, "\"ex\"") && !any(&w2, "\"ev\""), "{w2:?}");
     assert!(any(&w1, "rules/a.rerail"), "{w1:?}");
+}
+
+/// A policy whose text does not read (an `#include` of no file) runs alone, with its error, and the batch's others
+/// still pack (decision 0168): the batch's texts are read a text at a time when they do not read together. Read
+/// together only, one such policy sent each of the Python pack's 537 policies to a run of its own.
+#[test]
+fn a_policy_whose_text_does_not_read_leaves_the_others_packed() {
+    let root = crate::code_rule_dsl::fixtures::temp().with_extension("batch-pack-bad-text");
+    std::fs::create_dir_all(&root).unwrap();
+    std::fs::write(root.join("x.py"), "eval(\"1\")\nexec(\"2\")\n").unwrap();
+    let policy = |name: &str, head: &str, callee: &str| {
+        let path = root.with_extension(format!("{name}.rerail"));
+        std::fs::write(
+            &path,
+            format!(
+                ".policy \"t:{name}\" revision 1\n.language python\n{head}\
+                 .violation {name}_call(at: node) code \"{name}\" \"a call of {callee}\"\n\
+                 {name}_call(c) :- node(_, c, \"call\", _, _), field(c, \"function\", f), text(f, \"{callee}\").\n"
+            ),
+        )
+        .unwrap();
+        path
+    };
+    let paths = [
+        policy("ev", "#include \"python/calls.rerail\"\n", "eval"),
+        policy("bad", "#include \"no-such-module.rerail\"\n", "eval"),
+        policy("ex", "#include \"python/calls.rerail\"\n", "exec"),
+    ];
+    let batch = crate::code_rule_dsl::tools::run_policies(&paths, &root, &root.join("out"), &serde_json::Value::Null).unwrap();
+    let _ = std::fs::remove_dir_all(&root);
+    for p in &paths {
+        let _ = std::fs::remove_file(p);
+    }
+    let runs = batch["runs"].as_array().unwrap();
+    let together: Vec<u64> = runs.iter().map(|r| r["together"].as_u64().unwrap_or(0)).collect();
+    assert_eq!(together, [2, 0, 2], "{batch:#}");
+    assert!(runs[1]["error"].as_str().is_some_and(|e| e.contains("no-such-module.rerail")), "{batch:#}");
+    let codes: Vec<&str> = batch["diagnostics"].as_array().unwrap().iter().map(|d| d["code"].as_str().unwrap_or("")).collect();
+    assert_eq!(codes, ["ev", "ex"], "{batch:#}");
 }
 
 /// A policy's findings are its run alone's whatever else shares its pack (RUF060 beside C417; main's #923). `anns`

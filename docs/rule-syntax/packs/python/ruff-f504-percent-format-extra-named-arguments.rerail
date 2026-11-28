@@ -13,5 +13,5 @@
 
 .violation F504(at: node) code "F504" "`%`-format string has unused named argument(s)"
     suppress ruff "F504"
-F504(b) :- percent_fmt(b, _, r, v), pct_positional(v, 0), kind(r, "dictionary"), !dict_spread(r),
-    child(r, p, _), kind(p, "pair"), field(p, "key", k), plain_str(k, x), !pct_key(v, x).
+F504(b) :- percent_fmt(b, _, r, _), pct_positional(b, 0), kind(r, "dictionary"), !dict_spread(r),
+    child(r, p, _), kind(p, "pair"), field(p, "key", k), plain_str(k, x), !pct_key(b, x).

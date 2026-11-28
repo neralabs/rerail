@@ -1293,7 +1293,7 @@ dropped the `--timings` runs (2026-11-22).
       first split.
   - Found on the way, from the hub: the width census's two maps went unlisted in `facts_only`'s `STATE`, and
     `run_state` still listed the removed `crates/clif/src/rust.rs`. Both are fixed.
-  - `metal_host_guard_tests.rs` stays in `native/src`, uncompiled. 1b9c360dcf (RER-131) unmounted it when pattern
+  - `metal_host_guard_tests.rs` stays in `native/src`, uncompiled. 1b9c360dcf (decision 0161) unmounted it when pattern
     leaves moved to the host on the Metal path, and it fails as it stands.
   - Checks: the workspace with `--tests` is clean on Linux and macOS. The guards pass. Tests (Linux): the source
     scanners and the plan and schedule tests, 125. On a Mac: the Metal launch guard.

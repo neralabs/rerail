@@ -26,7 +26,7 @@ RUF028(c, "Move this comment above the first decorator; after a decorator the fo
     fmt_comment(c, k), k != "skip", own_line(c), child(p, c, _), kind(p, "decorated_definition").
 RUF028(c, "Indent this off comment to match the block above, or move it before the whole statement; directly above else, elif, except or finally the formatter ignores it.") :-
     fmt_comment(c, "off"), own_line(c), !in_expr(c), next_sibling(c, t), kind(t, k),
-    (k = "else_clause" ; k = "elif_clause" ; k = "except_clause" ; k = "finally_clause"), col(c, n), col(t, n).
+    (k = "else_clause" ; k = "elif_clause" ; k = "except_clause" ; k = "finally_clause"), node_start_column(c, n), node_start_column(t, n).
 RUF028(c, "Move this off comment below the first statement of the else or finally block, or above the try statement; at the start of a block after except the formatter ignores it.") :-
     fmt_comment(c, "off"), own_line(c), kind(y, "try_statement"), child(y, x, _), kind(x, "except_clause"),
     child(y, e, _), (kind(e, "else_clause") ; kind(e, "finally_clause")), field(e, "body", b), child(b, s, 0),
@@ -41,8 +41,8 @@ fmt_word("fmt", "off", "off"). fmt_word("fmt", "on", "on"). fmt_word("fmt", "ski
 fmt_word("yapf", "disable", "off"). fmt_word("yapf", "enable", "on").
 // own_line(c): nothing comes before c on its line.
 .decl own_line(c: node)
-own_line(c) :- kind(c, "comment"), !token_before(c, _).
-own_line(c) :- kind(c, "comment"), token_before(c, t), end_line(t, l), line(c, m), l < m.
+own_line(c) :- kind(c, "comment"), !node_to_token_before(c, _).
+own_line(c) :- kind(c, "comment"), node_to_token_before(c, t), token_end_line_number(t, l), node_line_number(c, m), l < m.
 // in_expr(c): c sits in an expression, brackets or a statement's header, not between statements.
 .decl in_expr(c: node)
 in_expr(c) :- kind(c, "comment"), child(p, c, _), !stmt_level(p).

@@ -60,7 +60,7 @@ evo_grandfathered("l5200_vector_index/index_manager.py::register_index").
 
 // ---- 1. documents ------------------------------------------------------------------------------------------------
 .decl evo_doc(d: number)
-evo_doc(d) :- source(d, sp), text(sp, t), evo_trigger(g), contains(g, t).
+evo_doc(d) :- document_source(d, sp), line_text(sp, t), evo_trigger(g), contains(g, t).
 .decl evo_worker(d: number)
 evo_worker(d) :- evo_doc(d), doc(d, "l5200_vector_index/embedding_worker.py", _).
 

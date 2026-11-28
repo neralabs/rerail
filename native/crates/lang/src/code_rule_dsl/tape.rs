@@ -146,6 +146,9 @@ pub struct Grammar {
     /// The field names and their codes, sorted by name, read once: Tree-sitter answers a field's code by comparing
     /// the name with each field's in turn, and the summaries ask it at every `field` (Q51).
     fields: Vec<(&'static str, u16)>,
+    /// The code sets its documents' auxiliary indexes are built with (`formats::code_sets`), of its tape tag's format
+    /// 16 table, with that tag: made once a dialect, not once a document (a quarter of the index's building, 0656).
+    aux_codes: Option<(u8, rerail_tape_format::aux_index::CodeSets)>,
 }
 
 impl Grammar {
@@ -184,7 +187,13 @@ impl Grammar {
         fields.sort_unstable();
         // A name of two codes keeps its first, as the grammar's own lookup answers.
         fields.dedup_by_key(|(name, _)| *name);
-        Ok(Arc::new(Self { lang, kinds, named, fields }))
+        let aux_codes = crate::code_rule_dsl::language::tape_tag(lang).and_then(|tag| Some((tag, formats::code_sets(rerail_tape_format::f16::lang(tag)?.table(), lang))));
+        Ok(Arc::new(Self { lang, kinds, named, fields, aux_codes }))
+    }
+
+    /// The code sets an auxiliary index of a tape of tag `tag` is built with, where `tag` is this dialect's.
+    pub fn aux_codes(&self, tag: u8) -> Option<&rerail_tape_format::aux_index::CodeSets> {
+        self.aux_codes.as_ref().filter(|(t, _)| *t == tag).map(|(_, c)| c)
     }
 
     /// The grammar of a dialect, built once per process and shared by every document of it: built per document, a
@@ -232,6 +241,62 @@ pub enum TemplateError {
     Encode(String),
 }
 
+/// A text a parser reads, with its SHA-256 where its reader took it already (the observer's, as it read the file):
+/// the tape's writer then takes none of its own (`Sixteen::sha256`). It reads as the text (`Deref`).
+#[derive(Clone, Copy, Debug)]
+pub struct Source<'a> {
+    pub text: &'a str,
+    pub sha256: Option<[u8; 32]>,
+}
+
+impl<'a> Source<'a> {
+    /// `text`, its digest not known.
+    pub fn text(text: &'a str) -> Self {
+        Source { text, sha256: None }
+    }
+    /// The digest, with the bytes it was taken of (the text where it lies).
+    pub fn digest(&self) -> Option<rerail_tape_format::f16::SourceDigest> {
+        self.sha256.map(|sha256| rerail_tape_format::f16::SourceDigest::taken(sha256, self.text.as_bytes()))
+    }
+}
+
+impl std::ops::Deref for Source<'_> {
+    type Target = str;
+    fn deref(&self) -> &str {
+        self.text
+    }
+}
+
+impl<'a> From<&Source<'a>> for Source<'a> {
+    fn from(source: &Source<'a>) -> Self {
+        *source
+    }
+}
+
+impl<'a> From<&'a str> for Source<'a> {
+    fn from(text: &'a str) -> Self {
+        Source::text(text)
+    }
+}
+
+impl<'a> From<&'a String> for Source<'a> {
+    fn from(text: &'a String) -> Self {
+        Source::text(text)
+    }
+}
+
+impl<'a> From<&'a Text> for Source<'a> {
+    fn from(text: &'a Text) -> Self {
+        Source::text(text)
+    }
+}
+
+impl<'a> From<&'a Arc<Text>> for Source<'a> {
+    fn from(text: &'a Arc<Text>) -> Self {
+        Source::text(text)
+    }
+}
+
 /// A parser's own kinds: its kind names by id (from 1), its first anonymous id, and its field names by id.
 pub type OwnTable = (&'static [&'static str], u16, &'static [&'static str]);
 
@@ -242,7 +307,7 @@ pub type OwnTable = (&'static [&'static str], u16, &'static [&'static str]);
 pub trait TreeParser: Send + Sync {
     /// The file's documents: `None` where the parser leaves the file to tree-sitter, `Err(Parser)` where
     /// it stopped at a limit before it read the file.
-    fn parse(&self, grammar: &Grammar, source: &str, budget: &dyn Fn() -> bool) -> Option<Result<FileImage, TemplateError>>;
+    fn parse(&self, grammar: &Grammar, source: &Source<'_>, budget: &dyn Fn() -> bool) -> Option<Result<FileImage, TemplateError>>;
 
     /// Whether `parse` builds the file's programs itself (Blade's compiled view). Otherwise the router builds them over
     /// its tape, for a dialect that embeds others (`TapeImage::parse`).
@@ -258,7 +323,7 @@ pub trait TreeParser: Send + Sync {
     /// `source` parsed from the node kind `start` (one of `starts`), the tape's root one such node with none above
     /// it: `None` where the parser refuses the text (there is no tree-sitter fallback for a fragment), `Some(Err)`
     /// where the tape cannot be made.
-    fn parse_from(&self, _grammar: &Grammar, _source: &str, _start: &str, _budget: &dyn Fn() -> bool) -> Option<Result<TapeImage, String>> {
+    fn parse_from(&self, _grammar: &Grammar, _source: &Source<'_>, _start: &str, _budget: &dyn Fn() -> bool) -> Option<Result<TapeImage, String>> {
         None
     }
 
@@ -333,7 +398,7 @@ pub fn install_parsers(registered: Vec<ParserImpl>) {
 /// `parser`'s documents of `source` (`TreeParser::parse`), with the programs a dialect that embeds others holds, built
 /// over the parser's tape (`embed::host` reads it in place), unless the parser builds them itself: a file that embeds
 /// code is read by its lean parser too. Every caller of a dialect's own parser reads a file through it.
-pub fn parse_own(parser: &dyn TreeParser, grammar: &Grammar, source: &str, budget: &dyn Fn() -> bool) -> Option<Result<FileImage, TemplateError>> {
+pub fn parse_own(parser: &dyn TreeParser, grammar: &Grammar, source: &Source<'_>, budget: &dyn Fn() -> bool) -> Option<Result<FileImage, TemplateError>> {
     let parsed = parser.parse(grammar, source, budget)?;
     if parser.embeds_itself() || grammar.lang.embeds().is_empty() {
         return Some(parsed);
@@ -385,6 +450,11 @@ pub struct TapeImage {
     /// The source's SHA-256 where the image was encoded from it; not stored (v12), so `None` for
     /// an image read from bytes, whose store pairs it with its source.
     pub source_digest: Option<[u8; 32]>,
+    /// The source this process's writer wrote it from, where it lay (its address and length): restored over those
+    /// very bytes, the tape is not walked again (`restore_tree`). `None` for an image read from bytes.
+    written_from: Option<(usize, usize)>,
+    /// Where its auxiliary index's sections lie in its home, read once when it is made (`doc_index`).
+    index_at: rerail_tape_format::doc_index::IndexAt,
 }
 
 /// A parsed image as the store's writer takes its bytes (`TapeBytes`) where no device reads tapes: the image's own
@@ -919,14 +989,18 @@ pub fn checked(budget: &impl Fn() -> bool) -> Result<(), String> {
     }
 }
 
-/// The store's identity of a tape (`HashKey::tape_identity`) whose source hashes to `source` and
-/// whose stored bytes are `tape`.
-pub fn tape_identity(source: &[u8; 32], tape: &[u8]) -> [u8; 32] {
-    let key = crate::content_store::HashKey::tape_identity(crate::content_store::HashKey::from_sha256_digest(*source), tape);
+/// The store's identity of a tape (`HashKey::tape_identity`) whose source hashes to `source`, of the tape tag `tag`
+/// (its dialect's, or a fragment's), this build's grammar, and stored in the format of `format_version`
+/// (`Format::store_version`). Its bytes are not read: a parse is a function of these.
+pub fn tape_identity(source: &[u8; 32], tag: u8, format_version: u32) -> [u8; 32] {
+    let source = crate::content_store::HashKey::from_sha256_digest(*source);
+    let key = crate::content_store::HashKey::tape_identity(source, i64::from(tag), crate::code_rule_dsl::build_ids::grammar_version(), i64::from(format_version));
     key.sha256_bytes().expect("a SHA-256 identity")
 }
 
-fn source_digest(source: &str, budget: &impl Fn() -> bool) -> Result<[u8; 32], String> {
+/// `source`'s SHA-256, the documents' and the memo's key and its tape's auxiliary index's (`formats::aux_of`): read in
+/// chunks, the budget checked between them.
+pub fn source_digest(source: &str, budget: &impl Fn() -> bool) -> Result<[u8; 32], String> {
     let mut digest = Sha256::new();
     for chunk in source.as_bytes().chunks(4096) {
         checked(budget)?;
@@ -1034,7 +1108,7 @@ pub trait TreeOut {
 /// Tree-sitter's tree under `root` written to `out` in preorder, `language` its grammar. An embedded
 /// program's placeholders its segments mark (`omitted`) are left out, with their subtrees. Where
 /// `filter` (the grammar's token automata) is given, a token it implies is skipped as the walk meets
-/// it: it is never a record (`tokens::TokenGrammar::stored_children`, RER-131).
+/// it: it is never a record (`tokens::TokenGrammar::stored_children`, decision 0161).
 fn encode_tree(
     out: &mut (impl TreeOut + ?Sized),
     root: TsNode<'_>,
@@ -1179,28 +1253,43 @@ impl TapeImage {
         Ok(bytes)
     }
 
-    /// The tape as the store keeps it (`to_bytes`), written straight into its home, a slab's room (decision 0353
-    /// step 4a): the store's writer and every reader take it there.
-    // copy (0353 step 4a): the parsers write their columns into a vector of their own, which goes once its stored
-    // bytes are in their room. It goes when a parser writes into the room (decision 0353).
+    /// The tape as the store keeps it (`to_bytes`) in its home, which the store's writer and every reader take (decision
+    /// 0353 step 4a): a format 16 or 16z tape's own, as it lies, where its writer wrote it in its room (`placed::rooms`)
+    /// or no device reads tapes; else written into a slab's room where the device's pool gives one.
     pub fn place_stored(&self) -> Result<rerail_tape_format::home::Home, String> {
-        const INTO_ROOM: rerail_prof::copies::Site = rerail_prof::copies::Site::new(17, "4a", "a parser's tape copied into its room (place_stored)");
+        let own = match &self.held {
+            Held::F16(t) => t.home(),
+            Held::F16Z(t) => t.home(),
+        };
+        if own.placed() || !placed::reads_tapes() {
+            return Ok(own.clone());
+        }
+        // copy (0353 step 4a): a tape in no room where a device reads tapes (a writer refused its room, a tape read
+        // from bytes in hand) written into one. It goes when every writer and load writes into its room.
+        const INTO_ROOM: rerail_prof::copies::Site = rerail_prof::copies::Site::new(17, "4a", "a tape in no room written into one (place_stored)");
         let len = self.stored_len();
-        INTO_ROOM.time(|| (self.place_stored_in(len), len))
+        // No room given (the device's budget spent): a format 16 tape stays in its own bytes, shared.
+        let copying = INTO_ROOM.start();
+        match placed::place_in_room(len, |out| self.emit_into(out)).map_err(|e| e.to_string())? {
+            Some(home) => {
+                copying.done(len);
+                Ok(home)
+            }
+            None => Ok(own.clone()),
+        }
     }
 
-    fn place_stored_in(&self, len: usize) -> Result<rerail_tape_format::home::Home, String> {
-        placed::place(len, |out| {
-            let mut at = 0;
-            self.emit(&mut |b| {
-                out[at..at + b.len()].copy_from_slice(b);
-                at += b.len();
-            })
-            .map_err(std::io::Error::other)?;
-            debug_assert_eq!(at, len, "the stored length");
-            Ok(())
+    /// The bytes the store keeps (`emit`) written into `out`, their length.
+    fn emit_into(&self, out: &mut [u8]) -> std::io::Result<()> {
+        let mut at = 0;
+        self.emit(&mut |b| {
+            // copy (0353 step 4a): `place_stored`'s, a tape in no room written into one.
+            out[at..at + b.len()].copy_from_slice(b);
+            at += b.len();
         })
-        .map_err(|e| e.to_string())
+        .map_err(std::io::Error::other)?;
+        debug_assert_eq!(at, out.len(), "the stored length");
+        Ok(())
     }
 
     /// The length of the bytes the store keeps (`to_bytes`).
@@ -1253,7 +1342,18 @@ impl TapeImage {
     /// The document's index (decision 0656 step 4), read in its home: every image holds one, its writer's
     /// (`written_16`), and one read in without it is refused (`sixteen`).
     pub fn doc_index(&self) -> rerail_tape_format::doc_index::DocIndex<'_> {
-        rerail_tape_format::doc_index::DocIndex::read(self.aux_bytes().expect("an image holds its index")).expect("an image's index reads")
+        rerail_tape_format::doc_index::DocIndex::of(self.aux_bytes().expect("an image holds its index"), self.index_at)
+    }
+
+    /// Where `held`'s auxiliary index's sections lie: a home without one, or without a section the reads need, was
+    /// written by no writer of this layout.
+    fn index_at(held: &Held) -> Result<rerail_tape_format::doc_index::IndexAt, String> {
+        let b = match held {
+            Held::F16(t) => t.aux_bytes(),
+            Held::F16Z(t) => t.aux_bytes(),
+        };
+        let b = b.ok_or("a stored tape without its auxiliary index")?;
+        Ok(rerail_tape_format::doc_index::DocIndex::read(b).map_err(|e| format!("a stored tape's auxiliary index: {e}"))?.at())
     }
 
     /// A stored tape placed in a room (decision 0353 step 4a), read where it lies: format 16 (or 16z) as stored.
@@ -1296,15 +1396,11 @@ impl TapeImage {
             Held::F16(t) => t.source_len(),
             Held::F16Z(t) => t.source_len(),
         };
-        let image = Self { held, language: grammar.lang, source_len: usize::try_from(source_len).map_err(|_| "source length overflow")?, source_digest: None };
+        // Its index, which every reader reads (`doc_index`).
+        let index_at = Self::index_at(&held)?;
+        let image = Self { held, language: grammar.lang, source_len: usize::try_from(source_len).map_err(|_| "source length overflow")?, source_digest: None, written_from: None, index_at };
         if image.node_count() == 0 {
             return Err("an empty tape".into());
-        }
-        // Its index, which every reader reads (`doc_index`): a home without one, or without a section its reads need,
-        // was written by no writer of this layout.
-        match image.aux_bytes() {
-            Some(b) => rerail_tape_format::doc_index::DocIndex::read(b).map(drop).map_err(|e| format!("a stored tape's auxiliary index: {e}"))?,
-            None => return Err("a stored tape without its auxiliary index".into()),
         }
         Ok(image)
     }
@@ -1360,7 +1456,7 @@ impl TapeImage {
             let home = self.place_stored()?;
             if home.placed() {
                 let mut placed = Self::from_home(home, grammar)?;
-                placed.source_digest = self.source_digest;
+                (placed.source_digest, placed.written_from) = (self.source_digest, self.written_from);
                 return Ok(placed);
             }
         }
@@ -1380,11 +1476,13 @@ impl TapeImage {
     /// file's view, `php_view`, against `source`), or a Blade template with Rerail's port of Forte
     /// (`encode_template`). `None` where the parser stopped before it read the file: tree-sitter
     /// gave up (`budget` interrupted it), or Forte reached a limit.
-    pub fn parse(
+    pub fn parse<'s>(
         grammar: &Grammar,
-        source: &str,
+        source: impl Into<Source<'s>>,
         budget: &impl Fn() -> bool,
     ) -> Option<Result<FileImage, String>> {
+        let source: Source<'s> = source.into();
+        let source = &source;
         // A dialect its language parses itself (Blade's Forte), or reads with a parser standing in for
         // tree-sitter's (JSON's Bitlex parser, which may leave the file to tree-sitter-json below).
         if let Some(parser) = tree_parser(grammar.lang)
@@ -1435,7 +1533,9 @@ impl TapeImage {
     /// `source` parsed from the node kind `start` by `grammar`'s hand-written parser (decision 0466): `None` where its
     /// dialect has no parser that starts there. A text the parser refuses is one `ERROR` node over it (`refused`):
     /// no tree is made up for it, and a rule's `.on guest_error` sees it where it stands.
-    pub fn parse_from(grammar: &Grammar, source: &str, start: &str, budget: &impl Fn() -> bool) -> Option<Result<FileImage, String>> {
+    pub fn parse_from<'s>(grammar: &Grammar, source: impl Into<Source<'s>>, start: &str, budget: &impl Fn() -> bool) -> Option<Result<FileImage, String>> {
+        let source: Source<'s> = source.into();
+        let source = &source;
         let parser = tree_parser(grammar.lang).filter(|p| p.starts().contains(&start))?;
         let image = parser.parse_from(grammar, source, start, &budget).unwrap_or_else(|| Self::refused(grammar, source, budget));
         Some(image.map(|image| FileImage::single(image, source)))
@@ -1519,7 +1619,8 @@ impl TapeImage {
         }
         // In the run's format, written as the parser goes (`formats::rr_tape`), with its source's digest (not stored
         // since format 12): the documents and the memo are keyed by it.
-        Self::written_16(formats::rr_tape(source)?, grammar.lang, source, None, budget)
+        let aux = formats::AuxFor::new(grammar.lang, source, None, budget);
+        Self::written_16(formats::rr_tape(source, &aux)?, grammar.lang, source, aux.digest(), budget)
     }
 
     /// The tape `walk` writes in preorder, in the run's format (decision 0434 §2): by format 16's ops. `nodes` is about
@@ -1545,7 +1646,9 @@ impl TapeImage {
     ) -> Result<Self, String> {
         let mut ops = formats::TreeOps::of_run_as(grammar.lang, source.as_bytes(), nodes, packed)?;
         walk(&mut ops)?;
-        Self::written_16(ops.finish()?, grammar.lang, source, None, budget)
+        // The index from the writer's record, keyed by the digest the writer took (`AuxFor`): no second pass.
+        let aux = formats::AuxFor::new(grammar.lang, source, None, budget);
+        Self::written_16(ops.finish(Some(&|t, nodes, taken| aux.make(t, nodes, taken)))?, grammar.lang, source, aux.digest(), budget)
     }
 
     /// `source`'s lines as `terminators` end them (decision 0612): the tape's line index, read where it lies, where
@@ -1559,6 +1662,19 @@ impl TapeImage {
             _ if placed => LineTable::placed(source, terminators),
             _ => LineTable::new(source, terminators),
         }
+    }
+
+    /// The tape tag its header names: its dialect's, or the fragment's it was parsed as.
+    pub fn tag(&self) -> u8 {
+        match &self.held {
+            Held::F16(t) => t.tag(),
+            Held::F16Z(t) => t.tag(),
+        }
+    }
+
+    /// The store's identity of this tape over a source whose SHA-256 is `source` (`tape_identity`).
+    pub fn identity(&self, source: &[u8; 32]) -> [u8; 32] {
+        tape_identity(source, self.tag(), self.format().store_version())
     }
 
     /// The format it is held in.
@@ -1982,7 +2098,7 @@ impl TapeDoc {
         // The file's documents are read outside every batch until one takes them (`TapeDoc::in_batch`): a batch of
         // their own, one cache for their 16z tapes' blocks (decision 0628 §6).
         let cache = image.z_cache();
-        let mut host = Self::restore_tree(source, grammar, &image.primary, lines, cache.clone(), budget)?;
+        let mut host = Self::restore_tree(source, grammar, &image.primary, lines, true, cache.clone(), budget)?;
         if image.derived.is_empty() {
             return Ok(host);
         }
@@ -2031,8 +2147,24 @@ impl TapeDoc {
         // refused here, so the tape is encoded again, never read wrong.
         guest.source_map.check(&guest.text, &host.source)?;
         let lines = Arc::new(guest.tape.lines(&guest.text, crate::code_rule_dsl::lines::terminators(grammar.lang), false));
-        let mut doc =
-            Self::restore_tree(Arc::clone(&guest.text), grammar, &guest.tape, lines, cache, budget)?;
+        // A guest's text that is one stretch of its host's source copied whole (a string with no escape) reads where
+        // the host's lies, in its room (decision 0353 step 4a): it is not housed apart.
+        let text = guest
+            .source_map
+            .whole_copy(guest.text.len())
+            .and_then(|range| placed::within(&host.source, range))
+            .filter(|text| text.as_str() == guest.text.as_str())
+            .map_or_else(
+                || {
+                    crate::code_rule_dsl::prof::count(if guest.source_map.len() == 1 { "guest.text_apart.one_segment" } else { "guest.text_apart.segments" }, 1);
+                    Arc::clone(&guest.text)
+                },
+                |text| {
+                    crate::code_rule_dsl::prof::count("guest.text_in_host", 1);
+                    Arc::new(text)
+                },
+            );
+        let mut doc = Self::restore_tree(text, grammar, &guest.tape, lines, true, cache, budget)?;
         checked(budget)?;
         doc.host = Some(Arc::new(HostLink {
             via: guest.via,
@@ -2049,19 +2181,26 @@ impl TapeDoc {
         grammar: Arc<Grammar>,
         image: &TapeImage,
         lines: Arc<LineTable>,
+        house: bool,
         cache: Option<Arc<rerail_tape_format::f16::ZCache>>,
         budget: &impl Fn() -> bool,
     ) -> Result<Self, String> {
         read!("docs restored");
         read!("nodes restored", image.node_count());
-        // The image is checked node by node and held as it is: the document reads its tape in place (decision
-        // 0293), so nothing is copied out of it.
-        let (digest, _) = validated::visit(&source, &grammar, image, budget, |_, _| {})?;
+        // The image is held as it is: the document reads its tape in place (decision 0293), so nothing is copied out of
+        // it. A tape this process's writer wrote from these very bytes (`written_16`: their address and length, while
+        // the run holds them) is not walked again, and its source's digest is the writer's. Any other, one read from
+        // the store or the wire or restored over another text, is checked node by node.
+        let bytes = source.as_bytes();
+        let digest = match (image.source_digest, image.written_from) {
+            (Some(d), Some(at)) if image.language == grammar.lang && at == (bytes.as_ptr() as usize, bytes.len()) => d,
+            _ => validated::visit(&source, &grammar, image, budget, |_, _| {})?.0,
+        };
         checked(budget)?;
         // Held where a device reads it, the source and the tape alike: the residency takes both as they lie (decision
-        // 0353 step 7, row 13). A placed image is shared, not copied.
-        let source = placed::housed(source);
-        let image = Arc::new(image.housed(&grammar)?);
+        // 0353 step 7, row 13). A placed image is shared, not copied. A document no device reads (`house` false: a
+        // rule's pattern) is held as it is.
+        let (source, image) = if house { (placed::housed(source), Arc::new(image.housed(&grammar)?)) } else { (source, Arc::new(image.clone())) };
         let held = Arc::new(formats::DocTape::in_batch(Arc::clone(&image), Arc::clone(&source), cache));
         Ok(Self {
             held,
@@ -2265,30 +2404,10 @@ impl TapeDoc {
         t.table().entry(t.code(node as usize))
     }
 
-    /// This document's tape identity, the store's key for it (`HashKey::tape_identity`: its image
-    /// as stored and its source's hash), computed once.
+    /// This document's tape identity, the store's key for it (`HashKey::tape_identity`: its source's digest, its tag,
+    /// the grammar and its format; not its bytes), computed once.
     pub fn tape_digest(&self) -> Result<[u8; 32], String> {
-        if let Some(digest) = self.digest.get() {
-            return Ok(*digest);
-        }
-        let digest = tape_identity(&self.source_digest, &self.image.to_bytes()?);
-        Ok(*self.digest.get_or_init(|| digest))
-    }
-
-    /// `tape_digest`, and the image as stored when computing it serialized the image (the digest
-    /// not known yet): admission copies those bytes, not a second serialization.
-    pub fn tape_digest_and_image(&self) -> Result<([u8; 32], Option<Vec<u8>>), String> {
-        if let Some(digest) = self.digest.get() {
-            return Ok((*digest, None));
-        }
-        // A tape in its room is hashed there: the residency takes it as it lies (`in_place`), nothing serialized.
-        if let Some((_, stored)) = self.image.stored_in_room() {
-            let digest = tape_identity(&self.source_digest, stored);
-            return Ok((*self.digest.get_or_init(|| digest), None));
-        }
-        let image = self.image.to_bytes()?;
-        let digest = tape_identity(&self.source_digest, &image);
-        Ok((*self.digest.get_or_init(|| digest), Some(image)))
+        Ok(*self.digest.get_or_init(|| self.image.identity(&self.source_digest)))
     }
 
     /// The SHA-256 of this document's source.
@@ -2437,7 +2556,7 @@ impl TapeDoc {
     }
 
     /// Whether the tokens the tape leaves out right after `parent`'s child `child` (its index among
-    /// the children) begin with `word` (`Doc::implied_after`, RER-131).
+    /// the children) begin with `word` (`Doc::implied_after`, decision 0161).
     pub fn transducer_implied_after(&self, parent: u32, child: usize, word: &[&str]) -> bool {
         self.implied_after(&self.root_node().at(parent, UNKNOWN), child, word) == Some(true)
     }
@@ -2908,7 +3027,7 @@ impl Doc for TapeDoc {
         Cow::Borrowed(&self.source[node.range()])
     }
     /// The implied word the tape leaves out in the gap after `parent`'s child `child`
-    /// (`tokens::stored_gaps`: the word before the next named child, or after the last), RER-131.
+    /// (`tokens::stored_gaps`: the word before the next named child, or after the last), decision 0161.
     fn implied_after<'a>(&'a self, parent: &TapeNode<'a>, child: usize, word: &[&str]) -> Option<bool> {
         let grammar = tokens::TokenGrammar::of_dialect(self.grammar.lang)?;
         // `stored_gaps` reads an ast-grep node: the parent's, rebuilt over a root of this document.
@@ -2947,7 +3066,7 @@ pub fn stored_children_for_test<'t>(lang: GrammarDialect, node: TsNode<'t>) -> V
 
 /// A pattern's tree as a tape: tree-sitter's parse of `source`, written as a document is
 /// (`TapeImage::encode_tree_image`), so the tokens the grammar implies are left out of patterns as
-/// they are of documents (RER-131). With it, per record, what tree-sitter's node says that the tape
+/// they are of documents (decision 0161). With it, per record, what tree-sitter's node says that the tape
 /// does not ([`PatternShape`]).
 pub fn pattern_doc(lang: GrammarDialect, source: &str) -> Result<(TapeDoc, PatternShape), String> {
     use ast_grep_core::language::Language as _;
@@ -2996,8 +3115,9 @@ pub fn pattern_doc(lang: GrammarDialect, source: &str) -> Result<(TapeDoc, Patte
     }
     let source = Arc::new(Text::from(source));
     let lines = Arc::new(LineTable::new(&source, crate::code_rule_dsl::lines::terminators(lang)));
+    // A rule's pattern, read by the matchers' compiler on the host alone: not housed where a device reads.
     let cache = image.own_cache().map(Arc::new);
-    let doc = TapeDoc::restore_tree(source, grammar, &image, lines, cache, &|| false)?;
+    let doc = TapeDoc::restore_tree(source, grammar, &image, lines, false, cache, &|| false)?;
     if ends.len() != doc.transducer_len() {
         return Err("a pattern's records disagree with its tree".into());
     }

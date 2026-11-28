@@ -8,7 +8,7 @@
 // COM818(n): findings from clauses `trailing-comma-on-bare-tuple`, `trailing-comma-at-end-of-file`, which say the same.
 // Each rule is one way a JSON `rule` can match.
 // Columns after `at` are the metavariables the JSON's message, anchor or `each` names: one finding per distinct row.
-.violation COM818(at: loc, comma: node) "Remove the trailing comma if a single value was meant; if a tuple is intended, parenthesize it as `(value,)`."
+.violation COM818(at: match, comma: node) "Remove the trailing comma if a single value was meant; if a tuple is intended, parenthesize it as `(value,)`."
     suppress noqa "COM818"
 COM818(COMMA, n) :- match(".*(?P<COMMA>,)", n), !kind(n, "comment"), child(p1, n, _),
     (kind(p1, "module") ; kind(p1, "block")),
@@ -22,8 +22,8 @@ COM818(COMMA, n) :- kind(n, "module"),
 // line_ends_after(n): the JSON util `line-ends-after`, used where the JSON says `matches: "line-ends-after"`
 .decl com818_line_ends_after(n: node)
 com818_line_ends_after(n) :-
-    ( com818_code_after_line(n, l4), end_line(n, l3), k1 = l4 - l3, k1 >= 1
-    ; count : { com818_code_after_line(n, l4) } = 0, end_line(n, l3), docof(n, d5), line_count(d5, k6), k1 = k6 - l3, k1 >= 1
+    ( com818_code_after_line(n, l4), node_end_line_number(n, l3), k1 = l4 - l3, k1 >= 1
+    ; count : { com818_code_after_line(n, l4) } = 0, node_end_line_number(n, l3), docof(n, d5), line_count(d5, k6), k1 = k6 - l3, k1 >= 1
     ).
 
 
@@ -44,8 +44,8 @@ COM818_trailing_comma_before_assignment_line(n) :- glob("\\,", n),
 // line_ends_after_trailing_comma_before_assignment_line(n): the JSON util `line-ends-after`, used where the JSON says `matches: "line-ends-after"`
 .decl com818_line_ends_after_trailing_comma_before_assignment_line(n: node)
 com818_line_ends_after_trailing_comma_before_assignment_line(n) :-
-    ( com818_code_after_line(n, l4), end_line(n, l3), k1 = l4 - l3, k1 >= 1
-    ; count : { com818_code_after_line(n, l4) } = 0, end_line(n, l3), docof(n, d5), line_count(d5, k6), k1 = k6 - l3, k1 >= 1
+    ( com818_code_after_line(n, l4), node_end_line_number(n, l3), k1 = l4 - l3, k1 >= 1
+    ; count : { com818_code_after_line(n, l4) } = 0, node_end_line_number(n, l3), docof(n, d5), line_count(d5, k6), k1 = k6 - l3, k1 >= 1
     ).
 
 
@@ -63,11 +63,11 @@ com818_code_comment_start(p, o) :- child(p, c, _), comment(c, _), node(_, c, _, 
 .decl com818_code_after_line(x: node, l: number)
 com818_code_after_line(x, l) :- structural_after(x, g), match("(?s)\\s*\\S.*", g),
     ws = @replace_all(g, "(?s)\\S.*", ""),
-    k = strlen(ws) - strlen(@replace_all(ws, "\n", "")), end_line(x, lx), l = lx + k.
+    k = strlen(ws) - strlen(@replace_all(ws, "\n", "")), node_end_line_number(x, lx), l = lx + k.
 com818_code_after_line(x, l) :- structural_after(x, g), match("\\s*", g), child(p, x, _),
     node(_, x, _, _, e), o = e + strlen(g), token(p, _, _, o, _),
     !com818_code_comment_start(p, o), k = strlen(g) - strlen(@replace_all(g, "\n", "")),
-    end_line(x, lx), l = lx + k.
+    node_end_line_number(x, lx), l = lx + k.
 com818_code_after_line(x, l) :- structural_after(x, g), match("\\s*", g), child(p, x, _),
     node(_, x, _, _, e), node(_, p, _, _, pe), pe = e + strlen(g),
     com818_code_after_line(p, l).

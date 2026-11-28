@@ -10,7 +10,7 @@
 // YTT201(n, detail): findings from clauses `sys-version-info0-eq3`, `sys-version-info0-ne3`. Their messages differ only in
 // `detail`: each rule's head gives its clause's words. Each rule is one way a JSON `rule` can match.
 // Columns after `at` are the metavariables the JSON's message, anchor or `each` names: one finding per distinct row.
-.violation YTT201(at: loc, c: node, detail: symbol) "Replace `sys.version_info[0] {detail} on Python 4 and later."
+.violation YTT201(at: node, c: node, detail: symbol) "Replace `sys.version_info[0] {detail} on Python 4 and later."
     suppress noqa "YTT201"
 YTT201(C, n, "== 3` with `sys.version_info >= (3,)`; the equality is false") :- ytt201_target(n),
     node(_, n, _, _, _), C = n.
@@ -49,19 +49,19 @@ ytt201_target(n) :- kind(n, "subscript"), ytt201_left_operand(n), field(n, "valu
 
 // in_string(n): the JSON util `in-string`, used where the JSON says `matches: "in-string"`
 //   C: metavariable this relation binds for the calling rule
-.decl ytt201_in_string(n: node, c: loc)
+.decl ytt201_in_string(n: node, c: node)
 ytt201_in_string(n, C) :- (kind(n, "string") ; kind(n, "concatenated_string")),
     parsed(n, "annotation", r1), within(c2, r1), ytt201_alt_4(c2, C).
 
 // zero_literal(n): the JSON util `zero-literal`, used where the JSON says `matches: "zero-literal"`
 .decl ytt201_zero_literal(n: node)
-ytt201_zero_literal(n) :- kind(n, "integer"), value(n, v1), value_type(v1, "int"), v1 = 0.
+ytt201_zero_literal(n) :- kind(n, "integer"), value(n, v1), value_type_of(n, "int"), v1 = 0.
 ytt201_zero_literal(n) :- kind(n, "parenthesized_expression"), child(n, c2, _),
     ytt201_zero_literal(c2).
 
 // three_literal(n): the JSON util `three-literal`, used where the JSON says `matches: "three-literal"`
 .decl ytt201_three_literal(n: node)
-ytt201_three_literal(n) :- kind(n, "integer"), value(n, v1), value_type(v1, "int"), v1 = 3.
+ytt201_three_literal(n) :- kind(n, "integer"), value(n, v1), value_type_of(n, "int"), v1 = 3.
 ytt201_three_literal(n) :- kind(n, "parenthesized_expression"), child(n, c2, _),
     ytt201_three_literal(c2).
 
@@ -97,21 +97,21 @@ ytt201_target_sys_version_info0_ne3(n) :- kind(n, "subscript"),
 
 // in_string_sys_version_info0_ne3(n): the JSON util `in-string`, used where the JSON says `matches: "in-string"`
 //   C: metavariable this relation binds for the calling rule
-.decl ytt201_in_string_sys_version_info0_ne3(n: node, c: loc)
+.decl ytt201_in_string_sys_version_info0_ne3(n: node, c: node)
 ytt201_in_string_sys_version_info0_ne3(n, C) :- (kind(n, "string") ; kind(n, "concatenated_string")),
     parsed(n, "annotation", r1), within(c2, r1), ytt201_alt_8(c2, C).
 
 // zero_literal_sys_version_info0_ne3(n): the JSON util `zero-literal`, used where the JSON says `matches: "zero-literal"`
 .decl ytt201_zero_literal_sys_version_info0_ne3(n: node)
 ytt201_zero_literal_sys_version_info0_ne3(n) :- kind(n, "integer"), value(n, v1),
-    value_type(v1, "int"), v1 = 0.
+    value_type_of(n, "int"), v1 = 0.
 ytt201_zero_literal_sys_version_info0_ne3(n) :- kind(n, "parenthesized_expression"),
     child(n, c2, _), ytt201_zero_literal_sys_version_info0_ne3(c2).
 
 // three_literal_sys_version_info0_ne3(n): the JSON util `three-literal`, used where the JSON says `matches: "three-literal"`
 .decl ytt201_three_literal_sys_version_info0_ne3(n: node)
 ytt201_three_literal_sys_version_info0_ne3(n) :- kind(n, "integer"), value(n, v1),
-    value_type(v1, "int"), v1 = 3.
+    value_type_of(n, "int"), v1 = 3.
 ytt201_three_literal_sys_version_info0_ne3(n) :- kind(n, "parenthesized_expression"),
     child(n, c2, _), ytt201_three_literal_sys_version_info0_ne3(c2).
 
@@ -156,12 +156,12 @@ ytt201_counted(n) :- node(_, n, _, _, _), !kind(n, "comment"), !kind(n, "line_co
 
 // alt_4(n): the JSON `any`: n matches if any one of these rules does
 //   C: metavariable this relation binds for the calling rule
-.decl ytt201_alt_4(n: node, c: loc)
+.decl ytt201_alt_4(n: node, c: node)
 ytt201_alt_4(n, C) :- ytt201_target(n), C = n.
 ytt201_alt_4(n, C) :- ytt201_in_string(n, C).
 
 // alt_8(n): the JSON `any`: n matches if any one of these rules does
 //   C: metavariable this relation binds for the calling rule
-.decl ytt201_alt_8(n: node, c: loc)
+.decl ytt201_alt_8(n: node, c: node)
 ytt201_alt_8(n, C) :- ytt201_target_sys_version_info0_ne3(n), C = n.
 ytt201_alt_8(n, C) :- ytt201_in_string_sys_version_info0_ne3(n, C).

@@ -35,9 +35,16 @@ source_language_classification(k, g) :-
     i = max j : { sl_option(t, s, _, j, _) }, sl_option(t, s, g, i, 1).
 .cache source_language_classification by source_language_classification_key
 
+// Each path's suffixes the registry knows, shorter than its name. A name ends with s exactly when its last strlen(s)
+// characters are s (both count characters, and a suffix of UTF-8 text starts at a character), so each name is cut at
+// each suffix length the registry has and looked up, not tested against every suffix: a path added to a run of 28
+// tested 28 paths against 46 suffixes (decision 0094 §8).
+.decl sl_suffix_length(length: number)
+sl_suffix_length(strlen(s)) :- sl_suffix(s, _, _, _).
+.decl sl_cut(path: symbol, suffix: symbol, length: number)
+sl_cut(p, substr(name, strlen(name) - n, n), n) :- sl_basename(p, name), sl_suffix_length(n), n < strlen(name).
 .decl sl_match(path: symbol, suffix: symbol, length: number)
-sl_match(p, s, strlen(s)) :- sl_basename(p, name), sl_suffix(s, _, _, _), !sl_named(p, _, _),
-    suffix(s, name), strlen(s) < strlen(name).
+sl_match(p, s, n) :- sl_cut(p, s, n), sl_suffix(s, _, _, _), !sl_named(p, _, _).
 
 .decl sl_placement(path: symbol, kind: symbol, selector: symbol)
 sl_placement(p, "name", name) :- sl_named(p, name, _).

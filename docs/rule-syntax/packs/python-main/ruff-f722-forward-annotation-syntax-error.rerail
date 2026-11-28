@@ -10,7 +10,7 @@
 // F722(n): a finding at node n, from clause `forward-annotation-syntax-error`.
 // Each rule below is one way the JSON `rule` can match.
 // Columns after `at` are the metavariables the JSON's message, anchor or `each` names: one finding per distinct row.
-.violation F722(at: loc, c: node) "Syntax error in forward annotation"
+.violation F722(at: node, c: node) "Syntax error in forward annotation"
     suppress noqa "F722"
 F722(C, n) :- (kind(n, "string") ; kind(n, "concatenated_string")), f722_alt_2(n, C),
     count : { value(n, v2), match("(?:\\\\\\r?\\n)+\\S(?s:.*)", v2) } = 0,
@@ -18,7 +18,7 @@ F722(C, n) :- (kind(n, "string") ; kind(n, "concatenated_string")), f722_alt_2(n
 
 // error_within(n): the JSON util `error-within`, used where the JSON says `matches: "error-within"`
 //   C: metavariable this relation binds for the calling rule
-.decl f722_error_within(n: node, c: loc)
+.decl f722_error_within(n: node, c: node)
 f722_error_within(n, C) :- parsed(n, "annotation", r1), within(c2, r1), f722_alt_1(c2, C).
 
 // jaxtyping_shape_of(n): 3 identical copies of one rule set (`jaxtyping-shape`, `jaxtyping-shape`, `jaxtyping-shape`), folded into one.
@@ -35,21 +35,21 @@ f722_jaxtyping_shape_of(n) :- child(p11, n, _), kind(p11, "type"), f722_tok_foll
 // F722_forward_annotation_semantic_syntax_error(n): a finding at node n, from clause `forward-annotation-semantic-syntax-error`.
 // Each rule below is one way the JSON `rule` can match.
 // Columns after `at` are the metavariables the JSON's message, anchor or `each` names: one finding per distinct row.
-.violation F722_forward_annotation_semantic_syntax_error(at: loc, e: node) code "F722" "Syntax error in forward annotation"
+.violation F722_forward_annotation_semantic_syntax_error(at: node, e: node) code "F722" "Syntax error in forward annotation"
     suppress noqa "F722"
 F722_forward_annotation_semantic_syntax_error(E, n) :- (kind(n, "string") ; kind(n, "concatenated_string")),
     f722_semantic_error(n, E), !f722_alt(n, "4").
 
 // semantic_error_within(n): the JSON util `semantic-error-within`, used where the JSON says `matches: "semantic-error-within"`
 //   E: metavariable this relation binds for the calling rule
-.decl f722_semantic_error_within(n: node, e: loc)
+.decl f722_semantic_error_within(n: node, e: node)
 f722_semantic_error_within(n, E) :- f722_demand_semantic_error_within(n),
     parsed(n, "annotation", r1), within(c2, r1),
     (kind(c2, "string") ; kind(c2, "concatenated_string")), f722_semantic_error(c2, E).
 
 // semantic_error(n): the JSON util `semantic-error`, used where the JSON says `matches: "semantic-error"`
 //   E: metavariable this relation binds for the calling rule
-.decl f722_semantic_error(n: node, e: loc)
+.decl f722_semantic_error(n: node, e: node)
 f722_semantic_error(n, E) :- f722_demand_semantic_error(n), parsed(n, "annotation", r1),
     child(r1, c2, _), kind(c2, "ERROR"), E = c2.
 f722_semantic_error(n, E) :- f722_demand_semantic_error(n), f722_semantic_error_within(n, E).
@@ -57,7 +57,7 @@ f722_semantic_error(n, E) :- f722_demand_semantic_error(n), f722_semantic_error_
 // F722_forward_annotation_await_outside_function(n): a finding at node n, from clause `forward-annotation-await-outside-function`.
 // Each rule below is one way the JSON `rule` can match.
 // Columns after `at` are the metavariables the JSON's message, anchor or `each` names: one finding per distinct row.
-.violation F722_forward_annotation_await_outside_function(at: loc, a: node) code "F722" "Remove the `await` from this string annotation; it is not valid outside a function."
+.violation F722_forward_annotation_await_outside_function(at: node, a: node) code "F722" "Remove the `await` from this string annotation; it is not valid outside a function."
     suppress noqa "F722"
 F722_forward_annotation_await_outside_function(A, n) :- (kind(n, "string") ; kind(n, "concatenated_string")),
     f722_await_outside_function(n, A),
@@ -66,7 +66,7 @@ F722_forward_annotation_await_outside_function(A, n) :- (kind(n, "string") ; kin
 
 // await_outside_function_within(n): the JSON util `await-outside-function-within`, used where the JSON says `matches: "await-outside-function-within"`
 //   A: metavariable this relation binds for the calling rule
-.decl f722_await_outside_function_within(n: node, a: loc)
+.decl f722_await_outside_function_within(n: node, a: node)
 f722_await_outside_function_within(n, A) :- f722_demand_await_outside_function_within(n),
     parsed(n, "annotation", r1), within(c2, r1),
     (kind(c2, "string") ; kind(c2, "concatenated_string")),
@@ -74,7 +74,7 @@ f722_await_outside_function_within(n, A) :- f722_demand_await_outside_function_w
 
 // await_outside_function(n): the JSON util `await-outside-function`, used where the JSON says `matches: "await-outside-function"`
 //   A: metavariable this relation binds for the calling rule
-.decl f722_await_outside_function(n: node, a: loc)
+.decl f722_await_outside_function(n: node, a: node)
 f722_await_outside_function(n, A) :- f722_demand_await_outside_function(n),
     parsed(n, "annotation", r1), has(r1, c2, "await"), !f722_alt_5(c2), A = c2.
 f722_await_outside_function(n, A) :- f722_demand_await_outside_function(n),
@@ -149,7 +149,7 @@ f722_alt_case("6", "jaxtyping_shape_forward_annotation_await_outside_function").
 
 // alt_1(n): the JSON `any`: n matches if any one of these rules does
 //   C: metavariable this relation binds for the calling rule
-.decl f722_alt_1(n: node, c: loc)
+.decl f722_alt_1(n: node, c: node)
 f722_alt_1(n, C) :- (kind(n, "string") ; kind(n, "concatenated_string")),
     parsed(n, "annotation", r1), kind(r1, "ERROR"), C = n.
 f722_alt_1(n, C) :- (kind(n, "string") ; kind(n, "concatenated_string")),
@@ -157,7 +157,7 @@ f722_alt_1(n, C) :- (kind(n, "string") ; kind(n, "concatenated_string")),
 
 // alt_2(n): the JSON `any`: n matches if any one of these rules does
 //   C: metavariable this relation binds for the calling rule
-.decl f722_alt_2(n: node, c: loc)
+.decl f722_alt_2(n: node, c: node)
 f722_alt_2(n, C) :- parsed(n, "annotation", r1), kind(r1, "ERROR"), node(_, n, _, _, _), C = n.
 f722_alt_2(n, C) :- f722_error_within(n, C).
 

@@ -42,7 +42,7 @@ n802_direct_method(n) :- child(p3, n, _), kind(p3, "decorated_definition"),
 
 // bad_function_name(n): the JSON util `bad-function-name`, used where the JSON says `matches: "bad-function-name"`
 //   NAME: metavariable this relation binds for the calling rule
-.decl n802_bad_function_name(n: node, name: loc)
+.decl n802_bad_function_name(n: node, name: node)
 n802_bad_function_name(n, NAME) :- kind(n, "identifier"), node(_, n, _, _, _), NAME = n,
     match(".*[\\x{149}\\x{2E4}\\x{1D2C}-\\x{1D2E}\\x{1D30}-\\x{1D3A}\\x{1D3C}-\\x{1D42}\\x{1E9A}\\x{2C7D}\\x{A7F1}-\\x{A7F4}\\x{A7F8}\\x{107B6}-\\x{107B9}[\\p{Alphabetic}--\\p{Lowercase}--\\x{FF9E}--\\x{FF9F}]].*", n),
     !n802_alt_3(n), field(p5, "name", n), kind(p5, "function_definition"),
@@ -103,7 +103,7 @@ n802_handler_attr(n) :- n802_demand_handler_attr(n), kind(n, "attribute"),
 // N802(n): a finding at node n, from clause `invalid-method-name`.
 // Each rule below is one way the JSON `rule` can match.
 // Columns after `at` are the metavariables the JSON's message, anchor or `each` names: one finding per distinct row.
-.violation N802(at: node, name: loc) "Rename method `{name}` to lowercase snake_case and update its callers; if it overrides a superclass method, decorate it with `@typing.override` instead."
+.violation N802(at: node, name: node) "Rename method `{name}` to lowercase snake_case and update its callers; if it overrides a superclass method, decorate it with `@typing.override` instead."
     suppress noqa "N802"
 N802(n, NAME) :- n802_bad_function_name(n, NAME), field(p1, "name", n),
     kind(p1, "function_definition"), n802_direct_method(p1).
@@ -111,7 +111,7 @@ N802(n, NAME) :- n802_bad_function_name(n, NAME), field(p1, "name", n),
 // N802_invalid_function_name(n): a finding at node n, from clause `invalid-function-name`.
 // Each rule below is one way the JSON `rule` can match.
 // Columns after `at` are the metavariables the JSON's message, anchor or `each` names: one finding per distinct row.
-.violation N802_invalid_function_name(at: node, name: loc) code "N802" "Rename function `{name}` to lowercase snake_case, such as `my_function`, and update its callers; keep the name if code outside this project calls it."
+.violation N802_invalid_function_name(at: node, name: node) code "N802" "Rename function `{name}` to lowercase snake_case, such as `my_function`, and update its callers; keep the name if code outside this project calls it."
     suppress noqa "N802"
 N802_invalid_function_name(n, NAME) :- n802_bad_function_name(n, NAME),
     count : { field(p1, "name", n), kind(p1, "function_definition"), n802_direct_method(p1) } = 0.

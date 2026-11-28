@@ -241,9 +241,9 @@ impl CodeRuleSqlExecutor {
         Ok(match ty {
             "sym" | "symbol" => json!({"symbol":atom(value)?}),
             "document" => json!({"document":atom(value)?}),
-            "node_order" => json!({"nodeOrder":[atom(value >> 32)?,(value as u32).to_string()]}),
-            "node" | "loc" if value >= 0 => {
-                json!({"node":[atom(value >> 32)?,(value as u32).to_string()]})
+            "node_order" => json!({"nodeOrder":[atom(rerail_blocks::located::Located::key_wide(value))?,rerail_blocks::located::Located(value).low().to_string()]}),
+            "node" | "place" if value >= 0 => {
+                json!({"node":[atom(rerail_blocks::located::Located::key_wide(value))?,rerail_blocks::located::Located(value).low().to_string()]})
             }
             _ => json!(value.to_string()),
         })

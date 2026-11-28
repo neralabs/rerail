@@ -8,13 +8,14 @@ description = "UKL kernels the engine runs as Rust (decision 0567 step 3): rerai
 [dependencies]
 # std::simd's interface on stable (`lanes`): replaced by std::simd once it is.
 rerail-simd = { path = "../simd" }
-# The reads the join program takes, written directly in Rust (decisions 0534, 0536): the views' entries and
-# directory, the numbering's reads, the rolling cache's lookups and the tape's reads where it lies. The relations'
+# The reads the join program takes, written directly in Rust (decisions 0534, 0536, 0704): the views' one Rust reader
+# (`view_reads::Doc`) and their entries and directory, the numbering's reads, the rolling cache's lookups and the
+# tape's reads where it lies. The relations'
 # reads are `lanes`' (rerail-blocks and rerail-clif are above this crate: the device crate that runs it is below them).
 rerail-reads = { path = "../reads" }
 
 [dev-dependencies]
-# The JIT of the CLIF reads, which the Rust reads are held to (`lanes::tests`, `join_run::reads::tests`).
+# The JIT of the CLIF reads, which the Rust reads are held to (`lanes::tests`; the views' in tests_lang).
 rerail-clif = { path = "../clif", features = ["test-hooks", "ir"] }
 rerail-blocks = { path = "../blocks", features = ["test-hooks"] }
 # The store's hash (`rerail_atoms::hash_str`'s), which `join_run::store_hash` is held to.

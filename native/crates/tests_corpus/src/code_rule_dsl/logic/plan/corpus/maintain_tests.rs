@@ -141,28 +141,37 @@ impl Drop for Session {
 }
 
 /// Every kind of stratum 0328 §6 and 0364 name, cross-file: a join with a projection (`uses`), a negation
-/// (`unused`), an aggregate over a derived relation (`fanout`) and over an input (`width`), a computed head (`named`),
+/// (`unused`), an aggregate over a derived relation (`fanout`) and over an input (`width`, over each file's
+/// `def_child`), a computed head (`named`),
 /// and recursion over the import graph, which can cycle (`reach`). Its comparison keeps it a recursive stratum: a
 /// plain transitive closure is the native reach index (decision 0119), which is not maintained by levels. And a
 /// relation that is a copy of an input only while its other rule's cross-file relation is empty (`defq`, as `cparam`
-/// over its file-local export in the corpus): it is derived, kept and maintained, not held as a view.
+/// over its file-local export in the corpus): it is derived, kept and maintained, not held as a view. Its cross-file
+/// strata are keyed by document keys and qualified names, each file's rules placing them on its nodes (decision
+/// 0677).
 const KINDS: &str = r#"
 .decl def(n: node, q: symbol)
 def(n, @dot(m, x)) :- kind(n, "function_definition"), field(n, "name", c), text(c, x), docof(n, d), doc(d, _, m).
 .decl imp(n: node, q: symbol)
 imp(n, @dot(m, x)) :- kind(n, "import_from_statement"), field(n, "module_name", mn), text(mn, m), field(n, "name", xn), text(xn, x).
-.decl uses(n: node, f: node) cross_file
-uses(n, f) :- imp(n, q), def(f, q).
-.decl used(f: node)
-used(f) :- uses(_, f).
+.decl def_at(d: number, q: symbol)
+def_at(d, q) :- def(f, q), docof(f, d).
+.decl imp_at(d: number, q: symbol)
+imp_at(d, q) :- imp(n, q), docof(n, d).
+.decl def_child(q: symbol, i: number)
+def_child(q, i) :- def(f, q), child(f, _, i).
+.decl uses(a: number, q: symbol) cross_file
+uses(a, q) :- imp_at(a, q), def_at(_, q).
+.decl used(q: symbol)
+used(q) :- uses(_, q).
 .decl unused(f: node)
-unused(f) :- def(f, _), !used(f).
+unused(f) :- def(f, q), !used(q).
 .decl fanout(f: node, n: number)
-fanout(f, n) :- def(f, _), n = count : { uses(_, f) }.
-.decl width(f: node, n: number)
-width(f, n) :- uses(_, f), n = count : { child(f, _, _) }.
+fanout(f, n) :- def(f, q), n = count : { uses(_, q) }.
+.decl width(q: symbol, n: number)
+width(q, n) :- used(q), n = count : { def_child(q, _) }.
 .decl named(n: node, q: symbol)
-named(n, @dot(q, q)) :- uses(n, f), def(f, q).
+named(n, @dot(q, q)) :- imp(n, q), used(q).
 .decl edge(a: symbol, b: symbol)
 edge(a, b) :- kind(n, "import_statement"), field(n, "name", t), text(t, b), docof(n, d), doc(d, _, a).
 edge(a, b) :- kind(n, "import_from_statement"), field(n, "module_name", t), text(t, b), docof(n, d), doc(d, _, a).
@@ -171,11 +180,11 @@ reach(a, b) :- edge(a, b).
 reach(a, c) :- reach(a, b), edge(b, c), b != "__none".
 .decl lonely(q: symbol)
 lonely(a) :- reach(a, a), a = "__none".
-.decl defq(n: node, q: symbol)
-defq(n, q) :- def(n, q).
-defq(n, q) :- lonely(q), def(n, q).
+.decl defq(d: number, q: symbol)
+defq(d, q) :- def_at(d, q).
+defq(d, q) :- lonely(q), def_at(d, q).
 .decl used_def(q: symbol)
-used_def(q) :- defq(_, q), imp(_, q).
+used_def(q) :- defq(_, q), imp_at(_, q).
 .output unused
 .output fanout
 .output width
@@ -341,24 +350,26 @@ fn r4_an_edit_that_reaches_most_of_a_stratum_derives_it_again() {
 }
 
 /// R4: a line inserted moves every node after it (`node`'s `start` and `end`), and no node's kind: a stratum that
-/// reads nodes' kinds alone is maintained, its delta the rows the lines added (`plan::unchanged_as_read`). Its every
+/// reads nodes' kinds alone is maintained, its delta the rows the lines added (`plan::unchanged_as_read`), here
+/// the function they define. Its every
 /// moved node was a change to it: ep2's one-line edit derived 391 strata again past the threshold, 66 over `kind`.
 #[test]
 fn r4_a_line_inserted_is_no_change_to_a_stratum_that_reads_no_offset() {
     // One file holds most nodes, so its nodes moved are most of `node`'s rows.
     let big: String = (0..60).map(|i| format!("def f{i}():\n    pass\n")).collect();
     // `used_kind` reads `kind` in the cross part, past a join of two files' rows, as `width` reads `child`.
-    let program = format!("{KINDS}\n.decl used_kind(f: node, k: symbol)\nused_kind(f, k) :- uses(_, f), kind(f, k).\n.output used_kind\n");
+    let program = format!("{KINDS}\n.decl used_kind(f: node, k: symbol)\nused_kind(f, k) :- def(f, q), used(q), kind(f, k).\n.output used_kind\n");
     let outputs: Vec<&'static str> = KIND_OUTPUTS.iter().copied().chain(["used_kind"]).collect();
     let mut s = Session::new("r4-moved", &program, &outputs, &[("a.py", big.as_str()), ("b.py", "from a import f1\ndef g():\n    pass\n")]);
     // Taken after the session, which holds the maintain tests one at a time: taken before, it waited on a test
     // whose runs waited on it.
     let _floor = super::switches::set(&[("RERAIL_AGAIN_MIN", "50")]);
     s.run();
-    // A line inserted in the first function's body, as ep2's: every node after it moves, and no child's index but
-    // the function's own.
-    s.write("a.py", &big.replacen("def f0():\n", "def f0():\n    x = 1\n", 1));
-    let moved = s.edit("a line inserted above every node but one function's");
+    // Lines inserted above the used function, as ep2's one-line edit: every node after them moves, and no child's
+    // index. They define a function, so the edit reaches the cross part (`def_at`'s one new row): a file's rows that
+    // it reads hold no offset (decision 0677), and lines that defined nothing would reach no stratum at all.
+    s.write("a.py", &big.replacen("def f1():\n", "def e():\n    pass\ndef f1():\n", 1));
+    let moved = s.edit("lines inserted above every node but one function's");
     assert!(!moved.report.cross_again.contains_key(maintain::THRESHOLD), "R4: a line inserted is maintained: {:?}", moved.report.cross_again);
     assert!(moved.report.cross_maintained.0 > 0, "R4: the mode maintained strata: {:?}", moved.report.cross_again);
 }
@@ -380,10 +391,14 @@ fn a_finding_s_places_moved_are_maintained() {
 def(n, @dot(m, x)) :- kind(n, "function_definition"), field(n, "name", c), text(c, x), docof(n, d), doc(d, _, m).
 .decl imp(n: node, q: symbol)
 imp(n, @dot(m, x)) :- kind(n, "import_from_statement"), field(n, "module_name", mn), text(mn, m), field(n, "name", xn), text(xn, x).
-.decl used(f: node) cross_file
-used(f) :- imp(_, q), def(f, q).
+.decl def_at(d: number, q: symbol)
+def_at(d, q) :- def(f, q), docof(f, d).
+.decl imp_at(d: number, q: symbol)
+imp_at(d, q) :- imp(n, q), docof(n, d).
+.decl used(q: symbol) cross_file
+used(q) :- imp_at(_, q), def_at(_, q).
 .decl placed(f: node, l: number)
-placed(f, l) :- used(f), line(f, l).
+placed(f, l) :- def(f, q), used(q), node_line_number(f, l).
 .output placed
 "#;
     // `used`: 200 functions of z.py that b.py imports, and a0.py's `g0`, and its `h0` once the append defines it
@@ -426,22 +441,26 @@ fn r4_a_changed_read_s_delta_leads_its_line() {
 
 /// R4 with readers: a stratum derived again past θ hands its readers its delta against its kept rows, and a reader
 /// maintained over that delta has versions of its own for the strata above it. On the O125 replay, `cls_q` derived
-/// again past θ, and so did `type_of`. Its reader `type_first`, a `min` over it (a `min` over a node here: one over a symbol is refused), was maintained and stopped:
+/// again past θ, and so did `type_of`. Its reader `type_first`, a `min` over it (a `min` over a document key here: one over a symbol is refused, and one over a node compares positions, refused in the cross-file part since decision 0695), was maintained and stopped:
 /// "type_of has no version".
 const AGAIN_THEN_MAINTAINED: &str = r#"
 .decl def(n: node, q: symbol)
 def(n, @dot(m, x)) :- kind(n, "function_definition"), field(n, "name", c), text(c, x), docof(n, d), doc(d, _, m).
 .decl edge(a: symbol, b: symbol)
 edge(a, b) :- kind(n, "import_statement"), field(n, "name", t), text(t, b), docof(n, d), doc(d, _, a).
-// `a` is the cross part's stratum the test is about (decision 0652: by its rules it is one file's).
-.decl a(n: node, q: symbol) cross_file
-a(n, q) :- def(n, q), q = "m0.f0".
-.decl b(q: symbol, m: symbol)
+.decl def_at(d: number, q: symbol)
+def_at(d, q) :- def(f, q), docof(f, d).
+// `a`, the cross part's stratum the test is about: each imported module's `f0`, a definition joined with any file's
+// import (cross-file, decision 0652), by its file's key (0677).
+.decl a(d: number, q: symbol) cross_file
+a(d, q) :- def_at(d, q), edge(_, b), q = @dot(b, "f0").
+// `b`, its maintained reader: each of `a`'s names with every importing module, any file's (cross-file).
+.decl b(q: symbol, m: symbol) cross_file
 b(q, m) :- a(_, q), edge(m, _).
 .decl c(m: symbol)
 c(m) :- b(_, m).
-.decl first(n: node) cross_file
-first(n) :- a(_, _), n = min n2 : { a(n2, _) }.
+.decl first(d: number) cross_file
+first(d) :- a(_, _), d = min d2 : { a(d2, _) }.
 .output c
 .output first
 "#;
@@ -503,9 +522,10 @@ fn r2_a_levelled_stratum_derived_again_is_a_version_of_its_kept_rows() {
     assert_eq!(ran.shape.rows_copied, 0, "R2: a levelled stratum derived again is a version of its kept rows");
 }
 
-/// R6: a recursive component that cannot hold a row up by itself (every recursive step goes strictly down the tree:
-/// the static check proves it) keeps no levels; its candidates are rechecked once each, as a non-recursive
-/// stratum's are.
+/// R6: a recursive component that cannot hold a row up by itself (every recursive step climbs its index by one, to
+/// the used function's line count: the static check proves it) keeps no levels; its candidates are rechecked once
+/// each, as a non-recursive stratum's are. The component is keyed by the function's qualified name: no node is in
+/// the cross part (decision 0677), so none of its strata steps down a tree.
 #[test]
 fn r6_a_component_that_cannot_cycle_keeps_no_levels() {
     let program = r#"
@@ -513,13 +533,19 @@ fn r6_a_component_that_cannot_cycle_keeps_no_levels() {
 def(n, @dot(m, x)) :- kind(n, "function_definition"), field(n, "name", c), text(c, x), docof(n, d), doc(d, _, m).
 .decl imp(n: node, q: symbol)
 imp(n, @dot(m, x)) :- kind(n, "import_from_statement"), field(n, "module_name", mn), text(mn, m), field(n, "name", xn), text(xn, x).
-.decl used(f: node) cross_file
-used(f) :- imp(_, q), def(f, q).
-.decl below(a: node, c: node)
-below(a, c) :- used(a), child(a, c, _).
-below(a, c) :- below(a, b), child(b, c, _).
-.decl depth(a: node, n: number)
-depth(a, n) :- used(a), n = count : { below(a, _) }.
+.decl def_at(d: number, q: symbol)
+def_at(d, q) :- def(f, q), docof(f, d).
+.decl imp_at(d: number, q: symbol)
+imp_at(d, q) :- imp(n, q), docof(n, d).
+.decl size(q: symbol, k: number)
+size(q, k) :- def(f, q), line(f, a), end_line(f, b), k = b - a.
+.decl used(q: symbol) cross_file
+used(q) :- imp_at(_, q), def_at(_, q).
+.decl below(q: symbol, i: number)
+below(q, 0) :- used(q).
+below(q, @add(i, 1)) :- below(q, i), size(q, k), i < k.
+.decl depth(q: symbol, n: number)
+depth(q, n) :- used(q), n = count : { below(q, _) }.
 .output depth
 "#;
     let mut s = Session::new("r6", program, &["depth"], &[("a.py", "def f():\n    x = 1\n"), ("b.py", "from a import f\n")]);
@@ -528,8 +554,8 @@ depth(a, n) :- used(a), n = count : { below(a, _) }.
     let ran = s.edit("the used function's body grows");
     assert!(ran.report.cross_maintained.1 > 0, "R6: the recursive stratum is maintained");
     assert_eq!(ran.by_levels, 0, "R6: a component that cannot cycle is not maintained by levels");
-    // `below` is cross-file (it reads `used`), and the cross part holds no tree: its measure's key (`ast_depth`) is
-    // an input there, so its candidates are ordered and each is rechecked once, not once per support that goes.
+    // `below` is cross-file (it reads `used`): its measure is its index, so its candidates are ordered and each is
+    // rechecked once, not once per support that goes.
     assert_eq!(ran.shape.measures_unkeyed, 0, "R6: the cross part reads its measure's key");
     // Rows go: their candidates are rechecked in the measure's order (or again as their supports go), with no
     // levels, and the outputs are a fresh run's (`edit`).
@@ -626,4 +652,61 @@ named(x, d) :- kind(n, "call"), field(n, "function", f), text(f, x), def(m, x), 
     s.write("b.py", "f()\n");
     s.run();
     views(&s, "session/session.sqlite", "a session's edit");
+}
+
+/// Decision 0094 §8, the incremental layout-invariance gate: a move costs about the moved definitions. t22's move,
+/// in small: a definition many files call goes to a module of its own (`_moved_0.py`), its old module re-exporting it
+/// where it was, so no importer changes. Answers are a fresh run's (R10, `fresh_tier`). Its cost is the joins' work
+/// (`shape::join_work`, counted, not timed), set against an edit of the same definition in place, a statement added to
+/// its body, which touches one file where the move touches two and changes no import: the move may cost a few times
+/// the edit, and at most half a cold run (it touches 2 files of 27). Strata derived again are not the measure: one that is cheap to derive is derived (0090 §4's priced
+/// clause), and the reach indexes over the import graph are made again whenever it changes (decision 0119 §3), their
+/// readers maintained from their delta.
+///
+/// The program is the typing program `calls_p3` (the analysis phase's rules), whose cross-file part is keyed by terms
+/// and symbols (decision 0677): a moved definition's nodes renumber no row of it, and an importer's rows name the
+/// definition by symbol. It passes (2026-11-26): joins' work cold 140,322, the edit in place 7,880, the move 15,894
+/// (2.0 times the edit, 0.11 of a cold run); the edit maintains 26 strata, the move 92, and neither derives a stratum
+/// again. Under `calls_cx` (node-keyed, before 0677) the move was 21,737 against the edit's 6,821, 3.2 times, past the
+/// bar: the moved definition's 35 nodes and the 12 callers' references to its new id were delta rows of the cross
+/// part.
+#[test]
+fn a_moved_definition_costs_about_itself() {
+    let program = std::fs::read_to_string(crate::source_tree::native().join("src/code_rule_dsl/typing/programs/calls_p3.rerail")).unwrap();
+    let helpers = "class Reader:\n    def read(self, s):\n        return s.strip()\n\n\ndef parse(s):\n    n = int(s)\n    return n\n\n\ndef keep(x):\n    return x\n";
+    let mut files: Vec<(String, String)> = vec![("pkg/__init__.py".into(), String::new()), ("pkg/helpers.py".into(), helpers.into())];
+    // Callers of `parse`, and modules of their own that call one another, so the move is a small part of the corpus.
+    for i in 0..12 {
+        files.push((format!("pkg/use{i}.py"), format!("from pkg.helpers import parse, Reader\n\n\ndef run{i}(s):\n    r = Reader()\n    return parse(r.read(s))\n")));
+    }
+    for i in 0..12 {
+        files.push((format!("pkg/own{i}.py"), format!("from pkg.own{} import step{}\n\n\nclass Box{i}:\n    def get(self):\n        return step{}(1)\n\n\ndef step{i}(x):\n    return Box{i}().get() if x else x\n", (i + 1) % 12, (i + 1) % 12, (i + 1) % 12)));
+    }
+    let refs: Vec<(&str, &str)> = files.iter().map(|(f, b)| (f.as_str(), b.as_str())).collect();
+    let mut s = Session::new("move", &program, &["call_target", "call_open", "type_of"], &refs);
+    // Each run's start, for a trace of its lines (`RERAIL_MODE_TRACE`) to be read run by run.
+    let start = |what: &str| eprintln!("0094 §8 run: {what}");
+    start("cold");
+    let cold = s.run();
+    s.write("pkg/helpers.py", &helpers.replace("    n = int(s)\n", "    n = int(s)\n    n = n + 0\n"));
+    start("edit");
+    let edit = s.edit("a statement added to parse");
+    start("edit back");
+    s.write("pkg/helpers.py", helpers);
+    s.edit("the statement taken out again");
+    let moved_def = "def parse(s):\n    n = int(s)\n    return n\n";
+    s.write("pkg/_moved_0.py", moved_def);
+    s.write("pkg/helpers.py", &helpers.replace(moved_def, "from pkg._moved_0 import parse\n"));
+    start("move");
+    let moved = s.edit("parse moved to a module of its own");
+    start("end");
+    let again = |r: &Ran| r.report.cross_again.iter().map(|(w, n)| (*w, *n)).collect::<BTreeMap<&str, usize>>();
+    let report = format!(
+        "joins' work: cold {}, edit in place {}, move {}; edit: again {:?}, maintained {:?}; move: again {:?}, maintained {:?}",
+        cold.shape.join_work, edit.shape.join_work, moved.shape.join_work, again(&edit), edit.report.cross_maintained, again(&moved), moved.report.cross_maintained
+    );
+    eprintln!("0094 §8: {report}");
+    assert!(edit.shape.join_work > 0, "the edit in place ran joins: {report}");
+    assert!(moved.shape.join_work <= 3 * edit.shape.join_work, "0094 §8: the move costs past 3 times the edit in place: {report}");
+    assert!(2 * moved.shape.join_work <= cold.shape.join_work, "0094 §8: the move costs past half a cold run: {report}");
 }

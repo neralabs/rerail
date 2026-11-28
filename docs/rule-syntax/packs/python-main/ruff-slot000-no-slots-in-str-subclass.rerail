@@ -46,21 +46,21 @@ slot000_str_base(n) :- slot000_demand_str_base(n), kind(n, "parenthesized_expres
 // enum_name(n, …): the JSON util `enum-name`, called with `matches` and arguments E
 //   K, N1, N2, N3, N4, SB: metavariables of the calling rule, passed in (bound by the caller)
 //   KX, N, OX: metavariables this relation binds for the calling rule
-.decl slot000_enum_name(n: node, e: node, k: loc, kx: loc, n_mv: loc, n1: loc, n2: loc, n3: loc, n4: loc, ox: loc, sb: loc)
+.decl slot000_enum_name(n: node, e: node, k: node, kx: node, n_mv: node, n1: node, n2: node, n3: node, n4: node, ox: node, sb: node)
 slot000_enum_name(n, E, K, KX, N, N1, N2, N3, N4, OX, SB) :- slot000_demand_enum_name(n, K, N1, N2, N3, N4, SB),
     node(_, n, _, _, _), E = n, slot000_alt_4(n, K, KX, N, N1, N2, N3, N4, OX, SB).
 
 // enum_base(n, …): the JSON util `enum-base`, called with `matches` and arguments E
 //   K, N1, N2, N3, N4, SB: metavariables of the calling rule, passed in (bound by the caller)
 //   KX, N, OX: metavariables this relation binds for the calling rule
-.decl slot000_enum_base(n: node, e: node, k: loc, kx: loc, n_mv: loc, n1: loc, n2: loc, n3: loc, n4: loc, ox: loc, sb: loc)
+.decl slot000_enum_base(n: node, e: node, k: node, kx: node, n_mv: node, n1: node, n2: node, n3: node, n4: node, ox: node, sb: node)
 slot000_enum_base(n, E, K, KX, N, N1, N2, N3, N4, OX, SB) :- slot000_demand_enum_base(n, K, N1, N2, N3, N4, SB),
     node(_, n, _, _, _), E = n, slot000_alt_6(n, K, KX, N, N1, N2, N3, N4, OX, SB).
 
 // class_ref(n, …): the JSON util `class-ref`, called with `matches` and arguments K
 //   O: metavariable of the calling rule, passed in (bound by the caller)
 //   N, OX: metavariables this relation binds for the calling rule
-.decl slot000_class_ref(n: node, k: node, n_mv: loc, o: loc, ox: loc)
+.decl slot000_class_ref(n: node, k: node, n_mv: node, o: node, ox: node)
 slot000_class_ref(n, K, N, O, OX) :- slot000_demand_class_ref(n, O), slot000_alt_8(n, K, N, O, OX).
 
 // tok_has_1(n): a child of n, a named node or an anonymous token, matches "^,$": a named node, a token the tape stores, or one it leaves out, read from the source between stored children
@@ -75,17 +75,17 @@ slot000_tok_has_1(n) :- child(n, c9, _), structural_after(c9, g4),
 slot000_tok_has_1(n) :- node_text(n, g4), !child(n, _, _), match("(?s)^(?:.*(?:,).*)$", g4).
 
 // demand_alt_4: the rows of alt_4 its callers ask for (the metavariable columns they pass in)
-.decl slot000_demand_alt_4(n: node, k: loc, n1: loc, n2: loc, n3: loc, n4: loc, sb: loc)
+.decl slot000_demand_alt_4(n: node, k: node, n1: node, n2: node, n3: node, n4: node, sb: node)
 slot000_demand_alt_4(n, K, N1, N2, N3, N4, SB) :- slot000_demand_enum_name(n, K, N1, N2, N3, N4, SB),
     node(_, n, _, _, _), E = n.
 
 // demand_alt_6: the rows of alt_6 its callers ask for (the metavariable columns they pass in)
-.decl slot000_demand_alt_6(n: node, k: loc, n1: loc, n2: loc, n3: loc, n4: loc, sb: loc)
+.decl slot000_demand_alt_6(n: node, k: node, n1: node, n2: node, n3: node, n4: node, sb: node)
 slot000_demand_alt_6(n, K, N1, N2, N3, N4, SB) :- slot000_demand_enum_base(n, K, N1, N2, N3, N4, SB),
     node(_, n, _, _, _), E = n.
 
 // demand_enum_base: the rows of enum_base its callers ask for (the metavariable columns they pass in)
-.decl slot000_demand_enum_base(n: node, k: loc, n1: loc, n2: loc, n3: loc, n4: loc, sb: loc)
+.decl slot000_demand_enum_base(n: node, k: node, n1: node, n2: node, n3: node, n4: node, sb: node)
 slot000_demand_enum_base(c5, UNSET_1, UNSET_2, UNSET_3, UNSET_4, UNSET_5, UNSET_6) :- kind(n, "identifier"),
     field(p1, "name", n), kind(p1, "class_definition"), field(p1, "superclasses", c2),
     kind(c2, "argument_list"), child(c2, c3, _), slot000_str_base(c3),
@@ -105,7 +105,7 @@ slot000_demand_enum_base(c2, K, N1, N2, N3, N4, SB) :- slot000_demand_alt_6(n, K
     kind(n, "parenthesized_expression"), child(n, c2, _).
 
 // demand_enum_name: the rows of enum_name its callers ask for (the metavariable columns they pass in)
-.decl slot000_demand_enum_name(n: node, k: loc, n1: loc, n2: loc, n3: loc, n4: loc, sb: loc)
+.decl slot000_demand_enum_name(n: node, k: node, n1: node, n2: node, n3: node, n4: node, sb: node)
 slot000_demand_enum_name(c13, K, N1, N2, N3, N4, SB) :- slot000_demand_alt_4(n, K, N1, N2, N3, N4, SB),
     kind(n, "parenthesized_expression"), child(n, c13, _).
 slot000_demand_enum_name(n, K, N1, N2, N3, N4, SB) :- slot000_demand_alt_6(n, K, N1, N2, N3, N4, SB).
@@ -113,11 +113,11 @@ slot000_demand_enum_name(c1, K, N1, N2, N3, N4, SB) :- slot000_demand_alt_6(n, K
     kind(n, "subscript"), field(n, "value", c1).
 
 // demand_alt_8: the rows of alt_8 its callers ask for (the metavariable columns they pass in)
-.decl slot000_demand_alt_8(n: node, k: loc, o: loc)
+.decl slot000_demand_alt_8(n: node, k: node, o: node)
 slot000_demand_alt_8(n, K, O) :- slot000_demand_class_ref(n, O), unset(K).
 
 // demand_class_ref: the rows of class_ref its callers ask for (the metavariable columns they pass in)
-.decl slot000_demand_class_ref(n: node, o: loc)
+.decl slot000_demand_class_ref(n: node, o: node)
 slot000_demand_class_ref(n, UNSET_1) :- slot000_demand_alt_4(n, K, N1, N2, N3, N4, SB),
     kind(n, "attribute"), inside(n, p6, "module"), within(c7, p6),
     kind(c7, "identifier"), node(_, c7, _, _, _), KX = c7, node(_, KX, _, _, _), node(_, K, _, _, _),
@@ -167,7 +167,7 @@ slot000_alt_2(n) :- kind(n, "identifier"), glob("str", n), bind_name(n, _),
 // alt_4(n): the JSON `any`: n matches if any one of these rules does
 //   K, N1, N2, N3, N4, SB: metavariables of the calling rule, passed in (bound by the caller)
 //   KX, N, OX: metavariables this relation binds for the calling rule
-.decl slot000_alt_4(n: node, k: loc, kx: loc, n_mv: loc, n1: loc, n2: loc, n3: loc, n4: loc, ox: loc, sb: loc)
+.decl slot000_alt_4(n: node, k: node, kx: node, n_mv: node, n1: node, n2: node, n3: node, n4: node, ox: node, sb: node)
 // KX, N, OX: not bound by this rule, so empty (unset) here, as in ast-grep.
 slot000_alt_4(n, K, KX, N, N1, N2, N3, N4, OX, SB) :- slot000_demand_alt_4(n, K, N1, N2, N3, N4, SB),
     (kind(n, "identifier") ; kind(n, "attribute")), sym_of(n, q1), slot000_set_3(q1),
@@ -191,7 +191,7 @@ slot000_alt_4(n, K, KX, N, N1, N2, N3, N4, OX, SB) :- slot000_demand_alt_4(n, K,
 // alt_6(n): the JSON `any`: n matches if any one of these rules does
 //   K, N1, N2, N3, N4, SB: metavariables of the calling rule, passed in (bound by the caller)
 //   KX, N, OX: metavariables this relation binds for the calling rule
-.decl slot000_alt_6(n: node, k: loc, kx: loc, n_mv: loc, n1: loc, n2: loc, n3: loc, n4: loc, ox: loc, sb: loc)
+.decl slot000_alt_6(n: node, k: node, kx: node, n_mv: node, n1: node, n2: node, n3: node, n4: node, ox: node, sb: node)
 slot000_alt_6(n, K, KX, N, N1, N2, N3, N4, OX, SB) :- slot000_demand_alt_6(n, K, N1, N2, N3, N4, SB),
     slot000_enum_name(n, N1, K, KX, N, N1, N2, N3, N4, OX, SB).
 slot000_alt_6(n, K, KX, N, N1, N2, N3, N4, OX, SB) :- slot000_demand_alt_6(n, K, N1, N2, N3, N4, SB),
@@ -204,7 +204,7 @@ slot000_alt_6(n, K, KX, N, N1, N2, N3, N4, OX, SB) :- slot000_demand_alt_6(n, K,
 // alt_8(n): the JSON `any`: n matches if any one of these rules does
 //   K, O: metavariables of the calling rule, passed in (bound by the caller)
 //   N, OX: metavariables this relation binds for the calling rule
-.decl slot000_alt_8(n: node, k: loc, n_mv: loc, o: loc, ox: loc)
+.decl slot000_alt_8(n: node, k: node, n_mv: node, o: node, ox: node)
 // N, OX: not bound by this rule, so empty (unset) here, as in ast-grep.
 slot000_alt_8(n, K, N, O, OX) :- slot000_demand_alt_8(n, K, O), kind(n, "identifier"), ref_site(n, b1),
     (st2 = b1 ; within(b1, st2)), kind(st2, "class_definition"),

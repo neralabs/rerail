@@ -90,21 +90,28 @@
     u.sc = IF_SCOPE
 
 // A group's threadgroup memory: the take's words, the scans' scratch, and the sorts' counts or a sorted tile (the
-// segmented scans' two rows alias them: no phase runs two of them); in the loop's phase, which runs no scan or sort,
-// each SIMD group's piece's run (`lp_piece`: its stacks, indexed as it goes, in the group's memory, not a thread's,
-// which Metal keeps in device memory); in the `#if` lines' evaluation, each SIMD group's window of a long line
-// (`p1_if_line`, `IfWin`).
+// segmented scans' two rows alias them: no phase runs two of them); in the `#if` lines' evaluation, each SIMD group's
+// window of a long line (`p1_if_line`, `IfWin`).
 #define PP_TG_BIG UKL_SORT_WORDS
-// A power of two: a SIMD group's run is its slot masked by a constant (the M3's back end, G15, computes an address in
-// group memory from a computed index wrong otherwise: decision 0588).
+// A power of two: a SIMD group's slot is masked by a constant (the M3's back end, G15, computes an address in group
+// memory from a computed index wrong otherwise: decision 0588).
 #define LP_SLOTS (256u / UKL_SIMD_WIDTH)
+// Each SIMD group's piece's run (`lp_piece`: its stacks, indexed as it goes) is its own slot of the unit's runs
+// (`LPRUN`, the host's `pp_arena::runs`), in device memory: `LP_SLOTS` a tile of the loop's phase, by the tile
+// (`UklTiles::tile`, below the unit's `TMAX`), each `LP_RUN_BYTES`. Not the group's memory: there the M3's back end
+// (G15) lost the run's writes, a thread's store not seen by its own next load (decision 0613 §4's notes, 2026-11-24).
+#define LP_RUN_BYTES (4096u)
+UKL_STATIC_ASSERT(sizeof(LpRun) <= LP_RUN_BYTES, "a run fits its slot (LP_RUN_BYTES, pp_arena::RUN_BYTES)");
+UKL_INLINE UKL_GLOBAL LpRun* lp_run_slot(PP_GLOBAL uint8_t* runs, uint32_t tile, uint32_t lid) {
+    uint32_t at = (tile * LP_SLOTS + ((lid / UKL_SIMD_WIDTH) & (LP_SLOTS - 1u))) * LP_RUN_BYTES;
+    return (UKL_GLOBAL LpRun*)(runs + (uint64_t)at);
+}
 typedef struct PpTg {
     // The item taken and whether one was; the next phase's tiles to push and its unit.
     uint32_t take[4];
     uint32_t scratch[UKL_TG_SCRATCH];
     union {
         uint32_t big[PP_TG_BIG];
-        LpRun lp[LP_SLOTS];
         IfWin ifw[LP_SLOTS];
     };
 } PpTg;
@@ -353,7 +360,7 @@ UKL_INLINE uint32_t pp_lib_tiles(ROBUFFER(uint32_t) lay, uint32_t n, uint32_t ls
     lp_run(xu, xa, AT(const uint32_t, IF_OPS), AT(uint32_t, STATE), AT(const uint32_t, LOOKUPS), AT(const uint32_t, XFLAG),       \
            AT(uint32_t, V), AT(uint32_t, OPV), AT(uint32_t, LOB), AT(uint32_t, PLAST),                                           \
            AT(uint32_t, DELTA), AT(uint32_t, DEPTH), AT(uint32_t, THEADS), AT(uint32_t, TRN), AT(uint32_t, OFLAG),                \
-           AT(const uint32_t, XPOS), g.lid & (UKL_SIMD_WIDTH - 1u), &tg->lp[(g.lid / UKL_SIMD_WIDTH) & (LP_SLOTS - 1u)] __UKL_ARGS)
+           AT(const uint32_t, XPOS), g.lid & (UKL_SIMD_WIDTH - 1u), lp_run_slot(AT(uint8_t, LPRUN), g.tile, g.lid) __UKL_ARGS)
 // The loop's phase (`PH_LP_RUN`), a function of its own apart from the program's step (`pp_step`), as it was before
 // decision 0653 (`lp_loop`, `lp_help`). Inlined into the step with every other phase, the M3's Metal back end
 // miscompiled it (2026-11-23): a piece read again wrote half its output entries, their words exchanged (`src` and

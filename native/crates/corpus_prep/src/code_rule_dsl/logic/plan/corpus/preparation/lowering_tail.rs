@@ -8,7 +8,7 @@ use rerail_blocks::vector::Vector;
 use crate::code_rule_dsl::logic::plan::body::{Body, VarSet, lit_vars};
 use crate::code_rule_dsl::logic::program_image::build::T;
 use crate::code_rule_dsl::logic::program_image::manager::{Cx, ProgramPass, ProgramW};
-use crate::code_rule_dsl::logic::program_image::{Lit as L, RuleId, Slot, TermRef, Version};
+use crate::code_rule_dsl::logic::program_image::{AtomId, Lit as L, RuleId, Slot, TermRef, Version};
 use crate::code_rule_dsl::logic::program_image::fields::{FieldsMut, ProgramFields};
 use std::collections::{BTreeMap, BTreeSet};
 
@@ -154,6 +154,7 @@ pub struct LiteralsOnce;
 
 impl ProgramPass for LiteralsOnce {
     const NAME: &'static str = "each literal of a body once";
+    const LOCAL: bool = true;
     fn run(&mut self, cx: &Cx<'_>, w: &mut ProgramW<'_>) -> Result<(), String> {
         let v = cx.v();
         let mut once: BTreeMap<RuleId, Vector<u32>> = BTreeMap::new();
@@ -192,6 +193,7 @@ pub struct DropSelfRules;
 
 impl ProgramPass for DropSelfRules {
     const NAME: &'static str = "drop the rules that are their own body";
+    const LOCAL: bool = true;
     fn run(&mut self, cx: &Cx<'_>, w: &mut ProgramW<'_>) -> Result<(), String> {
         let v = cx.v();
         let args = |r: crate::code_rule_dsl::logic::program_image::RuleRef<'_>, a: crate::code_rule_dsl::logic::program_image::AtomRef<'_>| a.args().map(|t| v.show_term(r, t)).collect::<Vec<_>>();
@@ -214,6 +216,7 @@ pub struct FactsOnce;
 
 impl ProgramPass for FactsOnce {
     const NAME: &'static str = "each fact once";
+    const LOCAL: bool = true;
     fn run(&mut self, cx: &Cx<'_>, w: &mut ProgramW<'_>) -> Result<(), String> {
         let v: &Version = cx.v();
         let mut once = Vec::new();
@@ -249,6 +252,7 @@ pub struct Unit;
 
 impl ProgramPass for Unit {
     const NAME: &'static str = "a rule reading no relation reads the unit";
+    const LOCAL: bool = true;
     fn run(&mut self, cx: &Cx<'_>, w: &mut ProgramW<'_>) -> Result<(), String> {
         const UNIT: &str = "rr_unit";
         let v = cx.v();
@@ -324,6 +328,44 @@ impl AggregateDemand {
             },
         }
     }
+    /// Item `i`'s places: its variables at a `node`, `loc` or `span` column or a document's column
+    /// (`front::document_column`), a nearest's two nodes, a placed demand's place columns.
+    fn places(v: &Version, p: &Placement, i: Item) -> VarSet {
+        let place = |ty: &str| matches!(ty, "node" | "place");
+        let mut out = VarSet::new();
+        match i {
+            Item::Placed(r) => {
+                let rule = v.rule(r).expect("a rule of the input");
+                let (demand, positions) = &p.prefix[&r];
+                let cols = p.decls.iter().find(|(d, _)| d == demand).map(|(_, c)| c.clone()).unwrap_or_default();
+                for ((_, t), (_, ty)) in rule.head().args().enumerate().filter(|(k, _)| positions.contains(k)).zip(&cols) {
+                    if place(ty) {
+                        crate::code_rule_dsl::logic::plan::body::term_vars(t, &mut out);
+                    }
+                }
+            }
+            Item::Own(r, n) => match lit_at(v, r, n).view() {
+                L::Atom(a) | L::Agg { atom: a, .. } => {
+                    let rel = v.rel_name(a.rel());
+                    let cols = v.columns_of(rel).unwrap_or_default();
+                    let document = crate::code_rule_dsl::logic::front::document_column(rel);
+                    for (k, t) in a.args().enumerate() {
+                        if let TermRef::Var(x) = t
+                            && (cols.get(k).is_some_and(|(_, ty)| place(ty)) || document == Some(k))
+                        {
+                            out.insert(x);
+                        }
+                    }
+                }
+                L::Nearest { n, a, .. } => {
+                    out.insert(n);
+                    out.insert(a);
+                }
+                _ => {}
+            },
+        }
+        out
+    }
     fn vars(v: &Version, p: &Placement, i: Item) -> VarSet {
         match i {
             Item::Placed(r) => {
@@ -347,9 +389,14 @@ fn lit_at(v: &Version, r: RuleId, n: u32) -> crate::code_rule_dsl::logic::progra
 
 /// Safe positive guards, then comparisons whose inputs those guards bind (a context is a superset of the consumer,
 /// never an assumption about a not-yet-computed aggregate or recursive result), over rule `r`'s items: its safe positive guards joined to the keys, then the
-/// comparisons they let run.
+/// comparisons they let run. With `by_place` (every key a place: a node, `loc` or `span`), a guard joins through its
+/// places alone (`AggregateDemand::places`): a node's demand is its own document's, and a guard reached through a
+/// value (a name) joins another document's rows to it and asks nothing more of this one. public-api-triples' demand
+/// of a class's Protocol count joined `pub_member(cq, n, f)`, a base's method in another file, by the class's name: a
+/// crossing that kept the program's name resolution from being staged (decision 0695). Leaving a guard out only
+/// widens the demand.
 #[allow(clippy::too_many_arguments)]
-fn guards(v: &Version, p: &Placement, r: RuleId, items: &[Item], helper: &str, keys: &VarSet, deps: &BTreeMap<String, BTreeSet<String>>, reach: &crate::code_rule_dsl::logic::rr::aggregate_demand::Reach) -> Option<Vec<Item>> {
+fn guards(v: &Version, p: &Placement, r: RuleId, items: &[Item], helper: &str, keys: &VarSet, by_place: bool, deps: &BTreeMap<String, BTreeSet<String>>, reach: &crate::code_rule_dsl::logic::rr::aggregate_demand::Reach) -> Option<Vec<Item>> {
     let rule = v.rule(r).expect("a rule of the input");
     let head = v.rel_name(rule.head().rel());
     let safe: Vec<(Item, VarSet)> = items
@@ -358,7 +405,7 @@ fn guards(v: &Version, p: &Placement, r: RuleId, items: &[Item], helper: &str, k
             Item::Own(_, n) if matches!(lit_at(v, r, n).view(), L::Nearest { .. }) => true,
             i => matches!(AggregateDemand::rel(v, p, i), Some((rel, true, false)) if !reach.reaches(deps, rel, helper) && !reach.reaches(deps, rel, head)),
         })
-        .map(|&i| (i, AggregateDemand::vars(v, p, i)))
+        .map(|&i| (i, if by_place { AggregateDemand::places(v, p, i) } else { AggregateDemand::vars(v, p, i) }))
         .collect();
     let cmps: Vec<(usize, u32, VarSet)> = items
         .iter()
@@ -384,8 +431,9 @@ fn guards(v: &Version, p: &Placement, r: RuleId, items: &[Item], helper: &str, k
             joined[k] = true;
             connected.extend(vars);
             if AggregateDemand::rel(v, p, *i).is_some() {
-                grounded.extend(vars);
-                bound.extend(vars);
+                let all = AggregateDemand::vars(v, p, *i);
+                grounded.extend(&all);
+                bound.extend(&all);
             }
         }
         // A nearest binds its node once its subject is an atom's.
@@ -403,7 +451,7 @@ fn guards(v: &Version, p: &Placement, r: RuleId, items: &[Item], helper: &str, k
             }
             if let L::Cmp { l, op, r: right } = lit_at(v, r, *n).view()
                 && let Some(more) = body.cmp_binds(l, op, right, &bound)
-                && (vars.is_empty() || !vars.is_disjoint(&connected))
+                && (vars.is_empty() || !vars.is_disjoint(&connected) || (by_place && vars.is_subset(&bound)))
             {
                 bound.extend(&more);
                 connected.extend(vars);
@@ -580,7 +628,9 @@ impl ProgramPass for AggregateDemand {
                     for (_, t) in atom.args().enumerate().filter(|(k, _)| positions.contains(k)) {
                         crate::code_rule_dsl::logic::plan::body::term_vars(t, &mut keys);
                     }
-                    let Some(body) = guards(v, &p, r, &items, name, &keys, &deps, &reach) else {
+                    // Every key a place: the demand is a node's, its guards joined through places.
+                    let by_place = v.columns_of(name).is_some_and(|cols| positions.iter().all(|&k| cols.get(k).is_some_and(|(_, ty)| matches!(ty.as_str(), "node" | "place"))));
+                    let Some(body) = guards(v, &p, r, &items, name, &keys, by_place, &deps, &reach) else {
                         refused = true;
                         break 'readers;
                     };
@@ -714,14 +764,16 @@ fn declare_placed(b: &mut crate::code_rule_dsl::logic::program_image::Builder<'_
 ///   each node's key read off the tape where its batch holds it, as `node_order`'s `k` is, not two joins with
 ///   `node_order` (t57 §8, E2);
 /// - `v = max x : { r(…x…) }`, `x` a node: `kv = max k : { r_ord(…, _, k) }, r_ord(…, v, kv)`, where
-///   `r_ord(…, x, k) :- r(…x…), node_order(x, k)`: a helper `rr_ordered<k>`, written after the program's rules.
+///   `r_ord(…, x, k) :- r(…x…), node_order(x, k)`: a helper `rr_ordered_<digest>`, named by its content (its atom's
+///   relation and arguments, the node aggregated marked) and written after the program's rules, so a module's tail
+///   and the whole program's give one helper one name (decision 0639 §6a).
 ///   `v` is the aggregated row's own node, read back from the helper at the key, not `node_order(v, kv)`: the key
 ///   names one node (decision 0121's keys hold the document), but the split cannot see a document in a number, and
 ///   took that rule for a join of two documents (decision 0652). The helper's row holds the group and its node
 ///   together, as the aggregated atom did. Its columns bound only inside the aggregate are `_` there.
 ///
 /// A variable is a node when a column it fills is declared `node`: in the head or any atom of the body. Fresh
-/// variables are numbered over the program in rule order.
+/// variables are numbered in each rule, so a rule is written alike wherever it is tailed.
 pub struct OrderNodes;
 
 /// The node read of a node's preorder key (`vtab::NODE_READS`).
@@ -739,6 +791,7 @@ enum Ordered {
 
 impl ProgramPass for OrderNodes {
     const NAME: &'static str = "order the nodes compared";
+    const LOCAL: bool = true;
     fn run(&mut self, cx: &Cx<'_>, w: &mut ProgramW<'_>) -> Result<(), String> {
         use crate::code_rule_dsl::logic::front::AggOp;
         use crate::code_rule_dsl::logic::program_image::{AggRef, AtomRef, CmpOp};
@@ -761,10 +814,10 @@ impl ProgramPass for OrderNodes {
             AggRef::Max => Some(AggOp::Max),
             _ => None,
         };
-        let mut fresh = 0usize;
         let mut helpers = 0usize;
         let mut plans: BTreeMap<RuleId, Vec<Ordered>> = BTreeMap::new();
         for r in v.rules() {
+            let mut fresh = 0usize;
             let mut nodes = BTreeSet::new();
             typed(r.head(), &mut nodes);
             for l in r.body() {
@@ -856,7 +909,36 @@ impl ProgramPass for OrderNodes {
             }
         }
         made.sort_by_key(|m| m.2);
-        for (id, lit, helper, _, _) in &made {
+        // Each helper's name, by its content: its atom's relation, gating and arguments, the node aggregated `o`,
+        // the other variables by their first place.
+        let mut names: Vec<String> = Vec::with_capacity(made.len());
+        for (id, lit, _, _, _) in &made {
+            let r = input.rule(*id).expect("a rule of the input");
+            let L::Agg { atom, over: Some(o), .. } = lit_at(&input, *id, *lit).view() else { return Err("an ordered aggregate".into()) };
+            let mut vars: Vec<Slot> = Vec::new();
+            let args: Vec<String> = atom
+                .args()
+                .map(|t| match t {
+                    TermRef::Var(s) if s == o => "o".to_owned(),
+                    TermRef::Var(s) => {
+                        let at = vars.iter().position(|x| *x == s).unwrap_or_else(|| {
+                            vars.push(s);
+                            vars.len() - 1
+                        });
+                        format!("v{at}")
+                    }
+                    t => input.show_term(r, t),
+                })
+                .collect();
+            let content = format!("{}\0{}\0{}", input.rel_name(atom.rel()), atom.gated(), args.join("\0"));
+            let digest = crate::content_store::HashKey::sha256(content.as_bytes()).sha256_bytes().unwrap_or_default();
+            names.push(format!("rr_ordered_{}", digest[..8].iter().map(|b| format!("{b:02x}")).collect::<String>()));
+        }
+        let mut once: BTreeSet<&str> = BTreeSet::new();
+        for (i, (id, lit, _, _, _)) in made.iter().enumerate() {
+            if !once.insert(names[i].as_str()) {
+                continue;
+            }
             let L::Agg { atom, over: Some(o), .. } = lit_at(&input, *id, *lit).view() else { return Err("an ordered aggregate".into()) };
             let cols = input.columns_of(input.rel_name(atom.rel())).unwrap_or_default();
             let mut seen: Vec<Slot> = Vec::new();
@@ -872,9 +954,8 @@ impl ProgramPass for OrderNodes {
             }
             decl.push(("n".to_owned(), "node".to_owned()));
             decl.push(("k".to_owned(), "int".to_owned()));
-            declared.push((format!("rr_ordered{helper}"), decl));
+            declared.push((names[i].clone(), decl));
         }
-        let names: Vec<String> = (0..helpers).map(|h| format!("rr_ordered{h}")).collect();
         let b = w.derive()?;
         for (rel, decl) in &declared {
             let pairs: Vec<(&str, &str)> = decl.iter().map(|(c, t)| (c.as_str(), t.as_str())).collect();
@@ -918,8 +999,12 @@ impl ProgramPass for OrderNodes {
             }
             rb.finish()?;
         }
-        // The helpers, after the program's rules: `rr_ordered<k>(args, k) :- atom, node_order(o, k)`.
+        // The helpers, after the program's rules: `rr_ordered_<digest>(args, k) :- atom, node_order(o, k)`, each once.
+        let mut once: BTreeSet<&str> = BTreeSet::new();
         for (id, lit, helper, args, k) in &made {
+            if !once.insert(names[*helper].as_str()) {
+                continue;
+            }
             let r = input.rule(*id).expect("a rule of the input");
             let L::Agg { atom, over: Some(o), .. } = lit_at(&input, *id, *lit).view() else { return Err("an ordered aggregate".into()) };
             let kk = ord(*k);
@@ -1185,6 +1270,7 @@ pub struct DeclareAxes;
 
 impl ProgramPass for DeclareAxes {
     const NAME: &'static str = "declare the tree axes read";
+    const LOCAL: bool = true;
     fn run(&mut self, cx: &Cx<'_>, w: &mut ProgramW<'_>) -> Result<(), String> {
         let v = cx.v();
         let mut axes: Vec<&str> = Vec::new();
@@ -1233,6 +1319,7 @@ impl crate::code_rule_dsl::logic::program_image::build::Rewrite for Unit1<'_> {
 
 impl ProgramPass for BooleanRelations {
     const NAME: &'static str = "nullary relations as sets of the unit";
+    const LOCAL: bool = true;
     fn run(&mut self, cx: &Cx<'_>, w: &mut ProgramW<'_>) -> Result<(), String> {
         let v: &Version = cx.v();
         let names: BTreeSet<String> = v.decls().into_iter().filter(|d| d.cols().next().is_none()).map(|d| v.text(d.name()).to_owned()).collect();
@@ -1270,6 +1357,7 @@ pub struct ScopeGlobs;
 
 impl ProgramPass for ScopeGlobs {
     const NAME: &'static str = "the scope's globs";
+    const LOCAL: bool = true;
     fn run(&mut self, cx: &Cx<'_>, w: &mut ProgramW<'_>) -> Result<(), String> {
         use crate::code_rule_dsl::logic::rr::lower::{reads_tool_calls, scope_globs, scope_text_globs};
         let v = cx.v();
@@ -1307,6 +1395,8 @@ pub struct KindSets {
     /// The linked library of a module lowered in its scope (`rr::Library::version`): a set it reads has the library's
     /// kinds first (`kinds_of`).
     pub library: Option<std::sync::Arc<Version>>,
+    /// The rules that take out the sets no rule reads (`rr/kind-sets.rerail`, decision 0701 §5.1).
+    pub rules: fn() -> &'static super::rules_pass::RulesProgram,
 }
 
 /// The kinds of a unary relation of kinds: its facts, and the kinds of `s` for each rule `set(k) :- s(k)`, rules gone
@@ -1372,14 +1462,17 @@ impl ProgramPass for KindSets {
             let sets = format!("{:?}", library.kindset_map().unwrap_or_default());
             bytes.extend_from_slice(&crate::content_store::HashKey::sha256(sets.as_bytes()).sha256_bytes().unwrap_or_default());
         }
+        // The rules that take sets out.
+        bytes.extend_from_slice((self.rules)().text().as_bytes());
         bytes
     }
     fn run(&mut self, _cx: &Cx<'_>, w: &mut ProgramW<'_>) -> Result<(), String> {
         use crate::code_rule_dsl::logic::front::{Error, axis};
         let input = std::sync::Arc::clone(w.input());
         let v: &Version = &input;
-        // The fields' edit, staged (read through as it goes) and stated on the derivation at the end.
-        let mut head = crate::code_rule_dsl::logic::program_image::fields::Edit::on(&input);
+        // The step's edit, written as it goes and read through: its fields are stated on it directly. (They were
+        // staged on an edit of their own and copied onto it, row by row: python's library 87 µs a program.)
+        let b = w.on()?;
         let mut kindsets = v.kindset_map()?;
         let was_kindsets = kindsets.clone();
         let library = self.library.clone();
@@ -1392,37 +1485,28 @@ impl ProgramPass for KindSets {
                 continue;
             }
             // `members`.
-            match kinds_of(v, &head, library, &gone, &set, &mut BTreeSet::new()) {
+            match kinds_of(v, &b.fields(), library, &gone, &set, &mut BTreeSet::new()) {
                 Some(kinds) => drop(kindsets.insert(set, kinds)),
-                None if matches!(head.columns_of(&set).as_deref(), Some([(_, t)]) if t == "sym") => drop(derived.insert(set)),
+                None if matches!(b.fields().columns_of(&set).as_deref(), Some([(_, t)]) if matches!(t.as_str(), "sym" | "symbol")) => drop(derived.insert(set)),
                 None => return Err(Error::Syntax(format!("the kind set {set} is not a relation of kinds (one column of facts, or rules `{set}(k) :- s(k)` over such sets)")).to_string()),
             }
         }
-        // A set no rule reads is no relation of the program, to a fixed point.
+        // A set no rule reads but its own and those of sets taken out is no relation of the program: the rules of
+        // `rr/kind-sets.rerail` over the image's view (decision 0701 §5.1). A program that holds no kind set as a
+        // relation has none to take out and runs no rules, as the rules' own program does when it is lowered.
         let heads_of = |gone: &BTreeSet<String>, set: &str| v.rel(set).is_some_and(|rel| v.heads(rel).next().is_some()) && !gone.contains(set);
-        loop {
-            let unread: Vec<String> = kindsets
-                .keys()
-                .filter(|set| head.declares(set) || head.states_facts(set) || heads_of(&gone, set))
-                .filter(|set| {
-                    !v.rules().filter(|r| !gone.contains(v.rel_name(r.head().rel())) && v.rel_name(r.head().rel()) != set.as_str()).any(|r| {
-                        r.body().any(|l| matches!(l.view(), L::Atom(a) | L::Agg { atom: a, .. } if v.rel_name(a.rel()) == set.as_str()))
-                    })
-                })
-                .cloned()
-                .collect();
-            if unread.is_empty() {
-                break;
+        if kindsets.keys().any(|set| b.fields().declares(set) || b.fields().states_facts(set) || heads_of(&gone, set)) {
+            let rules = (self.rules)();
+            let sets: Vec<AtomId> = kindsets.keys().filter_map(|s| v.find(s)).collect();
+            let out = rules.run_on(&input, &sets, &["img_kindset_out", "img_undeclare", "img_drop_facts"])?;
+            let name = |row: &Vec<i64>| v.text(AtomId(row[0] as u32)).to_owned();
+            for row in &out[1] {
+                b.fields().undeclare(&name(row));
             }
-            for set in unread {
-                if head.states_facts(&set) {
-                    head.b.fields().drop_facts(&set);
-                }
-                if head.declares(&set) {
-                    head.b.fields().undeclare(&set);
-                }
-                gone.insert(set);
+            for row in &out[2] {
+                b.fields().drop_facts(&name(row));
             }
+            gone.extend(out[0].iter().map(name));
         }
         // `derived_axes`: each axis over a derived set read through a helper.
         let mut axes: BTreeMap<RuleId, Vec<AxisLit>> = BTreeMap::new();
@@ -1459,7 +1543,7 @@ impl ProgramPass for KindSets {
         // `base_relation_derived` for `child` and `node`, the rules gone left out.
         if !need.is_empty() {
             for rel in ["child", "node"] {
-                crate::code_rule_dsl::logic::rr::lower::base_relation_derived(&mut head.b.fields(), rel, heads_of(&gone, rel));
+                crate::code_rule_dsl::logic::rr::lower::base_relation_derived(&mut b.fields(), rel, heads_of(&gone, rel));
             }
         }
         // The helpers' rules, as `derived_axes` pushes them: a set's members once, then each helper's rules.
@@ -1467,8 +1551,8 @@ impl ProgramPass for KindSets {
         let mut made: Vec<(String, Vec<&'static str>, Body)> = Vec::new();
         for (set, helper) in &need {
             let member = format!("rr_in_{set}");
-            if !head.declares(&member) {
-                head.b.fields().declare(&member, &[("x", "node")]);
+            if !b.fields().declares(&member) {
+                b.fields().declare(&member, &[("x", "node")]);
                 made.push((member.clone(), vec!["x"], vec![("node".to_owned(), vec!["_", "x", "k", "_", "_"], false), (set.clone(), vec!["k"], false)]));
             }
             let rel = format!("rr_{helper}_{set}");
@@ -1483,28 +1567,29 @@ impl ProgramPass for KindSets {
                 _ => (vec!["a"], vec![vec![is("n", false), child("a", "n")], vec![me(vec!["p"]), child("a", "p")]]),
             };
             let pairs: Vec<(&str, &str)> = cols.iter().map(|c| (*c, "node")).collect();
-            head.b.fields().declare(&rel, &pairs);
+            b.fields().declare(&rel, &pairs);
             for body in bodies {
                 made.push((rel.clone(), cols.clone(), body));
             }
         }
         if kindsets != was_kindsets {
-            head.b.fields().set_field(crate::code_rule_dsl::logic::program_facts::Field::Kindsets(&kindsets));
+            b.fields().set_field(crate::code_rule_dsl::logic::program_facts::Field::Kindsets(&kindsets));
         }
-        if gone.is_empty() && axes.is_empty() && made.is_empty() && head.b.is_empty() {
+        if gone.is_empty() && axes.is_empty() && made.is_empty() && b.is_empty() {
             return Ok(());
         }
-        let b = w.derive()?;
-        b.fields().state_fields_of(&head.b);
+        // An edit of the input, of what changed alone: the sets' rules taken out, each rule with an axis over a derived
+        // set written again in its place's stead, and the helpers' rules added. (A derivation copied every rule,
+        // declaration and fact of the program to take a few sets out: on python's library, 4.2 of the step's 10.2 ms.)
         use crate::code_rule_dsl::logic::program_image::build::t_of;
-        for r in input.rules() {
-            if gone.contains(input.rel_name(r.head().rel())) {
-                continue;
+        for set in &gone {
+            for r in input.rel(set).into_iter().flat_map(|rel| input.heads(rel)) {
+                b.remove(r.id());
             }
-            let Some(lits) = axes.get(&r.id()) else {
-                b.keep(&input, r);
-                continue;
-            };
+        }
+        for (&id, lits) in &axes {
+            let Some(r) = input.rule(id) else { return Err(format!("kind sets: rule {} of an axis is not the input's", id.0)) };
+            b.remove(id);
             let mut rb = b.rule().source(r.id()).head_from(&input, r, r.head());
             for l in r.body() {
                 rb = match lits.iter().find(|x| x.node == l.node()) {
@@ -1568,9 +1653,8 @@ impl ProgramPass for GrammarNames {
 
 /// The built-ins lowering writes out (`nearest`, `within`, …) and the core relations it rewrites where the program
 /// does not derive them (`rewritten`, its settings: `next_sibling`, `precedes`) are declared in `core.rerail` for the
-/// checker; they are no relations of the program. `within` stays declared where a rule reads it: the lowering made it
-/// the engine's relation (decision 0050); a program lowered without `core.rerail` (its own part, `parse_own`) still
-/// declares it.
+/// checker; they are no relations of the program. `within` is `WithinRead`'s: whether a rule reads it is the whole
+/// program's to say, and a module that states it may have its readers in another (decision 0639 §6a).
 pub struct BuiltinsOut {
     pub rewritten: Vec<String>,
 }
@@ -1580,11 +1664,9 @@ impl ProgramPass for BuiltinsOut {
     fn settings(&self) -> Vec<u8> {
         self.rewritten.join("\n").into_bytes()
     }
-    fn run(&mut self, cx: &Cx<'_>, w: &mut ProgramW<'_>) -> Result<(), String> {
+    fn run(&mut self, _cx: &Cx<'_>, w: &mut ProgramW<'_>) -> Result<(), String> {
         use crate::code_rule_dsl::facts::vtab::syntax::WITHIN;
-        let v = cx.v();
-        let reads_within = v.rules().any(|r| r.body().any(|l| matches!(l.view(), L::Atom(a) if v.rel_name(a.rel()) == WITHIN)));
-        let out: Vec<&str> = crate::code_rule_dsl::logic::rr::lower::builtins(&self.rewritten).filter(|b| !(reads_within && *b == "within")).collect();
+        let out: Vec<&str> = crate::code_rule_dsl::logic::rr::lower::builtins(&self.rewritten).filter(|b| *b != WITHIN).collect();
         let head = w.on()?;
         for &b in &out {
             if head.declares(b) {
@@ -1594,9 +1676,37 @@ impl ProgramPass for BuiltinsOut {
         if out.iter().any(|b| head.input_names().iter().any(|i| i == b)) {
             head.fields().retain_inputs(|i| !out.contains(&i));
         }
+        Ok(())
+    }
+}
+
+/// `within` stays declared where a rule reads it: the lowering made it the engine's relation (decision 0050); a
+/// program lowered without `core.rerail` (its own part, `parse_own`) still declares it. Where no rule reads it, it is
+/// no relation of the program, as `BuiltinsOut`'s others are not. It reads every rule, so it runs on the program, after
+/// the modules' tails (decision 0639 §6a): a prelude states `within` an input, and its readers include it.
+pub struct WithinRead;
+
+impl ProgramPass for WithinRead {
+    const NAME: &'static str = "within read";
+    fn run(&mut self, cx: &Cx<'_>, w: &mut ProgramW<'_>) -> Result<(), String> {
+        use crate::code_rule_dsl::facts::vtab::syntax::WITHIN;
+        let v = cx.v();
+        let reads_within = v.rules().any(|r| r.body().any(|l| matches!(l.view(), L::Atom(a) if v.rel_name(a.rel()) == WITHIN)));
         if reads_within {
+            let head = w.on()?;
             head.fields().declare_absent(WITHIN, &[("n", "node"), ("a", "node")]);
             head.fields().add_input(WITHIN);
+            return Ok(());
+        }
+        let (declared, input) = (v.decl_of(WITHIN).is_some(), v.input_names().iter().any(|i| i == WITHIN));
+        if declared || input {
+            let head = w.on()?;
+            if declared {
+                head.fields().undeclare(WITHIN);
+            }
+            if input {
+                head.fields().retain_inputs(|i| i != WITHIN);
+            }
         }
         Ok(())
     }
@@ -1681,7 +1791,7 @@ impl ProgramPass for CoreDecls {
         vec![u8::from(self.docof_of_locs)]
     }
     fn run(&mut self, _cx: &Cx<'_>, w: &mut ProgramW<'_>) -> Result<(), String> {
-        use crate::code_rule_dsl::logic::rr::lower::{core::declare_core, projection_at, projections, write_projection};
+        use crate::code_rule_dsl::logic::rr::lower::{core::declare_core, projections, write_projection};
         let input = std::sync::Arc::clone(w.input());
         let v: &Version = &input;
         // The fields' edit, staged and stated on the edit or the derivation at the end.
@@ -1704,26 +1814,13 @@ impl ProgramPass for CoreDecls {
             }
             return Ok(());
         }
-        // The program's order, the projections inserted where the tree inserts them.
-        enum Item<'r> {
-            Old(crate::code_rule_dsl::logic::program_image::RuleRef<'r>),
-            New(&'static str),
-        }
-        let mut order: Vec<Item<'_>> = input.rules().map(Item::Old).collect();
-        for rel in made {
-            let first = order.first().map(|x| match x {
-                Item::Old(r) => input.rel_name(r.head().rel()),
-                Item::New(r) => r,
-            });
-            order.insert(projection_at(rel, first), Item::New(rel));
-        }
-        let b = w.derive()?;
+        // An edit of the input: the projections' rules added. (A derivation copied every rule of the program to put
+        // them where the tree puts them, an order no reader reads; it was a new base, so a program linked on its
+        // library's union was no longer one, and nothing kept with the library was found from it.)
+        let b = w.on()?;
         b.fields().state_fields_of(&head.b);
-        for x in order {
-            match x {
-                Item::Old(r) => drop(b.keep(&input, r)),
-                Item::New(rel) => drop(write_projection(b, rel)?),
-            }
+        for rel in made {
+            write_projection(b, rel)?;
         }
         Ok(())
     }

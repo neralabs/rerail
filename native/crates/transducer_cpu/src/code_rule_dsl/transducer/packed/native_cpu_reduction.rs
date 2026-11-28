@@ -56,7 +56,7 @@ pub(super) fn define(
     let mut signature = module.make_signature();
     signature.params.push(AbiParam::new(pointer_type));
     signature.returns.push(AbiParam::new(types::I32));
-    let id = module.declare_function("tempo_reduce_candidates", Linkage::Local, &signature)?;
+    let id = module.declare_function("rerail_reduce_candidates", Linkage::Local, &signature)?;
     let mut context = module.make_context();
     context.func.signature = signature;
     let capture_contains = module.declare_func_in_func(capture_contains, &mut context.func);

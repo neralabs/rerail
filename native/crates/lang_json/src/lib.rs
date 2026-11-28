@@ -349,6 +349,23 @@ pub mod code_rule_dsl {
 }
 // cratify: mounts end
 
+/// This crate's own test binary, which the engine does not load: JSON's language pack is registered as the binary
+/// loads, as the engine registers it (`boot::install_languages`), so its tests read JSON's tree-sitter language, tape
+/// tag and terminators.
+#[cfg(test)]
+mod test_load {
+    extern "C" fn load() {
+        use crate::code_rule_dsl::language::{self, Family, adapter::{json::Json, pack::{Pack, register}}};
+        register(Family::Json, &Pack::<Json>::NEW);
+        language::register_base(Family::Json, &Pack::<Json>::NEW);
+    }
+    #[used]
+    #[cfg_attr(target_vendor = "apple", unsafe(link_section = "__DATA,__mod_init_func"))]
+    #[cfg_attr(windows, unsafe(link_section = ".CRT$XCU"))]
+    #[cfg_attr(not(any(target_vendor = "apple", windows)), unsafe(link_section = ".init_array"))]
+    static LOAD: extern "C" fn() = load;
+}
+
 // The crate's own tests make their folders the user's alone, as the engine's test binaries do (decision 0574): a
 // host's umask of `002` made a fixture's folder `775`, which the mapped files' rules refuse.
 #[cfg(test)]

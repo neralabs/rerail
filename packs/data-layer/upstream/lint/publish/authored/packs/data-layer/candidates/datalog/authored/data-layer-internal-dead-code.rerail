@@ -56,12 +56,12 @@ unreachable_cls(c, d, x) :- node(d, c, "class_definition", _, _), unreachable_do
 // raw_decorators: (definition, decorator name): `^@\s*([^\s(]+)` over the decorator's text, read on its first line
 // (a decorator starts its line, so the line's match at its column is the one W's regex finds).
 .decl unreachable_deco(o: node, x: symbol)
-unreachable_deco(o, x) :- unreachable_deco_at(o, d, l, c), src_line(d, l, sp),
-    match_group("@\\s*(?P<n>[^\\s(]+)", sp, m, "n", g), col(m, c), text(g, x).
+unreachable_deco(o, x) :- unreachable_deco_at(o, d, l, c), document_line(d, sp), line_number(sp, l),
+    line_regex_group("@\\s*(?P<n>[^\\s(]+)", sp, m, "n", g), match_start_column(m, c), match_text(g, x).
 // A decorator of definition o: its document, line and column.
 .decl unreachable_deco_at(o: node, d: number, l: number, c: number)
 unreachable_deco_at(o, d, l, c) :- node(d, dd, "decorated_definition", _, _), field(dd, "definition", o), child(dd, dc, _),
-    node(_, dc, "decorator", _, _), line(dc, l), col(dc, c).
+    node(_, dc, "decorator", _, _), node_line_number(dc, l), node_start_column(dc, c).
 
 // ---- inventory, declarations ----
 // unreachable_inv(id, x, d, name, kind, module, fqname)
@@ -470,13 +470,13 @@ unreachable_dyn(d, fq) :- unreachable_dyn_at(d, fq, lm, _), unreachable_dyn_modu
 unreachable_dyn(d, fq) :- unreachable_dyn_at(d, fq, l0, cm), unreachable_dyn_module(d, l0, c0), cm >= c0.
 // The module's first token: its line and column.
 .decl unreachable_dyn_module(d: number, l: number, c: number)
-unreachable_dyn_module(d, l, c) :- !option_on("oracleAnalyzer"), unreachable_doc(d, _, _), node(d, mo, "module", _, _), line(mo, l), col(mo, c).
+unreachable_dyn_module(d, l, c) :- !option_on("oracleAnalyzer"), unreachable_doc(d, _, _), node(d, mo, "module", _, _), node_line_number(mo, l), node_start_column(mo, c).
 // Each match m.attr at line l, column c.
 .decl unreachable_dyn_at(d: number, fq: symbol, l: number, c: number)
-unreachable_dyn_at(d, fq, l, c) :- unreachable_dyn_module(d, _, _), source(d, sp),
-    match_group("(?:\\bimport_module|\\bload_python_module|\\bimportlib\\.import_module)\\(\\s*['\"](?P<module>[^'\"]+)['\"]\\s*\\)\\.(?P<attr>[A-Za-z_][A-Za-z0-9_]*)", sp, m, "module", gm),
-    match_group("(?:\\bimport_module|\\bload_python_module|\\bimportlib\\.import_module)\\(\\s*['\"](?P<module>[^'\"]+)['\"]\\s*\\)\\.(?P<attr>[A-Za-z_][A-Za-z0-9_]*)", sp, m, "attr", ga),
-    line(m, l), col(m, c), text(gm, mn), text(ga, an), fq = cat(mn, cat(".", an)).
+unreachable_dyn_at(d, fq, l, c) :- unreachable_dyn_module(d, _, _), document_source(d, sp),
+    line_regex_group("(?:\\bimport_module|\\bload_python_module|\\bimportlib\\.import_module)\\(\\s*['\"](?P<module>[^'\"]+)['\"]\\s*\\)\\.(?P<attr>[A-Za-z_][A-Za-z0-9_]*)", sp, m, "module", gm),
+    line_regex_group("(?:\\bimport_module|\\bload_python_module|\\bimportlib\\.import_module)\\(\\s*['\"](?P<module>[^'\"]+)['\"]\\s*\\)\\.(?P<attr>[A-Za-z_][A-Za-z0-9_]*)", sp, m, "attr", ga),
+    match_line_number(m, l), match_start_column(m, c), match_text(gm, mn), match_text(ga, an), fq = cat(mn, cat(".", an)).
 unreachable_root(s) :- unreachable_dyn(_, fq), unreachable_resolved(fq, s).
 
 // ---- reach_edges ----
@@ -574,4 +574,4 @@ unreachable_shown(d) :- unreachable_doc(d, _, _), option_on("oracleAnalyzer").
 unreachable_shown(d) :- unreachable_doc(d, p, _), !option_on("oracleAnalyzer"), !prefix("impl/browser/", p).
 
 violation("data-layer-internal-dead-code", "unreachable-internal-symbols", c, p, l) :-
-    unreachable_category(_, x, d, c), unreachable_shown(d), doc(d, p, _), line(x, l).
+    unreachable_category(_, x, d, c), unreachable_shown(d), doc(d, p, _), node_line_number(x, l).

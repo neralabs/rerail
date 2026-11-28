@@ -1,0 +1,590 @@
+# Python.
+#
+# The reference is the lean parser (`rerail_python_lean`, decision 0163), whose tapes are
+# tree-sitter-python's. What the grammar does not read is refused, and goes to the lean parser
+# (decision 0698).
+#
+# Layout (decision 0698): a line break outside brackets is a mark of no width (`newline`), which
+# ends a statement. Inside brackets a line break is a blank (where the bracket depth is not 0).
+
+lexer python
+
+class blank     = ' ' '\t' 0x0c '\r'
+class lf        = '\n'
+# What the loop skips between tokens: blanks and line breaks (a line break's marks are below).
+class ws        = ' ' '\t' 0x0c '\r' '\n'
+class hash      = '#'
+class word      = 'a'..'z' 'A'..'Z' '0'..'9' '_'
+class alpha     = 'a'..'z' 'A'..'Z' '_'
+class digit     = '0'..'9'
+class dot       = '.'
+class opens     = '(' '[' '{'
+class closes    = ')' ']' '}'
+class quote     = '\'' '"'
+class bslash    = '\\'
+class high      = 0x80..0xff
+class tab_ff    = '\t' 0x0c
+class sq        = '\''
+class dq        = '"'
+class cr        = '\r'
+# A string's prefix letters (lean's `string_prefix`): raw, bytes, format and template, unicode.
+class pfx       = 'r' 'R' 'b' 'B' 'f' 'F' 't' 'T' 'u' 'U'
+class raw_l     = 'r' 'R'
+class bytes_l   = 'b' 'B'
+class format_l  = 'f' 'F' 't' 'T'
+class f_l       = 'f' 'F'
+class t_l       = 't' 'T'
+class lbrace    = '{'
+class rbrace    = '}'
+class colon     = ':'
+class bang      = '!'
+class eq        = '='
+class lt_gt     = '<' '>'
+class lpb       = '(' '['
+class rpb       = ')' ']'
+class conv_l    = 'r' 's' 'a'
+# What a backslash and one byte make an escape of (tree-sitter-python's `escape_sequence`).
+class esc_one   = '\n' '\'' '"' 'a' 'b' 'f' 'r' 'n' 't' 'v' '\\'
+class hex       = '0'..'9' 'a'..'f' 'A'..'F'
+class x_l       = 'x'
+class u_l       = 'u'
+class uu_l      = 'U'
+class nn_l      = 'N'
+class bytes_esc = 'N' 'u' 'U'
+class letter    = 'a'..'z' 'A'..'Z'
+class us        = '_'
+class sign      = '+' '-'
+class zero      = '0'
+class x_any     = 'x' 'X'
+class o_any     = 'o' 'O'
+class b_any     = 'b' 'B'
+class oct_d     = '0'..'7'
+class bin_d     = '0' '1'
+class exp_l     = 'e' 'E'
+class imag_l    = 'j' 'J'
+class punct     = '(' ')' '[' ']' '{' '}' ',' ':' ';' '.' '=' '+' '-' '*' '/' '%' '&' '|' '^' '~' '<' '>' '@' '!'
+# The bytes no token begins with, outside the regions: each its own `bad` token, as the lean lexer fails at a byte
+# its operators do not take. A backslash is an escape too (below). A byte past ASCII is an escape alone, and its
+# bytes are left free for the kinds a reader moves (decision 0509).
+class junk      = 0x00..0x08 0x0b 0x0e..0x1f '$' '?' '`' '\\' 0x7f
+
+# --- Regions -----------------------------------------------------------------------------------
+
+# A string, read as the lean lexer's `string` reads one (`read string`), each clause one of its decisions: its prefix's
+# letters, one or two starting a word (three or more are not read yet), say how it reads: raw (`raw_q`, at its quote),
+# bytes, format, template. Its quote, one or three; a triple's two more quotes are a piece of their own (`quote2`). A
+# backslash keeps a quote from closing it, raw or not: a raw string closes as any does, and reads no escape. A format
+# string closes at its quote or at an interpolation's `{` (an `{` alone: `{{` is text, the pairs read from a run's
+# first). After the interpolation's code, its `}` goes on as the kind of string the interpolation is in. A conversion
+# (`!r`) and a format spec (from its `:` to the `}`) are at the code's bracket level zero only: `{a[1:2]}` has no spec,
+# and `{ {k: v} }`'s first `}` is the dict's. An f-string in an interpolation's code opens one of its own, four deep, as
+# the lean lexer's stack of strings does; the outer one goes on after it ends. What it does not read is refused, each
+# where the lean lexer would read it (`refuse`). The reader makes the walk's kinds of each (`s1`, `d3`, `fs1`, its tails
+# `ts1`, `spec`) and their unions (`o_str`, `f_str`, `o_f`, `f_f`, `o_t`, `f_t`), its pieces' masks, and its tokens
+# (`token string_start`, below).
+# An interpolation's `=` before its end, but `==`, `!=`, `<=`, `>=` (`{x=}`: the lean parser keeps the `=` and the `}`).
+mask eq_end     = eq & ~prev(eq | bang | lt_gt)
+regions hidden {
+  cmt = hash .. lf outside
+  read string {
+    prefix pfx max 2 after word
+    flags raw = raw_l, bytes = bytes_l, format = f_l, template = t_l
+    quotes sq | dq triple
+    start quote2
+    text str_text
+    escape escape_sequence = bslash check else '\\' unless raw
+    braces escape_interpolation
+    close string_end
+    interpolation format interp_open = lbrace .. interp_end = rbrace level opens to closes max 7 nest 4 depth i_d0 i_d1 else i_deep
+    conversion type_conversion = bang conv_l
+    spec spec_text = colon
+    refuse "a template string" at open if template
+    refuse "a string open at the end of the file" at fill ~next(~empty)
+    refuse "a line break in a one-line string that no backslash escapes" at fill unless triple lf & ~escaped(bslash)
+    refuse "a carriage return in a string" at fill cr
+    # A triple opened by four quotes or more (but the empty triple's six), or closed by four or more not after a
+    # backslash: the lean lexer closes at the first three.
+    refuse "a triple-quoted string opened by four quotes or more" at open if triple next(quote, 3) & ~(next(quote, 4) & next(quote, 5) & ~next(quote, 6))
+    refuse "a triple-quoted string closed by four quotes or more" at text if triple ~escaped(bslash) & Q & next(Q3_c)
+    refuse "a `\\N{…}` escape" at escape next(nn_l)
+    # In a bytes string, `\N`, `\u` and `\U` are text: not read yet.
+    refuse "a `\\N`, `\\u` or `\\U` in a bytes string" at escape if bytes next(bytes_esc)
+    # A raw string whose bytes are only backslashes and what they step over: the lean lexer's string then ends at its
+    # first backslash. Not read yet.
+    refuse "a raw string of backslashes only" at raw backslashes quote | bslash | lf
+    refuse "an empty interpolation" at end empty
+    refuse "an empty format spec" at spec start next(rbrace)
+    refuse "a `}` alone in an f-string's text" at brace alone
+    refuse "a comment in an interpolation" at code hash
+    refuse "past 7 frames (f-strings and brackets) or 4 f-strings deep in an interpolation" at deep
+    refuse "a `{` or a line break in a format spec" at spec lbrace | lf
+    refuse "an interpolation's `=`" at end prev(eq_end) | prev(blank) & prev(eq_end, 2)
+  }
+}
+mask code       = ~hidden & ~o_cmt & ~o_str & ~o_t & ~o_spec
+
+# --- Strings -----------------------------------------------------------------------------------
+
+escape "a string prefix of three letters or more" when code & pw & next(pfx) & next(pfx, 2) & (next(quote, 3) | next(pfx, 3) & next(quote, 4))
+# An escape, read at its backslash as the lean lexer's `escape` reads it: by its grammar, each choice at the byte
+# after the backslash (`check`). Where it matches no escape the backslash is a `\` of its own (`else`).
+check escape_sequence = '\\' (u_l hex hex hex hex | uu_l hex hex hex hex hex hex hex hex | x_l hex hex
+                        | digit [digit [digit]] | esc_one)
+escape "a backslash" when code & bslash
+escape "a byte above 0x7f outside a comment" when code & high
+# A line's indentation: the blanks after its line break. A tab or a form feed counts as tree-sitter's
+# scanner counts it, not read yet.
+escape "a tab or a form feed in a line's indentation" when tab_ff & fill(prev(lf), ~blank)
+escape "a tab or a form feed starting the file" when tab_ff & ~prev(~empty)
+
+# --- Words and numbers -------------------------------------------------------------------------
+
+mask w          = code & word
+
+# A number (tree-sitter-python's `integer` and `float`), read as the lean lexer's `number`: from its first
+# digit, or a `.` before a digit not after a word (`.5`), the run of its bytes (word bytes, `.`s, an
+# exponent's sign), which its grammar must match at the token (`check`). A digit after a `.` or an
+# exponent's sign is no number's first: the run before it takes it. A number with `0x`, `0o` or
+# `0b` is `based`, never a float; a decimal one with a `.` or an exponent is (`real`, below).
+mask num0       = w & digit & ~prev(w)
+mask e_sign0    = code & sign & prev(exp_l & fill(num0, ~w)) & next(digit)
+mask num_first  = num0 & ~prev(dot) & ~prev(e_sign0)
+mask based_at   = num_first & zero & next(x_any | o_any | b_any)
+mask int_start  = num_first & ~based_at
+mask dot_start  = code & dot & next(digit) & ~prev(w)
+mask num_run    = word | dot | sign & prev(exp_l) & next(digit)
+mask number     = fill(based_at | int_start | dot_start, ~num_run)
+mask based_n    = fill(based_at, ~word)
+
+mask word_start = w & alpha & ~prev(w) & ~p1 & ~p2 & ~number & ~prev(conv_at)
+
+# Where a start reads them: no region's token starts there (the loop decides those first), and no row above does.
+assume "a token starts in code: the regions open only at a token's start" at starts code = ~empty
+assume "a quote at a start opens a string: any quote outside the regions opens one" at starts o_str = quote
+assume "a `#` at a start opens a comment" at starts o_cmt = hash
+assume "a name starts at a word's first letter that starts no string's prefix: a start is never in a word" at starts word_start = alpha & ~p1 & ~p2
+assume "a number starts at a digit, `0x`, `0o` and `0b` apart: a start is never in a word or a number's run" at starts int_start = digit & ~prev(dot) & ~(zero & next(x_any | o_any | b_any))
+assume "a number starts at `0x`, `0o` or `0b`: a start is never in a word or a number's run" at starts based_at = zero & next(x_any | o_any | b_any) & ~prev(dot)
+assume "a number starts at a `.` before a digit after no word" at starts dot_start = dot & next(digit) & ~prev(word)
+assume "a decimal number's bytes are a number's, and no based number's" in integer number = ~empty
+assume "a decimal number's bytes are no based number's" in integer based_n = empty
+
+token identifier = start word_start run word
+token based     = start based_at run word
+token integer   = start int_start | dot_start run num_run
+check based     = zero (x_any [us] hex ([us] hex)* | o_any [us] oct_d ([us] oct_d)* | b_any [us] bin_d ([us] bin_d)*)
+check integer   = digit ([us] digit)* ['.' [digit ([us] digit)*]] [exp_l [sign] digit ([us] digit)*] [imag_l]
+                | '.' digit ([us] digit)* [exp_l [sign] digit ([us] digit)*] [imag_l]
+
+# --- Operators ---------------------------------------------------------------------------------
+
+pairs two_start = "**" "//" "==" "!=" "<=" ">=" "<<" ">>" "->" "+=" "-=" "*=" "/=" "%=" "&=" "|=" "^=" "@=" ":=" "<>" "**=" "//=" "<<=" ">>="
+mask second     = (prev(two_start) | prev(two_start_three, 2)) & code
+# `...`: three dots, a token of its own (`ellipsis`), from the first dot of a run: the run of dots, which must be
+# three (`check`). The lean lexer reads `....` as an ellipsis and a `.`; here it is refused, to the lean parser.
+# Two dots are two operators.
+mask ell_at     = code & dot & next(dot) & next(dot, 2) & ~prev(dot)
+mask p_start    = code & punct & ~second & ~number & ~conv_at & ~fill(ell_at, ~dot)
+assume "an ellipsis starts at the first of three dots" at starts ell_at = dot & next(dot) & next(dot, 2) & ~prev(dot)
+assume "an operator starts at its first byte, but an ellipsis's or a conversion's (a `!` with no `=`): a start is never a pair's second" at starts p_start = punct & ~(dot & next(dot) & next(dot, 2) & ~prev(dot)) & ~(bang & ~next(eq))
+token punct     = start p_start pair two_start
+token ellipsis  = start ell_at run dot
+check ellipsis  = '.' '.' '.'
+
+token comment   = start hash & o_cmt read cmt
+
+# A string: its prefix, its opener (a quote, and a triple's two more), its parts, and its closer. It starts at its
+# prefix's first letter, or at its quote where it has none, as the lean lexer's `token` reads a string's prefix
+# before a name; its first piece runs through its quote. Its reader writes its tokens (`read string`): the string's
+# in parts, an interpolation's tail (`interp_end`, its `}` and the string's text after it), the format spec's
+# (`spec_text`, its `:` and its text) and the conversion's (`type_conversion`).
+mask str_at     = (p1 | p2) & code | o_str & ~prev(p1) & ~prev(p2, 2)
+token string_start = start str_at read string
+
+keywords identifier {
+  "False" "None" "True" "and" "as" "assert" "break" "class" "continue" "def" "del" "elif" "else"
+  "except" "finally" "for" "from" "global" "if" "import" "in" "is" "lambda" "nonlocal" "not" "or"
+  "pass" "raise" "return" "try" "while" "with" "yield"
+} soft {
+  "async" "await" "match" "case" "type" "print" "exec" "__future__" "_"
+}
+keywords punct { "(" ")" "[" "]" "{" "}" "," ":" ";" "." "=" "+" "-" "*" "/" "%" "&" "|" "^" "~" "<" ">" "@" "!" "**" "//" "==" "!=" "<=" ">=" "<<" ">>" "->" "+=" "-=" "*=" "/=" "%=" "&=" "|=" "^=" "@=" ":=" "<>" "**=" "//=" "<<=" ">>=" } required
+
+skip ws
+mask bad_first  = code & junk
+assume "a byte no token begins with is a bad token of its own" at starts bad_first = junk
+token bad       = start bad_first pair empty
+
+# --- Layout ------------------------------------------------------------------------------------
+
+# The bracket depth over code, the lean lexer's count of its loop: a line break inside brackets is a blank.
+# An interpolation's `{` and its tail's `}` are brackets too: a line break in it is a blank.
+scan depth      = count(code & opens | i_at, code & closes | o_t) max 31
+# A line break of code outside brackets, and the file's end: a statement's end.
+mark newline    = lf & code & depth.eq(0), end, settles, ends
+# The next line deeper than the level's indent: a block's start, after its header's `:`. Less
+# deep: the end of each block it is less than (decision 0698), as tree-sitter's scanner gives
+# INDENT and DEDENT.
+mark indent     = lf & code & depth.eq(0), deeper
+mark dedent     = lf & code & depth.eq(0), end, shallower, settles, ends
+# A list's trailing comma, before its closer (a target list's, before its `=`): the lean parser
+# keeps it and the closer.
+mark trail      = tokens "," ")" | "]" | "}" | "="
+# `from __future__`: a statement of its own.
+mark future     = tokens "from" "__future__"
+# A name before `[`: in a type, a generic type's (tree-sitter-python's `generic_type`).
+mark generic    = tokens identifier "["
+# A number with a `.` or an exponent: a float.
+mark real       = empty, at integer when count(dot & number | exp_l & number & ~based_n) at least 1
+# `with (`: the clause's parentheses, not an expression's, where a comma at their depth has more
+# after it (the lean parser's `paren_is_clause`): `(a, b)`, not `(a,)` or `(a as b)`. The lean
+# parser asks for a `:` after them too; where none follows (`with (a, b) as c:`) the clause's
+# reading refuses at the `as`.
+mark w_paren    = tokens after "with" "(" (~("def"))* nest ("(" | "[" | "{" to ")" | "]" | "}") "," ~(")")
+# A statement's first `(` or `[` whose closer an `=` follows: a tuple or list target (a
+# `tuple_pattern`, `list_pattern`), not an expression.
+mark target_paren = tokens "(" | "[" (~("def"))* nest ("(" | "[" | "{" to ")" | "]" | "}") ")" | "]" "="
+# A list's first splat with a comma after it at its depth: a `list_splat` among the list's items.
+# Alone (`[*a]`) it is a primary's, as an expression list's (tree-sitter reads it so).
+mark l_many     = tokens after "[" "*" (~("def"))* nest ("(" | "[" | "{" to ")" | "]" | "}") ","
+# `match` before an expression and a `:` on its line: a match statement's soft word, not a name.
+mark m_stmt     = tokens "match" (~("def") without newline)* nest ("(" | "[" | "{" to ")" | "]" | "}") ":", unless before "match" ":"
+# A name before `=` in a class pattern's arguments: a keyword pattern's.
+mark kw_pat     = tokens identifier "="
+# `type` before a name: a type alias's keyword, not a name.
+mark t_alias    = tokens "type" identifier
+# A `*` alone in a parameter list: a keyword separator (a leaf), not a splat's.
+mark kw_sep     = tokens "*" "," | ")"
+
+tree python {
+  node module whole padded = statement*
+  choice statement      = simple_statements | compound_statement
+  choice simple_statements nested = simple_statement (';' [simple_statement])* newline
+  choice compound_statement = if_statement | while_statement | for_statement | try_statement | with_statement
+                        | function_definition | class_definition | decorated_definition | match_statement
+  node if_statement     = 'if' condition: expression ':' consequence: suite (alternative: elif_clause)* [alternative: else_clause]
+  node elif_clause      = 'elif' condition: expression ':' consequence: suite
+  node else_clause      = 'else' ':' body: suite
+  node while_statement  = 'while' condition: expression ':' body: suite [alternative: else_clause]
+  # A loop's target: a pattern, or a list of them; not an expression, whose comparison takes `in`.
+  node for_statement    = 'for' for_rest
+  choice for_rest       = left: for_target 'in' right: expressions ':' body: suite [alternative: else_clause]
+  choice for_target     = pattern [wrap pattern_list _ in pattern (',' target_item)+]
+  # `try`'s handlers: the `except` and its `:` are leaves, its block and `finally`'s have no field.
+  node try_statement    = 'try' ':' body: suite (except_clause+ [else_clause] [finally_clause] | finally_clause)
+  node except_clause    = 'except' ['*'] [value: as_value] ':' suite
+  node finally_clause   = 'finally' ':' suite
+  # `with`: its keyword a leaf, its items a clause.
+  node with_statement   = 'with' with_rest
+  choice with_rest      = with_clause ':' body: suite
+  node with_clause      = w_paren '(' with_item (',' with_item)* (trail_paren | ')') | with_item (',' with_item)*
+  node with_item        = value: as_value
+  # An expression, or one bound by `as` (an `as_pattern` in the expression's slot).
+  choice as_value supertype expression = expression [wrap as_pattern _ in expression 'as' alias: as_pattern_target]
+  node as_pattern_target = primary_expression
+  # `match`: its soft word no leaf (`m_stmt`), its `:` a leaf; its body a block from the end of
+  # the record before its first `case` (`attached`), as tree-sitter's.
+  node match_statement  = m_stmt 'match' subject: expression (',' subject: expression)* ':' indent body: match_block
+  node match_block nested attached = retag block (alternative: case_clause)+
+  node case_clause      = 'case' case_item (',' case_item)* [guard: if_clause] ':' consequence: suite
+  # A case's pattern, in a `case_pattern` (a union's alternatives not); `p as x`: a
+  # `case_pattern` around an `as_pattern` of the pattern's and the name. `_` alone: none inside.
+  choice case_item      = case_pattern [wrap case_pattern _ wrap as_pattern _ 'as' identifier]
+  node case_pattern     = '_' | kw_pat keyword_pattern | case_simple [wrap union_pattern _ ('|' case_simple)+]
+  node keyword_pattern  = identifier '=' case_simple [wrap union_pattern _ ('|' case_simple)+]
+  choice case_simple    = dotted_name [wrap class_pattern _ '(' (')' | case_item (',' case_item)* (trail_paren | ')'))]
+                        | '-' (real integer as float | integer | based as integer) | real integer as float | integer | based as integer
+                        | string [wrap concatenated_string _ string+]
+                        | 'None' as none | 'True' as true | 'False' as false
+                        | case_list | case_tuple | dict_pattern | splat_pattern
+  node splat_pattern    = '*' ('_' | identifier) | '**' identifier
+  node case_list        = retag list_pattern '[' [case_item (',' case_item)*] ']'
+  node case_tuple       = retag tuple_pattern '(' [case_item (',' case_item)*] ')'
+  node dict_pattern     = '{' [dict_entry (',' dict_entry)*] '}'
+  choice dict_entry     = key: case_key ':' value: case_item | splat_pattern
+  choice case_key       = string [wrap concatenated_string _ string+] | '-' (integer | based as integer) | integer | based as integer | 'None' as none | 'True' as true | 'False' as false
+  # --- Definitions
+  # `async`: a leaf before `def`, `for` or `with`, the node retagged by the word after it.
+  node function_definition = 'async' ('def' def_rest | retag for_statement 'for' for_rest | retag with_statement 'with' with_rest)
+                        | 'def' def_rest
+  choice def_rest       = name: identifier [type_parameters: type_parameter] parameters: parameters ['->' return_type: types] ':' body: suite
+  node class_definition = 'class' name: identifier [type_parameters: type_parameter] [superclasses: argument_list] ':' body: suite
+  node decorated_definition = decorator+ definition: definition
+  choice definition     = function_definition | class_definition
+  node decorator        = '@' expression newline
+  node parameters       = '(' [parameter (',' parameter)*] (trail_paren | ')')
+  choice parameter supertype parameter = identifier [param_tail] | param_splat [wrap typed_parameter _ ':' type: types]
+                        | keyword_separator | positional_separator
+  # `a: int`'s name has no field, `a: int = 1`'s is `name`: the `=` decides, past the type.
+  choice param_tail     = wrap default_parameter name '=' value: expression
+                        | wrap typed_parameter _ ':' type: types [retag typed_default_parameter inner name ('=' value: expression)]
+  choice param_splat    = list_splat_pattern | dictionary_splat_pattern
+  node list_splat_pattern = '*' identifier
+  node dictionary_splat_pattern = '**' identifier
+  node keyword_separator = kw_sep '*'
+  node positional_separator = '/'
+  # A block: the lines past its header's indent (the header's `indent`, asked with the header's
+  # indent), to the first line less deep than its own: its first token's column.
+  node block nested     = statement+
+  # A header's body: an indented block, or its line's simple statements (`def f(): ...`), a
+  # block too.
+  choice suite          = indent block | inline_block
+  node inline_block     = retag block simple_statements
+  indented block
+  indented match_block
+  choice simple_statement = type_alias_statement | expression_statement | pass_statement | return_statement | raise_statement
+                        | delete_statement | assert_statement | global_statement | nonlocal_statement
+                        | break_statement | continue_statement | import_statement | import_from_statement
+                        | future_import_statement
+  # An assignment's target is read as an expression, then moved into its `left` (a pattern).
+  # A list of targets (`a, b = c`): the first moved into a `pattern_list` at its comma, the rest
+  # patterns; only an assignment follows (a bare `a, b` statement holds its expressions itself:
+  # not read yet, refused).
+  node expression_statement = expression [assign_tail | target_list wrap assignment left '=' right: rhs] | yield
+                        | target_paren target_item wrap assignment left in pattern '=' right: rhs
+                        | list_splat_pattern target_list wrap assignment left '=' right: rhs
+  choice target_list    = wrap pattern_list _ in pattern ',' [target_item (',' target_item)* [trail_eq]]
+  choice trail_eq       = trail ','
+
+  choice target_item supertype pattern = pattern | list_splat_pattern
+  # `yield`: its keyword (and `from`) leaves, then what it yields.
+  node yield            = 'yield' ['from' expression | expressions]
+  choice assign_tail    = wrap assignment left in pattern assign_rest
+                        | wrap augmented_assignment left in pattern operator: aug_op right: rhs
+  choice assign_rest    = '=' right: rhs | ':' type: types ['=' right: rhs]
+  choice rhs nested     = expression [wrap expression_list _ in expression (',' [list_part])+
+                                    | wrap assignment left in pattern '=' right: rhs]
+                        | star_item wrap expression_list _ in expression (',' [list_part])+
+                        | yield
+  choice aug_op         = '+=' | '-=' | '*=' | '/=' | '%=' | '&=' | '|=' | '^=' | '@=' | '**=' | '//=' | '<<=' | '>>='
+  # A type: a generic type, or an expression. A union over a generic (`list[int] | None`) is a
+  # `union_type` of two types, left to right, each step a type of its own; any other `|` is the
+  # expression's (`int | None` a `binary_operator`), as tree-sitter reads an annotation.
+  choice types          = type (wrap type _ wrap union_type _ '|' type)*
+  node type             = generic_type | expression
+  node generic_type     = generic identifier type_parameter
+  node type_parameter   = '[' types (',' types)* (trail_bracket | ']')
+  # `type X = ...`: the soft word before a name (`t_alias`); its word and `=` no leaves.
+  node type_alias_statement = t_alias 'type' left: type '=' right: types
+  node pass_statement   = 'pass'
+  node return_statement = 'return' [expressions]
+  node raise_statement  = 'raise' [expressions] ['from' cause: expression]
+  node delete_statement = 'del' expressions
+  node assert_statement = 'assert' expression [',' expression]
+  node global_statement = 'global' identifier (',' identifier)*
+  node nonlocal_statement = 'nonlocal' identifier (',' identifier)*
+  node break_statement  = 'break'
+  node continue_statement = 'continue'
+  # One expression, or a list of them (tree-sitter-python's `_expressions`).
+  choice expressions nested = expression [wrap expression_list _ in expression (',' [list_part])+]
+                        | star_item wrap expression_list _ in expression (',' [list_part])+
+  # An expression list's item, or a list's only one: an expression, or a splat read as a
+  # primary (`*a.b()`, the splat the attribute's object), its name in no slot.
+  choice list_part      = expression | star_item
+  choice star_item supertype expression = star_primary
+  choice star_primary supertype primary_expression = star_splat postfix*
+  node star_splat       = retag list_splat '*' identifier
+  # --- Imports
+  node import_statement = 'import' import_name (',' import_name)*
+  choice import_name    = name: dotted_name [wrap aliased_import name 'as' alias: identifier]
+  node dotted_name nested = identifier ('.' identifier)*
+  node import_from_statement = 'from' module_name: module_path 'import' from_list
+  choice module_path    = relative_import | dotted_name
+  node relative_import  = import_prefix [dotted_name]
+  node import_prefix    = '.'+
+  choice from_list      = wildcard_import | import_names
+  choice import_names   = import_name (',' import_name)* | '(' import_name (',' import_name)* (trail_paren | ')')
+  node wildcard_import  = '*'
+  node future_import_statement = future 'from' '__future__' 'import' import_names
+  # --- Expressions
+  # By tree-sitter-python's precedences, each operation around the left side so far, as Kotlin's
+  # (decision 0492): an operator's right operand takes every operator that binds tighter, so the
+  # loop never meets one after a looser one. A comparison is one node over all its operands.
+  choice expression supertype expression nested = (not_operator | primary_expression [comparison | walrus]) (and_op | or_op)* [conditional]
+                        | lambda
+  node lambda           = 'lambda' [parameters: lambda_parameters] ':' body: expression
+  node lambda_parameters = lambda_param (',' lambda_param)*
+  choice lambda_param supertype parameter = identifier [wrap default_parameter name '=' value: expression] | list_splat_pattern | dictionary_splat_pattern
+                        | keyword_separator
+  # Its operators a level of their own: the comparison ends at a line break after some uses only.
+  choice comparison     = wrap comparison_operator _ in primary_expression compare_rest
+  # `a := b`: a `named_expression` in the expression's slot, its name with none.
+  choice walrus         = wrap named_expression name ':=' value: expression
+  choice compare_rest nested = (operators: compare_op primary_expression)+
+  choice compare_op     = '<' | '<=' | '==' | '!=' | '>=' | '>' | '<>' | 'in' | 'not' wrap 'not in' _ 'in'
+                        | 'is' [wrap 'is not' _ 'not']
+  choice and_op         = wrap boolean_operator left in expression operator: 'and' right: not_operand
+  choice or_op          = wrap boolean_operator left in expression operator: 'or' right: or_operand
+  choice or_operand supertype expression nested = (not_operator | primary_expression [comparison]) and_op*
+  node not_operator     = 'not' argument: not_operand
+  choice not_operand supertype expression nested = not_operator | primary_expression [comparison]
+  choice conditional    = wrap conditional_expression _ in expression 'if' expression 'else' expression
+  # The binary operators are primaries: `|` loosest, then `&`, `^` (tighter than `&`, as
+  # tree-sitter-python has it), shifts, `+ -`, `* / // % @`; a unary operator; `**`, right to left.
+  choice primary_expression supertype primary_expression = (unary_operator | power) (mul_op | add_op | shift_op | xor_op | band_op | bor_op)*
+  choice power          = primary [wrap binary_operator left in primary_expression operator: '**' right: power_operand]
+  choice power_operand supertype primary_expression nested = unary_operator | power
+  node unary_operator   = operator: ('+' | '-' | '~') argument: power_operand
+  choice mul_op         = wrap binary_operator left in primary_expression operator: ('*' | '/' | '//' | '%' | '@') right: power_operand
+  choice add_op         = wrap binary_operator left in primary_expression operator: ('+' | '-') right: add_operand
+  choice shift_op       = wrap binary_operator left in primary_expression operator: ('<<' | '>>') right: shift_operand
+  choice xor_op         = wrap binary_operator left in primary_expression operator: '^' right: xor_operand
+  choice band_op        = wrap binary_operator left in primary_expression operator: '&' right: band_operand
+  choice bor_op         = wrap binary_operator left in primary_expression operator: '|' right: bor_operand
+  choice add_operand supertype primary_expression nested = (unary_operator | power) mul_op*
+  choice shift_operand supertype primary_expression nested = (unary_operator | power) (mul_op | add_op)*
+  choice xor_operand supertype primary_expression nested = (unary_operator | power) (mul_op | add_op | shift_op)*
+  choice band_operand supertype primary_expression nested = (unary_operator | power) (mul_op | add_op | shift_op | xor_op)*
+  choice bor_operand supertype primary_expression nested = (unary_operator | power) (mul_op | add_op | shift_op | xor_op | band_op)*
+  # A primary and its postfix operations, each a wrap of the primary so far.
+  choice primary        = atom postfix* | await
+  node await            = 'await' await_operand
+  choice await_operand supertype primary_expression nested = primary
+  choice postfix        = wrap attribute object in primary_expression '.' attribute: identifier
+                        | wrap call function in primary_expression arguments: argument_list
+                        | wrap subscript value in primary_expression '[' subscript: sub_item (',' subscript: sub_item)* (trail_bracket | ']')
+  # A subscript's item: an expression, or a slice (its `:` leaves), the expression before it moved in.
+  choice sub_item       = expression [wrap slice _ in expression slice_rest] | slice
+  node slice            = slice_rest
+  choice slice_rest     = ':' [expression] [':' [expression]]
+  # Strings side by side: a `concatenated_string` of them.
+  choice atom           = identifier | real integer as float | integer | based as integer | string [wrap concatenated_string _ string+] | list | parenthesized_expression | dictionary
+                        | 'True' as true | 'False' as false | 'None' as none | ellipsis
+  # The patterns an assignment's target is in (tree-sitter-python's `pattern`), and a loop's
+  # target read as one: a name, its attributes and subscripts.
+  choice pattern supertype pattern = identifier pattern_postfix* | tuple_pattern | list_pattern
+  node tuple_pattern    = '(' (')' | target_item (',' target_item)* (trail_paren | ')'))
+  node list_pattern     = '[' target_item (',' target_item)* (trail_bracket | ']')
+  choice pattern_postfix = wrap attribute object in primary_expression '.' attribute: identifier
+                        | wrap subscript value in primary_expression '[' subscript: sub_item (',' subscript: sub_item)* (trail_bracket | ']')
+
+  # A generator as a call's only argument stands for its list (`arguments:`).
+  node argument_list    = '(' (')' | argument (relabel body retag generator_expression comprehension ')' | (',' argument)* (trail_paren | ')')))
+  choice argument       = expression [wrap keyword_argument name '=' value: expression] | list_splat | dictionary_splat
+  node list_splat       = '*' expression
+  node dictionary_splat = '**' expression
+  # A list whose one item is a splat (`[*b]`) tree-sitter reads otherwise (the splat a primary's):
+  # not read yet, refused.
+  node list             = '[' (']' | expression (relabel body retag list_comprehension comprehension ']' | (',' list_item)* (trail_bracket | ']'))
+                              | l_many list_splat (',' list_item)+ (trail_bracket | ']') | star_item ']')
+  choice list_item      = expression | list_splat
+  # A comprehension: its first item the `body:` of the node it is retagged to, then its clauses.
+  choice comprehension  = for_in_clause (for_in_clause | if_clause)*
+  node for_in_clause    = ['async'] 'for' left: for_target 'in' right: in_operand
+  node if_clause        = 'if' in_operand
+  # An expression with no conditional: a clause's `if` is the next clause's.
+  choice in_operand supertype expression nested = (not_operator | primary_expression [comparison]) (and_op | or_op)*
+  # `{}`, a dictionary of pairs and splats, or a set: its first item says which.
+  node dictionary       = '{' ('}' | dictionary_splat dict_more | retag set list_splat set_more
+                              | expression ((wrap pair key in expression ':' value: expression) (dict_more | relabel body retag dictionary_comprehension comprehension '}')
+                                           | retag set set_more | relabel body retag set_comprehension comprehension '}'))
+  choice dict_more      = (',' dict_item)* (trail_brace | '}')
+  choice dict_item      = expression (wrap pair key in expression ':' value: expression) | dictionary_splat
+  choice set_more       = (',' set_item)* (trail_brace | '}')
+  choice set_item       = expression | list_splat
+  # `(a)`, or a tuple: `()`, `(a,)`, `(a, b)`.
+  node parenthesized_expression = '(' (retag tuple ')' | expression (')' | retag tuple paren_more | relabel body retag generator_expression comprehension ')')
+                              | retag tuple list_splat paren_more)
+  choice paren_more     = (',' paren_item)+ (trail_paren | ')') | trail_paren
+  choice paren_item     = expression | list_splat
+  # A trailing comma: the lean parser leaves a list's tokens out only where they are the ones the
+  # grammar implies, so after one the `,` and the closer are leaves.
+  choice trail_paren    = trail ',' ')'
+  choice trail_bracket  = trail ',' ']'
+  choice trail_brace    = trail ',' '}'
+  # A string: its start (prefix and quote, one leaf; a triple's two more quotes merged in), its content (its
+  # text and escapes), its end.
+  node string           = string_start string_rest
+  choice string_rest    = [merge string_start quote2] [string_content] (interpolation [string_content])* string_end
+  # `{`, its expression, a conversion (`!r`), and its `}` or its format spec (`:` and its text).
+  node interpolation    = interp_open expression: expression [type_conversion: type_conversion] [format_specifier: format_specifier] interp_end
+  node format_specifier = spec_text
+  # A backslash that starts no escape is a leaf of its own (lean's `Backslash`); a raw string's
+  # are its text.
+  node string_content   = (str_text | escape_sequence | '\\' | escape_interpolation)+
+  hidden newline indent dedent trail future generic kw_sep real w_paren target_paren l_many t_alias m_stmt kw_pat
+  # The tokens tree-sitter's grammar implies: no leaf on the tape.
+  implied pass_statement 'pass'
+  implied string_content str_text
+  implied interpolation interp_open interp_end
+  implied format_specifier spec_text
+  implied if_statement 'if' ':'
+  implied elif_clause 'elif' ':'
+  implied else_clause 'else' ':'
+  implied while_statement 'while' ':'
+  implied for_rest 'in' ':'
+  implied for_target ','
+  implied try_statement 'try' ':'
+  implied finally_clause 'finally' ':'
+  implied with_rest ':'
+  implied with_clause ',' ')'
+  implied as_value 'as'
+  implied pattern_postfix '.' '[' ']' ','
+  implied tuple_pattern '(' ')' ','
+  implied list_pattern '[' ']' ','
+  implied walrus ':='
+  implied assign_rest '=' ':'
+  implied expression_statement '='
+  implied target_list ','
+  implied lambda 'lambda' ':'
+  implied lambda_parameters ','
+  implied lambda_param '='
+  implied rhs ',' '='
+  implied expressions ','
+  implied return_statement 'return'
+  implied raise_statement 'raise' 'from'
+  implied delete_statement 'del'
+  implied assert_statement 'assert' ','
+  implied global_statement 'global' ','
+  implied nonlocal_statement 'nonlocal' ','
+  implied break_statement 'break'
+  implied continue_statement 'continue'
+  implied import_statement 'import' ','
+  implied dotted_name '.'
+  implied import_name 'as'
+  implied import_from_statement 'from'
+  # An import list's `(` is a leaf: it is not the only way on after `import`.
+  implied import_names ',' ')'
+  implied postfix '.' '[' ']' ','
+  implied argument_list '(' ')' ','
+  implied argument '='
+  implied list_splat '*'
+  implied star_splat '*'
+  implied type_alias_statement 'type' '='
+  implied match_statement 'match' ','
+  implied keyword_pattern '|'
+  implied case_clause 'case' ','
+  implied case_item 'as'
+  implied case_pattern '_' '|'
+  implied case_simple '(' ')' ','
+  implied case_list '[' ']' ','
+  implied case_tuple '(' ')' ','
+  implied dict_pattern '{' '}' ','
+  implied dict_entry ':'
+  implied dictionary_splat '**'
+  implied list '[' ']' ','
+  implied type_parameter '[' ']' ','
+  implied types '|'
+  implied parenthesized_expression '(' ')'
+  implied not_operator 'not'
+  implied conditional 'if' 'else'
+  implied paren_more ',' ')'
+  implied def_rest '->' ':'
+  implied for_in_clause 'in'
+  implied if_clause 'if'
+  implied await 'await'
+  implied class_definition 'class' ':'
+  implied decorator '@'
+  implied parameters '(' ')' ','
+  implied param_tail '=' ':'
+  implied parameter ':'
+  implied list_splat_pattern '*'
+  implied dictionary_splat_pattern '**'
+  implied dictionary '{' '}' ':'
+  implied dict_more ',' '}'
+  implied dict_item ':'
+  implied set_more ',' '}'
+  extra comment
+  # The lexer's errors: no rule takes them, as the lean lexer fails at a byte no token takes.
+  untaken bad
+}

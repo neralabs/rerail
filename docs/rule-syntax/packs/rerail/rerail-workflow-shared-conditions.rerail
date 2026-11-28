@@ -15,13 +15,13 @@
 // earlier lines hold a test. The test is the JSON's, searched line by line (`^[^#\n]*?` before it, as there).
 
 // skip_test(d, t): t is the first branch test on its line in file d.
-.decl skip_test(d: number, t: span)
-skip_test(d, t) :- source(d, sp), match_group("(?m)^[^#\\n]*?(?P<again>(?:!=[ \\t]*'changeset-release\\b|!startsWith\\([^)\\n]*'changeset-release\\b|!=[ \\t]*(?:vars|env)\\.RELEASE_BRANCH\\b))", sp, _, "again", t).
+.decl skip_test(d: number, t: match)
+skip_test(d, t) :- document_source(d, sp), line_regex_group("(?m)^[^#\\n]*?(?P<again>(?:!=[ \\t]*'changeset-release\\b|!startsWith\\([^)\\n]*'changeset-release\\b|!=[ \\t]*(?:vars|env)\\.RELEASE_BRANCH\\b))", sp, _, "again", t).
 .decl skip_line(d: number, l: number)
-skip_line(d, l) :- skip_test(d, t), line(t, l).
+skip_line(d, l) :- skip_test(d, t), match_line_number(t, l).
 
-.violation RELEASE_PR_SKIP_REPEATED(at: span) "Work out the release pull request skip once, as an output of a job the others need (ci.yml's changes job), and read that output in each job instead of repeating the branch test."
-RELEASE_PR_SKIP_REPEATED(t) :- skip_test(d, t), line(t, l), k = count : { skip_line(d, e), e < l }, k > 0, k < 12.
+.violation RELEASE_PR_SKIP_REPEATED(at: match) "Work out the release pull request skip once, as an output of a job the others need (ci.yml's changes job), and read that output in each job instead of repeating the branch test."
+RELEASE_PR_SKIP_REPEATED(t) :- skip_test(d, t), match_line_number(t, l), k = count : { skip_line(d, e), e < l }, k > 0, k < 12.
 
 // The pack's examples (packs/rerail/pack.json).
 .test a_repeated_branch_test_is_reported exactly

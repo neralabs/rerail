@@ -9,7 +9,7 @@
 
 // callee(n): the JSON util `callee`, used where the JSON says `matches: "callee"`
 //   F: metavariable this relation binds for the calling rule
-.decl pth208_callee(n: node, f: loc)
+.decl pth208_callee(n: node, f: node)
 pth208_callee(n, F) :- (kind(n, "identifier") ; kind(n, "attribute")),
     sym_of(n, "os.listdir"), node(_, n, _, _, _), F = n.
 pth208_callee(n, F) :- kind(n, "parenthesized_expression"), child(n, c1, _), pth208_callee(c1, F).
@@ -49,7 +49,7 @@ pth208_number(n) :- pth208_bool_typed(n).
 
 // int_typed(n): the JSON util `int-typed`, used where the JSON says `matches: "int-typed"`
 .decl pth208_int_typed(n: node)
-pth208_int_typed(n) :- kind(n, "integer"), value(n, v1), value_type(v1, "int").
+pth208_int_typed(n) :- kind(n, "integer"), value(n, v1), value_type_of(n, "int").
 pth208_int_typed(n) :- kind(n, "unary_operator"), field(n, "argument", c2), pth208_number(c2).
 pth208_int_typed(n) :- kind(n, "binary_operator"), !pth208_tok_has_4(n), field(n, "left", c11),
     pth208_number(c11), field(n, "right", c12), pth208_number(c12).
@@ -86,7 +86,7 @@ pth208_int_attribute(n) :- kind(n, "attribute"), field(n, "attribute", c1),
 
 // file_descriptor(n): the JSON util `file-descriptor`, used where the JSON says `matches: "file-descriptor"`
 .decl pth208_file_descriptor(n: node)
-pth208_file_descriptor(n) :- kind(n, "integer"), value(n, v1), value_type(v1, "int").
+pth208_file_descriptor(n) :- kind(n, "integer"), value(n, v1), value_type_of(n, "int").
 pth208_file_descriptor(n) :- kind(n, "parenthesized_expression"), child(n, c2, _),
     pth208_file_descriptor(c2).
 pth208_file_descriptor(n) :- pth208_name_root(n).
@@ -96,7 +96,7 @@ pth208_file_descriptor(n) :- pth208_int_attribute(n).
 // Each rule below is one way the JSON `rule` can match.
 // Columns after `at` are the metavariables the JSON's message, anchor or `each` names: one finding per distinct row.
 // The JSON `constraints` on S are added to every rule.
-.violation PTH208(at: loc, f: node, s: loc) "Use `Path({s}).iterdir()` instead of `os.listdir({s})`; it lazily yields `Path` objects, so take `.name` for plain names. Leave it for bytes paths and file descriptors."
+.violation PTH208(at: node, f: node, s: node) "Use `Path({s}).iterdir()` instead of `os.listdir({s})`; it lazily yields `Path` objects, so take `.name` for plain names. Leave it for bytes paths and file descriptors."
     suppress noqa "PTH208"
 PTH208(F, n, S) :- kind(n, "call"), field(n, "function", c1), pth208_callee(c1, F),
     pth208_arg_path_1(n, a2), S = a2, !pth208_file_descriptor(S).
@@ -104,7 +104,7 @@ PTH208(F, n, S) :- kind(n, "call"), field(n, "function", c1), pth208_callee(c1, 
 // PTH208_os_listdir_cwd(n, detail): findings from clauses `os-listdir-cwd`, `os-listdir-unpacked`. Their messages differ only in
 // `detail`: each rule's head gives its clause's words. Each rule is one way a JSON `rule` can match.
 // Columns after `at` are the metavariables the JSON's message, anchor or `each` names: one finding per distinct row.
-.violation PTH208_os_listdir_cwd(at: loc, f: node, detail: symbol) code "PTH208" "Use {detail}."
+.violation PTH208_os_listdir_cwd(at: node, f: node, detail: symbol) code "PTH208" "Use {detail}."
     suppress noqa "PTH208"
 PTH208_os_listdir_cwd(F, n, "`Path().iterdir()` instead of `os.listdir()`; it lazily yields `Path` objects, so take `.name` for plain names") :- kind(n, "call"),
     field(n, "function", c1), pth208_callee(c1, F), field(n, "arguments", c2),
@@ -278,7 +278,7 @@ pth208_arg_no_path_1(n) :- kind(n, "call"), field(n, "arguments", l), !pth208_ar
     !pth208_args_pos(l, _, 0), !kind(l, "generator_expression").
 
 // demand_alt_6: the rows of alt_6 its callers ask for (the metavariable columns they pass in)
-.decl pth208_demand_alt_6(n: node, a: loc)
+.decl pth208_demand_alt_6(n: node, a: node)
 pth208_demand_alt_6(c5, A) :- kind(n, "attribute"), field(n, "attribute", c1),
     kind(c1, "identifier"), node(_, c1, _, _, _), A = c1, field(n, "object", c2), kind(c2, "identifier"),
     ref_site(c2, b3), (st4 = b3 ; within(b3, st4)), kind(st4, "class_definition"),
@@ -315,7 +315,7 @@ pth208_alt_3(n) :- ref_site(n, b14), site_only(b14), (st15 = b14 ; within(b14, s
 
 // alt_6(n): the JSON `any`: n matches if any one of these rules does
 //   A: metavariable of the calling rule, passed in (bound by the caller)
-.decl pth208_alt_6(n: node, a: loc)
+.decl pth208_alt_6(n: node, a: node)
 pth208_alt_6(n, A) :- pth208_demand_alt_6(n, A), kind(n, "assignment"), field(n, "left", c1),
     kind(c1, "identifier"), text(c1, t_a1), text(A, t_a1),
     ( field(n, "type", c2), pth208_int_annotation(c2)

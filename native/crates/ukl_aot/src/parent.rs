@@ -51,6 +51,12 @@ pub fn json_doc(lang: &Lang, name: &str, src: &[u8]) -> Doc {
         }
         bytes.extend_from_slice(&c);
     }
+    // Its source after them, apart from the tape as the residency places it (decision 0353 step 7): the view's source
+    // offset from the document's first byte, and room past it for a window's read (`ukl_ld_window`, 8 bytes).
+    bytes.resize(bytes.len().next_multiple_of(16), 0);
+    view.set_source_offset(i64::try_from(bytes.len()).expect("a small document"));
+    bytes.extend_from_slice(src);
+    bytes.resize(bytes.len().next_multiple_of(16) + 16, 0);
     Doc { name: name.to_owned(), bytes, view }
 }
 

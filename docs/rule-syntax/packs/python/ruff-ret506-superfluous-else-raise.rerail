@@ -15,6 +15,6 @@
 //       y()
 #include "python/flow-return.rerail"
 
-.violation RET506(at: span, w: symbol) code "RET506" "Unnecessary `{w}` after `raise` statement"
+.violation RET506(at: node, w: symbol) code "RET506" "Unnecessary `{w}` after `raise` statement"
     suppress ruff "RET506"
 RET506(kw, w) :- else_after_jump(kw, w, "raise").

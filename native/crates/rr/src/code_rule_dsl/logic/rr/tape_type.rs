@@ -26,7 +26,7 @@ use crate::code_rule_dsl::logic::front::Error;
 const CONTENT: [&str; 3] = ["tape", "digest", "blob"];
 
 /// The types a content-keyed value is not, besides the other content types.
-const OTHER: [&str; 8] = ["symbol", "sym", "number", "int", "unsigned", "float", "node", "span"];
+const OTHER: [&str; 11] = ["symbol", "sym", "number", "int", "unsigned", "float", "node", "line", "match", "token", "place"];
 
 /// The relations of `core.rerail` with a tape column, and their columns' types.
 const BUILT_IN: &[(&str, &[&str])] = &[

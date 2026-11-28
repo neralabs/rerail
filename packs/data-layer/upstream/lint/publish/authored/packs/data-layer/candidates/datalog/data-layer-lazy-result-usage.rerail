@@ -100,9 +100,9 @@ lazy_result_exempt_decorator(f) :- lazy_result_def(f, _), child(w, f, _), node(_
 lazy_result_uses_lazy(f, m) :- lazy_result_def(f, m), inside(i, f, lazy_result_def_kind), node(_, i, "identifier", _, _), text(i, z), lazy_result_lazy(m, z).
 lazy_result_skip(p) :- doc(_, p, _), (contains("tests/", p) ; contains("test_", p) ; contains("__pycache__", p) ; contains("l2055_lazy_result/", p) ; contains("l2070_batching/", p)).
 lazy_result_hit(d, f, m) :- lazy_result_def(f, m), !lazy_result_lazy_return(f), !lazy_result_stub(f), !lazy_result_exempt_decorator(f), !lazy_result_uses_lazy(f, m), node(d, f, _, _, _), doc(d, p, _), !lazy_result_skip(p), !tape_syntax_error(d).
-violation("data-layer-lazy-result-usage", "execute", "lazy_result_usage", p, l) :- lazy_result_hit(d, f, "execute"), in_scope(d), !out_scope(d), doc(d, p, _), line(f, l).
-violation("data-layer-lazy-result-usage", "first", "lazy_result_usage", p, l) :- lazy_result_hit(d, f, "first"), in_scope(d), !out_scope(d), doc(d, p, _), line(f, l).
-violation("data-layer-lazy-result-usage", "one", "lazy_result_usage", p, l) :- lazy_result_hit(d, f, "one"), in_scope(d), !out_scope(d), doc(d, p, _), line(f, l).
-violation("data-layer-lazy-result-usage", "one_or_none", "lazy_result_usage", p, l) :- lazy_result_hit(d, f, "one_or_none"), in_scope(d), !out_scope(d), doc(d, p, _), line(f, l).
-violation("data-layer-lazy-result-usage", "select_one", "lazy_result_usage", p, l) :- lazy_result_hit(d, f, "select_one"), in_scope(d), !out_scope(d), doc(d, p, _), line(f, l).
-violation("data-layer-lazy-result-usage", "select_one_or_raise", "lazy_result_usage", p, l) :- lazy_result_hit(d, f, "select_one_or_raise"), in_scope(d), !out_scope(d), doc(d, p, _), line(f, l).
+violation("data-layer-lazy-result-usage", "execute", "lazy_result_usage", p, l) :- lazy_result_hit(d, f, "execute"), in_scope(d), !out_scope(d), doc(d, p, _), node_line_number(f, l).
+violation("data-layer-lazy-result-usage", "first", "lazy_result_usage", p, l) :- lazy_result_hit(d, f, "first"), in_scope(d), !out_scope(d), doc(d, p, _), node_line_number(f, l).
+violation("data-layer-lazy-result-usage", "one", "lazy_result_usage", p, l) :- lazy_result_hit(d, f, "one"), in_scope(d), !out_scope(d), doc(d, p, _), node_line_number(f, l).
+violation("data-layer-lazy-result-usage", "one_or_none", "lazy_result_usage", p, l) :- lazy_result_hit(d, f, "one_or_none"), in_scope(d), !out_scope(d), doc(d, p, _), node_line_number(f, l).
+violation("data-layer-lazy-result-usage", "select_one", "lazy_result_usage", p, l) :- lazy_result_hit(d, f, "select_one"), in_scope(d), !out_scope(d), doc(d, p, _), node_line_number(f, l).
+violation("data-layer-lazy-result-usage", "select_one_or_raise", "lazy_result_usage", p, l) :- lazy_result_hit(d, f, "select_one_or_raise"), in_scope(d), !out_scope(d), doc(d, p, _), node_line_number(f, l).

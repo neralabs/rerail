@@ -15,7 +15,7 @@ UP029(n) :- kind(n, "import_from_statement"), up029_alt_10(n).
 
 // shadowed(n): the JSON util `shadowed`, used where the JSON says `matches: "shadowed"`
 //   N: metavariable of the calling rule, passed in (bound by the caller)
-.decl up029_shadowed(n: node, n_mv: loc)
+.decl up029_shadowed(n: node, n_mv: node)
 up029_shadowed(n, N) :- up029_demand_shadowed(n, N), within_stop(n, p1, up029_stop_1), precedes(s2, p1),
     up029_alt_4(s2, N).
 up029_shadowed(n, N) :- up029_demand_shadowed(n, N),
@@ -23,7 +23,7 @@ up029_shadowed(n, N) :- up029_demand_shadowed(n, N),
 
 // alias_binding(n): the JSON util `alias-binding`, used where the JSON says `matches: "alias-binding"`
 //   N: metavariable of the calling rule, passed in (bound by the caller)
-.decl up029_alias_binding(n: node, n_mv: loc)
+.decl up029_alias_binding(n: node, n_mv: node)
 up029_alias_binding(n, N) :- up029_demand_alias_binding(n, N), up029_tok_follows_4(n), up029_alt_8(n, N).
 
 // tok_has_1(n): a child of n, a named node or an anonymous token, matches "^=$": a named node, a token the tape stores, or one it leaves out, read from the source between stored children
@@ -129,7 +129,7 @@ up029_tok_follows_9(n) :- precedes(o35, n), structural_before(o35, g33),
     match("(?s)^(?:(?:.*\\W)?(?:import)(?:\\W.*)?)$", g33).
 
 // demand_shadowed: the rows of shadowed its callers ask for (the metavariable columns they pass in)
-.decl up029_demand_shadowed(n: node, n_mv: loc)
+.decl up029_demand_shadowed(n: node, n_mv: node)
 up029_demand_shadowed(c2, N) :- child(n, c2, _), kind(c2, "dotted_name"),
     glob("{ascii,bytes,chr,dict,filter,hex,input,int,isinstance,list,map,max,min,next,object,oct,open,pow,range,round,str,super,zip}", c2),
     node(_, c2, _, _, _), N = c2, up029_tok_follows_6(c2).
@@ -144,21 +144,21 @@ up029_demand_shadowed(c30, N) :- field(n, "module_name", c29), kind(c29, "dotted
     glob("{filter,input,map,range,zip}", c30), node(_, c30, _, _, _), N = c30, up029_tok_follows_9(c30).
 
 // demand_alias_binding: the rows of alias_binding its callers ask for (the metavariable columns they pass in)
-.decl up029_demand_alias_binding(n: node, n_mv: loc)
+.decl up029_demand_alias_binding(n: node, n_mv: node)
 up029_demand_alias_binding(s1, N) :- up029_demand_shadowed(n, N), precedes(n, s1).
 up029_demand_alias_binding(s2, N) :- up029_demand_shadowed(n, N), precedes(s2, n).
 
 // demand_alt_4: the rows of alt_4 its callers ask for (the metavariable columns they pass in)
-.decl up029_demand_alt_4(n: node, n_mv: loc)
+.decl up029_demand_alt_4(n: node, n_mv: node)
 up029_demand_alt_4(s2, N) :- up029_demand_shadowed(n, N), within_stop(n, p1, up029_stop_1),
     precedes(s2, p1).
 
 // demand_alt_3: the rows of alt_3 its callers ask for (the metavariable columns they pass in)
-.decl up029_demand_alt_3(n: node, n_mv: loc)
+.decl up029_demand_alt_3(n: node, n_mv: node)
 up029_demand_alt_3(c4, N) :- up029_demand_alt_4(n, N), within_stop(c4, n, up029_stop_2).
 
 // demand_alt_8: the rows of alt_8 its callers ask for (the metavariable columns they pass in)
-.decl up029_demand_alt_8(n: node, n_mv: loc)
+.decl up029_demand_alt_8(n: node, n_mv: node)
 up029_demand_alt_8(n, N) :- up029_demand_alias_binding(n, N), up029_tok_follows_4(n).
 
 // stop_2: the kinds of the JSON `stopBy` rule: the tree search stops at these nodes
@@ -175,7 +175,7 @@ up029_stop_1(n) :- kind(n, "block"), child(p1, n, _),
 
 // alt_3(n): the JSON `any`: n matches if any one of these rules does
 //   N: metavariable of the calling rule, passed in (bound by the caller)
-.decl up029_alt_3(n: node, n_mv: loc)
+.decl up029_alt_3(n: node, n_mv: node)
 up029_alt_3(n, N) :- up029_demand_alt_3(n, N),
     (kind(n, "function_definition") ; kind(n, "class_definition")),
     field(n, "name", c1), kind(c1, "identifier"), node(_, c1, _, _, _), J = c1, text(J, t2), text(N, t2), @doc(J) = @doc(N).
@@ -188,7 +188,7 @@ up029_alt_3(n, N) :- up029_demand_alt_3(n, N), kind(n, "identifier"), node(_, n,
 
 // alt_4(n): the JSON `any`: n matches if any one of these rules does
 //   N: metavariable of the calling rule, passed in (bound by the caller)
-.decl up029_alt_4(n: node, n_mv: loc)
+.decl up029_alt_4(n: node, n_mv: node)
 up029_alt_4(n, N) :- up029_demand_alt_4(n, N),
     (kind(n, "function_definition") ; kind(n, "class_definition")),
     field(n, "name", c1), kind(c1, "identifier"), node(_, c1, _, _, _), J = c1, text(J, t2), text(N, t2), @doc(J) = @doc(N).
@@ -197,7 +197,7 @@ up029_alt_4(n, N) :- up029_demand_alt_4(n, N), within_stop(c4, n, up029_stop_2),
 
 // alt_8(n): the JSON `any`: n matches if any one of these rules does
 //   N: metavariable of the calling rule, passed in (bound by the caller)
-.decl up029_alt_8(n: node, n_mv: loc)
+.decl up029_alt_8(n: node, n_mv: node)
 up029_alt_8(n, N) :- up029_demand_alt_8(n, N), kind(n, "dotted_name"), node(_, n, _, _, _), J = n,
     text(J, t1), text(N, t1), @doc(J) = @doc(N).
 up029_alt_8(n, N) :- up029_demand_alt_8(n, N), kind(n, "aliased_import"), field(n, "alias", c3),

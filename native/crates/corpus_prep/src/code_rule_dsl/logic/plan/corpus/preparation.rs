@@ -16,8 +16,10 @@ pub mod whole;
 pub mod lowering_tail;
 pub mod demand;
 pub mod magic;
+pub mod callable;
 pub mod prune;
 pub mod rank;
+pub mod rules_pass;
 pub mod simplify;
 mod nearest;
 pub mod parts;
@@ -211,7 +213,12 @@ impl Deferral {
         let on = !loading_run && matches!(mode.as_str(), "auto" | "on" | "adaptive");
         let adaptive = mode != "on";
         let base = Deferral { on, adaptive, cache_pairs: adaptive, ..Default::default() };
-        crate::code_rule_dsl::logic::profile::with_bound::<Replans, _>(|r| r.0.as_ref().and_then(|r| r.lock().get(key).cloned())).filter(|_| on).unwrap_or(base)
+        // The rounds made eager stand with the deferral off too: what drew an answer across may be the demand.
+        match crate::code_rule_dsl::logic::profile::with_bound::<Replans, _>(|r| r.0.as_ref().and_then(|r| r.lock().get(key).cloned())) {
+            Some(d) if on => d,
+            Some(d) => Deferral { undone: d.undone, ..base },
+            None => base,
+        }
     }
 
     /// What the next try changes, when `rel`, answered by a function of its node's document, landed in the cross-file
@@ -234,6 +241,20 @@ impl Deferral {
             return None;
         }
         crate::code_rule_dsl::logic::profile::decision("deferred join placement", || format!("project {rel} in its source document before reading its factors"));
+        Some(next)
+    }
+
+    /// `self` with the round answering `rel` made eager, its answers projected in their documents, whatever drew the
+    /// answer into the cross-file part: the program's own demand, which preparation applies (decision 0174, RUF034
+    /// alone), as well as the deferred joins. `None` where that round is eager already, or none answers `rel`.
+    pub fn with_round_undone(&self, rel: &str) -> Option<Deferral> {
+        use crate::code_rule_dsl::logic::rr::lower::ON_REQUEST;
+        let round = ON_REQUEST.iter().position(|round| round.iter().any(|a| a.rel == rel))?;
+        let mut next = self.clone();
+        if !next.undone.insert(round) {
+            return None;
+        }
+        crate::code_rule_dsl::logic::profile::decision(&format!("{rel} on request"), || "no: preparing put its answer in the cross-file part, which holds no documents to read; its round eager (decision 0174 §6)".into());
         Some(next)
     }
 
@@ -316,7 +337,8 @@ pub(super) fn front_of(version: Arc<Version>, dialect: crate::code_rule_dsl::lan
     }
     // Joins deferred to what their readers request (`product_demand::deferred`, decision 0488): the requested pairs or
     // endpoints drive the producer, or the two factors meet in each reader. A part prepared alone lacks its readers.
-    if deferral.on && whole {
+    // The rounds made eager (`Deferral::with_round_undone`), before the deferred joins and the demand read them.
+    if whole {
         if !deferral.undone.is_empty() {
             let undone = deferral.undone.clone();
             p.made("rounds the deferral makes eager", 1, &deferral.settings(), |v| {
@@ -329,7 +351,9 @@ pub(super) fn front_of(version: Arc<Version>, dialect: crate::code_rule_dsl::lan
             });
             p.program(&mut prune::Prune::default());
         }
-        p.program(&mut super::product_demand::deferred::DeferJoins::new(deferral));
+        if deferral.on {
+            p.program(&mut super::product_demand::deferred::DeferJoins::new(deferral));
+        }
     }
     let mut reach = demand::ReachForm::default();
     p.program(&mut reach);
@@ -340,11 +364,15 @@ pub(super) fn front_of(version: Arc<Version>, dialect: crate::code_rule_dsl::lan
         p.program(&mut own);
         if matches!(own.outcome, Some(Ok(_))) {
             p.program(&mut prune::Prune::default());
-            // A measurement aid: `RERAIL_DEMAND_DUMP=<file>` writes the rules as demand left them.
+            // A measurement aid: `RERAIL_DEMAND_DUMP=<file>` appends the rules as demand left them, each program
+            // under a line naming its outputs.
             if let Some(path) = std::env::var_os("RERAIL_DEMAND_DUMP")
                 && let Ok(v) = p.current()
+                && let Ok(mut out) = std::fs::OpenOptions::new().create(true).append(true).open(path)
             {
-                let _ = std::fs::write(path, v.rules().map(|r| format!("{}\n", v.show_rule(r))).collect::<String>());
+                use std::io::Write as _;
+                let outputs: Vec<&str> = v.outputs().map(|o| v.text(o)).collect();
+                let _ = write!(out, "// ---- a program, its outputs: {}\n{}", outputs.join(", "), v.rules().map(|r| format!("{}\n", v.show_rule(r))).collect::<String>());
             }
         }
     }

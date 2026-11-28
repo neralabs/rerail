@@ -17,7 +17,7 @@
     "Expected object keys to be in {what}ending order. '{x}' should be before '{y}'."
     suppress eslint "sort-keys"
     suppress oxlint "sort-keys"
-sort_keys(at, x, y, w) :- prev_name(p, q), pname(p, x, at), pname(q, y, _), sort_key(x, kx), sort_key(y, ky),
+sort_keys(at, x, y, w) :- prev_name(p, q), pname(p, x, at), pname(q, y, _), sort_key(p, kx), sort_key(q, ky),
     order(o), (o = "asc", kx < ky ; o = "desc", ky < kx), !grouped(p), large(p), wording(o, w).
 
 // entry(o, p, i): the properties of object literal o, in order (i the child index). Methods and accessors are
@@ -67,15 +67,14 @@ entry_step(q, n) :- entry_step(q, m), !entry(_, m, _), next_sibling(m, n).
 .decl order(o: symbol)
 order(o) :- option("option", o).
 order("asc") :- !option("option", _).
-.decl sort_key(x: symbol, k: symbol)
-sort_key(x, k) :- named(x), !option("natural", "true"), cased(x, k).
-sort_key(x, k) :- named(x), option("natural", "true"), cased(x, c), natural_key(c, k).
-nat_ask(c) :- named(x), option("natural", "true"), cased(x, c).
-.decl cased(x: symbol, c: symbol)
-cased(x, x) :- named(x), !option("caseSensitive", "false").
-cased(x, @lower(x)) :- named(x), option("caseSensitive", "false").
-.decl named(x: symbol)
-named(x) :- pname(_, x, _).
+// sort_key(p, k), cased(p, c): keyed by the property, not its name (decision 0677).
+.decl sort_key(p: node, k: symbol)
+sort_key(p, k) :- !option("natural", "true"), cased(p, k).
+sort_key(p, k) :- option("natural", "true"), cased(p, c), natural_key(p, c, k).
+nat_ask(p, c) :- option("natural", "true"), cased(p, c).
+.decl cased(p: node, c: symbol)
+cased(p, x) :- pname(p, x, _), !option("caseSensitive", "false").
+cased(p, @lower(x)) :- pname(p, x, _), option("caseSensitive", "false").
 .decl wording(o: symbol, w: symbol)  // "natural insensitive asc"
 wording(o, cat(n, cat(i, o))) :- order(o), (option("natural", "true"), n = "natural " ; !option("natural", "true"), n = ""),
     (option("caseSensitive", "false"), i = "insensitive " ; !option("caseSensitive", "false"), i = "").
@@ -97,8 +96,8 @@ back_prop(p, q) :- next_entry(r, p), !property(_, r, _), back_prop(r, q).
 .decl property(o: node, p: node, i: number)
 property(o, p, i) :- entry(o, p, i), !kind(p, "spread_element"), !ignored(p).
 .decl blank_between(q: node, p: node)  // a line with nothing on it, not inside a comment or a template
-blank_between(q, p) :- prev_prop(p, q), docof(p, d), end_line(q, a), line(p, b), src_line(d, l, sp), a < l, l < b,
+blank_between(q, p) :- prev_prop(p, q), docof(p, d), node_end_line_number(q, a), node_line_number(p, b), document_line(d, sp), line_number(sp, l), a < l, l < b,
     match("\\s*", sp), !spanned(d, l).
 .decl spanned(d: number, l: number)  // line l is inside a multi-line comment or template string
-spanned(d, l) :- (kind(c, "comment") ; kind(c, "template_string")), docof(c, d), line(c, a), end_line(c, b), a < b,
-    src_line(d, l, _), a < l, l <= b.
+spanned(d, l) :- (kind(c, "comment") ; kind(c, "template_string")), docof(c, d), node_line_number(c, a), node_end_line_number(c, b), a < b,
+    document_line(d, Rr_line1), line_number(Rr_line1, l), a < l, l <= b.

@@ -1,6 +1,6 @@
 // scripts/release/packs.mjs: what a pack release run publishes and under which dist-tag, what a promotion moves to
 // `latest` (and `next`), the lockfile sync after `changeset version`, the publish gate's reading of the pack
-// validation, the patch-only bumps of packs below 1.0.0, the changeset a pull request owes each pack whose
+// validation, the major bumps refused below 1.0.0, the changeset a pull request owes each pack whose
 // published files it changes, the changelog entry a changeset becomes (changesetNotes), and the rule summary
 // a released pack's changelog section opens with (pack-changelog.mjs).
 
@@ -544,16 +544,16 @@ describe("changesetBumpFailures", () => {
   const changeset = (file, ...bumps) => ({ file, text: `---\n${bumps.map(([id, bump]) => `"@neralabs/rerail-pack-${id}": ${bump}`).join("\n")}\n---\n\nSummary.\n` });
   const packs = [pack("young", "0.1.1"), pack("stable", "1.2.0")];
 
-  it("refuses a minor or major bump of a pack below 1.0.0, which would take 0.1.1 to 0.2.0 or 1.0.0", () => {
-    const failures = changesetBumpFailures([changeset("a.md", ["young", "minor"]), changeset("b.md", ["stable", "patch"], ["young", "major"])], packs);
+  it("refuses a major bump of a pack below 1.0.0, which would release 0.1.1 as 1.0.0", () => {
+    const failures = changesetBumpFailures([changeset("a.md", ["young", "major"]), changeset("b.md", ["stable", "patch"], ["young", "major"])], packs);
     expect(failures).toEqual([
-      "a.md: @neralabs/rerail-pack-young is 0.1.1, below 1.0.0, so its bump is patch, not minor",
-      "b.md: @neralabs/rerail-pack-young is 0.1.1, below 1.0.0, so its bump is patch, not major",
+      "a.md: @neralabs/rerail-pack-young is 0.1.1, below 1.0.0, so a major bump would release it as 1.0.0: use minor or patch",
+      "b.md: @neralabs/rerail-pack-young is 0.1.1, below 1.0.0, so a major bump would release it as 1.0.0: use minor or patch",
     ]);
   });
 
-  it("passes a patch below 1.0.0 and any bump from 1.0.0", () => {
-    expect(changesetBumpFailures([changeset("a.md", ["young", "patch"], ["stable", "major"])], packs)).toEqual([]);
+  it("passes a patch or minor below 1.0.0 and any bump from 1.0.0", () => {
+    expect(changesetBumpFailures([changeset("a.md", ["young", "patch"], ["stable", "major"]), changeset("b.md", ["young", "minor"])], packs)).toEqual([]);
   });
 
   it("passes the repository's pending changesets", () => {

@@ -189,9 +189,9 @@ hnsw_architecture_hi(h, i, b) :- hnsw_architecture_lit(h, i, _), hnsw_architectu
 hnsw_architecture_hi(h, i, b) :- hnsw_architecture_lit(h, i, _), hnsw_architecture_host_str(h), j = @add(i, 1), !fstring_piece(h, j, _, _), node(_, h, _, _, b).
 hnsw_architecture_run(h, i, f, s) :- hnsw_architecture_lo(h, i, a), hnsw_architecture_hi(h, i, b), hnsw_architecture_frag(h, f, s), s >= a, s < b.
 hnsw_architecture_run(h, i, x, s) :- hnsw_architecture_lit(h, i, _), hnsw_architecture_host_str(h), j = @add(i, 1), fstring_piece(h, j, "debug", _), hnsw_architecture_piece_node(h, j, x), node(_, x, _, s, _).
-hnsw_architecture_run_line(h, i, l) :- hnsw_architecture_run(h, i, f, s), s = min t : { hnsw_architecture_run(h, i, _, t) }, line(f, l).
-hnsw_architecture_run_line(h, 0, l) :- hnsw_architecture_lit(h, 0, _), hnsw_architecture_host_spec(h), line(h, l).
-hnsw_architecture_run_line(h, i, l) :- hnsw_architecture_lit(h, i, _), hnsw_architecture_host_spec(h), i > 0, j = @sub(i, 1), hnsw_architecture_piece_node(h, j, x), end_line(x, l).
+hnsw_architecture_run_line(h, i, l) :- hnsw_architecture_run(h, i, f, s), s = min t : { hnsw_architecture_run(h, i, _, t) }, node_line_number(f, l).
+hnsw_architecture_run_line(h, 0, l) :- hnsw_architecture_lit(h, 0, _), hnsw_architecture_host_spec(h), node_line_number(h, l).
+hnsw_architecture_run_line(h, i, l) :- hnsw_architecture_lit(h, i, _), hnsw_architecture_host_spec(h), i > 0, j = @sub(i, 1), hnsw_architecture_piece_node(h, j, x), node_end_line_number(x, l).
 hnsw_architecture_piece_const(d, l, v) :- hnsw_architecture_lit(h, i, v), hnsw_architecture_run_line(h, i, l), node(d, h, _, _, _).
 hnsw_architecture_unparen(x, x) :- node(_, x, _, _, _), !node(_, x, "parenthesized_expression", _, _).
 hnsw_architecture_unparen(o, x) :- node(_, o, "parenthesized_expression", _, _), child(o, i, 0), !child(o, _, 1), hnsw_architecture_unparen(i, x).
@@ -220,7 +220,7 @@ hnsw_architecture_row(d, i, "HNSW003") :- hnsw_architecture_imported(d, i, s), h
 hnsw_architecture_row(d, f, "HNSW004") :- node(d, f, "function_definition", _, _), !op(f, "async"), field(f, "name", x), text(x, "render"), hnsw_architecture_algorithm(d).
 hnsw_architecture_row(d, c, "HNSW005") :- node(d, c, "call", _, _), field(c, "function", a), node(_, a, "attribute", _, _), field(a, "object", w), hnsw_architecture_unparen(w, o), node(_, o, "identifier", _, _), text(o, "SqlFragment"), hnsw_architecture_algorithm(d).
 hnsw_architecture_row(d, c, "HNSW002") :- hnsw_architecture_const(c, s), node(d, c, _, _, _), (contains("in_beam", s) ; contains("beam_iteration_limit", s) ; contains("original_cosine", s) ; contains("recovery_epoch", s) ; contains("route_partition", s)).
-hnsw_architecture_found(d, l, issue) :- hnsw_architecture_row(d, n, issue), line(n, l).
+hnsw_architecture_found(d, l, issue) :- hnsw_architecture_row(d, n, issue), node_line_number(n, l).
 hnsw_architecture_found(d, l, "HNSW007") :- hnsw_architecture_piece_const(d, l, s), hnsw_architecture_module(d), hnsw_architecture_json_re(x), match(x, s).
 hnsw_architecture_found(d, l, "HNSW002") :- hnsw_architecture_piece_const(d, l, s), (contains("in_beam", s) ; contains("beam_iteration_limit", s) ; contains("original_cosine", s) ; contains("recovery_epoch", s) ; contains("route_partition", s)).
 hnsw_architecture_generated(d) :- doc(d, p, _), match("(?:.*/)?rust_bridge/(?:.*/)?generated_[^/]*", p).

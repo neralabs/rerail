@@ -8,7 +8,7 @@
 // C402(n): a finding at node n, from clause `generator-dict`.
 // Each rule below is one way the JSON `rule` can match.
 // Columns after `at` are the metavariables the JSON's message, anchor or `each` names: one finding per distinct row.
-.violation C402(at: loc, c402_call: node) "Rewrite `dict((k, v) for ...)` as a dict comprehension `{{k: v for ...}}`; leave it if `dict` here is not the builtin."
+.violation C402(at: place, c402_call: node) "Rewrite `dict((k, v) for ...)` as a dict comprehension `{{k: v for ...}}`; leave it if `dict` here is not the builtin."
     suppress noqa "C402"
 C402(CALL, n) :- c402_call(n, CALL).
 C402(CALL, n) :- c402_in_annotation(n, CALL).
@@ -36,7 +36,7 @@ c402_pairs(n) :- kind(n, "parenthesized_expression"), child(n, c2, _), c402_pair
 
 // call(n): the JSON util `call`, used where the JSON says `matches: "call"`
 //   CALL: metavariable this relation binds for the calling rule
-.decl c402_call(n: node, c402_call: loc)
+.decl c402_call(n: node, c402_call: place)
 c402_call(n, CALL) :- kind(n, "call"), c402_alt_1(n, CALL), field(n, "arguments", c4),
     ( c402_pairs(c4)
     ; kind(c4, "argument_list"), k1 = count : { child(c4, c1, _), !c402_trivia(c1) }, k1 >= 1, k1 <= 1, child(c4, c2, _), c402_pairs(c2)
@@ -45,19 +45,19 @@ c402_call(n, CALL) :- kind(n, "call"), c402_alt_1(n, CALL), field(n, "arguments"
 
 // in_annotation(n): the JSON util `in-annotation`, used where the JSON says `matches: "in-annotation"`
 //   CALL: metavariable this relation binds for the calling rule
-.decl c402_in_annotation(n: node, c402_call: loc)
+.decl c402_in_annotation(n: node, c402_call: place)
 c402_in_annotation(n, CALL) :- (kind(n, "string") ; kind(n, "concatenated_string")),
     parsed(n, "annotation", r1), within(c2, r1), c402_alt_3(c2, CALL).
 
 // alt_1(n): the JSON `any`: n matches if any one of these rules does
 //   CALL: metavariable this relation binds for the calling rule
-.decl c402_alt_1(n: node, c402_call: loc)
+.decl c402_alt_1(n: node, c402_call: place)
 c402_alt_1(n, CALL) :- field(n, "function", c1), c402_callee(c1), node(_, n, _, _, _), CALL = n.
 c402_alt_1(n, CALL) :- field(n, "function", c2), kind(c2, "list_splat"), child(c2, c3, _),
     c402_callee(c3), match("\\*(?:\\s|\\\\\\r?\\n|#[^\\r\\n]*)*(?<CALL>[\\s\\S]+)", n).
 
 // alt_3(n): the JSON `any`: n matches if any one of these rules does
 //   CALL: metavariable this relation binds for the calling rule
-.decl c402_alt_3(n: node, c402_call: loc)
+.decl c402_alt_3(n: node, c402_call: place)
 c402_alt_3(n, CALL) :- c402_call(n, CALL).
 c402_alt_3(n, CALL) :- c402_in_annotation(n, CALL).

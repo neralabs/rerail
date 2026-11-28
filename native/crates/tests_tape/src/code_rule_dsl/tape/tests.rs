@@ -169,12 +169,20 @@ fn rewritten(image: &TapeImage, source: &str, edit: impl Fn(usize, &mut rerail_t
             .collect()
     });
     let terminators = crate::code_rule_dsl::lines::terminators(image.language);
-    let tape = rerail_tape_format::f16::write(lang, nodes.len(), source.as_bytes(), terminators, tag, false, |i| {
-        let mut x = nodes[i];
-        edit(i, &mut x);
-        x
-    })?;
-    TapeImage::written_16(rerail_tape_format::f16::Finished { tape }, image.language, source, None, &|| false)
+    let edited: Vec<rerail_tape_format::f16::Node> = (0..nodes.len())
+        .map(|i| {
+            let mut x = nodes[i];
+            edit(i, &mut x);
+            x
+        })
+        .collect();
+    let tape = rerail_tape_format::f16::write(lang, edited.len(), source.as_bytes(), terminators, tag, false, |i| edited[i])?;
+    // The record of the nodes as written, which the auxiliary index is laid from.
+    let mut record = rerail_tape_format::aux_index::Nodes::default();
+    for x in &edited {
+        record.push(x.number, x.subtree_end as u32, x.start as u32, x.end as u32);
+    }
+    TapeImage::written_16(rerail_tape_format::f16::Finished { tape, nodes: Some(record), digest: None }, image.language, source, None, &|| false)
 }
 
 /// `image`'s stored bytes edited, then read back: `Err` where the format's reading refuses them.
@@ -329,11 +337,11 @@ fn persisted_image_round_trips_without_parsing() {
     // `_jsx_closing_tag_lt`, Patch 24's `_no_line_terminator_here`, Patch 28's
     // `_member_name_here`, Patch 29's `_template_escape_without_digits`, Patch 30's `using`
     // declarations, `grammars/tree-sitter-typescript/PATCHES.md`) renumbers them; so does the language's format 16
-    // table (its codes, from the grammar, decision 0631, and their numbering, by two corpora's counts: revision 4), and a
+    // table (its codes, from the grammar, decision 0631, and their numbering, by a corpus's counts: revision 5), and a
     // change of format 16's layout (decision 0434) or of what its home holds (its auxiliary index, decision 0656).
     assert_eq!(
         digest,
-        "10220242ab41c817f5aa9505398499f5b0b2c4365a32400de60e17bc5a4888ab"
+        "7a5af35f41d747bf64e59f1f34fe3b9d04cd6d435a9180cd6a9a592d5f2f6ef5"
     );
 }
 
@@ -1038,7 +1046,7 @@ fn damaged_trees_keep_error_and_missing_nodes_like_native() {
             }
         }
         // The statement: `debugger` alone is natively its keyword, a token the grammar implies, which
-        // no tape stores (RER-131).
+        // no tape stores (decision 0161).
         let pattern = if lang == GrammarDialect::Python {
             "x = $A"
         } else {
@@ -1075,7 +1083,7 @@ fn cancellation_interrupts_mid_encode_without_partial_image() {
         "encode must poll before the final source digest"
     );
     let image = TapeImage::encode(native.tree.root_node(), &grammar, &source, &|| false).unwrap();
-    // A record per stored node: the tokens the grammar implies are in no tape (RER-131).
+    // A record per stored node: the tokens the grammar implies are in no tape (decision 0161).
     let nodes = native.tree.root_node().descendant_count();
     let doc = TapeDoc::restore(Arc::new(source.into()), grammar, &image, &|| false).unwrap();
     assert_eq!(doc.transducer_len(), doc.image.node_count());
@@ -1122,7 +1130,7 @@ fn checkpoint_stride_boundaries_preserve_native_nodes_and_matches() {
         (17, "x\n".repeat(8)),
     ] {
         let (native, tape, _, _) = fixture(&source, GrammarDialect::Python);
-        // The document's tree image: the stored one is named-only (RER-131).
+        // The document's tree image: the stored one is named-only (decision 0161).
         let image = Arc::clone(&tape.image);
         let left = AstGrep::doc(native);
         let right = AstGrep::doc(tape.clone());
@@ -1166,7 +1174,7 @@ fn span_varint_width_boundaries_preserve_utf8_ranges_and_captures() {
     for (length, expected_width) in [(127, 1), (128, 2), (16_383, 2), (16_384, 3)] {
         let source = format!("#é{}\nfoo(1)\n", "a".repeat(length - 3));
         let (native, tape, _, _) = fixture(&source, GrammarDialect::Python);
-        // The document's tree image: the stored one is named-only (RER-131).
+        // The document's tree image: the stored one is named-only (decision 0161).
         let image = Arc::clone(&tape.image);
         let left = AstGrep::doc(native);
         let right = AstGrep::doc(tape.clone());
@@ -1704,7 +1712,7 @@ fn bitlex_bytes(source: &str) -> Option<Vec<u8>> {
 
 /// A JSON file's image from the Bitlex parser, or `None` where it refuses the file.
 fn bitlex_image(source: &str) -> Option<TapeImage> {
-    let written = crate::code_rule_dsl::transducer::packed::json_parser::image(source)?;
+    let written = crate::code_rule_dsl::transducer::packed::json_parser::image(source, None)?;
     TapeImage::written_16(written, GrammarDialect::Json, source, None, &|| false).ok()
 }
 
@@ -1883,9 +1891,9 @@ fn rr_parse_costs() {
     );
 }
 
-/// The Bitlex parser's JSON tapes are tree-sitter-json's, byte for byte: kinds, fields, spans,
-/// extras (comments) and the `_value` supertype; and an invalid file is refused, so it goes to
-/// tree-sitter-json.
+/// The Bitlex parser's JSON tapes are tree-sitter-json's, byte for byte: kinds, fields, spans and the `_value`
+/// supertype; and an invalid file is refused, so it goes to tree-sitter-json. It is simdjson's form, which reads what
+/// simdjson refuses for a number past a double's range; a comment is simdjson's JSONC read's, so the parser refuses it.
 #[test]
 fn json_tapes_from_the_bitlex_parser_are_tree_sitters() {
     assert_eq!(crate::code_rule_dsl::transducer::packed::json_parser::compile_error(), None);
@@ -1895,7 +1903,7 @@ fn json_tapes_from_the_bitlex_parser_are_tree_sitters() {
         "null\n",
         "{\"a\": 1, \"b\": [true, false, null], \"c\": {\"d\": \"e\\n\\u00e9\"}}\n",
         "[1, -2.5e10, 0, 3.0E-2]",
-        "// a comment\n{\n  \"a\": 1, /* inline */ \"b\": 2\n}\n// trailing\n",
+        "[1e400, 123456789012345678901234567890]",
         "\u{feff}{\"bom\": true}",
         "{\"nested\": [[[{\"x\": [1, {\"y\": []}]}]]]}",
         "  \n\t{ \"spaced\" :\t[ 1 ,2 ] }  \n",
@@ -1906,13 +1914,13 @@ fn json_tapes_from_the_bitlex_parser_are_tree_sitters() {
     // JSON allows an exponent's sign; tree-sitter-json refuses `+`, so these tapes are the Bitlex parser's alone.
     for source in ["1e+2", "[1.5E+3]"] {
         assert!(
-            crate::code_rule_dsl::transducer::packed::json_parser::image(source).is_some(),
+            crate::code_rule_dsl::transducer::packed::json_parser::image(source, None).is_some(),
             "refused {source:?}"
         );
     }
-    for invalid in ["{", "[1,]", "{\"a\" 1}", "tru", ""] {
+    for invalid in ["{", "[1,]", "{\"a\" 1}", "tru", "", "// a comment\n{}"] {
         assert!(
-            crate::code_rule_dsl::transducer::packed::json_parser::image(invalid).is_none(),
+            crate::code_rule_dsl::transducer::packed::json_parser::image(invalid, None).is_none(),
             "accepted {invalid:?}"
         );
     }
@@ -2070,7 +2078,7 @@ fn the_router_takes_the_best_json_parser_this_cpu_runs() {
     for (r, _) in routes.iter().filter(|(r, _)| r.runs) {
         let image = r
             .parser
-            .parse(&grammar, source, &|| false)
+            .parse(&grammar, &source.into(), &|| false)
             .unwrap()
             .unwrap();
         assert_eq!(image.primary.to_bytes().unwrap(), want, "{}", r.name);
@@ -2381,7 +2389,7 @@ fn json_parse_costs() {
     }
     let all = files.len();
     files.retain(|f| {
-        rerail_simdjson::structurals(f.as_bytes(), |_| ()).is_ok() && jp::image(f).is_some()
+        rerail_simdjson::structurals(f.as_bytes(), |_| ()).is_ok() && jp::image(f, None).is_some()
     });
     let bytes: usize = files.iter().map(String::len).sum();
     let retired = rerail_compiler::native_cpu_codegen::retired;
@@ -2441,20 +2449,20 @@ fn json_parse_costs() {
             "simdjson: the tape",
             Box::new(|f| {
                 usize::from(
-                    std::hint::black_box(product.parse(&grammar, f, &|| false))
+                    std::hint::black_box(product.parse(&grammar, &f.into(), &|| false))
                         .is_some_and(|t| t.is_ok()),
                 )
             }),
         ),
         (
             "bitlex: parse (the image)",
-            Box::new(|f| jp::image(f).unwrap().tape.extent().len()),
+            Box::new(|f| jp::image(f, None).unwrap().tape.extent().len()),
         ),
         (
             "bitlex: the tape",
             Box::new(|f| {
                 usize::from(
-                    std::hint::black_box(jp::tape::Bitlex.parse(&grammar, f, &|| false))
+                    std::hint::black_box(jp::tape::Bitlex.parse(&grammar, &f.into(), &|| false))
                         .is_some_and(|t| t.is_ok()),
                 )
             }),
@@ -6988,6 +6996,29 @@ fn every_tape_format_reads_the_document_as_restored() {
     }
 }
 
+/// Decision 0353 step 4a (row 17): a parser writes its tape in its room where a device reads tapes (`placed::rooms`),
+/// whichever parser it is (tree-sitter's, a Bitlex parser's, simdjson's): the image a parse gives is placed there, and
+/// placing it (`place_stored`) is its home as it is, with the bytes it would be stored as.
+#[test]
+fn a_parse_writes_its_tape_in_its_room() {
+    for (language, source) in [
+        (GrammarDialect::Python, "def f(a):\n    return len(a)\n"),
+        (GrammarDialect::Json, "{\"a\": [1, 2, {\"b\": null}]}\n"),
+        (GrammarDialect::Go, "package p\n\nfunc f(a int) int { return a }\n"),
+        (GrammarDialect::Rust, "fn f(a: u8) -> u8 { a }\n"),
+    ] {
+        let grammar = Arc::new(Grammar::new(language).unwrap());
+        let image = TapeImage::parse(&grammar, source, &|| false).expect("parsed").expect("encoded").primary;
+        #[cfg(any(target_os = "macos", target_os = "linux", windows))]
+        assert_eq!(image.placed(), super::placed::device().is_some(), "{language:?}: written in a slab's room where there is a device");
+        let home = image.place_stored().unwrap();
+        assert_eq!(&*home, &image.to_bytes().unwrap()[..], "{language:?}: the bytes as stored");
+        if image.placed() {
+            assert_eq!(home.as_ptr(), image.room().unwrap().bytes().as_ptr(), "{language:?}: placed where its parser wrote it");
+        }
+    }
+}
+
 /// Decision 0353 step 4a: a stored tape placed in its home (a slab's room, where the host has a device) and read
 /// there answers every node question as the same tape read from a buffer of its own, in each format.
 #[test]
@@ -7489,11 +7520,11 @@ fn lean_tapes_are_tree_sitters<E: std::fmt::Debug>(
     // The product's route: the lean parser where it reads the file, tree-sitter where it refuses.
     assert!(tree_parser(dialect).is_some(), "{dialect:?}'s parser is installed");
     let source = sources.last().expect("a source");
-    let product = TapeImage::parse(&grammar, source, &|| false).unwrap().unwrap();
+    let product = TapeImage::parse(&grammar, *source, &|| false).unwrap().unwrap();
     let lean = encode(&grammar, source, &|| false).unwrap().unwrap();
     assert_eq!(product.primary.to_bytes().unwrap(), lean.to_bytes().unwrap());
     let refused = invalid.first().expect("an invalid text");
-    assert!(TapeImage::parse(&grammar, refused, &|| false).unwrap().is_ok());
+    assert!(TapeImage::parse(&grammar, *refused, &|| false).unwrap().is_ok());
 }
 
 /// Kotlin's tapes from the lean parser (the product's parser for Kotlin, decision 0326) are
@@ -7502,7 +7533,7 @@ fn lean_tapes_are_tree_sitters<E: std::fmt::Debug>(
 fn kotlin_tapes_from_the_lean_parser_are_tree_sitters() {
     lean_tapes_are_tree_sitters(
         GrammarDialect::Kotlin,
-        crate::code_rule_dsl::tape::kotlin_lean::encode,
+        |grammar, source, budget| crate::code_rule_dsl::tape::kotlin_lean::encode(grammar, source, budget),
         &[
             "",
             "// only a comment\n/* block */\nclass A\n",
@@ -7521,7 +7552,7 @@ fn kotlin_tapes_from_the_lean_parser_are_tree_sitters() {
 fn swift_tapes_from_the_lean_parser_are_tree_sitters() {
     lean_tapes_are_tree_sitters(
         GrammarDialect::Swift,
-        crate::code_rule_dsl::tape::swift_lean::encode,
+        |grammar, source, budget| crate::code_rule_dsl::tape::swift_lean::encode(grammar, source, budget),
         &[
             "",
             "// only a comment\nlet x = 1\n",
@@ -7540,7 +7571,7 @@ fn swift_tapes_from_the_lean_parser_are_tree_sitters() {
 fn scala_tapes_from_the_lean_parser_are_tree_sitters() {
     lean_tapes_are_tree_sitters(
         GrammarDialect::Scala,
-        crate::code_rule_dsl::tape::scala_lean::encode,
+        |grammar, source, budget| crate::code_rule_dsl::tape::scala_lean::encode(grammar, source, budget),
         &[
             "",
             "// only a comment\nobject A\n",
@@ -7706,7 +7737,7 @@ fn a_file_that_embeds_code_is_read_by_its_lean_parser() {
     let html = Grammar::new(GrammarDialect::Html).unwrap();
     let parser = tree_parser(GrammarDialect::Html).expect("HTML's parser");
     let source = "<p>a</p>\n<script>let x = 1;</script>\n<style>p { color: red }</style>\n";
-    let image = parse_own(parser, &html, source, &|| false).expect("the lean parser reads it").unwrap();
+    let image = parse_own(parser, &html, &source.into(), &|| false).expect("the lean parser reads it").unwrap();
     assert_eq!(image.derived.len(), 2, "a program per script and style");
     let routed = TapeImage::parse(&html, source, &|| false).unwrap().unwrap();
     assert_eq!(routed.derived.len(), 2);

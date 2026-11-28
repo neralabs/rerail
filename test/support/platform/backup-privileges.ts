@@ -1,5 +1,5 @@
-import { execFileSync } from "node:child_process";
-import { join } from "node:path";
+import { afterAll, beforeAll } from "vitest";
+import { PrivilegeSwitch, type Program, WINDOWS_POWERSHELL } from "./privileges/privilege-switch.js";
 
 /**
  * The Windows privileges that let a program open a file whatever its ACL says. Node opens every file with
@@ -10,52 +10,51 @@ import { join } from "node:path";
 const BACKUP_PRIVILEGES = ["SeBackupPrivilege", "SeRestorePrivilege"] as const;
 
 /**
- * Windows PowerShell: sets the privileges named in RERAIL_TEST_PRIVILEGES, in the token of process RERAIL_TEST_PID, to
- * RERAIL_TEST_STATE (0 off, 2 on), and prints each one that was on before. One the token does not hold is passed over.
+ * The bound on a describe block's wait for its PowerShell to say it is ready, and the only one. The first Windows
+ * PowerShell start on a new GitHub Windows runner, which prepares its modules for first use, took 32.8 s; this allows
+ * close to four times that, so a slow first start costs the set-up its time and never fails a case.
  */
-const SET_PRIVILEGES = String.raw`
-Add-Type -Namespace RerailTest -Name Token -MemberDefinition @'
-[StructLayout(LayoutKind.Sequential, Pack = 4)] public struct One { public uint Count; public uint Low; public int High; public uint Attributes; }
-[DllImport("kernel32.dll", SetLastError = true)] public static extern IntPtr OpenProcess(uint access, bool inherit, int pid);
-[DllImport("advapi32.dll", SetLastError = true)] public static extern bool OpenProcessToken(IntPtr process, uint access, out IntPtr token);
-[DllImport("advapi32.dll", SetLastError = true, CharSet = CharSet.Unicode)] public static extern bool LookupPrivilegeValue(string system, string name, out long luid);
-[DllImport("advapi32.dll", SetLastError = true)] public static extern bool AdjustTokenPrivileges(IntPtr token, bool all, ref One state, uint length, ref One previous, out uint returned);
-'@
-$process = [RerailTest.Token]::OpenProcess(0x0400, $false, [int]$env:RERAIL_TEST_PID)
-$token = [IntPtr]::Zero
-if (-not [RerailTest.Token]::OpenProcessToken($process, 0x28, [ref]$token)) { throw "OpenProcessToken failed: $([Runtime.InteropServices.Marshal]::GetLastWin32Error())" }
-foreach ($name in $env:RERAIL_TEST_PRIVILEGES.Split(' ')) {
-  $luid = [long]0
-  if (-not [RerailTest.Token]::LookupPrivilegeValue($null, $name, [ref]$luid)) { throw "LookupPrivilegeValue failed for $name" }
-  $state = New-Object RerailTest.Token+One
-  $state.Count = 1; $state.Low = [uint32]($luid -band 0xffffffffL); $state.High = [int]($luid -shr 32); $state.Attributes = [uint32]$env:RERAIL_TEST_STATE
-  $previous = New-Object RerailTest.Token+One
-  $length = [uint32]0
-  if (-not [RerailTest.Token]::AdjustTokenPrivileges($token, $false, [ref]$state, 16, [ref]$previous, [ref]$length)) { throw "AdjustTokenPrivileges failed for $name" }
-  if ($previous.Count -eq 1 -and ($previous.Attributes -band 2)) { $name }
-}
-`;
+export const PRIVILEGE_SWITCH_START_BOUND_MS = 120_000;
 
-/** Sets `names` in this process's token to `state`, by {@link SET_PRIVILEGES}; returns those that were on. */
-function setPrivileges(names: readonly string[], state: 0 | 2): string[] {
-  const powershell = join(process.env.SystemRoot ?? "C:\\Windows", "System32", "WindowsPowerShell", "v1.0", "powershell.exe");
-  const printed = execFileSync(powershell, [
-    "-NoLogo", "-NoProfile", "-NonInteractive", "-EncodedCommand", Buffer.from(SET_PRIVILEGES, "utf16le").toString("base64"),
-  ], { encoding: "utf8", env: { ...process.env, RERAIL_TEST_PID: String(process.pid), RERAIL_TEST_PRIVILEGES: names.join(" "), RERAIL_TEST_STATE: String(state) } });
-  return printed.split(/\s+/u).filter(name => names.includes(name));
-}
+/** Runs `body` with this process's Backup and Restore privileges off. */
+export type WithoutBackupPrivileges = <T>(body: () => Promise<T>) => Promise<T>;
 
 /**
- * Runs `body` with this process's Backup and Restore privileges off ({@link BACKUP_PRIVILEGES}), and then turns on again
- * those that were on, so an ACL a test sets binds this process as it binds every account that holds neither on: a
- * person's program, an elevated one started from PowerShell or cmd included. Elsewhere than Windows it runs `body`.
+ * Keeps one Windows PowerShell for the describe block that calls this, which turns this process's Backup and Restore
+ * privileges ({@link BACKUP_PRIVILEGES}) off and on when asked. The block's set-up starts it and waits for its line
+ * that it is ready, bounded by {@link PRIVILEGE_SWITCH_START_BOUND_MS} alone, and its tear-down ends it, so neither the
+ * start nor its compile falls in a case's time limit. When PowerShell ends before it is ready, the set-up fails once,
+ * in PowerShell's own words, and vitest skips the block's cases.
+ *
+ * The privileges live in the token of the process that runs the test file: under `pool: "forks"` each file runs in a
+ * child process of its own, one case at a time, so no other file's case shares the token while one has them off.
+ *
+ * Returns `withoutBackupPrivileges`, which runs `body` with both off and then turns on again those that were on, so an
+ * ACL a test sets binds this process as it binds every account that holds neither on: a person's program, an elevated
+ * one started from PowerShell or cmd included. Elsewhere than Windows it registers nothing and runs `body`.
+ * `program` stands in for Windows PowerShell in a test of this helper.
  */
-export async function withoutBackupPrivileges<T>(body: () => Promise<T>): Promise<T> {
-  if (process.platform !== "win32") return await body();
-  const wereOn = setPrivileges(BACKUP_PRIVILEGES, 0);
+export function backupPrivilegeSwitch(program: Program = WINDOWS_POWERSHELL): { withoutBackupPrivileges: WithoutBackupPrivileges } {
+  if (process.platform !== "win32") return { withoutBackupPrivileges: body => body() };
+  let kept: PrivilegeSwitch | undefined;
+  beforeAll(async () => {
+    // Kept before the wait, so the tear-down ends it even when the wait is cut at its bound.
+    kept = new PrivilegeSwitch(program);
+    await kept.ready();
+  }, PRIVILEGE_SWITCH_START_BOUND_MS);
+  afterAll(async () => {
+    await kept?.end();
+  });
+  return { withoutBackupPrivileges: body => withBackupPrivilegesOff(kept, body) };
+}
+
+/** Runs `body` with {@link BACKUP_PRIVILEGES} off through `kept`, then turns on again those that were on. */
+async function withBackupPrivilegesOff<T>(kept: PrivilegeSwitch | undefined, body: () => Promise<T>): Promise<T> {
+  if (kept === undefined) throw new Error("withoutBackupPrivileges runs only in a case of the describe block that called backupPrivilegeSwitch");
+  const wereOn = await kept.set(BACKUP_PRIVILEGES, 0);
   try {
     return await body();
   } finally {
-    if (wereOn.length > 0) setPrivileges(wereOn, 2);
+    if (wereOn.length > 0) await kept.set(wereOn, 2);
   }
 }

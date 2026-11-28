@@ -1419,6 +1419,10 @@ impl ClComputeQueue {
         self.ops.borrow_mut().push(Op::Wait(event.clone(), value));
     }
 
+    /// A barrier between two launches' memory (decision 0674's chain): none needed, the queue runs its launches in
+    /// order, each done before the next.
+    pub fn memory_barrier(&self) {}
+
     /// The work so far, handed to the root, which enqueues it behind its backlog; its event.
     pub fn flush(&mut self) -> ClComputeEvent {
         let done = Arc::new(Done::default());

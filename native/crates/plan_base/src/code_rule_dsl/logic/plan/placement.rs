@@ -207,24 +207,6 @@ pub fn narrow_round_work() -> f64 {
     DEVICE_ROUND / CPU_PER_WORK
 }
 
-/// How long a stratum placed on the device may wait for the device's memory before it runs on the CPU instead (Q203):
-/// the CPU's price for its `work` units of planned work less the device's, at the prices it was placed by. Never
-/// negative.
-pub fn worth_waiting(work: f64) -> f64 {
-    ((CPU_PER_STRATUM + CPU_PER_WORK * work) - (GPU_PER_SUBMISSION + GPU_PER_WORK * work)).max(0.0)
-}
-
-/// The most work placed on the device waits for the device's memory (`gpu::shared::admit`), whatever the CPU's price
-/// for it: a wait past it is a wave held up, not a choice of the work's.
-const ADMIT_MAX: f64 = 0.5;
-
-/// How long work placed on the device (a stratum's tables, a matcher wave's workspace) waits for the device's memory to
-/// be admitted, for `work` units of its planned work: what waiting is worth (`worth_waiting`), at most `ADMIT_MAX`.
-/// Past it the work runs on the CPU, the price having chosen it (0334); the admission refuses at once where no lease
-/// coming back makes the room.
-pub fn admission_patience(work: f64) -> f64 {
-    worth_waiting(work).min(ADMIT_MAX)
-}
 
 /// `GPU_BIAS`, or `RERAIL_GPU_BIAS` when set: a measurement aid only, to refit the bias over runs at several.
 pub(in crate::code_rule_dsl) fn gpu_bias() -> f64 {
@@ -436,18 +418,12 @@ impl Shape {
                 }
                 // A cat's text compared with a name (`=`, `!=`): the device compares the names' bytes (`CATEQ`).
                 // The other side a constant or a variable: a comparison of names, or (a variable no atom binds) the
-                // text bound, made on the device (in a recursive stratum too, its rounds keeping their texts one value
-                // a content, decision 0661). A cat of made texts (`is_made_cat`) binds a variable only.
+                // text bound, made on the device when the head alone reads it; in a recursive stratum too, whose rounds
+                // keep each made text one value in their arena (0307 for a lattice's, 0661 for a set head's). A cat of
+                // made texts (`is_made_cat`) binds a variable only.
                 Lit::Cmp { l, op: CmpOp::Eq | CmpOp::Ne, r }
                     if [(l, r), (r, l)].into_iter().any(|(c, o)| {
-                        (is_cat_of_rows(v, c) || matches!(o, TermRef::Var(_)) && is_made_cat(v, c))
-                            && match o {
-                                // In a recursive stratum too, as a head's cat: the rounds keep each made text one value a
-                                // content (decision 0661), and an atom keyed by it finds the atom it is (0666).
-                                TermRef::Var(_) => true,
-                                TermRef::Call(..) => false,
-                                _ => true,
-                            }
+                        (is_cat_of_rows(v, c) || matches!(o, TermRef::Var(_)) && is_made_cat(v, c)) && !matches!(o, TermRef::Call(..))
                     }) =>
                 {
                     self.note(Form::Comparison, String::new);
@@ -756,7 +732,7 @@ pub fn place(shape: &Shape) -> Placement {
 }
 
 /// Whether a run bound to the CPU runs the device's join program on the host (`rerail_accel::gpu::shared::on_host`):
-/// `rerail_ukl_rust`'s `join_run`, on `rerail_simd`. `RERAIL_CPU_JOINS=scalar`, a measurement aid: the scalar joins,
+/// `rerail_ukl_rust`'s `join_program`, on `rerail_simd`. `RERAIL_CPU_JOINS=scalar`, a measurement aid: the scalar joins,
 /// as before.
 pub fn host_joins() -> bool {
     !rerail_prof::code_rule_dsl::logic::profile::setting(|| std::env::var("RERAIL_CPU_JOINS").is_ok_and(|v| v == "scalar"))
@@ -827,8 +803,9 @@ pub mod tests {
         let p = place(&plain);
         assert!(p.gpu && p.host && !p.device, "the CPU binding runs it on the join program: {p:?}");
         // `@doc(x) = @doc(y)` and `@in(x, {…})` are row code, and so is `z = cat(x, y)` (a text the device makes);
-        // `sha256(x)` is not; `lower(x)` is (a text the device makes into its arena), in a recursive stratum too, as a
-        // cat in one is (its rounds keep their made texts one value a content, decision 0661).
+        // `sha256(x)` is not; a cat in a recursive stratum is (its rounds keep their texts one value a content,
+        // decision 0661), and so is `lower(x)`, there or not (a text the device makes into the component's arena,
+        // decision 0659: `setfix::device` refuses a made text only in a lattice).
         let cmp = |l: T<'static>, r: T<'static>| Literal::Eq(l, r);
         let doc = |v: &'static str| T::Call("doc", vec![T::Var(v)]);
         let mut docs = Shape::default();
@@ -840,7 +817,8 @@ pub mod tests {
         assert!(cat.forms.contains(&Form::Comparison) && !cat.forms.contains(&Form::Computed), "{:?}", cat.forms);
         let mut rec = Shape::default();
         adds(&mut rec, &[atom("kind", false), made()], &[], 1.0, true);
-        assert!(!rec.forms.contains(&Form::Computed), "{:?}", rec.forms);
+        // In a recursive stratum too: its rounds keep each made text one value in their arena (decision 0661).
+        assert!(rec.forms.contains(&Form::Comparison) && !rec.forms.contains(&Form::Computed), "{:?}", rec.forms);
         let lower = || cmp(T::Var("z"), T::Call("lower", vec![T::Var("x")]));
         let mut len = Shape::default();
         adds(&mut len, &[atom("kind", false), cmp(T::Var("z"), T::Call("sha256", vec![T::Var("x")]))], &[], 1.0, false);

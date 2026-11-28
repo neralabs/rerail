@@ -28,6 +28,70 @@ fn a_nullary_guard_is_ready_in_a_demanded_body() {
     }
 }
 
+/// A magic rule keeps no literal that the literals it leaves out had tied to its key, and that joins another
+/// document's nodes to the key's by a value alone (decision 0677). `pair(x, y)` ties x and y; kept as an extra it
+/// would close a negative cycle (`!leaf` reads `un`), so it is left out, and `child(y, d, i)` then joined y's file to
+/// c's by the index i: RUF034's `magic_unparen_bf`, which the split refused as a relation of one file joining two.
+/// Left out with it, the demand only widens.
+#[test]
+fn a_demand_joins_no_other_documents_nodes_by_a_value() {
+    let src = ".decl kind(n: node, k: symbol)\n.input kind\n.decl child(p: node, c: node, i: number)\n.input child\n\
+        .decl ask(a: node, b: node)\n.input ask\n.decl un(e: node, m: node)\n.pragma \"magic-transform\" \"un\"\n\
+        un(e, e) :- kind(e, \"x\").\nun(e, m) :- kind(e, \"paren\"), child(e, i, 0), un(i, m).\n\
+        .decl leaf(x: node)\nleaf(x) :- kind(x, _), un(x, m), kind(m, \"leaf\").\n\
+        .decl pair(x: node, y: node)\npair(x, y) :- ask(a, b), un(a, x), un(b, y).\n\
+        pair(u, v) :- pair(x, y), !leaf(x), child(x, c, i), child(y, d, i), un(c, u), un(d, v).\n\
+        .decl same(x: node, y: node)\n.output same\nsame(x, y) :- pair(x, y), kind(x, k), kind(y, k).\n";
+    for gate in [false, true] {
+        let v = parse_version(src).unwrap_or_else(|e| panic!("{e}"));
+        let mut p = Pipeline::new("listed demand", v);
+        p.program(&mut Prune::default());
+        let mut demand = ProgramDemand { gate, ..ProgramDemand::default() };
+        p.program(&mut demand);
+        let v = p.finish().unwrap_or_else(|e| panic!("{e}")).0;
+        assert!(matches!(demand.outcome, Some(Ok(_))), "gate {gate}: {:?}", demand.outcome);
+        let rules: Vec<String> = v.rules().map(|r| v.show_rule(r)).collect();
+        let demand: Vec<&String> = rules.iter().filter(|r| r.starts_with("magic_un_") && r.contains("child(")).collect();
+        assert!(!demand.is_empty(), "gate {gate}: the demand of `un` from `pair`'s children: {rules:#?}");
+        for r in demand {
+            assert!(r.matches("child(").count() == 1 || r.contains("pair("), "gate {gate}: joins two documents' children by their index: {r}\n{rules:#?}");
+        }
+    }
+}
+
+/// A demand answered through a coarser one keeps no literal that only the demanded atom tied to the key (decision
+/// 0677). `w`'s `un(v, c)` comes after the test of c, so it asks for `un` with both columns bound, which `out`'s
+/// `un(v, u)` answers through `un_bf`, keyed by v alone. The test of c (`kind`, `field`, `named`) reached v only by
+/// the value t of `whole(t, q)`: default-called-once's `magic_unparen_bf(v)`, which the split refused as a relation of
+/// one file joining two. Left out, the demand only widens; `whole` stays, and binds nothing of another file.
+#[test]
+fn a_coarser_demand_keeps_no_literal_only_the_demanded_atom_tied() {
+    let src = ".decl kind(n: node, k: symbol)\n.input kind\n.decl child(p: node, c: node, i: number)\n.input child\n\
+        .decl field(p: node, x: symbol, c: node)\n.input field\n.decl named(e: node, q: symbol)\n.input named\n\
+        .decl arg(f: node, v: node)\n.input arg\n.decl ftype(f: node, t: symbol)\n.input ftype\n\
+        .decl whole(t: symbol, q: symbol)\nwhole(\"Date\", \"now\").\n\
+        .decl un(e: node, m: node)\n.pragma \"magic-transform\" \"un\"\n\
+        un(e, e) :- kind(e, \"x\").\nun(e, m) :- kind(e, \"paren\"), child(e, i, 0), un(i, m).\n\
+        .decl w(f: node, v: node)\n\
+        w(f, v) :- ftype(f, t), arg(f, v), kind(c, \"call\"), field(c, \"function\", e), named(e, q), whole(t, q), un(v, c).\n\
+        .decl out(f: node, u: node)\n.output out\nout(f, u) :- ftype(f, _), arg(f, v), un(v, u), !w(f, v).\n";
+    for gate in [false, true] {
+        let v = parse_version(src).unwrap_or_else(|e| panic!("{e}"));
+        let mut p = Pipeline::new("listed demand", v);
+        p.program(&mut Prune::default());
+        let mut demand = ProgramDemand { gate, ..ProgramDemand::default() };
+        p.program(&mut demand);
+        let v = p.finish().unwrap_or_else(|e| panic!("{e}")).0;
+        assert!(matches!(demand.outcome, Some(Ok(_))), "gate {gate}: {:?}", demand.outcome);
+        let rules: Vec<String> = v.rules().map(|r| v.show_rule(r)).collect();
+        let magic: Vec<&String> = rules.iter().filter(|r| r.starts_with("magic_un_")).collect();
+        assert!(magic.iter().any(|r| r.contains("whole(")), "gate {gate}: the demand of `un` from `w`: {rules:#?}");
+        for r in magic {
+            assert!(!r.contains("named(") && !r.contains("field("), "gate {gate}: joins the call's file to v's by a value: {r}\n{rules:#?}");
+        }
+    }
+}
+
 /// T's `rdl.py sql` front over `src`: prune, demand (`mode`: `demand` is `.demand`'s magic sets, `adorn` the
 /// adornment of every derived relation, `gate` that with gated negations), prune.
 fn transformed(src: &str, mode: &str) -> Result<Arc<Version>, String> {
@@ -112,14 +176,39 @@ fn t_programs_transform_like_t() {
             // `glob` is a `.rerail` built-in, so the program's relation of that name reads as `glob_` (the goldens are
             // copies, kept as written).
             let expected = renamed.replace_all(&expected, |c: &regex::Captures| format!("{}glob_{}", &c[1], &c[2])).into_owned();
+            // A demand answered through a coarser one keeps no literal that only the demanded atom tied to its key
+            // (decision 0677, batch 6): T's `home_bbb`, answered through `home_ffb`, kept `rifrom(s, …)`, which reaches
+            // t by the value x alone and joins s's document to t's.
+            let expected = expected.replace(
+                "rule magic_home_ffb($t) :- magic_ifrom_bbff($t, $x), rifrom($s, $x, $m, $y)\n",
+                "rule magic_home_ffb($t) :- magic_ifrom_bbff($t, $x)\n",
+            );
             // T declares the gates of every trial its greedy search made, a rejected one's too (`done_islocal` in
             // `calls_rust.gate`); the version declares the gates of the program it made. A declaration no rule or
             // gate names is not compared, for a gate.
             let named = |rel: &str| expected.lines().filter(|l| !l.starts_with("decl ")).any(|l| l.contains(&format!("{rel}(")) || l.contains(&format!("\"{rel}\"")));
+            // Demand is a set, stored sorted (program_facts); T printed it in the order its pragmas stated it.
+            let sorted_demand = |l: &str| match l.strip_prefix("demand [").and_then(|d| d.strip_suffix(']')) {
+                Some(items) => {
+                    let mut items: Vec<&str> = items.split(", ").collect();
+                    items.sort();
+                    format!("demand [{}]", items.join(", "))
+                }
+                None => l.to_owned(),
+            };
+            // The program's input views (`kind`, `docof`), rules over `node`: T's parser wrote them first, the version
+            // writes them after the program's own rules. Compared apart, by being there.
+            let view_rule = |l: &str| ["rule kind($n, $k) :- node(_, $n, $k, _, _)", "rule docof($n, $d) :- node($d, $n, _, _, _)"].contains(&l);
+            let views = |t: &str| t.lines().filter(|l| view_rule(l)).map(str::to_owned).collect::<std::collections::BTreeSet<_>>();
+            if views(&got) != views(&expected) {
+                failures.push(format!("{name}.{mode}: the view rules {:?}, T's {:?}", views(&got), views(&expected)));
+            }
+            let got: String = got.lines().filter(|l| !view_rule(l)).map(|l| format!("{l}\n")).collect();
             let expected: String = expected
                 .lines()
+                .filter(|l| !view_rule(l))
                 .filter(|l| l.strip_prefix("decl done_").and_then(|d| d.split_once('(')).is_none_or(|(rel, _)| named(&format!("done_{rel}"))))
-                .map(|l| format!("{l}\n"))
+                .map(|l| format!("{}\n", sorted_demand(l)))
                 .collect();
             if got != expected {
                 let line = got.lines().zip(expected.lines()).position(|(a, b)| a != b);
@@ -162,6 +251,45 @@ fn demanded(src: &str) -> (Vec<String>, Vec<(String, String)>, Vec<String>) {
     // The program keeps the reasons with its report.
     assert_eq!(ProgramFields::magic_report(&*v).map(|r| r.reasons), Some(report.reasons.clone()));
     (v.rules().map(|r| v.show_rule(r)).collect(), own.splits, report.reasons)
+}
+
+/// python/compare.rerail's shape: `pair` carries asks down to children, and `un`'s demand from its recursive rule
+/// must leave `pair(x, y)` out (kept, it closes a cycle through `!leaf`). The atom tied `x` and `y` (decision 0652: a
+/// relation not declared `cross_file` holds one document's rows); left out, each child's magic rule keeps only its
+/// own side's `kid`, so neither joins two nodes, whether `pair` is declared `cross_file` or not.
+const DROPPED_PAIR: &str = "
+    .decl ask(a: node, b: node)
+    .decl kid(x: node, i: number, c: node)
+    .decl val(x: node, v: symbol)
+    .input ask, kid, val
+    .decl un(a: node, x: node)
+    .pragma \"magic-transform\" \"un\"
+    un(e, e) :- val(e, k), k != \"paren\".
+    un(e, m) :- val(e, \"paren\"), kid(e, 0, i), un(i, m).
+    .decl leaf(x: node)
+    leaf(x) :- kid(x, _, _), un(x, y), val(y, _).
+    .decl pair(x: node, y: node)
+    pair(x, y) :- ask(a, b), un(a, x), un(b, y).
+    pair(u, v) :- pair(x, y), !leaf(x), kid(x, i, c), kid(y, i, d), un(c, u), un(d, v).
+    .output pair
+";
+
+#[test]
+fn a_left_out_per_document_atom_keeps_its_nodes_in_one_document() {
+    // The magic rules `pair`'s recursive rule gives `un`: its children `c` and `d`.
+    let magic = |src: &str| -> Vec<String> {
+        let (rules, _, _) = demanded(src);
+        rules.into_iter().filter(|r| r.starts_with("magic_un_bf($c)") || r.starts_with("magic_un_bf($d)")).collect()
+    };
+    // Each keeps only what ties its own child (decision 0677, batch 6: a demand answered through a coarser one keeps
+    // no literal only the left-out atom tied to its key): `kid(x, i, c)` alone, never `y`'s side. So no rule joins
+    // two nodes, and no `@doc(x) = @doc(y)` is needed to keep them in one document (f8f4cfcde2, where both sides stayed).
+    for (what, src) in [("per document", DROPPED_PAIR.to_owned()), ("cross_file", DROPPED_PAIR.replace(".decl pair(x: node, y: node)", ".decl pair(x: node, y: node) cross_file"))] {
+        let rules = magic(&src);
+        assert_eq!(rules.len(), 2, "{what}: one magic rule for each child: {rules:#?}");
+        assert!(rules.iter().all(|r| !r.contains("pair(")), "{what}: pair(x, y) is left out: {rules:#?}");
+        assert!(rules.iter().all(|r| r.matches("kid(").count() == 1 && !r.contains("doc(")), "{what}: one child's kid alone, no join of two nodes: {rules:#?}");
+    }
 }
 
 /// A string annotation's shape (decision 0431 §8): the parse request reads `unparen` (through `tsub`), and a reader
@@ -230,4 +358,28 @@ fn a_split_copy_splits_the_demand_below_it_in_the_next_round() {
     let with = |head: &str| rules.iter().filter(|r| r.starts_with(&format!("{head}("))).cloned().collect::<Vec<_>>();
     assert!(with("magic_hop_bf").iter().all(|r| !r.contains("__rr_embed_req")), "{rules:#?}");
     assert!(with("unparen__rr_embed_req").iter().filter(|r| r.contains("hop")).all(|r| r.contains("hop__rr_embed_req(")), "{rules:#?}");
+}
+
+/// With nothing bound, a body's sideways order starts at a relation computed in full, not at a demanded one: read
+/// first, the demanded relation is read with nothing bound, and so computed in full. points_to's
+/// `pt_vpos_t(t) :- pt_vpos(n), pt_tm(n, t)` started at `pt_tm`, which is below `pt_vpos` in the strata, and made
+/// every node's term. Here `pos` is above `tm` (it reads `seen`, which reads `tm`), and `out` reads `pos` first.
+#[test]
+fn a_body_starts_at_a_relation_computed_in_full() {
+    let src = ".decl node(n: node, k: symbol)\n.input node\n.decl ok(k: symbol)\n.input ok\n\
+        .decl tm(n: node, t: symbol)\n.pragma \"magic-transform\" \"tm\"\ntm(n, k) :- node(n, k), ok(k).\n\
+        .decl seen(n: node)\nseen(n) :- node(n, \"z\"), tm(n, _).\n\
+        .decl pos(n: node)\npos(n) :- node(n, \"v\"), seen(n).\n\
+        .decl out(t: symbol)\n.output out\nout(t) :- pos(n), tm(n, t).\n";
+    let v = parse_version(src).unwrap_or_else(|e| panic!("{e}"));
+    let mut p = Pipeline::new("listed demand", v);
+    p.program(&mut Prune::default());
+    let mut demand = ProgramDemand::default();
+    p.program(&mut demand);
+    let v = p.finish().unwrap_or_else(|e| panic!("{e}")).0;
+    let Some(Ok(report)) = &demand.outcome else { panic!("{:?}", demand.outcome) };
+    let rules: Vec<String> = v.rules().map(|r| v.show_rule(r)).collect();
+    assert!(report.adornments.iter().any(|a| a == "tm_bf"), "`out` asks `tm` by the node `pos` binds: {report:?}\n{rules:#?}");
+    assert!(report.free_readers.is_empty(), "nothing asks `tm` with nothing bound: {:?}", report.free_readers);
+    assert!(rules.iter().any(|r| r.starts_with("magic_tm_bf(") && r.contains("pos(")), "`tm`'s demand is `pos`'s nodes: {rules:#?}");
 }

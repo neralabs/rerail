@@ -1,0 +1,103 @@
+.policy "rr-node-span-columns" revision 1
+.description "A relation's column holds a node in one rule and a line, a token, an end point or a match in another."
+.language rr
+.mode steer
+.scope include "**/*.rerail"
+
+// Node ids are a batch's tape preorder numbers; lines, tokens, end points and matches are values of other types
+// (the batch node id design). A column that holds both is a coercion: one rule puts a node there, another a span.
+// Converting between them is a function a rule calls (`line(n, l)` takes a node to its line number), never a column
+// that holds either.
+//
+//   fn_head(f, h) :- fn_holder(f, h).                   h: a node
+//   fn_head(f, m) :- arrow_op(f, m).                    m: a source line (arrow_op takes it from src_line)
+//                                                       ← RR201 at m: fn_head's column 1 holds nodes and lines
+//
+// What each column holds is read from the program's own declarations and rules, through every rule's head, to a
+// fixpoint: a variable takes the kinds of every column it is bound at (a body atom's, by its relation's declared
+// type or by what its rules put there), a named capture of `match` is a match, and `x = y` joins two variables'.
+
+// ---- the clauses' variables ------------------------------------------------------------------------------------
+
+// head_arg(c, rel, i, x, v): clause c's head (one of its heads) puts variable x, written at v, in column i of rel.
+.decl head_arg(c: node, rel: symbol, i: number, x: symbol, v: node)
+head_arg(c, rel, i, x, v) :- kind(c, "clause"), field(c, "head", h), field(h, "relation", r), text(r, rel),
+    field(h, "arguments", al), child(al, v, i), kind(v, "variable"), text(v, x).
+
+// bound(a): atom a binds its variables: not under a negation, nor in an aggregate's own body.
+.decl unbound(a: node)
+unbound(a) :- kind(a, "atom"), kind(g, "negation"), within(a, g).
+unbound(a) :- kind(a, "atom"), kind(g, "aggregate"), within(a, g).
+
+// body_arg(c, rel, i, x): an atom of clause c's body binds variable x at column i of rel.
+.decl body_arg(c: node, rel: symbol, i: number, x: symbol)
+body_arg(c, rel, i, x) :- kind(c, "clause"), field(c, "body", b), kind(a, "atom"), within(a, b), !unbound(a),
+    field(a, "relation", r), text(r, rel), field(a, "arguments", al), child(al, v, i), kind(v, "variable"), text(v, x).
+
+// same(c, x, y): clause c's body says x = y (a comparison stores no `=`: its text says it).
+.decl same(c: node, x: symbol, y: symbol)
+same(c, x, y) :- kind(c, "clause"), field(c, "body", b), kind(q, "comparison"), within(q, b), field(q, "left", l),
+    kind(l, "variable"), field(q, "right", r), kind(r, "variable"), text(q, s),
+    match("\\s*(?<x>[A-Za-z_][A-Za-z0-9_]*)\\s*=\\s*(?<y>[A-Za-z_][A-Za-z0-9_]*)\\s*", s).
+same(c, y, x) :- same(c, x, y).
+
+// captured(c, x, s): a regex of clause c's body, over the subject variable s, names a group x. Over a node or a
+// span the group binds x to a match; over a symbol, to a symbol (core.rerail's `match`). Read from the literal's
+// text: its first named group, and its last (a regex here names at most two).
+.decl captured(c: node, x: symbol, s: symbol)
+captured(c, x, s) :- regex_text(c, re, s), match("(?s).*?\\(\\?P?<(?<x>[A-Za-z_][A-Za-z0-9_]*)>.*", re).
+captured(c, x, s) :- regex_text(c, re, s), match("(?s).*\\(\\?P?<(?<x>[A-Za-z_][A-Za-z0-9_]*)>.*", re).
+.decl regex_text(c: node, re: symbol, s: symbol)
+regex_text(c, re, s) :- kind(c, "clause"), field(c, "body", b), kind(a, "atom"), within(a, b), !unbound(a),
+    field(a, "relation", r), text(r, m), (m = "match" ; m = "match_all" ; m = "match_group"),
+    field(a, "arguments", al), child(al, p, 0), kind(p, "string"), text(p, re), child(al, v, 1), kind(v, "variable"),
+    text(v, s).
+
+// ---- what each column holds ------------------------------------------------------------------------------------
+
+// declared(rel, i, t): a `.decl` or `.violation` gives rel's column i the type t.
+.decl declared(rel: symbol, i: number, t: symbol)
+declared(rel, i, t) :- (kind(d, "declaration") ; kind(d, "violation_declaration")), field(d, "name", n), text(n, rel),
+    field(d, "columns", cl), child(cl, col, i), field(col, "type", ty), field(ty, "name", tn), text(tn, t).
+
+// made(rel, i, k): core.rerail's producers of the span types (their columns are `span`; this says which kind).
+.decl made(rel: symbol, i: number, k: symbol)
+made("source", 1, "line").
+made("src_line", 2, "line").
+made("first_token", 1, "token").
+made("last_token", 1, "token").
+made("token_before", 1, "token").
+made("token_after", 1, "token").
+made("end_point", 1, "end").
+made("match_all", 2, "match").
+made("match_group", 2, "match").
+made("match_group", 4, "match").
+
+// holds(rel, i, k): rel's column i holds a k: a node, or a line, token, end point or match.
+.decl holds(rel: symbol, i: number, k: symbol)
+holds(rel, i, "node") :- declared(rel, i, "node").
+holds(rel, i, k) :- made(rel, i, k).
+holds(rel, i, k) :- head_arg(c, rel, i, x, _), var_holds(c, x, k).
+
+// var_holds(c, x, k): clause c's variable x is a k.
+.decl var_holds(c: node, x: symbol, k: symbol)
+var_holds(c, x, k) :- body_arg(c, rel, i, x), holds(rel, i, k), !loc_reader(rel, i).
+var_holds(c, x, "match") :- captured(c, x, s), var_holds(c, s, k), (k = "node" ; span_kind(k)).
+var_holds(c, x, k) :- same(c, x, y), var_holds(c, y, k).
+
+// loc_reader(rel, i): a column typed `loc` reads whatever it is given (text, line, col, unset …): it says nothing
+// about what its variable holds.
+.decl loc_reader(rel: symbol, i: number)
+loc_reader(rel, i) :- declared(rel, i, "loc"), !made(rel, i, _).
+
+.decl span_kind(k: symbol)
+span_kind("line").
+span_kind("token").
+span_kind("end").
+span_kind("match").
+
+// ---- the finding -----------------------------------------------------------------------------------------------
+
+.violation mixed_column(at: node, rel: symbol, i: number, k: symbol) code "RR201"
+    "This column holds nodes in other rules and a line, token, end point or match here: give the column one type, and convert with a function where a rule needs the other"
+mixed_column(v, rel, i, k) :- head_arg(c, rel, i, x, v), var_holds(c, x, k), span_kind(k), holds(rel, i, "node").

@@ -138,23 +138,11 @@ impl Terminators {
     }
 }
 
-/// The length of the terminator whose last byte is `bytes[last]`, the line index's offset: its bytes alone say it,
-/// whatever the set (a set's terminators never end alike), so a line's end is read off the index and the source.
-pub fn length_ending_at(bytes: &[u8], last: usize) -> usize {
-    let before = |k: usize| last.checked_sub(k).and_then(|at| bytes.get(at).copied());
-    match bytes[last] {
-        b'\n' if before(1) == Some(b'\r') => 2,
-        0x85 if before(1) == Some(0xC2) => 2,
-        0xA8 | 0xA9 if before(1) == Some(0x80) && before(2) == Some(0xE2) => 3,
-        _ => 1,
-    }
-}
+pub use rerail_reads::lines::{HEAD, count, len_of, length_ending_at, line, start};
 
 /// Every `SAMPLE`-th zero and one of the high bits is sampled.
 pub const SAMPLE_SHIFT: u32 = 8;
 pub const SAMPLE: usize = 1 << SAMPLE_SHIFT;
-/// The index's first fields, u32s: `m`, `L`, zero samples, one samples, high words.
-pub const HEAD: usize = 20;
 
 /// The index of `source`'s lines as `terminators` end them: its bytes, without the room a region keeps after them.
 pub fn index(source: &[u8], terminators: Terminators) -> crate::Vector<u8> {
@@ -291,13 +279,6 @@ pub fn bits_of(u: u64, delay: u32, words: usize, word: impl Fn(usize) -> u64 + C
     (m, offsets)
 }
 
-/// The bytes of the index that starts `index` (its first fields say), without the room after it.
-pub fn len_of(index: &[u8]) -> Option<usize> {
-    let field = |k: usize| index.get(4 * k..4 * k + 4).map(|b| u32::from_le_bytes(b.try_into().expect("4 bytes")) as usize);
-    let (m, l, zs, os, words) = (field(0)?, field(1)?, field(2)?, field(3)?, field(4)?);
-    Some(HEAD + 8 * (zs + os + words) + (m * l).div_ceil(8))
-}
-
 /// The lines of a text no tape holds (a rule file, a preprocessor's input): an index of its own in the tape's format,
 /// read by the tape's reads (`reads::f16::line`, `line_start`), so its lines are a tape's lines (decision 0612).
 pub struct Lines {
@@ -327,29 +308,13 @@ impl Lines {
 
     /// Line `line`'s (0-based) first byte.
     pub fn start(&self, line: usize) -> usize {
-        crate::reads::f16::line_start(&self.index, &lines_view(), line as u32) as usize
+        rerail_reads::lines::start(&self.index, line as u32) as usize
     }
 
     /// The lines, the empty one after a final terminator too.
     pub fn count(&self) -> usize {
         count(&self.index).expect("an index") as usize + 1
     }
-}
-
-/// The view the tape's reads take of an index at the start of its bytes.
-fn lines_view() -> rerail_clif::view::TapeView {
-    rerail_clif::view::TapeView::default()
-}
-
-/// The 0-based line of byte `x`, by an index at the start of `index` (its word's room after it): the line ends before
-/// `x`, the tape's read (`reads::f16::line`).
-pub fn line(index: &[u8], x: u32) -> u32 {
-    crate::reads::f16::line(index, &lines_view(), x)
-}
-
-/// The newlines' count an index holds (a document has one line more).
-pub fn count(index: &[u8]) -> Option<u32> {
-    Some(u32::from_le_bytes(index.get(..4)?.try_into().ok()?))
 }
 
 /// The index checked against itself and its source's length: its fields' sizes add up to its length, and its

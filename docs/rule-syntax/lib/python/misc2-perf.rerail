@@ -45,7 +45,7 @@ perf_for(f, t, it) :- kind(f, "for_statement"), field(f, "left", l), perf_paren_
 .decl perf_paren_target(l: node, t: node)
 perf_paren_target(l, t) :- kind(l, "tuple_pattern"), !op(l, ","), child(l, t, _), !kind(t, "comment"),
     count : { child(l, c, _), !kind(c, "comment") } = 1.
-.decl perf_body(f: node, st: node, test: loc)
+.decl perf_body(f: node, st: node, test: node)
 perf_body(f, st, t) :- kind(f, "for_statement"), field(f, "body", b), body_len(b, 1), body_stmt(b, st, 0),
     !kind(st, "if_statement"), unset(t).
 perf_body(f, st, t) :- kind(f, "for_statement"), field(f, "body", b), body_len(b, 1), body_stmt(b, i, 0),

@@ -11,7 +11,7 @@
 // Each rule below is one way the JSON `rule` can match.
 // Columns after `at` are the metavariables the JSON's message, anchor or `each` names: one finding per distinct row.
 // The JSON `constraints` on L are added to every rule.
-.violation PERF402(at: node, l: loc) "Copy the iterable in one step: `{l}.extend(<iterable>)`, or `{l} = list(<iterable>)` if `{l}` is a fresh empty list; keep the loop if code after it reads the loop variable."
+.violation PERF402(at: node, l: node) "Copy the iterable in one step: `{l}.extend(<iterable>)`, or `{l} = list(<iterable>)` if `{l}` is a fresh empty list; keep the loop if code after it reads the loop variable."
     suppress noqa "PERF402"
 PERF402(n, L) :- perf402_call(n, A, L), child(p1, n, _), kind(p1, "expression_statement"),
     perf402_only_stmt(p1), child(p2, p1, _), kind(p2, "block"), child(p3, p2, _), perf402_loop(p3, A),
@@ -60,14 +60,14 @@ perf402_list_bound(n) :- kind(n, "identifier"),
 
 // plain_name(n): the JSON util `plain-name`, used where the JSON says `matches: "plain-name"`
 //   L: metavariable this relation binds for the calling rule
-.decl perf402_plain_name(n: node, l: loc)
+.decl perf402_plain_name(n: node, l: node)
 perf402_plain_name(n, L) :- kind(n, "identifier"), node(_, n, _, _, _), L = n.
 perf402_plain_name(n, L) :- kind(n, "parenthesized_expression"), child(n, c1, _),
     perf402_plain_name(c1, L).
 
 // call(n): the JSON util `call`, used where the JSON says `matches: "call"`
 //   A, L: metavariables this relation binds for the calling rule
-.decl perf402_call(n: node, a: loc, l: loc)
+.decl perf402_call(n: node, a: node, l: node)
 perf402_call(n, A, L) :- kind(n, "call"), field(n, "function", c1), kind(c1, "attribute"),
     field(c1, "object", c2), perf402_plain_name(c2, L), field(c1, "attribute", c3),
     kind(c3, "identifier"), glob("{append,insert}", c3), field(n, "arguments", c4),
@@ -79,14 +79,14 @@ perf402_only_stmt(n) :- node(_, n, _, _, _), !perf402_alt_13(n).
 
 // loop_target(n): the JSON util `loop-target`, used where the JSON says `matches: "loop-target"`
 //   T: metavariable this relation binds for the calling rule
-.decl perf402_loop_target(n: node, t: loc)
+.decl perf402_loop_target(n: node, t: node)
 perf402_loop_target(n, T) :- kind(n, "identifier"), node(_, n, _, _, _), T = n.
 perf402_loop_target(n, T) :- kind(n, "tuple_pattern"), !perf402_tok_has_8(n), child(n, c9, _),
     perf402_loop_target(c9, T).
 
 // loop(n): the JSON util `loop`, used where the JSON says `matches: "loop"`
 //   A: metavariable of the calling rule, passed in (bound by the caller)
-.decl perf402_loop(n: node, a: loc)
+.decl perf402_loop(n: node, a: node)
 perf402_loop(n, A) :- perf402_demand_loop(n, A), kind(n, "for_statement"), !perf402_tok_has_9(n),
     field(n, "left", c9), perf402_loop_target(c9, T), value(A, t10), value(T, t10).
 
@@ -367,7 +367,7 @@ perf402_tok_has_9(n) :- node_text(n, g3), !child(n, _, _),
     match("(?s)^(?:(?:.*\\W)?(?:async)(?:\\W.*)?)$", g3).
 
 // demand_loop: the rows of loop its callers ask for (the metavariable columns they pass in)
-.decl perf402_demand_loop(n: node, a: loc)
+.decl perf402_demand_loop(n: node, a: node)
 perf402_demand_loop(p3, A) :- perf402_call(n, A, L), child(p1, n, _), kind(p1, "expression_statement"),
     perf402_only_stmt(p1), child(p2, p1, _), kind(p2, "block"), child(p3, p2, _),
     perf402_list_bound(L).
@@ -407,7 +407,7 @@ perf402_alt_10(n) :- node(_, n, _, _, _), glob("[(),]", n).
 
 // alt_8(n): the JSON `any`: n matches if any one of these rules does
 //   A: metavariable this relation binds for the calling rule
-.decl perf402_alt_8(n: node, a: loc)
+.decl perf402_alt_8(n: node, a: node)
 perf402_alt_8(n, A) :- kind(n, "generator_expression"), node(_, n, _, _, _), A = n.
 perf402_alt_8(n, A) :- kind(n, "argument_list"), k2 = count : { child(n, c1, _), !perf402_alt_6(c1) },
     k2 >= 1, k2 <= 1, child(n, c3, _), node(_, c3, _, _, _), A = c3, !perf402_alt_10(c3).

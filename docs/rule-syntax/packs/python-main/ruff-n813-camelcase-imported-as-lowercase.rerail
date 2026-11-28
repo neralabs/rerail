@@ -8,7 +8,7 @@
 // N813(n): a finding at node n, from clause `camelcase-imported-as-lowercase`.
 // Each rule below is one way the JSON `rule` can match.
 // Columns after `at` are the metavariables the JSON's message, anchor or `each` names: one finding per distinct row.
-.violation N813(at: node, asname: loc, name: loc) "Use a CamelCase alias instead of `{asname}` for `{name}` and update its uses; leave it if `{name}` is really a function or variable despite its CamelCase name."
+.violation N813(at: node, asname: node, name: node) "Use a CamelCase alias instead of `{asname}` for `{name}` and update its uses; leave it if `{name}` is really a function or variable despite its CamelCase name."
     suppress noqa "N813"
 N813(n, ASNAME, NAME) :- kind(n, "aliased_import"), field(n, "name", c1),
     kind(c1, "dotted_name"), child(c1, c2, _), kind(c2, "identifier"),

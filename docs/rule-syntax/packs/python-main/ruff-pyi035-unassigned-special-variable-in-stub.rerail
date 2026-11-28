@@ -25,7 +25,7 @@ pyi035_special_name(n) :- kind(n, "tuple_pattern"), !pyi035_tok_has_1(n), child(
 // Each rule below is one way the JSON `rule` can match.
 // Columns after `at` are the metavariables the JSON's message, anchor or `each` names: one finding per distinct row.
 // `options` carries JSON settings that have no .rerail form yet.
-.violation PYI035_unassigned_class_special_variable(at: node, name: loc) code "PYI035" "Give `{name}` a value in this stub, such as a tuple of strings; it has the same meaning as at runtime."
+.violation PYI035_unassigned_class_special_variable(at: node, name: node) code "PYI035" "Give `{name}` a value in this stub, such as a tuple of strings; it has the same meaning as at runtime."
     suppress noqa "PYI035"
 PYI035_unassigned_class_special_variable_raw(n, NAME) :- kind(n, "expression_statement"),
     child(n, c1, _), kind(c1, "assignment"), c1 ~ `$NAME: $TYPE`,
@@ -60,5 +60,5 @@ pyi035_stop_1("function_definition"). pyi035_stop_1("class_definition").
 PYI035(v0) :- PYI035_raw(v0), rr_d = @doc(v0), doc(rr_d, rr_p, _), match("\\.pyi$", rr_p).
 
 // main's file condition {"regex": "\\.pyi$"}
-.decl PYI035_unassigned_class_special_variable_raw(at: node, name: loc)
+.decl PYI035_unassigned_class_special_variable_raw(at: node, name: node)
 PYI035_unassigned_class_special_variable(v0, v1) :- PYI035_unassigned_class_special_variable_raw(v0, v1), rr_d = @doc(v0), doc(rr_d, rr_p, _), match("\\.pyi$", rr_p).

@@ -308,7 +308,8 @@ async function runTranslations(engine: string, dir: string, rules: ReadonlyMap<s
     // Each run its own store, removed with its output: the default store, one per working directory, would hold every
     // pack's tapes and memo entries across runs until its hard limit refused new ones.
     const store = `${out}.store`;
-    mkdirSync(store, { recursive: true });
+    // The user's alone: the engine refuses a store folder others may read or write (decision 0574).
+    mkdirSync(store, { recursive: true, mode: 0o700 });
     const input = calls === undefined ? [dir] : ["--tool-calls", calls, dir];
     const run = await spawnAsync(engine, ["run-policies", ...input, out, ...paths], { cwd: SELF, env: { ...ENGINE_ENV, RERAIL_TAPE_CACHE: join(store, "store.sqlite") }, timeoutS });
     rmSync(out, { recursive: true, force: true });
@@ -387,7 +388,7 @@ function checkRr(engine: string, rules: ReadonlyMap<string, readonly string[]>, 
   const paths = [...rules.values()].flat();
   if (paths.length === 0) return refused;
   const store = join(work, "check-rr.store");
-  mkdirSync(store, { recursive: true });
+  mkdirSync(store, { recursive: true, mode: 0o700 });
   const checked = spawnSync(engine, ["check-rr", ...paths], { cwd: SELF, env: { ...ENGINE_ENV, RERAIL_TAPE_CACHE: join(store, "store.sqlite") }, encoding: "utf8", maxBuffer: 1 << 28 });
   rmSync(store, { recursive: true, force: true });
   let rows: { path: string; status: string; error?: string }[];

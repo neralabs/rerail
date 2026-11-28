@@ -38,9 +38,9 @@ pub(crate) use code_rule_dsl::prof::purge_allocator_pages;
 /// The engine's tools without Node (`rerail-engine dump` / `asm`).
 pub use code_rule_dsl::tools;
 pub use rerail_store::content_store;
-/// Every in-process Git read (`native/src/git_access`): the opener, its setup and its pool are the store's
-/// (`rerail-store`), which the workspace discovery and the ignore matcher open through; the Node-API object that
-/// installs the setup is the engine's.
+/// The Git opener the workspace discovery and the ignore matcher read through (`native/src/git_access`): the opener,
+/// its setup and its pool are the store's (`rerail-store`); the Node-API object that installs the setup is the
+/// engine's.
 pub mod git_access {
     pub use rerail_store::git_access::*;
     pub mod owner;
@@ -207,6 +207,13 @@ pub fn health() -> Health {
         ok: true,
         engine_version: "1".to_owned(),
     }
+}
+
+/// Names the installed package this addon was loaded for (`source_tree::name_package`), where the engine reads its
+/// own `.rerail` files. The loader calls it as it loads the addon, before anything reads them.
+#[napi]
+pub fn set_package_root(root: String) {
+    source_tree::name_package(std::path::PathBuf::from(root));
 }
 
 /// What `verify_model` found: `problem` and `file` are absent where the model matches its manifest.
@@ -910,15 +917,19 @@ pub struct ConversationEngine {
 
 #[napi]
 impl ConversationEngine {
+    /// The engine of the model at `model_path`. Its caller is the Node environment: its engines share one copy of each
+    /// model, held by the environment's object (`api::environment`, decision 0442).
     #[napi(factory, catch_unwind)]
-    pub fn load(model_path: String, max_input_tokens: u32) -> Result<Self> {
+    pub fn load(env: napi::Env, model_path: String, max_input_tokens: u32) -> Result<Self> {
         if max_input_tokens == 0 {
             return Err(Error::new(
                 Status::InvalidArg,
                 "max_input_tokens must be positive",
             ));
         }
-        let model = shared_model(Path::new(&model_path))?;
+        let environment = rerail_workspace::code_rule_dsl::workspace::api::environment(&env)?;
+        let models = environment.shared.get::<model::Models>();
+        let model = shared_model(&models, Path::new(&model_path))?;
         let dimensions = model.fingerprint.dimensions as usize;
         Ok(Self {
             encoder: ModelEncoder {

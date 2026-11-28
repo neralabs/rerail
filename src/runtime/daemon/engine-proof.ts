@@ -64,12 +64,20 @@ function provesChallenge(answer: Buffer, expected: string): boolean {
 
 /**
  * What the listener on a socket or pipe made of a challenge ({@link engineCapabilityProof}): it answered with the proof
- * (`proved`); it refused, answered anything else or hung up, or nothing listens (`refused`); or no whole answer came
- * within the timeout, counted from the ask (`silent`). An engine whose one event loop is inside an audit or a long
- * garbage collection is silent as well as a holder that never answers, so silence proves neither that the engine is
- * this home's nor that it is not.
+ * (`proved`); it answered that it has no {@link ENGINE_PROOF_PATH} (`no-proof`, a 404); it refused otherwise, answered
+ * anything else or hung up, or nothing listens (`refused`); or no whole answer came within the timeout, counted from the
+ * ask (`silent`). An engine of Rerail 0.1.4 or earlier has no proof and answers 404 to every path but its events, as any
+ * listener without that path does, and an engine whose one event loop is inside an audit or a long garbage collection
+ * is silent as well as a holder that never answers: neither answer proves that the engine is this home's, nor that it is
+ * not.
  */
-export type EngineProofAnswer = "proved" | "refused" | "silent";
+export type EngineProofAnswer = "proved" | "no-proof" | "refused" | "silent";
+
+/** What an answer of `status` with the body `answer` makes of a challenge whose proof is `expected`. */
+function proofAnswer(status: number | undefined, answer: Buffer, expected: string): EngineProofAnswer {
+  if (status === 404) return "no-proof";
+  return status === 200 && provesChallenge(answer, expected) ? "proved" : "refused";
+}
 
 /**
  * The Windows named pipe `path` spelled `\\?\pipe\<name>`, which `CreateFile` opens as the same pipe. Node's connect
@@ -167,7 +175,7 @@ async function askForProof(route: RequestOptions, accessToken: string, challenge
       if (size > MAX_ANSWER_BYTES) outgoing.destroy(new Error("Engine proof too long"));
       else chunks.push(chunk);
     });
-    response.on("end", () => resolve(response.statusCode === 200 && provesChallenge(Buffer.concat(chunks), expected) ? "proved" : "refused"));
+    response.on("end", () => resolve(proofAnswer(response.statusCode, Buffer.concat(chunks), expected)));
     // The first verdict wins: a response cut short ends here without `end`.
     response.on("close", () => resolve("refused"));
   });

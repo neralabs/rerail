@@ -1403,14 +1403,13 @@ impl CudaComputeFunctionLibrary {
         if let Some(set) = a.cu_func_set_attribute {
             ck(unsafe { set(func, CU_FUNC_ATTRIBUTE_MAX_DYNAMIC_SHARED_SIZE_BYTES, dynamic_limit as i32) }, "cuFuncSetAttribute")?;
         }
-        Ok(CudaComputeFunction { func, device: self.device, name: function_name.to_string(), arguments, param_sizes, dynamic_limit })
+        Ok(CudaComputeFunction { func, name: function_name.to_string(), arguments, param_sizes, dynamic_limit })
     }
 }
 
 /// A kernel of a library, with its arguments (`MetalComputeFunction`).
 pub struct CudaComputeFunction {
     func: Ptr,
-    device: CudaDevice,
     pub name: String,
     arguments: Vec<GridComputeFunctionArgument>,
     /// Each launch parameter's size, in the kernel's order.
@@ -1652,6 +1651,10 @@ impl CudaComputeQueue {
         self.keep.borrow_mut().push(event.word.clone());
         self.ops.borrow_mut().push(Op::WaitValue { at: event.word.device_address(), value });
     }
+
+    /// A barrier between two launches' memory (decision 0674's chain): none needed, the queue runs its launches in
+    /// order (one stream), each done before the next.
+    pub fn memory_barrier(&self) {}
 
     /// The work so far, issued onto the root's stream between two events, as an event to await. A launch the driver
     /// refuses fails the event (`await_`); the operations after it are not issued.

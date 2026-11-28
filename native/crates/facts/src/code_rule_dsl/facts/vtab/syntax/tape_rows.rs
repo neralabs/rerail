@@ -15,7 +15,7 @@
 //! `doc`'s rows are a batch's documents themselves, one each, of what the documents are given.
 
 use super::cells::Cells;
-use super::made::ViewCounts;
+use super::made::{ColKind, ViewCounts};
 use super::ranks::Item;
 use super::tokens::TokRel;
 use super::{Batch, Projected, Shape};
@@ -131,6 +131,11 @@ pub(super) trait TapeRows: Send + Sync + 'static {
     fn row(&self, at: &At, d: &Self::Doc, item: u32, k: u32, out: &mut [i64]);
     /// The tape nodes under tape node `x` that may have a row whose `parent()` column is `x`, in order.
     fn under(&self, _at: &At, _x: u32, _each: &mut dyn FnMut(u32)) {}
+    /// What column `column` holds where the batch alone bounds it (`Batch::bounds_of`, `Source::col_bounds`): none
+    /// said.
+    fn col_kind(&self, _column: usize) -> Option<ColKind> {
+        None
+    }
     /// Whether a lookup on `column` finds its items (`find`).
     fn keyed(&self, column: usize) -> bool {
         column == self.own() || Some(column) == self.parent()
@@ -138,7 +143,7 @@ pub(super) trait TapeRows: Send + Sync + 'static {
     /// The items (each with its document) a lookup of `value` on a `keyed` column may find, with a row or not: by the
     /// row's own id, its tape node; by a parent's, the nodes under it.
     fn find(&self, batch: &Batch, column: usize, value: i64, each: &mut dyn FnMut(usize, u32)) {
-        let Some(doc) = batch.doc(value >> 32, &mut 0) else { return };
+        let Some(doc) = batch.doc(rerail_blocks::located::Located::key_wide(value), &mut 0) else { return };
         let at = At { batch, doc };
         let p = at.p();
         let Some(local) = p.local_of((value & 0xffff_ffff) as u32) else { return };
@@ -190,8 +195,9 @@ pub(super) struct RowsView<R: TapeRows> {
     batch: Arc<Batch>,
     rows: R,
     per: Box<[OnceLock<Per<R::Doc>>]>,
-    /// Its index's home where the device reads it in place (`device_view`), as a view's (`Viewed::home`).
-    home: OnceLock<Option<Arc<crate::code_rule_dsl::facts::rows::IndexHome>>>,
+    /// Its index's home where the device reads it in place (`device_view`), as a view's (`Viewed::home`): room for an
+    /// index at every entry of its directory, found again by every later binding.
+    home: OnceLock<Option<crate::code_rule_dsl::facts::rows::Part>>,
 }
 
 impl<R: TapeRows> RowsView<R> {
@@ -258,11 +264,10 @@ impl<R: TapeRows> Source for RowsView<R> {
         if !entries_hold(view, &self.batch) {
             return None;
         }
-        let mut in_place = in_place.read_of(view, Arc::clone(&self.batch) as Arc<dyn std::any::Any + Send + Sync>)?;
+        let in_place = in_place.read_of(view, Arc::clone(&self.batch) as Arc<dyn std::any::Any + Send + Sync>)?;
         let rows = self.len();
-        let home = self.home.get_or_init(|| crate::code_rule_dsl::facts::rows::IndexHome::new(rows, rerail_blocks::relation::ADDED_INDEXES)).clone()?;
-        in_place.grows = Some(Arc::clone(&home));
-        Some(crate::code_rule_dsl::facts::vtab::DeviceView { view, rows, in_place, home: home.part() })
+        let home = self.home.get_or_init(|| crate::code_rule_dsl::facts::rows::Part::for_device_indexed(0, rows, rerail_blocks::relation::ADDED_INDEXES).ok()).clone()?;
+        Some(crate::code_rule_dsl::facts::vtab::DeviceView { view, rows, in_place, home })
     }
     fn as_any(&self) -> Option<&dyn std::any::Any> {
         Some(self)
@@ -288,6 +293,10 @@ impl<R: TapeRows> Source for RowsView<R> {
     fn statistics(&self) -> Option<Vec<(String, i64, i64, i64, i64)>> {
         self.rows.statistics(&self.batch)
     }
+    /// By what the column holds (`TapeRows::col_kind`), from the batch's documents: no row made.
+    fn col_bounds(&self, column: usize) -> Option<[i64; 2]> {
+        self.rows.col_kind(column).map(|k| self.batch.bounds_of(k))
+    }
     fn failure(&self) -> Option<String> {
         self.batch.docs.failure()
     }
@@ -298,6 +307,7 @@ impl<R: TapeRows> Source for RowsView<R> {
         out[column]
     }
     fn row_at(&self, row: usize, columns: &[usize], out: &mut [i64]) {
+        let _kind = rerail_prof::work::doing(rerail_prof::work::VIEW);
         let (doc, k) = self.locate(row);
         let mut all = [0; COLUMNS];
         self.read(doc, k, &mut all);
@@ -359,6 +369,9 @@ impl<R: TapeRows> Source for RowsView<R> {
     }
     /// `lookup`'s rows in its order, sorted in the probe's frame: a list made a probe was 2.07 M on cold PostHog.
     fn lookup_each(&self, column: usize, values: &[i64], each: &mut dyn FnMut(usize)) -> bool {
+        let _kind = rerail_prof::work::doing(rerail_prof::work::VIEW);
+        let outer = each;
+        let each: &mut dyn FnMut(usize) = &mut |r| { let _caller = _kind.paused(); outer(r) };
         if !self.rows.keyed(column) {
             return false;
         }
@@ -557,7 +570,7 @@ impl Gap {
     /// Each row's gap, `(tape node, from, to)` in bytes of the source, in the tape's order of their parents.
     fn walk(&self, p: &Projected, each: &mut dyn FnMut(u32, u32, u32)) {
         let f = p.f();
-        if f.len() > 0 && p.local_of_node(0) != NONE {
+        if !f.is_empty() && p.local_of_node(0) != NONE {
             match self.0 {
                 Side::Before => each(0, 0, f.start(0)),
                 Side::After => each(0, f.end(0), p.facts.source.len() as u32),
@@ -795,6 +808,10 @@ impl TapeRows for DocRow {
         out[1] = d[0];
         out[2] = d[1];
     }
+    /// Its document's key; its path's and module's atoms.
+    fn col_kind(&self, column: usize) -> Option<ColKind> {
+        Some(if column == 0 { ColKind::Key } else { ColKind::Atom })
+    }
     fn keyed(&self, column: usize) -> bool {
         column < 3
     }
@@ -827,9 +844,9 @@ impl TapeRows for DocRow {
     }
 }
 
-/// `visit_index(n, i)`: node `n`'s place in the language's visit order, from 0 per document (`tree::visit_order`:
-/// CPython's `ast` order in a Python document, the tape's elsewhere), of every document with a grammar, a guest's too
-/// (decision 0597). A row a node (`Item::Node`); the order is a walk of the tape that the tape holds no index of: each
+/// `visit_index(n, i)`: node `n`'s key in the language's visit order, by granule run (`tree::keys_by_run`), in
+/// `tree::visit_order`'s order (CPython's `ast` order in a Python document, the tape's elsewhere), of every document
+/// with a grammar, a guest's too (decision 0597). A row a node (`Item::Node`); the order is a walk of the tape that the tape holds no index of: each
 /// node's place is kept, 4 bytes a node of the projection, made on the document's first read (`// copy: derived`).
 /// Made as rows it was 13.7 MB of each chunk's block of sources at the M3's 300-file peak (ab200), `n` and `i` a row
 /// each.
@@ -842,10 +859,15 @@ impl VisitIndex {
             let dialect = at.batch.dialects.get(p.tag()).expect("a document with rows has a grammar");
             let python = crate::code_rule_dsl::language::tape_tag(crate::code_rule_dsl::language::GrammarDialect::Python) == Some(p.tag());
             let n = p.len() as usize;
-            // copy: derived (each node's place in the visit order, a walk the tape holds no index of)
+            // copy: derived (each node's key in the visit order, a walk the tape holds no index of)
             Cells::build(p.block(), n.max(1), |out: &mut [u32]| {
                 out.fill(NONE);
-                super::tree::visit_order(p, dialect, python, &mut |l, i| out[l as usize] = i);
+                let mut order = Vec::with_capacity(n);
+                super::tree::visit_order(p, dialect, python, &mut |l, i| {
+                    out[l as usize] = i;
+                    order.push(l);
+                });
+                super::tree::keys_by_run(&order, |l| (p.global(l) as u32) >> rerail_clif::ids::INDEX_BITS, out);
                 n.max(1)
             })
             .expect("a projection's block holds a view's places")
@@ -910,7 +932,7 @@ impl TreeDigest {
             // Every node's 64 digits in one buffer, each a slice of it.
             let mut digits: Vec<u8> = vec![b'0'; 64 * p.len() as usize];
             Self::hexes(at, &mut |l, h| digits[64 * l as usize..64 * (l as usize + 1)].copy_from_slice(h.as_bytes()));
-            let texts: Vec<&str> = digits.chunks_exact(64).map(|d| std::str::from_utf8(d).expect("hex digits")).collect();
+            let texts: Vec<&str> = digits.as_chunks::<64>().0.iter().map(|d| std::str::from_utf8(d).expect("hex digits")).collect();
             interned(at, &texts, "a document's digests")
         })
     }

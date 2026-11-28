@@ -626,6 +626,8 @@ pub mod heap {
     pub const DEVICE: u32 = 1 << 29;
     /// An allocation with no span open: the low bits are its thread's number (`thread_ix`), not a span.
     pub const THREAD: u32 = 1 << 28;
+    /// Chunks the engine's anonymous blocks hand out (`rerail_blocks::block::set_chunk_hook`): outside jemalloc's heap.
+    pub const BLOCKS: u32 = 1 << 27;
 
     /// An allocation of `size` bytes at `ptr`: sampled when its thread's countdown runs out, or when big.
     #[inline]
@@ -750,6 +752,15 @@ pub mod heap {
 
     /// The live samples' bytes by span id: a sample of `size` stands for `size` bytes when big, else for
     /// `size / (1 - e^(-size / INTERVAL))` (the expected bytes a sample of a byte-countdown stands for).
+    /// A live sample's bytes, scaled up for the sampling under `BIG`. A blocks' chunk counts its bytes in memory
+    /// (`rerail_blocks::mem::resident`, at most its own): a chunk a join reserves for its rows is room, mostly never
+    /// written.
+    fn weight(ptr: usize, size: u64, span: u32) -> f64 {
+        let held = if span & BLOCKS != 0 { rerail_blocks::mem::resident(ptr, size as usize).min(size as usize) as f64 } else { size as f64 };
+        let size = size as f64;
+        if size >= BIG as f64 { held } else { held / (1.0 - (-size / INTERVAL as f64).exp()).max(1e-9) }
+    }
+
     pub fn snapshot() -> Vec<(u32, u64)> {
         let mut by = std::collections::HashMap::<u32, f64>::new();
         for at in 0..SLOTS {
@@ -757,9 +768,8 @@ pub mod heap {
             if k == EMPTY || k == GONE {
                 continue;
             }
-            let size = SIZES[at].load(Relaxed) as f64;
-            let weight = if size >= BIG as f64 { size } else { size / (1.0 - (-size / INTERVAL as f64).exp()).max(1e-9) };
-            *by.entry(SPANS[at].load(Relaxed)).or_default() += weight;
+            let span = SPANS[at].load(Relaxed);
+            *by.entry(span).or_default() += weight(k, SIZES[at].load(Relaxed), span);
         }
         let mut v: Vec<(u32, u64)> = by.into_iter().map(|(k, w)| (k, w as u64)).collect();
         v.sort_by_key(|b| std::cmp::Reverse(b.1));
@@ -777,9 +787,8 @@ pub mod heap {
                 continue;
             }
             let Some(stack) = frames::of(at) else { continue };
-            let size = SIZES[at].load(Relaxed) as f64;
-            let weight = if size >= BIG as f64 { size } else { size / (1.0 - (-size / INTERVAL as f64).exp()).max(1e-9) };
-            *by.entry((SPANS[at].load(Relaxed), stack)).or_default() += weight;
+            let span = SPANS[at].load(Relaxed);
+            *by.entry((span, stack)).or_default() += weight(k, SIZES[at].load(Relaxed), span);
         }
         let mut v: Vec<((u32, Vec<usize>), u64)> = by.into_iter().map(|(k, w)| (k, w as u64)).collect();
         v.sort_by_key(|x| std::cmp::Reverse(x.1));
@@ -931,6 +940,9 @@ pub mod heap {
         if id & DEVICE != 0 {
             return format!("device leases, in {}", name(id & !DEVICE));
         }
+        if id & BLOCKS != 0 {
+            return format!("blocks' chunks, in {}", name(id & !BLOCKS));
+        }
         if id & TREE_SITTER != 0 {
             return format!("Tree-sitter's, in {}", name(id & !TREE_SITTER));
         }
@@ -952,6 +964,296 @@ pub mod heap {
     }
 }
 
+/// The profile's CPU sampler: CPU time by what each thread was doing, in the engine's own terms (its span, join, step
+/// and kind of work: `rerail_context::work`'s words). A thread of its own looks at every registered thread each
+/// millisecond and charges the CPU that thread used to the word the thread holds then. Its counts are CPU time,
+/// never events: a step that is asked often but cheaply weighs little, and work no counter names (an index's first
+/// build inside a probe, a pool's waits, a view's search for a node) weighs what it costs.
+pub mod work {
+    use std::collections::HashMap;
+    use std::fmt::Write as _;
+    use std::sync::atomic::Ordering::Relaxed;
+
+    /// The kinds of work a word names (its bits 56..64), by code.
+    pub const KINDS: [&str; 11] = ["(no kind set)", "walk", "probe", "view read", "derived read", "test", "chunk", "head rows", "build", "text", "node search"];
+    pub const WALK: u8 = 1;
+    pub const PROBE: u8 = 2;
+    pub const VIEW: u8 = 3;
+    pub const DERIVED: u8 = 4;
+    pub const TEST: u8 = 5;
+    pub const CHUNK: u8 = 6;
+    pub const HEAD: u8 = 7;
+    pub const BUILD: u8 = 8;
+    pub const TEXT: u8 = 9;
+    /// A view's search for a node's place by its id (`number_of_near`, `node_near`, `local_of_near`).
+    pub const NODE: u8 = 10;
+
+    pub use rerail_context::work::{doing, mine, on, restore, set_part, Doing, Slot, JOIN, KIND, SPAN, STEP};
+
+    static START: std::sync::Once = std::sync::Once::new();
+    /// What the sampler found, by thread (`rerail_context::work::slots`' order).
+    static TABLE: std::sync::LazyLock<std::sync::Mutex<Vec<Thread>>> = std::sync::LazyLock::new(Default::default);
+    /// The joins' names and their steps' (`join`), by id - 1.
+    static JOINS: std::sync::LazyLock<std::sync::Mutex<(HashMap<String, u16>, Vec<(String, Vec<String>)>)>> = std::sync::LazyLock::new(Default::default);
+    /// The milliseconds between looks.
+    const EVERY_MS: u64 = 2;
+
+    /// A thread's looks: its CPU at the first and the last, and by word, the CPU added since the look before (where
+    /// the clock is exact) and the looks that found it running.
+    #[derive(Default)]
+    struct Thread {
+        first: Option<u64>,
+        last: u64,
+        /// Whether its clock lags (macOS): its CPU is then spread over the looks that found it in its own code.
+        lags: bool,
+        words: HashMap<u64, (u64, u64)>,
+        last_word: u64,
+    }
+
+    /// Starts the sampler, once for the process, and turns the threads' words on.
+    pub fn start() {
+        START.call_once(|| {
+            rerail_context::work::enable();
+            let _ = std::thread::Builder::new().name("rerail-work-sampler".into()).spawn(sample);
+        });
+    }
+
+    fn sample() {
+        loop {
+            std::thread::sleep(std::time::Duration::from_millis(EVERY_MS));
+            let slots = rerail_context::work::slots();
+            let looks: Vec<Option<(u64, Option<bool>, u64)>> = slots.iter().map(|s| s.look().map(|(cpu, running)| (cpu, running, s.word.load(Relaxed)))).collect();
+            let mut t = TABLE.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+            t.resize_with(slots.len(), Default::default);
+            for (th, look) in t.iter_mut().zip(looks) {
+                let Some((cpu, running, word)) = look else { continue };
+                let Some(_) = th.first else {
+                    (th.first, th.last) = (Some(cpu), cpu);
+                    continue;
+                };
+                let d = cpu.saturating_sub(th.last);
+                th.last = cpu;
+                match running {
+                    Some(r) => {
+                        th.lags = true;
+                        if r {
+                            th.words.entry(word).or_default().1 += 1;
+                            th.last_word = word;
+                        }
+                    }
+                    None if d > 0 => {
+                        let e = th.words.entry(word).or_default();
+                        e.0 += d;
+                        e.1 += 1;
+                    }
+                    None => {}
+                }
+            }
+        }
+    }
+
+    /// CPU ns and looks by word, every thread's: where a thread's clock lags, its CPU from its first look to its last
+    /// spread over its words by the looks that found it in its own code (one that used CPU with none: to its last word).
+    fn table() -> HashMap<u64, (u64, u64)> {
+        let t = TABLE.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+        let mut out: HashMap<u64, (u64, u64)> = HashMap::new();
+        for th in t.iter() {
+            let Some(first) = th.first else { continue };
+            if !th.lags {
+                for (&w, &(ns, n)) in &th.words {
+                    let e = out.entry(w).or_default();
+                    e.0 += ns;
+                    e.1 += n;
+                }
+                continue;
+            }
+            let cpu = th.last.saturating_sub(first);
+            let looks: u64 = th.words.values().map(|x| x.1).sum();
+            if looks == 0 {
+                if cpu > 0 {
+                    out.entry(th.last_word).or_default().0 += cpu;
+                }
+                continue;
+            }
+            for (&w, &(_, n)) in &th.words {
+                let e = out.entry(w).or_default();
+                e.0 += (cpu as u128 * u128::from(n) / u128::from(looks)) as u64;
+                e.1 += n;
+            }
+        }
+        out
+    }
+
+    /// A join's id in the words (1 on; `u16::MAX` past the room): by its name, its steps named once.
+    pub fn join(name: &str, steps: impl FnOnce() -> Vec<String>) -> u16 {
+        let mut j = JOINS.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+        if let Some(&id) = j.0.get(name) {
+            return id;
+        }
+        if j.1.len() >= usize::from(u16::MAX - 1) {
+            return u16::MAX;
+        }
+        j.1.push((name.to_owned(), steps()));
+        let id = j.1.len() as u16;
+        j.0.insert(name.to_owned(), id);
+        id
+    }
+
+    /// One row of the table: a word's parts named, and its CPU.
+    pub struct Row {
+        pub span: String,
+        pub join: String,
+        /// The step (`None`: none, the join's own work outside its steps).
+        pub step: Option<usize>,
+        pub step_name: String,
+        pub kind: &'static str,
+        pub cpu_ns: u64,
+        pub looks: u64,
+    }
+
+    /// The table so far, most CPU first.
+    pub fn rows() -> Vec<Row> {
+        let t: Vec<(u64, (u64, u64))> = table().into_iter().collect();
+        let joins = JOINS.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+        let mut out: Vec<Row> = t
+            .into_iter()
+            .map(|(w, (ns, n))| {
+                let span = (w & rerail_context::work::SPAN) as u32;
+                let join = ((w & rerail_context::work::JOIN) >> 32) as u16;
+                let step = ((w & rerail_context::work::STEP) >> 48) as usize;
+                let kind = ((w & rerail_context::work::KIND) >> 56) as usize;
+                let j = (join != 0).then(|| joins.1.get(usize::from(join) - 1)).flatten();
+                let step = step.checked_sub(1);
+                Row {
+                    span: super::heap::name(span),
+                    join: match (join, j) {
+                        (0, _) => String::new(),
+                        (_, Some((name, _))) => name.clone(),
+                        _ => "(joins past the room)".to_owned(),
+                    },
+                    step,
+                    step_name: match (j, step) {
+                        (Some((_, steps)), Some(s)) => steps.get(s).cloned().unwrap_or_else(|| if s == steps.len() { "(head rows)".to_owned() } else { "(outside the steps)".to_owned() }),
+                        _ => String::new(),
+                    },
+                    kind: KINDS.get(kind).copied().unwrap_or("?"),
+                    cpu_ns: ns,
+                    looks: n,
+                }
+            })
+            .collect();
+        out.sort_by_key(|r| std::cmp::Reverse(r.cpu_ns));
+        out
+    }
+
+    /// The table as `work.tsv`: one line a word.
+    pub fn tsv() -> String {
+        let mut s = String::from("cpu_ms\tlooks\tkind\tspan\tjoin\tstep\tstep_name\n");
+        for r in rows() {
+            let _ = writeln!(s, "{:.1}\t{}\t{}\t{}\t{}\t{}\t{}", r.cpu_ns as f64 / 1e6, r.looks, r.kind, r.span, r.join, r.step.map_or(String::new(), |s| s.to_string()), r.step_name);
+        }
+        s
+    }
+
+    /// The report's section: the sampled CPU by kind of work, by span, by join, and by join step with its kinds.
+    pub fn report(top: usize) -> String {
+        let rows = rows();
+        let all: u64 = rows.iter().map(|r| r.cpu_ns).sum();
+        let mut s = String::new();
+        if all == 0 {
+            return s;
+        }
+        let pct = |ns: u64| 100.0 * ns as f64 / all as f64;
+        let _ = writeln!(s, "CPU sampled by what each thread was doing (rerail_prof::work: every {EVERY_MS} ms, each thread's word of its span, join, step and kind of work; a thread's CPU spread over the looks that found it in its own code where its clock lags, as on macOS): {:.3} s", all as f64 / 1e9);
+        let group = |key: &dyn Fn(&Row) -> String| {
+            let mut m: HashMap<String, u64> = HashMap::new();
+            for r in &rows {
+                *m.entry(key(r)).or_default() += r.cpu_ns;
+            }
+            let mut v: Vec<(String, u64)> = m.into_iter().collect();
+            v.sort_by_key(|x| std::cmp::Reverse(x.1));
+            v
+        };
+        let _ = writeln!(s, "\nby kind of work:");
+        for (k, ns) in group(&|r| r.kind.to_owned()) {
+            let _ = writeln!(s, "  {:9.3} s {:5.1}%  {k}", ns as f64 / 1e9, pct(ns));
+        }
+        let _ = writeln!(s, "\nby join (the walks' own CPU, every step):");
+        for (k, ns) in group(&|r| if r.join.is_empty() { "(in no join)".to_owned() } else { r.join.clone() }).into_iter().take(top) {
+            let _ = writeln!(s, "  {:9.3} s {:5.1}%  {}", ns as f64 / 1e9, pct(ns), short(&k, 200));
+        }
+        let _ = writeln!(s, "\nby join step and kind of work:");
+        for r in rows.iter().filter(|r| !r.join.is_empty()).take(top) {
+            let step = r.step.map_or("-".to_owned(), |x| x.to_string());
+            let _ = writeln!(s, "  {:9.3} s {:5.1}%  {:<12} step {step:>2} {}  in {}", r.cpu_ns as f64 / 1e9, pct(r.cpu_ns), r.kind, short(&r.step_name, 70), short(&r.join, 90));
+        }
+        let _ = writeln!(s, "\nby span, outside the joins:");
+        for (k, ns) in group(&|r| if r.join.is_empty() { r.span.clone() } else { "(in a join)".to_owned() }).into_iter().take(top) {
+            let _ = writeln!(s, "  {:9.3} s {:5.1}%  {}", ns as f64 / 1e9, pct(ns), short(&k, 160));
+        }
+        s
+    }
+
+    fn short(s: &str, n: usize) -> String {
+        if s.chars().count() <= n { s.to_owned() } else { format!("{}…", s.chars().take(n).collect::<String>()) }
+    }
+
+    #[cfg(all(test, any(target_vendor = "apple", target_os = "linux")))]
+    mod tests {
+        /// The sampler charges a thread's CPU to the word it holds: a thread that spins 300 ms under one word is
+        /// charged most of it there, and one that sleeps as long under another is charged next to nothing; a job on
+        /// the pool runs under its maker's word.
+        #[test]
+        fn a_threads_cpu_is_charged_to_the_word_it_holds() {
+            super::start();
+            let span = super::super::heap::intern("work sampler test: spinning");
+            let quiet = super::super::heap::intern("work sampler test: sleeping");
+            let spin = std::thread::spawn(move || {
+                super::set_part(super::SPAN, u64::from(span));
+                let t = std::time::Instant::now();
+                let mut x = 0u64;
+                while t.elapsed() < std::time::Duration::from_millis(300) {
+                    x = std::hint::black_box(x.wrapping_mul(31).wrapping_add(7));
+                }
+                x
+            });
+            let sleep = std::thread::spawn(move || {
+                super::set_part(super::SPAN, u64::from(quiet));
+                std::thread::sleep(std::time::Duration::from_millis(300));
+            });
+            spin.join().unwrap();
+            sleep.join().unwrap();
+            std::thread::sleep(std::time::Duration::from_millis(20));
+            let cpu = |name: &str| super::rows().iter().filter(|r| r.span == name).map(|r| r.cpu_ns).sum::<u64>();
+            let (spun, slept) = (cpu("work sampler test: spinning"), cpu("work sampler test: sleeping"));
+            assert!(spun > 200_000_000, "the spinning thread's CPU charged to its word: {spun} ns");
+            assert!(slept < 20_000_000, "the sleeping thread charged next to nothing: {slept} ns");
+            // A job carries its maker's word to the pool thread that runs it.
+            let job = super::super::heap::intern("work sampler test: a job's maker");
+            super::set_part(super::SPAN, u64::from(job));
+            let got = std::sync::atomic::AtomicU64::new(0);
+            rerail_context::cores_scope(|s| {
+                s.spawn(|_| got.store(rerail_context::work::word() & super::SPAN, std::sync::atomic::Ordering::Relaxed));
+            });
+            assert_eq!(got.into_inner(), u64::from(job), "the job ran under its maker's word");
+            // The innermost guard names the work; a callback the read calls runs under its caller's word.
+            let kind = || (rerail_context::work::word() & super::KIND) >> 56;
+            let walk = super::doing(super::WALK);
+            {
+                let read = super::doing(super::VIEW);
+                assert_eq!(kind(), u64::from(super::VIEW));
+                {
+                    let _caller = read.paused();
+                    assert_eq!(kind(), u64::from(super::WALK), "a read's callback is its caller's work");
+                }
+                assert_eq!(kind(), u64::from(super::VIEW));
+            }
+            assert_eq!(kind(), u64::from(super::WALK));
+            drop(walk);
+        }
+    }
+}
+
 // The browser build has no JIT: wasm/cranelift-jit stands in under the same name (wasm/README.md).
 #[cfg(target_family = "wasm")]
 extern crate cranelift_jit_wasm as cranelift_jit;
@@ -966,6 +1268,7 @@ pub mod code_rule_dsl {
     pub mod phase_clock;
     pub mod prof;
     pub mod sql_frame;
+    pub mod w_joins;
     #[allow(unused_imports)]
     use napi::Result;
     #[allow(unused_imports)]

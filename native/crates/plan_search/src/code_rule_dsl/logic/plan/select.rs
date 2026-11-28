@@ -106,7 +106,7 @@ fn term(b: &Body<'_>, t: TermRef<'_>, env: &Env, atoms: Option<[i64; 3]>) -> Res
                     out
                 }
                 // A node's document (`@doc`): nodes are `d << 32 | index`.
-                ("doc", [x]) => bin(Op::Divide, x.clone(), integer(1i64 << 32)),
+                ("doc", [x]) => bin(Op::Divide, x.clone(), integer(rerail_blocks::located::SCALE)),
                 // A sibling's position (`logic::convert`: `precedes`, `follows`), and `.rerail`'s arithmetic.
                 ("add", [x, y]) => bin(Op::Add, x.clone(), y.clone()),
                 ("sub", [x, y]) => bin(Op::Subtract, x.clone(), y.clone()),
@@ -160,14 +160,14 @@ fn term(b: &Body<'_>, t: TermRef<'_>, env: &Env, atoms: Option<[i64; 3]>) -> Res
                 // atom and the line, below `unset` (-1) and every node id; `unset` for a line outside `0 .. 2^32`.
                 // `@place_path` and `@place_line` take it apart.
                 ("place", [p, l]) if atoms.is_some() => {
-                    let valid = bin(Op::And, bin(Op::GreaterOrEqual, l.clone(), integer(0)), bin(Op::Less, l.clone(), integer(1 << 32)));
-                    let place = bin(Op::Subtract, integer(-2), bin(Op::Add, bin(Op::Multiply, p.clone(), integer(1 << 32)), l.clone()));
+                    let valid = bin(Op::And, bin(Op::GreaterOrEqual, l.clone(), integer(0)), bin(Op::Less, l.clone(), integer(rerail_blocks::located::SCALE)));
+                    let place = bin(Op::Subtract, integer(-2), bin(Op::Add, bin(Op::Multiply, p.clone(), integer(rerail_blocks::located::SCALE)), l.clone()));
                     Expr::Case { branches: vec![(valid, place)], fallback: Box::new(integer(-1)) }
                 }
-                ("place_path", [x]) if atoms.is_some() => bin(Op::Divide, bin(Op::Subtract, integer(-2), x.clone()), integer(1 << 32)),
+                ("place_path", [x]) if atoms.is_some() => bin(Op::Divide, bin(Op::Subtract, integer(-2), x.clone()), integer(rerail_blocks::located::SCALE)),
                 ("place_line", [x]) if atoms.is_some() => {
                     let n = bin(Op::Subtract, integer(-2), x.clone());
-                    bin(Op::Subtract, n.clone(), bin(Op::Multiply, bin(Op::Divide, n, integer(1 << 32)), integer(1 << 32)))
+                    bin(Op::Subtract, n.clone(), bin(Op::Multiply, bin(Op::Divide, n, integer(rerail_blocks::located::SCALE)), integer(rerail_blocks::located::SCALE)))
                 }
                 ("place" | "place_path" | "place_line", _) => {
                     return Err(Error::Plan(format!("no SQL for {}: a place is made of a symbol atom", b.v.show_term(b.rule, t))));
@@ -346,7 +346,7 @@ impl<'a, 'v> SelectBuilder<'a, 'v> {
             // A document's nodes are `d << 32 | index`: the interval is computed, no table read or
             // made (decision 0104). T's facts number nodes in preorder over the corpus: there the
             // intervals are `stat_docrange`'s.
-            let lo = bin(Op::Multiply, term(b, dv, &self.env, self.atoms)?, integer(1 << 32));
+            let lo = bin(Op::Multiply, term(b, dv, &self.env, self.atoms)?, integer(rerail_blocks::located::SCALE));
             (lo.clone(), bin(Op::Add, lo, integer(0xffff_ffff)))
         } else {
             let ra = self.next_alias();

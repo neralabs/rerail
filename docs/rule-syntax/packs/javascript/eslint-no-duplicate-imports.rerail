@@ -15,11 +15,11 @@
     suppress eslint "no-duplicate-imports"
     suppress oxlint "no-duplicate-imports"
 duplicate(x, cat("Merge this import into the earlier import from '", m, "' (line ", to_string(l), ").")) :-
-    dup(x, "import", p, "import", m), line(p, l).
+    dup(x, "import", p, "import", m), node_line_number(p, l).
 duplicate(x, cat("Combine this import with the re-export from '", m, "': import once, then export the imported names.")) :-
     dup(x, "import", _, "export", m).
 duplicate(x, cat("Merge this re-export into the earlier re-export from '", m, "' (line ", to_string(l), ").")) :-
-    dup(x, "export", p, "export", m), line(p, l).
+    dup(x, "export", p, "export", m), node_line_number(p, l).
 duplicate(x, cat("Replace this re-export from '", m, "' by exporting the names already imported from it.")) :-
     dup(x, "export", _, "import", m).
 
@@ -59,7 +59,9 @@ mergeable(x, p) :- decl(x, _, m), decl(p, _, m), shape(x, s), shape(p, t), x != 
     !types_apart(x, p).
 .decl types_apart(x: node, p: node)  // import type D from "m" and import type { N } from "m"
 types_apart(x, p) :- typed(x), typed(p), shape(x, s), shape(p, t), (s = "default", t = "named" ; s = "named", t = "default").
-.decl apart(s: symbol, t: symbol)  // these shapes never merge, in either order
-apart("all", t) :- shape(_, t), t != "all", t != "bare".
-apart(t, "all") :- shape(_, t), t != "all", t != "bare".
+// apart(s, t): these shapes never merge, in either order. Facts over the shapes `shape` gives, not over every
+// file's imports (decision 0677).
+.decl apart(s: symbol, t: symbol)
+apart("all", "named"). apart("all", "namespace"). apart("all", "default").
+apart("named", "all"). apart("namespace", "all"). apart("default", "all").
 apart("namespace", "named"). apart("named", "namespace").

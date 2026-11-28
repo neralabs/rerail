@@ -134,12 +134,13 @@ pub(super) struct Sample {
     pub(super) threads: usize,
     /// What else holds memory then, beside the heap (MB): the Metal driver's allocations, the device buffer pool's
     /// reservations, relational work's leases (live, idle), SQLite's heap, the host blocks (used, and of it free
-    /// on their lists; decision 0342).
-    pub(super) holders: [usize; 7],
+    /// on their lists, and of that what is still resident: a free chunk's pages may have gone to the OS; decision
+    /// 0342), and the threads' stacks and long rooms (blocks of their own, which no allocator counts).
+    pub(super) holders: [usize; 24],
 }
 
 /// The holders a sample reads (`Sample::holders`), in MB.
-fn holders() -> [usize; 7] {
+fn holders() -> [usize; 24] {
     let (reserved, driver) = crate::code_rule_dsl::prof::device_memory();
     // Relational work's device leases exist only where the device does (macOS).
     #[cfg(any(target_os = "macos", target_os = "linux", windows))]
@@ -148,7 +149,17 @@ fn holders() -> [usize; 7] {
     let (live, idle) = (0, 0);
     let sqlite = unsafe { rusqlite::ffi::sqlite3_memory_used() }.max(0) as usize;
     let (host, host_free) = rerail_accel::blocks::host_held();
-    [driver, reserved, live >> 20, idle >> 20, sqlite >> 20, host >> 20, host_free >> 20]
+    let host_free_resident = rerail_accel::blocks::host_free_resident();
+    let (stacks, long) = (rerail_blocks::scratch::resident(), rerail_blocks::long::resident());
+    // The host blocks' bytes in memory, measured: their used bytes count room reserved and never written.
+    let host_in_memory = rerail_accel::blocks::host_resident();
+    // Of the free bytes kept in memory: those a give would take, and those in pages a live chunk shares.
+    let (givable, pinned) = rerail_accel::blocks::free_kept_split();
+    // Every block's memory in memory: the anonymous blocks', and the leases' and mappings'.
+    let (by_kind, leased_in_memory) = rerail_accel::blocks::resident_split();
+    let anon: usize = by_kind.iter().sum();
+    let k = by_kind.map(|b| b >> 20);
+    [driver, reserved, live >> 20, idle >> 20, sqlite >> 20, host >> 20, host_free >> 20, host_free_resident >> 20, stacks >> 20, long >> 20, host_in_memory >> 20, givable >> 20, pinned >> 20, anon >> 20, leased_in_memory >> 20, k[0], k[1], k[2], k[3], k[4], k[5], k[6], k[7] + k[8], rerail_blocks::scratch::used() >> 20]
 }
 
 /// The relations' blocks live now by the span that made them (span, life, bytes used, blocks), as the facts crate
@@ -156,16 +167,18 @@ fn holders() -> [usize; 7] {
 #[derive(Default)]
 pub struct BlocksBySpan(pub std::sync::OnceLock<fn() -> Vec<SpanBlocks>>);
 
-/// One span's blocks live now: span, life, bytes used, blocks, the span's name.
-pub type SpanBlocks = (u32, u8, usize, usize, String);
+/// One span's blocks live now: span, life, bytes used, blocks, the span's name, and the bytes of them in memory (their
+/// used bytes count room reserved and never written; none for a row of no blocks of its own, inside another's).
+pub type SpanBlocks = (u32, u8, usize, usize, String, usize);
 
 /// The runs' relations held now by name (name, rows, columns, bytes of values, runs holding it), as the evaluator
 /// reads them (`setfix::held_by_name`), which sets it at its first run: the sampler takes it at the peak.
 #[derive(Default)]
 pub struct RelationsByName(pub std::sync::OnceLock<fn() -> Vec<NamedRelation>>);
 
-/// One relation held now: name, rows, columns, bytes of values, runs holding it.
-pub type NamedRelation = (String, usize, usize, usize, usize);
+/// One relation held now: name, rows, columns, bytes of values (their room), runs holding it, the bytes of that room
+/// in memory, and the bytes of its indexes in memory.
+pub type NamedRelation = (String, usize, usize, usize, usize, usize, usize);
 
 #[derive(Default)]
 pub(super) struct Sampled {
@@ -183,14 +196,16 @@ pub(super) struct Sampled {
     pub(super) heap_frames: Vec<((u32, Vec<usize>), u64)>,
     /// The relations' blocks live then, by the span that made them and their life (`rows::held_by_span`): span,
     /// life, bytes used, blocks.
-    pub(super) blocks: Vec<(u32, u8, usize, usize, String)>,
+    pub(super) blocks: Vec<SpanBlocks>,
     /// The runs' relations held then (`RelationsByName`).
-    pub(super) relations: Vec<(String, usize, usize, usize, usize)>,
+    pub(super) relations: Vec<NamedRelation>,
     pub(super) heap_at: u64,
     /// `RERAIL_HEAP_AT=<text>`: the live heap by allocating span at the most footprint seen while a thread had a
     /// span open whose path holds the text (a phase that is not the peak's), and that footprint.
     pub(super) heap_in: Vec<(u32, u64)>,
     pub(super) heap_in_at: u64,
+    /// The relations' blocks live then, by the span that made them (`BlocksBySpan`), as `blocks` at the peak.
+    pub(super) blocks_in: Vec<SpanBlocks>,
 }
 
 /// `RERAIL_HEAP_AT`'s text, read once a run.
@@ -216,18 +231,22 @@ pub(super) fn sample() {
                     rerail_prof::heap::alloc_by(ptr, len, rerail_prof::heap::DEVICE);
                 }
             });
-            // Q203 (c): what holds the device's budget when a lease is refused, by the span that leased it (the first
-            // few refusals of a process).
-            rerail_accel::gpu::shared::set_refusal_hook(|why| {
-                // Every refusal by the span that asked (one line), the holdings for the first few.
-                static TOLD: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
-                eprintln!("rerail: refused in {}: {why}", rerail_prof::heap::name(rerail_prof::heap::span()));
-                if TOLD.fetch_add(1, std::sync::atomic::Ordering::Relaxed) >= 6 {
-                    return;
+            // So are the chunks the anonymous blocks hand out (relations, vectors, indexes), under the span that took
+            // them: the blocks' account names only the span that made each block.
+            rerail_blocks::block::set_chunk_hook(|ptr, len| {
+                if len == 0 {
+                    rerail_prof::heap::free(ptr);
+                } else {
+                    rerail_prof::heap::alloc_by(ptr, len, rerail_prof::heap::BLOCKS);
                 }
+            });
+            // Q203 (c): what holds the device's budget when the run ends for its device memory, by the span that leased
+            // it, and the span that asked.
+            rerail_accel::gpu::shared::set_out_of_memory_hook(|why| {
+                eprintln!("rerail: out of device memory in {}: {why}", rerail_prof::heap::name(rerail_prof::heap::span()));
                 let held: Vec<(u32, u64)> = rerail_prof::heap::snapshot().into_iter().filter(|(id, _)| id & rerail_prof::heap::DEVICE != 0).collect();
                 let all: u64 = held.iter().map(|h| h.1).sum();
-                let mut out = format!("rerail: refused, device leases by span ({} MB sampled): {why}", all >> 20);
+                let mut out = format!("rerail: out of device memory, device leases by span ({} MB sampled): {why}", all >> 20);
                 for (id, bytes) in held.iter().take(12) {
                     out.push_str(&format!("\n  {:>6.1} MB  {}", *bytes as f64 / 1048576.0, rerail_prof::heap::name(*id)));
                 }
@@ -306,8 +325,10 @@ pub(super) fn sample() {
                     s.heap_in_at = now;
                     drop(s);
                     let heap = rerail_prof::heap::snapshot();
+                    let blocks = super::machine::<BlocksBySpan>().0.get().map_or_else(Vec::new, |f| f());
                     s = SAMPLED.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
                     s.heap_in = heap;
+                    s.blocks_in = blocks;
                 }
                 if keep {
                     s.rows.push(sample);
@@ -372,14 +393,13 @@ pub(super) fn sampled_report(r: &mut String) {
     // allocators). The driver's count (`current_allocated_size`) is shown apart: it counts every no-copy wrap of host
     // memory (the blocks, the heap) again, so it is no holder of its own (ab145: 2,709 MB of it at a 3,051 MB
     // footprint whose IOAccelerator regions were 971 MB).
-    let [driver, reserved, leased, idle, sqlite, host, host_free] = t.holders;
+    let [driver, reserved, leased, idle, sqlite, host, host_free, host_free_resident, stacks, long, host_resident, givable, pinned, anon, leased_in_memory, k0, facts, chunk, program, outputs, journal, scratch, atoms_kept, stacks_used] = t.holders;
     let heap_mb = |b: u64| (b >> 20) as usize;
-    let accounted = heap_mb(t.resident) + reserved + leased + idle + host;
-    let _ = writeln!(r, "  by holder then (MB): heap live {}, heap resident beyond live {}; the device's own {} (device pool {}, relational leases {} + {} idle); SQLite heap {}; host blocks {} ({} free on their lists); the rest {}; the Metal driver's count {} (no-copy wraps of host memory counted again)",
-        heap_mb(t.live), heap_mb(t.resident.saturating_sub(t.live)), reserved + leased + idle, reserved, leased, idle, sqlite, host, host_free, heap_mb(t.footprint).saturating_sub(accounted), driver);
-    // Blocks' memory handed out again and zeroed for it (decision 0342): a free list's chunk asked zeroed (a
-    // descriptor), a recycled slab's allocation; a relation's rows are written before read and never zeroed.
-    let _ = writeln!(r, "  blocks: {} MB zeroed as their memory was handed out again", rerail_accel::blocks::zeroed_bytes() >> 20);
+    // The blocks' bytes in memory are measured (`blocks::host_resident`): their used bytes, less their free chunks'
+    // pages given back, counted room reserved and never written too (7,890 MB of them at a 4,243 MB footprint).
+    let accounted = heap_mb(t.resident) + reserved + leased + idle + host_resident + stacks + long;
+    let _ = writeln!(r, "  by holder then (MB): heap live {}, heap resident beyond live {}; the device's own {} (device pool {}, relational leases {} + {} idle; of every ledger's memory {} MB in memory, anonymous blocks {} of it: facts {}, chunk {}, program {}, outputs {}, journal {}, scratch {}, atoms and kept {}, no kind {}); SQLite heap {}; host blocks {} used, {} of them in memory ({} live, {} free on their lists: {} in pages no live chunk reaches, {} in pages one shares; {} more free given back to the OS); the threads' stacks {} ({} under their tops), their long rooms {}; the rest {}; the Metal driver's count {} (no-copy wraps of host memory counted again)",
+        heap_mb(t.live), heap_mb(t.resident.saturating_sub(t.live)), reserved + leased + idle, reserved, leased, idle, anon + leased_in_memory, anon, facts, chunk, program, outputs, journal, scratch, atoms_kept, k0, sqlite, host, host_resident, host_resident.saturating_sub(host_free_resident), host_free_resident, givable, pinned, host_free.saturating_sub(host_free_resident), stacks, stacks_used, long, heap_mb(t.footprint).saturating_sub(accounted), driver);
     if let Some(census) = width_census::report() {
         let _ = writeln!(r, "  {census}");
         for line in width_census::top_spans(30) {
@@ -403,22 +423,21 @@ pub(super) fn sampled_report(r: &mut String) {
     if !s.blocks.is_empty() {
         // Rows of no blocks (what a block of every array holds, by span: `rows::held_by_span`) are inside the others'.
         let total: usize = s.blocks.iter().filter(|b| b.3 > 0).map(|b| b.2).sum();
-        let _ = writeln!(r, "Relations' blocks live then, by the span that made them (at {} MB footprint; {} MB used in all, of {} blocks):",
-            mb(s.heap_at as f64), total >> 20, s.blocks.iter().map(|b| b.3).sum::<usize>());
-        let lives = ["a run's", "sources'", "kept", "a device run's own"];
-        for (id, life, bytes, n, by) in s.blocks.iter().take(40) {
-            let by = if by.is_empty() { String::new() } else { format!(", by {by}") };
-            let _ = writeln!(r, "{:>10} MB  {:>5} blocks, {}, made in {}{by}", bytes >> 20, n, lives.get(*life as usize).unwrap_or(&"?"), super::short(&rerail_prof::heap::name(*id), 140));
-        }
+        let resident: usize = s.blocks.iter().map(|b| b.5).sum();
+        let _ = writeln!(r, "Relations' blocks live then, by the span that made them (at {} MB footprint; {} MB used in all, {} MB of it in memory, of {} blocks; used, in memory):",
+            mb(s.heap_at as f64), total >> 20, resident >> 20, s.blocks.iter().map(|b| b.3).sum::<usize>());
+        blocks_lines(r, &s.blocks);
     }
     if !s.relations.is_empty() {
         let total: usize = s.relations.iter().map(|r| r.3).sum();
+        let resident: usize = s.relations.iter().map(|r| r.5).sum();
+        let indexes: usize = s.relations.iter().map(|r| r.6).sum();
         let rows: usize = s.relations.iter().map(|r| r.1).sum();
-        let _ = writeln!(r, "The runs' relations held then, by name (at {} MB footprint; {} relations, {} rows, {} MB of values in all; rows, columns, MB, runs):",
-            mb(s.heap_at as f64), s.relations.len(), rows, total >> 20);
+        let _ = writeln!(r, "The runs' relations held then, by name (at {} MB footprint; {} relations, {} rows, {} MB of values' room in all, {} MB of it in memory, their indexes {} MB in memory; room, in memory, indexes in memory, rows, columns, runs):",
+            mb(s.heap_at as f64), s.relations.len(), rows, total >> 20, resident >> 20, indexes >> 20);
         // Every one: what the rows are is read off the whole list, not its head.
-        for (name, rows, k, bytes, runs) in s.relations.iter() {
-            let _ = writeln!(r, "{:>10} KB  {:>9} rows  {k} columns  {runs} runs  {}", bytes >> 10, rows, super::short(name, 120));
+        for (name, rows, k, bytes, runs, res, ix) in s.relations.iter() {
+            let _ = writeln!(r, "{:>10} KB {:>10} KB {:>10} KB  {:>9} rows  {k} columns  {runs} runs  {}", bytes >> 10, res >> 10, ix >> 10, rows, super::short(name, 120));
         }
     }
     if let Some(text) = heap_at_text()
@@ -429,12 +448,30 @@ pub(super) fn sampled_report(r: &mut String) {
         for (id, bytes) in s.heap_in.iter().take(30) {
             let _ = writeln!(r, "{:>10} MB  {}", mb(*bytes as f64), super::short(&rerail_prof::heap::name(*id), 150));
         }
+        let total: usize = s.blocks_in.iter().filter(|b| b.3 > 0).map(|b| b.2).sum();
+        let resident: usize = s.blocks_in.iter().map(|b| b.5).sum();
+        let _ = writeln!(r, "Relations' blocks live then, by the span that made them ({} MB used in all, {} MB of it in memory, of {} blocks; used, in memory):", total >> 20, resident >> 20, s.blocks_in.iter().map(|b| b.3).sum::<usize>());
+        blocks_lines(r, &s.blocks_in);
     }
     let mut rose: Vec<(&String, &(u64, u64))> = s.rise.iter().filter(|(_, v)| v.0 > 0).collect();
     rose.sort_by_key(|(_, v)| std::cmp::Reverse(v.0));
     let _ = writeln!(r, "Open (innermost, on any thread) while the high-water mark rose, by the rise; most footprint seen while open");
     for (p, (rise, most)) in rose.iter().take(20) {
         let _ = writeln!(r, "{:>10} MB {:>10} MB  {}", mb(*rise as f64), mb(*most as f64), super::short(p, 140));
+    }
+}
+
+/// The blocks' rows of a report (`SpanBlocks`), the 40 most in memory: used, in memory (a row of no blocks of its own
+/// shows none), blocks, life, the span that made them.
+fn blocks_lines(r: &mut String, blocks: &[SpanBlocks]) {
+    use std::fmt::Write as _;
+    let mut rows: Vec<&SpanBlocks> = blocks.iter().collect();
+    rows.sort_by_key(|b| std::cmp::Reverse((b.5, b.2)));
+    let lives = ["a run's", "sources'", "kept", "a device run's own"];
+    for (id, life, bytes, n, by, resident) in rows.into_iter().take(40) {
+        let by = if by.is_empty() { String::new() } else { format!(", by {by}") };
+        let res = if *n > 0 { format!("{:>6} MB", resident >> 20) } else { format!("{:>9}", "-") };
+        let _ = writeln!(r, "{:>10} MB {res}  {:>5} blocks, {}, made in {}{by}", bytes >> 20, n, lives.get(*life as usize).unwrap_or(&"?"), super::short(&rerail_prof::heap::name(*id), 140));
     }
 }
 
@@ -446,6 +483,10 @@ pub fn heap_tsv() -> String {
     let mut t = String::from("bytes\tspan\n");
     for (id, bytes) in &s.heap {
         let _ = writeln!(t, "{bytes}\t{}", rerail_prof::heap::name(*id));
+    }
+    // `RERAIL_HEAP_AT`'s snapshot, each span marked `in:`.
+    for (id, bytes) in &s.heap_in {
+        let _ = writeln!(t, "{bytes}\tin: {}", rerail_prof::heap::name(*id));
     }
     t
 }
@@ -467,10 +508,10 @@ pub fn heap_frames_tsv() -> String {
 pub fn sampled_tsv() -> String {
     use std::fmt::Write as _;
     let s = SAMPLED.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
-    let mut t = String::from("at_s\tunix_s\tfootprint_bytes\tmax_bytes\tjemalloc_live_bytes\tjemalloc_resident_bytes\tmetal_driver_mb\tdevice_pool_mb\trelational_leased_mb\trelational_idle_mb\tsqlite_mb\thost_blocks_mb\thost_free_mb\tthreads\topen\n");
+    let mut t = String::from("at_s\tunix_s\tfootprint_bytes\tmax_bytes\tjemalloc_live_bytes\tjemalloc_resident_bytes\tmetal_driver_mb\tdevice_pool_mb\trelational_leased_mb\trelational_idle_mb\tsqlite_mb\thost_blocks_mb\thost_free_mb\thost_free_resident_mb\tstacks_mb\tlong_rooms_mb\tthreads\topen\thost_resident_mb\tfree_givable_mb\tfree_pinned_mb\tanon_blocks_resident_mb\tleases_maps_resident_mb\n");
     for r in &s.rows {
-        let [d, p, l, i, q, h, f] = r.holders;
-        let _ = writeln!(t, "{:.3}\t{:.3}\t{}\t{}\t{}\t{}\t{d}\t{p}\t{l}\t{i}\t{q}\t{h}\t{f}\t{}\t{}", r.at, r.unix, r.footprint, r.max, r.live, r.resident, r.threads, r.open.join(" | "));
+        let [d, p, l, i, q, h, f, fr, st, lo, hr, fg, fp, an, lm, ..] = r.holders;
+        let _ = writeln!(t, "{:.3}\t{:.3}\t{}\t{}\t{}\t{}\t{d}\t{p}\t{l}\t{i}\t{q}\t{h}\t{f}\t{fr}\t{st}\t{lo}\t{}\t{}\t{hr}\t{fg}\t{fp}\t{an}\t{lm}", r.at, r.unix, r.footprint, r.max, r.live, r.resident, r.threads, r.open.join(" | "));
     }
     t
 }

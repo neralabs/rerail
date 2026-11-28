@@ -335,7 +335,7 @@ pub enum Item {
     /// `.lattice L<base> { Op -> term, … }`.
     Lattice { name: String, base: String, ops: Vec<(String, Term)> },
     Pragma(Vec<String>),
-    /// `.violation V(at: loc, …) "message"`, its `fix` lines, its `suppress` lines, and `options { … }`.
+    /// `.violation V(at: place, …) "message"`, its `fix` lines, its `suppress` lines, and `options { … }`.
     /// `code {c}` names the column holding the finding's code (`in "re"`: the codes it may produce), `code "X"` gives
     /// it, and `tag {t}` names an extra key field.
     Violation {
@@ -550,7 +550,7 @@ impl<'s> Parser<'s> {
         }
     }
 
-    /// The next token, a token the grammar implies: the tape leaves it out (a named-only tape, RER-131;
+    /// The next token, a token the grammar implies: the tape leaves it out (a named-only tape, decision 0161;
     /// `docs/parser-generators/32-named-only-rr-tapes.md`). The kind and the named children say where it is.
     fn implied(&mut self) {
         self.i += 1;

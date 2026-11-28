@@ -120,6 +120,6 @@ constructors_catalog(c, t) :- constructors_version(c, t, v), constructors_ctor(d
 constructors_catalog(c, t) :- constructors_version(c, t, v), node(_, v, "identifier", _, _), node_text(v, x), constructors_catalog(c, x).
 constructors_ok(c) :- constructors_ctor(d, c, _, _), constructors_proj(c, v), node(d, v, "call", vs, _), constructors_catcall(d, vs).
 constructors_ok(c) :- constructors_ctor(_, c, _, _), constructors_proj(c, v), node(_, v, "identifier", _, _), node_text(v, x), constructors_catalog(c, x).
-violation("data-layer-versioned-merged-identity", "constructors", "VMI002", p, l) :- constructors_ctor(d, c, _, _), !constructors_reviewed(c), constructors_doc(d, p), line(c, l).
-violation("data-layer-versioned-merged-identity", "constructors", "VMI003", p, l) :- constructors_ctor(d, c, _, _), constructors_reviewed(c), !constructors_ok(c), constructors_doc(d, p), line(c, l).
+violation("data-layer-versioned-merged-identity", "constructors", "VMI002", p, l) :- constructors_ctor(d, c, _, _), !constructors_reviewed(c), constructors_doc(d, p), node_line_number(c, l).
+violation("data-layer-versioned-merged-identity", "constructors", "VMI003", p, l) :- constructors_ctor(d, c, _, _), constructors_reviewed(c), !constructors_ok(c), constructors_doc(d, p), node_line_number(c, l).
 violation("data-layer-versioned-merged-identity", "constructors", "VMI001", "impl/common/l2070_server_plan/steps", 1) :- option_item("expectedCallers", _, e), !constructors_found(e).

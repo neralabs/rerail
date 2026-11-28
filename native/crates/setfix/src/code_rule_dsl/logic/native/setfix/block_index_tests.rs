@@ -157,7 +157,7 @@ fn a_frozen_relations_known_sorted_ranges_are_in_its_block() {
     let ib = directory(&rel);
     let known = ib.relation().known();
     assert_eq!(known.iter().map(|kn| (kn.lo, kn.hi)).collect::<Vec<_>>(), vec![(0, (n / 2) as u32)]);
-    assert_eq!(rel.sorted.within(&cols, 2, 100, 200), vec![(100, 200)], "read from the block");
+    assert_eq!(rel.sorted.within(&cols, 100, 200), vec![(100, 200)], "read from the block");
 }
 
 /// Decision 0478 step 5d: a frozen relation's dead rows are its block relation's (`own_dead`), read there by the CPU,
@@ -172,7 +172,7 @@ fn a_frozen_relations_dead_rows_are_its_blocks_and_the_devices() {
         rel.push(r);
     }
     for id in (0..n as u32).step_by(5) {
-        if super::kill(&mut rel.dead, id) {
+        if rel.kill_row(id) {
             rel.ndead += 1;
         }
     }
@@ -212,6 +212,33 @@ fn an_order_made_at_a_probe_is_in_the_blocks_directory() {
     assert_eq!(rel.rows.last_in_block().unwrap().relation().orders().count(), before + 1, "the order is in the directory");
 }
 
+/// Decision 0706 E5: a derived input's order built ahead of its readers (`access::build_orders`, as a component's
+/// plans' are) is in its block's directory, and the probe after it reads it there and makes none of its own.
+#[test]
+fn an_order_built_ahead_is_the_one_its_probe_reads() {
+    let _run = crate::code_rule_dsl::logic::profile::test_run();
+    let n = 3000;
+    let k = 2;
+    let mut rows_ = crate::code_rule_dsl::facts::rows::Rows::frozen(k, rows(n / 2), n / 2);
+    let mut rest = crate::code_rule_dsl::facts::rows::Rows::new(k);
+    rest.extend_from_slice(&rows(n)[n..]);
+    rows_.append_part(rest.parts().last().expect("its rows' part").clone());
+    let rows_ = rows_.freeze(n);
+    let rel = InRel::held(rows_, n, vec![b'i'; 2], rerail_blocks::vector::Vector::new());
+    let before = rel.rows.last_in_block().unwrap().relation().orders().count();
+    let ix = rel.index(&[1]);
+    assert!(ix.ordered.is_some() && ix.order.get().is_none(), "a derived input's order, not yet made");
+    let (ahead, readers) = (super::access::orders_built_ahead_for_tests(), super::access::orders_made_by_readers_for_tests());
+    assert_eq!(super::access::build_orders(&[(&*rel, &*ix)]), 1);
+    assert_eq!(super::access::orders_built_ahead_for_tests(), ahead + 1);
+    assert_eq!(rel.rows.last_in_block().unwrap().relation().orders().count(), before + 1, "the order is in the directory");
+    let mut got = Vec::new();
+    rel.probe_each(&[1], &[2000], &mut |row| got.push((row(0), row(1))));
+    assert_eq!(got, vec![(2000 % 7, 2000)]);
+    assert_eq!(super::access::orders_made_by_readers_for_tests(), readers, "the probe made no order");
+    assert_eq!(rel.rows.last_in_block().unwrap().relation().orders().count(), before + 1);
+}
+
 /// Decision 0478 step 6: a derived input's value counts and measured statistics are written once in a block, and
 /// its rows' values are not copied to count them.
 #[test]
@@ -247,7 +274,7 @@ fn a_test_by_one_node_column_reads_the_blocks_node_bits() {
     let mut hint = 0;
     // Decision 0706 §5: a reader never builds it; with none built ahead it probes as before.
     assert_eq!(rel.index(&[0, 1]).node_bits_has(&rel, node(0, 10), &mut hint), None, "none built ahead: none read");
-    assert!(rel.in_block().unwrap().relation().find_node_bits(0, n as u32).is_none(), "and the reader built none");
+    assert!(rel.in_block().unwrap().relation().find_node_index(rerail_blocks::relation::NODE_BITS, 0, n as u32).is_none(), "and the reader built none");
     // Built ahead, as the level's batch builds it.
     rel.in_block().unwrap().own_node_bits(0).expect("room");
     for doc in 0..4 {
@@ -257,7 +284,7 @@ fn a_test_by_one_node_column_reads_the_blocks_node_bits() {
         }
     }
     let ib = rel.in_block().unwrap();
-    assert!(ib.relation().find_node_bits(0, n as u32).is_some(), "in the relation's block");
+    assert!(ib.relation().find_node_index(rerail_blocks::relation::NODE_BITS, 0, n as u32).is_some(), "in the relation's block");
     assert_eq!(super::run_counts().node_bits[0].load(std::sync::atomic::Ordering::Relaxed), 1);
     assert_eq!(super::run_counts().node_bits[1].load(std::sync::atomic::Ordering::Relaxed), 1, "the index on both columns had none");
     let mut dead = rerail_blocks::vector![0u64; n.div_ceil(64)];
@@ -287,8 +314,8 @@ fn a_test_by_two_columns_reads_the_filter_built_ahead() {
     super::access::seed_observed(a.clone(), Use { tests: 1_000_000, found: 1_000 });
     assert!(access::pays(&a.kind, n as u64, Use { tests: 1_000_000, found: 1_000 }));
     let reads = std::iter::once("held".to_owned()).collect();
-    assert_eq!(super::access::prefetch(&reads, |name| (name == "held").then(|| rel.clone())), (1, 1));
-    assert_eq!(super::access::prefetch(&reads, |name| (name == "held").then(|| rel.clone())), (0, 0), "built once");
+    assert_eq!(super::access::prefetch(&reads, |name| (name == "held").then(|| rel.clone()), |_| None), (1, 1));
+    assert_eq!(super::access::prefetch(&reads, |name| (name == "held").then(|| rel.clone()), |_| None), (0, 0), "built once");
     // A fresh index (another plan) finds it; each key it rejects is in no row, and it rejects most absent keys.
     let ix = rel.index(&[1, 0]);
     let (mut absent, mut rejected) = (0, 0);
@@ -309,5 +336,5 @@ fn a_test_by_two_columns_reads_the_filter_built_ahead() {
     let _ = other.name.set("hit".into());
     super::access::seed_observed(Access::membership("hit", [0, 1]), Use { tests: 100, found: 100 });
     let reads = std::iter::once("hit".to_owned()).collect();
-    assert_eq!(super::access::prefetch(&reads, |name| (name == "hit").then(|| other.clone())), (0, 0));
+    assert_eq!(super::access::prefetch(&reads, |name| (name == "hit").then(|| other.clone()), |_| None), (0, 0));
 }

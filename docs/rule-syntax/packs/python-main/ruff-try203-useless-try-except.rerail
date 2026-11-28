@@ -8,7 +8,7 @@
 // TRY203(n): a finding at node n, from clause `reraise-only-handler`.
 // Each rule below is one way the JSON `rule` can match.
 // Columns after `at` are the metavariables the JSON's message, anchor or `each` names: one finding per distinct row.
-.violation TRY203(at: loc, handler: node) "This handler only re-raises: drop the `try`/`except` so the error propagates, moving any `else` code after the body and keeping any `finally`."
+.violation TRY203(at: match, handler: node) "This handler only re-raises: drop the `try`/`except` so the error propagates, moving any `else` code after the body and keeping any `finally`."
     suppress noqa "TRY203"
 TRY203(HANDLER, n) :- kind(n, "except_clause"),
     match("(?s)(?<HANDLER>(?:(?:[^'\"#]|#[^\\n]*)*?(?:[^\\s'\"#;]|'''(?:[^'\\\\]|\\\\.|''?(?:[^'\\\\]|\\\\.))*'''|\"\"\"(?:[^\"\\\\]|\\\\.|\"\"?(?:[^\"\\\\]|\\\\.))*\"\"\"|'(?:[^'\\\\\\n]|\\\\.)*'|\"(?:[^\"\\\\\\n]|\\\\.)*\"))+?)(?:\\s|;|#[^\\n]*)*", n),

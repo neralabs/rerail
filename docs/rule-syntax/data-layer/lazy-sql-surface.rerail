@@ -29,7 +29,7 @@ lss_trigger("LazyResult"). lss_trigger("SyncSqlConnection"). lss_trigger("compil
 lss_trigger("execute_async"). lss_trigger("explicit_execution_authority"). lss_trigger("grammar_lazy").
 lss_trigger("legacy_async"). lss_trigger("legacy_sync").
 .decl lss_doc(d: number)
-lss_doc(d) :- source(d, sp), text(sp, s), lss_trigger(t), contains(t, s).
+lss_doc(d) :- document_source(d, sp), line_text(sp, s), lss_trigger(t), contains(t, s).
 // FORBIDDEN_CONNECTION_GRAMMAR_LAZY_METHODS and FORBIDDEN_COMPILE_CONTEXT_ATTRS.
 .decl grammar_lazy(v: symbol)
 grammar_lazy("_grammar_effect_lazy"). grammar_lazy("_grammar_row_lazy"). grammar_lazy("_grammar_rows_lazy").

@@ -25,7 +25,7 @@ pie796_enum_base(n) :- (kind(n, "identifier") ; kind(n, "attribute")), sym_of(n,
 // Each rule below is one way the JSON `rule` can match.
 // Columns after `at` are the metavariables the JSON's message, anchor or `each` names: one finding per distinct row.
 // `options` carries JSON settings that have no .rerail form yet.
-.violation PIE796(at: node, v: loc) "Enum contains duplicate value: `{v}`"
+.violation PIE796(at: node, v: node) "Enum contains duplicate value: `{v}`"
     suppress noqa "PIE796"
 PIE796_raw(n, V) :- pie796_member(n, V),
     k4 = count : { precedes(s1, n), pie796_member(s1, U), value(U, t2), value(V, t2) },
@@ -43,7 +43,7 @@ pie796_member(n, X) :- kind(n, "expression_statement"), child(n, c1, _),
 // Each rule below is one way the JSON `rule` can match.
 // Columns after `at` are the metavariables the JSON's message, anchor or `each` names: one finding per distinct row.
 // `options` carries JSON settings that have no .rerail form yet.
-.violation PIE796_non_unique_enums_stub(at: node, v: loc) code "PIE796" "Enum contains duplicate value: `{v}`"
+.violation PIE796_non_unique_enums_stub(at: node, v: node) code "PIE796" "Enum contains duplicate value: `{v}`"
     suppress noqa "PIE796"
 PIE796_non_unique_enums_stub_raw(n, V) :- pie796_member_non_unique_enums_stub(n, V),
     k4 = count : { precedes(s1, n), pie796_member_non_unique_enums_stub(s1, U), value(U, t2), value(V, t2) },
@@ -142,9 +142,9 @@ pie796_alt_5(n) :- pie796_alt_2(n).
 pie796_alt_5(n) :- pie796_unknown_value(n).
 
 // main's file condition {"regex": "\\.py$"}
-.decl PIE796_raw(at: node, v: loc)
+.decl PIE796_raw(at: node, v: node)
 PIE796(v0, v1) :- PIE796_raw(v0, v1), rr_d = @doc(v0), doc(rr_d, rr_p, _), match("\\.py$", rr_p).
 
 // main's file condition {"regex": "\\.pyi$"}
-.decl PIE796_non_unique_enums_stub_raw(at: node, v: loc)
+.decl PIE796_non_unique_enums_stub_raw(at: node, v: node)
 PIE796_non_unique_enums_stub(v0, v1) :- PIE796_non_unique_enums_stub_raw(v0, v1), rr_d = @doc(v0), doc(rr_d, rr_p, _), match("\\.pyi$", rr_p).

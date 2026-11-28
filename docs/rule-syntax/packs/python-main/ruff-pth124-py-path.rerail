@@ -14,7 +14,7 @@ pth124_ref(n) :- (kind(n, "identifier") ; kind(n, "attribute")), sym_of(n, "py.p
 // PTH124(n): findings from clauses `py-path-local`, `py-path-local-in-annotation`, which say the same.
 // Each rule is one way a JSON `rule` can match.
 // Columns after `at` are the metavariables the JSON's message, anchor or `each` names: one finding per distinct row.
-.violation PTH124(at: loc, f: node) "Use `pathlib.Path(...)` instead of `py.path.local(...)` and port the py.path methods called on it (`join`, `ensure`, `check`, `read`); keep it where an API still requires a `py.path.local`."
+.violation PTH124(at: node, f: node) "Use `pathlib.Path(...)` instead of `py.path.local(...)` and port the py.path methods called on it (`join`, `ensure`, `check`, `read`); keep it where an API still requires a `py.path.local`."
     suppress noqa "PTH124"
 PTH124(F, n) :- kind(n, "call"), field(n, "function", c1), pth124_callee(c1, F).
 PTH124(F, n) :- (kind(n, "string") ; kind(n, "concatenated_string")),
@@ -26,13 +26,13 @@ PTH124(F, n) :- (kind(n, "string") ; kind(n, "concatenated_string")),
 
 // callee(n): the JSON util `callee`, used where the JSON says `matches: "callee"`
 //   F: metavariable this relation binds for the calling rule
-.decl pth124_callee(n: node, f: loc)
+.decl pth124_callee(n: node, f: node)
 pth124_callee(n, F) :- pth124_ref(n), node(_, n, _, _, _), F = n.
 pth124_callee(n, F) :- kind(n, "parenthesized_expression"), child(n, c1, _), pth124_callee(c1, F).
 
 // alt_1(n): the JSON `any`: n matches if any one of these rules does
 //   F: metavariable this relation binds for the calling rule
-.decl pth124_alt_1(n: node, f: loc)
+.decl pth124_alt_1(n: node, f: node)
 pth124_alt_1(n, F) :- pth124_ref(n), F = n.
 pth124_alt_1(n, F) :- kind(n, "parenthesized_expression"), child(n, c1, _), pth124_ref(c1), F = c1.
 pth124_alt_1(n, F) :- kind(n, "parenthesized_expression"), child(n, c2, _),
@@ -40,7 +40,7 @@ pth124_alt_1(n, F) :- kind(n, "parenthesized_expression"), child(n, c2, _),
 
 // alt_11(n): the JSON `any`: n matches if any one of these rules does
 //   F: metavariable this relation binds for the calling rule
-.decl pth124_alt_11(n: node, f: loc)
+.decl pth124_alt_11(n: node, f: node)
 pth124_alt_11(n, F) :- kind(n, "call"), child(n, c1, _), pth124_alt_1(c1, F).
 pth124_alt_11(n, F) :- (kind(n, "string") ; kind(n, "concatenated_string")),
     parsed(n, "annotation", r5), has(r5, c6, "call"), child(c6, c7, _), pth124_alt_1(c7, F).

@@ -10,6 +10,6 @@
 // with the same regex as todo_tag (a capture on a node is a span).
 #include "python/misc2-todo.rerail"
 
-.decl todo_at(c: node, D: span)
+.decl todo_at(c: node, D: match)
 todo_at(c, D) :- todo_tag(c, _, _, _),
     match("(?:.*?#[#\\s]*)(?<D>[tT][oO][dD][oO]|[fF][iI][xX][mM][eE]|[xX][xX][xX]|[hH][aA][cC][kK])(?:[\\t -/:-@\\[-\\x60{-~].*)?", c).

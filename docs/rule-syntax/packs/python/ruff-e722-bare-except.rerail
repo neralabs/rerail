@@ -12,7 +12,7 @@
 #include "python/pyflakes.rerail"
 //   bare_except(x, kw)  x is an `except:` clause with no type; kw its `except` keyword
 
-.violation E722(at: loc) code "E722"
+.violation E722(at: place) code "E722"
     "Name the exception types this bare except should catch; it also catches KeyboardInterrupt and SystemExit."
     suppress ruff "E722"
 // Only a `raise` directly in the handler's body counts, as in Ruff; one nested in an `if` does not.

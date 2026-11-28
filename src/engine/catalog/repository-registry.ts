@@ -8,13 +8,14 @@ import { opendir, readFile, stat } from "node:fs/promises";
 import { homedir } from "node:os";
 import { dirname, join, parse, resolve, sep } from "node:path";
 import { and, eq, getTableColumns, inArray, ne, sql } from "drizzle-orm";
-import { earlierPhysicalPath, physicalPath, storedPath, storedPathAsync, withinCheckout } from "./checkout-control.js";
+import { earlierPhysicalPath, physicalPath, storedPathAsync, withinCheckout } from "./checkout-control.js";
 import type { RerailDatabase } from "../storage/database.js";
 import { gitExecutable, GitUnavailableError, runGitAsync } from "../git.js";
 import { mergeAssistExperimentEnabled } from "../experimental-features.js";
 import type { CheckoutContext, CheckoutRecord, RepositoryKey, RepositoryRecord, RepositoryStatus } from "./repository-model.js";
 import {
   checkoutIdentity,
+  folderIdentity,
   GIT_IDENTITY_FILE,
   folderMarkerCloneId,
   normalizeRemoteAddress,
@@ -24,13 +25,19 @@ import {
   repositoryFolderName,
   repositoryIdentityLocation,
   resolveCloneId,
-  worktreeRegistry,
+  WorktreeRegistryPass,
   type RepositoryIdentityLocation,
 } from "./repository-identity.js";
+import { placementInputs } from "./checkouts/git-placement.js";
+import { configFilesText, includesAnother, remoteConfigFiles } from "./checkouts/kept-remote.js";
 import { checkouts, mergeAssistState, repositories, ruleSettings } from "../storage/schema.js";
+import { nameOnce, storedArray, storedItems, type StoredListLog } from "../storage/stored-list.js";
+import { openRecordWriter, type RecordWriter } from "../storage/record-writes.js";
 
 type Reader = Pick<RerailDatabase, "select">;
 type Writer = Pick<RerailDatabase, "select" | "insert" | "update" | "delete">;
+/** A reader that knows its database file, which the line naming a repository whose aliases do not read names (`listedRow`). */
+type FileReader = Reader & Pick<RerailDatabase, "$client">;
 
 const CLONE_KEY_PREFIX = "clone:";
 
@@ -53,14 +60,21 @@ function recordOf(row: RepositoryRow): RepositoryRecord {
   return { ...row, started: row.started === true };
 }
 
-function repositoryRow(db: Reader, key: RepositoryKey): RepositoryRow | undefined {
-  return db.select().from(repositories).where(eq(repositories.repositoryKey, key)).get();
+/** The row `key` names, read as the list reads it (`storedRow`). */
+function repositoryRow(db: FileReader, key: RepositoryKey): StoredRow | undefined {
+  const row = db.select(LISTED_COLUMNS).from(repositories).where(eq(repositories.repositoryKey, key)).get();
+  return row === undefined ? undefined : storedRow(row, db.$client.name);
 }
 
-/** The repository `key` names: its own key, else the one that lists it as an alias. */
-function repositoryByKeyOrAlias(db: Reader, key: RepositoryKey): RepositoryRow | undefined {
+/**
+ * The repository `key` names: its own key, else the one that lists it as an alias. Each row is read as the list reads
+ * it (`listedRow`): a repository whose aliases do not read is still found by its own key and matches no alias, rather
+ * than failing the lookup of every checkout not recorded yet, and the list's line names it.
+ */
+function repositoryByKeyOrAlias(db: FileReader, key: RepositoryKey): StoredRow | undefined {
   return repositoryRow(db, key)
-    ?? db.select().from(repositories).where(ne(repositories.aliases, [])).all().find(row => row.aliases.includes(key));
+    ?? db.select(LISTED_COLUMNS).from(repositories).where(ne(repositories.aliases, [])).all()
+      .map(row => storedRow(row, db.$client.name)).find(row => row.aliases.includes(key));
 }
 
 /**
@@ -193,14 +207,48 @@ function adoptedIn(db: RerailDatabase): Set<RepositoryKey> {
 /**
  * Record the checkout `workspace` is in, creating its clone id, repository and checkout rows as needed. A path
  * recorded for another clone id (a re-clone) is recorded again and loses its own settings. A clone-keyed repository
- * adopts the checkout's remote once per process.
+ * adopts the checkout's remote once per process. Given the database's record writer, `records`, a checkout recorded
+ * with the same clone id is only seen again, which never waits for another process's write lock ({@link seenCheckout}),
+ * but for that adoption: the first time a process sees a remote on a clone-keyed checkout, it writes on `db`, which
+ * waits for the lock as before.
  */
-export function recordCheckout(db: RerailDatabase, workspace: string, now = Date.now()): CheckoutContext & { readonly cloneId: string } {
+export function recordCheckout(
+  db: RerailDatabase,
+  workspace: string,
+  now = Date.now(),
+  records?: RecordWriter,
+): CheckoutContext & { readonly cloneId: string } {
   refuseUnboundedFolder(repositoryIdentityLocation(workspace));
   const { cloneId, location } = resolveCloneId(workspace, located => refusedCheckoutCloneId(db, located));
   const checkoutPath = physicalPath(location.workspaceRoot);
-  const repositoryKey = db.transaction(tx => recordCheckoutRow(tx, location, checkoutPath, cloneId, now), { behavior: "immediate" });
+  const repositoryKey = (records === undefined ? undefined : seenCheckout(db, records, { location, checkoutPath, cloneId, now }))
+    // `db` itself, not the transaction's handle, so a line `listedRow` writes names the file; both run on its one connection.
+    ?? db.transaction(() => recordCheckoutRow(db, location, checkoutPath, cloneId, now), { behavior: "immediate" });
   return adoptRemoteOnce(db, contextOf(location, checkoutPath, repositoryKey, cloneId), location, now);
+}
+
+/** A checkout as `recordCheckout` resolved it, and when it was seen. */
+interface SeenAt {
+  readonly location: RepositoryIdentityLocation;
+  readonly checkoutPath: string;
+  readonly cloneId: string;
+  readonly now: number;
+}
+
+/**
+ * The repository of the checkout recorded at `checkoutPath` for `cloneId`, read as the database holds it now, with no
+ * lock; its record (`recordCheckoutRow`, the statements of `recordCheckout`'s transaction, which here only move its
+ * seen time) is a record write: made at once when the write lock is free, else kept until another process gives the
+ * lock back, so a session's start in a checkout Rerail knows never waits for the lock on the daemon's thread. Made
+ * later, it records the checkout again if it was forgotten meanwhile. Undefined, nothing written, for a checkout
+ * recorded under another clone id or not at all, which takes the transaction: its repository comes from its write.
+ */
+function seenCheckout(db: FileReader, records: RecordWriter, seen: SeenAt): RepositoryKey | undefined {
+  const recorded = db.select({ cloneId: checkouts.cloneId, repositoryKey: checkouts.repositoryKey }).from(checkouts)
+    .where(eq(checkouts.checkoutPath, seen.checkoutPath)).get();
+  if (recorded?.cloneId !== seen.cloneId) return undefined;
+  records.write(database => { recordCheckoutRow(database, seen.location, seen.checkoutPath, seen.cloneId, seen.now); });
+  return recorded.repositoryKey;
 }
 
 /**
@@ -221,6 +269,8 @@ function refuseUnboundedFolder(located: RepositoryIdentityLocation): void {
   if (located.git) return;
   const physical = physicalPath(located.workspaceRoot);
   if (physical === parse(physical).root || physical === physicalPath(homedir())) {
+    // Git gave no answer: the folder may be a checkout (a home folder that is one), and Git's missing answer is why.
+    if (located.unanswered !== undefined) throw located.unanswered;
     throw new Error(`${physical} is not a git checkout; Rerail won't treat a filesystem root or your home folder as one`);
   }
 }
@@ -230,7 +280,7 @@ function refuseUnboundedFolder(located: RepositoryIdentityLocation): void {
  * clone id goes with its settings. Its repository; the caller forms the context after the write, outside its lock.
  */
 function recordCheckoutRow(
-  tx: Writer,
+  tx: Writer & FileReader,
   location: RepositoryIdentityLocation,
   checkoutPath: string,
   cloneId: string,
@@ -259,13 +309,13 @@ function recordCheckoutRow(
 }
 
 /** The repository of a recorded checkout of the clone, else the repository keyed by its clone id. */
-function cloneRepository(db: Reader, cloneId: string): RepositoryKey | undefined {
+function cloneRepository(db: FileReader, cloneId: string): RepositoryKey | undefined {
   return db.select({ key: checkouts.repositoryKey }).from(checkouts).where(eq(checkouts.cloneId, cloneId)).limit(1).get()?.key
     ?? repositoryByKeyOrAlias(db, `${CLONE_KEY_PREFIX}${cloneId}`)?.repositoryKey;
 }
 
 /** The repository the checkout's remote names, created when none is known: keyed by the remote, else by the clone id. */
-function remoteRepositoryCreated(tx: Writer, location: RepositoryIdentityLocation, cloneId: string, now: number): RepositoryKey {
+function remoteRepositoryCreated(tx: Writer & FileReader, location: RepositoryIdentityLocation, cloneId: string, now: number): RepositoryKey {
   const remoteKey = remoteKeyOf(location);
   const known = remoteKey === undefined ? undefined : repositoryByKeyOrAlias(tx, remoteKey)?.repositoryKey;
   if (known !== undefined) return known;
@@ -299,22 +349,22 @@ function adoptRemoteOnce<C extends CheckoutContext>(db: RerailDatabase, context:
  * its `.git` keeps the clone id but reads its own registry, so it neither grants nor refuses for the original. Git runs
  * only in a recorded checkout Rerail runs in; false when nothing was recorded.
  */
-export function recordStartedWorktree(db: RerailDatabase, root: string, location: RepositoryIdentityLocation): boolean {
+export function recordStartedWorktree(
+  db: RerailDatabase,
+  root: string,
+  location: RepositoryIdentityLocation,
+  registries: WorktreeRegistryPass = new WorktreeRegistryPass(),
+): boolean {
   if (!location.git || physicalPath(location.workspaceRoot) !== root) return false;
   const { id: cloneId } = checkoutIdentity(location);
   if (cloneId === undefined) return false;
   const commonDirectory = physicalPath(dirname(location.identityPath));
   const recorded = db.select({ path: checkouts.checkoutPath, key: checkouts.repositoryKey }).from(checkouts).where(eq(checkouts.cloneId, cloneId)).all();
+  // A gone folder lists nothing. A caller recording many worktrees passes one pass for all, which reads each registry once.
   const listed = recorded.some(peer =>
-    checkoutStatus(db, contextOf(location, root, peer.key, cloneId)).started && registryLists(peer.path, commonDirectory, root));
+    checkoutStatus(db, contextOf(location, root, peer.key, cloneId)).started && registries.lists(peer.path, commonDirectory, root));
   if (listed) recordCheckout(db, root);
   return listed;
-}
-
-/** Whether the recorded `checkout` reads Git's registry in `commonDirectory` and lists `root` there; a gone folder lists nothing. */
-function registryLists(checkout: string, commonDirectory: string, root: string): boolean {
-  const registry = worktreeRegistry(checkout);
-  return registry?.commonDirectory === commonDirectory && registry.worktrees.some(worktree => storedPath(worktree) === root);
 }
 
 /**
@@ -323,14 +373,15 @@ function registryLists(checkout: string, commonDirectory: string, root: string):
  * remote names. A clone without an id file yet (a fresh clone) is still found by its remote, with `cloneId` null, so
  * a new clone of a started repository reads started. Undefined when git is unavailable or no repository is known.
  */
-export function lookupCheckout(db: Reader, workspace: string): CheckoutContext | undefined {
+export function lookupCheckout(db: FileReader, workspace: string): CheckoutContext | undefined {
   try {
     gitExecutable();
   } catch (error) {
     if (error instanceof GitUnavailableError) return undefined;
     throw error;
   }
-  return lookupAt(db, repositoryIdentityLocation(workspace));
+  const location = repositoryIdentityLocation(workspace);
+  return lookupAt(db, location, () => remoteKeyOf(location));
 }
 
 /**
@@ -338,24 +389,51 @@ export function lookupCheckout(db: Reader, workspace: string): CheckoutContext |
  * the thread): a checkout whose marker names its clone, recorded, is found with no Git process. One with no marker
  * reads its legacy id from Git's config, as {@link checkoutIdentity} does.
  */
-export function lookupCheckoutAt(db: Reader, location: RepositoryIdentityLocation): CheckoutContext | undefined {
-  return lookupAt(db, location);
+export function lookupCheckoutAt(db: FileReader, location: RepositoryIdentityLocation): CheckoutContext | undefined {
+  return lookupAt(db, location, () => remoteKeyOf(location));
 }
 
-function lookupAt(db: Reader, location: RepositoryIdentityLocation): CheckoutContext | undefined {
-  const { id, marked } = checkoutIdentity(location);
+/** A checkout's clone id as {@link checkoutIdentity} reads it, and whether a marker names it. */
+type CheckoutIdentity = ReturnType<typeof checkoutIdentity>;
+
+/**
+ * {@link lookupCheckout} at `location`, its identity read there unless the caller read it ({@link KeptLocation});
+ * `remoteKey` gives the key of the checkout's remote, asked only for a checkout neither recorded nor of a recorded clone.
+ */
+function lookupAt(
+  db: FileReader,
+  location: RepositoryIdentityLocation,
+  remoteKey: () => RepositoryKey | undefined,
+  { id, marked }: CheckoutIdentity = checkoutIdentity(location),
+): CheckoutContext | undefined {
   // A worktree whose Git folder is gone has no id to read: the one recorded at its path, as its start takes it.
   const cloneId = id ?? refusedCheckoutCloneId(db, location) ?? null;
   const checkoutPath = physicalPath(location.workspaceRoot);
-  const knownClone = cloneId === null ? undefined : recordedRepositoryAt(db, checkoutPath, cloneId) ?? cloneRepository(db, cloneId);
-  const repositoryKey = knownClone ?? remoteRepository(db, location);
+  const knownClone = recordedRepositoryAt(db, location, checkoutPath, cloneId) ?? (cloneId === null ? undefined : cloneRepository(db, cloneId));
+  const repositoryKey = knownClone ?? remoteRepository(db, location, remoteKey);
   return repositoryKey === undefined ? undefined : contextOf(location, checkoutPath, repositoryKey, marked || knownClone !== undefined ? cloneId : null);
 }
 
-/** The repository of the row for the current identity at this path: a different id is a re-clone. */
-function recordedRepositoryAt(db: Reader, checkoutPath: string, cloneId: string): RepositoryKey | undefined {
-  return db.select({ key: checkouts.repositoryKey }).from(checkouts)
-    .where(and(eq(checkouts.checkoutPath, checkoutPath), eq(checkouts.cloneId, cloneId))).get()?.key;
+/** The repository of the row recorded at `checkoutPath` when that row is the checkout's own ({@link isOwnRow}). */
+function recordedRepositoryAt(db: Reader, location: RepositoryIdentityLocation, checkoutPath: string, cloneId: string | null): RepositoryKey | undefined {
+  const recorded = db.select({ key: checkouts.repositoryKey, cloneId: checkouts.cloneId }).from(checkouts)
+    .where(eq(checkouts.checkoutPath, checkoutPath)).get();
+  return recorded !== undefined && isOwnRow(recorded.cloneId, { location, cloneId: cloneId ?? undefined }) ? recorded.key : undefined;
+}
+
+/**
+ * Whether the row recorded at a checkout's path with clone id `rowCloneId` is the checkout's own, the checkout being as
+ * `placed` read it: its clone id is the one read there; a different id is a re-clone. Two folders have no id this read
+ * can find and the row still names them: a linked worktree whose Git folder is gone, as {@link refusedCheckoutCloneId}
+ * takes it when recording, and a folder whose Git gave no answer to where its repository is
+ * ({@link RepositoryIdentityLocation.unanswered}), read as outside Git for that ask alone. Any other folder without an id
+ * file was not recorded, since recording writes the id: a row at its path is a removed clone's, which
+ * {@link recordCheckout} records over as a re-clone.
+ */
+export function isOwnRow(rowCloneId: string, placed: Pick<KeptLocation, "location" | "cloneId">): boolean {
+  const { location, cloneId } = placed;
+  if (cloneId !== undefined) return rowCloneId === cloneId;
+  return location.gitFolderGone === true || location.unanswered !== undefined;
 }
 
 /**
@@ -373,22 +451,118 @@ export function recordedPlainRoot(db: Reader, real: string): string | undefined 
   })?.path;
 }
 
-/**
- * The known repository an unrecorded Git checkout's effective remote names, read again on each call: Git's includes
- * and branch configuration can change it between calls. A folder outside git has none.
- */
-function remoteRepository(db: Reader, location: RepositoryIdentityLocation): RepositoryKey | undefined {
-  const remoteKey = location.git ? remoteKeyOf(location) : undefined;
-  return remoteKey === undefined ? undefined : repositoryByKeyOrAlias(db, remoteKey)?.repositoryKey;
+/** The known repository the checkout's remote names (`remoteKey`); a folder outside git has none. */
+function remoteRepository(db: FileReader, location: RepositoryIdentityLocation, remoteKey: () => RepositoryKey | undefined): RepositoryKey | undefined {
+  if (!location.git) return undefined;
+  const key = remoteKey();
+  return key === undefined ? undefined : repositoryByKeyOrAlias(db, key)?.repositoryKey;
 }
 
 /**
- * A `lookupCheckout` for many workspaces over one connection, as the daemon answers per request. Each call reads the
- * checkout now at the folder and its remote: a linked worktree that replaced another at a path, or a remote changed
- * since, is seen at once (b78c86062a: 9 ms a call for a recorded checkout, 23 ms for an unrecorded clone).
+ * A checkout's remote as the resolver keeps it: its key, undefined where it names none; the config files it is read
+ * from ({@link remoteFilesOf}); and what they held just before Git was asked ({@link configFilesText}).
  */
-export function createCheckoutResolver(db: Reader): (workspace: string) => CheckoutContext | undefined {
-  return workspace => lookupCheckout(db, workspace);
+interface KeptRemote {
+  readonly key: RepositoryKey | undefined;
+  readonly files: readonly string[];
+  readonly text: string;
+}
+
+/**
+ * A location the resolver or a session's rule checks (`CheckoutCatalogs`) read for a workspace, with what was there then:
+ * the clone id at its identity path, the identity of its top level's `.git` ({@link folderIdentity}; undefined where it
+ * could not be read), and the checkout's remote once the resolver read it ({@link keptRemoteKey}); a location read
+ * afresh ({@link locationNow}) has none. Each workspace keeps its own, so a second folder of a checkout reads the remote
+ * at its first read, which {@link readRemoteAddress} answers from Git's kept answer while the clone's config files read
+ * the same.
+ */
+export interface KeptLocation {
+  readonly location: RepositoryIdentityLocation;
+  readonly cloneId: string | undefined;
+  /** Its identity as `checkoutIdentity` read it there, which the lookups take. */
+  readonly identity: CheckoutIdentity;
+  readonly gitEntry: string | undefined;
+  remote?: KeptRemote;
+}
+
+/**
+ * The config files `location`'s remotes are read from ({@link remoteConfigFiles}): its common Git folder's, and its own
+ * Git folder's, which is the common one for a main checkout. A linked worktree's is found from its `.git` file with no
+ * Git process ({@link placementInputs}); where Git's placement of it is not read from its files, the first alone.
+ */
+function remoteFilesOf(location: RepositoryIdentityLocation): readonly string[] {
+  const common = dirname(location.identityPath);
+  return remoteConfigFiles(common, location.main ? common : placementInputs(location.workspaceRoot)?.gitFolder);
+}
+
+/**
+ * `kept`'s remote key, kept while the config files it is read from hold what they held when it was read
+ * ({@link configFilesText}: their text, or what the file system says of one whose text cannot be read), so no Git
+ * runs; `git remote set-url` rewrites the common `config`, and the next lookup reads the remote again
+ * ({@link remoteKeyOf}). One that includes another file is read again at every lookup, as the included file's change
+ * alone does not show in the text ({@link includesAnother}).
+ */
+function keptRemoteKey(kept: KeptLocation): RepositoryKey | undefined {
+  const files = kept.remote?.files ?? remoteFilesOf(kept.location);
+  // Read before Git is asked: a config written between the two reads as changed at the next lookup.
+  const text = configFilesText(files);
+  // A config that includes another file is read again each time: the included file's change alone is not in `text`.
+  if (kept.remote?.text === text && !includesAnother(text)) return kept.remote.key;
+  kept.remote = { key: remoteKeyOf(kept.location), files, text };
+  return kept.remote.key;
+}
+
+/**
+ * Whether `kept` still places its workspace. A main checkout whose id file is in its own `.git` keeps it there, and
+ * the same id is the same clone. A linked worktree's is in its clone's common Git folder, a submodule's in its parent's
+ * `.git/modules`, a `--separate-git-dir` clone's in the folder it names, each of which outlives the working tree, and a
+ * folder without an id tells nothing by it: for those the `.git` at the top level must be the same entry too, as a
+ * checkout made again at the path makes a new one.
+ */
+export function stillPlaces(kept: KeptLocation): boolean {
+  const { location } = kept;
+  if (readCloneIdAt(location.identityPath) !== kept.cloneId) return false;
+  const ownGitFolder = join(location.workspaceRoot, ".git");
+  if (location.main && kept.cloneId !== undefined && dirname(location.identityPath) === ownGitFolder) return true;
+  return folderIdentity(ownGitFolder) === kept.gitEntry;
+}
+
+/** `workspace`'s location read afresh, with the clone id there and the identity of its top level's `.git`. */
+export function locationNow(workspace: string): KeptLocation {
+  const location = repositoryIdentityLocation(workspace);
+  const gitEntry = location.git ? folderIdentity(join(location.workspaceRoot, ".git")) : undefined;
+  return { location, cloneId: readCloneIdAt(location.identityPath), identity: checkoutIdentity(location), gitEntry };
+}
+
+/** {@link locationNow}, kept in `located` when it is in Git. */
+function locatedAfresh(located: Map<string, KeptLocation>, workspace: string): KeptLocation {
+  const kept = locationNow(workspace);
+  if (kept.location.git) located.set(workspace, kept);
+  else located.delete(workspace);
+  return kept;
+}
+
+/**
+ * A `lookupCheckout` for many workspaces over one connection, as the daemon answers per request: each workspace's Git
+ * location is kept while the clone there is the one it was read with ({@link stillPlaces}), and read afresh, its remote
+ * too, once another checkout takes its path; a folder outside Git is located again each time, so a later `git init` is
+ * seen. A checkout's remote is kept while its repository's config files read the same ({@link keptRemoteKey}), so a
+ * remote changed in place names its repository at the next lookup. The database is read on every call, so adoption
+ * and new records show at once.
+ */
+export function createCheckoutResolver(db: FileReader): (workspace: string) => CheckoutContext | undefined {
+  const located = new Map<string, KeptLocation>();
+  return workspace => {
+    try {
+      gitExecutable();
+    } catch (error) {
+      if (error instanceof GitUnavailableError) return undefined;
+      throw error;
+    }
+    const known = located.get(workspace);
+    const kept = known !== undefined && stillPlaces(known) ? known : locatedAfresh(located, workspace);
+    return lookupAt(db, kept.location, () => keptRemoteKey(kept), kept.identity);
+  };
 }
 
 /** `fromKey`'s settings become `toKey`'s, its Merge Assist settings too; its `gh` readiness is read again for `toKey`. */
@@ -408,27 +582,32 @@ function eitherStarted(left: boolean | null, right: boolean | null): boolean | n
 /**
  * Move the repository `fromKey` to `toKey`, as when a clone-keyed repository's checkout gains a remote. When `toKey`
  * is new or not set up, `fromKey` becomes it: its configuration, settings and checkouts move, it is started when
- * either was, and `fromKey` stays as an alias. When `toKey` is set up, only the checkouts move and `fromKey` is left
- * unused. A repository another process already adopted is left as it is.
+ * either was, and `fromKey` stays as an alias; while either row's stored aliases hold no JSON array, nothing moves and
+ * the repository stays under `fromKey`. When `toKey` is set up, only the checkouts move and `fromKey` is left unused.
+ * A repository another process already adopted is left as it is.
  */
 export function adoptRemote(db: RerailDatabase, fromKey: RepositoryKey, toKey: RepositoryKey, now = Date.now()): void {
   if (fromKey === toKey) return;
   db.transaction(tx => {
-    const source = repositoryRow(tx, fromKey);
+    // `db` itself, as `recordCheckout` passes it, so a line `listedRow` writes names the file.
+    const source = repositoryRow(db, fromKey);
     // Another process adopted it first, moving its checkouts with it.
     if (source === undefined) return;
-    const target = repositoryRow(tx, toKey);
+    const target = repositoryRow(db, toKey);
     if (target?.configuredAt != null) {
       tx.update(checkouts).set({ repositoryKey: toKey }).where(eq(checkouts.repositoryKey, fromKey)).run();
       return;
     }
+    const aliases = aliasesAfter([source, target], [fromKey], toKey);
+    // The move would rewrite one row's aliases and remove the other's: while either text holds no array, the repository
+    // stays under its key, as it is, until a person mends the text; the lines `listedRow` wrote name the row.
+    if (aliases === undefined) return;
     if (target !== undefined) {
       tx.update(checkouts).set({ repositoryKey: fromKey }).where(eq(checkouts.repositoryKey, toKey)).run();
       tx.delete(repositories).where(eq(repositories.repositoryKey, toKey)).run();
     }
     // What `toKey` holds gives way to `fromKey`'s, rows a repository removed before left under it included.
     deleteRepositorySettings(tx, toKey);
-    const aliases = [...new Set([...source.aliases, ...(target?.aliases ?? []), fromKey])].filter(alias => alias !== toKey);
     tx.update(repositories)
       .set({
         repositoryKey: toKey,
@@ -445,17 +624,18 @@ export function adoptRemote(db: RerailDatabase, fromKey: RepositoryKey, toKey: R
 /**
  * Make the remote `address` resolve to the repository `key` (a rename, an ssh host alias, a mirror). A repository
  * already known by that address that is not set up gives its checkouts to `key` and is removed; one that is set up
- * is refused.
+ * is refused, as is the link while the stored aliases of `key` or of that repository hold no JSON array.
  */
 export function linkAlias(db: RerailDatabase, key: RepositoryKey, address: string, now = Date.now()): RepositoryKey {
   const alias = normalizeRemoteAddress(address);
   if (alias === undefined) throw new Error(`${address} is not a remote address`);
   db.transaction(tx => {
-    const repository = repositoryRow(tx, key);
+    // `db` itself, as `recordCheckout` passes it, so a line `listedRow` writes names the file.
+    const repository = repositoryRow(db, key);
     if (repository === undefined) throw new Error(`Unknown repository: ${key}`);
     if (alias === key || repository.aliases.includes(alias)) return;
-    const merged = absorbAliasOwner(tx, key, alias);
-    const aliases = [...new Set([...repository.aliases, alias, ...merged])].filter(name => name !== key);
+    const aliases = aliasesAfter([repository], [alias, ...absorbAliasOwner(db, key, alias)], key);
+    if (aliases === undefined) throw aliasesRefused(repository);
     tx.update(repositories).set({ aliases, updatedAt: now }).where(eq(repositories.repositoryKey, key)).run();
   }, { behavior: "immediate" });
   return alias;
@@ -463,16 +643,25 @@ export function linkAlias(db: RerailDatabase, key: RepositoryKey, address: strin
 
 /**
  * Gives `key` the checkouts of the repository `alias` already names and removes that repository, returning the names it
- * went by: its own key and aliases resolve to `key` too, so a fresh clone of its remote joins `key`. One set up is refused.
+ * went by, each item of its aliases as stored: its own key and aliases resolve to `key` too, so a fresh clone of its
+ * remote joins `key`. One set up is refused, and one whose stored aliases hold no array, which the removal would lose.
  */
-function absorbAliasOwner(tx: Writer, key: RepositoryKey, alias: RepositoryKey): RepositoryKey[] {
+function absorbAliasOwner(tx: Writer & FileReader, key: RepositoryKey, alias: RepositoryKey): unknown[] {
   const other = repositoryByKeyOrAlias(tx, alias);
   if (other === undefined) return [];
   if (other.configuredAt !== null) throw new Error(`${alias} already belongs to the set-up repository ${other.repositoryKey}`);
+  const names = storedAliasItems(other);
+  if (names === undefined) throw aliasesRefused(other);
   tx.update(checkouts).set({ repositoryKey: key }).where(eq(checkouts.repositoryKey, other.repositoryKey)).run();
   deleteRepositorySettings(tx, other.repositoryKey);
   tx.delete(repositories).where(eq(repositories.repositoryKey, other.repositoryKey)).run();
-  return [other.repositoryKey, ...other.aliases];
+  return [other.repositoryKey, ...names];
+}
+
+/** Why an alias is not added: `row`'s stored aliases hold no array, and adding it would write over that text. */
+function aliasesRefused(row: StoredRow): Error {
+  return new Error(`repository ${row.repositoryKey} takes no alias while the ${repositories.aliases.name} of its row is not a JSON array, `
+    + "which only a damaged file or a hand edit leaves: mend that text first");
 }
 
 /**
@@ -578,15 +767,81 @@ export interface RepositoryListing extends RepositoryRecord {
   readonly checkouts: readonly RecordedCheckout[];
 }
 
-/** Every repository Rerail knows, with its recorded checkouts, ordered by name. */
-export function listRepositories(db: Reader): RepositoryListing[] {
+/**
+ * A `repositories` row with `aliases_json` as the text the database holds, which `listedRow` parses, so one repository's
+ * damaged text fails no page that lists repositories.
+ */
+const LISTED_COLUMNS = { ...getTableColumns(repositories), aliases: sql<string>`${repositories.aliases}` };
+type ListedRow = Omit<RepositoryRow, "aliases"> & { aliases: string };
+
+/**
+ * `row` with its aliases parsed, rather than failing every page that lists repositories. Text that is no JSON array,
+ * which only a damaged file or a hand edit leaves, reads as no aliases; an array reads without its items that are not
+ * strings (a CHECK refuses text that is no JSON array, not such an item), so each costs itself, never the aliases
+ * beside it. Either way the line that names the repository goes to `log` once, and never holds an item's text.
+ */
+function listedRow(row: ListedRow, file: string, log: StoredListLog): RepositoryRow {
+  const aliases = storedItems(row.aliases, "text");
+  // The column name the schema gives, so the line names the place a person mends.
+  const column = repositories.aliases.name;
+  const place = { file, place: `repository ${row.repositoryKey} ${column}` };
+  if (typeof aliases === "string") {
+    nameOnce(log, place, `rerail: ${file}: repository ${row.repositoryKey} reads with no aliases: the ${column} of its row is not `
+      + `a JSON array (${aliases}), which only a damaged file or a hand edit leaves.\n`);
+    return { ...row, aliases: [] };
+  }
+  if (aliases.left > 0) nameOnce(log, place, `rerail: ${file}: repository ${row.repositoryKey} reads without ${aliases.left} of the `
+    + `${aliases.items.length + aliases.left} items of its aliases: the ${column} of its row holds no string there, which only a damaged file or a hand edit leaves.\n`);
+  return { ...row, aliases: aliases.items as RepositoryKey[] }; // each item is a string: `storedItems` kept only those
+}
+
+/** A row as `listedRow` reads it, with the text its aliases are stored as, which a write extends (`aliasesAfter`). */
+type StoredRow = RepositoryRow & { readonly storedAliases: string };
+
+/** `row` as `listedRow` reads it, keeping the text its aliases are stored as. */
+function storedRow(row: ListedRow, file: string, log: StoredListLog = process.stderr): StoredRow {
+  return { ...listedRow(row, file, log), storedAliases: row.aliases };
+}
+
+/** The items of the array `row`'s aliases are stored as, one that is no string too; none for no row; undefined for text that holds no array. */
+function storedAliasItems(row: StoredRow | undefined): unknown[] | undefined {
+  const items = row === undefined ? [] : storedArray(row.storedAliases);
+  return typeof items === "string" ? undefined : items;
+}
+
+/**
+ * The aliases a write stores for the rows it merges into one: the items each row's aliases are stored as, in order,
+ * then `added`, each name once and `key` left out, so the write keeps every item a row holds, one that is no string
+ * too, and mends none. Undefined where a row's stored text holds no array: the write then leaves that text as it is.
+ */
+export function aliasesAfter(rows: readonly (StoredRow | undefined)[], added: readonly unknown[], key: RepositoryKey): RepositoryKey[] | undefined {
+  const items = rows.map(storedAliasItems);
+  // An item that is no string is kept as stored, though the column's type names strings.
+  return items.includes(undefined) ? undefined : [...new Set([...items.flat(), ...added])].filter(name => name !== key) as RepositoryKey[];
+}
+
+/**
+ * Every repository Rerail knows, with its recorded checkouts, ordered by name. `log`: where the line that names a
+ * repository whose stored aliases do not read goes (`listedRow`): `daemon.log` for the daemon, a command's own error
+ * output for a command that passes it.
+ */
+export function listRepositories(db: Reader & Pick<RerailDatabase, "$client">, log: StoredListLog = process.stderr): RepositoryListing[] {
   const byRepository = new Map<RepositoryKey, RecordedCheckout[]>();
   for (const row of db.select(recordedCheckoutColumns).from(checkouts).orderBy(checkouts.checkoutPath).all()) {
     byRepository.set(row.repositoryKey, [...(byRepository.get(row.repositoryKey) ?? []), row]);
   }
-  return db.select().from(repositories).all()
+  return db.select(LISTED_COLUMNS).from(repositories).all()
+    .map(row => listedRow(row, db.$client.name, log))
     .map(repository => ({ ...recordOf(repository), checkouts: byRepository.get(repository.repositoryKey) ?? [] }))
     .sort((left, right) => left.displayName.localeCompare(right.displayName) || left.repositoryKey.localeCompare(right.repositoryKey));
+}
+
+/**
+ * Every `repositories` row in key order, its aliases read as `listRepositories` reads them (`listedRow`), with the text
+ * they are stored as, which a write extends (`aliasesAfter`).
+ */
+export function readableRepositoryRows(db: FileReader, log: StoredListLog = process.stderr): StoredRow[] {
+  return db.select(LISTED_COLUMNS).from(repositories).orderBy(repositories.repositoryKey).all().map(row => storedRow(row, db.$client.name, log));
 }
 
 /** A checkout of a listed repository as {@link listedCheckoutStates} reads it. */
@@ -1227,8 +1482,24 @@ export async function pruneCheckouts(
   const answered = (): void => { unanswered.looking = undefined; };
   void looking.then(answered, answered);
   const looked = await unlessAborted(looking, signal);
-  if (looked === undefined || looked.gone.length === 0 || signal?.aborted === true) return [];
+  if (looked === undefined || looked.gone.length === 0 || !await seenTimesMade(db.$client.name, signal)) return [];
   return db.transaction(tx => forgetCheckouts(tx, looked, now), { behavior: "immediate" });
+}
+
+/**
+ * True once this process's record writes to the database at `path` are made, waiting off the thread while another
+ * process holds the write lock; false once `signal` aborts first. A session that starts in a checkout meanwhile keeps
+ * its seen time waiting there ({@link recordCheckout}): the forget after this reads it, so a worktree made again at a
+ * removed one's path while the pass looked stays.
+ */
+async function seenTimesMade(path: string, signal: AbortSignal | undefined): Promise<boolean> {
+  const records = openRecordWriter(path);
+  try {
+    await unlessAborted(records.settled(), signal);
+  } finally {
+    records.close();
+  }
+  return signal?.aborted !== true;
 }
 
 /** {@link unlistedByTheirClones} of `rows`, their folders looked at one by one; none once `signal` aborts. */
@@ -1306,9 +1577,32 @@ export function recordedCheckoutsVersion(db: Pick<RerailDatabase, "select">): st
  * {@link recordedCheckoutsVersion} for a connection that asks on every lookup, as a source walk does for each file: the
  * statement is prepared once, where each one-off read prepared it again.
  */
-export function recordedCheckoutsVersionReader(db: Pick<RerailDatabase, "select">): () => string {
+export function recordedCheckoutsVersionReader(db: Pick<RerailDatabase, "select"> & Partial<Pick<RerailDatabase, "$client">>): () => string {
   const query = recordedCheckoutsVersionQuery(db).prepare();
-  return () => query.get()?.version ?? EMPTY_RECORDED_CHECKOUTS;
+  if (db.$client === undefined) return () => query.get()?.version ?? EMPTY_RECORDED_CHECKOUTS;
+  // Each owner look-up asks this, a few hundred times a walk at a few hundred worktrees, and the query reads every row:
+  // it runs again only once a write reached the database.
+  const commits = commitMark(db.$client);
+  let mark = "";
+  let version: string | undefined;
+  return () => {
+    const now = commits();
+    if (version === undefined || now !== mark) {
+      mark = now;
+      version = query.get()?.version ?? EMPTY_RECORDED_CHECKOUTS;
+    }
+    return version;
+  };
+}
+
+/**
+ * A text that changes whenever a write reaches the database: SQLite's `data_version`, which another connection's commit
+ * changes, and `total_changes()`, which counts this connection's own. While it holds, every table reads the same. One
+ * statement, as the version query it stands in front of is.
+ */
+function commitMark(client: RerailDatabase["$client"]): () => string {
+  const mark = client.prepare("SELECT (SELECT data_version FROM pragma_data_version()) || ':' || total_changes()").pluck();
+  return () => String(mark.get());
 }
 
 const EMPTY_RECORDED_CHECKOUTS = "0:0:0";

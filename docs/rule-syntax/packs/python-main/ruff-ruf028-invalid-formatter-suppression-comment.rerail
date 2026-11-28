@@ -18,7 +18,7 @@ ruf028_suppression(n) :- ruf028_off_family(n, "skip").
 
 // end_of_line(n): the JSON util `end-of-line`, used where the JSON says `matches: "end-of-line"`
 .decl ruf028_end_of_line(n: node)
-ruf028_end_of_line(n) :- ruf028_code_before_line(n, l3), line(n, l4), k1 = l4 - l3, k1 = 0.
+ruf028_end_of_line(n) :- ruf028_code_before_line(n, l3), node_line_number(n, l4), k1 = l4 - l3, k1 = 0.
 
 // statement_level(n): the JSON util `statement-level`, used where the JSON says `matches: "statement-level"`
 .decl ruf028_statement_level(n: node)
@@ -45,7 +45,7 @@ ruf028_trailing_in_paren(n) :- precedes(s1, n), !ruf028_alt_3(s1).
 // prev_inline(n): the JSON util `prev-inline`, used where the JSON says `matches: "prev-inline"`
 .decl ruf028_prev_inline(n: node)
 ruf028_prev_inline(n) :- precedes_stop(s1, n, ruf028_stop_28), ruf028_code_before_line(s1, l4),
-    line(s1, l5), k2 = l5 - l4, k2 = 0.
+    node_line_number(s1, l5), k2 = l5 - l4, k2 = 0.
 
 // grabbed(n): the JSON util `grabbed`, used where the JSON says `matches: "grabbed"`
 .decl ruf028_grabbed(n: node)
@@ -150,11 +150,11 @@ ruf028_code_comment_end(p, o) :- child(p, c, _), comment(c, _), node(_, c, _, _,
 .decl ruf028_code_before_line(x: node, l: number)
 ruf028_code_before_line(x, l) :- structural_before(x, g), match("(?s).*\\S\\s*", g),
     ws = @replace_all(g, "(?s)^.*\\S", ""),
-    k = strlen(ws) - strlen(@replace_all(ws, "\n", "")), line(x, lx), l = lx - k.
+    k = strlen(ws) - strlen(@replace_all(ws, "\n", "")), node_line_number(x, lx), l = lx - k.
 ruf028_code_before_line(x, l) :- structural_before(x, g), match("\\s*", g), child(p, x, _),
     node(_, x, _, s, _), o = s - strlen(g), token(p, _, _, _, o),
     !ruf028_code_comment_end(p, o), k = strlen(g) - strlen(@replace_all(g, "\n", "")),
-    line(x, lx), l = lx - k.
+    node_line_number(x, lx), l = lx - k.
 ruf028_code_before_line(x, l) :- structural_before(x, g), match("\\s*", g), child(p, x, _),
     node(_, x, _, s, _), node(_, p, _, ps, _), ps = s - strlen(g),
     ruf028_code_before_line(p, l).

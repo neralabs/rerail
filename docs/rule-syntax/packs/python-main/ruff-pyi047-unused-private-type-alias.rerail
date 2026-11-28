@@ -39,7 +39,7 @@ pyi047_named_alias_site(n) :- kind(n, "assignment"), pyi047_alias_site(n), field
 // Each rule below is one way the JSON `rule` can match.
 // Columns after `at` are the metavariables the JSON's message, anchor or `each` names: one finding per distinct row.
 // `options` carries JSON settings that have no .rerail form yet.
-.violation PYI047(at: node, name: loc) "Nothing in this file uses the private type alias `{name}`. Use it, rename it without the underscore if other modules import it, or remove it once nothing does."
+.violation PYI047(at: node, name: node) "Nothing in this file uses the private type alias `{name}`. Use it, rename it without the underscore if other modules import it, or remove it once nothing does."
     suppress noqa "PYI047"
 PYI047_raw(n, NAME) :- kind(n, "identifier"), node(_, n, _, _, _), NAME = n, prefix("_", n),
     bind_name(n, b1), st2 = b1, pyi047_alias_site(st2), site_latest(b1), !site_used(b1),
@@ -49,7 +49,7 @@ PYI047_raw(n, NAME) :- kind(n, "identifier"), node(_, n, _, _, _), NAME = n, pre
 // Each rule below is one way the JSON `rule` can match.
 // Columns after `at` are the metavariables the JSON's message, anchor or `each` names: one finding per distinct row.
 // `options` carries JSON settings that have no .rerail form yet.
-.violation PYI047_unused_private_type_alias_stub(at: node, name: loc) code "PYI047" "Nothing in this file uses the private type alias `{name}`. Use it, rename it without the underscore if other modules import it, or remove it once nothing does."
+.violation PYI047_unused_private_type_alias_stub(at: node, name: node) code "PYI047" "Nothing in this file uses the private type alias `{name}`. Use it, rename it without the underscore if other modules import it, or remove it once nothing does."
     suppress noqa "PYI047"
 PYI047_unused_private_type_alias_stub_raw(n, NAME) :- kind(n, "identifier"), node(_, n, _, _, _), NAME = n,
     prefix("_", n), bind_name(n, b1), st2 = b1, pyi047_alias_site(st2), site_latest(b1),
@@ -59,7 +59,7 @@ PYI047_unused_private_type_alias_stub_raw(n, NAME) :- kind(n, "identifier"), nod
 // Each rule below is one way the JSON `rule` can match.
 // Columns after `at` are the metavariables the JSON's message, anchor or `each` names: one finding per distinct row.
 // `options` carries JSON settings that have no .rerail form yet.
-.violation PYI047_unused_comprehension_variable_in_stub_alias(at: node, name: loc) code "PYI047" "The comprehension variable `{name}` in this stub type alias is never read. Replace the comprehension with a plain type expression; stubs only declare types."
+.violation PYI047_unused_comprehension_variable_in_stub_alias(at: node, name: node) code "PYI047" "The comprehension variable `{name}` in this stub type alias is never read. Replace the comprehension with a plain type expression; stubs only declare types."
     suppress noqa "PYI047"
 PYI047_unused_comprehension_variable_in_stub_alias_raw(n, NAME) :- kind(n, "identifier"),
     node(_, n, _, _, _), NAME = n, prefix("_", n), bind_name(n, b1), site_scope(b1, "comprehension"),
@@ -93,13 +93,13 @@ pyi047_tok_has_2(n) :- node_text(n, g3), !child(n, _, _), match("(?s)^(?:.*(?:,)
 pyi047_stop_2("block"). pyi047_stop_2("module").
 
 // main's file condition {"notRegex": "\\.pyi$"}
-.decl PYI047_raw(at: node, name: loc)
+.decl PYI047_raw(at: node, name: node)
 PYI047(v0, v1) :- PYI047_raw(v0, v1), rr_d = @doc(v0), doc(rr_d, rr_p, _), !match("\\.pyi$", rr_p).
 
 // main's file condition {"regex": "\\.pyi$"}
-.decl PYI047_unused_private_type_alias_stub_raw(at: node, name: loc)
+.decl PYI047_unused_private_type_alias_stub_raw(at: node, name: node)
 PYI047_unused_private_type_alias_stub(v0, v1) :- PYI047_unused_private_type_alias_stub_raw(v0, v1), rr_d = @doc(v0), doc(rr_d, rr_p, _), match("\\.pyi$", rr_p).
 
 // main's file condition {"regex": "\\.pyi$"}
-.decl PYI047_unused_comprehension_variable_in_stub_alias_raw(at: node, name: loc)
+.decl PYI047_unused_comprehension_variable_in_stub_alias_raw(at: node, name: node)
 PYI047_unused_comprehension_variable_in_stub_alias(v0, v1) :- PYI047_unused_comprehension_variable_in_stub_alias_raw(v0, v1), rr_d = @doc(v0), doc(rr_d, rr_p, _), match("\\.pyi$", rr_p).

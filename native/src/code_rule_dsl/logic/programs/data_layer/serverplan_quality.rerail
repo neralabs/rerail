@@ -38,7 +38,7 @@ cdef("class_definition").
 
 // strategy-file-size (entryPoint "all"): file.content has a 1501st line, in impl/common/l2070_server_plan/strategies/**/*.py.
 .decl file_content(d: number, s: symbol)
-file_content(d, s) :- source(d, sp), text(sp, s).
+file_content(d, s) :- document_source(d, sp), line_text(sp, s).
 violation("data-layer-serverplan-quality", "strategy-file-size", D, N) :- doc(D, p),
     @rx_matches(p, "^impl/common/l2070_server_plan/strategies/(?:.*/)?[^/]*\\.py$") = 1, file_content(D, s),
     @rx_matches(s, "\\A(?:[^\\n\\r\\v\\f\\x1c-\\x1e\\x85\\u2028\\u2029]*(?:\\r\\n|[\\n\\r\\v\\f\\x1c-\\x1e\\x85\\u2028\\u2029])){1500}(?<OVERFLOW>[^\\n\\r\\v\\f\\x1c-\\x1e\\x85\\u2028\\u2029]+|[\\n\\r\\v\\f\\x1c-\\x1e\\x85\\u2028\\u2029])") = 1,

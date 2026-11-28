@@ -64,6 +64,23 @@ struct State {
 /// freed in a loop) then neither gives its pages back nor faults them in each time.
 const RESIDENT: usize = 16;
 
+/// The bytes of every long room's runs whose pages are in memory (taken, or emptied and kept): for the profile's
+/// account of a footprint, as `scratch::resident` is the stacks'.
+static IN_MEMORY: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
+
+/// What the threads' long rooms hold in memory now (`IN_MEMORY`).
+pub fn resident() -> usize {
+    IN_MEMORY.load(std::sync::atomic::Ordering::Relaxed)
+}
+
+impl Drop for Long {
+    fn drop(&mut self) {
+        let s = self.state.get_mut().unwrap_or_else(|e| e.into_inner());
+        let kept = s.runs.iter().filter(|r| !r.given).count();
+        IN_MEMORY.fetch_sub(kept * RUN, std::sync::atomic::Ordering::Relaxed);
+    }
+}
+
 /// The room's block and its runs: what a region holds to be freed from any thread.
 pub struct Long {
     block: Arc<Block>,
@@ -121,6 +138,7 @@ impl Long {
                 let r = s.runs.len() as u32;
                 assert!(self.run_at(r) + RUN <= self.block.reserved(), "a thread's long room is full: {} runs", r);
                 s.runs.push(Run { class: NONE, listed: false, given: false, live: 0, bump: 0, free: 0 });
+                IN_MEMORY.fetch_add(RUN, std::sync::atomic::Ordering::Relaxed);
                 r
             }
         };
@@ -128,6 +146,7 @@ impl Long {
         if s.runs[r as usize].given {
             // SAFETY: the run's own pages, given back when it was last emptied.
             unsafe { crate::mem::reuse_pages(self.base.add(at), RUN) };
+            IN_MEMORY.fetch_add(RUN, std::sync::atomic::Ordering::Relaxed);
         }
         s.runs[r as usize] = Run { class: class as u8, listed: true, given: false, live: 1, bump: 1, free: 0 };
         s.partial[class].push(r);
@@ -152,6 +171,7 @@ impl Long {
             if given {
                 // SAFETY: the run's own pages: no region of it is live.
                 unsafe { crate::mem::give_back(self.base.add(self.run_at(r)), RUN) };
+                IN_MEMORY.fetch_sub(RUN, std::sync::atomic::Ordering::Relaxed);
             }
             if run.listed {
                 s.partial[class].retain(|&x| x != r);
@@ -213,11 +233,9 @@ impl crate::maps::Room for LongRoom {
             return crate::scratch::large_region(bytes, align, name);
         };
         let at = self.0.take(class);
-        // SAFETY: the slot's bytes, this region's alone until it goes.
+        // SAFETY: the slot's bytes, this region's alone until it goes. Not zeroed: its holder writes each byte before
+        // it reads it (`Room`; a freed slot holds its list's next).
         let ptr = unsafe { self.0.base.add(at) };
-        // Zeroed, as every room's region reads (a freed slot holds its list's next).
-        // SAFETY: the region's own bytes, within its slot.
-        unsafe { std::ptr::write_bytes(ptr, 0, bytes.max(8)) };
         let census = crate::census::counted(crate::census::LONG, name, bytes);
         // SAFETY: `bytes` writable bytes at `ptr`, aligned as asked (the class is a multiple of `align`, a run at a
         // multiple of `RUN`), held by `InLong` while the region lives.
@@ -234,9 +252,10 @@ mod tests {
         LongRoom(Arc::new(Long::new(64 << 20)))
     }
 
-    /// A region lies in its room's block, reads zero, and a freed slot is taken again by its class.
+    /// A region lies in its room's block, and a freed slot is taken again by its class, as it was left: no room zeroes
+    /// a region (`Room`; its first 8 bytes held its list's next).
     #[test]
-    fn a_freed_slot_is_taken_again_by_its_class_and_reads_zero() {
+    fn a_freed_slot_is_taken_again_by_its_class_not_zeroed() {
         let r = room();
         let mut a = r.region(40, 8, "a");
         let (block, at) = crate::maps::place_of(&a).expect("in a block");
@@ -247,7 +266,7 @@ mod tests {
         let b = r.region(48, 16, "b");
         assert_eq!(crate::maps::place_of(&b).unwrap().1, at, "the class's freed slot is taken first");
         // SAFETY: the region's own 48 bytes.
-        assert!(unsafe { std::slice::from_raw_parts(b.as_ptr(), 48) }.iter().all(|&x| x == 0), "a region reads zero");
+        assert!(unsafe { std::slice::from_raw_parts(b.as_ptr().add(8), 32) }.iter().all(|&x| x == 7), "not zeroed");
     }
 
     /// A run whose slots are all freed goes back, and another class takes it.

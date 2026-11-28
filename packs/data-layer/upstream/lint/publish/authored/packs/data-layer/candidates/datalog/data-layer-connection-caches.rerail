@@ -49,22 +49,22 @@ out_scope(d) :- doc(d, p, _), glob("**/test_*.py", p).
 cc_gate(d) :- option_on("sourceGate"), node(d, m, "module", _, _), node_text(m, s), match("(?s:.*)(?:BranchId|RevisionId|branch_tip|cache|tip_revision)(?s:.*)", s).
 cc_gate(d) :- !option_on("sourceGate"), node(d, _, "module", _, _).
 cc_skipped(d) :- doc(d, p, _), match("(?:(?s:.*)/)?(?:\\.pytest_cache|__pycache__|tests)/(?s:.*)", p).
-cc_exempt(d, l) :- doc(d, p, _), match("(?s:.*)(?:staging_bypass\\.py)", p), src_line(d, l, sp), text(sp, s), match("(?s:.*)(?:_expected_tip_revision_id)(?s:.*)", s).
-cc_exempt(d, l) :- doc(d, p, _), match("(?s:.*)(?:sql_table_hnsw\\.py)", p), src_line(d, l, sp), text(sp, s), match("(?s:.*)(?:_max_layer_cache|_entry_point_cache)(?s:.*)", s).
-cc_exempt(d, l) :- doc(d, p, _), match("(?s:.*)(?:stmt_versioned\\.py)", p), src_line(d, l, sp), text(sp, s), match("(?s:.*)(?:_tip_revision)(?s:.*)", s).
-cc_exempt(d, l) :- doc(d, p, _), match("(?s:.*)(?:intent_transaction\\.py)", p), src_line(d, l, sp), text(sp, s), match("(?s:.*)(?:_tip_revision)(?s:.*)", s).
-cc_exempt(d, l) :- doc(d, p, _), match("(?s:.*)(?:intent_branch_ops\\.py)", p), src_line(d, l, sp), text(sp, s), match("(?s:.*)(?:_tip_revision)(?s:.*)", s).
-cc_exempt(d, l) :- doc(d, p, _), match("(?s:.*)(?:versioning_intent_steps\\.py)", p), src_line(d, l, sp), text(sp, s), match("(?s:.*)(?:_tip_revision)(?s:.*)", s).
-cc_exempt(d, l) :- doc(d, p, _), match("(?s:.*)(?:branch_ops_steps\\.py)", p), src_line(d, l, sp), text(sp, s), match("(?s:.*)(?:_tip_revision)(?s:.*)", s).
-cc_exempt(d, l) :- doc(d, p, _), match("(?s:.*)(?:commit_branch_steps\\.py)", p), src_line(d, l, sp), text(sp, s), match("(?s:.*)(?:_tip_revision)(?s:.*)", s).
-cc_exempt(d, l) :- doc(d, p, _), match("(?s:.*)(?:sql_versioned_write_transaction\\.py)", p), src_line(d, l, sp), text(sp, s), match("(?s:.*)(?:_cached_tip_revision_id)(?s:.*)", s).
-cc_exempt(d, l) :- doc(d, p, _), match("(?s:.*)(?:stmt_squash_validation\\.py)", p), src_line(d, l, sp), text(sp, s), match("(?s:.*)(?:_tip_revision_input)(?s:.*)", s).
-cc_exempt(d, l) :- doc(d, p, _), match("(?s:.*)(?:squash_steps\\.py)", p), src_line(d, l, sp), text(sp, s), match("(?s:.*)(?:_resolved_branch_tip_revision|_branch_tip_scalar_ref_id|_resolved_branch_tip_sql)(?s:.*)", s).
+cc_exempt(d, l) :- doc(d, p, _), match("(?s:.*)(?:staging_bypass\\.py)", p), document_line(d, sp), line_number(sp, l), line_text(sp, s), match("(?s:.*)(?:_expected_tip_revision_id)(?s:.*)", s).
+cc_exempt(d, l) :- doc(d, p, _), match("(?s:.*)(?:sql_table_hnsw\\.py)", p), document_line(d, sp), line_number(sp, l), line_text(sp, s), match("(?s:.*)(?:_max_layer_cache|_entry_point_cache)(?s:.*)", s).
+cc_exempt(d, l) :- doc(d, p, _), match("(?s:.*)(?:stmt_versioned\\.py)", p), document_line(d, sp), line_number(sp, l), line_text(sp, s), match("(?s:.*)(?:_tip_revision)(?s:.*)", s).
+cc_exempt(d, l) :- doc(d, p, _), match("(?s:.*)(?:intent_transaction\\.py)", p), document_line(d, sp), line_number(sp, l), line_text(sp, s), match("(?s:.*)(?:_tip_revision)(?s:.*)", s).
+cc_exempt(d, l) :- doc(d, p, _), match("(?s:.*)(?:intent_branch_ops\\.py)", p), document_line(d, sp), line_number(sp, l), line_text(sp, s), match("(?s:.*)(?:_tip_revision)(?s:.*)", s).
+cc_exempt(d, l) :- doc(d, p, _), match("(?s:.*)(?:versioning_intent_steps\\.py)", p), document_line(d, sp), line_number(sp, l), line_text(sp, s), match("(?s:.*)(?:_tip_revision)(?s:.*)", s).
+cc_exempt(d, l) :- doc(d, p, _), match("(?s:.*)(?:branch_ops_steps\\.py)", p), document_line(d, sp), line_number(sp, l), line_text(sp, s), match("(?s:.*)(?:_tip_revision)(?s:.*)", s).
+cc_exempt(d, l) :- doc(d, p, _), match("(?s:.*)(?:commit_branch_steps\\.py)", p), document_line(d, sp), line_number(sp, l), line_text(sp, s), match("(?s:.*)(?:_tip_revision)(?s:.*)", s).
+cc_exempt(d, l) :- doc(d, p, _), match("(?s:.*)(?:sql_versioned_write_transaction\\.py)", p), document_line(d, sp), line_number(sp, l), line_text(sp, s), match("(?s:.*)(?:_cached_tip_revision_id)(?s:.*)", s).
+cc_exempt(d, l) :- doc(d, p, _), match("(?s:.*)(?:stmt_squash_validation\\.py)", p), document_line(d, sp), line_number(sp, l), line_text(sp, s), match("(?s:.*)(?:_tip_revision_input)(?s:.*)", s).
+cc_exempt(d, l) :- doc(d, p, _), match("(?s:.*)(?:squash_steps\\.py)", p), document_line(d, sp), line_number(sp, l), line_text(sp, s), match("(?s:.*)(?:_resolved_branch_tip_revision|_branch_tip_scalar_ref_id|_resolved_branch_tip_sql)(?s:.*)", s).
 cc_candidate(n) :- cc_p0_hit(n).
 cc_candidate(n) :- cc_p1_hit(n).
 cc_candidate(n) :- cc_p2_hit(n).
 cc_candidate(n) :- cc_p3_hit(n).
-cc_found(n, p, l) :- cc_candidate(n), node(d, n, _, _, _), line(n, l), !cc_exempt(d, l), !cc_skipped(d), cc_gate(d), in_scope(d), !out_scope(d), doc(d, p, _).
+cc_found(n, p, l) :- cc_candidate(n), node(d, n, _, _, _), node_line_number(n, l), !cc_exempt(d, l), !cc_skipped(d), cc_gate(d), in_scope(d), !out_scope(d), doc(d, p, _).
 cc_self_attr(a, s) :- node(_, a, "attribute", _, _), field(a, "object", o), node_text(o, t), match("(?s:.*)self", t), field(a, "attribute", x), node_text(x, s).
 cc_keyed(n) :- node(_, n, "assignment", _, _), field(n, "type", t), node_text(t, s), match("dict\\[(?:BranchId|RevisionId)(?s:.*)", s).
 cc_p0_next(a) :- cc_self_attr(a, _), field(p, "left", a), node(_, p, "assignment", _, _).
@@ -75,7 +75,7 @@ violation("data-layer-connection-caches", "pattern-0", "CC001", p, l) :- cc_p0_h
 cc_p1_hit(n) :- cc_keyed(n), field(n, "left", a), cc_self_attr(a, s), match("_\\w*cache\\w*", s).
 violation("data-layer-connection-caches", "pattern-1", "CC001", p, l) :- cc_p1_hit(n), cc_found(n, p, l).
 cc_p2_hit(n) :- cc_keyed(n), field(n, "left", x), node(_, x, "identifier", _, _), node_text(x, s), match("_\\w+", s).
-cc_p2_hit(n) :- cc_p2_typed(n), node(d, n, _, _, _), line(n, l), src_line(d, l, sp), text(sp, t), col(n, c), match("\\s*", @substr(t, 0, c)).
+cc_p2_hit(n) :- cc_p2_typed(n), node(d, n, _, _, _), node_line_number(n, l), document_line(d, sp), line_number(sp, l), line_text(sp, t), node_start_column(n, c), match("\\s*", @substr(t, 0, c)).
 cc_p2_typed(n) :- node(_, n, "typed_parameter", _, _), child(n, x, _), node(_, x, "identifier", _, _), node_text(x, xs), match("_\\w+", xs), field(n, "type", t), node_text(t, ts), match("dict\\[(?:BranchId|RevisionId)(?s:.*)", ts).
 violation("data-layer-connection-caches", "pattern-2", "CC001", p, l) :- cc_p2_hit(n), cc_found(n, p, l).
 cc_p3_hit(n) :- node(_, n, "assignment", _, _), field(n, "left", a), cc_self_attr(a, s), match("_\\w+", s), field(n, "type", t), node_text(t, ts), match("dict\\[(?:BranchId|RevisionId)\\s*,\\s*(?:RevisionId|BranchId)(?s:.*)", ts).

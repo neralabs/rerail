@@ -206,6 +206,14 @@ impl ShardKey for i64 {
 }
 
 impl<K: ShardKey> Keys<K> {
+    /// Every key with parts, in no order.
+    fn keys(&self) -> impl Iterator<Item = u64> + '_ {
+        let table = self.log.as_ref().map(|log| log.table.load_full());
+        (0..table.as_ref().map_or(0, |t| t.slots.len())).filter_map(move |i| {
+            let s = &table.as_ref()?.slots[i];
+            (s.first.load(Ordering::Acquire) != EMPTY).then(|| s.key.load(Ordering::Relaxed))
+        })
+    }
     /// The parts below `bound` that hold rows of key `k`, in the order admitted.
     fn parts(&self, k: K, bound: usize) -> impl Iterator<Item = usize> + '_ {
         // The table borrowed for the first link alone (`load`: no count of its holders written, as a probe of each
@@ -216,7 +224,7 @@ impl<K: ShardKey> Keys<K> {
         std::iter::from_fn(move || {
             let link = at.checked_sub(1)?;
             let word = self.log.as_ref()?.links.get(link as usize)?.load(Ordering::Acquire);
-            let part = (word >> 32) as usize;
+            let part = (word >> 32) as usize; // bits: a link's part and next
             if part >= bound {
                 return None;
             }
@@ -236,7 +244,7 @@ impl<K: ShardKey> Keys<K> {
             let last = slot.last.load(Ordering::Relaxed);
             let word = log.links.slot(last as usize - 1);
             let held = word.load(Ordering::Relaxed);
-            if (held >> 32) as usize == i {
+            if (held >> 32) as usize == i { // bits: a link's part and next
                 return;
             }
             let link = Self::link(&log, &mut counts.0, i);
@@ -270,7 +278,7 @@ impl<K: ShardKey> Keys<K> {
     fn link(log: &KeyLog, links: &mut u32, i: usize) -> u32 {
         let at = *links;
         // Its next is none (0: links are numbered from 1).
-        log.links.slot(at as usize).store((i as u64) << 32, Ordering::Relaxed);
+        log.links.slot(at as usize).store((i as u64) << 32, Ordering::Relaxed); // bits: a link's part and next
         *links += 1;
         at + 1
     }
@@ -308,7 +316,7 @@ impl Parts {
     /// of the document `v` (a part is found by its documents' keys and their files', `Values::add`): no part is read
     /// for a key it does not hold. Every part for a value no key names (an atom, a number).
     fn of(&self, v: i64, docs: bool, each: &mut dyn FnMut(&Part)) {
-        let key = if docs { u32::try_from(v).ok() } else { (1 << 32..).contains(&v).then_some((v >> 32) as u32) };
+        let key = if docs { u32::try_from(v).ok() } else { rerail_blocks::located::is_located(v).then_some(rerail_blocks::located::Located(v).key()) };
         let Some(key) = key else {
             if !docs {
                 self.list.iter().for_each(each);
@@ -358,7 +366,7 @@ pub(super) struct Dir {
     /// home is of the batch's rows alone: an index of the layered rows was never found there, and with its room taken
     /// by the base's indexes, each stratum built its own into a fresh home (the data-layer rules over 50 files: about
     /// 2,000 builds of `child`'s index of 58-70 K rows, 47 of the join program's 61 s, 2026-11-25).
-    homes: [std::sync::OnceLock<Option<(usize, Arc<crate::code_rule_dsl::facts::rows::IndexHome>)>>; 16],
+    homes: [std::sync::OnceLock<Option<(usize, crate::code_rule_dsl::facts::rows::Part)>>; 16],
     batches: Vec<Arc<super::Batch>>,
 }
 
@@ -448,7 +456,7 @@ impl Values {
                 let columns: Vec<usize> = (0..src.columns().len()).collect();
                 let mut named: rustc_hash::FxHashSet<i64> = rustc_hash::FxHashSet::default();
                 src.for_rows(&columns, &mut |_, row| {
-                    named.extend(row.iter().copied().filter(|&v| (1 << 32..).contains(&v) && !own.contains(&((v >> 32) as u32))));
+                    named.extend(row.iter().copied().filter(|&v| rerail_blocks::located::is_located(v) && !own.contains(&rerail_blocks::located::Located(v).key())));
                 });
                 for v in named {
                     p.hosted.add(v, i);
@@ -468,7 +476,7 @@ impl Values {
     pub fn source_of(&self, name: &str, n: i64) -> Option<Arc<dyn Source>> {
         let parts = self.parts.load();
         let p = parts.get(name)?;
-        let i = p.by_key.parts((n >> 32) as u32, p.list.len()).next()?;
+        let i = p.by_key.parts(rerail_blocks::located::Located(n).key(), p.list.len()).next()?;
         Some(Arc::clone(&p.list[i].src))
     }
     fn total(&self, name: &str) -> usize {
@@ -542,7 +550,7 @@ impl Source for Slice {
 /// makes (`within`'s outer rows start at `1 << 31`, and a chunk makes far fewer than `1 << 30` of them), within the
 /// `u32` the engine reads a row by. A scan of the source numbers them past the base's rows instead (`Made::at`).
 const MADE_AT: usize = 0xF000_0000;
-const MADE_ROOM: usize = (1 << 32) - MADE_AT;
+const MADE_ROOM: usize = (1 << 32) - MADE_AT; // bits: the u32 rows' room
 
 /// A layered source made on lookup (containment, an axis) with values admitted: the values' rows, made whole once per
 /// admission (`Layered::scanned`), each part's solve made once over its batch, and read without a lock. Made per
@@ -620,12 +628,14 @@ pub struct Layered {
     /// For a base made on lookup, whose rows grow as it is read: the parts' rows, made whole once per admission.
     made: Option<Made>,
     width: usize,
+    /// `has_parts`' last answer and the values admitted then (`admitted << 1 | has`): asked again only when more are.
+    seen: AtomicU64,
     /// A placed base's relation over the values' directory (`view_over`), by its rows: made again when values are
     /// admitted, else kept, so its indexes are found again by every stratum that reads it.
     #[cfg(any(target_os = "macos", target_os = "linux", windows))]
     over: parking_lot::Mutex<Option<(usize, Arc<super::places::Over>)>>,
-    /// `has_parts`' last answer and the values admitted then (`admitted << 1 | has`): asked again only when more are.
-    seen: AtomicU64,
+    /// `part_docs`' last answer and the values admitted then.
+    part_docs: parking_lot::Mutex<(usize, Arc<[u32]>)>,
 }
 
 impl Layered {
@@ -639,9 +649,10 @@ impl Layered {
             values,
             made,
             width,
+            seen: AtomicU64::new(0),
             #[cfg(any(target_os = "macos", target_os = "linux", windows))]
             over: parking_lot::Mutex::new(None),
-            seen: AtomicU64::new(0),
+            part_docs: parking_lot::Mutex::new((0, Arc::from([]))),
         }
     }
     /// The batch's rows, where a value's rows are numbered past them (never for a base made on lookup, whose values'
@@ -657,6 +668,10 @@ impl Layered {
     pub fn source_of(&self, n: i64) -> Arc<dyn Source> {
         self.values.source_of(&self.name, n).unwrap_or_else(|| Arc::clone(&self.base))
     }
+    /// SPIKE (`spike_strata`): each admitted value's batch, in the order admitted.
+    pub fn value_batches(&self) -> Vec<Arc<super::Batch>> {
+        self.values.batches.read().clone()
+    }
     fn parts<T>(&self, f: impl FnOnce(&Parts) -> T) -> Option<T> {
         if self.values.admitted.load(Ordering::Acquire) == 0 {
             return None;
@@ -668,6 +683,21 @@ impl Layered {
     /// of a 15 s sample of `all`.
     /// Asked once per value admitted: each probe's load of the parts and hash of the name took about 1% of `all`'s
     /// per-file phase's samples.
+    /// The document keys the relation's parts hold rows of (`Parts::by_key`'s keys), sorted: made again only when more
+    /// values are admitted.
+    fn part_docs(&self) -> Arc<[u32]> {
+        let admitted = self.values.admitted();
+        let mut held = self.part_docs.lock();
+        if held.0 == admitted && admitted != 0 {
+            return Arc::clone(&held.1);
+        }
+        let all = self.values.parts.load();
+        let mut keys: Vec<u32> = all.get(self.name.as_str()).map_or_else(Vec::new, |p| p.by_key.keys().map(|k| k as u32).collect());
+        keys.sort_unstable();
+        keys.dedup();
+        *held = (admitted, Arc::from(keys));
+        Arc::clone(&held.1)
+    }
     fn has_parts(&self) -> bool {
         let admitted = self.values.admitted() as u64;
         if admitted == 0 {
@@ -808,19 +838,15 @@ impl Layered {
             };
             over.apply(v)?;
             v.keep = Arc::new((Arc::clone(&dir), Arc::clone(&over)));
-            v.grows = Some(over.home());
-            dv_ref.home = over.home().part();
+            dv_ref.home = over.home();
             return dv;
         }
         // Its own home, of its own rows (`Dir::homes`), not the base's.
-        use crate::code_rule_dsl::facts::rows::{AXIS_KEYS, IndexHome, Part};
-        dv_ref.home = match dir.homes.get(dv_ref.view as usize)?.get_or_init(|| IndexHome::new(rows, AXIS_KEYS).map(|home| (rows, home))) {
-            Some((n, home)) if *n == rows => {
-                v.grows = Some(Arc::clone(home));
-                home.part()
-            }
+        let make = || crate::code_rule_dsl::facts::rows::Part::for_device_indexed(0, rows, rerail_blocks::relation::ADDED_INDEXES).ok();
+        dv_ref.home = match dir.homes.get(dv_ref.view as usize)?.get_or_init(|| make().map(|part| (rows, part))) {
+            Some((n, part)) if *n == rows => part.clone(),
             // Rows of another count than the first reader's: a home of its own, as each was before.
-            _ => Part::for_device_indexed(0, rows, AXIS_KEYS).ok()?,
+            _ => make()?,
         };
         dv
     }
@@ -857,23 +883,25 @@ impl Source for Layered {
     /// chunk's or a tape value's. A value's parts are keyed by their hosts' keys too, so a host file's
     /// key names its guests' parts as well: the first of them that holds the node answers. The base is asked, then
     /// each part that holds `n`'s key, where they lie: no list of them is made.
-    fn node_read(&self, name: &str, n: i64) -> Option<rusqlite::types::Value> {
-        if let Some(v) = self.base.node_read(name, n) {
+    fn node_read(&self, name: &str, n: i64, more: &[i64]) -> Option<rusqlite::types::Value> {
+        if let Some(v) = self.base.node_read(name, n, more) {
             return Some(v);
         }
         let parts = self.values.parts.load();
         let p = parts.get(self.name.as_str())?;
-        p.by_key.parts((n >> 32) as u32, p.list.len()).find_map(|i| p.list[i].src.node_read(name, n))
+        p.by_key.parts(rerail_blocks::located::Located(n).key(), p.list.len()).find_map(|i| p.list[i].src.node_read(name, n, more))
     }
     /// `node_read`, the base's text lent; a part's is made (the parts are read under their list's guard).
-    fn node_read_ref(&self, name: &str, n: i64) -> Option<super::super::NodeRead<'_>> {
-        if let Some(v) = self.base.node_read_ref(name, n) {
+    fn node_read_ref(&self, name: &str, n: i64, more: &[i64]) -> Option<super::super::NodeRead<'_>> {
+        let _kind = rerail_prof::work::doing(rerail_prof::work::VIEW);
+        if let Some(v) = self.base.node_read_ref(name, n, more) {
             return Some(v);
         }
         let parts = self.values.parts.load();
         let p = parts.get(self.name.as_str())?;
-        p.by_key.parts((n >> 32) as u32, p.list.len()).find_map(|i| p.list[i].src.node_read(name, n)).map(super::super::NodeRead::Value)
+        p.by_key.parts(rerail_blocks::located::Located(n).key(), p.list.len()).find_map(|i| p.list[i].src.node_read(name, n, more)).map(super::super::NodeRead::Value)
     }
+    /// The base's (a part's node is read as text).
     /// Every node's text where it lies (`LongTexts::node_texts_in_place`), the chunk's documents' and its values': a
     /// node is found through the directory over the chunk's batch and its values (`views_over`), each document's
     /// source where it lies, as `node_read` finds it through the batch that holds its document.
@@ -895,6 +923,16 @@ impl Source for Layered {
         let read = dir.views.read_of(super::device_chunk::VIEW_NODE, Arc::clone(&dir) as Arc<dyn std::any::Any + Send + Sync>);
         why(if read.is_some() { "read in place (a layered binding)" } else { "refused: the layered directory on no device" });
         read
+    }
+    /// As `node_read`: the base, then each part that holds `n`'s key. Not forwarded, every node text a chunk's join
+    /// read took the trait's `None` and was made as a string (7.6 M reads of an idc run, 227 ns each).
+    fn node_atom(&self, name: &str, n: i64, make: bool, held: &dyn Fn(&str) -> Option<i64>, table: (*const (), Option<&std::path::Path>)) -> Option<i64> {
+        if let Some(v) = self.base.node_atom(name, n, make, held, table) {
+            return Some(v);
+        }
+        let parts = self.values.parts.load();
+        let p = parts.get(self.name.as_str())?;
+        p.by_key.parts(rerail_blocks::located::Located(n).key(), p.list.len()).find_map(|i| p.list[i].src.node_atom(name, n, make, held, table))
     }
     fn as_any(&self) -> Option<&dyn std::any::Any> {
         Some(self)
@@ -921,7 +959,8 @@ impl Source for Layered {
         let keys = [1, (1i64 << 31) - 1];
         let [alo, ahi] = match kind {
             ColKind::Key => keys,
-            ColKind::Node => [keys[0] << 32, (keys[1] << 32) | i64::from(u32::MAX)],
+            ColKind::Node => rerail_blocks::located::Located::range(keys[0], keys[1]),
+            ColKind::NodeOrNone => [-1, rerail_blocks::located::Located::range(keys[0], keys[1])[1]],
             ColKind::Atom | ColKind::U32 => [0, i64::from(u32::MAX)],
         };
         Some([lo.min(alo), hi.max(ahi)])
@@ -936,6 +975,9 @@ impl Source for Layered {
     }
     fn estimated_len(&self) -> usize {
         self.base.estimated_len()
+    }
+    fn known_len(&self) -> Option<usize> {
+        self.base.known_len()
     }
     fn may_hold_rows(&self) -> bool {
         self.base.may_hold_rows() || self.values.total(&self.name) > 0
@@ -952,6 +994,9 @@ impl Source for Layered {
     fn statistics(&self) -> Option<Vec<(String, i64, i64, i64, i64)>> {
         self.base.statistics()
     }
+    fn estimated_statistics(&self) -> Option<Vec<(String, i64, i64, i64, i64)>> {
+        self.base.estimated_statistics()
+    }
     /// The base's counts: the values admitted past its rows are a few (a chunk's tape values), and a count read
     /// across the rows made the base's batch whole.
     fn value_counts(&self, wanted: &[(usize, i64)]) -> Option<Vector<i64>> {
@@ -962,6 +1007,24 @@ impl Source for Layered {
     }
     fn made_on_lookup(&self) -> bool {
         self.base.made_on_lookup()
+    }
+    fn build_value_index(&self, column: usize) -> Option<usize> {
+        self.base.build_value_index(column)
+    }
+    fn build_value_bits(&self, node: usize, column: usize, value: i64) -> Option<usize> {
+        self.base.build_value_bits(node, column, value)
+    }
+    /// The base's bits, which answer for the batch's nodes: the documents its parts hold rows of are named (`others`),
+    /// and a node of one is read as without them.
+    fn value_bits(&self, node: usize, column: usize, value: i64) -> Option<super::super::ValueBits> {
+        let mut bits = self.base.value_bits(node, column, value)?;
+        if self.has_parts() {
+            bits.others = self.part_docs();
+        }
+        Some(bits)
+    }
+    fn value_bits_gen(&self) -> u32 {
+        self.base.value_bits_gen()
     }
     fn complete_rows(&self) -> bool {
         self.base.complete_rows()
@@ -996,6 +1059,9 @@ impl Source for Layered {
     }
     /// The base's rows, then the parts' that may hold each value, numbered past the base's.
     fn lookup_each(&self, column: usize, values: &[i64], each: &mut dyn FnMut(usize)) -> bool {
+        let _kind = rerail_prof::work::doing(rerail_prof::work::VIEW);
+        let outer = each;
+        let each: &mut dyn FnMut(usize) = &mut |r| { let _caller = _kind.paused(); outer(r) };
         if !self.base.lookup_each(column, values, each) {
             return false;
         }
@@ -1050,8 +1116,27 @@ impl Source for Layered {
     fn lookup_read(&self, column: usize, value: i64, columns: &[usize], each: &mut dyn FnMut(usize, &[i64])) -> bool {
         self.lookup_read_at(column, value, columns, &mut super::super::ProbeCursor::default(), each)
     }
+    /// The base's read; a node it has no row of, while the chunk has admitted values of the relation, may be a part's
+    /// (or a made row's): the caller probes it as one row.
+    fn read_own_batch(&self, column: usize, values: &[i64], reads: &[usize], out: &mut [i64], found: &mut [u8], cursor: &mut super::super::ProbeCursor) -> bool {
+        let _kind = rerail_prof::work::doing(rerail_prof::work::VIEW);
+        if !self.base.read_own_batch(column, values, reads, out, found, cursor) {
+            return false;
+        }
+        if self.values.admitted.load(Ordering::Acquire) == 0 {
+            return true;
+        }
+        let all = self.values.parts.load();
+        if all.get(self.name.as_str()).is_some_and(|p| p.total > 0) {
+            found.iter_mut().filter(|f| **f == 0).for_each(|f| *f = 2);
+        }
+        true
+    }
     /// The cursor is the base's: a part's reads keep none (a value's rows are few).
     fn lookup_read_at(&self, column: usize, value: i64, columns: &[usize], cursor: &mut super::super::ProbeCursor, each: &mut dyn FnMut(usize, &[i64])) -> bool {
+        let _kind = rerail_prof::work::doing(rerail_prof::work::VIEW);
+        let outer = each;
+        let each: &mut dyn FnMut(usize, &[i64]) = &mut |r, v| { let _caller = _kind.paused(); outer(r, v) };
         // No value admitted (a chunk's first run): the base's read, with no load of the parts.
         if self.values.admitted.load(Ordering::Acquire) == 0 {
             return self.base.lookup_read_at(column, value, columns, cursor, each);
@@ -1100,6 +1185,36 @@ impl Source for Layered {
         }
         true
     }
+    /// The base's test; where the relation has parts that may hold the value, `None` (the matches are read).
+    fn test_at(&self, column: usize, value: i64, columns: &[usize], want: &[i64], cursor: &mut super::super::ProbeCursor) -> Option<bool> {
+        let _kind = rerail_prof::work::doing(rerail_prof::work::VIEW);
+        if self.values.admitted.load(Ordering::Acquire) == 0 {
+            return self.base.test_at(column, value, columns, want, cursor);
+        }
+        let all = self.values.parts.load();
+        let Some(p) = all.get(self.name.as_str()).filter(|p| p.total > 0) else {
+            return self.base.test_at(column, value, columns, want, cursor);
+        };
+        if self.made.is_some() {
+            return None;
+        }
+        if self.base.test_at(column, value, columns, want, cursor)? {
+            return Some(true);
+        }
+        // Each part that may hold the value, read as `lookup_read_at` reads it (a value's rows are few).
+        let mut found = false;
+        p.of(value, self.base.keys_documents(column), &mut |part| {
+            if found {
+                return;
+            }
+            let mut each = |_: usize, got: &[i64]| found |= got == want;
+            if !part.src.lookup_read(column, value, columns, &mut each) {
+                let rows = part.src.lookup(column, &[value]).unwrap_or_else(|| (0..part.src.len()).filter(|&r| part.src.value(r, column) == value).collect());
+                found = rows.into_iter().any(|r| columns.iter().zip(want).all(|(&c, &w)| part.src.value(r, c) == w));
+            }
+        });
+        Some(found)
+    }
     fn keys_documents(&self, column: usize) -> bool {
         self.base.keys_documents(column)
     }
@@ -1114,6 +1229,7 @@ impl Source for Layered {
     /// The base's rows in the range, then each part's, past the base's: a part with no range read is read whole (a
     /// value's rows are few). `rr_ann_node`'s range of the annotations' nodes is the values' rows.
     fn range_lookup(&self, column: usize, lower: Option<(i64, bool)>, upper: Option<(i64, bool)>) -> Option<rerail_blocks::vector::Vector<usize>> {
+        let _kind = rerail_prof::work::doing(rerail_prof::work::VIEW);
         if self.made.is_some() {
             return None;
         }
@@ -1167,7 +1283,18 @@ impl Source for Layered {
     /// The base's test (`within`'s interval, t50 step 4), else the test of each part that may hold the row's first
     /// value's node: a value's nodes are its part's, never the batch's. Unforwarded, a chunk's every `within` test was
     /// a lookup of the node's rows (`def_outside`: 1.56 M tests at 1.6 µs on 1,000 files).
+    /// The base's; a pair it does not hold may be a part's, where the relation has parts: asked as one row.
+    fn holds_batch(&self, cols: [usize; 2], pairs: &[i64], out: &mut [u8]) -> bool {
+        if !self.base.holds_batch(cols, pairs, out) {
+            return false;
+        }
+        if !pairs.is_empty() && self.has_parts() {
+            out.iter_mut().filter(|o| **o == 0).for_each(|o| *o = 2);
+        }
+        true
+    }
     fn holds(&self, equal: &[(usize, i64)]) -> Option<bool> {
+        let _kind = rerail_prof::work::doing(rerail_prof::work::VIEW);
         let base = self.base.holds(equal)?;
         if base || !self.has_parts() {
             return Some(base);
@@ -1260,6 +1387,7 @@ impl Source for Layered {
         self.parts(|p| p.at(row - self.base_len()).map(|(part, r)| part.src.value(r, column))).flatten().unwrap_or(0)
     }
     fn row_at(&self, row: usize, columns: &[usize], out: &mut [i64]) {
+        let _kind = rerail_prof::work::doing(rerail_prof::work::VIEW);
         if self.made.is_some() {
             let Some(i) = self.made_row(row) else { return self.base.row_at(row, columns, out) };
             self.scanned(|s| {
@@ -1278,6 +1406,32 @@ impl Source for Layered {
                 part.src.row_at(r, columns, out);
             }
         });
+    }
+    /// The base's rows that pass (its own scan, document by document), then the values' rows past them, numbered as
+    /// `for_rows` numbers them. The trait's scan read each row's columns through `value`: a select of the row's node
+    /// for each column of each row (1,766 samples of an idc run, `View::filtered`).
+    fn filter_eq(&self, eqs: &[(usize, i64)]) -> Vector<u32> {
+        let mut out = self.base.filter_eq(eqs);
+        let passes = |r: &[i64]| eqs.iter().all(|&(c, v)| r[c] == v);
+        if self.made.is_some() {
+            let at = self.scan_at();
+            self.scanned(|s| {
+                s.each(at, self.width.max(1), &mut |i, r| {
+                    if passes(r) {
+                        out.push(i as u32);
+                    }
+                    true
+                });
+            });
+            return out;
+        }
+        self.parts(|p| {
+            for part in &p.list {
+                let at = (self.base_len() + part.start) as u32;
+                out.extend(part.src.filter_eq(eqs).iter().map(|&r| at + r));
+            }
+        });
+        out
     }
     fn for_rows(&self, columns: &[usize], each: &mut dyn FnMut(usize, &[i64])) {
         self.base.for_rows(columns, each);
@@ -1352,7 +1506,7 @@ impl Source for Layered {
             self.scanned(|s| {
                 s.each(at, self.width.max(1), &mut |i, r| {
                     let id = r[column];
-                    each(i, if id >= 1 << 32 { id >> 32 } else { id });
+                    each(i, rerail_blocks::located::document_of(id));
                     true
                 });
             });

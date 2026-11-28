@@ -156,7 +156,7 @@ fn a_session_keeps_its_cross_part_across_a_file_local_edit() {
     std::fs::write(src.join("b.py"), "from a import helper, other\n\ndef main():\n    assert True\n    helper(1)\n    other(2)\n").unwrap();
     // `at` is the cross-file part; `flagged`, file-local, is the rule edited.
     let program = |kind: &str| format!(
-        "#include \"core.rerail\"\n.decl called(c: node, x: symbol)\ncalled(c, x) :- kind(c, \"call\"), field(c, \"function\", f), text(f, x).\n.decl defined(d: node, x: symbol)\ndefined(d, x) :- kind(d, \"function_definition\"), field(d, \"name\", n), text(n, x).\n.decl at(x: symbol, k: number) cross_file\nat(x, k) :- called(c, x), defined(_, x), col(c, k).\n.decl flagged(n: node)\nflagged(n) :- kind(n, \"assert_statement\"), !kind(n, \"{kind}\").\n.decl flag_line(l: number)\nflag_line(l) :- flagged(n), line(n, l).\n.output at, flag_line\n"
+        "#include \"core.rerail\"\n.decl called(c: node, x: symbol)\ncalled(c, x) :- kind(c, \"call\"), field(c, \"function\", f), text(f, x).\n.decl defined(d: node, x: symbol)\ndefined(d, x) :- kind(d, \"function_definition\"), field(d, \"name\", n), text(n, x).\n.decl at(x: symbol, k: number) cross_file\nat(x, k) :- called(c, x), defined(_, x), node_start_column(c, k).\n.decl flagged(n: node)\nflagged(n) :- kind(n, \"assert_statement\"), !kind(n, \"{kind}\").\n.decl flag_line(l: number)\nflag_line(l) :- flagged(n), node_line_number(n, l).\n.output at, flag_line\n"
     );
     let program = |kind: &str| crate::code_rule_dsl::logic::rr::print_version(&crate::code_rule_dsl::logic::rr::parse_version(&program(kind)).unwrap()).unwrap();
     let run = |text: &str| super::super::run(text, &src, None, &out, "program", Binding::Cpu, 1 << 18).unwrap();
@@ -226,7 +226,9 @@ fn recursive_cross_file_stratum() -> Ran {
 .scope include "**/*.py"
 #include "python/names.rerail"
 .decl dep(a: number, b: number) cross_file
-dep(a, b) :- impmod(i, m), docof(i, a), doc(b, _, m).
+.decl dep_from(a: number, m: symbol)
+dep_from(a, m) :- impmod(i, m), docof(i, a).
+dep(a, b) :- dep_from(a, m), doc(b, _, m).
 .decl reach(a: number, b: number) no_reach
 reach(a, b) :- dep(a, b).
 reach(a, c) :- reach(a, b), dep(b, c).
@@ -291,7 +293,9 @@ fn a_session_passes_on_a_quiet_stratum() {
 .scope include "**/*.py"
 #include "python/names.rerail"
 .decl dep(a: number, b: number) cross_file
-dep(a, b) :- impmod(i, m), docof(i, a), doc(b, _, m).
+.decl dep_from(a: number, m: symbol)
+dep_from(a, m) :- impmod(i, m), docof(i, a).
+dep(a, b) :- dep_from(a, m), doc(b, _, m).
 .decl via_h(a: number)
 via_h(a) :- dep(a, b), doc(b, _, "h").
 .decl seen(a: number)
@@ -336,10 +340,12 @@ IMP(i) :- impmod(i, _), docof(i, a), seen(a).
 
 /// A stratum a changed read reaches, none of whose rules sees a row the read's delta gained or lost, is passed on as
 /// kept (decision 0563 B): an edit adds an assignment to a file. `wh` reads `kind` only for `while` statements, which
-/// the edit's nodes are none of (the delta's own rows); `pair` joins `node`'s new rows to `wh`, which holds none of
-/// their nodes (a derived witness, read through its index), and so does `rr_unplaced` (decision 0431 R9), which joins
-/// `node` to the findings `W` (`rr_found_node`). A second edit adds a `while` loop, which both see; a third moves a.py's
-/// loop a line down, which `rr_unplaced` does not read (`Net`). Each run's findings are a full run's.
+/// the edit's nodes are none of (the delta's own rows), and `wh_in` names each file that has one; `pair` pairs those
+/// files (by their document keys, decision 0677), and `W` joins `node`'s new rows to `wh`, which holds none of their
+/// nodes (a derived witness, read through its index). `rr_unplaced` (decision 0431 R9) joins the findings `W` to
+/// the nodes no file places, each file's own (`rr_unplaced_node`, decision 0677), which no edit of a placed file
+/// changes: no edit reaches it. A second edit adds a `while` loop, which `pair` sees; a third moves a.py's loop a line
+/// down (`Net`). Each run's findings are a full run's.
 #[test]
 fn a_session_passes_on_a_stratum_its_changed_kinds_do_not_reach() {
     let base = crate::code_rule_dsl::fixtures::temp().with_extension("session-unseen");
@@ -355,10 +361,12 @@ fn a_session_passes_on_a_stratum_its_changed_kinds_do_not_reach() {
 .scope include "**/*.py"
 .decl wh(n: number)
 wh(n) :- kind(n, "while_statement").
-.decl pair(n: number, m: number) cross_file
-pair(n, m) :- wh(n), node(a, n, _, _, _), wh(m), node(b, m, _, _, _), a != b.
+.decl wh_in(d: number)
+wh_in(d) :- wh(n), node(d, n, _, _, _).
+.decl pair(a: number, b: number) cross_file
+pair(a, b) :- wh_in(a), wh_in(b), a != b.
 .violation W(at: node) code "W" "A while loop in a file, where another file has one too."
-W(n) :- pair(n, _).
+W(n) :- wh(n), node(a, n, _, _, _), pair(a, _).
 "#,
     )
     .unwrap();
@@ -383,30 +391,39 @@ W(n) :- pair(n, _).
     let report = run();
     let got = findings();
     assert_eq!(got, full(), "the session's findings are a full run's");
-    assert!(report.cross_unseen.iter().any(|k| k == crate::code_rule_dsl::logic::rr::lower::findings::UNPLACED), "`W` holds none of the edit's nodes: {:?} unseen", report.cross_unseen);
+    unplaced_not_reached(&report);
     std::fs::write(src.join("c.py"), "x = 1\nwhile x:\n    x = 0\n").unwrap();
     run();
     let got = findings();
     assert_eq!(got, full(), "the session's findings are a full run's");
     assert_eq!(got.len(), 3, "c.py's loop pairs too: {got:?}");
     // A line put at a.py's top moves its loop down and keeps its id (`granules`): `node`'s rows past it change only
-    // in their places. `rr_unplaced(c) :- rr_found_node(c, n), node(d, n, _, _, _), !doc(d, _, _)` reads none of
-    // them, so it sees no change, though
-    // `W` holds the loop; `violation` reads its line, which moved, so it is reached. The finding moves with the loop.
+    // in their places. The nodes no file places are none of them, so `rr_unplaced` is not reached, though `W` holds
+    // the loop; `violation` reads its line, which moved, so it is reached. The finding moves with the loop.
     let was = findings();
     std::fs::write(src.join("a.py"), "import os\nwhile a:\n    pass\n").unwrap();
     let report = run();
     let got = findings();
     assert_eq!(got, full(), "the session's findings are a full run's");
     assert_ne!(got, was, "a.py's finding is a line lower");
-    assert!(report.cross_unseen.iter().any(|k| k == crate::code_rule_dsl::logic::rr::lower::findings::UNPLACED), "`rr_unplaced` reads no place of a.py's moved nodes: {:?} unseen", report.cross_unseen);
+    unplaced_not_reached(&report);
     assert!(!report.cross_unseen.iter().any(|k| k == "violation"), "`violation` reads the moved loop's line: {:?} unseen", report.cross_unseen);
     drop(session);
     let _ = std::fs::remove_dir_all(&base);
 }
 
+/// An edit of a placed file changes none of the nodes no file places (`rr_unplaced_node`, made in the file's part,
+/// decision 0677), so the cross-file part's `rr_unplaced` is not reached by it: not an input that changed, nor a
+/// stratum reached that saw no row.
+fn unplaced_not_reached(report: &super::super::Report) {
+    use crate::code_rule_dsl::logic::rr::lower::findings::{UNPLACED, UNPLACED_NODE};
+    assert!(!report.cross_changed.iter().any(|k| k == UNPLACED_NODE), "no node of a placed file is unplaced: {:?} changed", report.cross_changed);
+    assert!(!report.cross_unseen.iter().any(|k| k == UNPLACED), "`rr_unplaced` is not reached: {:?} unseen", report.cross_unseen);
+}
+
 /// A run admits no guest where none of its documents embeds a program (decision 0563 A) and its file-local part
-/// answers no request: here `parsed` is asked only across files (`far`), as ep2's string annotations are, so no part
+/// answers no request: here the program reads a guest relation, `host_node`, and asks no request. (A request the cross-file part asks, as ep2's string annotations
+/// were asked across files, names its node there, in the request's cover, and is refused: decision 0677.) So no part
 /// answers it. Python embeds HTML only by call argument (`Markup("…")`), so a batch whose texts name no such callee
 /// drops the guest rules: the first run (no text in the store yet: the embedder's own test) and the next (each text
 /// recorded with no programs). An edit that adds a `Markup` call may embed, so the run keeps them. Each run's
@@ -426,13 +443,13 @@ fn a_session_drops_the_guest_rules_where_no_document_embeds() {
 .scope include "**/*.py"
 .decl at_call(n: number)
 at_call(n) :- kind(n, "call").
-.decl far(s: number) cross_file
-far(s) :- kind(s, "string"), docof(s, a), at_call(t), docof(t, b), a != b.
-.decl annotated(r: number)
-annotated(r) :- far(s), parsed(s, "annotation", r).
-.violation C(at: node) code "C" "A call, or an annotation a string of another file holds."
+.violation C(at: node) code "C" "A call."
 C(n) :- at_call(n).
-C(r) :- annotated(r).
+// Each node that hosts an embedded program (Python's HTML by call argument): a guest relation, read in the file's
+// part, which asks no request.
+.decl hosted(h: node)
+hosted(h) :- host_node(_, h).
+.output hosted
 "#,
     )
     .unwrap();
@@ -485,7 +502,9 @@ fn a_session_keeps_its_part_around_an_inlined_relation() {
 .scope include "**/*.py"
 #include "python/names.rerail"
 .decl dep(a: number, b: number) cross_file
-dep(a, b) :- impmod(i, m), docof(i, a), doc(b, _, m).
+.decl dep_from(a: number, m: symbol)
+dep_from(a, m) :- impmod(i, m), docof(i, a).
+dep(a, b) :- dep_from(a, m), doc(b, _, m).
 .decl back(a: number, b: number) inline
 back(a, b) :- dep(b, a).
 .violation BACK(at: node) code "BACK" "This import's module imports this one."
@@ -524,6 +543,8 @@ BACK(i) :- impmod(i, m), docof(i, a), doc(b, _, m), back(a, b).
 /// An insert into a recursive stratum stops at the rows that survived (decision 0090): an edge that adds no
 /// reachability (`a` imports `c`, which it reached through `b`) inserts the new edge and nothing of `reach`.
 /// Without the stop, the inserts walked the closure from the new edge again (9,000,000 rows on `session_costs`).
+/// The rows inserted were counted by the delete-and-rederive forms, gone with 0364 stage 6c; the maintain mode adds
+/// a row once, so the session's findings are checked against a full run's, with the stratum maintained.
 #[test]
 fn a_session_inserts_only_rows_new_against_the_survivors() {
     let base = crate::code_rule_dsl::fixtures::temp().with_extension("session-ins");
@@ -539,7 +560,9 @@ fn a_session_inserts_only_rows_new_against_the_survivors() {
 .scope include "**/*.py"
 #include "python/names.rerail"
 .decl dep(a: number, b: number) cross_file
-dep(a, b) :- impmod(i, m), docof(i, a), doc(b, _, m).
+.decl dep_from(a: number, m: symbol)
+dep_from(a, m) :- impmod(i, m), docof(i, a).
+dep(a, b) :- dep_from(a, m), doc(b, _, m).
 .decl reach(a: number, b: number) no_reach
 reach(a, b) :- dep(a, b).
 reach(a, c) :- reach(a, b), dep(b, c).
@@ -553,17 +576,21 @@ CYC(i) :- impmod(i, m), docof(i, a), doc(b, _, m), reach(b, a).
     }
     let program = crate::code_rule_dsl::tools::flatten(&rule).unwrap();
     let run = || super::super::run(&program, &src, None, &out, "program", Binding::Cpu, 1 << 18).unwrap();
+    let findings = || {
+        let mut rows: Vec<Vec<String>> = crate::code_rule_dsl::logic::plan::output::shown(&out, "violation").unwrap_or_default();
+        rows.sort();
+        rows
+    };
     let session = start(&base.join("session")).unwrap();
     run();
     std::fs::write(src.join("a.py"), "from b import x\nfrom c import q\n").unwrap();
-    let switched = super::super::switches::set(&[("RERAIL_CROSS_DELTA_COUNTS", "1")]);
     let report = run();
-    drop(switched);
+    let got = findings();
+    full(run);
     drop(session);
     let _ = std::fs::remove_dir_all(&base);
-    let [_, inserted, _, _, _, new] = report.cross_delta_counts;
     assert!(report.cross_maintained.1 > 0, "the recursive stratum is maintained: {:?}", report.cross_maintained);
-    assert_eq!(inserted, new, "the insert rules carry only rows truly new (the edge a -> c), not reach's rows again");
+    assert_eq!(got, findings(), "the session's findings after the edge a -> c are a full run's");
 }
 
 /// A cross-file stratum with aggregates is maintained by its changed groups (decision 0077 §3): a module's
@@ -637,7 +664,7 @@ fn wave0_session(tag: &str, rules: &str, files: &[(&str, &str)], edits: &[(&str,
     let (src, out) = (base.join("src"), base.join("out"));
     std::fs::create_dir_all(&src).unwrap();
     let rule = base.join("w0.rerail");
-    let head = ".policy \"test-wave0\" revision 1\n.description \"A maintained stratum's first wave.\"\n.language python\n.mode steer\n.scope include \"**/*.py\"\n#include \"python/names.rerail\"\n.decl dep(a: number, b: number) cross_file\ndep(a, b) :- impmod(i, m), docof(i, a), doc(b, _, m).\n";
+    let head = ".policy \"test-wave0\" revision 1\n.description \"A maintained stratum's first wave.\"\n.language python\n.mode steer\n.scope include \"**/*.py\"\n#include \"python/names.rerail\"\n.decl dep(a: number, b: number) cross_file\n.decl dep_from(a: number, m: symbol)\ndep_from(a, m) :- impmod(i, m), docof(i, a).\ndep(a, b) :- dep_from(a, m), doc(b, _, m).\n";
     std::fs::write(&rule, format!("{head}{rules}")).unwrap();
     for (path, text) in files {
         std::fs::write(src.join(path), text).unwrap();
@@ -745,7 +772,9 @@ fn cross_file_aggregate() -> Ran {
 .scope include "**/*.py"
 #include "python/names.rerail"
 .decl dep(a: number, b: number) cross_file
-dep(a, b) :- impmod(i, m), docof(i, a), doc(b, _, m).
+.decl dep_from(a: number, m: symbol)
+dep_from(a, m) :- impmod(i, m), docof(i, a).
+dep(a, b) :- dep_from(a, m), doc(b, _, m).
 .decl fan(b: number, n: number)
 fan(b, n) :- doc(b, _, _), n = count : { dep(_, b) }.
 .decl leaf(b: number)
@@ -812,7 +841,9 @@ fn a_session_keeps_a_negation_that_still_fails() {
 .scope include "**/*.py"
 #include "python/names.rerail"
 .decl dep(a: number, b: number) cross_file
-dep(a, b) :- impmod(i, m), docof(i, a), doc(b, _, m).
+.decl dep_from(a: number, m: symbol)
+dep_from(a, m) :- impmod(i, m), docof(i, a).
+dep(a, b) :- dep_from(a, m), doc(b, _, m).
 .violation LONE(at: node) code "LONE" "An import of no file, in a file that imports none."
 LONE(i) :- impmod(i, m), docof(i, a), !dep(a, _).
 "#,
@@ -867,7 +898,9 @@ fn session_costs() {
 .scope include "**/*.py"
 #include "python/names.rerail"
 .decl dep(a: number, b: number) cross_file
-dep(a, b) :- impmod(i, m), docof(i, a), doc(b, _, m).
+.decl dep_from(a: number, m: symbol)
+dep_from(a, m) :- impmod(i, m), docof(i, a).
+dep(a, b) :- dep_from(a, m), doc(b, _, m).
 .decl reach(a: number, b: number)
 reach(a, b) :- dep(a, b).
 reach(a, c) :- reach(a, b), dep(b, c).
@@ -1036,8 +1069,8 @@ fn cache_boundary_edits_explain_the_current_snapshot() {
 /// 0597 rung 2.11: a pass runs only on what changed in its inputs (rule 7, 0563 B). In a session, an edit that changes
 /// no root and no relation the context reads `.from` (b.py's own line) changes no input of the context, so none of its
 /// cross strata runs. Renaming the class the annotation names (a.py's `Foo`, the annotation's text unchanged) changes
-/// what the context reads `.from` its host (`defined`, a cross-file relation, so the context's `resolved` is the cross
-/// part's), and the row goes. Each run's rows are a full run's.
+/// what the context reads `.from` its host (`defined`, a relation of every file's names, staged before the program,
+/// decision 0709: its export changes), and the row goes. Each run's rows are a full run's.
 #[test]
 fn a_contexts_strata_run_only_on_changes_to_its_roots_and_reads() {
     let base = crate::code_rule_dsl::fixtures::temp().with_extension("session-context");
@@ -1085,12 +1118,13 @@ quoted_resolved(x) :- res(x).
     std::fs::write(src.join("b.py"), "y = 2\n").unwrap();
     let report = run();
     assert_eq!(rows(), full(), "the session's rows are a full run's");
-    assert!(!report.cross_changed.iter().any(|c| c.contains("rr_pass_quoted") || c == "defined_at"), "no input of the context changed: {:?}", report.cross_changed);
+    let defined = |c: &str| c == "defined_at" || c.ends_with("__defined");
+    assert!(!report.cross_changed.iter().any(|c| c.contains("rr_pass_quoted") || defined(c)), "no input of the context changed: {:?}", report.cross_changed);
     std::fs::write(src.join("a.py"), "class Bar: ...\nx: \"Foo\" = 1\n").unwrap();
     let report = run();
     assert_eq!(rows(), full(), "the session's rows are a full run's");
     assert!(rows().is_empty(), "Foo names no class now: {:?}", rows());
-    assert!(report.cross_changed.iter().any(|c| c == "defined_at"), "what the context reads .from changed: {:?}", report.cross_changed);
+    assert!(report.cross_changed.iter().any(|c| defined(c)), "what the context reads .from changed: {:?}", report.cross_changed);
     drop(session);
     let _ = std::fs::remove_dir_all(&base);
 }
@@ -1115,7 +1149,9 @@ fn a_session_derives_nothing_again_that_no_change_reaches() {
 .scope include "**/*.py"
 #include "python/names.rerail"
 .decl dep(a: number, b: number) cross_file
-dep(a, b) :- impmod(i, m), docof(i, a), doc(b, _, m).
+.decl dep_from(a: number, m: symbol)
+dep_from(a, m) :- impmod(i, m), docof(i, a).
+dep(a, b) :- dep_from(a, m), doc(b, _, m).
 .decl reach(a: number, b: number) no_reach
 reach(a, b) :- dep(a, b).
 reach(a, c) :- reach(a, b), dep(b, c).
@@ -1123,10 +1159,10 @@ reach(a, c) :- reach(a, b), dep(b, c).
 CYC(i) :- impmod(i, m), docof(i, a), doc(b, _, m), reach(b, a).
 .decl defines(d: number)
 defines(d) :- kind(n, "function_definition"), docof(n, d).
-.decl imports_definer(i: node) cross_file   // i imports a module that defines a function (decision 0652)
-imports_definer(i) :- impmod(i, m), doc(b, _, m), defines(b).
+.decl imports_definer(a: number, m: symbol) cross_file   // a imports m, a module that defines a function (decision 0677)
+imports_definer(a, m) :- dep_from(a, m), doc(b, _, m), defines(b).
 .violation SHADOW(at: node) code "SHADOW" "A module that defines a function imports one that does too."
-SHADOW(i) :- imports_definer(i), docof(i, a), defines(a).
+SHADOW(i) :- impmod(i, m), docof(i, a), imports_definer(a, m), defines(a).
 "#,
     )
     .unwrap();

@@ -99,11 +99,12 @@ pub fn tape_queued(cache: &dyn crate::content_store::FactStore, file: &dyn Sourc
 }
 
 pub const NONE: u32 = u32::MAX;
-/// Kind codes per dialect (the tape's `KIND_LIMIT`).
-pub const KIND_STRIDE: u32 = 1024;
-
-/// Tree-sitter's ERROR symbol, past every grammar's kinds and so past the stride.
-const ERROR_SYMBOL: u16 = u16::MAX;
+/// Kind codes per dialect, ERROR's symbol and a kind's atom: the shipped tables' (decision 0697), whose codes'
+/// atoms the binary holds. ERROR's atom takes code 0, the grammar's end symbol, which never labels a node (the tape's
+/// own `ERROR_CODE`), so every atom of a dialect stays in its stride: `tag * 1024 + 0xffff` would read as another
+/// dialect's kind.
+pub use rerail_tape_format::codes::{KIND_STRIDE, kind_atom};
+use rerail_tape_format::codes::ERROR_SYMBOL;
 
 /// The codes a test of a document reads, as its table holds them.
 #[derive(Clone, Copy)]
@@ -117,12 +118,6 @@ enum Codes {
     Faults,
 }
 
-/// The atom of kind `code` in the dialect whose tape tag is `tag`. ERROR's atom takes code 0, the grammar's end
-/// symbol, which never labels a node (the tape's own `ERROR_CODE`), so every atom of a dialect stays in its stride:
-/// `tag * 1024 + 0xffff` would read as another dialect's kind.
-pub fn kind_atom(tag: u8, code: u16) -> u32 {
-    u32::from(tag) * KIND_STRIDE + if code == ERROR_SYMBOL { 0 } else { u32::from(code) }
-}
 
 /// The tape tag of a kind atom's dialect.
 pub fn kind_tag(atom: u32) -> u8 {
@@ -250,6 +245,14 @@ pub fn build_with_tape(file: &dyn SourceFile, keep: bool) -> Result<(Built, Opti
     Ok((with_programs(built, &grammar, image.derived)?, doc))
 }
 
+/// Whether a file of `grammar`'s dialect has no programs but its parse's (`FileImage::embedding`'s derived documents):
+/// no embedding of the dialect reads the scope, so [`with_programs`] adds none. Then a file's derived documents are
+/// its whole record of programs, and their count is recorded with its tape (decision 0431 step 6), whichever path
+/// writes it.
+pub fn programs_are_the_parse(grammar: &crate::code_rule_dsl::tape::Grammar) -> bool {
+    grammar.lang.embeds().iter().all(|&(via, _)| !crate::code_rule_dsl::embed::embedder(via).reads_scope())
+}
+
 /// `built`'s facts with the file's programs (decision 0431 §7, step 6): `derived`, those its parse made over the tape
 /// (`FileImage::embedding`), and those of each embedding that reads the scope (`call-argument`, decision 0470), made
 /// over a document over the facts' own tape, read in place. The batch reads them off the facts.
@@ -353,16 +356,23 @@ fn queued_tape(source: &[u8; 32], tag: i64, gv: i64, fv: i64) -> crate::content_
 /// A parsed tape's stored bytes in their home and the image read there (decision 0353 step 4a): written straight
 /// into a slab's room, which the store's writer and every reader take. A host whose tape is not placed (no device,
 /// or the pool refused the room) keeps the parser's image, and the writer its bytes.
-/// A tape still queued for the writer, read where it is: the room this process placed it in (decision 0353 step 4a),
-/// else its bytes read into a tape of its own.
-// copy (0353 step 4a): a queued tape not in a room (a frame of a gathered segment, decompressed) is read into a vector.
+/// A tape still queued for the writer, read where it is (decision 0353 step 4a): the home its parse gave it (a slab's
+/// room, or its own bytes where no device reads tapes), shared; a store's decompressed frame held as it is where no
+/// device reads tapes; else written into a room the device reads.
 fn queued_image(stored: &crate::content_store::ObjectBytes, grammar: &Arc<crate::code_rule_dsl::tape::Grammar>) -> Result<crate::code_rule_dsl::tape::TapeImage, String> {
     use crate::code_rule_dsl::tape::TapeImage;
-    if let crate::content_store::ObjectBytes::Tape(held) = stored
-        && let Ok(home) = (Arc::clone(held) as Arc<dyn std::any::Any + Send + Sync>).downcast::<rerail_tape_format::home::Home>()
-        && home.placed()
-    {
-        return TapeImage::from_home((*home).clone(), grammar);
+    use crate::content_store::ObjectBytes;
+    use rerail_tape_format::home::Home;
+    match stored {
+        ObjectBytes::Tape(held) => {
+            if let Ok(home) = (Arc::clone(held) as Arc<dyn std::any::Any + Send + Sync>).downcast::<Home>() {
+                return TapeImage::from_home((*home).clone(), grammar);
+            }
+        }
+        ObjectBytes::Heap(bytes) if !crate::code_rule_dsl::tape::placed::reads_tapes() => {
+            return TapeImage::from_home(Home::from(Arc::clone(bytes)), grammar);
+        }
+        _ => {}
     }
     // A parse's image the writer took as it lies (`placed_parse` with no device room): the image itself.
     if let crate::content_store::ObjectBytes::Tape(held) = stored
@@ -371,8 +381,17 @@ fn queued_image(stored: &crate::content_store::ObjectBytes, grammar: &Arc<crate:
         return Ok(image.0.clone());
     }
     crate::code_rule_dsl::prof::count("tape.queued_read_apart", 1);
-    const APART: rerail_prof::copies::Site = rerail_prof::copies::Site::new(17, "4a", "a queued tape not in a room, read into a vector (queued_image)");
-    APART.time(|| (TapeImage::from_bytes(stored, grammar), stored.len()))
+    // copy (0353 step 4a): a queued tape in no room (a gathered segment's entry, mapped or decompressed) written into
+    // the room a device reads it in. It goes when a segment's load writes its frames there.
+    const APART: rerail_prof::copies::Site = rerail_prof::copies::Site::new(17, "4a", "a queued tape in no room written into one (queued_image)");
+    let home = APART.time(|| {
+        let home = crate::code_rule_dsl::tape::placed::place(stored.len(), |out| {
+            out.copy_from_slice(stored);
+            Ok(())
+        });
+        (home, stored.len())
+    });
+    TapeImage::from_home(home.map_err(|e| e.to_string())?, grammar)
 }
 
 /// A parse's tape in a slab's room where a device reads tapes (`placed_parse`), else as the parser made it.
@@ -399,7 +418,8 @@ fn placed_parse(image: crate::code_rule_dsl::tape::TapeImage, grammar: &Arc<crat
         return Ok((Arc::new(crate::code_rule_dsl::tape::StoredImage(image.clone())), image));
     }
     let home = image.place_stored()?;
-    if !home.placed() {
+    // Written in its room by its parser (`placed::rooms`), or in no room: the image is the one read.
+    if !home.placed() || image.placed() {
         return Ok((Arc::new(home), image));
     }
     let mut primary = TapeImage::from_home(home.clone(), grammar)?;
@@ -546,8 +566,9 @@ fn build_in_wave_as(
             let parse = crate::code_rule_dsl::logic::profile::span(|| "tape parse".into());
             crate::code_rule_dsl::logic::profile::work(crate::code_rule_dsl::logic::profile::Unit::Byte, file.source().len() as u64);
             let parsed = match fragment {
-                Some(f) => TapeImage::parse_from(&grammar, file.source(), f.start, &|| false),
-                None => TapeImage::parse(&grammar, file.source(), &|| false),
+                // The source's digest, taken as it was read: the tape's writer takes none of its own.
+                Some(f) => TapeImage::parse_from(&grammar, tape::Source { text: file.source(), sha256: Some(digest) }, f.start, &|| false),
+                None => TapeImage::parse(&grammar, tape::Source { text: file.source(), sha256: Some(digest) }, &|| false),
             };
             let Some(image) = parsed else {
                 return Ok((Built::Unparsed, None));
@@ -885,6 +906,10 @@ impl<'a> FactsIn<'a> {
             (self.atom(e), e.field)
         })
     }
+    /// The node's tape code (its table's number, `tape_number`): what `code_entry` and an entry's tables by code take.
+    pub fn tape_code(&self, id: u32) -> u32 {
+        on_tape!(self, |t| t.code(id as usize))
+    }
     /// The node's kind atom.
     pub fn kind(&self, id: u32) -> u32 {
         on_tape!(self, |t| self.atom(t.table().entry(t.code(id as usize))))
@@ -970,7 +995,7 @@ impl<'a> FactsIn<'a> {
         on_tape!(self, |t| t.subtree_end(id as usize) == id as usize + 1)
     }
     /// `id`'s anonymous children in source order: the tokens the tape stores (the grammar's implied
-    /// ones are not, RER-131).
+    /// ones are not, decision 0161).
     pub fn tokens(&self, id: u32) -> Vec<Token> {
         self.children(id)
             .into_iter()
@@ -1013,9 +1038,15 @@ impl<'a> FactsIn<'a> {
     /// language's (decision 0336 §7). The document's index (`index`) answers whether it holds one, and lists the nodes
     /// of a code few nodes have; else a scan of the codes, 64 nodes at a time.
     fn matching(&self, codes: Codes) -> Vector<u32> {
+        let mut out = rerail_blocks::vector::Vector::new();
+        self.each_matching(codes, &mut |x| out.push(x));
+        out
+    }
+    /// `matching`'s nodes, ascending, each given to `each`: none collected.
+    fn each_matching(&self, codes: Codes, each: &mut dyn FnMut(u32)) {
         use rerail_tape_format::tape::CodeSet;
         if self.is_empty() {
-            return rerail_blocks::vector::Vector::new();
+            return;
         }
         let index = self.index();
         on_tape!(self, |t| {
@@ -1039,7 +1070,7 @@ impl<'a> FactsIn<'a> {
                 Codes::Faults => table.faults(),
             };
             if set.is_empty() {
-                return rerail_blocks::vector::Vector::new();
+                return;
             }
             // Whether the document holds one, from the smaller side: the set's numbers searched among the codes it
             // holds, or each code it holds tested.
@@ -1049,24 +1080,25 @@ impl<'a> FactsIn<'a> {
                 _ => index.counts().any(|(c, _)| set.contains(c)),
             };
             if !meets {
-                return rerail_blocks::vector::Vector::new();
+                return;
             }
-            // Codes few nodes have: their nodes as the index lists them, no scan.
+            // Codes few nodes have: their nodes as the index lists them, no scan; several codes' lists, each in
+            // preorder, merged.
             if let Some(numbers) = numbers
                 && numbers.iter().all(|&n| index.listed(n).is_some())
             {
-                let mut out: Vector<u32> = numbers.iter().flat_map(|&n| index.listed(n).into_iter().flatten()).collect();
-                out.sort_unstable();
-                return out;
+                let mut lists: Vec<_> = numbers.iter().filter_map(|&n| index.listed(n)).map(Iterator::peekable).collect();
+                while let Some(i) = (0..lists.len()).filter_map(|i| lists[i].peek().map(|&x| (x, i))).min().map(|(_, i)| i) {
+                    each(lists[i].next().expect("the list peeked"));
+                }
+                return;
             }
-            let mut out = rerail_blocks::vector::Vector::new();
             t.match_groups(&set, |base, mut m| {
                 while m != 0 {
-                    out.push((base + m.trailing_zeros() as usize) as u32);
+                    each((base + m.trailing_zeros() as usize) as u32);
                     m &= m - 1;
                 }
             });
-            out
         })
     }
     /// The nodes of kind `kind` (an atom), by id.
@@ -1077,6 +1109,12 @@ impl<'a> FactsIn<'a> {
         // `atom`'s inverse: the codes of the kind with no ERROR flag; for slot 0 (ERROR's atom, which kind 0's shares)
         // also every ERROR code and kind 0's.
         self.matching(Codes::Kind(kind_code(kind)))
+    }
+    /// `of_kind`'s nodes, ascending, each given to `each`: none collected.
+    pub fn each_of_kind(&self, kind: u32, each: &mut dyn FnMut(u32)) {
+        if kind_tag(kind) == self.tag {
+            self.each_matching(Codes::Kind(kind_code(kind)), each);
+        }
     }
     /// Nodes of the abstract class `class` (a supertype's kind atom), by id.
     pub fn of_class(&self, class: u32) -> Vector<u32> {
@@ -1172,13 +1210,27 @@ impl<'a> FactsIn<'a> {
 pub fn digest(f: &Facts) -> [u8; 32] {
     use sha2::{Digest as _, Sha256};
     let mut hash = Sha256::new();
-    hash.update(b"rerail.core-facts/v2\0");
+    hash.update(b"rerail.core-facts/v4\0");
+    let image = f.tape.as_ref().map(|t| t.image());
+    // The source by its digest: the one its tape's writer took as it read the source (`TapeImage::source_digest`),
+    // else (a tape read from the store, or none) taken here.
+    let source: [u8; 32] = match image.and_then(|i| i.source_digest) {
+        Some(d) => d,
+        None => {
+            crate::code_rule_dsl::logic::profile::work(crate::code_rule_dsl::logic::profile::Unit::Byte, f.source.len() as u64);
+            Sha256::digest(f.source.as_bytes()).into()
+        }
+    };
     hash.update((f.source.len() as u64).to_le_bytes());
-    hash.update(f.source.as_bytes());
-    let tape = f.tape.as_ref().and_then(|t| t.image().to_bytes().ok()).unwrap_or_default();
-    hash.update((tape.len() as u64).to_le_bytes());
-    hash.update(&tape);
-    crate::code_rule_dsl::logic::profile::work(crate::code_rule_dsl::logic::profile::Unit::Byte, (f.source.len() + tape.len()) as u64);
+    // The tape by its identity, the store's key (`TapeImage::identity`: the source, its tag, the grammar and its
+    // format); with none, the source alone. Its bytes are not read.
+    match image {
+        Some(i) => hash.update(i.identity(&source)),
+        None => {
+            hash.update(source);
+            hash.update([0xff; 2]);
+        }
+    }
     hash.finalize().into()
 }
 
@@ -1232,7 +1284,7 @@ pub fn input_columns(rel: &str) -> Option<&'static [&'static str]> {
         "text" | "name" | "str" | "strprefix" | "node_text" | "comment" | "structural_before" | "structural_after" => &["n", "s"],
         // W's values (`facts::vtab::syntax::Extra`).
         "value" | "static_value" | "rr_value_lit" => &["n", "v"],
-        "value_type_of" => &["n", "t"],
+        "value_type_of" | "static_value_type_of" => &["n", "t"],
         "value_type" => &["v", "t"],
         // W's f-string trees (`facts::vtab::syntax::fstring`).
         "fstring_piece" => &["n", "i", "kind", "v"],

@@ -18,15 +18,25 @@
 /// numbered node's anonymous children), the nodes with a numbered tape parent (and the root: `structural_before`'s,
 /// `rr_token_named`'s), an anchored projection's anchors, and the nodes with text (`Item`'s numbers).
 pub const ITEMS: u32 = 13;
+/// `op`'s item (the engine's `ranks::Item::Op`): a numbered node's anonymous children, which `view_op` selects.
+pub const OP_ITEM: u32 = 9;
 /// A group's words: one of bits an item, then the counts before it, two to a word.
 pub const WORDS: u32 = ITEMS + ITEMS.div_ceil(2);
-/// Items a select sample stands for.
-pub const SAMPLE: u32 = 64;
+/// Items a select sample stands for: 16, so a select's sample is nearly always its item's group or the one before
+/// (at 64, a probe's select read two to three groups past it; 4 bytes a sample, a quarter of a byte an item).
+pub const SAMPLE: u32 = 16;
+const _: () = assert!(SAMPLE.is_power_of_two());
 /// An id's low 32 bits: its granule's slot, then its index in it (`INDEX_BITS`).
 pub const SLOT_BITS: u32 = 14;
 pub const INDEX_BITS: u32 = 32 - SLOT_BITS;
 /// The top slots, from the last down, that hold a document's spans past its nodes and tokens (`span_low`).
 pub const SPAN_SLOTS: u32 = 16;
+/// The slots below the spans' that hold the spans a batch makes beside a document's tape (the facts' `ExtraSpan`:
+/// its lines, its comments no node is, its matches): two, then the matches' 14.
+pub const EXTRA_SLOTS: u32 = 16;
+/// The slot of a document's `source` span and its `src_line` spans (`ExtraSpan::Line`, the extra spans' first): line
+/// `l`'s id has low bits `LINE_SLOT << INDEX_BITS | l`, line 0 the whole source (`view_line_span`).
+pub const LINE_SLOT: u32 = (1 << SLOT_BITS) - SPAN_SLOTS - EXTRA_SLOTS;
 /// An order key's low bits: its index in its granule; above them, its run's rank.
 pub const ORDER_INDEX_BITS: u32 = 18;
 /// The items a granule jump stands for (`Numbering::jumps`).
@@ -152,14 +162,8 @@ fn bisect(mut lo: u32, mut hi: u32, below: impl Fn(u32) -> bool) -> u32 {
     lo
 }
 
-/// The numbering's reads (decision 0536): written directly, the same reads as the CLIF's (`id_reads`, the JIT's
-/// and the kernels' MSL), held equal to them by the facts crate's tests. An item is a numbered node (0), a token
-/// (1), a node under a field (2) or a node after a sibling (3); a number is an item's rank among its kind.
-///
-/// # Safety
-/// Every read: the descriptor's runs were set (`Run::set`) to items that are still there.
-/// A walk of a numbering's `item` tape nodes in order (`Numbering::nodes_from`): the bits of its group not yet
-/// walked, `g`'s.
+/// A walk of a numbering's `item` tape nodes in order (`Numbering::nodes_from`, `nodes_at`): the bits of its group
+/// not yet walked, `g`'s.
 #[derive(Clone, Copy)]
 pub struct Nodes<'a> {
     n: &'a Numbering,
@@ -169,6 +173,12 @@ pub struct Nodes<'a> {
 }
 
 impl Nodes<'_> {
+    /// The item it walks.
+    #[inline]
+    pub fn item(&self) -> u32 {
+        self.item
+    }
+
     /// The next numbered tape node, `NONE` past the last.
     ///
     /// # Safety
@@ -189,6 +199,12 @@ impl Nodes<'_> {
     }
 }
 
+/// The numbering's reads (decision 0536): written directly, the same reads as the CLIF's (`id_reads`, the JIT's
+/// and the kernels' MSL), held equal to them by the facts crate's tests. An item is a numbered node (0), a token
+/// (1), a node under a field (2) or a node after a sibling (3); a number is an item's rank among its kind.
+///
+/// # Safety
+/// Every read: the descriptor's runs were set (`Run::set`) to items that are still there.
 impl Numbering {
     /// Run `run`'s items.
     #[inline(always)]
@@ -265,7 +281,7 @@ impl Numbering {
             return NONE;
         }
         // SAFETY: the caller's; an item's sample of every `SAMPLE`th number, and `r` a number.
-        let mut g = unsafe { Self::u32_at(&self.samples[item as usize], r >> 6) };
+        let mut g = unsafe { Self::u32_at(&self.samples[item as usize], r >> SAMPLE.trailing_zeros()) };
         loop {
             // SAFETY: the caller's; number `r` lies in a group from its sample's on.
             let (m, before) = unsafe { (self.group(g)[item as usize], self.before(g, item)) };
@@ -277,6 +293,34 @@ impl Numbering {
         }
     }
 
+    /// `select`, its group searched from `hint` (the last select's group, which a probe's cursor keeps): where number
+    /// `r` lies a few groups past it at most, from there with no read of the sample; else from the sample. Any hint
+    /// gives the same tape node.
+    ///
+    /// # Safety
+    /// As every read's.
+    #[inline]
+    pub unsafe fn select_near(&self, item: u32, r: u32, hint: &mut u32) -> u32 {
+        if r >= self.count[item as usize] {
+            return NONE;
+        }
+        let h = *hint;
+        // SAFETY: the caller's; a group from the hint's (at or before number `r`'s) or its sample's on holds it.
+        unsafe {
+            let near = (h as u64) < self.groups.len && r.checked_sub(self.before(h, item)).is_some_and(|d| d < 4 * SAMPLE);
+            let mut g = if near { h } else { Self::u32_at(&self.samples[item as usize], r >> SAMPLE.trailing_zeros()) };
+            loop {
+                let (m, before) = (self.group(g)[item as usize], self.before(g, item));
+                let k = r.wrapping_sub(before);
+                if k < m.count_ones() {
+                    *hint = g;
+                    return (self.first + g) * 64 + select64(m, k);
+                }
+                g += 1;
+            }
+        }
+    }
+
     /// `item`'s numbered tape nodes in order from number `r` on (`Nodes`): one `select`, then each next set bit of
     /// the groups, where a `select` of each would search from its sample.
     ///
@@ -285,13 +329,23 @@ impl Numbering {
     #[inline]
     pub unsafe fn nodes_from(&self, item: u32, r: u32) -> Nodes<'_> {
         // SAFETY: the caller's.
-        let x = unsafe { self.select(item, r) };
-        if x == NONE {
-            return Nodes { n: self, item, g: self.groups.len as u32, m: 0 };
+        unsafe { self.nodes_at(item, self.select(item, r)) }
+    }
+
+    /// `item`'s numbered tape nodes in order from tape node `x` on (`Nodes`; none for `NONE`): from a numbered node's
+    /// tape node plus one, the numbers after it, with no sample read.
+    ///
+    /// # Safety
+    /// As every read's.
+    #[inline]
+    pub unsafe fn nodes_at(&self, item: u32, x: u32) -> Nodes<'_> {
+        let end = self.groups.len as u32;
+        if x == NONE || x >> 6 >= self.first + end {
+            return Nodes { n: self, item, g: end, m: 0 };
         }
-        let g = (x >> 6) - self.first;
-        // SAFETY: `x` is a numbered node, so `g` a group.
-        let m = unsafe { self.group(g) }[item as usize] & !((1u64 << (x & 63)) - 1);
+        let (g, keep) = if x >> 6 < self.first { (0, u64::MAX) } else { ((x >> 6) - self.first, u64::MAX << (x & 63)) };
+        // SAFETY: `g` is a group.
+        let m = unsafe { self.group(g) }[item as usize] & keep;
         Nodes { n: self, item, g, m }
     }
 
@@ -439,24 +493,29 @@ impl Numbering {
     /// As every read's.
     #[inline]
     unsafe fn granule_of_low(&self, low: u32) -> Option<(u32, u32, u32)> {
+        // SAFETY: the caller's.
+        unsafe { self.granule_of_low_near(low, &mut { NONE }) }
+    }
+
+    /// `granule_of_low`, its slot's entry first looked for at `hint` (the last one's, which a probe's cursor keeps):
+    /// ids probed in key order are mostly of one granule's slot. Any hint gives the same item.
+    ///
+    /// # Safety
+    /// As every read's.
+    #[inline]
+    unsafe fn granule_of_low_near(&self, low: u32, hint: &mut u32) -> Option<(u32, u32, u32)> {
         const STEPS: u32 = 8;
         let slot = low >> INDEX_BITS;
         // SAFETY: the caller's.
         let (by_slot, nodes, tokens) = unsafe { (Self::of::<[u32; 3]>(&self.by_slot), Self::of::<u32>(&self.nodes), Self::of::<u32>(&self.tokens)) };
-        let n = by_slot.len() as u32;
-        // The guess: `slot`'s share of the entries, the last one at most.
-        let mut at = (((u64::from(slot) * u64::from(n)) >> SLOT_BITS) as u32).min(n.saturating_sub(1));
-        // Forward while the entry is below the slot, then back while the one before is not, `STEPS` in all.
-        let mut steps = 0;
-        while at < n && steps < STEPS && by_slot[at as usize][0] < slot {
-            (at, steps) = (at + 1, steps + 1);
-        }
-        while at != 0 && steps < STEPS && by_slot[at as usize - 1][0] >= slot {
-            (at, steps) = (at - 1, steps + 1);
-        }
-        if steps == STEPS {
-            at = bisect(0, n, |i| by_slot[i as usize][0] < slot);
-        }
+        let at = match by_slot.get(*hint as usize) {
+            Some(e) if e[0] == slot => *hint,
+            _ => {
+                let at = Self::slot_entry(by_slot, slot, STEPS);
+                *hint = at;
+                at
+            }
+        };
         let &[s, g, c] = by_slot.get(at as usize)?;
         if s != slot {
             return None;
@@ -476,8 +535,18 @@ impl Numbering {
     #[inline]
     pub unsafe fn number_of(&self, low: u32) -> Option<(u32, u32)> {
         // SAFETY: the caller's.
+        unsafe { self.number_of_near(low, &mut { NONE }) }
+    }
+
+    /// `number_of`, its slot's entry first looked for at `hint` (`granule_of_low_near`).
+    ///
+    /// # Safety
+    /// As every read's.
+    #[inline]
+    pub unsafe fn number_of_near(&self, low: u32, hint: &mut u32) -> Option<(u32, u32)> {
+        // SAFETY: the caller's.
         unsafe {
-            let (g, item, k) = self.granule_of_low(low)?;
+            let (g, item, k) = self.granule_of_low_near(low, hint)?;
             Some((item, self.number_in(g, item, k, None)))
         }
     }
@@ -527,6 +596,27 @@ impl Numbering {
     pub unsafe fn own_places(&self) -> usize {
         // SAFETY: the caller's.
         unsafe { Self::of::<u32>(&self.nodes).last().copied().unwrap_or(0) as usize }
+    }
+
+    /// The entry of `slot` in `by_slot` (the first at or past it): a guess at its share of the entries, a few steps
+    /// from there, a bisection past `steps`.
+    #[inline(always)]
+    fn slot_entry(by_slot: &[[u32; 3]], slot: u32, steps: u32) -> u32 {
+        let n = by_slot.len() as u32;
+        // The guess: `slot`'s share of the entries, the last one at most.
+        let mut at = (((u64::from(slot) * u64::from(n)) >> SLOT_BITS) as u32).min(n.saturating_sub(1));
+        // Forward while the entry is below the slot, then back while the one before is not, `steps` in all.
+        let mut taken = 0;
+        while at < n && taken < steps && by_slot[at as usize][0] < slot {
+            (at, taken) = (at + 1, taken + 1);
+        }
+        while at != 0 && taken < steps && by_slot[at as usize - 1][0] >= slot {
+            (at, taken) = (at - 1, taken + 1);
+        }
+        if taken == steps {
+            at = bisect(0, n, |i| by_slot[i as usize][0] < slot);
+        }
+        at
     }
 
     /// Node number `l`'s order key: its stretch's run rank, then its index in its granule (its number itself where

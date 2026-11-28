@@ -66,6 +66,7 @@ pub mod code_rule_dsl {
             /// The library `#include` reads from (a function, beside its module of the same name).
             pub use library::library;
             pub mod lower;
+            pub mod place_type;
             pub mod print;
             pub mod tape_type;
             pub mod translate;

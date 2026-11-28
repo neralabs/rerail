@@ -48,7 +48,7 @@ pub(super) static DECLS: LazyLock<BTreeMap<String, Vec<(String, String)>>> = Laz
 });
 
 /// The core relations `rewrite` lowers: where the program does not derive one, no relation of the program.
-pub(super) const REWRITTEN: [&str; 3] = ["next_sibling", "precedes", "earlier"];
+pub(super) const REWRITTEN: [&str; 9] = ["next_sibling", "precedes", "earlier", "node_to_line", "node_to_end_line", "line_to_node", "match_to_node", "document_line", "place_to_node"];
 
 /// Whether core.rerail declares `rel`.
 pub fn is_core(rel: &str) -> bool {
@@ -61,8 +61,60 @@ fn shape(rel: &str) -> (&'static [&'static str], &'static [&'static str]) {
     match rel {
         "next_sibling" | "precedes" => (&["a", "b"][..], &["i", "j", "p"][..]),
         "earlier" => (&["m", "n"][..], &["d", "i", "j"][..]),
+        "node_to_line" | "node_to_end_line" => (&["n", "l"][..], &["d", "k"][..]),
+        "line_to_node" => (&["l", "n"][..], &["d", "k"][..]),
+        "match_to_node" => (&["m", "n"][..], &["a", "c", "d", "s"][..]),
+        "document_line" => (&["d", "l"][..], &["k"][..]),
+        "place_to_node" => (&["p", "n"][..], &[][..]),
         other => unreachable!("{other} has no definition"),
     }
+}
+
+/// The typed readers and conversions that are one of the engine's reads under another name (decision 0724 §4): the
+/// relation, the engine's read, and the arity both have. A typed name is what the type check reads (`place_type`);
+/// the engine's read takes a node or a span alike.
+pub(super) const ALIASES: &[(&str, &str, usize)] = &[
+    ("line_text", "text", 2),
+    ("token_text", "text", 2),
+    ("match_text", "text", 2),
+    ("line_document", "docof", 2),
+    ("token_document", "docof", 2),
+    ("match_document", "docof", 2),
+    ("node_line_number", "line", 2),
+    ("line_number", "line", 2),
+    ("token_line_number", "line", 2),
+    ("match_line_number", "line", 2),
+    ("node_end_line_number", "end_line", 2),
+    ("token_end_line_number", "end_line", 2),
+    ("match_end_line_number", "end_line", 2),
+    ("node_start_column", "col", 2),
+    ("token_start_column", "col", 2),
+    ("match_start_column", "col", 2),
+    ("document_source", "source", 2),
+    ("document_line_by_number", "src_line", 3),
+    ("node_to_first_token", "first_token", 2),
+    ("node_to_last_token", "last_token", 2),
+    ("node_to_token_before", "token_before", 2),
+    ("node_to_token_after", "token_after", 2),
+    ("token_previous", "token_before", 2),
+    ("token_next", "token_after", 2),
+    ("node_to_end_position", "end_point", 2),
+    ("place_text", "text", 2),
+    ("place_document", "docof", 2),
+    ("place_line_number", "line", 2),
+    ("place_end_line_number", "end_line", 2),
+    ("place_start_column", "col", 2),
+    ("place_to_first_token", "first_token", 2),
+    ("place_to_last_token", "last_token", 2),
+    ("place_to_token_before", "token_before", 2),
+    ("place_to_token_after", "token_after", 2),
+    ("place_to_end_position", "end_point", 2),
+];
+
+/// `rel`'s engine read and arity, where it is an alias (`ALIASES`): the lowering reads the engine's read in its
+/// place (`clause::lit_node`), its terms as written, so a computed one is bound as any atom's is.
+pub(crate) fn alias(rel: &str) -> Option<(&'static str, &'static str, usize)> {
+    ALIASES.iter().copied().find(|(r, _, _)| *r == rel)
 }
 
 /// Variable `n`'s term in `v`.
@@ -92,6 +144,35 @@ fn write_definition(me: &mut Lowerer, rel: &str, v: &[(&str, Tm)]) -> Result<(),
             me.emit_atom("node", vec![x("d"), x("n"), w(), w(), w()], false, false)?;
             me.emit_atom("visit_index", vec![x("n"), x("j")], false, false)?;
             me.emit_cmp(x("i"), "<", x("j"))
+        }
+        "node_to_line" | "node_to_end_line" => {
+            let read = if rel == "node_to_line" { "line" } else { "end_line" };
+            me.emit_atom(read, vec![x("n"), x("k")], false, false)?;
+            me.emit_atom("docof", vec![x("n"), x("d")], false, false)?;
+            me.emit_atom("src_line", vec![x("d"), x("k"), x("l")], false, false)
+        }
+        "line_to_node" => {
+            me.emit_atom("line", vec![x("l"), x("k")], false, false)?;
+            me.emit_atom("docof", vec![x("l"), x("d")], false, false)?;
+            me.emit_atom("node", vec![x("d"), x("n"), w(), w(), w()], false, false)?;
+            me.emit_atom("line", vec![x("n"), x("k")], false, false)
+        }
+        // The nodes whose span is the match's: the same start (line and column) and the same text, so the same end.
+        "match_to_node" => {
+            me.emit_atom("docof", vec![x("m"), x("d")], false, false)?;
+            me.emit_atom("line", vec![x("m"), x("a")], false, false)?;
+            me.emit_atom("col", vec![x("m"), x("c")], false, false)?;
+            me.emit_atom("text", vec![x("m"), x("s")], false, false)?;
+            me.emit_atom("node", vec![x("d"), x("n"), w(), w(), w()], false, false)?;
+            me.emit_atom("line", vec![x("n"), x("a")], false, false)?;
+            me.emit_atom("col", vec![x("n"), x("c")], false, false)?;
+            me.emit_atom("node_text", vec![x("n"), x("s")], false, false)
+        }
+        "document_line" => me.emit_atom("src_line", vec![x("d"), x("k"), x("l")], false, false),
+        // A place that is a node: the node.
+        "place_to_node" => {
+            me.emit_atom("node", vec![w(), x("p"), w(), w(), w()], false, false)?;
+            me.emit_cmp(x("n"), "=", x("p"))
         }
         other => unreachable!("{other} has no definition"),
     }

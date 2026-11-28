@@ -46,6 +46,13 @@ Its first run makes its versions' prepared plans and searches the rest. Its late
 A caller that wants to seed a new store, such as a CI job from a checked-in plan file, would export and import a
 store's plans explicitly, keyed by the program before lowering. That is not built.
 
+## The prepared program too (2026-11-27)
+
+The user, on a profile that put a new store's first preparation at 2.9 s: "we will not do 2", the reuse of a prepared
+program across stores by a new process (a machine-level store of prepared programs keyed by the rules' text, as the
+rule images are). A prepared program stays its store's, as its plans are. Within one process, a program prepared for
+another store is still moved to this store's atoms (`prepared::moved`, 48f1915d2f).
+
 ## Open
 
 - If a seeded store is ever wanted: the export and import above, through an explicit shared object (0442), keyed by

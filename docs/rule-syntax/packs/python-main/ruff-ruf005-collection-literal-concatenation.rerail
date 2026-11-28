@@ -56,21 +56,21 @@ ruf005_plus_op(n) :- kind(n, "binary_operator"), ruf005_tok_has_2(n).
 
 // outer_operand(n): the JSON util `outer-operand`, used where the JSON says `matches: "outer-operand"`
 //   E: metavariable this relation binds for the calling rule
-.decl ruf005_outer_operand(n: node, e: loc)
+.decl ruf005_outer_operand(n: node, e: node)
 ruf005_outer_operand(n, E) :- ruf005_concat_core(n), node(_, n, _, _, _), E = n.
 ruf005_outer_operand(n, E) :- kind(n, "parenthesized_expression"), child(n, c1, _),
     ruf005_outer_operand(c1, E).
 
 // type_string(n): the JSON util `type-string`, used where the JSON says `matches: "type-string"`
 //   E: metavariable this relation binds for the calling rule
-.decl ruf005_type_string(n: node, e: loc)
+.decl ruf005_type_string(n: node, e: node)
 ruf005_type_string(n, E) :- (kind(n, "string") ; kind(n, "concatenated_string")),
     parsed(n, "annotation", r1), within(c2, r1), ruf005_alt_5(c2, E).
 
 // RUF005(n): findings from clauses `collection-literal-concatenation`, `collection-literal-concatenation-in-string-type`, which say the same.
 // Each rule is one way a JSON `rule` can match.
 // Columns after `at` are the metavariables the JSON's message, anchor or `each` names: one finding per distinct row.
-.violation RUF005(at: loc, e: node) "Write one literal with unpacking, such as `[*a, 1, *b]` or `(*a, 1)`, instead of adding collections with `+`. Keep `+` if an operand defines its own `__add__`."
+.violation RUF005(at: node, e: node) "Write one literal with unpacking, such as `[*a, 1, *b]` or `(*a, 1)`, instead of adding collections with `+`. Keep `+` if an operand defines its own `__add__`."
     suppress noqa "RUF005"
 RUF005(E, n) :- !ruf005_alt_6(n), child(n, c1, _), ruf005_outer_operand(c1, E).
 RUF005(E, n) :- ruf005_type_string(n, E).
@@ -218,7 +218,7 @@ ruf005_stop_4(n) :- node(_, n, _, _, _), !kind(n, "parenthesized_expression").
 
 // alt_5(n): the JSON `any`: n matches if any one of these rules does
 //   E: metavariable this relation binds for the calling rule
-.decl ruf005_alt_5(n: node, e: loc)
+.decl ruf005_alt_5(n: node, e: node)
 ruf005_alt_5(n, E) :- ruf005_concat(n), E = n.
 ruf005_alt_5(n, E) :- ruf005_type_string(n, E).
 

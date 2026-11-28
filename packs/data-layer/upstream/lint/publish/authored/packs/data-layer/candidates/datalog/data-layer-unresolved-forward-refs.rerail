@@ -146,4 +146,4 @@ inspection_neq(x, y) :- inspection_pair(x, y), inspection_kids(x), inspection_ki
 inspection_neq(x, y) :- inspection_pair(x, y), inspection_kids(x), inspection_kids(y), token(y, i, b, _, _), !inspection_tisnode(y, i), !match("[#\\\\](?s:.*)", b), inspection_tnode(x, i, cx), inspection_kids(cx).
 inspection_fallback(n) :- inspection_context(n), inside(n, c, inspection_kinds_call), inspection_get_call(c, n).
 inspection_fallback(n) :- inspection_seed(n, m), !inspection_neq(n, m).
-violation("data-layer-unresolved-forward-refs", "inspection", "unresolved_forward_ref", p, l) :- inspection_context(n), !inspection_fallback(n), node(d, n, _, _, _), in_scope(d), !out_scope(d), !tape_syntax_error(d), doc(d, p, _), line(n, l).
+violation("data-layer-unresolved-forward-refs", "inspection", "unresolved_forward_ref", p, l) :- inspection_context(n), !inspection_fallback(n), node(d, n, _, _, _), in_scope(d), !out_scope(d), !tape_syntax_error(d), doc(d, p, _), node_line_number(n, l).

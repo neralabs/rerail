@@ -10,12 +10,21 @@
 //! a chunk of 16,384 nodes wrote 160 MB, from 400 MB            ->  ~72,000 nodes (what the room holds)
 //! ```
 //!
+//! **Spread over the chunks at once** (decision 0690). No chunk is more than the corpus's nodes over `SPREAD` times as
+//! many chunks as evaluate at once, so a corpus is cut into at least that many: 300 files of 456 K nodes, with a most
+//! of 1 M, were 2 chunks (the first's 65,536 nodes, then the rest), one evaluating while the other waited, where 8
+//! could have run; they are 7 now, each at the first's size. The corpus's nodes are estimated
+//! from the chunks filed (their nodes a file) times the corpus's files, so the bound too is the same on every run.
+//!
 //! **The same cut on every run** (Q314). Chunk `n`'s size is decided from chunks filed before it, in their order,
 //! never from what is filed when the builder reaches it: the builder cut the documents by the size last stored while
 //! it worked ahead, so two runs cut different chunks, and the plans made from them (Q88) differed (1 relation inlined
-//! in one hogql run, 11 in the next; 83-92 B). While chunks grow, chunk `n + 1` is sized by chunk `n` (one evaluates
-//! at a time). Once the size holds, chunk `n + window` is sized by chunk `n`: no more evaluate at once than the
-//! plans' window (`plan::PLAN_WINDOW`), so the chunk a size waits for is filed before the builder reaches it.
+//! in one hogql run, 11 in the next; 83-92 B). While chunks grow, chunk `n + window` (the plans' window,
+//! `plan::PLAN_WINDOW`) is sized by chunk `n`, growth included, and the first window's chunks are the first's size: the
+//! builder cuts and projects up to a window ahead, never held by the chunk before it (it was held for the whole of each
+//! growing chunk's evaluation, the workers idle). Once the size holds, chunk `n + horizon` (`HORIZON` windows) is sized
+//! by chunk `n`, and the chunks from growth's stop to the first so sized are the size it stopped at: the builder cuts
+//! that far ahead of the filing, each chunk built, evaluated, then filed in order.
 //!
 //! The measure is the chunk's own blocks' bytes, not the process's count, which other chunks' and threads' timing
 //! moves. The run's start is the count when the chunks begin, in steps of `BASE_STEP`.
@@ -33,6 +42,10 @@ pub const GROWTH: usize = 8;
 /// The run's start is counted in steps of this: a few MB more or less of heap at the start moves no chunk's size.
 pub const BASE_STEP: usize = 64 << 20;
 
+/// The chunks a corpus is cut into at least, for each that evaluates at once (decision 0690): two, so the last chunks'
+/// tail is half a chunk's work, not one whole.
+pub const SPREAD: usize = 2;
+
 /// What a chunk filed measured.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct Measured {
@@ -40,6 +53,8 @@ pub struct Measured {
     pub nodes: usize,
     pub bytes: usize,
     pub held: usize,
+    /// Its files (a host and its guests are one).
+    pub files: usize,
 }
 
 /// What set a size.
@@ -53,6 +68,8 @@ pub enum By {
     Most,
     /// What the room holds.
     Room,
+    /// The corpus spread over the chunks at once (`SPREAD`).
+    Spread,
 }
 
 /// A size decided, and why.
@@ -67,6 +84,8 @@ pub struct Decided {
     pub per_node: f64,
     pub room: usize,
     pub fit: usize,
+    /// The most a chunk is for the corpus to spread over the chunks at once (`SPREAD`), when estimated.
+    pub spread: Option<usize>,
 }
 
 /// Windows a filed chunk's measure sizes past it (`Schedule::horizon`): built, evaluating, and evaluated.
@@ -82,6 +101,8 @@ pub struct Schedule {
     /// 8 chunks past the last filed, shared by those built, evaluating and evaluated: cold PostHog's chunks ran 2-4
     /// at once of 8, the main thread waiting 16 s for the next chunk's size.
     horizon: usize,
+    /// The plans' window: while chunks grow, chunk `n` sizes chunk `n + window`, growth included.
+    window: usize,
     at_most: usize,
     /// Three quarters of the limit, less the run's start.
     room: usize,
@@ -92,6 +113,10 @@ pub struct Schedule {
     cut: usize,
     filed: usize,
     held: usize,
+    /// The corpus's files, and the nodes and files of the chunks filed: the corpus's nodes estimated (`SPREAD`).
+    files: usize,
+    filed_nodes: usize,
+    filed_files: usize,
     at_once: usize,
     /// Every chunk after the first of this many nodes, whatever was measured (`RERAIL_CHUNK_NODES`, Q88).
     fixed: Option<usize>,
@@ -99,9 +124,10 @@ pub struct Schedule {
 
 impl Schedule {
     /// Chunks of `first` to `most` nodes, `window` the plans' (`plan::PLAN_WINDOW`), at most `at_most` at once,
-    /// against `limit` bytes from `start` (the run's count when the chunks begin); `fixed`, every chunk after the first
-    /// of that many nodes.
-    pub fn new(first: usize, most: usize, window: usize, at_most: usize, limit: usize, start: usize, fixed: Option<usize>) -> Schedule {
+    /// against `limit` bytes from `start` (the run's count when the chunks begin), of a corpus of `files` files (none:
+    /// 0); `fixed`, every chunk after the first of that many nodes.
+    #[allow(clippy::too_many_arguments)]
+    pub fn new(first: usize, most: usize, window: usize, at_most: usize, limit: usize, start: usize, files: usize, fixed: Option<usize>) -> Schedule {
         let first = first.min(most).max(1);
         let window = window.max(at_most).max(1);
         let base = start.div_ceil(BASE_STEP) * BASE_STEP;
@@ -109,13 +135,18 @@ impl Schedule {
             first,
             most,
             horizon: HORIZON * window,
+            window,
             at_most: at_most.max(1),
             room: (limit / 4 * 3).saturating_sub(base),
-            sizes: vec![Some((first, By::First))],
+            // The first window's chunks are the first's size: each later one is sized by the chunk a window before it.
+            sizes: vec![Some((first, By::First)); window.max(at_most).max(1)],
             stopped: None,
             cut: 0,
             filed: 0,
             held: 0,
+            files,
+            filed_nodes: 0,
+            filed_files: 0,
             at_once: 1,
             fixed,
         }
@@ -134,9 +165,9 @@ impl Schedule {
         if let Some(&Some((nodes, _))) = self.sizes.get(n) {
             return Some(nodes);
         }
-        // Past the chunk growth stopped at, and before the window's first decision, the size it stopped at.
+        // From the chunk growth stopped at to the first a chunk filed since sizes, the size it stopped at.
         let s = self.stopped?;
-        (n >= s && n < s + self.horizon).then(|| self.sizes[s].expect("the size growth stopped at").0)
+        (n >= s && n < s + 1 + self.horizon - self.window).then(|| self.sizes[s].expect("the size growth stopped at").0)
     }
 
     /// The next chunk is cut: its number.
@@ -164,20 +195,25 @@ impl Schedule {
         self.held += m.held;
         let per_node = (m.bytes as f64 / m.nodes.max(1) as f64).max(1.0);
         let fit = (room as f64 / per_node) as usize;
-        let (chunk, (nodes, by)) = match self.stopped {
-            None => {
-                let grown = m.nodes.max(target).saturating_mul(GROWTH);
-                let sized = if self.most <= grown && self.most <= fit {
-                    (self.most, By::Most)
-                } else if grown <= fit {
-                    (grown, By::Grown)
-                } else {
-                    (fit, By::Room)
-                };
-                (n + 1, sized)
+        // The corpus's nodes, at the filed chunks' nodes a file, over `SPREAD` times the chunks at once.
+        (self.filed_nodes, self.filed_files) = (self.filed_nodes + m.nodes, self.filed_files + m.files);
+        let spread = (self.files > 0 && self.filed_files > 0)
+            .then(|| (self.filed_nodes as f64 / self.filed_files as f64 * self.files as f64) as usize / (SPREAD * self.at_most));
+        // The least of the most, the room and the spread, and what set it: `None` when growth may go past it.
+        let bound = |grown: usize| {
+            let mut least = (self.most, By::Most);
+            for b in [(fit, By::Room), (spread.unwrap_or(usize::MAX), By::Spread)] {
+                if b.0 < least.0 {
+                    least = b;
+                }
             }
-            // Growth stopped: the most when the room holds it, else what it holds.
-            Some(_) => (n + self.horizon, if self.most <= fit { (self.most, By::Most) } else { (fit, By::Room) }),
+            if grown < least.0 { (grown, By::Grown) } else { least }
+        };
+        // Growing, the chunk a window on, `GROWTH` times this one; growth stopped, the chunk a horizon on, the least of
+        // the most, what the room holds and the spread.
+        let (chunk, (nodes, by)) = match self.stopped {
+            None => (n + self.window, bound(m.nodes.max(target).saturating_mul(GROWTH))),
+            Some(_) => (n + self.horizon, bound(usize::MAX)),
         };
         let nodes = nodes.clamp(self.first, self.most);
         if self.sizes.len() <= chunk {
@@ -188,7 +224,7 @@ impl Schedule {
             self.stopped = Some(chunk);
         }
         self.at_once = if by == By::Grown { 1 } else { (fit / nodes.max(1)).clamp(1, self.at_most) };
-        Decided { chunk, nodes, at_once: self.at_once, by, per_node, room, fit }
+        Decided { chunk, nodes, at_once: self.at_once, by, per_node, room, fit, spread }
     }
 }
 
@@ -201,22 +237,25 @@ mod tests {
     const MOST: usize = 262_144;
 
     fn schedule(start_mb: usize) -> Schedule {
-        Schedule::new(16_384, MOST, 8, 8, LIMIT, start_mb * MB, None)
+        Schedule::new(16_384, MOST, 8, 8, LIMIT, start_mb * MB, 0, None)
     }
 
     fn wrote(nodes: usize, mb: usize) -> Measured {
-        Measured { nodes, bytes: mb * MB, held: 0 }
+        Measured { nodes, bytes: mb * MB, held: 0, files: 0 }
     }
 
-    /// A cheap chunk is followed by one `GROWTH` times its size, alone (decision 0435 R4).
+    /// A cheap chunk sizes the chunk a window on `GROWTH` times its size, alone (decision 0435 R4); the first window's
+    /// chunks are the first's size, known before any is filed, so the builder is never held by the chunk before.
     #[test]
     fn a_cheap_chunk_grows() {
         let mut s = schedule(300);
-        assert_eq!(s.size(0), Some(16_384));
-        assert_eq!(s.size(1), None, "undecided until chunk 0 is filed");
+        for n in 0..8 {
+            assert_eq!(s.size(n), Some(16_384), "chunk {n}: the first window's");
+        }
+        assert_eq!(s.size(8), None, "undecided until chunk 0 is filed");
         let d = s.file(0, wrote(16_384, 2));
-        assert_eq!((d.chunk, d.nodes, d.at_once, d.by), (1, 16_384 * GROWTH, 1, By::Grown));
-        assert_eq!(s.size(1), Some(16_384 * GROWTH));
+        assert_eq!((d.chunk, d.nodes, d.at_once, d.by), (8, 16_384 * GROWTH, 1, By::Grown));
+        assert_eq!(s.size(8), Some(16_384 * GROWTH));
     }
 
     /// Growth stops at the caller's most, and then as many chunks evaluate at once as the room holds, each sized by
@@ -227,14 +266,15 @@ mod tests {
         let d = s.file(0, wrote(16_384, 1));
         assert_eq!(d.by, By::Grown);
         let d = s.file(1, wrote(131_072, 30));
-        assert_eq!((d.chunk, d.nodes, d.by), (2, MOST, By::Most));
+        assert_eq!((d.chunk, d.nodes, d.by), (9, MOST, By::Most));
         assert!(d.at_once > 1 && d.at_once <= 8, "{d:?}");
-        for n in 2..26 {
+        // Chunks 9 to 25 the size growth stopped at, to the first chunk 2 sizes (2 + 3 windows).
+        for n in 9..26 {
             assert_eq!(s.size(n), Some(MOST), "chunk {n} is sized by growth's stop");
         }
         assert_eq!(s.size(26), None, "chunk 26 is sized by chunk 2");
         let d = s.file(2, wrote(MOST, 60));
-        assert_eq!((d.chunk, d.nodes), (26, MOST));
+        assert_eq!((d.chunk, d.nodes), (26, MOST), "growth stopped: the most, a horizon on");
     }
 
     /// A chunk whose growth a node would not fit `GROWTH` times its size is held to what the room holds, alone.
@@ -254,16 +294,44 @@ mod tests {
         let mut s = schedule(1_200);
         assert_eq!(s.file(0, wrote(16_384, 10)).nodes, 16_384);
         let mut s = schedule(300);
-        let d = s.file(0, Measured { nodes: 16_384, bytes: 800 * MB, held: 800 * MB });
+        let d = s.file(0, Measured { nodes: 16_384, bytes: 800 * MB, held: 800 * MB, files: 0 });
         let after = s.file(1, wrote(16_384, 1));
         assert_eq!(after.room + 800 * MB, d.room, "{d:?} {after:?}");
+    }
+
+    /// A corpus is cut into at least `SPREAD` times as many chunks as evaluate at once (decision 0690, R1): growth
+    /// stops at the corpus's nodes, at the filed chunks' nodes a file, over that many, and as many evaluate at once as
+    /// the room holds; a corpus whose spread is past the most is cut at the most, as before (R2).
+    #[test]
+    fn a_corpus_is_spread_over_the_chunks_at_once() {
+        // 300 files, the first chunk's 16,384 nodes of 10: about 491,000 nodes, spread over 16 chunks.
+        let mut s = Schedule::new(16_384, 1 << 20, 8, 8, LIMIT, 300 * MB, 300, None);
+        let d = s.file(0, Measured { nodes: 16_384, bytes: MB, held: 0, files: 10 });
+        assert_eq!((d.by, d.nodes, d.spread), (By::Spread, 30_720, Some(30_720)), "{d:?}");
+        assert_eq!(d.at_once, 8, "the room holds 8 at once: {d:?}");
+        assert_eq!(s.size(8), Some(30_720), "chunk 8 is sized by the spread");
+        // PostHog's 29,885 files at the same nodes a file: about 49 M nodes, past the most.
+        let mut s = Schedule::new(16_384, MOST, 8, 8, LIMIT, 300 * MB, 29_885, None);
+        let d = s.file(0, Measured { nodes: 16_384, bytes: MB, held: 0, files: 10 });
+        assert_eq!((d.by, d.nodes), (By::Grown, 16_384 * GROWTH), "{d:?}");
+        let d = s.file(1, Measured { nodes: 16_384 * GROWTH, bytes: 8 * MB, held: 0, files: 80 });
+        assert_eq!((d.by, d.nodes), (By::Most, MOST), "{d:?}");
+    }
+
+    /// The spread is never below the first chunk's nodes: a corpus smaller than `SPREAD` times the chunks at once of
+    /// them is cut into chunks of the first's size.
+    #[test]
+    fn the_spread_is_never_below_the_first_size() {
+        let mut s = Schedule::new(16_384, MOST, 8, 8, LIMIT, 300 * MB, 20, None);
+        let d = s.file(0, Measured { nodes: 16_384, bytes: MB, held: 0, files: 10 });
+        assert_eq!((d.by, d.nodes), (By::Spread, 16_384), "{d:?}");
     }
 
     /// The sizes are a function of the chunks' measures in their order (R6): filed at whatever time, interleaved
     /// with the builder's cuts however the threads ran, the same chunks get the same sizes.
     #[test]
     fn the_sizes_are_the_same_whatever_the_timing() {
-        let measures = [wrote(16_384, 1), wrote(131_072, 20), wrote(MOST, 50), wrote(MOST, 400), wrote(MOST, 40), wrote(MOST, 40)];
+        let measures: Vec<Measured> = [wrote(16_384, 1); 8].into_iter().chain([wrote(131_072, 20), wrote(MOST, 50), wrote(MOST, 400), wrote(MOST, 40), wrote(MOST, 40)]).collect();
         let run = |cut_ahead: usize| {
             let mut s = schedule(300);
             let mut sizes = Vec::new();
@@ -280,6 +348,6 @@ mod tests {
         };
         assert_eq!(run(0), run(3));
         assert_eq!(run(0), run(7));
-        assert_eq!(run(0)[..3], [16_384, 131_072, MOST]);
+        assert_eq!(run(0)[7..10], [16_384, 131_072, 131_072]);
     }
 }

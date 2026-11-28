@@ -13,9 +13,10 @@ pub mod newlines;
 /// The tape's reads in Rust, written directly (decision 0534): this crate's readers'.
 // The reads (decision 0534), in the crate below every reader of a tape (`rerail_reads::tape`), where they were.
 pub use rerail_reads::tape as reads;
-/// The views' reads in Rust, written directly (decision 0353 step 3 on the CPU): the host executor's reads of a
-/// document's views' rows, through its entry in its batch's views' directory.
-pub mod view_reads;
+/// The views' reads in Rust, written directly (decision 0353 step 3 on the CPU): the reads of a document's views' rows,
+/// through its entry in its batch's views' directory; the host executor's and the CPU's join program's
+/// (`rerail_reads::view_reads`).
+pub use rerail_reads::view_reads;
 /// The tape's writer in Rust, written directly (decision 0532): the host's, and a generated tier 2's `ops` module.
 pub mod writer16;
 /// A tape's auxiliary index (decision 0656): the names stream, the vocabulary, sibling places, code counts and rare
@@ -25,10 +26,52 @@ pub mod doc_index;
 
 pub use rerail_vector::{Pod, vector::Vector};
 
-pub const CODE_EXTRA: u8 = 1;
-pub const CODE_ERROR: u8 = 2;
-pub const CODE_MISSING: u8 = 4;
+/// The shipped tables' lines and the codes' atoms (decision 0697), shared with the build script.
+pub mod codes;
+pub use codes::{CODE_ERROR, CODE_EXTRA, CODE_MISSING};
 pub const KIND_LIMIT: usize = 1024;
+const _: () = assert!(KIND_LIMIT == codes::KIND_STRIDE as usize, "a kind atom's stride is the tape's kinds");
+
+/// The codes' directory (decision 0697): each shipped language's codes' kind atoms and field atoms, written by the
+/// build script from `tables/` (`codes::image`) and read where it lies in the binary: by the host's view reads
+/// (`codes_dir::kinds`), and as a home of the views' directory by the JIT's and the kernels' (`rerail_clif::view_reads::
+/// CodesDir`). Page-aligned and a whole number of pages, as a device's wrap of it in place takes it, and in the
+/// binary's writable data, not its read-only text: Metal's wrap of a read-only mapping's pages left them unreadable to
+/// the host while the wrap was held (the JIT's view reads faulted on its first word). Never written.
+pub mod codes_dir {
+    const LEN: usize = include!(concat!(env!("OUT_DIR"), "/codes_len.rs"));
+    /// Its bytes in a cell, so the static is placed with the binary's writable data (interior mutability).
+    #[repr(C, align(16384))]
+    struct Aligned<T>(core::cell::UnsafeCell<T>);
+    // SAFETY: never written; every reader only loads from it.
+    unsafe impl<T> Sync for Aligned<T> {}
+    const _: () = assert!(align_of::<Aligned<u8>>() == super::codes::ALIGN && LEN.is_multiple_of(super::codes::ALIGN));
+    const _: () = assert!(cfg!(target_endian = "little"), "the directory's image is little-endian");
+    const _: () = assert!(size_of::<rerail_clif::view_reads::CodesLang>() == super::codes::LANG_BYTES, "a language's place, as the reads read it");
+    static DIR: Aligned<[u8; LEN]> = Aligned(core::cell::UnsafeCell::new(*include_bytes!(concat!(env!("OUT_DIR"), "/codes.bin"))));
+
+    /// The directory's bytes.
+    pub fn bytes() -> &'static [u8] {
+        // SAFETY: never written (`Aligned`).
+        unsafe { &*DIR.0.get() }
+    }
+
+    /// Run `k` (0 kinds, 1 fields) of language `tag`: empty for a tag with no table.
+    fn run(tag: u8, k: usize) -> &'static [u32] {
+        // SAFETY: the binary's directory, static.
+        unsafe { rerail_reads::views::code_atoms(bytes().as_ptr(), tag, k) }
+    }
+
+    /// Language `tag`'s codes' kind atoms, by number: the `kind` column's value of a node of each.
+    pub fn kinds(tag: u8) -> &'static [u32] {
+        run(tag, 0)
+    }
+
+    /// Language `tag`'s codes' field atoms, by number: the `field` column's value of a node of each.
+    pub fn fields(tag: u8) -> &'static [u32] {
+        run(tag, 1)
+    }
+}
 pub const FIELD_LIMIT: usize = 64;
 /// No value: a cell of an index past its width (the engine's `tape::index`).
 pub const SENTINEL: u16 = u16::MAX;
@@ -47,6 +90,10 @@ pub const fn key(kind: u16, field: u16, flags: u8) -> u32 {
     debug_assert!((kind as u32) < 1 << KIND_BITS && (field as u32) < 1 << (16 - KIND_BITS), "a kind or field past its bits");
     (kind as u32 | (field as u32) << KIND_BITS) | (flags as u32) << 16
 }
+
+/// A key's first class bit, above its flags: bit `CLASS_SHIFT + j` puts the node in its parser's supertype `j`, which
+/// the parser's own numbering reads (decision 0698; tier 2 as Rust's `SUPERS`).
+pub const CLASS_SHIFT: u32 = 19;
 
 /// A source's SHA-256 (not in the header since format 12; the engine keeps it in memory).
 pub fn digest(src: &[u8]) -> [u8; 32] {
@@ -284,6 +331,98 @@ pub struct Sixteen {
     pub z: bool,
     pub blocks: bool,
     pub number: std::sync::Arc<dyn Fn(u32) -> Option<u32> + Send + Sync>,
+    /// The writers a parse takes its format 16 writer from and gives it back to (`Writers`); `None`, a writer of its
+    /// own.
+    pub writers: Option<std::sync::Arc<Writers>>,
+    /// The source's SHA-256 where its reader took it, and the bytes it was taken of (`f16::SourceDigest::taken`): a
+    /// writer given those very bytes takes none of its own (`f16::Document::sha256`). A parser that writes from
+    /// another text (a template's masked view) still hashes its own.
+    pub sha256: Option<f16::SourceDigest>,
+    /// Where the tape goes: rooms every reader reads it in (decision 0353 step 4a), or `None`, a vector of its own.
+    pub rooms: Option<std::sync::Arc<dyn home::Rooms>>,
+}
+
+/// Each language's keys' numbers in its table, by the names a lean crate gives them (`f16::Lang::number_named`): the
+/// machine's value (decision 0442), a table a tag and naming, so a key is numbered by its names once, not once a
+/// document.
+#[derive(Default)]
+pub struct KeyNumbers(std::sync::Mutex<Vec<(u8, usize, std::sync::Arc<KeyTable>)>>);
+
+impl KeyNumbers {
+    /// The table of tag `tag`'s keys as `names` names them.
+    pub fn of(&self, tag: u8, names: fn(u32) -> Option<KeyNames>) -> std::sync::Arc<KeyTable> {
+        let mut tables = self.0.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+        let at = names as usize;
+        if let Some((.., t)) = tables.iter().find(|(g, n, _)| *g == tag && *n == at) {
+            return std::sync::Arc::clone(t);
+        }
+        let t = std::sync::Arc::new(KeyTable::default());
+        tables.push((tag, at, std::sync::Arc::clone(&t)));
+        t
+    }
+}
+
+/// A language's keys' numbers (`KeyNumbers`), each found at its first sight: pages of `KEY_PAGE` keys, a page made at
+/// its first key. A key past the pages is found each time.
+pub struct KeyTable {
+    pages: Box<[std::sync::OnceLock<Box<[std::sync::atomic::AtomicU32]>>]>,
+}
+
+/// The keys a page of a `KeyTable` holds, and its pages: keys below 2^20, every lean crate's.
+const KEY_PAGE: usize = 1 << 10;
+const KEY_PAGES: usize = 1 << 10;
+/// A key not yet numbered, and one its table lacks.
+const KEY_UNSEEN: u32 = u32::MAX;
+const KEY_LACKED: u32 = u32::MAX - 1;
+
+impl Default for KeyTable {
+    fn default() -> Self {
+        KeyTable { pages: (0..KEY_PAGES).map(|_| std::sync::OnceLock::new()).collect() }
+    }
+}
+
+impl KeyTable {
+    /// `key`'s number: the table's, else `find`'s, kept.
+    pub fn number(&self, key: u32, find: impl FnOnce() -> Option<u32>) -> Option<u32> {
+        use std::sync::atomic::{AtomicU32, Ordering::Relaxed};
+        let Some(page) = self.pages.get(key as usize / KEY_PAGE) else { return find() };
+        let slot = &page.get_or_init(|| (0..KEY_PAGE).map(|_| AtomicU32::new(KEY_UNSEEN)).collect())[key as usize % KEY_PAGE];
+        match slot.load(Relaxed) {
+            KEY_UNSEEN => {
+                let n = find();
+                debug_assert!(n.is_none_or(|n| n < KEY_LACKED), "a number past a table's");
+                slot.store(n.unwrap_or(KEY_LACKED), Relaxed);
+                n
+            }
+            KEY_LACKED => None,
+            n => Some(n),
+        }
+    }
+}
+
+/// A machine's format 16 writers not in use (the machine's value, decision 0442): a parse takes one (`Writer::to`)
+/// and gives it back once its tape is finished, so a writer is made once a parse worker, not once a document, and its
+/// parts' room is not made and zeroed again (`f16::Writer::begin` grows only a part that is short).
+#[derive(Default)]
+pub struct Writers(std::sync::Mutex<Vec<f16::Writer>>);
+
+impl Writers {
+    /// A writer not in use, if any.
+    pub fn take(&self) -> Option<f16::Writer> {
+        self.0.lock().unwrap_or_else(std::sync::PoisonError::into_inner).pop()
+    }
+    /// `w` given back, holding no run's rooms (`f16::Writer::release_rooms`).
+    pub fn give(&self, mut w: f16::Writer) {
+        w.release_rooms();
+        self.0.lock().unwrap_or_else(std::sync::PoisonError::into_inner).push(w);
+    }
+    /// A writer for the next document, its tapes going to `rooms` (decision 0353 row 17): one of `writers` not in
+    /// use, else a new one (with no `writers`, always a new one).
+    pub fn take_for(writers: Option<&Writers>, rooms: Option<std::sync::Arc<dyn home::Rooms>>) -> f16::Writer {
+        let mut w = writers.and_then(Writers::take).unwrap_or_else(f16::Writer::empty);
+        w.place_in(rooms);
+        w
+    }
 }
 
 /// A node's key named as its grammar names it: what a parser without the grammar (a lean parser's own tests and
@@ -314,6 +453,9 @@ impl Named {
             z: false,
             blocks: true,
             number: std::sync::Arc::new(move |key| lang.number_named(&name(key)?)),
+            writers: None,
+            sha256: None,
+            rooms: None,
         });
         Named { target }
     }
@@ -393,8 +535,8 @@ impl<T> Sink<()> for Kept<'_, T> {
 
 /// The format 16 writer the nodes are passed to as they are committed (`Writer::pass`).
 struct Passing {
-    /// The thread's format 16 writer (`f16::Writer::reused`), given back when the parse is done.
-    w: std::mem::ManuallyDrop<f16::Writer>,
+    /// The machine's format 16 writer (`Writers::take_for`), given back when the parse is done.
+    w: f16::Writer,
     number: std::sync::Arc<dyn Fn(u32) -> Option<u32> + Send + Sync>,
     /// Each code id's number, as far as resolved.
     numbers: Vector<u32>,
@@ -404,6 +546,16 @@ struct Passing {
     bad: Option<String>,
     /// A node read after its commit that the window no longer holds (`Writer::passed_node`).
     lost: std::cell::Cell<Option<usize>>,
+    /// Where `w` is given back when the parse is done with it, finished or not (`Writers`).
+    writers: Option<std::sync::Arc<Writers>>,
+}
+
+impl Drop for Passing {
+    fn drop(&mut self) {
+        if let Some(writers) = self.writers.take() {
+            writers.give(std::mem::replace(&mut self.w, f16::Writer::empty()));
+        }
+    }
 }
 
 /// A node passed to format 16's ops before its close: what the parse may still read of it, and its close.
@@ -421,13 +573,6 @@ struct Passed {
 
 // SAFETY: `repr(C)`, two words and four `u32`s: no padding, no address.
 unsafe impl Pod for Passed {}
-
-impl Drop for Passing {
-    fn drop(&mut self) {
-        // SAFETY: taken once, here, and not used after.
-        unsafe { std::mem::ManuallyDrop::take(&mut self.w) }.give_back();
-    }
-}
 
 impl Passing {
     fn fail(&mut self, why: impl FnOnce() -> String) {
@@ -589,8 +734,11 @@ impl<L: Layout> Writer<L> {
                 return self;
             }
         };
-        let w = std::mem::ManuallyDrop::new(f16::Writer::reused(t.lang, src, t.terminators, t.tag, t.z, t.blocks, self.cap));
-        self.sixteen = Ok(Box::new(Passing { w, number: t.number, numbers: Vector::new(), open: Vector::new(), bad: None, lost: Default::default() }));
+        let doc = f16::Document { lang: t.lang, source: src, tag: t.tag, z: t.z, blocks: t.blocks, nodes: self.cap, sha256: t.sha256.and_then(|d| d.of_source(src)) };
+        // The machine's writer, used again, its tape written in the target's rooms (0353 row 17).
+        let mut w = Writers::take_for(t.writers.as_deref(), t.rooms.clone());
+        w.begin_with(&doc, |out| newlines::index_into(out, src, t.terminators));
+        self.sixteen = Ok(Box::new(Passing { w, number: t.number, numbers: Vector::new(), open: Vector::new(), bad: None, lost: Default::default(), writers: t.writers }));
         // The columns hold the window: the nodes since the last commit (more grow it).
         if self.cap > WINDOW {
             let (cap, widths) = (WINDOW, self.layout.widths());
@@ -1457,11 +1605,27 @@ impl<L: Layout> Writer<L> {
         self.wide_from = if self.marks.is_empty() { 0x10000 } else { 0 };
     }
 
+    /// Each code's key given to `f` before it is numbered: a parser that holds a node's slot in the bits from
+    /// `CLASS_SHIFT` while it parses numbers its node by its classes, from its slot and kind (the interpreter's code
+    /// table, decision 0698). Before the first commit: format 16's nodes are numbered as they are committed.
+    pub fn map_code_keys(&mut self, f: fn(u32) -> u32) {
+        assert_eq!(self.coded, 0, "code keys mapped after a commit");
+        if let Ok(s) = &mut self.sixteen {
+            let number = s.number.clone();
+            s.number = std::sync::Arc::new(move |key| number(f(key)));
+        }
+    }
+
     /// The tape in format 16 or 16z and its presence, where the writer writes it (`to`; decision 0434 §2): the nodes
     /// not yet passed on given to the ops, then their `finish`. `Redo` where the writer's widths did not keep every
     /// size and end exactly; `Ok(Err)` where the writer writes no tape, or the nodes are not a format 16 tape (a code
     /// the language's table lacks, an edit before a commit, a node past format 16's bounds).
     pub fn finish_16(&mut self) -> Result<Result<f16::Finished, String>, Redo> {
+        self.finish_16_laid(None)
+    }
+
+    /// `finish_16`, the tape's auxiliary index laid in its home where `lay` builds one (`f16::ops::Writer::finish_laid`).
+    pub fn finish_16_laid(&mut self, lay: Option<f16::LayAux<'_>>) -> Result<Result<f16::Finished, String>, Redo> {
         debug_assert!(self.chains.is_empty(), "a chain not ended");
         self.commit();
         let w = self.layout.widths();
@@ -1487,7 +1651,7 @@ impl<L: Layout> Writer<L> {
             return Ok(Err(format!("node {node} read after its commit")));
         }
         s.close_to(self.n);
-        Ok(s.w.finish())
+        Ok(s.w.finish_laid(lay))
     }
 }
 
@@ -1515,7 +1679,7 @@ mod tests {
             let (kind, field) = (k & 0x3ff, k >> KIND_BITS & 0x3f);
             (k >> 16 == 0 && kind < 16 && field < 8).then_some(kind + 16 * field)
         };
-        Ok(Sixteen { lang: lang(), terminators: newlines::Terminators::Lf, tag: 1, z, blocks: true, number: std::sync::Arc::new(number) })
+        Ok(Sixteen { lang: lang(), terminators: newlines::Terminators::Lf, tag: 1, z, blocks: true, number: std::sync::Arc::new(number), writers: None, sha256: None, rooms: None })
     }
 
     /// The rows of the tape `w` finishes.
@@ -1619,7 +1783,7 @@ mod tests {
             f16::Lang::new(CodeTable::new(entries), [1, 1, 1], 1).unwrap()
         });
         let number = |k: u32| (k >> 16 == 0 && k & 0x3ff < 16 && k >> 10 < 8).then(|| (k & 0x3ff) + 16 * (k >> 10));
-        let target = || Ok(Sixteen { lang, terminators: newlines::Terminators::Lf, tag: 1, z: false, blocks: true, number: std::sync::Arc::new(number) });
+        let target = || Ok(Sixteen { lang, terminators: newlines::Terminators::Lf, tag: 1, z: false, blocks: true, number: std::sync::Arc::new(number), writers: None, sha256: None, rooms: None });
         let src = vec![b' '; 200_000];
         // 0: the calls joined; 1: the joined calls; 2: the plain ones (no chain, no node passed on).
         let build = |way: u8| {

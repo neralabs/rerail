@@ -13,6 +13,14 @@ pub struct Bag {
     pub value: Option<usize>,
 }
 
+impl Bag {
+    /// The bag's summary as the index catalogue names it (decision 0706 §1): its group columns, and its tests and
+    /// value column as the aggregate's description.
+    pub(super) fn access(&self) -> crate::code_rule_dsl::logic::access::Kind {
+        crate::code_rule_dsl::logic::access::Kind::Summary { group: self.columns.iter().map(|&c| c as u16).collect(), agg: format!("{:?}/{:?}", self.tests, self.value) }
+    }
+}
+
 #[derive(Clone, Copy, Debug, Default)]
 pub(super) struct Summary {
     pub count: i64,
@@ -123,6 +131,12 @@ impl Groups {
         v[4] = s.max.unwrap_or(0);
         v[5] = i64::from(s.min.is_some()) | i64::from(s.max.is_some()) << 1;
     }
+    /// `value` added to `key`'s group (a group made where there is none).
+    fn add(&mut self, key: &[i64], value: Option<i64>) {
+        let mut g = self.get(key).unwrap_or_default();
+        g.add(value);
+        self.insert(key, g);
+    }
     fn clear(&mut self) {
         *self = Groups::default();
     }
@@ -138,6 +152,9 @@ impl Groups {
 struct Memo {
     epoch: (usize, usize, usize, usize),
     groups: Groups,
+    /// Every group of the epoch is in `groups` (built ahead in one pass, decision 0706 E3): a key with none is the
+    /// empty group, and nothing is folded.
+    whole: bool,
     preferred_value: Option<Arc<Bag>>,
     builds: usize,
     /// Counted under a read lock: a hit takes no write lock.
@@ -170,8 +187,11 @@ impl Default for Pool {
 }
 impl Pool {
     fn shard(&self, key: &[i64]) -> &parking_lot::RwLock<HashMap<Arc<Bag>, Memo>> {
+        &self.0[self.shard_of(key)]
+    }
+    fn shard_of(&self, key: &[i64]) -> usize {
         let hash = key.iter().fold(0u64, |h, &k| (h.rotate_left(5) ^ k as u64).wrapping_mul(0x517c_c1b7_2722_0a95));
-        &self.0[(hash >> (64 - SHARDS.trailing_zeros())) as usize]
+        (hash >> (64 - SHARDS.trailing_zeros())) as usize
     }
 
     /// Each bag's memo, every shard's summed (the epoch is the latest a shard saw).
@@ -231,6 +251,41 @@ impl Pool {
             }
         }
     }
+    /// Whether `bag`'s (selected) memo holds every group of `epoch`.
+    fn is_whole(&self, bag: &Arc<Bag>, epoch: (usize, usize, usize, usize)) -> bool {
+        let selected = self.selected(bag);
+        self.0.iter().all(|shard| shard.read().get(&selected).is_some_and(|m| m.whole && m.epoch == epoch))
+    }
+
+    /// Decision 0706 E3: every group of `bag` over the rows `each` gives (each live row's values by column), folded
+    /// in one pass into each shard's memo for `epoch`, marked whole. The bag read is the selected one (a count reads
+    /// its value bag's summaries, `register`).
+    fn build_whole(&self, bag: &Arc<Bag>, epoch: (usize, usize, usize, usize), each: impl FnOnce(&mut dyn FnMut(&dyn Fn(usize) -> i64))) -> usize {
+        let selected = self.selected(bag);
+        let mut shards: Vec<Groups> = (0..SHARDS).map(|_| Groups::default()).collect();
+        let mut key = Vec::with_capacity(selected.columns.len());
+        each(&mut |at| {
+            if !selected.tests.iter().all(|&(a, b)| at(a) == at(b)) {
+                return;
+            }
+            key.clear();
+            key.extend(selected.columns.iter().map(|&c| at(c)));
+            let shard = self.shard_of(&key);
+            shards[shard].add(&key, selected.value.map(&at));
+        });
+        let mut groups = 0;
+        for (shard, built) in self.0.iter().zip(shards) {
+            groups += built.len();
+            let mut pool = shard.write();
+            let memo = pool.entry(selected.clone()).or_default();
+            memo.epoch = epoch;
+            memo.groups = built;
+            memo.whole = true;
+            memo.builds += 1;
+        }
+        groups
+    }
+
     pub fn evaluate(
         &self,
         bag: &Arc<Bag>,
@@ -243,46 +298,37 @@ impl Pool {
         // (`explain`).
         let counted = crate::code_rule_dsl::logic::profile::on();
         let shard = self.shard(key);
-        // A hit: under the read lock.
-        {
+        // A hit: under the read lock, which also chooses the bag a miss builds for (its preferred value's).
+        let selected = {
             let pool = shard.read();
-            let memo = if bag.value.is_none() {
-                pool.get(bag).and_then(|m| m.preferred_value.as_ref()).map_or_else(|| pool.get(bag), |p| pool.get(p))
-            } else {
-                pool.get(bag)
-            };
+            let preferred = if bag.value.is_none() { pool.get(bag).and_then(|m| m.preferred_value.clone()) } else { None };
+            let memo = match &preferred { Some(p) => pool.get(p), None => pool.get(bag) };
             if let Some(memo) = memo
                 && memo.epoch == epoch
-                && let Some(summary) = memo.groups.get(key)
+                && let Some(summary) = memo.groups.get(key).or(memo.whole.then(Summary::default))
             {
                 if counted {
                     memo.lookups.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
                 }
                 return summary;
             }
-        }
-        let mut selected = bag.clone();
-        {
-            let mut pool = shard.write();
-            if selected.value.is_none() {
-                selected = pool
-                    .get(bag)
-                    .and_then(|m| m.preferred_value.clone())
-                    .unwrap_or(selected);
-            }
-            let memo = pool.entry(selected.clone()).or_default();
-            memo.lookups.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-            if memo.epoch != epoch {
-                memo.groups.clear();
-                memo.epoch = epoch;
-            }
-            if let Some(summary) = memo.groups.get(key) {
-                return summary;
-            }
-        }
+            preferred.unwrap_or_else(|| bag.clone())
+        };
+        // A miss: built outside the lock, then kept under one write lock. Every group of `public_best_len` is a miss
+        // (330 k groups of one row on idc): a write lock before the build as well, to look again, took a third of the
+        // step. A thread that built the same group meanwhile kept the same summary: its is taken.
         let summary = build(selected.value);
         let mut pool = shard.write();
-        let memo = pool.get_mut(&selected).unwrap();
+        let memo = pool.entry(selected).or_default();
+        memo.lookups.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        if memo.epoch != epoch {
+            memo.groups.clear();
+            memo.whole = false;
+            memo.epoch = epoch;
+        }
+        if let Some(kept) = memo.groups.get(key).or(memo.whole.then(Summary::default)) {
+            return kept;
+        }
         memo.builds += 1;
         memo.groups.insert(key, summary);
         summary
@@ -314,6 +360,70 @@ pub(super) fn explain(p: &Section<steps::Plan>, store: &Store) {
     profile::decision("native scalar storage", || {
         serde_json::json!({"consumers":consumers}).to_string()
     });
+}
+
+/// Decision 0706 E3, at a component run's start: the summaries of `plans`' scalar steps over a complete input (`Src::In`,
+/// held, not a view) whose use the run has seen pay (`access::pays`), each built whole in one pass, in parallel, before
+/// any walk reads them. Returns the bags built and their groups.
+pub(super) fn build_ahead<'a>(plans: impl Iterator<Item = &'a JoinRule>) -> (usize, usize) {
+    if !super::access::on() {
+        return (0, 0);
+    }
+    let Some(seen) = crate::code_rule_dsl::logic::run::local_if_any::<super::access::Observed>() else { return (0, 0) };
+    let mut jobs: Vec<(&InRel, Arc<Bag>)> = Vec::new();
+    for p in plans {
+        let p: &Section<steps::Plan> = p;
+        for step in p.steps.iter() {
+            let Step::Scalar { src: Src::In(rel, _), bag, bound: None, .. } = step else { continue };
+            let Some(bag) = bag.as_ref().map(|h| p.bound(h)) else { continue };
+            let rel: &InRel = p.bound(rel);
+            let Some(name) = rel.name.get() else { continue };
+            if rel.view.is_some() || jobs.iter().any(|(r, b)| std::ptr::eq(*r, rel) && b == bag) {
+                continue;
+            }
+            let epoch = (rel.len(), 0, rel.len(), rel.ndead);
+            if rel.summaries.is_whole(bag, epoch) {
+                continue;
+            }
+            let kind = bag.access();
+            let pays = seen.use_of(&crate::code_rule_dsl::logic::access::Access { rel: name.clone(), kind: kind.clone() }).is_some_and(|u| crate::code_rule_dsl::logic::access::pays(&kind, rel.len() as u64, u));
+            if pays {
+                jobs.push((rel, bag.clone()));
+            }
+        }
+    }
+    if jobs.is_empty() {
+        return (0, 0);
+    }
+    let _span = crate::code_rule_dsl::logic::profile::span(|| "scalar summaries built ahead (decision 0706 E3)".into());
+    use rayon::prelude::*;
+    let groups: usize = rerail_context::on_cores(|| jobs
+        .par_iter()
+        .map(|(rel, bag)| {
+            let epoch = (rel.len(), 0, rel.len(), rel.ndead);
+            let rows = super::cands::Rows::In(rel);
+            rel.summaries.build_whole(bag, epoch, |f| {
+                for id in 0..rel.len() as u32 {
+                    if rows.dead(id) {
+                        continue;
+                    }
+                    let row = rows.row(id);
+                    f(&|c| row.at(c));
+                }
+            })
+        })
+        .sum());
+    #[cfg(any(test, feature = "test-hooks"))]
+    WHOLE.fetch_add(jobs.len() as u64, std::sync::atomic::Ordering::Relaxed);
+    (jobs.len(), groups)
+}
+
+/// Tests: the bags the process built whole ahead (`build_ahead`).
+#[cfg(any(test, feature = "test-hooks"))]
+static WHOLE: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+#[cfg(any(test, feature = "test-hooks"))]
+pub fn built_whole_for_tests() -> u64 {
+    WHOLE.load(std::sync::atomic::Ordering::Relaxed)
 }
 
 pub(super) fn register(p: &Section<steps::Plan>, store: Option<&Store>) {
@@ -606,6 +716,41 @@ pub mod tests {
         assert_eq!(s.result(Kind::Sum).unwrap(), Some(i64::MAX));
     }
 
+    /// Decision 0706 E3: a bag's summary built whole in one pass gives each group's fold (its rows that pass the bag's
+    /// tests, many groups over every shard), the empty group for a key with no rows, and folds nothing after; a
+    /// changed version folds again.
+    #[test]
+    fn a_whole_summary_gives_each_groups_fold_and_empty_groups() {
+        let pool = Pool::default();
+        let bag = Arc::new(Bag { columns: rerail_blocks::vector![0, 1], tests: vec![(2, 3)], value: Some(4) });
+        // Rows (g0, g1, a, b, v): a group per (i % 50, i % 7); rows with a != b fail the test.
+        let rows: Vec<[i64; 5]> = (0..2_000i64).map(|i| [i % 50, i % 7, i % 3, if i % 11 == 0 { 9 } else { i % 3 }, i * 13 % 101 - 40]).collect();
+        let epoch = (rows.len(), 0, rows.len(), 0);
+        pool.build_whole(&bag, epoch, |f| for r in &rows { f(&|c| r[c]) });
+        assert!(pool.is_whole(&bag, epoch));
+        let fold = |key: &[i64]| {
+            let mut s = Summary::default();
+            for r in rows.iter().filter(|r| r[..2] == *key && r[2] == r[3]) { s.add(Some(r[4])); }
+            s
+        };
+        let folds = std::cell::Cell::new(0);
+        for g0 in 0..52 {
+            for g1 in 0..8 {
+                let key = [g0, g1];
+                let got = pool.evaluate(&bag, &key, epoch, |_| { folds.set(folds.get() + 1); Summary::default() });
+                let want = fold(&key);
+                for kind in [Kind::Count, Kind::Sum, Kind::Min, Kind::Max] {
+                    assert_eq!(got.result(kind).unwrap(), want.result(kind).unwrap(), "{key:?} {kind:?}");
+                }
+            }
+        }
+        assert_eq!(folds.get(), 0, "a whole summary folds nothing");
+        let next = (rows.len() + 1, 0, rows.len() + 1, 0);
+        assert!(!pool.is_whole(&bag, next));
+        pool.evaluate(&bag, &[0, 0], next, |_| { folds.set(folds.get() + 1); Summary::default() });
+        assert_eq!(folds.get(), 1, "another version is not the whole one");
+    }
+
     fn connection() -> Connection {
         let path = crate::code_rule_dsl::fixtures::temp();
         drop(crate::content_store::ContentStore::open(&path).unwrap());
@@ -842,4 +987,31 @@ pub mod tests {
         assert_eq!(run(&second), vec![2, 103]);
         assert_eq!(run(&first), vec![2, 10]);
     }
+}
+
+/// `RERAIL_SCALAR_TRACE` (a measurement aid, decision 0706 E3): per scalar step's source and bag, its probes, folds
+/// and rows inspected over the run, printed when the run ends.
+#[derive(Default)]
+pub(super) struct Trace(parking_lot::Mutex<HashMap<String, [u64; 4]>>);
+impl Drop for Trace {
+    fn drop(&mut self) {
+        let mut all: Vec<_> = self.0.get_mut().drain().collect();
+        all.sort_by_key(|(_, c)| std::cmp::Reverse(c[2]));
+        for (k, c) in all.iter().take(40) {
+            eprintln!("RERAIL_SCALAR_TRACE {k}: probes {} folds {} inspected {} rows {}", c[0], c[1], c[2], c[3]);
+        }
+    }
+}
+pub(super) fn trace() -> bool {
+    static ON: std::sync::LazyLock<bool> = std::sync::LazyLock::new(|| std::env::var_os("RERAIL_SCALAR_TRACE").is_some());
+    *ON
+}
+pub(super) fn note(name: impl FnOnce() -> String, probes: u64, folds: u64, inspected: u64, rows: u64) {
+    let t = crate::code_rule_dsl::logic::run::local::<Trace>();
+    let mut m = t.0.lock();
+    let c = m.entry(name()).or_default();
+    c[0] += probes;
+    c[1] += folds;
+    c[2] += inspected;
+    c[3] = c[3].max(rows);
 }

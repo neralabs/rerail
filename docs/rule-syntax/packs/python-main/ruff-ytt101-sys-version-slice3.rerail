@@ -10,7 +10,7 @@
 // YTT101(n): a finding at node n, from clause `sys-version-slice3`.
 // Each rule below is one way the JSON `rule` can match.
 // Columns after `at` are the metavariables the JSON's message, anchor or `each` names: one finding per distinct row.
-.violation YTT101(at: loc, c: node) "Use `sys.version_info[:2]` (a tuple) instead of `sys.version[:3]`; the slice truncates a two-digit minor version such as 3.10 to 3.1."
+.violation YTT101(at: place, c: node) "Use `sys.version_info[:2]` (a tuple) instead of `sys.version[:3]`; the slice truncates a two-digit minor version such as 3.10 to 3.1."
     suppress noqa "YTT101"
 YTT101(C, n) :- ytt101_target(n), node(_, n, _, _, _), C = n.
 YTT101(C, n) :- ytt101_splat_target(n),
@@ -19,7 +19,7 @@ YTT101(C, n) :- ytt101_in_string(n, C).
 
 // three_literal(n): the JSON util `three-literal`, used where the JSON says `matches: "three-literal"`
 .decl ytt101_three_literal(n: node)
-ytt101_three_literal(n) :- kind(n, "integer"), value(n, v1), value_type(v1, "int"), v1 = 3.
+ytt101_three_literal(n) :- kind(n, "integer"), value(n, v1), value_type_of(n, "int"), v1 = 3.
 ytt101_three_literal(n) :- kind(n, "parenthesized_expression"), child(n, c2, _),
     ytt101_three_literal(c2).
 
@@ -52,7 +52,7 @@ ytt101_target(n) :- (kind(n, "identifier") ; kind(n, "attribute")), sym_of(n, "s
 
 // in_string(n): the JSON util `in-string`, used where the JSON says `matches: "in-string"`
 //   C: metavariable this relation binds for the calling rule
-.decl ytt101_in_string(n: node, c: loc)
+.decl ytt101_in_string(n: node, c: node)
 ytt101_in_string(n, C) :- (kind(n, "string") ; kind(n, "concatenated_string")),
     parsed(n, "annotation", r1), within(c2, r1), ytt101_alt_4(c2, C).
 
@@ -115,6 +115,6 @@ ytt101_counted(n) :- node(_, n, _, _, _), !kind(n, "comment"), !kind(n, "line_co
 
 // alt_4(n): the JSON `any`: n matches if any one of these rules does
 //   C: metavariable this relation binds for the calling rule
-.decl ytt101_alt_4(n: node, c: loc)
+.decl ytt101_alt_4(n: node, c: node)
 ytt101_alt_4(n, C) :- ytt101_target(n), C = n.
 ytt101_alt_4(n, C) :- ytt101_in_string(n, C).

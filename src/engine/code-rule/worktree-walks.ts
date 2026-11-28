@@ -12,8 +12,13 @@
  * `WORKTREE_FULL_WALK_MS` old. It hands each session what it saw of the others last time. Reading them all stat'ed
  * every file of every worktree on each walk: with 190 worktrees, about 5 s of the daemon's main thread a walk.
  */
-import { relative, sep } from "node:path";
-import { gitModifiedOrUntrackedPaths, GitReads, gitTrackedIgnoredReader, gitUnmergedReader } from "../git.js";
+import { channel } from "node:diagnostics_channel";
+import { lstat } from "node:fs/promises";
+import { join, relative, sep } from "node:path";
+import { FolderPlaces } from "../catalog/checkouts/folder-places.js";
+import type { WorktreeListLearning, WorktreeRegistry } from "../catalog/repository-identity.js";
+import { fileStamp } from "../file-stamp.js";
+import { gitFirstSightListing, GitReads, gitTrackedIgnoredReader, gitUnmergedReader, type HeadListing } from "../git.js";
 import { readGitHead } from "../git-head-reader.js";
 import type { ObservedSource, ScanError, Source, SourceScan } from "./code-rule-bridge.js";
 import type { TreeWatch } from "./tree-watch.js";
@@ -29,9 +34,21 @@ import { SharedTreeWatch, WorktreeNotices, type WorktreeRead } from "./worktree-
 export const WORKTREE_WALK_GAP_MS = 5_000;
 
 /**
+ * The clock the walks are paced by (`WORKTREE_WALK_GAP_MS`): the one the pause's own timer runs on, not the time of day,
+ * so a pause counts what its timer counts. On Linux it stands still while the system is suspended, so a suspend inside a
+ * walk adds nothing to the pause after it; on Windows and macOS it counts a sleep, as their timers do. On every system a
+ * change of the time of day (a person setting the clock, a time sync after a resume) neither stretches a pause nor cuts
+ * it short.
+ */
+function pacingNow(): number {
+  return performance.now();
+}
+
+/**
  * How long walks trust change notices for a worktree: a walk reads one whose last read began this long ago, and one is
  * timed for it though every session watching it is idle. A write no notice tells of (through a hard link, a memory
- * map, a file another program holds open on Windows, or one the system lost without saying so) is found then.
+ * map, on Linux only one its program still holds, a file another program holds open on Windows, or one the system
+ * lost without saying so) is found then.
  */
 export const WORKTREE_FULL_WALK_MS = 600_000;
 
@@ -42,6 +59,38 @@ export const WORKTREE_FULL_WALK_MS = 600_000;
  * walk it asks for then reads it, once each session watching it is past its gap.
  */
 export const WORKTREE_NOTICE_MS = 250;
+
+/**
+ * The `node:diagnostics_channel` channel on which the walks count their reads, and the sessions the turns of their lanes
+ * that apply what the walks found, for whoever measures the daemon: a load test subscribes through the inspector and
+ * reads the end of the daemon's first pass over every worktree from it. Nothing is published while no one subscribes.
+ */
+const WORKTREE_WALK_EVENTS = "rerail:worktree-walks";
+
+/** What the walks publish as each read of a worktree ends: whether it was the worktree's first, and whether it found a change. */
+interface WorktreeReadEvent {
+  readonly kind: "read";
+  readonly first: boolean;
+  readonly changed: boolean;
+}
+
+const walkEvents = channel(WORKTREE_WALK_EVENTS);
+
+/** Tells whoever subscribes (`WORKTREE_WALK_EVENTS`) of a read that made `snapshot` where the walk held `previous`. */
+function tellRead(previous: WorktreeSnapshot | undefined, snapshot: WorktreeSnapshot): void {
+  if (walkEvents.hasSubscribers) walkEvents.publish({ kind: "read", first: previous === undefined, changed: snapshot !== previous } satisfies WorktreeReadEvent);
+}
+
+/** What a session publishes as one turn of its lane applies a walk's take: how many of the take's worktrees it holds. */
+interface WorktreeTakeTurnEvent {
+  readonly kind: "take-turn";
+  readonly worktrees: number;
+}
+
+/** Tells whoever subscribes (`WORKTREE_WALK_EVENTS`) of a turn of a session's lane that applies `worktrees` worktrees of a take. */
+export function tellTakeTurn(worktrees: number): void {
+  if (walkEvents.hasSubscribers) walkEvents.publish({ kind: "take-turn", worktrees } satisfies WorktreeTakeTurnEvent);
+}
 
 /**
  * What one walk saw of a worktree, each source by its path in the worktree (`/`-separated). A snapshot never changes: a
@@ -71,8 +120,19 @@ export interface WorktreeFindings {
    * (`firstSeenIn`). Undefined for a checkout whose Git ran past its time limit: it did not say which files changed.
    */
   readonly listed: ReadonlyMap<string, readonly string[] | undefined>;
+  /**
+   * Listed with `listed`, for the worktree's own checkout: which files hold what `head` holds and which may differ
+   * (`FirstSightListing.byHead`); absent where Git did not say, and where the first sight takes no file of the worktree
+   * for Git to judge: none is stamped since the earliest session seeing it first opened (`listedFor`).
+   */
+  readonly byHead: ReadonlyMap<string, HeadListing>;
   /** Subtrees the walk could not read. */
   readonly failedRoots: ReadonlySet<string>;
+  /**
+   * What the read left out (`WorktreeRead.leftOut`): it read nothing at or below each of these paths, so the snapshot
+   * says nothing of a file there.
+   */
+  readonly leftOut: ReadonlySet<string>;
   /**
    * Whether the read gave up on a path it met (`SourceScan.gaveUp`): a write there may be found only by the read that
    * tries again, so this one answers for no call's writes.
@@ -198,9 +258,19 @@ export interface WatcherWalk {
   /**
    * Takes what the walk found. `records` holds, by worktree (physical), the changes no watching session made that this
    * session records once for the repository (`WorktreeWalks`). Never rejects: the session records its own failures.
+   * What it reads of the walk off its own lane it reads through `inTurn`, so the sessions taking a walk read one after
+   * another.
    */
-  take(walk: WorktreeWalk, records: WorktreeRecords): Promise<void>;
+  take(walk: WorktreeWalk, records: WorktreeRecords, inTurn: ReadTurn): Promise<void>;
 }
+
+/**
+ * Runs `read` once every read handed out before it has ended (`WatcherWalk.take`). Sessions that joined a repository's
+ * walk while its first walk read all take their first sight of every worktree when the next walk ends: read at once,
+ * each finding every new worktree's checkout and building its rules, those reads held each other, and every session's
+ * hooks, for seconds on Windows. A read waits for no lane and no take, only for the reads before it.
+ */
+export type ReadTurn = <T>(read: () => Promise<T>) => Promise<T>;
 
 /** A change a read found in a worktree since the read before it: the source's path in the worktree, and its new observation (undefined once removed). */
 export interface WorktreeChange {
@@ -217,8 +287,18 @@ export type WorktreeRecords = ReadonlyMap<string, ReadonlySet<string>>;
 export interface WorktreeWatcher {
   /** The filesystem's clock (`filesystemClock`). */
   clock(): Promise<number>;
-  /** Called as each walk begins, before it reads anything; undefined once the session has closed or cannot say. */
-  start(): WatcherWalk | undefined;
+  /**
+   * Called before each walk begins, before {@link WorktreeWatcher.start}: what `start` would ask Git, learnt through `git`
+   * as processes no thread waits on, so `start` finds it kept, or the list stored for the registry, read with no Git,
+   * which `start` takes as read here; undefined, with nothing started, when there is nothing to learn. What it gives to
+   * wait on never rejects; a throw is taken as nothing to learn.
+   */
+  prepare?(git: GitReads): WorktreeListLearning | undefined;
+  /**
+   * Called as each walk begins, before it reads anything, with the list its {@link WorktreeWatcher.prepare} read when no
+   * wait came between them; undefined once the session has closed or cannot say.
+   */
+  start(registry?: WorktreeRegistry): WatcherWalk | undefined;
 }
 
 /** A session's watch of the shared walk. */
@@ -231,7 +311,10 @@ export interface WorktreeWatch {
   request(): void;
   /** Whether a walk the session asked for has yet to be taken. */
   pending(): boolean;
-  /** Resolves once no walk the session asked for is timed, running, or still being taken. */
+  /**
+   * Starts at once a walk the session asked for that waits out its gap, and resolves once no walk it asked for is timed,
+   * running, or still being taken.
+   */
   settled(): Promise<void>;
   /**
    * Stops watching: no walk reads through the session or reaches it again. Once no session watches, it settles when
@@ -247,7 +330,7 @@ interface Watching {
   /** How many walks it asked for, and how many of those asks the walks it took answered. */
   asked: number;
   answered: number;
-  /** When a walk may next begin for its asks: the gap after the last walk that answered one (`WORKTREE_WALK_GAP_MS`). */
+  /** When a walk may next begin for its asks, on `pacingNow`: the gap after the last walk that answered one (`WORKTREE_WALK_GAP_MS`). */
   nextWalkAt: number;
   /** Taking walks, one after the other; the newest it has yet to take waits in `waiting`, replacing any older. */
   taking: Promise<void> | undefined;
@@ -274,7 +357,7 @@ interface Departed {
 
 /** What the last read of a worktree found, kept to hand to sessions while nothing tells of a change there. */
 interface Kept {
-  readonly findings: Omit<WorktreeFindings, "texts" | "listed" | "inner" | "changes">;
+  readonly findings: Omit<WorktreeFindings, "texts" | "listed" | "byHead" | "inner" | "changes">;
   /** Whether the read left something to try again: a folder it could not list, or a file it could not read. */
   readonly retry: boolean;
   /** The other worktrees and sessions' checkouts inside it that the read left out (`leftOut`), one per line. */
@@ -307,8 +390,8 @@ interface WalkBegun {
   readonly skip: ReadonlySet<string>;
   readonly files: WalkFiles;
   readonly walking: ReadonlyMap<Watching, WatcherWalk>;
-  /** The worktrees whose checkouts' changed files the walk lists (`firstSeenIn`). */
-  readonly firstSeen: ReadonlySet<string>;
+  /** The worktrees whose checkouts' changed files the walk lists, each with when its earliest first seer opened (`firstSeenIn`). */
+  readonly firstSeen: ReadonlyMap<string, number>;
 }
 
 /**
@@ -435,11 +518,22 @@ function retried(scan: SourceScan): boolean {
   return false;
 }
 
-/** What Git lists as modified or untracked in each of `checkouts`, one Git process each. */
-async function listChanged(git: GitReads, checkouts: ReadonlySet<string>): Promise<Map<string, readonly string[] | undefined>> {
+/** What a walk's Git lists of a worktree's checkouts for a session's first sight of it (`WorktreeFindings`). */
+type FirstSightListings = Pick<WorktreeFindings, "listed" | "byHead">;
+
+/**
+ * What Git lists as modified or untracked in each of `checkouts`, and in the worktree's own at `root` which files hold
+ * what `head` holds (`gitFirstSightListing`): `HEAD` is read for that checkout only.
+ */
+async function listChanged(git: GitReads, root: string, checkouts: ReadonlySet<string>, head: string | undefined): Promise<FirstSightListings> {
   const listed = new Map<string, readonly string[] | undefined>();
-  for (const checkout of checkouts) listed.set(checkout, await git.run(signal => gitModifiedOrUntrackedPaths(checkout, { signal })));
-  return listed;
+  const byHead = new Map<string, HeadListing>();
+  for (const checkout of checkouts) {
+    const listing = await git.run(signal => gitFirstSightListing(checkout, checkout === root ? head : undefined, { signal }));
+    listed.set(checkout, listing.changed);
+    if (listing.byHead !== undefined) byHead.set(checkout, listing.byHead);
+  }
+  return { listed, byHead };
 }
 
 /**
@@ -447,24 +541,92 @@ async function listChanged(git: GitReads, checkouts: ReadonlySet<string>): Promi
  * takes for the first time (`WatcherWalk.firstSight`), but where the walk that session is still taking shows it that
  * worktree first too. That walk listed it, and the session takes that walk before this one, which ends its first sight:
  * listing it again for each walk that began meanwhile started a Git process per worktree on every one of them. Should
- * that take not end it, the session lists the worktree itself as it takes this walk (`CodeRuleBridge`).
+ * that take not end it, the session lists the worktree itself as it takes this walk (`CodeRuleBridge`). Each maps to
+ * the earliest a session seeing it first opened (`WatcherWalk.startedAt`): that session's first sight takes the most.
  */
-function firstSeenIn(walking: ReadonlyMap<Watching, WatcherWalk>): Set<string> {
-  const roots = new Set<string>();
+function firstSeenIn(walking: ReadonlyMap<Watching, WatcherWalk>): Map<string, number> {
+  const roots = new Map<string, number>();
   for (const [watching, walk] of walking) {
-    for (const root of walk.firstSight) if (watching.takingPart?.firstSight.has(root) !== true) roots.add(root);
+    for (const root of walk.firstSight) {
+      if (watching.takingPart?.firstSight.has(root) !== true) roots.set(root, Math.min(roots.get(root) ?? Infinity, walk.startedAt));
+    }
   }
   return roots;
 }
 
-/** `WorktreeFindings.listed` of the worktree at `root`: listed when the walk shows a session it first (`firstSeen`). */
+/**
+ * Whether `source` was stamped at or after `since`, when a session opened: a write that session may have made, which
+ * its first sight of the source's worktree takes (`CodeRuleBridge.#firstSightPaths`). A source the walk did not read
+ * has no stamp, and was not.
+ */
+export function stampedSince(source: Pick<ObservedSource, "modifiedAt">, since: number): boolean {
+  return (source.modifiedAt ?? -Infinity) >= since;
+}
+
+/**
+ * Whether the file at `absolute` still holds what a walk read as `source`, by the rule a walk keeps for its own reads
+ * (`staleStamp` in `code-rule-bridge.ts`, Git's racy-index rule): it has the stamp the walk read, and the walk read a
+ * stamp older than its own start (`ObservedSource.observedAt`). Both are read on the filesystem's clock, which stamps
+ * files and advances in ticks, so a write since the walk began, even one in the tick the walk read the file in, has a
+ * later stamp. Not where the file cannot be stamped now.
+ */
+async function readStill(absolute: string, source: ObservedSource): Promise<boolean> {
+  const stamp = await lstat(absolute).then(fileStamp, () => undefined);
+  return stamp === source.stamp && (source.modifiedAt ?? Infinity) < (source.observedAt ?? -Infinity);
+}
+
+/**
+ * `listed` (`HeadListing`) without those of the files `stamped` (named relative to the worktree at `root`) that no
+ * longer hold what the walk read (`readStill`). The walk reads a worktree's files before its Git lists them, so a file
+ * the walk read and something then put back to `HEAD`'s text, as `git checkout -- <file>` or `git stash` do, is one Git
+ * names as holding that text, though the walk read another. Checked once every listing has ended, which judged no
+ * other text than the walk read in a file that still holds it.
+ */
+async function heldSinceRead(root: string, listed: HeadListing, stamped: ReadonlyArray<readonly [string, ObservedSource]>): Promise<HeadListing> {
+  const atHead = new Set(listed.atHead);
+  for (const [path, source] of stamped) if (!await readStill(join(root, path), source)) atHead.delete(path);
+  return { notAtHead: listed.notAtHead, atHead };
+}
+
+/**
+ * `WorktreeFindings.listed` and `byHead` of the worktree at `root` whose `HEAD` the walk read as `head` and whose
+ * snapshot holds `sources`: listed when the walk shows a session it first (`firstSeen`), and `byHead` asked only where
+ * that first sight takes a file for Git to judge: one stamped since the earliest session seeing it first opened
+ * (`stampedSince`). Any other is its baseline, and a `.gitignore` it takes for its rules is no change unless stamped
+ * since. A session that opens beside worktrees Git added before it takes none of their files, and the index's three
+ * listings cost each of them, one worktree after another: on Windows 11, beside 104 worktrees, the walk that first
+ * showed a new session the worktrees took 26 to 78 s. Of the files stamped since, `byHead` names as holding `HEAD`'s
+ * text only those that still hold what the walk read (`heldSinceRead`); only the worktree's own checkout has one.
+ */
 async function listedFor(
   git: GitReads,
-  root: string,
-  firstSeen: ReadonlySet<string>,
+  { root, head, sources }: { readonly root: string; readonly head: string | undefined; readonly sources: ReadonlyMap<string, ObservedSource> },
+  firstSeen: ReadonlyMap<string, number>,
   checkouts: ReadonlySet<string>,
-): Promise<Map<string, readonly string[] | undefined>> {
-  return firstSeen.has(root) ? await listChanged(git, checkouts) : new Map<string, readonly string[] | undefined>();
+): Promise<FirstSightListings> {
+  const since = firstSeen.get(root);
+  if (since === undefined) return { listed: new Map(), byHead: new Map() };
+  const stamped = [...sources].filter(([, source]) => stampedSince(source, since));
+  const { listed, byHead } = await listChanged(git, root, checkouts, stamped.length > 0 ? head : undefined);
+  const own = byHead.get(root);
+  return { listed, byHead: own === undefined ? byHead : new Map([[root, await heldSinceRead(root, own, stamped)]]) };
+}
+
+/** The list `learnt` stored for the registry, read with no Git, which the walk's list takes in the same synchronous run. */
+export function storedRegistry(learnt: WorktreeListLearning | undefined): WorktreeRegistry | undefined {
+  return learnt?.kind === "stored" ? learnt.registry : undefined;
+}
+
+/**
+ * What `watcher` learns before a walk begins ({@link WorktreeWatcher.prepare}), through `git`. A throw is taken as nothing
+ * to learn, as a walk takes a throw of `start`: the walk begins, and its start meets what failed.
+ */
+function preparedBy(watcher: WorktreeWatcher, git: GitReads): WorktreeListLearning | undefined {
+  try {
+    return watcher.prepare?.(git);
+  } catch {
+    return undefined;
+  }
 }
 
 /**
@@ -513,12 +675,16 @@ export class WorktreeWalks {
   #pump: NodeJS.Timeout | undefined;
   /** Whether a walk is reading: it takes the notices itself, and asks for the walk they call for as it ends. */
   #walking = false;
+  /** The last read of a take handed out, which the next one waits for (`#inTurn`). */
+  #reads: Promise<void> = Promise.resolve();
   readonly #onWatching: ((watching: boolean) => void) | undefined;
+  readonly #sessionWatch: (() => TreeWatch | undefined) | undefined;
 
   /**
    * `notices`: none by default, so every worktree is read on every walk; `RepositoryWorktreeWalks` gives each walk the
    * engine's. `looks`: what each walk looks at in a watched worktree (`WorktreeLooks`). `onWatching`: told `true` as a
-   * first session starts watching, and `false` as the last stops.
+   * first session starts watching, and `false` as the last stops. `sessionWatch`: a watch of a session folder through
+   * the engine watch the notices come from, none by default (`sessionWatch()`).
    */
   constructor(options: {
     gapMs?: number;
@@ -526,12 +692,19 @@ export class WorktreeWalks {
     notices?: WorktreeNotices;
     looks?: WorktreeLooks;
     onWatching?: (watching: boolean) => void;
+    sessionWatch?: () => TreeWatch | undefined;
   } = {}) {
     this.#gapMs = options.gapMs ?? WORKTREE_WALK_GAP_MS;
     this.#fullWalkMs = options.fullWalkMs ?? WORKTREE_FULL_WALK_MS;
     this.#notices = options.notices ?? new WorktreeNotices();
     this.#looks = options.looks ?? new WorktreeLooks();
     this.#onWatching = options.onWatching;
+    this.#sessionWatch = options.sessionWatch;
+  }
+
+  /** A watch of a session folder through the engine watch these walks take their notices from; undefined without one. */
+  sessionWatch(): TreeWatch | undefined {
+    return this.#sessionWatch?.();
   }
 
   watch(watcher: WorktreeWatcher): WorktreeWatch {
@@ -575,7 +748,7 @@ export class WorktreeWalks {
   #schedule(): void {
     const due = this.#dueAt();
     if (this.#walk !== undefined) {
-      if (due !== undefined && due <= Date.now()) this.#wake?.();
+      if (due !== undefined && due <= pacingNow()) this.#wake?.();
       return;
     }
     if (due === undefined) return;
@@ -599,18 +772,18 @@ export class WorktreeWalks {
    */
   async #walkWhenDue(): Promise<void> {
     try {
-      for (let due = this.#dueAt(); due !== undefined && due > Date.now(); due = this.#dueAt()) {
-        if (!(await this.#sleep(due - Date.now()))) break;
+      for (let due = this.#dueAt(); due !== undefined && due > pacingNow(); due = this.#dueAt()) {
+        if (!(await this.#sleep(due - pacingNow()))) break;
       }
       if (this.#dueAt() === undefined) return;
-      const startedAt = Date.now();
+      const startedAt = pacingNow();
       let askers: readonly Watching[] = [];
       this.#walking = true;
       try {
         askers = await this.#walkOnce();
       } finally {
         this.#walking = false;
-        const end = Date.now();
+        const end = pacingNow();
         for (const watching of askers) watching.nextWalkAt = end + Math.max(this.#gapMs, end - startedAt);
         this.#askNoticed();
       }
@@ -701,9 +874,20 @@ export class WorktreeWalks {
 
   async #settled(watching: Watching): Promise<void> {
     while (!watching.closed && (watching.answered < watching.asked || watching.taking !== undefined)) {
+      this.#walkNowFor(watching);
       await this.#walk?.catch(() => undefined);
       await watching.taking;
     }
+  }
+
+  /**
+   * Starts now the walk `watching` asks for and its gap still holds back: the gap is the only wait of a timed walk, and
+   * what settles a session waits for is what that walk finds, not the pacing. One running is not joined.
+   */
+  #walkNowFor(watching: Watching): void {
+    if (!watching.requested) return;
+    watching.nextWalkAt = Math.min(watching.nextWalkAt, pacingNow());
+    this.#schedule();
   }
 
   async #unwatch(watching: Watching): Promise<void> {
@@ -760,7 +944,12 @@ export class WorktreeWalks {
 
   /** One walk, for every session asking and every session sharing a worktree with one; returns the sessions that asked. */
   async #walkOnce(): Promise<Watching[]> {
-    const starts = this.#start();
+    // A walk with nothing to learn begins at once, and each session's start takes the list its learn step read. After a
+    // wait, each reads the registry as it is then, a worktree added meanwhile included.
+    const prepared = this.#prepare();
+    const learning = [...prepared.values()].flatMap(learnt => (learnt?.kind === "learning" ? [learnt.done] : []));
+    if (learning.length > 0) await Promise.allSettled(learning);
+    const starts = this.#start(learning.length === 0 ? prepared : new Map());
     this.#forget([...starts.values()].map(walk => rootsOf(walk)));
     this.#watchRegistries(starts.values());
     const askers = [...starts.keys()].filter(watching => watching.requested);
@@ -836,13 +1025,22 @@ export class WorktreeWalks {
     this.#departed = this.#departed.filter(departed => (found.get(departed.checkout)?.readFrom ?? -Infinity) <= departed.closedAt);
   }
 
-  /** Each open session's part in the walk beginning now; one that cannot say has its request dropped. */
-  #start(): Map<Watching, WatcherWalk> {
+  /** Each watching session's {@link WorktreeWatcher.prepare}, through the walks' Git reads, which stop with the last session. */
+  #prepare(): Map<Watching, WorktreeListLearning | undefined> {
+    const git = this.#git;
+    return new Map(this.#watching.map(watching => [watching, preparedBy(watching.watcher, git)]));
+  }
+
+  /**
+   * Each open session's part in the walk beginning now, given the list its learn step stored where `prepared` holds one;
+   * one that cannot say has its request dropped.
+   */
+  #start(prepared: ReadonlyMap<Watching, WorktreeListLearning | undefined>): Map<Watching, WatcherWalk> {
     const starts = new Map<Watching, WatcherWalk>();
     for (const watching of [...this.#watching]) {
       let walk: WatcherWalk | undefined;
       try {
-        walk = watching.watcher.start();
+        walk = watching.watcher.start(storedRegistry(prepared.get(watching)));
       } catch {
         walk = undefined;
       }
@@ -1006,7 +1204,7 @@ export class WorktreeWalks {
     const readAt = Date.now();
     const result = await this.#readWorktree(root, begun, state);
     if (result === undefined) return undefined;
-    const { texts: _texts, listed: _listed, changes: _changes, ...findings } = result.findings;
+    const { texts: _texts, listed: _listed, byHead: _byHead, changes: _changes, ...findings } = result.findings;
     if (this.#watched(root)) {
       this.#kept.set(root, {
         findings, retry: retried(result.scan), skipped: state.skipped, look: state.look, readAt, trackedIgnored: state.trackedIgnored,
@@ -1017,8 +1215,10 @@ export class WorktreeWalks {
   }
 
   /** What a walk hands on of a worktree it did not read: what was kept, no text, and Git's listing for a session's first sight. */
-  async #keptFindings(root: string, kept: Kept, firstSeen: ReadonlySet<string>): Promise<Omit<WorktreeFindings, "inner">> {
-    return { ...kept.findings, texts: new Map(), listed: await listedFor(this.#git, root, firstSeen, kept.findings.checkouts), changes: [] };
+  async #keptFindings(root: string, kept: Kept, firstSeen: ReadonlyMap<string, number>): Promise<Omit<WorktreeFindings, "inner">> {
+    const { head, snapshot, checkouts } = kept.findings;
+    const listings = await listedFor(this.#git, { root, head, sources: snapshot.sources }, firstSeen, checkouts);
+    return { ...kept.findings, texts: new Map(), ...listings, changes: [] };
   }
 
   /** Whether an open session watched `root` as the last walk began. */
@@ -1064,11 +1264,13 @@ export class WorktreeWalks {
       if (scan === undefined) continue;
       this.#notices.read(root, scan.seen);
       const { snapshot, texts } = nextSnapshot(previous, scan);
+      tellRead(previous, snapshot);
       const changes = previous === undefined ? [] : changesBetween(previous, snapshot);
-      const listed = await listedFor(this.#git, root, begun.firstSeen, scan.checkouts);
+      const listings = await listedFor(this.#git, { root, head: read.head, sources: snapshot.sources }, begun.firstSeen, scan.checkouts);
       const findings = {
-        snapshot, texts, head: read.head, unmerged: read.unmerged, checkouts: scan.checkouts, listed,
-        failedRoots: scan.failedRoots, gaveUp: scan.gaveUp === true, errors: scan.errors, unread: scan.unread, readFrom: read.observedAt,
+        snapshot, texts, head: read.head, unmerged: read.unmerged, checkouts: scan.checkouts, ...listings,
+        failedRoots: scan.failedRoots, leftOut: scan.seen.leftOut, gaveUp: scan.gaveUp === true, errors: scan.errors, unread: scan.unread,
+        readFrom: read.observedAt,
         changes,
       };
       return { findings, scan };
@@ -1103,13 +1305,20 @@ export class WorktreeWalks {
       for (let next = watching.waiting; next !== undefined && !watching.closed; next = watching.waiting) {
         watching.waiting = undefined;
         watching.takingPart = next.walk;
-        await next.walk.take(next.found, next.records).catch(() => undefined);
+        await next.walk.take(next.found, next.records, read => this.#inTurn(read)).catch(() => undefined);
         watching.answered = Math.max(watching.answered, next.answers);
       }
     } finally {
       watching.taking = undefined;
       watching.takingPart = undefined;
     }
+  }
+
+  /** The sessions' reads of the walks they take, one after another ({@link ReadTurn}). */
+  #inTurn<T>(read: () => Promise<T>): Promise<T> {
+    const turn = this.#reads.then(read);
+    this.#reads = turn.then(() => undefined, () => undefined);
+    return turn;
   }
 }
 
@@ -1123,6 +1332,11 @@ export class RepositoryWorktreeWalks {
   readonly #options: { gapMs?: number; fullWalkMs?: number };
   readonly #treeWatch: SharedTreeWatch | undefined;
   /**
+   * Where each worktree's top folder is on disk, for every session of every repository: kept while the watch shows
+   * nothing moved it (`FolderPlaces`), through a user of the watch of its own.
+   */
+  readonly places: FolderPlaces;
+  /**
    * By repository, the walk its sessions watch, dropped once none does: nothing of an idle walk is worth keeping, and
    * a folder the catalog does not know is a repository of its own.
    */
@@ -1132,6 +1346,7 @@ export class RepositoryWorktreeWalks {
     const { treeWatch, ...walks } = options;
     this.#options = walks;
     this.#treeWatch = treeWatch === undefined ? undefined : new SharedTreeWatch(treeWatch);
+    this.places = new FolderPlaces({ watch: this.#treeWatch?.user({ flagsOnly: true }) });
   }
 
   /** The walk of the repository `repository` names, the same for every checkout of it (its clone id). */
@@ -1141,6 +1356,8 @@ export class RepositoryWorktreeWalks {
     const walks: WorktreeWalks = new WorktreeWalks({
       ...this.#options,
       notices: new WorktreeNotices({ treeWatch: this.#treeWatch?.user() }),
+      // A session folder's watch is one more user of the engine watch the walks share (`SessionNotices`).
+      sessionWatch: () => this.#treeWatch?.user(),
       // A session handed this walk before it was dropped brings it back while no other took its place.
       onWatching: watching => {
         if (!watching && this.#walks.get(repository) === walks) this.#walks.delete(repository);

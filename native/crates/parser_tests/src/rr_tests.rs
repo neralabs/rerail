@@ -168,23 +168,23 @@ const CASES: &[(&str, &str)] = &[
     // back after its `)`. The file goes to the engine.
     ("r(x) :- (x + 1) > 1.", "never"),
     // `.violation`: parts in any order, continuation lines, the words as names elsewhere.
-    (".violation v(at: loc, c: symbol) code {c} in \"E[0-9]+\" tag {at} \"m {c}\"\nfix safe v_fix \"a fix\"\nsuppress ruff \"E501\", \"W291\" over {at}\noptions { \"a\": [1, {\"b\": 2}] }\nr(x) :- s(x).", "parses"),
-    (".violation v(at: loc) code \"X1\" \"m\"\n.violation w(at: loc) \"n\" fix safe \"d\" fix f \"e\"\n.decl code(fix: number, tag: t)", "parses"),
+    (".violation v(at: place, c: symbol) code {c} in \"E[0-9]+\" tag {at} \"m {c}\"\nfix safe v_fix \"a fix\"\nsuppress ruff \"E501\", \"W291\" over {at}\noptions { \"a\": [1, {\"b\": 2}] }\nr(x) :- s(x).", "parses"),
+    (".violation v(at: place) code \"X1\" \"m\"\n.violation w(at: place) \"n\" fix safe \"d\" fix f \"e\"\n.decl code(fix: number, tag: t)", "parses"),
     ("r(code, tag, fix, safe, suppress, over, options, in, violation) :- code(x), fix = 1.", "parses"),
-    (".violation\nv(at: loc) tag { t } code { c } \"m\" // c\n/* d */ suppress t \"r\"", "parses"),
+    (".violation\nv(at: place) tag { t } code { c } \"m\" // c\n/* d */ suppress t \"r\"", "parses"),
     // `fix`, `suppress`, `options` starting a clause right after a `.violation`, and `over` a
     // fact after a `suppress` line: the engine reads the word only before what follows it.
-    (".violation v(at: loc) \"m\"\nfix(x) :- s(x).", "parses"),
-    (".violation v(at: loc) \"m\"\nsuppress(x) :- s(x).\n.violation w(at: loc) \"m\"\noptions(x).", "parses"),
-    (".violation v(at: loc) \"m\"\nsuppress t(x) :- s(x).", "never"),
-    (".violation v(at: loc) \"m\"\nsuppress t \"r\"\nover(x).\nfix(1).", "parses"),
-    (".violation v(at: loc) \"m\" fix /* c */ f // d\n \"e\" suppress t /* c */ \"r\" over /* c */ {at}\noptions // c\n{}\nfix(y).", "parses"),
-    (".violation v(at: loc) \"m\"\nfix safe \"d\"\nfix safe s \"e\"\nfix \"x\".", "never"),
-    (".violation v(at: loc) \"m\"\noptions = 1.", "never"),
+    (".violation v(at: place) \"m\"\nfix(x) :- s(x).", "parses"),
+    (".violation v(at: place) \"m\"\nsuppress(x) :- s(x).\n.violation w(at: place) \"m\"\noptions(x).", "parses"),
+    (".violation v(at: place) \"m\"\nsuppress t(x) :- s(x).", "never"),
+    (".violation v(at: place) \"m\"\nsuppress t \"r\"\nover(x).\nfix(1).", "parses"),
+    (".violation v(at: place) \"m\" fix /* c */ f // d\n \"e\" suppress t /* c */ \"r\" over /* c */ {at}\noptions // c\n{}\nfix(y).", "parses"),
+    (".violation v(at: place) \"m\"\nfix safe \"d\"\nfix safe s \"e\"\nfix \"x\".", "never"),
+    (".violation v(at: place) \"m\"\noptions = 1.", "never"),
     // A column in braces that is no single name: one `raw_text` leaf, nested braces counted.
-    (".violation v(at: loc) code {at.code} tag { } \"m\"", "parses"),
-    (".violation v(at: loc) code { /* c */ at } tag {a {b} c} \"m\" suppress t \"r\" over {x y}\n.violation w(at: loc) code {at} \"m\" suppress t \"r\" over { at }", "parses"),
-    (".violation v(at: loc) code {at \"m\"", "never"),
+    (".violation v(at: place) code {at.code} tag { } \"m\"", "parses"),
+    (".violation v(at: place) code { /* c */ at } tag {a {b} c} \"m\" suppress t \"r\" over {x y}\n.violation w(at: place) code {at} \"m\" suppress t \"r\" over { at }", "parses"),
+    (".violation v(at: place) code {at \"m\"", "never"),
     // A `` `` `` with none after it in the file's bytes: the empty literal, read on after it.
     ("r(x) :- x = replace(c, ``).", "parses"),
     ("r(x) :- y = ``a``, z = `b`, x = replace(c, ``). // c", "parses"),
@@ -288,9 +288,15 @@ const CASES: &[(&str, &str)] = &[
     (".fixtures a\n.fixtures b\n.end\n.end", "never"),
     ("r(x).\n.end", "never"),
     (".test a\nr(x).", "never"),
-    // `.input` with no relation, before an `#include` (`io_bare`'s `hash_word`, a keyword's
-    // token), a comment between: the engine refuses it, so every step does.
+    // `.input` with no relation, before an `#include` (a keyword's token, not a `.`: `io_none` does not
+    // hold, and a relation is read), a comment between: the engine refuses it, so every step does.
     (".input #include \"a\"", "never"),
+    // A setting's JSON object on its line, a word after it; one over lines ends the setting, as the lean parser asks
+    // whether a word is on its line from the word before's first byte (decision 0673 step 4).
+    (".s {} x\nr(x).", "parses"),
+    (".s {\"a\": {\"b\": 1}} x y\n", "parses"),
+    (".s {\n} x\nr(x).", "never"),
+    (".s {\"a\": {\n}} x\n", "never"),
     (". /* a\n b */input // c\n#include \"a\"", "never"),
 ];
 
@@ -385,13 +391,13 @@ fn rr_cases_parse() {
 fn a_refused_mark_is_checked() {
     let source = grammar().remove(0).1;
     assert_eq!(rerail_cpu_stream::ladder::compile_error(&source), None);
-    let refuse = "refuse json_bad in json_document json_inner_object json_inner_array";
+    let refuse = "refuse json_bad in json_document json_array";
     for (from, to, why) in [
-        (refuse, "refuse json_bad in json_document json_inner_object", "calls one that does not"),
-        (refuse, "refuse json_bad in json_document json_member json_inner_object json_inner_array", "no nested level"),
-        (refuse, "refuse json_bad in source_file json_document json_inner_object json_inner_array", "the root"),
-        ("hidden float_at line newline policy_on json_bad fix_on", "hidden float_at line newline policy_on fix_on", "no hidden mark"),
-        ("merge json_object ']'", "merge json_object ']' [merge json_object '.']", "may end only after its last token"),
+        (refuse, "refuse json_bad in json_document", "calls one that does not"),
+        (refuse, "refuse json_bad in json_document json_member json_array", "no nested level"),
+        (refuse, "refuse json_bad in source_file json_document json_array", "the root"),
+        ("agg_word json_bad fix_on", "agg_word fix_on", "no hidden mark"),
+        ("(',' json_value)*] ']'", "(',' json_value)*] ']' ['.']", "may end only after its last token"),
     ] {
         assert_eq!(source.matches(from).count(), 1, "{from}");
         let e = rerail_cpu_stream::ladder::compile_error(&source.replace(from, to));
@@ -400,23 +406,29 @@ fn a_refused_mark_is_checked() {
 }
 
 /// `reread R`: the compiler takes a reading only by a name declared once, and gives its rows to
-/// the program (`RETAG m=3` names one; `provisional` fields the program checks at `ACCEPT`).
+/// the program (`RETAG m=3` names one). rr reads no tree again (decision 0673 step 5), so JSON's
+/// grammar is given one: an object's member is a value, and a pair's key that value read again as a string.
 #[test]
 fn a_reading_is_checked() {
-    let source = grammar().remove(0).1;
+    let json = include_str!("../../json_parser/json.bitlex");
+    let (pair, member) = (
+        "  node object nested          = '{' [pair (',' pair)*] '}'\n  node pair                   = key: string ':' value: value\n",
+        "  node object nested          = '{' [member (',' member)*] '}'\n  choice member               = value wrap pair _ reread key ':' value: value\n  reading key                 = root as string, string_content gone, keep escape_sequence '\"'\n",
+    );
+    assert_eq!(json.matches(pair).count(), 1);
+    let source = json.replace(pair, member).replace("  implied pair ':'\n", "");
     assert_eq!(rerail_cpu_stream::ladder::compile_error(&source), None);
     for (from, to, why) in [
-        ("reread parenthesized_strict pattern_tail\n  provisional", "reread nowhere pattern_tail\n  provisional", "no reading of that name"),
-        ("reading parenthesized_strict = ", "reading parenthesized = ", "two of that name"),
-        ("conjunction gone, atom as call", "conjunction gone, conjunction gone, atom as call", "a kind twice"),
+        ("reread key ':'", "reread nowhere ':'", "no reading of that name"),
+        ("  reading key ", "  reading key                 = root gone, keep escape_sequence\n  reading key ", "two of that name"),
+        ("string_content gone,", "string_content gone, string_content gone,", "a kind twice"),
     ] {
         assert_eq!(source.matches(from).count(), 1, "{from}");
         let e = rerail_cpu_stream::ladder::compile_error(&source.replace(from, to));
         assert!(e.as_deref().is_some_and(|e| e.contains(why)), "{to}: {e:?}");
     }
-    let c = rerail_cpu_stream::ladder::compile_step("rr", &source);
-    assert_eq!(c.program.readings.maps.len(), source.lines().filter(|l| l.trim_start().starts_with("reading ")).count());
-    assert_eq!(c.program.readings.provisional, [c.ids.of("field bare")]);
+    let c = rerail_cpu_stream::ladder::compile_step("json", &source);
+    assert_eq!(c.program.readings.maps.len(), 1);
     let rereads = c.native.structural.iter().filter(|b| matches!(b.operation, rerail_compiler::native_ir::StructuralOperation::Reread { .. })).count();
     assert!(rereads > 0, "the words reread");
 }

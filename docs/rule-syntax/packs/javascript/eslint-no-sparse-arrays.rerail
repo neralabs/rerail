@@ -9,7 +9,7 @@
 //   [,]   [1,, 2]   [a, , ,]      → reported, once per hole
 //   [1, 2,]   [, a] = xs  (a pattern, not a literal)     fine
 // No options.
-.violation no_sparse_arrays(at: span) code "no-sparse-arrays" "Unexpected comma in middle of array."
+.violation no_sparse_arrays(at: token) code "no-sparse-arrays" "Unexpected comma in middle of array."
     suppress eslint "no-sparse-arrays"
     suppress oxlint "no-sparse-arrays"
     suppress biome "lint/suspicious/noSparseArray"
@@ -21,9 +21,9 @@ no_sparse_arrays(t) :- hole(_, t).
 // `[` when the gap is the first.
 .stored hole "a gap holding a hole differs from the implied word, so the tape keeps every token in it"
 .stored sep "a comma after an element is stored only where its gap holds a hole or ends the array"
-.decl hole(a: node, t: span)
-hole(a, t) :- kind(a, "array"), first_token(a, b), text(b, "["), token_after(b, t), text(t, ",").
-hole(a, t) :- sep(a, c), token_after(c, t), text(t, ",").
-.decl sep(a: node, c: span)
+.decl hole(a: node, t: token)
+hole(a, t) :- kind(a, "array"), node_to_first_token(a, b), token_text(b, "["), token_next(b, t), token_text(t, ",").
+hole(a, t) :- sep(a, c), token_next(c, t), token_text(t, ",").
+.decl sep(a: node, c: token)
 sep(a, c) :- hole(a, c).
-sep(a, c) :- kind(a, "array"), child(a, x, _), !kind(x, "comment"), token_after(x, c), text(c, ",").
+sep(a, c) :- kind(a, "array"), child(a, x, _), !kind(x, "comment"), node_to_token_after(x, c), token_text(c, ",").

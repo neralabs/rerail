@@ -4,7 +4,8 @@ This group has four data-layer checks, written in `.rerail`, and two libraries:
 
 - `lib/data-layer/purity-ast.rerail` (102 lines) holds the `ast` idioms that the purity and
   authority scripts spell the same way: `ast_walk`, `short_name`, `walk_name`, `body_def`,
-  `last_body_def`, `class_field_name`, `deco_at`, `walk_qualname` and `py_repr`. `short_name` now
+  `last_body_def`, `class_field_name`, `deco_at` and `walk_qualname` (its `py_repr` is now core's
+  `@py_repr` functor). `short_name` now
   sees through parentheses, so `(a.foo)` gives "foo".
 - `lib/data-layer/purity-calls.rerail` (181 lines) is new. It holds pure_lazy_runtime_purity's
   call graph:

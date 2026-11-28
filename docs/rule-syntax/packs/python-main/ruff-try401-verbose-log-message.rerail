@@ -10,7 +10,7 @@
 // TRY401(n): a finding at node n, from clause `verbose-log-message`.
 // Each rule below is one way the JSON `rule` can match.
 // Columns after `at` are the metavariables the JSON's message, anchor or `each` names: one finding per distinct row.
-.violation TRY401(at: node, c: loc, e: loc) "Remove `{e}` from this message: the `exception` call already logs the caught exception and its traceback. Leave it if this logger does not append the traceback."
+.violation TRY401(at: node, c: node, e: node) "Remove `{e}` from this message: the `exception` call already logs the caught exception and its traceback. Leave it if this logger does not append the traceback."
     suppress noqa "TRY401"
 TRY401(n, C, E) :- kind(n, "identifier"), node(_, n, _, _, _), E = n, try401_walked(n, C), ref_site(n, b1),
     main_form(b1, "except").
@@ -45,14 +45,14 @@ try401_level_callee(n) :- kind(n, "parenthesized_expression"), child(n, c10, _),
 
 // exception_call(n): the JSON util `exception-call`, used where the JSON says `matches: "exception-call"`
 //   C: metavariable this relation binds for the calling rule
-.decl try401_exception_call(n: node, c: loc)
+.decl try401_exception_call(n: node, c: node)
 try401_exception_call(n, C) :- kind(n, "call"), node(_, n, _, _, _), C = n, inside(n, p1, "block"),
     child(p2, p1, _), kind(p2, "except_clause"), field(n, "function", c3),
     try401_level_callee(c3), !try401_alt_2(n).
 
 // walked(n): the JSON util `walked`, used where the JSON says `matches: "walked"`
 //   C: metavariable this relation binds for the calling rule
-.decl try401_walked(n: node, c: loc)
+.decl try401_walked(n: node, c: node)
 try401_walked(n, C) :- child(p1, n, _), kind(p1, "argument_list"), child(p2, p1, _),
     kind(p2, "call"), try401_exception_call(p2, C), !kind(n, "keyword_argument"),
     !kind(n, "dictionary_splat").
@@ -62,7 +62,7 @@ try401_walked(n, C) :- child(p4, n, _), try401_walked_parent(p4, C).
 
 // walked_parent(n): the JSON util `walked-parent`, used where the JSON says `matches: "walked-parent"`
 //   C: metavariable this relation binds for the calling rule
-.decl try401_walked_parent(n: node, c: loc)
+.decl try401_walked_parent(n: node, c: node)
 try401_walked_parent(n, C) :- try401_walked(n, C), !kind(n, "attribute").
 
 // handler_type(n): the JSON util `handler-type`, used where the JSON says `matches: "handler-type"`

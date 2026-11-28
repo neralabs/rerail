@@ -53,8 +53,8 @@ up031_identifier_literal(n) :- kind(n, "parenthesized_expression"), child(n, c4,
 // clean_dict(n): the JSON util `clean-dict`, used where the JSON says `matches: "clean-dict"`
 .decl up031_clean_dict(n: node)
 up031_clean_dict(n) :- up031_dict_keys_ok(n),
-    ( line(n, l1), end_line(n, l2), k1 = l2 - l1, k1 = 0
-    ; child(n, c1, _), kind(c1, "pair"), field(c1, "key", c2), up031_code_before_line(c2, l3), line(c2, l4), k2 = l4 - l3, k2 >= 1
+    ( node_line_number(n, l1), node_end_line_number(n, l2), k1 = l2 - l1, k1 = 0
+    ; child(n, c1, _), kind(c1, "pair"), field(c1, "key", c2), up031_code_before_line(c2, l3), node_line_number(c2, l4), k2 = l4 - l3, k2 >= 1
     ).
 
 
@@ -81,7 +81,7 @@ up031_r_simple(n) :- kind(n, "parenthesized_expression"), child(n, c3, _), up031
 
 // first_nonconv(n): the JSON util `first-nonconv`, used where the JSON says `matches: "first-nonconv"`
 //   AT: metavariable this relation binds for the calling rule
-.decl up031_first_nonconv(n: node, at: loc)
+.decl up031_first_nonconv(n: node, at: node)
 up031_first_nonconv(n, AT) :- up031_plain_string(n),
     ( kind(n, "string"), up031_seg_nonconv(n)
     ; kind(n, "concatenated_string"), child(n, c1, _), kind(c1, "string"), up031_seg_nonconv(c1), count : { precedes(s1, c1), kind(s1, "string"), up031_seg_err(s1) } = 0
@@ -92,7 +92,7 @@ up031_first_nonconv(n, AT) :- kind(n, "parenthesized_expression"), child(n, c3, 
 
 // first_nonconv_dict(n): the JSON util `first-nonconv-dict`, used where the JSON says `matches: "first-nonconv-dict"`
 //   AT: metavariable this relation binds for the calling rule
-.decl up031_first_nonconv_dict(n: node, at: loc)
+.decl up031_first_nonconv_dict(n: node, at: node)
 up031_first_nonconv_dict(n, AT) :- up031_plain_string(n),
     ( kind(n, "string"), up031_seg_nonconv_dict(n)
     ; kind(n, "concatenated_string"), child(n, c1, _), kind(c1, "string"), up031_seg_nonconv_dict(c1), count : { precedes(s1, c1), kind(s1, "string"), up031_seg_err(s1) } = 0
@@ -103,7 +103,7 @@ up031_first_nonconv_dict(n, AT) :- kind(n, "parenthesized_expression"), child(n,
 
 // good(n): the JSON util `good`, used where the JSON says `matches: "good"`
 //   AT: metavariable this relation binds for the calling rule
-.decl up031_good(n: node, at: loc)
+.decl up031_good(n: node, at: node)
 up031_good(n, AT) :- up031_plain_string(n),
     ( kind(n, "string"), !up031_seg_bad(n)
     ; kind(n, "concatenated_string"), count : { child(n, c1, _), kind(c1, "string"), up031_seg_bad(c1) } = 0
@@ -113,7 +113,7 @@ up031_good(n, AT) :- kind(n, "parenthesized_expression"), child(n, c2, _), up031
 
 // good_dict(n): the JSON util `good-dict`, used where the JSON says `matches: "good-dict"`
 //   AT: metavariable this relation binds for the calling rule
-.decl up031_good_dict(n: node, at: loc)
+.decl up031_good_dict(n: node, at: node)
 up031_good_dict(n, AT) :- up031_plain_string(n),
     ( kind(n, "string"), !up031_seg_bad_dict(n)
     ; kind(n, "concatenated_string"), count : { child(n, c1, _), kind(c1, "string"), up031_seg_bad_dict(c1) } = 0
@@ -148,7 +148,7 @@ UP031(n) :- n ~ `$S % $R`,
 // UP031_printf_string_formatting_manual(n): findings from clauses `printf-string-formatting-manual`, `printf-string-formatting-annotation-manual`, which say the same.
 // Each rule is one way a JSON `rule` can match.
 // Columns after `at` are the metavariables the JSON's message, anchor or `each` names: one finding per distinct row.
-.violation UP031_printf_string_formatting_manual(at: loc, at: loc) code "UP031" "Rewrite this percent-format string as an f-string or `.format()` by hand: `%d`, `%i`, `%u`, `%c`, `*` widths and unusual dict keys need explicit conversion."
+.violation UP031_printf_string_formatting_manual(at: node, at: node) code "UP031" "Rewrite this percent-format string as an f-string or `.format()` by hand: `%d`, `%i`, `%u`, `%c`, `*` widths and unusual dict keys need explicit conversion."
     suppress noqa "UP031"
 UP031_printf_string_formatting_manual(n, AT) :- n ~ `$S % $R`,
     ( count : { field(n, "right", c1), up031_r_dict(c1) } = 0, field(n, "left", c2), up031_first_nonconv(c2, AT)
@@ -163,7 +163,7 @@ UP031_printf_string_formatting_manual(n, AT) :- (kind(n, "string") ; kind(n, "co
 // UP031_printf_string_formatting_annotation(n): a finding at node n, from clause `printf-string-formatting-annotation`.
 // Each rule below is one way the JSON `rule` can match.
 // Columns after `at` are the metavariables the JSON's message, anchor or `each` names: one finding per distinct row.
-.violation UP031_printf_string_formatting_annotation(at: loc, bin: node) code "UP031" "Replace this percent-format with an f-string or `.format()`; if the right side is a name that may hold a tuple, leave it or unpack it explicitly."
+.violation UP031_printf_string_formatting_annotation(at: node, bin: node) code "UP031" "Replace this percent-format with an f-string or `.format()`; if the right side is a name that may hold a tuple, leave it or unpack it explicitly."
     suppress noqa "UP031"
 UP031_printf_string_formatting_annotation(BIN, n) :- (kind(n, "string") ; kind(n, "concatenated_string")),
     parsed(n, "annotation", r1), has(r1, c2, "binary_operator"), c2 ~ `$S % $R`,
@@ -181,11 +181,11 @@ up031_code_comment_end(p, o) :- child(p, c, _), comment(c, _), node(_, c, _, _, 
 .decl up031_code_before_line(x: node, l: number)
 up031_code_before_line(x, l) :- structural_before(x, g), match("(?s).*\\S\\s*", g),
     ws = @replace_all(g, "(?s)^.*\\S", ""),
-    k = strlen(ws) - strlen(@replace_all(ws, "\n", "")), line(x, lx), l = lx - k.
+    k = strlen(ws) - strlen(@replace_all(ws, "\n", "")), node_line_number(x, lx), l = lx - k.
 up031_code_before_line(x, l) :- structural_before(x, g), match("\\s*", g), child(p, x, _),
     node(_, x, _, s, _), o = s - strlen(g), token(p, _, _, _, o),
     !up031_code_comment_end(p, o), k = strlen(g) - strlen(@replace_all(g, "\n", "")),
-    line(x, lx), l = lx - k.
+    node_line_number(x, lx), l = lx - k.
 up031_code_before_line(x, l) :- structural_before(x, g), match("\\s*", g), child(p, x, _),
     node(_, x, _, s, _), node(_, p, _, ps, _), ps = s - strlen(g),
     up031_code_before_line(p, l).
@@ -382,7 +382,7 @@ up031_alt_1(n) :- child(n, c9, _), kind(c9, "width"), child(n, c10, _),
 
 // alt_14(n): the JSON `any`: n matches if any one of these rules does
 //   AT: metavariable this relation binds for the calling rule
-.decl up031_alt_14(n: node, at: loc)
+.decl up031_alt_14(n: node, at: node)
 up031_alt_14(n, AT) :- child(n, c1, _), up031_first_nonconv(c1, AT), up031_tok_precedes_8(c1),
     count : { child(n, c9, _), up031_r_dict(c9), up031_tok_follows_9(c9) } = 0.
 up031_alt_14(n, AT) :- child(n, c17, _), up031_first_nonconv_dict(c17, AT), up031_tok_precedes_10(c17),

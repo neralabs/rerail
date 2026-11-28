@@ -4736,7 +4736,9 @@ impl Em<'_> {
                 self.line(format!("let {f} = {b}.trailing_zeros() as usize % {w};"));
                 format!("(if {b} >> j & 1 != 0 {{ j }} else {{ {f} }})")
             };
-            self.line(format!("let {addr}: [usize; {w}] = core::array::from_fn(|j| {{ let j = {j}; (({hi}[j] as u64) << 32 | {lo}[j] as u64) as usize }});"));
+            // None running: `NO_LANE`'s zeros (`addrs`).
+            let none = if cx.full { String::new() } else { format!("if bits(&{}) == 0 {{ return NO_LANE.as_ptr() as usize; }} ", cx.cur) };
+            self.line(format!("let {addr}: [usize; {w}] = core::array::from_fn(|j| {{ {none}let j = {j}; (({hi}[j] as u64) << 32 | {lo}[j] as u64) as usize }});"));
         } else if cx.full {
             let at = (0..w).map(|j| format!("(({hi}[{j}] as u64) << 32 | {lo}[{j}] as u64) as usize")).collect::<Vec<_>>().join(", ");
             self.line(format!("let {addr}: [usize; {w}] = [{at}];"));
@@ -4744,9 +4746,10 @@ impl Em<'_> {
             let (b, f) = (self.tmp(), self.tmp());
             self.line(format!("let {b} = bits(&{});", cx.cur));
             self.line(format!("let {f} = {b}.trailing_zeros() as usize % {w};"));
-            // A lane that does not run: the first running one's address (its halves' select, before the pair).
+            // A lane that does not run: the first running one's address (its halves' select, before the pair); none
+            // running (a block entered under a uniform branch none of its lanes takes), `NO_LANE`'s zeros.
             let at = (0..w).map(|j| format!("{{ let j = if {b} >> {j} & 1 != 0 {{ {j} }} else {{ {f} }}; (({hi}[j] as u64) << 32 | {lo}[j] as u64) as usize }}")).collect::<Vec<_>>().join(", ");
-            self.line(format!("let {addr}: [usize; {w}] = [{at}];"));
+            self.line(format!("let {addr}: [usize; {w}] = if {b} == 0 {{ [NO_LANE.as_ptr() as usize; {w}] }} else {{ [{at}] }};"));
         }
         if let Some(k) = key {
             let d = self.ind;
@@ -5831,7 +5834,7 @@ fn each_prelude(p: u32) -> String {
             o.push_str(&format!("#[inline]\nunsafe fn stjf_{name}(v: [uint32x4_t; {n}], mut at: impl FnMut(usize) -> *mut u8) {{\n\tlet x = words{n}(v);\n\tfor j in 0..{} {{\n\t\t(at(j) as *mut {ty}).write_unaligned({val});\n\t}}\n}}\n", 4 * p));
         }
     }
-    o.push_str(&format!("/// Each lane's address of its halves `lo` and `hi`; a lane mask `k` has off, the first on's.\n#[inline(always)]\nunsafe fn addrs(lo: [uint32x4_t; {p}], hi: [uint32x4_t; {p}], k: [uint32x4_t; {p}]) -> [usize; {w}] {{\n\tlet (l, h, b) = (words{p}(lo), words{p}(hi), bits(&k));\n\tlet f = b.trailing_zeros() as usize % {w};\n\tcore::array::from_fn(|j| {{\n\t\tlet j = if b >> j & 1 != 0 {{ j }} else {{ f }};\n\t\t((h[j] as u64) << 32 | l[j] as u64) as usize\n\t}})\n}}\n", w = 4 * p));
+    o.push_str(&format!("/// Where a load reads when no lane of its mask runs (a block entered under a uniform branch none of its lanes\n/// takes): zeros, as a store's lanes that are off write to a sink. Its loads' constant offsets lie inside it.\nstatic NO_LANE: [u8; 4096] = [0; 4096];\n/// Each lane's address of its halves `lo` and `hi`; a lane mask `k` has off, the first on's (none on: `NO_LANE`).\n#[inline(always)]\nunsafe fn addrs(lo: [uint32x4_t; {p}], hi: [uint32x4_t; {p}], k: [uint32x4_t; {p}]) -> [usize; {w}] {{\n\tlet (l, h, b) = (words{p}(lo), words{p}(hi), bits(&k));\n\tif b == 0 {{\n\t\treturn [NO_LANE.as_ptr() as usize; {w}];\n\t}}\n\tlet f = b.trailing_zeros() as usize % {w};\n\tcore::array::from_fn(|j| {{\n\t\tlet j = if b >> j & 1 != 0 {{ j }} else {{ f }};\n\t\t((h[j] as u64) << 32 | l[j] as u64) as usize\n\t}})\n}}\n", w = 4 * p));
     o.push_str(&format!("#[inline(always)]\nunsafe fn bsl_w(k: [uint32x4_t; {p}], a: [uint32x4_t; {q}], b: [uint32x4_t; {q}]) -> [uint32x4_t; {q}] {{\n\tcore::array::from_fn(|r| vbslq_u32(k[r % {p}], a[r], b[r]))\n}}\n", q = 2 * p));
     o.push_str(&format!("#[inline(always)]\nunsafe fn cat_w(a: [uint32x4_t; {p}], b: [uint32x4_t; {p}]) -> [uint32x4_t; {q}] {{\n\tcore::array::from_fn(|r| if r < {p} {{ a[r] }} else {{ b[r - {p}] }})\n}}\n", q = 2 * p));
     o

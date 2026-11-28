@@ -686,6 +686,7 @@ fn dirty_source_reads_reject_symlink_escapes() {
             kind: OverlayKind::Untracked,
         }],
         nested_roots: Vec::new(),
+        volume_answers: Default::default(),
     };
     assert!(workspace.read_source("escape/source.py", u64::MAX).is_err());
     std::fs::remove_dir_all(root).unwrap();
@@ -713,6 +714,7 @@ fn dirty_source_reads_reject_fifos_without_blocking() {
             kind: OverlayKind::Untracked,
         }],
         nested_roots: Vec::new(),
+        volume_answers: Default::default(),
     };
     let (sender, receiver) = std::sync::mpsc::channel();
     let reader = std::thread::spawn(move || {
@@ -811,6 +813,7 @@ fn clean_trees_comparisons_are_linear_for_many_trees_and_overlays() {
             })
             .collect(),
         nested_roots: Vec::new(),
+        volume_answers: Default::default(),
     };
     let clean = workspace
         .clean_trees()
@@ -850,6 +853,7 @@ fn a_tree_whose_prefix_an_overlay_names_is_not_clean() {
             kind: OverlayKind::Untracked,
         }],
         nested_roots: Vec::new(),
+        volume_answers: Default::default(),
     };
     let clean = workspace
         .clean_trees()
@@ -901,6 +905,7 @@ fn tree_workspace(trees: Vec<GitTree>) -> GitWorkspace {
         base_files: Vec::new(),
         overlays: Vec::new(),
         nested_roots: Vec::new(),
+        volume_answers: Default::default(),
     }
 }
 
@@ -1080,4 +1085,39 @@ impl Publish for GitWorkspace {
             .put_source(&bytes, &aliases)
             .map_err(|error| crate::git_workspace::discovery_error("cannot persist workspace source", error))
     }
+}
+
+/// A scoped discovery reads the status of its root alone: what is staged, changed and untracked
+/// under it, as Git lists them there, and nothing beside it.
+#[test]
+fn a_scoped_discovery_reads_the_status_under_its_root_alone() {
+    let root = fixture_directory("scoped-status");
+    std::fs::create_dir_all(root.join("pkg")).unwrap();
+    initialize_repository(
+        &root,
+        &[
+            ("pkg/staged.py", b"before\n"),
+            ("pkg/changed.py", b"before\n"),
+            ("pkg/kept.py", b"kept\n"),
+            ("staged.py", b"before\n"),
+            ("changed.py", b"before\n"),
+        ],
+    );
+    for folder in ["pkg/", ""] {
+        for name in ["staged.py", "changed.py", "new.py"] {
+            std::fs::write(root.join(format!("{folder}{name}")), b"after\n").unwrap();
+        }
+    }
+    run_git(&root, &["add", "--", "pkg/staged.py", "staged.py"]);
+    let under_pkg: Vec<_> = porcelain(&root)
+        .into_iter()
+        .filter(|(_, path)| path.starts_with("pkg/"))
+        .collect();
+    assert_eq!(under_pkg.len(), 3, "{under_pkg:?}");
+
+    let workspace = discover_under(&root.join("pkg")).unwrap();
+
+    assert_eq!(overlay_codes(&workspace), under_pkg);
+    assert!(workspace.clean_source_alias("pkg/kept.py").is_some());
+    std::fs::remove_dir_all(root).unwrap();
 }

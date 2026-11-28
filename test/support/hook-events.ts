@@ -1,13 +1,16 @@
-import { mkdtemp } from "node:fs/promises";
+import { mkdir, mkdtemp, writeFile } from "node:fs/promises";
+import { createServer } from "node:http";
+import type { AddressInfo } from "node:net";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import Database from "better-sqlite3";
 import { Readable } from "node:stream";
 import { afterEach } from "vitest";
-import type { AdapterDelivery, AdapterEvent, RerailEventLoop, SemanticEmbedder } from "../../src/engine/index.js";
+import type { AdapterDelivery, AdapterEvent, EventAnswerFacts, RerailEventLoop, SemanticEmbedder } from "../../src/engine/index.js";
 import { serveHook, type HookInput, type HookOptions, type HookOutput } from "../../src/harness/index.js";
 import { startTestRepository } from "./started-repository.js";
 import { removeFolder } from "./platform/remove-folder.js";
+import { testEngineEndpoint } from "./platform/engine-endpoint.js";
 
 /** Replaces the native model so hooks and runtimes run where the addon is absent. */
 export const testEmbedder: SemanticEmbedder = {
@@ -63,6 +66,40 @@ export function scriptedLoop(script: Readonly<Record<string, readonly AdapterDel
       return script[event.kind] ?? [];
     },
   };
+}
+
+/** `loop`, whose answers carry `facts` beside their deliveries, as a daemon's that knows them answers a hook. */
+export function answering<Loop extends RerailEventLoop>(loop: Loop, facts: EventAnswerFacts): Loop {
+  return Object.assign(loop, { answerFacts: () => facts });
+}
+
+/** A daemon a hook may read from: its loopback dashboard origin and the paths of the requests it has been sent. */
+export interface CountingDaemon {
+  readonly origin: string;
+  readonly requests: string[];
+  close(): Promise<void>;
+}
+
+/**
+ * Records in `home`'s daemon.json a live daemon (this process) whose dashboard is a loopback listener that counts what
+ * it is asked and answers every request 503, so a hook's reads find nothing beyond the bare origin.
+ */
+export async function countingDaemon(home: string): Promise<CountingDaemon> {
+  const requests: string[] = [];
+  const server = createServer((request, response) => {
+    requests.push(new URL(request.url ?? "/", "http://127.0.0.1/").pathname);
+    response.writeHead(503).end();
+  });
+  await new Promise<void>(resolve => server.listen(0, "127.0.0.1", resolve));
+  const origin = `http://127.0.0.1:${(server.address() as AddressInfo).port}/`;
+  await mkdir(home, { recursive: true });
+  await writeFile(join(home, "daemon.json"), JSON.stringify({ pid: process.pid, host: "127.0.0.1", port: (server.address() as AddressInfo).port, url: origin,
+    version: "test", databasePath: join(home, "rerail.sqlite"), kernelSocketPath: testEngineEndpoint(home), ui: "bundled", startedAt: 1, packageRoot: home }));
+  const close = async (): Promise<void> => {
+    server.closeAllConnections();
+    await new Promise(resolve => server.close(resolve));
+  };
+  return { origin, requests, close };
 }
 
 /** Serves one stdin payload through the harness entry and captures both answer streams. */

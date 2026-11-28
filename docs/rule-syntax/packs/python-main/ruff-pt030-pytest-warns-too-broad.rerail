@@ -20,7 +20,7 @@ pt030_warns_callee(n) :- kind(n, "parenthesized_expression"), child(n, c1, _),
 
 // broad_warning(n): the JSON util `broad-warning`, used where the JSON says `matches: "broad-warning"`
 //   W: metavariable this relation binds for the calling rule
-.decl pt030_broad_warning(n: node, w: loc)
+.decl pt030_broad_warning(n: node, w: node)
 pt030_broad_warning(n, W) :- kind(n, "identifier"), node(_, n, _, _, _), W = n,
     ( global_ref(n, "Warning")
     ; global_ref(n, "UserWarning")
@@ -82,7 +82,7 @@ pt030_in_callable_form(n) :- child(p2, n, _), kind(p2, "keyword_argument"), chil
 
 // flagged_warning(n): the JSON util `flagged-warning`, used where the JSON says `matches: "flagged-warning"`
 //   W: metavariable this relation binds for the calling rule
-.decl pt030_flagged_warning(n: node, w: loc)
+.decl pt030_flagged_warning(n: node, w: node)
 pt030_flagged_warning(n, W) :- pt030_broad_warning(n, W),
     ( field(p1, "value", n), pt030_keyword_named(p1), child(p2, p1, _), pt030_unmatched_warns_args(p2)
     ; pt030_pos0(n), child(p3, n, _), pt030_unmatched_warns_args(p3), count : { child(p3, c1, _), pt030_keyword_named(c1) } = 0
@@ -112,7 +112,7 @@ pt030_ann_unmatched_args(n) :- kind(n, "argument_list"), next_sibling(s1, n),
 
 // ann_flagged_warning(n): the JSON util `ann-flagged-warning`, used where the JSON says `matches: "ann-flagged-warning"`
 //   W: metavariable this relation binds for the calling rule
-.decl pt030_ann_flagged_warning(n: node, w: loc)
+.decl pt030_ann_flagged_warning(n: node, w: node)
 pt030_ann_flagged_warning(n, W) :- pt030_broad_warning(n, W),
     ( pt030_tok_follows_12(n), child(p1, n, _), pt030_ann_keyword_named(p1), child(p2, p1, _), pt030_ann_unmatched_args(p2)
     ; pt030_pos0(n), child(p3, n, _), pt030_ann_unmatched_args(p3), count : { child(p3, c1, _), pt030_ann_keyword_named(c1) } = 0
@@ -121,14 +121,14 @@ pt030_ann_flagged_warning(n, W) :- pt030_broad_warning(n, W),
 
 // ann_string_context_manager(n): the JSON util `ann-string-context-manager`, used where the JSON says `matches: "ann-string-context-manager"`
 //   W: metavariable this relation binds for the calling rule
-.decl pt030_ann_string_context_manager(n: node, w: loc)
+.decl pt030_ann_string_context_manager(n: node, w: node)
 pt030_ann_string_context_manager(n, W) :- kind(n, "string"),
     count : { has(n, c1, "escape_sequence"), node(_, c1, _, _, _) } = 0,
     parsed(n, "annotation", r2), within(c3, r2), pt030_alt_11(c3, W).
 
 // ann_string_callable(n): the JSON util `ann-string-callable`, used where the JSON says `matches: "ann-string-callable"`
 //   W: metavariable this relation binds for the calling rule
-.decl pt030_ann_string_callable(n: node, w: loc)
+.decl pt030_ann_string_callable(n: node, w: node)
 pt030_ann_string_callable(n, W) :- kind(n, "string"),
     count : { has(n, c1, "escape_sequence"), node(_, c1, _, _, _) } = 0,
     parsed(n, "annotation", r2), within(c3, r2), pt030_alt_12(c3, W).
@@ -136,7 +136,7 @@ pt030_ann_string_callable(n, W) :- kind(n, "string"),
 // PT030(n): a finding at node n, from clause `context-manager-form`.
 // Each rule below is one way the JSON `rule` can match.
 // Columns after `at` are the metavariables the JSON's message, anchor or `each` names: one finding per distinct row.
-.violation PT030(at: loc, w: node) "Give `pytest.warns({w})` a non-empty `match=` regex, or expect a more specific warning, so an unrelated warning cannot satisfy it."
+.violation PT030(at: node, w: node) "Give `pytest.warns({w})` a non-empty `match=` regex, or expect a more specific warning, so an unrelated warning cannot satisfy it."
     suppress noqa "PT030"
 PT030(W, n) :- pt030_flagged_warning(n, W), !pt030_in_callable_form(n).
 PT030(W, n) :- pt030_ann_string_context_manager(n, W).
@@ -144,7 +144,7 @@ PT030(W, n) :- pt030_ann_string_context_manager(n, W).
 // PT030_callable_form(n): a finding at node n, from clause `callable-form`.
 // Each rule below is one way the JSON `rule` can match.
 // Columns after `at` are the metavariables the JSON's message, anchor or `each` names: one finding per distinct row.
-.violation PT030_callable_form(at: loc, w: node) code "PT030" "`pytest.warns({w}, func)` ignores `match=`; call the function inside `with pytest.warns({w}, match=...):` instead, or expect a more specific warning class."
+.violation PT030_callable_form(at: node, w: node) code "PT030" "`pytest.warns({w}, func)` ignores `match=`; call the function inside `with pytest.warns({w}, match=...):` instead, or expect a more specific warning class."
     suppress noqa "PT030"
 PT030_callable_form(W, n) :- pt030_flagged_warning(n, W), pt030_in_callable_form(n).
 PT030_callable_form(W, n) :- pt030_ann_string_callable(n, W).
@@ -514,12 +514,12 @@ pt030_alt_9(n) :- precedes(s9, n), kind(s9, "keyword_argument"), child(s9, c10, 
 
 // alt_11(n): the JSON `any`: n matches if any one of these rules does
 //   W: metavariable this relation binds for the calling rule
-.decl pt030_alt_11(n: node, w: loc)
+.decl pt030_alt_11(n: node, w: node)
 pt030_alt_11(n, W) :- pt030_ann_flagged_warning(n, W), !pt030_in_callable_form(n).
 pt030_alt_11(n, W) :- pt030_ann_string_context_manager(n, W).
 
 // alt_12(n): the JSON `any`: n matches if any one of these rules does
 //   W: metavariable this relation binds for the calling rule
-.decl pt030_alt_12(n: node, w: loc)
+.decl pt030_alt_12(n: node, w: node)
 pt030_alt_12(n, W) :- pt030_ann_flagged_warning(n, W), pt030_in_callable_form(n).
 pt030_alt_12(n, W) :- pt030_ann_string_callable(n, W).

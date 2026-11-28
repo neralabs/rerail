@@ -13,4 +13,4 @@
 
 .violation F503(at: node) code "F503" "`%`-format string expected sequence but got mapping"
     suppress ruff "F503"
-F503(b) :- percent_fmt(b, _, r, v), pct_positional(v, n), n > 1, mapping_display(r).
+F503(b) :- percent_fmt(b, _, r, _), pct_positional(b, n), n > 1, mapping_display(r).

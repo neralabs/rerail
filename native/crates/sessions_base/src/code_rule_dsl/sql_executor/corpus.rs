@@ -98,7 +98,7 @@ impl Corpus {
     pub fn new(run: Arc<Run>, name: &str, columns: Vec<String>, types: Vec<String>, form: Form, atoms: Arc<Atoms>) -> Self {
         let nullary = types.is_empty();
         let types = if nullary { vec!["int".to_owned()] } else { types };
-        let locations = types.iter().enumerate().filter(|(_, t)| matches!(t.as_str(), "node" | "loc")).map(|(i, _)| i).collect();
+        let locations = types.iter().enumerate().filter(|(_, t)| matches!(t.as_str(), "node" | "place")).map(|(i, _)| i).collect();
         let docs = (0..run.len()).map(|_| OnceLock::new()).collect();
         let mut source = Self { run, name: name.to_owned(), columns, types, form, nullary, atoms, locations, docs, all: OnceLock::new(), per_doc: 1 };
         if source.run.len() > 0 {
@@ -115,7 +115,7 @@ impl Corpus {
             .map(|t| match (t.as_str(), self.form) {
                 _ if self.nullary => None,
                 ("int", _) => Some("number".to_owned()),
-                ("node" | "loc", _) => Some(t.clone()),
+                ("node" | "place", _) => Some(t.clone()),
                 ("sym", _) | (_, Form::Lines) => Some("symbol".to_owned()),
                 _ => None,
             })
@@ -156,7 +156,7 @@ impl Corpus {
         if rows.width() != w {
             return vec![];
         }
-        let integer = |t: &str| matches!(t, "int" | "node" | "loc");
+        let integer = |t: &str| matches!(t, "int" | "node" | "place");
         // A text column's values, each shown (an integer a text column holds: as it is written).
         let shown: Vec<String> = (0..rows.len())
             .flat_map(|i| (0..w).filter(|&c| !integer(&self.types[c])).map(move |c| (i, c)))
@@ -220,17 +220,17 @@ impl Source for Corpus {
         let w = self.width();
         let mut found = rerail_blocks::vector![];
         for &v in values.iter().filter(|v| **v > 0) {
-            let key = if v >= 1 << 32 { v >> 32 } else { v };
+            let key = rerail_blocks::located::document_of(v);
             let Some(&doc) = self.run.by_key.get(&key) else { continue };
             let rows = self.rows_of(doc);
-            found.extend(rows.chunks(w).enumerate().filter(|(_, r)| r[column] == v).map(|(i, _)| PROBE | doc << 32 | i));
+            found.extend(rows.chunks(w).enumerate().filter(|(_, r)| r[column] == v).map(|(i, _)| PROBE | doc << 32 | i)); // bits: a probe's row handle
         }
         Some(found)
     }
     fn value(&self, row: usize, column: usize) -> i64 {
         let w = self.width();
         if row & PROBE != 0 {
-            let (doc, i) = ((row & !PROBE) >> 32, row & 0xffff_ffff);
+            let (doc, i) = ((row & !PROBE) >> 32, row & 0xffff_ffff); // bits: a probe's row handle
             return self.rows_of(doc)[i * w + column];
         }
         self.all()[row * w + column]

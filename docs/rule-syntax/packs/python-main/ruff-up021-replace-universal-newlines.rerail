@@ -42,20 +42,20 @@ up021_drop_keyword(n) :- up021_legacy_keyword(n), child(p1, n, _), kind(p1, "key
 
 // rename_in_string(n): the JSON util `rename-in-string`, used where the JSON says `matches: "rename-in-string"`
 //   K: metavariable this relation binds for the calling rule
-.decl up021_rename_in_string(n: node, k: loc)
+.decl up021_rename_in_string(n: node, k: node)
 up021_rename_in_string(n, K) :- (kind(n, "string") ; kind(n, "concatenated_string")),
     parsed(n, "annotation", r1), within(c2, r1), up021_alt_1(c2, K).
 
 // drop_in_string(n): the JSON util `drop-in-string`, used where the JSON says `matches: "drop-in-string"`
 //   K: metavariable this relation binds for the calling rule
-.decl up021_drop_in_string(n: node, k: loc)
+.decl up021_drop_in_string(n: node, k: node)
 up021_drop_in_string(n, K) :- (kind(n, "string") ; kind(n, "concatenated_string")),
     parsed(n, "annotation", r1), within(c2, r1), up021_alt_2(c2, K).
 
 // UP021(n, detail): findings from clauses `rename-to-text`, `drop-duplicate`. Their messages differ only in
 // `detail`: each rule's head gives its clause's words. Each rule is one way a JSON `rule` can match.
 // Columns after `at` are the metavariables the JSON's message, anchor or `each` names: one finding per distinct row.
-.violation UP021(at: loc, k: node, detail: symbol) "{detail}."
+.violation UP021(at: node, k: node, detail: symbol) "{detail}."
     suppress noqa "UP021"
 UP021(K, n, "Rename the `universal_newlines` keyword to `text`; it is the same option under its current name") :- up021_rename_keyword(n),
     node(_, n, _, _, _), K = n.
@@ -78,12 +78,12 @@ up021_tok_has_1(n) :- node_text(n, g5), !child(n, _, _),
 
 // alt_1(n): the JSON `any`: n matches if any one of these rules does
 //   K: metavariable this relation binds for the calling rule
-.decl up021_alt_1(n: node, k: loc)
+.decl up021_alt_1(n: node, k: node)
 up021_alt_1(n, K) :- up021_rename_keyword(n), K = n.
 up021_alt_1(n, K) :- up021_rename_in_string(n, K).
 
 // alt_2(n): the JSON `any`: n matches if any one of these rules does
 //   K: metavariable this relation binds for the calling rule
-.decl up021_alt_2(n: node, k: loc)
+.decl up021_alt_2(n: node, k: node)
 up021_alt_2(n, K) :- up021_drop_keyword(n), K = n.
 up021_alt_2(n, K) :- up021_drop_in_string(n, K).

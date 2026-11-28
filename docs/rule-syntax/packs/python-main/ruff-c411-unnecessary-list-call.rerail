@@ -10,7 +10,7 @@
 // C411(n): a finding at node n, from clause `unnecessary-list-call`.
 // Each rule below is one way the JSON `rule` can match.
 // Columns after `at` are the metavariables the JSON's message, anchor or `each` names: one finding per distinct row.
-.violation C411(at: loc, call: node) "Remove the outer `list()` call and keep the list comprehension; it already builds a new list."
+.violation C411(at: node, call: node) "Remove the outer `list()` call and keep the list comprehension; it already builds a new list."
     suppress noqa "C411"
 C411(CALL, n) :- c411_target(n), node(_, n, _, _, _), CALL = n.
 C411(CALL, n) :- c411_in_annotation(n, CALL).
@@ -39,12 +39,12 @@ c411_target(n) :- kind(n, "call"), field(n, "function", c1), c411_callee(c1),
 
 // in_annotation(n): the JSON util `in-annotation`, used where the JSON says `matches: "in-annotation"`
 //   CALL: metavariable this relation binds for the calling rule
-.decl c411_in_annotation(n: node, call: loc)
+.decl c411_in_annotation(n: node, call: node)
 c411_in_annotation(n, CALL) :- (kind(n, "string") ; kind(n, "concatenated_string")),
     parsed(n, "annotation", r1), within(c2, r1), c411_alt_1(c2, CALL).
 
 // alt_1(n): the JSON `any`: n matches if any one of these rules does
 //   CALL: metavariable this relation binds for the calling rule
-.decl c411_alt_1(n: node, call: loc)
+.decl c411_alt_1(n: node, call: node)
 c411_alt_1(n, CALL) :- c411_target(n), CALL = n.
 c411_alt_1(n, CALL) :- c411_in_annotation(n, CALL).

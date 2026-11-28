@@ -1076,13 +1076,49 @@ fn json_number_check_equals_the_reference() {
     assert!(refused > 0 && refused < words.len());
 }
 
-/// A check whose byte machine cycles through two or more states (`('a' 'b')*`) would need a loop
-/// over the token's bytes: the compiler refuses it. JSON's, whose only cycles are runs, compiles.
+/// A check whose byte machine cycles through two or more states that one byte enters two of
+/// (`('-' '-' '0')+`) would need a loop over the token's bytes: the compiler refuses it. A cycle
+/// whose state its byte tells (`('-' '0')+`, Python's digits with `_` between) compiles, as do
+/// JSON's runs.
 #[test]
 fn a_check_that_needs_a_byte_loop_is_refused() {
-    let cycle = json_with_check(Some("check number = ('-' '0')+")).map(|_| ()).expect_err("a two-state cycle");
+    let cycle = json_with_check(Some("check number = ('-' '-' '0')+")).map(|_| ()).expect_err("a cycle a byte enters twice");
     assert!(cycle.contains("a cycle through two or more states"), "{cycle}");
+    json_with_check(Some("check number = ('-' '0')+")).expect("a cycle its bytes tell");
     json_with_check(Some("check number = digit+")).expect("runs only");
+}
+
+/// A check whose machine cycles through two states its bytes tell (`digit ('e' digit)*`: digits
+/// with single `e`s between, as Python's with `_`s), a token's check and masks over the file,
+/// equals the reference's grammar on every word of up to five bytes over `-01e`, and on tokens
+/// over the blocks' edges.
+#[test]
+fn a_check_whose_bytes_tell_its_cycle_equals_the_reference() {
+    let with = "check number = ['-'] digit (['e'] digit)*";
+    let text: String = JSON.lines().map(|l| if l.starts_with("check number") { with } else { l }).collect::<Vec<_>>().join("\n");
+    let (p, _) = json_with_check(Some(with)).expect("compiles");
+    let stmts = ::bitlex::syntax::parse(&text).expect("parses");
+    let alphabet = b"-01e";
+    let mut words: Vec<Vec<u8>> = vec![];
+    let mut frontier: Vec<Vec<u8>> = vec![vec![]];
+    for _ in 0..5 {
+        frontier = frontier.iter().flat_map(|w| alphabet.iter().map(move |&b| [w.as_slice(), &[b]].concat())).collect();
+        words.extend(frontier.iter().cloned());
+    }
+    for n in [63, 64, 65, 128] {
+        let pairs: Vec<u8> = (0..n).map(|i| if i % 2 == 0 { b'7' } else { b'e' }).collect();
+        words.push([&pairs[..], b"7"].concat());
+        words.push(pairs.clone());
+        words.push([&pairs[..], b"e7"].concat());
+        words.push([&b"["[..], &pairs, b"7,1ee2]"].concat());
+    }
+    let mut refused = 0;
+    for w in &words {
+        let want = reference_nodes(&stmts, w);
+        assert_eq!(tier2_nodes(&p, w), want, "{:?}", String::from_utf8_lossy(w));
+        refused += usize::from(want.is_none());
+    }
+    assert!(refused > 0 && refused < words.len());
 }
 
 // --- Tier 2: the transducer's words (decision 0087) ----------------------------------------------
@@ -1266,10 +1302,10 @@ fn json_in_clusters_equals_one_function() {
         ("by traffic, at most 40 words", native_cpu_clusters::by_traffic(&native, &traffic, 40)),
         ("a function a rule, native calls", native_cpu_clusters::by_rules(&native)),
         ("a function a rule, optimized", native_cpu_clusters::Cut { speed: true, ..native_cpu_clusters::by_rules(&native) }),
-        ("a word a cluster", native_cpu_clusters::Cut { of: (0..n as u32).collect(), count: n as u32, held: Vec::new(), reload: false, inline_span: false, pass: Vec::new(), speed: false, pick: rerail_compiler::native_cpu_clusters::Pick::Tree, pick_traffic: Default::default(), near: false, unsigned: false, calls: false }),
+        ("a word a cluster", native_cpu_clusters::Cut { of: (0..n as u32).collect(), count: n as u32, held: Vec::new(), reload: false, inline_span: false, pass: Vec::new(), speed: false, pick: rerail_compiler::native_cpu_clusters::Pick::Tree, pick_traffic: Default::default(), near: false, unsigned: false, calls: false, stride: None }),
         // The state in registers: every field, in clusters and in the one function.
         ("by traffic, the state in registers", native_cpu_clusters::Cut { held: (0..Mem::Depth as u32 + 1).collect(), ..native_cpu_clusters::by_traffic(&native, &traffic, 40) }),
-        ("a word a cluster, the state in registers", native_cpu_clusters::Cut { of: (0..n as u32).collect(), count: n as u32, held: (0..Mem::Depth as u32 + 1).collect(), reload: true, inline_span: true, pass: Vec::new(), speed: false, pick: rerail_compiler::native_cpu_clusters::Pick::Tree, pick_traffic: Default::default(), near: false, unsigned: false, calls: false }),
+        ("a word a cluster, the state in registers", native_cpu_clusters::Cut { of: (0..n as u32).collect(), count: n as u32, held: (0..Mem::Depth as u32 + 1).collect(), reload: true, inline_span: true, pass: Vec::new(), speed: false, pick: rerail_compiler::native_cpu_clusters::Pick::Tree, pick_traffic: Default::default(), near: false, unsigned: false, calls: false, stride: None }),
         ("one function, the state in registers", native_cpu_clusters::Cut { held: (0..Mem::Depth as u32 + 1).collect(), ..native_cpu_clusters::Cut::one(n) }),
         ("one function, ctx at each word", native_cpu_clusters::Cut { reload: true, ..native_cpu_clusters::Cut::one(n) }),
         ("by traffic, ctx at each word", native_cpu_clusters::Cut { reload: true, ..native_cpu_clusters::by_traffic(&native, &traffic, 40) }),

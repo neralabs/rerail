@@ -9,23 +9,28 @@ use crate::code_rule_dsl::typing::file_local::Binding;
 use std::collections::BTreeSet;
 use std::path::{Path, PathBuf};
 
-/// Cross-file: `uses` joins one file's imports with another's definitions, and each output reads base relations of
-/// the definitions used, so the split leaves those reads in the cross part.
+/// Cross-file: `uses` joins one file's imports with another's definitions, by the definition's qualified name (no
+/// node crosses, decision 0677), and each output reads base relations of the definitions used, so the split leaves
+/// those reads in the cross part.
 const PROGRAM: &str = r#"
 .decl def(n: node, q: symbol)
 def(n, @dot(m, x)) :- kind(n, "function_definition"), field(n, "name", c), text(c, x), docof(n, d), doc(d, _, m).
 .decl imp(n: node, q: symbol)
 imp(n, @dot(m, x)) :- kind(n, "import_from_statement"), field(n, "module_name", mn), text(mn, m), field(n, "name", xn), text(xn, x).
-.decl uses(n: node, f: node) cross_file
-uses(n, f) :- imp(n, q), def(f, q).
+.decl def_at(d: number, q: symbol)
+def_at(d, q) :- def(f, q), docof(f, d).
+.decl imp_at(d: number, q: symbol)
+imp_at(d, q) :- imp(n, q), docof(n, d).
+.decl uses(a: number, q: symbol) cross_file
+uses(a, q) :- imp_at(a, q), def_at(_, q).
 .decl shape(f: node, k: symbol, l: number, c: number)
-shape(f, k, l, c) :- uses(_, f), child(f, b, _), kind(b, k), line(b, l), col(b, c).
+shape(f, k, l, c) :- def(f, q), uses(_, q), child(f, b, _), kind(b, k), node_line_number(b, l), node_start_column(b, c).
 .decl named(f: node, t: symbol)
-named(f, t) :- uses(_, f), field(f, "name", c), text(c, t).
+named(f, t) :- def(f, q), uses(_, q), field(f, "name", c), text(c, t).
 .decl span(f: node, s: number, e: number)
-span(f, s, e) :- uses(_, f), node(_, f, _, s, e).
+span(f, s, e) :- def(f, q), uses(_, q), node(_, f, _, s, e).
 .decl home(u: node, p: symbol)
-home(u, p) :- uses(u, f), docof(f, d), doc(d, p, _).
+home(u, p) :- imp(u, q), docof(u, a), uses(a, q), def_at(d, q), doc(d, p, _).
 .output shape
 .output named
 .output span
@@ -49,6 +54,8 @@ struct Corpus {
     program: String,
     outputs: &'static [&'static str],
     runs: usize,
+    /// The nodes a chunk holds (`corpus::run`'s `chunk_nodes`): the files one chunk, unless a test splits them.
+    chunk_nodes: usize,
 }
 
 impl Corpus {
@@ -65,7 +72,7 @@ impl Corpus {
         let rule = dir.join("program.rerail");
         std::fs::write(&rule, program).unwrap();
         let program = crate::code_rule_dsl::logic::rr::print_version(&crate::code_rule_dsl::logic::rr::parse_file_version(&rule).unwrap()).unwrap();
-        let c = Corpus { dir, marker, program, outputs, runs: 0 };
+        let c = Corpus { dir, marker, program, outputs, runs: 0, chunk_nodes: 1 << 18 };
         for (file, body) in FILES {
             c.write(file, body);
         }
@@ -87,7 +94,7 @@ impl Corpus {
         self.runs += 1;
         let out = self.dir.join(format!("out{}", self.runs));
         super::TEST_TAPE_CACHE.with(|p| *p.borrow_mut() = Some(store.to_owned()));
-        let report = super::run(&self.program, &self.dir.join("src"), None, &out, "program", Binding::Cpu, 1 << 18).unwrap();
+        let report = super::run(&self.program, &self.dir.join("src"), None, &out, "program", Binding::Cpu, self.chunk_nodes).unwrap();
         let rows = self.outputs.iter().map(|r| crate::code_rule_dsl::logic::plan::output::shown(&out, r).unwrap_or_default().into_iter().collect()).collect();
         (report, rows)
     }
@@ -216,7 +223,10 @@ fn r4_a_base_relations_statistics_are_kept_and_patched_by_an_edit() {
     profile::set(false);
     // Counted, or a source's own from its structure (`doc`'s from its documents, `within`'s from the tree): no row made.
     assert!(cold_counted(&cold), "a cold run counts them: {cold:?}");
-    assert!(all(&warm, "kept", "kept"), "the run after it takes them as kept: {warm:?}");
+    // The run after it counts none: each it takes is kept. Here it takes none: every file a memo hit, and the cross part
+    // reads no base relation since a pushed lookup is narrowed to its reader's nodes and made in the files (decision
+    // 0677). Before, `doc` was read there, and its statistics taken as kept.
+    assert!(warm.iter().all(|x| x.ends_with(": kept") || x.ends_with(": kept at the held nodes")), "the run after it takes them as kept: {warm:?}");
     // A semi-join's at its held nodes too, by the nodes the changed files' exports held and hold (`held_counted`).
     assert!(all(&edit, "patched by the changed documents", "patched by the changed documents") || inside, "an edit patches them, but inside another run's waves: {edit:?}");
 }
@@ -251,7 +261,10 @@ fn a_session_keeps_its_corpus_batch_and_its_base_statistics() {
     profile::set(false);
     assert!(cold_counted(&cold), "a session's first run counts them: {cold:?}");
     assert_eq!(cold_batch, BTreeSet::from(["4 documents made".to_owned()]), "and makes every document");
-    assert!(all(&warm, "kept", "kept"), "the run after it takes them as kept: {warm:?}");
+    // The run after it counts none: each it takes is kept. Here it takes none: every file a memo hit, and the cross part
+    // reads no base relation since a pushed lookup is narrowed to its reader's nodes and made in the files (decision
+    // 0677). Before, `doc` was read there, and its statistics taken as kept.
+    assert!(warm.iter().all(|x| x.ends_with(": kept") || x.ends_with(": kept at the held nodes")), "the run after it takes them as kept: {warm:?}");
     let made = |batch: &BTreeSet<String>, n: usize| batch.len() == 1 && batch.iter().all(|x| x.starts_with(&format!("{n} documents made")));
     assert!(made(&warm_batch, 0), "and makes none: {warm_batch:?}");
     assert!(all(&edit, "patched by the changed documents", "patched by the changed documents"), "an edit patches them: {edit:?}");
@@ -260,7 +273,7 @@ fn a_session_keeps_its_corpus_batch_and_its_base_statistics() {
     assert_eq!(rows, c.fresh(), "the session's outputs after the edit are a fresh run's");
 }
 
-/// `line` and `col` read only at the nodes `uses` holds, each alone in its rule (a join of two would be pushed into the
+/// `line` and `col` read only at the definitions `uses` names, each alone in its rule (a join of two would be pushed into the
 /// file-local part whole), and a span read (`src_line`), which makes `line` and `col` rows of the batch's documents
 /// rather than views of the tape (`Extra::spans`), as the data layer's are; and `docof` joined in a maintained
 /// stratum, whose plan asks its estimate by a column (`setfix`'s lead), so each is a semi-join input whose first column is the node,
@@ -271,16 +284,20 @@ const AT_HELD: &str = r#"
 def(n, @dot(m, x)) :- kind(n, "function_definition"), field(n, "name", c), text(c, x), docof(n, d), doc(d, _, m).
 .decl imp(n: node, q: symbol)
 imp(n, @dot(m, x)) :- kind(n, "import_from_statement"), field(n, "module_name", mn), text(mn, m), field(n, "name", xn), text(xn, x).
-.decl uses(n: node, f: node) cross_file
-uses(n, f) :- imp(n, q), def(f, q).
+.decl def_at(d: number, q: symbol)
+def_at(d, q) :- def(f, q), docof(f, d).
+.decl imp_at(d: number, q: symbol)
+imp_at(d, q) :- imp(n, q), docof(n, d).
+.decl uses(a: number, q: symbol) cross_file
+uses(a, q) :- imp_at(a, q), def_at(_, q).
 .decl at_line(f: node, l: number)
-at_line(f, l) :- uses(_, f), line(f, l).
+at_line(f, l) :- def(f, q), uses(_, q), node_line_number(f, l).
 .decl at_col(f: node, c: number)
-at_col(f, c) :- uses(_, f), col(f, c).
+at_col(f, c) :- def(f, q), uses(_, q), node_start_column(f, c).
 .decl lines(d: number, l: number)
-lines(d, l) :- src_line(d, l, _).
+lines(d, l) :- document_line(d, Rr_line2), line_number(Rr_line2, l).
 .decl at_home(u: node, p: symbol)
-at_home(u, p) :- uses(u, f), docof(f, d), doc(d, p, _).
+at_home(u, p) :- imp(u, q), docof(u, a), uses(a, q), def_at(d, q), doc(d, p, _).
 .output at_line
 .output at_col
 .output lines
@@ -412,25 +429,37 @@ fn a_semi_joins_estimates_scale_its_node_column_alone() {
 
 /// The fixture's program, and a string annotation's tree read across files (a guest, decision 0055; the data
 /// layer's `parsed` annotations): `ann_kids` reads `child` at a guest's root, of the files a file imports from, and
-/// `below` walks a guest's tree in the cross part, so `child` is read at nodes it derives, a base relation whole.
+/// `deep` reads `kind` at the nodes of a guest's tree, which each file's `below` walks (no node is in a cross-file
+/// stratum, decision 0677: the cross part reads a guest's nodes in the outputs alone), and `finding` places a
+/// finding at each of those nodes, decoded off the corpus batch.
 const GUESTS: &str = r#"
 .decl def(n: node, q: symbol)
 def(n, @dot(m, x)) :- kind(n, "function_definition"), field(n, "name", c), text(c, x), docof(n, d), doc(d, _, m).
 .decl imp(n: node, q: symbol)
 imp(n, @dot(m, x)) :- kind(n, "import_from_statement"), field(n, "module_name", mn), text(mn, m), field(n, "name", xn), text(xn, x).
-.decl uses(n: node, f: node) cross_file
-uses(n, f) :- imp(n, q), def(f, q).
+.decl def_at(d: number, q: symbol)
+def_at(d, q) :- def(f, q), docof(f, d).
+.decl imp_at(d: number, q: symbol)
+imp_at(d, q) :- imp(n, q), docof(n, d).
+.decl uses(a: number, q: symbol) cross_file
+uses(a, q) :- imp_at(a, q), def_at(_, q).
 .decl shape(f: node, k: symbol)
-shape(f, k) :- uses(_, f), child(f, b, _), kind(b, k).
+shape(f, k) :- def(f, q), uses(_, q), child(f, b, _), kind(b, k).
 .decl ann(d: number, r: node)
 ann(d, r) :- string_annotation(s), parsed(s, "annotation", r), docof(s, d).
 .decl ann_kids(u: node, k: symbol)
-ann_kids(u, k) :- uses(u, f), docof(f, d), ann(d, r), child(r, c, _), kind(c, k).
-.decl below(u: node, c: node)
-below(u, c) :- uses(u, f), docof(f, d), ann(d, r), child(r, c, _).
-below(u, c) :- below(u, b), child(b, c, _).
+ann_kids(u, k) :- imp(u, q), docof(u, a), uses(a, q), def_at(d, q), ann(d, r), child(r, c, _), kind(c, k).
+.decl below(r: node, c: node)   // each file's: the nodes of its guests' trees, under their roots
+below(r, c) :- ann(_, r), child(r, c, _).
+below(r, c) :- below(r, b), child(b, c, _).
 .decl deep(u: node, k: symbol)
-deep(u, k) :- below(u, c), kind(c, k).
+deep(u, k) :- imp(u, q), docof(u, a), uses(a, q), def_at(d, q), ann(d, r), below(r, c), kind(c, k).
+// A finding at a guest's node, decoded in the cross part (its node and file off the corpus batch, as a pack's are):
+// so the batch holds the guests' documents. The importer is another file's (`a != d`): a read of `imp_at` at no
+// column would be an existence read, staged as a relation of names (decision 0709), and the finding per-file.
+.decl finding(category: symbol, k: symbol, n: node)
+finding("deep", k, c) :- imp_at(a, q), uses(a, q), def_at(d, q), a != d, ann(d, r), below(r, c), kind(c, k).
+.output finding
 .output shape
 .output ann_kids
 .output deep
@@ -554,4 +583,186 @@ fn cold_counted(made: &BTreeSet<String>) -> bool {
     // Counted by the chunks where their rows lay (decision 0458's statistics), or off the batch.
     let how = [": counted", ": counted at the held nodes", ": counted by the chunks, where their rows lay", ": counted by the chunks at their held nodes", own];
     !made.is_empty() && made.iter().all(|x| how.iter().any(|h| x.ends_with(h)))
+}
+
+/// A text test the cross part reads is unioned by the chunks (decision 0494): each counts its files' passing strings,
+/// the run's statistics of it are theirs, and they are given to the corpus batch, whose whole read of it takes them and
+/// makes no document. A
+/// test estimated on a sample (`Source::estimated_statistics`) is not one whose statistics its structure gives: taken
+/// for one, no chunk unioned it, and the cross part's scan of a path test made every document of `all` (27 s of its
+/// CPU, 2026-11-24).
+#[test]
+fn a_text_test_the_cross_part_reads_is_unioned_by_the_chunks() {
+    use crate::code_rule_dsl::logic::profile;
+    const TESTED: &str = r#"
+.decl def(n: node, q: symbol)
+def(n, @dot(m, x)) :- kind(n, "function_definition"), field(n, "name", c), text(c, x), docof(n, d), doc(d, _, m).
+.decl imp(n: node, q: symbol)
+imp(n, @dot(m, x)) :- kind(n, "import_from_statement"), field(n, "module_name", mn), text(mn, m), field(n, "name", xn), text(xn, x).
+// `uses(a, q)`: file a imports q, which a file defines, by document key and name (no node crosses, decision 0677).
+.decl def_at(d: number, q: symbol)
+def_at(d, q) :- def(f, q), docof(f, d).
+.decl imp_at(d: number, q: symbol)
+imp_at(d, q) :- imp(n, q), docof(n, d).
+.decl uses(a: number, q: symbol) cross_file
+uses(a, q) :- imp_at(a, q), def_at(_, q).
+.decl used_in(d: number, x: symbol) cross_file
+used_in(d, x) :- uses(d, x).
+// The relations that span files are declared so (decision 0652).
+// A document's path, read across files whole (`packages`): an input of the cross part. `home` joins it and a test of
+// it to a cross-file relation by a document's number alone, so no node keys a file-local helper of them and the cross
+// part reads the test: `export_names`' second rule's shape.
+.decl dpath(d: number, p: symbol) cross_file
+dpath(d, p) :- doc(d, p, _).
+.decl packages(p: symbol) cross_file
+packages(p) :- dpath(_, p), @rx_matches(p, "[.]py$") = 1.
+.decl home(d: number, p: symbol, x: symbol) cross_file
+home(d, p, x) :- used_in(d, x), dpath(d, p), @rx_matches(p, "^[bc][.]py$") = 1.
+.output home
+.output packages
+"#;
+    let mut c = Corpus::with("text-test-unioned", TESTED, &["home", "packages"]);
+    let _run = crate::code_rule_dsl::logic::run::scope(crate::code_rule_dsl::logic::native::width::Settings::from_env);
+    profile::set(true);
+    let made = {
+        let _run = crate::code_rule_dsl::logic::run::scope(crate::code_rule_dsl::logic::native::width::Settings::from_env);
+        profile::take_decisions();
+        let (_, rows) = c.run();
+        every_output_has_rows(&rows);
+        profile::take_decisions()
+    };
+    profile::set(false);
+    let tests: Vec<&String> = made.keys().filter(|(t, x)| t == "the base relations' statistics (decision 0458)" && x.starts_with("strtest_")).map(|(_, x)| x).collect();
+    assert!(!tests.is_empty(), "the cross part reads a text test: {:?}", made.keys().filter(|(t, x)| t.contains("0458") || t.contains("text") || x.contains("strtest")).collect::<Vec<_>>());
+    for x in &tests {
+        assert!(x.ends_with(": counted by the chunks, where their rows lay"), "a text test's statistics are the chunks' union: {x}");
+    }
+    // The union is the corpus batch's: a whole read of the test there takes it, and makes no document.
+    let given: BTreeSet<&str> = made.keys().filter(|(t, _)| t == "a text test's passing strings given (decision 0494)").filter_map(|(_, x)| x.split(':').next()).collect();
+    for x in &tests {
+        let rel = x.split(':').next().unwrap_or_default();
+        assert!(given.contains(rel), "{rel}: the chunks' passing strings are given to the corpus batch: {given:?}");
+    }
+}
+
+/// A relation a batch makes, that no count gives, is measured on a sample of its documents once a mix, by the chunks
+/// of its plan window (Q88): a later chunk of the mix scales that measure, its rows' count its source's where one is
+/// known with no row made (`Source::known_len`), else the measured chunk's per document. Asked its `estimated_len`
+/// there, each chunk made its sample, a matcher wave of its own before the wave that made the rest (the `all` run: 25
+/// more waves, 6.9 s of CPU, 2026-11-24).
+#[test]
+fn a_kept_measure_is_scaled_without_a_sample_of_each_chunk() {
+    use crate::code_rule_dsl::logic::profile;
+    // The run's window (two sets of the chunks at once, at least the plans' window).
+    let window = crate::code_rule_dsl::logic::plan::corpus::plan_window() as u64;
+    // `PROGRAM`, and a file-local test of a document's path (a node's text is read in place, no text test): a text
+    // test each chunk reads, its scan priced by its sample.
+    const PROGRAM_TESTED: &str = concat!(
+        "\n.decl qnamed(f: node, p: symbol)\n",
+        "qnamed(f, p) :- kind(f, \"function_definition\"), docof(f, d), doc(d, p, _), @rx_matches(p, \"m1[0-9][.]py$\") = 1.\n",
+        ".output qnamed\n"
+    );
+    let program = format!("{PROGRAM}{PROGRAM_TESTED}");
+    let mut c = Corpus::with("kept-measure-scaled", &program, &["shape", "named", "span", "home", "qnamed"]);
+    // More chunks than the run's window (about 2.4 files a chunk), every file Python: one mix.
+    for i in 0..(3 * window as usize).max(24) {
+        c.write(&format!("m{i}.py"), &format!("from a import f\n\ndef q{i}(v):\n    return f(v)\n"));
+    }
+    c.chunk_nodes = 48;
+    let _run = crate::code_rule_dsl::logic::run::scope(crate::code_rule_dsl::logic::native::width::Settings::from_env);
+    profile::set(true);
+    let made = {
+        let _run = crate::code_rule_dsl::logic::run::scope(crate::code_rule_dsl::logic::native::width::Settings::from_env);
+        profile::take_decisions();
+        let (_, rows) = c.run();
+        every_output_has_rows(&rows);
+        profile::take_decisions()
+    };
+    profile::set(false);
+    let by_rel = |title: &str| {
+        let mut by: std::collections::BTreeMap<String, u64> = std::collections::BTreeMap::new();
+        for ((t, x), n) in &made {
+            if t == title {
+                *by.entry(x.split(':').next().unwrap_or_default().to_owned()).or_default() += n;
+            }
+        }
+        by
+    };
+    let mut sampled = by_rel("a relation measured on a sample of its batch's documents (decision 0494)");
+    let tests = by_rel("a text test measured on a sample of its batch's documents (decision 0494)");
+    assert!(!tests.is_empty(), "a chunk measures a text test on a sample: {:?}", made.keys().filter(|(t, x)| t.contains("text test") || x.contains("strtest")).collect::<Vec<_>>());
+    sampled.extend(tests);
+    let scaled = by_rel("a kept measure scaled to a chunk (Q88)");
+    assert!(!sampled.is_empty(), "a chunk measures a relation on a sample: {:?}", made.keys().filter(|(t, _)| t.contains("0494")).collect::<Vec<_>>());
+    for (rel, n) in &sampled {
+        let reused = scaled.get(rel).copied().unwrap_or(0);
+        assert!(reused > 0, "{rel}: the chunks past the plan window scale its kept measure ({n} sampled; sampled {sampled:?}, scaled {scaled:?})");
+        assert!(*n <= window, "{rel}: measured on a sample by the plan window's chunks alone, not by each of {}: {n}", n + reused);
+    }
+}
+
+/// An `ast` atom of two captures, one of many nodes (`$$$R`): at each root W's matcher matched, a row for each node of
+/// the product of its captures' nodes, the root's first (`captured_rows`, its rows laid flat a tape at a time).
+#[test]
+fn an_ast_atoms_captures_give_the_product_of_their_nodes() {
+    const PROGRAM_AST: &str = concat!(
+        "\n.decl argrest(a: symbol, r: symbol)\n",
+        "argrest(a, r) :- ast(d, f, {\"language\": \"python\", \"syntax\": \"valid\", \"rule\": {\"pattern\": \"f($A, $$$R)\"}}, A: x, R: y), text(x, a), text(y, r).\n",
+        ".output argrest\n"
+    );
+    let program = format!("{PROGRAM}{PROGRAM_AST}");
+    let mut c = Corpus::with("ast-product", &program, &["shape", "named", "span", "home", "argrest"]);
+    c.write("e.py", "f(b, c, d)\nf(e)\nf(g, h)\n");
+    let (_, rows) = c.run();
+    let want: BTreeSet<Vec<String>> = [["b", "c"], ["b", "d"], ["g", "h"]].iter().map(|r| r.iter().map(|s| s.to_string()).collect()).collect();
+    assert_eq!(rows[4], want, "the product of A's node and each of R's, at each call matched");
+}
+
+/// Decision 0689: `text` read by node alone in the cross part, of a node nothing else there binds (`said`: the text of
+/// each node inside a definition another file uses, `within` it), is read in its versions. (Its nodes were reached by
+/// a recursion across files, `reach`, as `same_some` was; decision 0677 keeps every node out of the cross part's own
+/// relations, so `uses` is by document key and name and the output reaches the nodes by the tree's axis.) An edit that changes a node's text and keeps its id (`return x` to `return y`, one
+/// granule: the `return`, its value and the definition each) reaches `said` as `text`'s change alone; one that
+/// retracts the binding (no file imports `f`) reads the text the node had. The outputs are a cold run's after each.
+#[test]
+fn a_text_read_by_node_alone_follows_an_edit_of_its_node_kept() {
+    const SAID: &str = r#"
+.decl def(n: node, q: symbol)
+def(n, @dot(m, x)) :- kind(n, "function_definition"), field(n, "name", c), text(c, x), docof(n, d), doc(d, _, m).
+.decl imp(n: node, q: symbol)
+imp(n, @dot(m, x)) :- kind(n, "import_from_statement"), field(n, "module_name", mn), text(mn, m), field(n, "name", xn), text(xn, x).
+.decl def_at(d: number, q: symbol)
+def_at(d, q) :- def(f, q), docof(f, d).
+.decl imp_at(d: number, q: symbol)
+imp_at(d, q) :- imp(n, q), docof(n, d).
+.decl uses(a: number, q: symbol) cross_file
+uses(a, q) :- imp_at(a, q), def_at(_, q).
+.decl said(r: node, t: symbol) cross_file
+said(f, t) :- def(f, q), uses(_, q), text(f, t).
+said(r, t) :- def(f, q), uses(_, q), within(r, f), text(r, t).
+.output said
+"#;
+    let mut c = Corpus::with("said", SAID, &["said"]);
+    let (_, rows) = c.run();
+    let said = |rows: &[BTreeSet<Vec<String>>]| -> BTreeSet<String> { rows[0].iter().map(|r| r[1].clone()).collect() };
+    let first = said(&rows);
+    assert!(first.contains("return x") && first.contains("f(y)"), "the texts inside f and g: {first:?}");
+    // What `said` holds after each edit, and what it does not.
+    let edits: &[(&str, &str, &[&str], &[&str])] = &[
+        // The text of `return`'s value changes; its node is kept, and the `return`'s and the definition's.
+        ("a.py", "def f(x):\n    return y\n\ndef k():\n    pass\n", &["return y", "y", "f(y)"], &["return x"]),
+        // c.py still imports f, and g.
+        ("b.py", "def g(y, z):\n    return f(y)\n", &["return y", "f(y)"], &[]),
+        // No file imports f or g: `said` retracts what each of their nodes was read as.
+        ("c.py", "def h():\n    pass\n", &[], &["return y", "f(y)"]),
+        ("a.py", "def f(x):\n    return w\n\ndef k():\n    pass\n", &[], &["return w"]),
+        ("b.py", "from a import f\n\ndef g(y, z):\n    return f(y)\n", &["return w", "w"], &["return y"]),
+    ];
+    for (file, body, has, lacks) in edits {
+        c.write(file, body);
+        let (_, rows) = c.run();
+        let now = said(&rows);
+        assert!(has.iter().all(|t| now.contains(*t)) && lacks.iter().all(|t| !now.contains(*t)), "after {file}'s edit: {now:?}");
+        assert_eq!(rows, c.fresh(), "after {file}'s edit, the outputs are a cold run's");
+    }
 }

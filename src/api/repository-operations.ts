@@ -52,12 +52,12 @@ import { configureBundledCodeRule } from "../engine/catalog/rule-config.js";
 import { BLOCK_STEERS_NOTE, type RuleMode } from "../engine/catalog/rule-mode.js";
 import { untitledRuleRefusal } from "../engine/catalog/rule-schema.js";
 import { blockModeEnabled, conversationRulesEnabled, experimentOffMessage, type ExperimentalFeature } from "../engine/experimental-features.js";
-import { cachedRecommendRulePacks } from "../engine/catalog/rule-packs.js";
+import { cachedRecommendRulePacks, recentScan, rulePacksThatFit } from "../engine/catalog/rule-packs.js";
 import { worktreeRuleCatalog } from "../engine/catalog/worktree-pack.js";
 import { approve, currentSubject, ruleSubject } from "../engine/catalog/rule-approval.js";
 import { checkouts, libraryRules, repositories, ruleAttachments, ruleSettings, RULE_KINDS } from "../engine/storage/schema.js";
 import { ruleKindOf, type RuleDocument } from "../engine/catalog/rule-store.js";
-import { ApiError, defineOperation, type Operation, type RerailApiStores } from "./operation.js";
+import { ApiError, defineOperation, writtenWhenFree, type Operation, type RerailApiStores } from "./operation.js";
 import {
   approvalSubjectSchema,
   attachmentRecordSchema,
@@ -83,7 +83,7 @@ import {
   startResultSchema,
   targetShape,
 } from "./repository-contracts.js";
-import { rulePackRecommendationsSchema } from "./rule-pack-contracts.js";
+import { publishedRulePacksSchema, rulePackRecommendationsSchema } from "./rule-pack-contracts.js";
 import { rulesDashboardUrl } from "./session-contracts.js";
 
 interface TargetInput {
@@ -345,6 +345,46 @@ function effectiveRuleRecord(rule: EffectiveRule, dates: RuleDates): z.infer<typ
   return { ...ruleDocumentRecord(rule.document, rule.notRun), ...shared };
 }
 
+/** How many rules a repository has, one per rule id however many folders add it, and how many of them run. */
+export interface RepositoryRuleCounts {
+  readonly total: number;
+  readonly on: number;
+}
+
+/**
+ * {@link RepositoryRuleCounts} of repository `repositoryKey`'s own rules (`GET /api/repository/rules` with no checkout),
+ * counted as the dashboard's repository list counts that answer (`ruleCountsOf` in ui/repo-rules.js): a rule runs
+ * where it is on at every folder that adds it, its options apply at each, and Rerail evaluates its document. A
+ * session's count can differ: it reads one checkout's own settings and rules too.
+ */
+export function repositoryRuleCounts(stores: RerailApiStores, repositoryKey: string): RepositoryRuleCounts {
+  const byId = new Map<string, { folders: Set<string>; runs: boolean }>();
+  for (const rule of listRepositoryRules(stores.database(), stores.ruleCatalog(), repositoryKey).rules) {
+    const known = byId.get(rule.document.rule.id) ?? { folders: new Set<string>(), runs: true };
+    byId.set(rule.document.rule.id, known);
+    // A folder already counted for the rule is not counted again, as the dashboard reads only its first entry there.
+    if (known.folders.has(rule.attachmentFolder)) continue;
+    known.folders.add(rule.attachmentFolder);
+    known.runs &&= runsAtFolder(rule);
+  }
+  return { total: byId.size, on: [...byId.values()].filter(rule => rule.runs).length };
+}
+
+/** Whether `rule` runs at the folder that adds it: on, its options apply, and Rerail evaluates its document. */
+function runsAtFolder(rule: EffectiveRule): boolean {
+  if (!rule.on || rule.configError !== null) return false;
+  const record = ruleDocumentRecord(rule.document, rule.notRun);
+  return !("inactive" in record) || record.inactive === undefined;
+}
+
+/** Every repository Rerail knows, as `GET /api/repositories` lists them to a person, each with its {@link repositoryRuleCounts}. */
+export function repositoriesWithRuleCounts(stores: RerailApiStores): { repository: z.infer<typeof repositorySummarySchema>; counts: RepositoryRuleCounts }[] {
+  return listRepositories(stores.database()).map(repository => ({
+    repository: repositorySummary(repository),
+    counts: repositoryRuleCounts(stores, repository.repositoryKey),
+  }));
+}
+
 function libraryRecord(rule: LibraryRule): z.infer<typeof libraryRuleRecordSchema> {
   const shared = {
     revision: rule.revision,
@@ -355,7 +395,7 @@ function libraryRecord(rule: LibraryRule): z.infer<typeof libraryRuleRecordSchem
   };
   return rule.document.kind === "code"
     ? { kind: "code", rule: rule.document.rule, ...shared, ...inactiveOf("code", rule.document.rule) }
-    : { kind: "conversation", rule: rule.document.rule, ...shared };
+    : { kind: "conversation", rule: rule.document.rule, ...shared, ...inactiveOf("conversation", rule.document.rule) };
 }
 
 interface SettingChange {
@@ -597,7 +637,7 @@ export const repositoryOperations: readonly Operation[] = [
     summary: "Turn rules or whole packs on or off, change their mode, or choose whether linters' suppression comments (eslint-disable, noqa, ...) silence them (suppressions: honour or ignore), for the repository or for one checkout (this worktree), optionally in one folder. config sets the option values of one code rule by Rerail over the whole repository (folder \"\"); an unknown option or a value the option does not allow is rejected. null clears a value so the next owner decides; an omitted value is kept. A coding agent may change checkout settings at any time, and the repository's only before it is set up.",
     body: settingsSetBodySchema,
     output: z.object({ settings: z.array(ruleSettingRecordSchema), ...blockNoteShape }),
-    handler: (stores, input, caller) => {
+    handler: async (stores, input, caller) => {
       const target = resolveTarget(stores, input, caller, true);
       const db = stores.database();
       let owner: RuleSetting["owner"];
@@ -616,8 +656,12 @@ export const repositoryOperations: readonly Operation[] = [
       refuseExperimentsOff(changes.map(change => settingModeWrite(db, owner, change)));
       const catalog = checkoutRuleCatalog(stores, target.checkout);
       for (const change of changes) checkSetting(stores, catalog, change);
-      const settings = changes.map(change => mergedSetting(db, owner, change));
-      for (const setting of settings) setRuleSetting(db, setting);
+      // Merged over the settings as the database holds them once the write lock is free, and saved in that transaction.
+      const settings = await writtenWhenFree(stores, database => {
+        const merged = changes.map(change => mergedSetting(database, owner, change));
+        for (const setting of merged) setRuleSetting(database, setting);
+        return merged;
+      });
       return { settings: settings.map(settingRecord), ...blockNote([input.mode]) };
     },
   }),
@@ -751,6 +795,38 @@ export const repositoryOperations: readonly Operation[] = [
         checkoutPath,
         recommendations: cachedRecommendRulePacks(checkoutPath)
           .map(({ pack, ruleCount, reason, folder }) => ({ packId: pack.id, ruleCount, reason, folder })),
+      };
+    },
+  }),
+  defineOperation({
+    id: "rule_packs_published",
+    method: "GET",
+    path: "/api/rule-packs/published",
+    summary: "List the rule packs rerail packs recommend offers, installed or not: each pack published on npm that fits this Rerail, at npm's version, or at the installed version where that stands in (npm cannot give the pack, or the one installed is newer). Each comes with its version, rule count, the version installed if any, and why it is suggested for a checkout when it fits (matched locally, as for the recommendations). A person's read asks npm when no list is held or the one held is a day old, and the first waits for it, but not within five minutes of a read that failed; a coding agent's read only returns what is held. Installs nothing: rerail packs add <id>@<version> installs a pack, then repository_attachments_set adds it.",
+    query: z.object({ ...targetShape }).strict(),
+    output: publishedRulePacksSchema,
+    handler: async (stores, input, caller) => {
+      const reader = stores.publishedRulePacks();
+      if (reader === undefined) throw new ApiError(503, "published-packs-unavailable", "this daemon does not read npm for published rule packs");
+      const target = resolveTarget(stores, input, caller, false);
+      const checkoutPath = await checkoutOnDisk(target);
+      const published = await reader.read(caller.kind === "person");
+      const head = { repositoryKey: target.repository.repositoryKey, checkoutPath };
+      if ("unread" in published) return { ...head, readAt: null, unread: published.unread, packs: [] };
+      const fits = new Map(rulePacksThatFit(recentScan(checkoutPath), published.packs.map(found => found.pack)).map(found => [found.pack.id, found]));
+      const loaded = stores.ruleCatalog().packs;
+      return {
+        ...head,
+        readAt: published.readAt,
+        packs: published.packs.map(({ pack, packageName, version, ruleCount }) => {
+          const fit = fits.get(pack.id);
+          const installed = loaded.get(pack.id);
+          return {
+            id: pack.id, name: pack.name, category: pack.category, covers: pack.covers, publisher: pack.publisher, packageName, version, ruleCount,
+            installedVersion: installed?.packageName === packageName ? installed.version : null,
+            ...(fit === undefined ? {} : { reason: fit.reason, folder: fit.folder }),
+          };
+        }),
       };
     },
   }),

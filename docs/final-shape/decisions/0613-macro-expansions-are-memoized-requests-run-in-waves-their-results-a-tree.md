@@ -690,6 +690,200 @@ So:
 
      A probe that reads the run after the call makes every shape pass: a G13 miscompile that follows the code's
      shape, as `clif_view_field`'s did. Still open.
+   **A hole in a call's arguments, taken whole** (2026-11-23). Boost's `seq.c` on the CPU backend: its runs that
+   stopped at a hole stopped mostly where a call's arguments are read through it (133, against 8 where a name looked
+   past one for `(`), and the holders those stops read again cascade (253). Such a hole is now taken whole into the
+   argument (`lp_collect_hole`) where the callee reads no parameter raw. Taking it whole is a guess that its result's
+   parentheses are balanced and that it has no comma at its depth 0 (unless the argument is the variadic rest).
+   The record carries the guess (`RQ_DELIM`, `RQ_NOCOMMA`). The record's result has a delimiters' summary
+   (`lp_entries_sum`, row 6's `pexp`), written with its live names before its `RQ_FIN`. A wrong guess reads its
+   holders again, as a wrong edge does. A guess made after the result is done is checked at once. A hole in a raw
+   argument keeps the call from being posted (`lp_raw_flat`), and a memo key spells a hole with its shift. The
+   stops in arguments went from 133 to 78. `seq.c` is still refused on the work bound: a piece read again posts
+   nothing, so one of its readings runs past 4 M steps.
+
+   Tried and not kept (`tmp/0613-rereads-post-wip.patch`): a result that acted with its holder marked
+   (`RQ_ACTED`), its key's calls read inline, and a piece read again posting again up to 8 times. That passed on
+   the CPU backend and CUDA, but turned the M3 red (arguments read empty); the delimiter guess alone passes there. It
+   would not have bounded `seq.c` either: 326 of its 816 posts have no key, so they act again on every reading.
+   What bounds it is a reading that waits for a result, then reads it in place.
+
+   **A hole read in place, the design** (2026-11-23). The reading of a piece again is what passes the work bound:
+   it posts nothing, and every hole that decided something made it. A hole decides something at four places:
+   - a name before it that looks for `(`;
+   - a call's arguments read through it where the callee reads a parameter raw, or where its delimiters guess
+     was wrong;
+   - a rescan passing a result with live names;
+   - a `(` after it.
+
+   Each of the four reads the hole's result in place, as a caller takes an argument's request (`lp_arg_take`,
+   `lp_arg_occ`). The pieces:
+   - **Done: read in place.** The run logs an occurrence with room for the request's rows (`LG_TAKE`). It then
+     pushes a node frame over the result's entries, with `xp` the room's base and `def` the hole's shift (a node
+     frame's `def` is unused). `lp_xin` adds the shift to a text token's `st` and to a nested hole's, and a nested
+     node's frame inherits it, as `lp_memo_emit` and `lp_leaves` shift a kept result's text tokens. The frame is
+     then read as any node's: a name's look for `(` goes into it, a call's arguments read through it, a live
+     name in it acts. The serial pass rescans the argument's expanded tokens, painted as they were, and these
+     are those tokens.
+   - **Not done, not started: claimed and read here.** The run claims the record (`pst` of row 6, as an
+     argument's request is claimed), pushes a dead-list frame (`FK_DEAD`) with the record's disabled macros
+     (`lp_dead_list`'s), then the call's raw entries, and reads them inline. The record's queue item is then
+     nothing to read. Its waiters wait on it, so a claimed record with waiters is read by its taker too (`DUP`,
+     as an argument another group reads).
+   - **Being read by another group: the run reads its piece again,** as now. That is no wait across groups.
+   - **The reading again of a piece posts.** Its holes' records are done by then, so each decision above reads in
+     place, and no hole makes it stop. Only an unkeyed record still being read stops it, and the reading after
+     that one posts nothing, which bounds it.
+
+   `seq.c` is the measure: its readings again have to stay under the work bound. The eval tests, the corpus and
+   Boost's other tests stay the serial pass's on the CPU backend, CUDA and the M3.
+
+   **Where Boost's time goes: readings again** (measured 2026-11-24, spark2, CUDA and the CPU backend with 8
+   groups, `array.c`'s two big units, the same counts each):
+   - The pieces' first readings take 825 steps and post 51,852 requests. The readings again take 1,957,461 steps.
+     So 99% of the work is pieces read again inline, posting nothing, one group each. The longest, 266 K steps,
+     bounds the unit.
+   - What made them read again:
+     - a name before a hole looking for its `(`: 68;
+     - a call's arguments read through a hole: 123, 110 of them where the callee reads a parameter raw (`#` or
+       `##`: Boost's `CAT_I` pattern, where taking the hole whole is not allowed);
+     - a result read inline (`RQ_INLINE`): 25; a delimiters guess wrong: 1;
+     - a `(` after a hole, and a live name in a rescan: none.
+   - **Every one of the 191 holes was not done** when the reading reached it: the reading meets the call it just
+     posted a few steps later. So the first need is a wait. Reading a done result in place is the second.
+
+   **Continuations, the design** (2026-11-24). This is §4's "a wait leaves a continuation on the expansion it
+   waits for", built for the two stops above. It replaces the reading again for them; the other stops still
+   read again.
+   - **A run parks.** Where a reading needs a hole's result and the hole is not done, the run stops before the
+     step that needs it (`LP_WAIT`). In a call's arguments, `lp_lex` leaves the hole unread. At a name's look for
+     `(`, the name is kept (`pend`), and the step is read again from the name when the run resumes. Nothing the
+     step did before the look changes its outcome: the lookup, the disabled test and the looked-up set are the
+     same the second time.
+   - **Its state is a park slot.** The run's state is already in device memory (`LpRun`). Parking moves it to one
+     of `LP_PARKS` park slots in `LPRUN`, after a bitmap that claims them, with what lives in registers: the
+     output's scalars (`LpOut`'s, its pointers made again from the arguments) and the piece's bounds, step and
+     kind. This is the executor's own state, its registers spilled, not a block (0353). The group's spare
+     blocks stay with the group.
+   - **It waits on the record.** The slot is added to the record's waiters (row 4's list, `RQ_PARKW` in the
+     waiter's flags) by the same compare-and-swap a memo hit uses. If the list is closed (`RQ_DONEW`), the result
+     is done, the slot is given back, and the run goes on at once.
+   - **It resumes from the queue.** `lp_rq_finish` pushes each park waiter as an item (`LQ_FIN` with
+     `LQ_RESUME`, the slot). The group that takes it moves the state into its own run slot, frees the park slot,
+     and goes on from the step that stopped. It gives no hold count back: the run's reading still holds one,
+     as before.
+   - **No slot free:** the run reads again, as now.
+   - **A done result where a name looks for `(`** is answered by the result's summary. `lp_entries_sum` also
+     gives whether its first token is `(` (`LN_LPAREN`) and whether it is empty (`LN_EMPTY`); an empty result
+     lets the look go on to the next entry. No tokens are read.
+   - **A done result in a call's arguments is read in place,** where taking it whole is not allowed:
+     - Its result's entries are read through a node frame (`FK_NODE`), with `def` a room row (`LG_ROOM`) in
+       the reader's log. The row names the occurrence the hole was posted with (`LG_OCC`, this run's), its shift
+       and its call's row, and room for the request's rows follows it. The occurrence becomes `LG_OCCX`: its rows
+       are made at the room instead (the roll-up walks the request's log there). So rows are made once.
+     - Each entry read through such a frame (`lp_fin`) has its text places moved by the shift (a text token's
+       `st` and `org`, a text span's, a body token's `org`, a nested hole's shift). Its row references are made
+       the reader's: the request's rows the room's, its own call's (row 0) the occurrence's call row, and its
+       raw arguments' (`XP_ARG`) what the occurrence's raw rows hold.
+     - A node in the result is read through a frame of its own with the same room row. It is never taken whole,
+       since its tokens need the shift. The group's look ahead skips such frames.
+     - The memo's captures open around it are not kept: their templates would hold rows that point into
+       this log.
+     - A hole whose occurrence is another run's (one inside a result or a node read here) is found from its room:
+       the room's row standing for it is a row of the room's request's log. That occurrence is made this run's
+       (`lp_occ_mirror`): an `LG_OCC` row and its raw rows, their references made the reader's (`lp_ref_in`: the
+       request's rows the room's, its holder's (`XP_H`) where the holder's rows are, its arguments' what the room's
+       occurrence's raw rows hold, the text's moved by the room's shift). The room's row is marked `LG_MOVED` and
+       names it, and the roll-up makes its rows there. An argument's token not in the occurrence's raw rows refuses
+       the mirror before a row is made, and the hole is read again. This holds at any depth: a mirror's room's
+       holder is the room the mirror's own row was moved from.
+   - **A reading again posts.** A piece read again for a stop that is not a hole's posts its calls as requests, as
+     its first reading did, up to `LP_READINGS` (2) readings. Past them it is read inline, posting nothing, as before.
+   - **A memo template holds no place of the text.** A hit on a call that is not a top call is written with no
+     shift (`lp_memo_close`), so a template holding a text token or span, a request's hole, or a node made before
+     the call holding one, would give another place the keeper's tokens (`array.c`: line 230's text in line 229's
+     result). Such a template is not kept (`lp_tpl_placed`, bounded by `LP_TPL_READS`).
+   - **Counts:** the parks, the resumes, the results read in place, and the stops that still read again by
+     reason.
+
+   Tests, before the change: `a_reading_waits_for_its_holes_result` (a name before a hole whose result begins
+   with `(`, and one whose result is empty; `CAT(F(x), y)` with `CAT` reading `##` and `F` posted; nested three
+   deep; a memo hit's hole at another place, its shift), each the serial pass's tokens and `Expansion` rows on the
+   CPU backend with 8 groups and on CUDA, with no piece read again for these stops. Then `array.c`'s readings
+   again on CUDA, against the 1,957,461 steps above.
+
+   **Results** (2026-11-24, spark2, CUDA unless named):
+   - `a_reading_waits_for_its_holes_result` has two more shapes: a result's holes read in a caller's arguments
+     (`ELEM(i, INS(A, x))`, Boost's `ARRAY_ELEM` of an `ARRAY_INSERT`), and the standard's §6.10.3.5 example
+     stringized (Boost's `cpp_standard.cpp`). It passes on the CPU backend and CUDA. On CUDA a hole is often done
+     before its reader reaches it, so whether a shape parks is the device's timing. The test asks that every park
+     resumes, that no hole is read again, and that some hole is waited for or read in place. All 51 eval tests pass
+     on both.
+     - One full CUDA run failed this test's "read again 0" once. It did not come back in 6 full runs, 12 runs alone
+       and 32 runs four at a time.
+   - Bugs found on the way:
+     - `lp_fin` subtracted an argument entry's start twice when its token was not in the occurrence's raw rows;
+     - `lp_ref_in` did not mask an argument token's index to its 30 bits;
+     - a hole passed through as a node's first entry lost the node's space. HEAD read that case again inline.
+   - Boost: 61 of 64 units the serial pass's, the same three `seq.*` refused for capacity as before. GPU time
+     32.8 s over 45 runs, against 79 s before; the serial pass 21.8 s.
+   - `array.c` (its two big units): the longest piece is 180,408 steps, against 266 K. Pieces read again: 47.
+     There are 185 parks, all resumed, 1,269 holes read in place and no hole read again.
+   - The C and C++ corpus: 3,135 of 3,135 units the serial pass's, none refused, 0.30 s GPU against 2.1 s serial.
+   - What bounds Boost now: the readings again past `LP_READINGS`, inline, and the longest piece's chain of
+     requests one after another.
+   - **Then (2026-11-24): the arguments collected a window at a time, and two roll-up fixes.**
+     - Where the time went: `array.c` has no readings past `LP_READINGS`. About 70% of a long request's steps
+       collected arguments, one entry a step, at every level that passes a 256-element tuple on. The longest chain is
+       `BOOST_PP_WHILE`'s, each iteration's state its next one's argument: serial in the serial pass too. More request
+       levels (`LP_RQ_LEVELS` 16, not 4) doubled the steps, and stayed at 4.
+     - The collector reads lists and nodes (`FK_LIST`, `FK_STOP`, a node not a room) as it reads the text: the
+       group looks at the next 64 entries (`LQ_LPUNCT`, `lp_lwindow`: each entry's punctuator class, a span with no
+       delimiter of at most `LP_WSPAN` tokens one entry), and the run takes the entries before the next `(`, `)` or
+       stop in one step (`lp_collect_lrun`), commas at depth 0 included, in both windows.
+     - `array.c`'s big unit, CPU backend: 1.85 M steps in all to 0.88 M; the longest request 229 K to 99 K.
+       Collecting from lists 717 K to 268 K, from nodes 376 K to 73 K.
+     - The roll-up's two bugs, found by `expansions_are_the_serial_passes` on CUDA (3 failures in 20 runs at the step
+       before, 9 in 20 with the windows: more holes read in place):
+       - A room's request's holder's rows (`XP_H`) were read as the reader's own; where the hole is a result's read
+         in another room they are that room's. The room's row keeps that offset (its `st`, the frame's `hoff`), and
+         the roll-up adds it.
+       - A token of a node inside a room's result reaches the room's first row (its request's own call, no row of
+         its own) rebased by `lp_xin` alone, not through `lp_fin`. The roll-up reads that row as the occurrence's
+         call row. `INS`'s `SIZE`, `T2` and `DATA` had lost their parent there.
+       - After: 0 failures in 25 runs on CUDA; the 51 eval tests pass on the CPU backend and CUDA.
+     - Boost: 61 of 64 units the serial pass's, the same three `seq.*` refused (a batch past 4 GiB, reported as a
+       device error), 31.0 s GPU against 32.8 s. The corpus: 3,135 of 3,135, none refused, 0.30 s GPU.
+   - **Then (2026-11-25): an argument passed on is a reference, whatever its size** (§4's arguments as references,
+     which the collector windows above had only made cheaper per entry).
+     - What was not built: an argument's expansion of one entry was passed on bare, never a node. A span (a macro's
+       body, or the text's own tokens) has no summary, so each call it was passed on to read all its tokens again:
+       to find its arguments' commas, and again to look its names up. A 256-element tuple passed 7 levels on cost
+       174 steps more on the CPU backend (2 elements: 38).
+     - Now a span of more than `LP_NODE_SPAN` (8) tokens that is an argument's expansion is a node of one entry
+       (`lp_node_arg`). Its summary is made once, on the first read (`lp_node_sum`), and every later call takes it
+       whole. The same 7 levels cost 27 steps for 256 elements (the body's) and 25 (the text's).
+     - Two places a node of one span must be read as its span:
+       - a memo template's hole: a hit fills it with its own argument (`lp_node_one_span`, `lp_hole_entry`,
+         `lp_hole_fill`);
+       - a call posted as a request: its raw tokens are its holders' by their index (`XP_ARG`), which has no form for
+         a node's entries (`lp_raw_flat` refused them, and the calls ran inline: `array.c` 2.23 M steps). At posting
+         such a node is its span again (`lp_raw_unwrap`).
+     - `array.c`'s big unit, CPU backend: 787 K steps against 880 K, the longest piece 86.7 K against 99.4 K; the memo
+       keeps 4,966 results (4,983 before).
+     - Test: `an_argument_passed_on_costs_nothing_for_its_size` (a tuple of 2 and of 256 elements, a macro's body and
+       written in the text, 1 and 8 levels deep: the extra levels cost what they cost for 2 elements, and the tuple
+       is read twice in all, a 32-token window a step).
+     - Validation (spark2): the 52 eval tests pass on the CPU backend and CUDA. Boost on CUDA, run alone: 61 of 64,
+       the same three refused, 30.5 s GPU against 31.0 s. The corpus: 3,135 of 3,135, 0.31 s GPU.
+       `a_disabled_macro_paints_alike_in_a_memoized_expansion` failed once on CUDA in a full suite run, its message not
+       kept; it passed 3 full suite runs and 42 runs alone or four at a time after. Its arguments are at most 8
+       tokens, so none of this step's paths is reached there.
+     - Still a cost of the argument's size, not counted in steps: sealing a node hashes its tokens' spelling
+       (`lp_node_seal`), and a memo key hashes its arguments' spelling, both on one thread; a posted call's request
+       makes its argument's node again. A request's raw arguments are still copied into its record (`lp_rq_post`,
+       `lp_rq_begin`), and a node's tokens still have their origins in each run's log, not the tree (§6).
+
 3. **Measure the result.** The slowest piece's chain against today's 1.35 ms; the batch's GPU time against the
    serial pass on all cores.
 

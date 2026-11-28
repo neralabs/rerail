@@ -129,7 +129,7 @@ Tier 2 can now be lowered in clusters (`native_cpu_clusters`, `native_cpu_stream
   index of the place it enters at. Its first block picks that place (a jump table).
 - **A jump to another cluster's word is a tail call** (`return_call`) with the word's index.
   No stack grows.
-- **The state stays in memory**, in `tempo_stream`'s stack frame. Its address is in the pinned
+- **The state stays in memory**, in `rerail_stream`'s stack frame. Its address is in the pinned
   register (x21), which no cluster allocates. Passed as an argument, the allocator spilled it,
   and every access of the state first reloaded the address: 16K more loads.
 - **One cluster is the old function**, unchanged: its state in its own frame, no driver.

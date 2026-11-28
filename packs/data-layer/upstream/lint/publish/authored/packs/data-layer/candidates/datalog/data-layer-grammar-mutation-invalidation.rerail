@@ -100,4 +100,4 @@ mutation_construction(c, y) :- mutation_construction(c, x), mutation_edge(c, x, 
 mutation_runtime(c, x) :- mutation_edge(c, x, _), !prefix("_", x).
 mutation_runtime(c, y) :- mutation_runtime(c, x), mutation_edge(c, x, y).
 mutation_satisfied(c, x) :- mutation_edge(c, _, x), mutation_construction(c, x), !mutation_runtime(c, x).
-violation("data-layer-grammar-mutation-invalidation", "mutation", "MUTATION_WITHOUT_INVALIDATION", p, l) :- mutation_subject(d, c, f, x), !mutation_satisfied(c, x), doc(d, p, _), line(f, l).
+violation("data-layer-grammar-mutation-invalidation", "mutation", "MUTATION_WITHOUT_INVALIDATION", p, l) :- mutation_subject(d, c, f, x), !mutation_satisfied(c, x), doc(d, p, _), node_line_number(f, l).

@@ -25,7 +25,7 @@ dfi_contract("relation_scope").
 
 // dfi_file(d): the source triggers.
 .decl dfi_file(d: number)
-dfi_file(d) :- source(d, sp), text(sp, s), match("(?s).*(type|getattr|hasattr)\\(.*", s).
+dfi_file(d) :- document_source(d, sp), line_text(sp, s), match("(?s).*(type|getattr|hasattr)\\(.*", s).
 // dfi_pos(c, i, a): a is call c's i-th positional argument (`*xs` included, as in ast's Call.args).
 .decl dfi_pos(c: node, i: number, a: node)
 dfi_pos(c, i, a) :- kind(c, "call"), field(c, "arguments", al), kind(al, "argument_list"), child(al, a, j),

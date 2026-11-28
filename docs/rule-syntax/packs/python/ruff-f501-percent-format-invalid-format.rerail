@@ -16,4 +16,4 @@
 .violation F501(at: node) code "F501"
     "Fix this malformed %-format string, such as an incomplete specifier or an unclosed %(key) name."
     suppress ruff "F501"
-F501(b) :- percent_fmt(b, _, _, v), pct_error(v, "invalid").
+F501(b) :- percent_fmt(b, _, _, _), pct_error(b, "invalid").

@@ -9,7 +9,7 @@
 // Each rule below is one way the JSON `rule` can match.
 // Columns after `at` are the metavariables the JSON's message, anchor or `each` names: one finding per distinct row.
 // The JSON `transform` computes C1, C10, C11, C12, C13, C14, C15, C16, C17, C18, C19, C2, C20, C21, C22, C23, C24, C3, C4, C5, C6, C7, C8, C9, CALLS, LINE from other metavariables' text; its literals end each rule.
-.violation D402(at: node, name: loc) "Reword this docstring's first line so it no longer spells `{name}(...)`; say what the function does, since the signature already shows its parameters."
+.violation D402(at: node, name: node) "Reword this docstring's first line so it no longer spells `{name}(...)`; say what the function does, since the signature already shows its parameters."
     suppress noqa "D402"
 D402(n, NAME) :- d402_docstring(n), child(n, c2, _), kind(c2, "string_content"),
     node(_, c2, _, _, _), DOC = c2, inside(n, p3, "function_definition"), field(p3, "name", c4),

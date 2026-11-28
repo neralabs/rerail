@@ -46,7 +46,7 @@ class_fn(f) :- kind(f, "method_definition"), child(b, f, _), kind(b, "class_body
 class_fn(f) :- hook_anon(f), child(m, f, _), kind(m, "field_definition"), field(m, "value", f).
 // `// $FlowFixMe[react-rule-hook]` on the line above silences the call.
 .decl flow_fixme(c: node)
-flow_fixme(c) :- hook_call(c, _), line(c, l), docof(c, d), kind(k, "comment"), docof(k, d), end_line(k, l - 1),
+flow_fixme(c) :- hook_call(c, _), node_line_number(c, l), docof(c, d), kind(k, "comment"), docof(k, d), node_end_line_number(k, l - 1),
     contains("$FlowFixMe[react-rule-hook]", k).
 
 // useEffectEvent(f) returns a function for effects only. The call must be stored (`const x = …`) or stand alone.

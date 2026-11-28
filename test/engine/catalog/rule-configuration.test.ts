@@ -7,6 +7,7 @@ import {
   listRepositoryRules,
   loadCheckoutRuleSet,
   removeAttachment,
+  repositoryRulesVersionReader,
   ruleConfigurationSignature,
   setRuleSetting,
   setUpRepository,
@@ -23,7 +24,7 @@ import {
   testBundle,
 } from "../../support/rule-configuration-builders.js";
 import { eq } from "drizzle-orm";
-import { ruleSettings } from "../../../src/engine/storage/schema.js";
+import { repositories, ruleSettings, sessions } from "../../../src/engine/storage/schema.js";
 
 const WORKTREE = "/work/app-feature";
 const OTHER_CHECKOUT = "/work/app";
@@ -336,6 +337,38 @@ describe("rule configuration writes", () => {
     // The dashboard, the API and MCP write without an origin: the row is the person's from then on.
     setRuleSetting(db, repositorySetting("", "rule", "no-var", { on: true, mode: "block" }));
     expect(origin()).toEqual([{ targetId: "no-var", origin: null }]);
+  });
+});
+
+describe("repositoryRulesVersionReader", () => {
+  it("stays as it is for a session's records, and moves with a repository's rules, set-up, name or on/off", async () => {
+    const db = await workedExample();
+    const version = repositoryRulesVersionReader(db);
+    let last = version();
+    const moved = (): boolean => {
+      const now = version();
+      const changed = now !== last;
+      last = now;
+      return changed;
+    };
+
+    db.insert(sessions).values({ sessionId: "s1", host: "omp", cwd: "/work/app", repositoryId: REPOSITORY, startedAt: 1 }).run();
+    expect(moved()).toBe(false);
+
+    setRuleSetting(db, repositorySetting("web", "rule", "no-var", { on: false, mode: null }));
+    expect(moved()).toBe(true);
+    addAttachment(db, { repositoryKey: REPOSITORY, folder: "api/", sourceKind: "pack", sourceId: "lint" }, 20);
+    expect(moved()).toBe(true);
+    removeAttachment(db, { repositoryKey: REPOSITORY, folder: "api/", sourceKind: "pack", sourceId: "lint" });
+    expect(moved()).toBe(true);
+    db.update(repositories).set({ started: false }).where(eq(repositories.repositoryKey, REPOSITORY)).run();
+    expect(moved()).toBe(true);
+    db.update(repositories).set({ displayName: "renamed" }).where(eq(repositories.repositoryKey, REPOSITORY)).run();
+    expect(moved()).toBe(true);
+    addRepository(db, OTHER_REPOSITORY);
+    expect(moved()).toBe(true);
+    setUpRepository(db, OTHER_REPOSITORY, { packs: [] }, 30);
+    expect(moved()).toBe(true);
   });
 });
 

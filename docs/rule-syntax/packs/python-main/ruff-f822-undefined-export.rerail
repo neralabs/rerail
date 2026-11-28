@@ -11,7 +11,7 @@
 // F822(n): a finding at node n, from clause `undefined-export`.
 // Each rule below is one way the JSON `rule` can match.
 // Columns after `at` are the metavariables the JSON's message, anchor or `each` names: one finding per distinct row.
-.violation F822(at: node, s: loc) "Undefined name {s} in `__all__`"
+.violation F822(at: node, s: node) "Undefined name {s} in `__all__`"
     suppress noqa "F822"
 F822(n, S) :- (kind(n, "string") ; kind(n, "concatenated_string")), node(_, n, _, _, _), S = n,
     docof(n, d2), modnode(d2, m3),

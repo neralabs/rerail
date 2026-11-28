@@ -116,7 +116,7 @@ fn source_lines_are_the_languages_lines() {
 #include "core.rerail"
 #include "data-layer/pub-lines.rerail"
 .decl lines(p: symbol, l: number, s: symbol)
-lines(p, l, s) :- doc(d, p, _), src_line(d, l, sp), text(sp, s), line(sp, l), end_line(sp, l), col(sp, 0).
+lines(p, l, s) :- doc(d, p, _), document_line(d, sp), line_number(sp, l), place_text(sp, s), place_line_number(sp, l), place_end_line_number(sp, l), place_start_column(sp, 0).
 .decl split(l: number, s: symbol)
 split(l, s) :- doc(d, "a.py", _), py_line(d, l, s).
 .decl count(p: symbol, k: number)
@@ -171,15 +171,15 @@ fn source_is_the_files_text() {
     let dir = corpus("source", &files);
     let program = r#"
 .decl doc(d: number, path: symbol, module: symbol)
-.decl source(d: number, sp: span)
-.decl text(n: loc, s: symbol)
-.decl line(n: loc, l: number)
-.decl end_line(n: loc, l: number)
+.decl source(d: number, sp: place)
+.decl text(n: place, s: symbol)
+.decl line(n: place, l: number)
+.decl end_line(n: place, l: number)
 .input doc, source, text, line, end_line
 .decl hit(p: symbol)
-hit(p) :- doc(d, p, _), source(d, sp), text(sp, s), match("(?s).*import os\n\\s+x = 1\r\n", s).
+hit(p) :- doc(d, p, _), document_source(d, sp), place_text(sp, s), match("(?s).*import os\n\\s+x = 1\r\n", s).
 .decl lines(p: symbol, l: number, e: number)
-lines(p, l, e) :- doc(d, p, _), source(d, sp), line(sp, l), end_line(sp, e).
+lines(p, l, e) :- doc(d, p, _), document_source(d, sp), place_line_number(sp, l), place_end_line_number(sp, e).
 .output hit, lines
 "#;
     let got = run(&dir, program, &["hit", "lines"]);
@@ -204,11 +204,11 @@ fn src_lines_are_the_line_table() {
     let source = "a = 1\r\nb = 2\rc = 3\x0cd = 4\n";
     let dir = corpus("tape-lines", &[("a.py", source)]);
     let program = r#"
-.decl src_line(d: number, l: number, sp: span)
-.decl text(n: loc, s: symbol)
+.decl src_line(d: number, l: number, sp: place)
+.decl text(n: place, s: symbol)
 .input src_line, text
 .decl lines(l: number, s: symbol)
-lines(l, s) :- src_line(_, l, sp), text(sp, s).
+lines(l, s) :- document_line(_, sp), line_number(sp, l), place_text(sp, s).
 .output lines
 "#;
     let got = run(&dir, program, &["lines"]);
@@ -234,14 +234,14 @@ fn node_text_and_positions_are_ws_spans() {
 .decl doc(d: number, path: symbol, module: symbol)
 .decl node(d: number, n: node, kind: symbol, start: number, end: number)
 .decl node_text(n: node, s: symbol)
-.decl line(n: loc, l: number)
-.decl end_line(n: loc, l: number)
-.decl col(n: loc, c: number)
+.decl line(n: place, l: number)
+.decl end_line(n: place, l: number)
+.decl col(n: place, c: number)
 .input doc, node, node_text, line, end_line, col
 .decl kinds(k: symbol)
 {}
 .decl spans(p: symbol, k: symbol, l: number, e: number, c: number, s: symbol)
-spans(p, k, l, e, c, s) :- doc(d, p, _), node(d, n, k, _, _), kinds(k), line(n, l), end_line(n, e), col(n, c), node_text(n, s).
+spans(p, k, l, e, c, s) :- doc(d, p, _), node(d, n, k, _, _), kinds(k), node_line_number(n, l), node_end_line_number(n, e), node_start_column(n, c), node_text(n, s).
 .output spans
 "#,
         kinds.iter().map(|k| format!("kinds({k:?}).")).collect::<Vec<_>>().join("\n")
@@ -271,7 +271,7 @@ fn without_spans_text_and_line_are_ts() {
 .decl line(n: node, l: number)
 .input text, line
 .decl t(s: symbol, l: number)
-t(s, l) :- text(n, s), line(n, l).
+t(s, l) :- text(n, s), node_line_number(n, l).
 .output t
 "#;
     assert_eq!(run(&dir, program, &["t"])[0], [["x", "1"], ["y", "2"]]);
@@ -291,7 +291,7 @@ fn a_tree_rooted_at_an_error_node_is_read() {
 .decl syntax_error(d: number)
 .input doc, node, line, syntax_error
 .decl errors(p: symbol, l: number, s: number, e: number)
-errors(p, l, s, e) :- doc(d, p, _), node(d, n, "ERROR", s, e), line(n, l).
+errors(p, l, s, e) :- doc(d, p, _), node(d, n, "ERROR", s, e), node_line_number(n, l).
 .decl invalid(p: symbol)
 invalid(p) :- doc(d, p, _), syntax_error(d).
 .output errors, invalid
@@ -316,16 +316,16 @@ fn base_relations_read_are_inputs() {
     let dir = corpus("span-text", &files);
     let program = r#"
 .decl doc(d: number, path: symbol, module: symbol)
-.decl source(d: number, sp: span)
-.decl text(n: loc, s: symbol)
+.decl source(d: number, sp: place)
+.decl text(n: place, s: symbol)
 .decl syntax_error(d: number)
 .input doc, syntax_error, source
 .decl hit(p: symbol)
-hit(p) :- doc(d, p, _), syntax_error(d), source(d, sp), text(sp, s), contains("ServerPlan", s).
+hit(p) :- doc(d, p, _), syntax_error(d), document_source(d, sp), place_text(sp, s), contains("ServerPlan", s).
 .decl plain(p: symbol)
-plain(p) :- doc(d, p, _), !syntax_error(d), source(d, sp), text(sp, s), contains("x = 1", s).
+plain(p) :- doc(d, p, _), !syntax_error(d), document_source(d, sp), place_text(sp, s), contains("x = 1", s).
 .decl same(p: symbol, q: symbol) cross_file
-same(p, q) :- doc(d, p, _), source(d, sp), text(sp, s), doc(e, q, _), source(e, sq), text(sq, s).
+same(p, q) :- doc(d, p, _), document_source(d, sp), place_text(sp, s), doc(e, q, _), document_source(e, sq), place_text(sq, s).
 .output hit, plain, same
 "#;
     let got = run(&dir, program, &["hit", "plain", "same"]);
@@ -342,14 +342,14 @@ fn no_documents_give_no_rows() {
     let program = r#"
 .decl doc(d: number, path: symbol, module: symbol)
 .decl node(d: number, n: node, kind: symbol, start: number, end: number)
-.decl source(d: number, sp: span)
-.decl src_line(d: number, l: number, sp: span)
-.decl text(n: loc, s: symbol)
+.decl source(d: number, sp: place)
+.decl src_line(d: number, l: number, sp: place)
+.decl text(n: place, s: symbol)
 .input doc, node, source, src_line, text
 .decl calls(p: symbol)
 calls(p) :- doc(d, p, _), node(d, _, "call", _, _).
 .decl lines(p: symbol, s: symbol)
-lines(p, s) :- doc(d, p, _), src_line(d, _, sp), text(sp, s).
+lines(p, s) :- doc(d, p, _), document_line(d, sp), place_text(sp, s).
 .output calls, lines
 "#;
     let empty = corpus("no-docs-empty", &[]);
@@ -373,23 +373,23 @@ fn match_all_is_ws_regex() {
     let dir = corpus("match-all", &files);
     let program = r#"
 .decl doc(d: number, path: symbol, module: symbol)
-.decl source(d: number, sp: span)
-.decl src_line(d: number, l: number, sp: span)
-.decl text(n: loc, s: symbol)
-.decl line(n: loc, l: number)
-.decl end_line(n: loc, l: number)
-.decl col(n: loc, c: number)
+.decl source(d: number, sp: place)
+.decl src_line(d: number, l: number, sp: place)
+.decl text(n: place, s: symbol)
+.decl line(n: place, l: number)
+.decl end_line(n: place, l: number)
+.decl col(n: place, c: number)
 .input doc, source, src_line, text, line, end_line, col
 .decl whole(p: symbol, l: number, e: number, c: number, s: symbol)
-whole(p, l, e, c, s) :- doc(d, p, _), source(d, sp), match_all("needle\\w*", sp, m), line(m, l), end_line(m, e), col(m, c), text(m, s).
+whole(p, l, e, c, s) :- doc(d, p, _), document_source(d, sp), line_regex_match("needle\\w*", sp, m), place_line_number(m, l), place_end_line_number(m, e), place_start_column(m, c), place_text(m, s).
 .decl across(p: symbol, l: number, e: number, c: number)
-across(p, l, e, c) :- doc(d, p, _), source(d, sp), match_all("(?s)needle.end", sp, m), line(m, l), end_line(m, e), col(m, c).
+across(p, l, e, c) :- doc(d, p, _), document_source(d, sp), line_regex_match("(?s)needle.end", sp, m), place_line_number(m, l), place_end_line_number(m, e), place_start_column(m, c).
 .decl lines(p: symbol, l: number, e: number, c: number, s: symbol)
-lines(p, l, e, c, s) :- doc(d, p, _), src_line(d, k, sp), match_all("needle\\w*", sp, m), line(m, l), end_line(m, e), col(m, c), text(m, s), l = k.
+lines(p, l, e, c, s) :- doc(d, p, _), document_line(d, sp), line_number(sp, k), line_regex_match("needle\\w*", sp, m), place_line_number(m, l), place_end_line_number(m, e), place_start_column(m, c), place_text(m, s), l = k.
 .decl pairs(p: symbol, l: number, e: number, c: number, s: symbol)
-pairs(p, l, e, c, s) :- doc(d, p, _), source(d, sp), match_all("aa", sp, m), line(m, l), end_line(m, e), col(m, c), text(m, s).
+pairs(p, l, e, c, s) :- doc(d, p, _), document_source(d, sp), line_regex_match("aa", sp, m), place_line_number(m, l), place_end_line_number(m, e), place_start_column(m, c), place_text(m, s).
 .decl none(p: symbol)
-none(p) :- doc(d, p, _), source(d, sp), !match_all("needle", sp, _).
+none(p) :- doc(d, p, _), document_source(d, sp), !line_regex_match("needle", sp, _).
 .output whole, across, lines, pairs, none
 "#;
     let got = run(&dir, program, &["whole", "across", "lines", "pairs", "none"]);
@@ -422,25 +422,25 @@ fn text_files_are_text_only_documents() {
 .scope text "**/*.md", "**/*.rst", "**/*.txt"
 .decl doc(d: number, path: symbol, module: symbol)
 .decl node(d: number, n: node, kind: symbol, start: number, end: number)
-.decl source(d: number, sp: span)
-.decl src_line(d: number, l: number, sp: span)
+.decl source(d: number, sp: place)
+.decl src_line(d: number, l: number, sp: place)
 .decl line_count(d: number, k: number)
-.decl text(n: loc, s: symbol)
-.decl line(n: loc, l: number)
-.decl end_line(n: loc, l: number)
-.decl col(n: loc, c: number)
+.decl text(n: place, s: symbol)
+.decl line(n: place, l: number)
+.decl end_line(n: place, l: number)
+.decl col(n: place, c: number)
 .decl docs(p: symbol)
 docs(p) :- doc(_, p, _).
 .decl treed(p: symbol)
 treed(p) :- doc(d, p, _), node(d, _, _, _, _).
 .decl advertised(p: symbol)
-advertised(p) :- doc(d, p, _), source(d, sp), text(sp, s), contains("graph_query_builder(", s).
+advertised(p) :- doc(d, p, _), document_source(d, sp), place_text(sp, s), contains("graph_query_builder(", s).
 .decl lines(p: symbol, l: number, s: symbol)
-lines(p, l, s) :- doc(d, p, _), src_line(d, l, sp), text(sp, s).
+lines(p, l, s) :- doc(d, p, _), document_line(d, sp), line_number(sp, l), place_text(sp, s).
 .decl counts(p: symbol, k: number)
 counts(p, k) :- doc(d, p, _), line_count(d, k).
 .decl hits(p: symbol, l: number, e: number, c: number, s: symbol)
-hits(p, l, e, c, s) :- doc(d, p, _), source(d, sp), match_all("needle", sp, m), line(m, l), end_line(m, e), col(m, c), text(m, s).
+hits(p, l, e, c, s) :- doc(d, p, _), document_source(d, sp), line_regex_match("needle", sp, m), place_line_number(m, l), place_end_line_number(m, e), place_start_column(m, c), place_text(m, s).
 .output docs, treed, advertised, lines, counts, hits
 "#;
     let got = run(&dir, program, &["docs", "treed", "advertised", "lines", "counts", "hits"]);
@@ -505,20 +505,20 @@ fn match_group_is_ws_capture() {
     let quoted = re.replace('\\', "\\\\").replace('"', "\\\"");
     let program = r#"
 .decl doc(d: number, path: symbol, module: symbol)
-.decl source(d: number, sp: span)
-.decl src_line(d: number, l: number, sp: span)
-.decl text(n: loc, s: symbol)
-.decl line(n: loc, l: number)
-.decl end_line(n: loc, l: number)
-.decl col(n: loc, c: number)
+.decl source(d: number, sp: place)
+.decl src_line(d: number, l: number, sp: place)
+.decl text(n: place, s: symbol)
+.decl line(n: place, l: number)
+.decl end_line(n: place, l: number)
+.decl col(n: place, c: number)
 .decl groups(p: symbol, g: symbol, l: number, e: number, c: number, s: symbol)
-groups(p, g, l, e, c, s) :- doc(d, p, _), source(d, sp), match_group("RE", sp, _, g, gsp), line(gsp, l), end_line(gsp, e), col(gsp, c), text(gsp, s).
+groups(p, g, l, e, c, s) :- doc(d, p, _), document_source(d, sp), line_regex_group("RE", sp, _, g, gsp), place_line_number(gsp, l), place_end_line_number(gsp, e), place_start_column(gsp, c), place_text(gsp, s).
 .decl lines(p: symbol, g: symbol, l: number, e: number, c: number, s: symbol)
-lines(p, g, l, e, c, s) :- doc(d, p, _), src_line(d, _, sp), match_group("RE", sp, _, g, gsp), line(gsp, l), end_line(gsp, e), col(gsp, c), text(gsp, s).
+lines(p, g, l, e, c, s) :- doc(d, p, _), document_line(d, sp), line_regex_group("RE", sp, _, g, gsp), place_line_number(gsp, l), place_end_line_number(gsp, e), place_start_column(gsp, c), place_text(gsp, s).
 .decl imports(p: symbol, l: number, s: symbol, a: symbol)
-imports(p, l, s, a) :- doc(d, p, _), source(d, sp), match_all("RE", sp, m), line(m, l), match_group("RE", sp, m, "module", ms), text(ms, s), match_group("RE", sp, m, "attr", asp), text(asp, a).
+imports(p, l, s, a) :- doc(d, p, _), document_source(d, sp), line_regex_match("RE", sp, m), place_line_number(m, l), line_regex_group("RE", sp, m, "module", ms), place_text(ms, s), line_regex_group("RE", sp, m, "attr", asp), place_text(asp, a).
 .decl bare(p: symbol, s: symbol)
-bare(p, s) :- doc(d, p, _), source(d, sp), match_group("RE", sp, m, "module", ms), text(ms, s), !match_group("RE", sp, m, "attr", _).
+bare(p, s) :- doc(d, p, _), document_source(d, sp), line_regex_group("RE", sp, m, "module", ms), place_text(ms, s), !line_regex_group("RE", sp, m, "attr", _).
 .output groups, lines, imports, bare
 "#
     .replace("RE", &quoted);
@@ -791,14 +791,14 @@ fn comments_are_ws_comment_nodes() {
     let dir = corpus("comments", &[("a.py", python)]);
     let program = r#"
 .decl comment(n: node, s: symbol)
-.decl line(n: loc, l: number)
-.decl end_line(n: loc, l: number)
-.decl col(n: loc, c: number)
+.decl line(n: place, l: number)
+.decl end_line(n: place, l: number)
+.decl col(n: place, c: number)
 .decl node_text(n: node, s: symbol)
-.decl text(n: loc, s: symbol)
+.decl text(n: place, s: symbol)
 .input comment, line, end_line, col, node_text, text
 .decl comments(l: number, e: number, c: number, t: symbol, s: symbol)
-comments(l, e, c, t, s) :- comment(n, s), line(n, l), end_line(n, e), col(n, c), node_text(n, t), text(n, t).
+comments(l, e, c, t, s) :- comment(n, s), node_line_number(n, l), node_end_line_number(n, e), node_start_column(n, c), node_text(n, t), text(n, t).
 .output comments
 "#;
     let got = run(&dir, program, &["comments"]);
@@ -811,13 +811,13 @@ comments(l, e, c, t, s) :- comment(n, s), line(n, l), end_line(n, e), col(n, c),
     let program = r#"
 .decl node(d: number, n: node, kind: symbol, start: number, end: number)
 .decl comment(n: node, s: symbol)
-.decl line(n: loc, l: number)
-.decl end_line(n: loc, l: number)
-.decl col(n: loc, c: number)
+.decl line(n: place, l: number)
+.decl end_line(n: place, l: number)
+.decl col(n: place, c: number)
 .decl node_text(n: node, s: symbol)
 .input node, comment, line, end_line, col, node_text
 .decl comments(l: number, e: number, c: number, t: symbol, s: symbol)
-comments(l, e, c, t, s) :- comment(n, s), node(_, n, _, _, _), line(n, l), end_line(n, e), col(n, c), node_text(n, t).
+comments(l, e, c, t, s) :- comment(n, s), node(_, n, _, _, _), node_line_number(n, l), node_end_line_number(n, e), node_start_column(n, c), node_text(n, t).
 .output comments
 "#;
     let got = run(&dir, program, &["comments"]);
@@ -855,7 +855,7 @@ fn tree_arithmetic_is_ws_relations() {
     let dir = corpus("tree-arithmetic", &files);
     let program = r#"
 .decl at(n: node, p: symbol, l: number, c: number)
-at(n, p, l, c) :- docof(n, d), doc(d, p, _), line(n, l), col(n, c).
+at(n, p, l, c) :- docof(n, d), doc(d, p, _), node_line_number(n, l), node_start_column(n, c).
 .decl kinds(p: symbol, l: number, c: number)
 kinds(p, l, c) :- kind(n, "call"), at(n, p, l, c).
 .decl within_def(p: symbol, l: number, c: number)
@@ -904,14 +904,14 @@ fn docof_and_unset() {
 empty(x) :- unset(x).
 .decl nodes_unset(n: node)
 nodes_unset(n) :- node(_, n, _, _, _), unset(n).
-.decl wrong(n: node)
+.decl wrong(n: place)
 wrong(n) :- node(d, n, _, _, _), docof(n, e), d != e.
-wrong(sp) :- src_line(d, _, sp), docof(sp, e), d != e.
-.decl undocumented(n: node)
+wrong(sp) :- document_line(d, sp), place_document(sp, e), d != e.
+.decl undocumented(n: place)
 undocumented(n) :- node(_, n, _, _, _), !docof(n, _).
-undocumented(sp) :- src_line(_, _, sp), !docof(sp, _).
+undocumented(sp) :- document_line(_, sp), !line_document(sp, _).
 .decl calls(p: symbol, l: number, c: number)
-calls(p, l, c) :- kind(n, "call"), docof(n, d), doc(d, p, _), line(n, l), col(n, c).
+calls(p, l, c) :- kind(n, "call"), docof(n, d), doc(d, p, _), node_line_number(n, l), node_start_column(n, c).
 .output empty, nodes_unset, wrong, undocumented, calls
 "#;
     let got = run(&dir, program, &["empty", "nodes_unset", "wrong", "undocumented", "calls"]);
@@ -931,7 +931,7 @@ fn op_at_is_the_operators_in_order() {
     let dir = corpus("op-at", &files);
     let program = r#"
 .decl ops(k: symbol, l: number, i: number, s: symbol)
-ops(k, l, i, s) :- op_at(n, i, s), kind(n, k), line(n, l).
+ops(k, l, i, s) :- op_at(n, i, s), kind(n, k), node_line_number(n, l).
 .output ops
 "#;
     let got = run(&dir, program, &["ops"]);
@@ -957,7 +957,7 @@ ops(k, l, i, s) :- op_at(n, i, s), kind(n, k), line(n, l).
 }
 
 /// `prev_token(n, s)` is the text of the child right before n among its parent's stored children, and `token(p, i, s,
-/// start, end)` p's stored children in order. A named-only tape stores no token the grammar implies (RER-131), and
+/// start, end)` p's stored children in order. A named-only tape stores no token the grammar implies (decision 0161), and
 /// no relation holds one: the call's `(`, `)` and `,`, the `from` and the import list's `,` are in neither. A keyword
 /// some other word of its gap holds is stored where implied too: `from m import (a, b)` makes `import` one.
 #[test]
@@ -1077,10 +1077,10 @@ fn a_kind_disjunction_compares_kinds() {
     let dir = corpus("kind-disjunction", &files);
     let program = r#"
 .decl either(p: symbol, l: number, c: number)
-either(p, l, c) :- node(d, n, k, _, _), (k = "call" ; k = "attribute"), doc(d, p, _), line(n, l), col(n, c).
+either(p, l, c) :- node(d, n, k, _, _), (k = "call" ; k = "attribute"), doc(d, p, _), node_line_number(n, l), node_start_column(n, c).
 .decl neither(p: symbol, l: number, c: number)
 neither(p, l, c) :- node(d, n, "identifier", _, _), child(q, n, _), node(_, q, k, _, _), !(k = "call" ; k = "attribute"),
-    doc(d, p, _), line(n, l), col(n, c).
+    doc(d, p, _), node_line_number(n, l), node_start_column(n, c).
 .output either, neither
 "#;
     let got = run(&dir, program, &["either", "neither"]);
@@ -1123,12 +1123,13 @@ calls(n) :- later(n, _).
 
 /// A recursive relation with facts whose every rule joins an empty relation of a lower stratum keeps its facts: the
 /// stratum has no rule to run, but its relations are not held empty (`native_stratum_`; the data-layer pack's
-/// `conditional_derived`, a fact and a rule over the classes' bases, where no class has one).
+/// `conditional_derived`, a fact and a rule over the classes' bases, where no class has one). `e` pairs values of any
+/// two files: a crossing, declared (decisions 0652, 0680).
 #[test]
 fn a_stratum_whose_rules_join_nothing_keeps_its_facts() {
     let dir = corpus("facts-empty-joins", &[TREE]);
     let program = ".decl s(x: number)\ns(n) :- node(_, _, k, n, _), k = \"no_such_kind\".\n\
-                   .decl e(x: number, y: number)\ne(x, y) :- s(x), s(y).\n\
+                   .decl e(x: number, y: number) cross_file\ne(x, y) :- s(x), s(y).\n\
                    .decl d(x: number)\nd(7).\nd(y) :- d(x), e(x, y).\n\
                    .decl out(x: number)\nout(x) :- d(x).\n.output out\n";
     assert_eq!(run(&dir, program, &["out"]), [[["7"]]]);
@@ -1243,7 +1244,7 @@ fn as_is_a_variable() {
     let dir = corpus("as-variable", &files);
     let program = r#"
 .decl args(p: symbol, l: number, c: number)
-args(p, l, c) :- kind(call, "call"), field(call, "arguments", as), kind(as, "argument_list"), docof(as, d), doc(d, p, _), line(as, l), col(as, c).
+args(p, l, c) :- kind(call, "call"), field(call, "arguments", as), kind(as, "argument_list"), docof(as, d), doc(d, p, _), node_line_number(as, l), node_start_column(as, c).
 .output args
 "#;
     assert_eq!(run(&dir, program, &["args"])[0], sorted(w_at(json!({ "kind": "argument_list", "inside": { "kind": "call" } }), &files)));
@@ -1404,14 +1405,14 @@ fn match_group_joined_on_its_match_column() {
 .decl node(d: number, n: node, kind: symbol, start: number, end: number)
 .decl field(p: node, f: symbol, c: node)
 .decl child(p: node, c: node, i: number)
-.decl src_line(d: number, l: number, sp: span)
-.decl text(n: loc, s: symbol)
-.decl line(n: loc, l: number)
-.decl col(n: loc, c: number)
+.decl src_line(d: number, l: number, sp: place)
+.decl text(n: place, s: symbol)
+.decl line(n: place, l: number)
+.decl col(n: place, c: number)
 .decl deco_at(o: node, d: number, l: number, c: number)
-deco_at(o, d, l, c) :- node(d, dd, "decorated_definition", _, _), field(dd, "definition", o), child(dd, dc, _), node(_, dc, "decorator", _, _), line(dc, l), col(dc, c).
+deco_at(o, d, l, c) :- node(d, dd, "decorated_definition", _, _), field(dd, "definition", o), child(dd, dc, _), node(_, dc, "decorator", _, _), node_line_number(dc, l), node_start_column(dc, c).
 .decl deco(l: number, x: symbol)
-deco(l, x) :- deco_at(_, d, l, c), src_line(d, l, sp), match_all("@\\s*(?P<n>[^\\s(]+)", sp, m), match_group("@\\s*(?P<n>[^\\s(]+)", sp, m, "n", g), col(m, c), text(g, x).
+deco(l, x) :- deco_at(_, d, l, c), document_line(d, sp), line_number(sp, l), line_regex_match("@\\s*(?P<n>[^\\s(]+)", sp, m), line_regex_group("@\\s*(?P<n>[^\\s(]+)", sp, m, "n", g), place_start_column(m, c), place_text(g, x).
 .output deco
 "#;
     let got = run(&dir, program, &["deco"]);
@@ -1461,7 +1462,7 @@ fn a_demanded_relation_read_with_constants_alone() {
     let dir = corpus("demand-constants-alone", &[("a.py", source)]);
     let program = r#"
 .decl node(d: number, n: node, kind: symbol, start: number, end: number)
-.decl text(n: loc, s: symbol)
+.decl text(n: place, s: symbol)
 .decl ident(s: symbol)
 ident(s) :- node(_, n, "identifier", _, _), text(n, s).
 .decl other(s: symbol)
@@ -1487,14 +1488,14 @@ fn match_groups_of_one_match_and_a_disjunction() {
     let dir = corpus("match-groups-disjunction", &[("a.py", source)]);
     let quoted = re.replace('\\', "\\\\").replace('"', "\\\"");
     let program = r#"
-.decl source(d: number, sp: span)
-.decl text(n: loc, s: symbol)
-.decl line(n: loc, l: number)
-.decl col(n: loc, c: number)
+.decl source(d: number, sp: place)
+.decl text(n: place, s: symbol)
+.decl line(n: place, l: number)
+.decl col(n: place, c: number)
 .decl dyn_at(fq: symbol, l: number, c: number)
-dyn_at(fq, l, c) :- source(_, sp), match_group("RE", sp, m, "module", gm), match_group("RE", sp, m, "attr", ga), line(m, l), col(m, c), text(gm, mn), text(ga, an), fq = cat(mn, cat(".", an)).
+dyn_at(fq, l, c) :- document_source(_, sp), line_regex_group("RE", sp, m, "module", gm), line_regex_group("RE", sp, m, "attr", ga), place_line_number(m, l), place_start_column(m, c), place_text(gm, mn), place_text(ga, an), fq = cat(mn, cat(".", an)).
 .decl late(fq: symbol)
-late(fq) :- source(_, sp), match_all("RE", sp, m), match_group("RE", sp, m, "module", gm), text(gm, fq), (line(m, l), l > 2 ; col(m, c), c < 5).
+late(fq) :- document_source(_, sp), line_regex_match("RE", sp, m), line_regex_group("RE", sp, m, "module", gm), place_text(gm, fq), (place_line_number(m, l), l > 2 ; place_start_column(m, c), c < 5).
 .output dyn_at, late
 "#
     .replace("RE", &quoted);
@@ -1753,4 +1754,397 @@ fn str_answered_on_request_holds_the_eager_rows() {
     assert_eq!(asked[0].len(), 7, "string rows: {:?}", asked[0]);
     assert_eq!(asked, eager);
     let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// t57 E6: a test `kind(n, #k)` of a node the atom before it bound is read in that atom's row program, a chunk's nodes
+/// at once off the tape (`rowcode::Test::view`, `Source::holds_each`), not a membership step's probe a row. Its rows
+/// are those of the same rules written so that no test is fused (each kind bound, then compared): positive and
+/// negated, a node a row holds and one bound before, a kind constant and a kind another atom bound.
+#[test]
+fn a_kind_test_of_a_node_the_atom_bound_is_read_in_its_row_program() {
+    let dir = corpus("view-tests", &[TREE]);
+    let program = r#"
+.decl pair(n: node, p: node)
+pair(n, p) :- child(p, n, _).
+.decl named(n: node, p: node)
+named(n, p) :- pair(n, p), kind(n, "identifier"), kind(p, "call").
+.decl named_bound(n: node, p: node)
+named_bound(n, p) :- pair(n, p), kind(n, a), a = "identifier", kind(p, b), b = "call".
+.decl unnamed(n: node)
+unnamed(n) :- pair(n, p), !kind(n, "identifier"), kind(p, "expression_statement").
+.decl unnamed_bound(n: node)
+unnamed_bound(n) :- pair(n, p), kind(n, a), a != "identifier", kind(p, b), b = "expression_statement".
+.decl same(n: node, m: node)
+same(n, m) :- pair(n, p), pair(m, p), n < m, kind(n, k), kind(m, k).
+.decl same_bound(n: node, m: node)
+same_bound(n, m) :- pair(n, p), pair(m, p), n < m, kind(n, k), kind(m, j), j = k.
+.output named, named_bound, unnamed, unnamed_bound, same, same_bound
+"#;
+    // The run's own scope, held here: its counts are read before it ends.
+    let _run = crate::code_rule_dsl::logic::run::scope(crate::code_rule_dsl::logic::native::width::Settings::from_env);
+    let got = run(&dir, program, &["named", "named_bound", "unnamed", "unnamed_bound", "same", "same_bound"]);
+    let tested = crate::code_rule_dsl::logic::native::setfix::run_counts().view_tests.load(std::sync::atomic::Ordering::Relaxed);
+    assert!(tested > 0, "a row program tested nodes by a view");
+    assert!(got.iter().all(|rows| !rows.is_empty()), "{got:?}");
+    for k in [0, 2, 4] {
+        assert_eq!(got[k], got[k + 1], "rule {k}: fused against bound");
+    }
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// A lookup (`setfix::lookups`: a node's own facts by its id, `kind(n, k)` binding `k`) after a fused atom is read
+/// with the chunk's other rows, its values computed columns (`rowcode::ViewTest::looks`, one `read_own_batch` a
+/// chunk): no probe a row. A lookup keyed by another's value (`child(g, p, _)` then `kind(g, k)`) reads it. Its rows
+/// are those of the same rules over a derived copy of the views, which are no lookups (each probed as a step).
+#[test]
+fn a_lookup_after_a_fused_atom_is_read_with_its_chunks_rows() {
+    let dir = corpus("view-looks", &[TREE]);
+    let program = r#"
+.decl pair(n: node, p: node)
+pair(n, p) :- child(p, n, _).
+.decl kinds(n: node, k: symbol)
+kinds(n, k) :- kind(n, k).
+.decl up(c: node, g: node)
+up(c, g) :- child(g, c, _).
+.decl looked(n: node, a: symbol, b: symbol)
+looked(n, a, b) :- pair(n, p), kind(n, a), kind(p, b).
+.decl probed(n: node, a: symbol, b: symbol)
+probed(n, a, b) :- pair(n, p), kinds(n, a), kinds(p, b).
+.decl chained(n: node, k: symbol)
+chained(n, k) :- pair(n, p), child(g, p, _), kind(g, k).
+.decl chained_probed(n: node, k: symbol)
+chained_probed(n, k) :- pair(n, p), up(p, g), kinds(g, k).
+.output looked, probed, chained, chained_probed
+"#;
+    // The run's own scope, held here: its counts are read before it ends.
+    let _run = crate::code_rule_dsl::logic::run::scope(crate::code_rule_dsl::logic::native::width::Settings::from_env);
+    let got = run(&dir, program, &["looked", "probed", "chained", "chained_probed"]);
+    let looked = crate::code_rule_dsl::logic::native::setfix::run_counts().view_looks.load(std::sync::atomic::Ordering::Relaxed);
+    assert!(looked > 0, "a row program read a lookup's values with its chunk's rows");
+    assert!(got.iter().all(|rows| !rows.is_empty()), "{got:?}");
+    assert_eq!(got[0], got[1], "a lookup's rows are its probes'");
+    assert_eq!(got[2], got[3], "a lookup by a lookup's value: its probes' rows");
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// Decision 0706 E1: a kind test after the first step (`kind(n, K)` and `!kind(n, K)`, the node bound) is tested a
+/// batch of rows at a time, by the source's batch test, and gives the rows each row's test gives: the call children
+/// that are identifiers (every line of `a.py` calls one, and lines 2 and 4 of `b.py`), and the statements' children
+/// that are not calls (`a.py`'s assignments, its odd lines).
+#[test]
+fn kind_tests_in_batches_give_each_rows_rows() {
+    use crate::code_rule_dsl::logic::native::component::{kind_batched_rows, kind_batches_forced};
+    let body: String = (0..400).map(|i| format!("x{i} = f{i}(a{i}, b{i}) + g(c{i})\nprint(x{i})\n")).collect();
+    let files = [("a.py", body.as_str()), ("b.py", "def h(q):\n    return q(1, 2)\n\nh(len)\n")];
+    let dir = corpus("kind-batches", &files);
+    let program = r#"
+.decl at(n: node, p: symbol, l: number)
+at(n, p, l) :- docof(n, d), doc(d, p, _), line(n, l).
+.decl callee_ids(p: symbol, l: number)
+callee_ids(p, l) :- kind(c, "call"), child(c, n, _), kind(n, "identifier"), at(n, p, l).
+.decl not_calls(p: symbol, l: number, k: symbol)
+not_calls(p, l, k) :- kind(c, "expression_statement"), child(c, n, _), node(_, n, k, _, _), !kind(n, "call"), at(n, p, l).
+.output callee_ids, not_calls
+"#;
+    kind_batches_forced(Some(true));
+    let before = kind_batched_rows();
+    let got = run(&dir, program, &["callee_ids", "not_calls"]);
+    kind_batches_forced(None);
+    assert!(kind_batched_rows() > before + 256, "tested in batches ({} rows)", kind_batched_rows() - before);
+    let file = |p: &str| p.rsplit('/').next().unwrap_or(p).trim_matches('"').to_owned();
+    let callees: BTreeSet<(String, i64)> = got[0].iter().map(|r| (file(&r[0]), r[1].parse().unwrap())).collect();
+    let want: BTreeSet<(String, i64)> = (1..=800).map(|l| ("a.py".to_owned(), l)).chain([2, 4].map(|l| ("b.py".to_owned(), l))).collect();
+    assert_eq!(callees, want, "{:?}", &got[0][..got[0].len().min(4)]);
+    let not_calls: BTreeSet<(String, i64, String)> = got[1].iter().map(|r| (file(&r[0]), r[1].parse().unwrap(), r[2].trim_matches('"').to_owned())).collect();
+    let want: BTreeSet<(String, i64, String)> = (0..400).map(|i| ("a.py".to_owned(), 2 * i + 1, "assignment".to_owned())).collect();
+    assert_eq!(not_calls, want, "{:?}", &got[1][..got[1].len().min(4)]);
+}
+
+/// Decision 0706 E3: an aggregate over a relation an earlier stratum derived, run over many chunks: once the run has
+/// seen its probes cover the relation's rows, its summary is built whole ahead of the stratum, and each group's count
+/// and minimum are the source's (a file with `i % 5 + 1` calls, the first on line `i % 3 + 1`).
+#[test]
+fn aggregates_over_summaries_built_ahead_give_each_groups_rows() {
+    use crate::code_rule_dsl::logic::native::component::summaries_built_whole;
+    let sources: Vec<(String, String)> = (0..120).map(|i| (format!("f{i:03}.py"), format!("{}{}", "x = 1\n".repeat(i % 3), "f()\n".repeat(i % 5 + 1)))).collect();
+    let files: Vec<(&str, &str)> = sources.iter().map(|(p, s)| (p.as_str(), s.as_str())).collect();
+    let dir = corpus("summaries-ahead", &files);
+    let program = r#"
+.decl calls(d: number, l: number)
+calls(d, l) :- kind(n, "call"), docof(n, d), line(n, l).
+.decl ncalls(p: symbol, c: number)
+ncalls(p, c) :- doc(d, p, _), c = count : { calls(d, _) }.
+.decl first(p: symbol, l: number)
+first(p, l) :- doc(d, p, _), l = min x : { calls(d, x) }.
+.output ncalls, first
+"#;
+    let before = summaries_built_whole();
+    let out = dir.join(".out");
+    super::run(program, &dir, None, &out, "program", Binding::Cpu, 64).unwrap();
+    let got = shown_of(&Outputs::open(&out).unwrap(), &["ncalls", "first"]);
+    assert!(summaries_built_whole() > before, "summaries built ahead");
+    let file = |p: &str| p.rsplit('/').next().unwrap_or(p).trim_matches('"').to_owned();
+    let of = |rows: &Vec<Vec<String>>| rows.iter().map(|r| (file(&r[0]), r[1].parse::<i64>().unwrap())).collect::<BTreeSet<_>>();
+    let want_n: BTreeSet<(String, i64)> = (0..120).map(|i| (format!("f{i:03}.py"), (i % 5 + 1) as i64)).collect();
+    let want_l: BTreeSet<(String, i64)> = (0..120).map(|i| (format!("f{i:03}.py"), (i % 3 + 1) as i64)).collect();
+    assert_eq!(of(&got[0]), want_n);
+    assert_eq!(of(&got[1]), want_l);
+}
+
+/// Decision 0706 E4: seed scans of the `field` view by several fields (`field(_, "left", n)`, `field(_, "right",
+/// n)`, ...), run over many chunks: once the run has seen a chunk walk the field column for more than one field, the
+/// batch's field index is built ahead of the level, and each scan reads its field's rows from it. The rows are the
+/// source's: each line `a{i} = b{i} + c{i}` has one left and one right operand, and one assignment's left side.
+#[test]
+fn field_scans_over_a_value_index_built_ahead_give_each_fields_rows() {
+    use crate::code_rule_dsl::logic::native::component::value_indexes_built;
+    let sources: Vec<(String, String)> = (0..80).map(|i| (format!("g{i:02}.py"), (0..(i % 4 + 1)).map(|k| format!("a{k} = b{k} + c{k}\n")).collect())).collect();
+    let files: Vec<(&str, &str)> = sources.iter().map(|(p, s)| (p.as_str(), s.as_str())).collect();
+    let dir = corpus("field-index", &files);
+    let program = r#"
+.decl at(n: node, p: symbol, l: number)
+at(n, p, l) :- docof(n, d), doc(d, p, _), line(n, l).
+.decl lefts(p: symbol, l: number)
+lefts(p, l) :- field(_, "left", n), kind(n, "identifier"), at(n, p, l).
+.decl rights(p: symbol, l: number)
+rights(p, l) :- field(_, "right", n), at(n, p, l).
+.decl targets(p: symbol, l: number)
+targets(p, l) :- field(a, "left", n), kind(a, "assignment"), at(n, p, l).
+.output lefts, rights, targets
+"#;
+    let before = value_indexes_built();
+    let out = dir.join(".out");
+    super::run(program, &dir, None, &out, "program", Binding::Cpu, 64).unwrap();
+    let got = shown_of(&Outputs::open(&out).unwrap(), &["lefts", "rights", "targets"]);
+    assert!(value_indexes_built() > before, "the field index built ahead");
+    let file = |p: &str| p.rsplit('/').next().unwrap_or(p).trim_matches('"').to_owned();
+    let of = |rows: &Vec<Vec<String>>| rows.iter().map(|r| (file(&r[0]), r[1].parse::<i64>().unwrap())).collect::<BTreeSet<_>>();
+    let want: BTreeSet<(String, i64)> = (0..80).flat_map(|i| (1..=(i % 4 + 1) as i64).map(move |l| (format!("g{i:02}.py"), l))).collect();
+    assert_eq!(of(&got[0]), want, "lefts: the assignments' and the additions' left operands");
+    assert_eq!(of(&got[1]), want);
+    assert_eq!(of(&got[2]), want);
+}
+
+/// A filter's prepare and apply: `kind(n, "identifier")` and its negation with `n` bound are answered by the bits of
+/// the kind's nodes the `node` view's source built ahead (`Source::build_value_bits`), one bit a test, once the run's
+/// first chunks have seen the tests pay. The rows are the source's: each line's assignment's and addition's left
+/// operands are identifiers, and of the right operands, the assignment's (an addition) alone is not. `kinds` reads
+/// `kind` unbound, so `kind` is the view, not rows made on demand for the tested nodes.
+#[test]
+fn kind_tests_by_a_bound_node_read_the_kinds_bits_built_ahead() {
+    use crate::code_rule_dsl::logic::native::component::value_bit_tests;
+    let sources: Vec<(String, String)> = (0..80).map(|i| (format!("g{i:02}.py"), (0..(i % 4 + 1)).map(|k| format!("a{k} = b{k} + c{k}\n")).collect())).collect();
+    let files: Vec<(&str, &str)> = sources.iter().map(|(p, s)| (p.as_str(), s.as_str())).collect();
+    let dir = corpus("kind-bits", &files);
+    let program = r#"
+.decl at(n: node, p: symbol, l: number)
+at(n, p, l) :- docof(n, d), doc(d, p, _), line(n, l).
+.decl lefts(p: symbol, l: number)
+lefts(p, l) :- field(_, "left", n), kind(n, "identifier"), at(n, p, l).
+.decl rights(p: symbol, l: number)
+rights(p, l) :- field(_, "right", n), !kind(n, "identifier"), at(n, p, l).
+.decl kinds(k: symbol)
+kinds(k) :- kind(_, k).
+.output lefts, rights, kinds
+"#;
+    let before = value_bit_tests();
+    let out = dir.join(".out");
+    super::run(program, &dir, None, &out, "program", Binding::Cpu, 64).unwrap();
+    let got = shown_of(&Outputs::open(&out).unwrap(), &["lefts", "rights"]);
+    assert!(value_bit_tests() > before + 100, "the kind's bits answered its tests ({})", value_bit_tests() - before);
+    let file = |p: &str| p.rsplit('/').next().unwrap_or(p).trim_matches('"').to_owned();
+    let of = |rows: &Vec<Vec<String>>| rows.iter().map(|r| (file(&r[0]), r[1].parse::<i64>().unwrap())).collect::<BTreeSet<_>>();
+    let want: BTreeSet<(String, i64)> = (0..80).flat_map(|i| (1..=(i % 4 + 1) as i64).map(move |l| (format!("g{i:02}.py"), l))).collect();
+    assert_eq!(of(&got[0]), want, "lefts: identifiers");
+    assert_eq!(of(&got[1]), want, "rights: the assignments' additions");
+    assert_eq!(got[1].len(), want.len(), "one right operand a line is not an identifier");
+}
+
+/// Decision 0706 E1: a node's text read as a symbol (`node_text(n, s)`, its value bound, compared with a constant,
+/// and joined on) is its leaf's term's atom, read with no hash of the text; and the rows are the text's: each file's
+/// identifiers by name, those named `hit`, and the pairs of lines that name one identifier.
+#[test]
+fn node_texts_read_as_term_atoms_give_the_texts_rows() {
+    use crate::code_rule_dsl::logic::native::component::node_text_term_atoms;
+    let names = ["alpha", "hit", "beta", "hit", "gamma_long_enough_to_pass_the_inline_bound_of_text", "alpha"];
+    let source: String = names.iter().map(|n| format!("{n}\n")).collect();
+    let dir = corpus("node-text-terms", &[("a.py", source.as_str())]);
+    let program = r#"
+.decl doc(d: number, path: symbol, module: symbol)
+.decl node(d: number, n: node, kind: symbol, start: number, end: number)
+.decl node_text(n: node, s: symbol)
+.decl line(n: loc, l: number)
+.input doc, node, node_text, line
+.decl ids(l: number, s: symbol)
+ids(l, s) :- node(_, n, "identifier", _, _), node_text(n, s), line(n, l).
+.decl hits(l: number)
+hits(l) :- node(_, n, "identifier", _, _), node_text(n, "hit"), line(n, l).
+.decl same(a: number, b: number)
+same(a, b) :- node(d, n, "identifier", _, _), node_text(n, s), node(d, m, "identifier", _, _), node_text(m, s), n != m, line(n, a), line(m, b).
+.output ids, hits, same
+"#;
+    let before = node_text_term_atoms();
+    let got = run(&dir, program, &["ids", "hits", "same"]);
+    assert!(node_text_term_atoms() > before, "texts read as their terms' atoms");
+    let ids: BTreeSet<(i64, String)> = got[0].iter().map(|r| (r[0].parse().unwrap(), r[1].trim_matches('"').to_owned())).collect();
+    let want: BTreeSet<(i64, String)> = names.iter().enumerate().map(|(i, n)| (i as i64 + 1, (*n).to_owned())).collect();
+    assert_eq!(ids, want);
+    let hits: BTreeSet<i64> = got[1].iter().map(|r| r[0].parse().unwrap()).collect();
+    assert_eq!(hits, BTreeSet::from([2, 4]));
+    let same: BTreeSet<(i64, i64)> = got[2].iter().map(|r| (r[0].parse().unwrap(), r[1].parse().unwrap())).collect();
+    assert_eq!(same, BTreeSet::from([(1, 6), (6, 1), (2, 4), (4, 2)]));
+}
+
+/// Decision 0706 E1: a view's step by a bound node that binds its row's other columns (`field(p, f, n)` with `n`
+/// bound binds the parent and the field; `node(_, x, k, _, _)` with `x` bound binds its kind), and one whose keys
+/// and negation are checked (`kind(p, "binary_operator")`, `!kind(p, "assignment")`), read a batch of rows at a time.
+/// The rows are the source's: each line `x{i} = a{i} + b{i}` has an addition whose operands are its left and right,
+/// identifiers, under no assignment directly.
+#[test]
+fn node_reads_that_bind_in_batches_give_each_rows_rows() {
+    use crate::code_rule_dsl::logic::native::component::{kind_batched_rows, kind_batches_forced};
+    let body: String = (0..400).map(|i| format!("x{i} = a{i} + b{i}\n")).collect();
+    let dir = corpus("node-reads", &[("a.py", body.as_str())]);
+    let program = r#"
+.decl operands(l: number, f: symbol)
+operands(l, f) :- kind(n, "identifier"), field(p, f, n), kind(p, "binary_operator"), line(n, l).
+.decl not_assigned(l: number, f: symbol)
+not_assigned(l, f) :- kind(n, "identifier"), field(p, f, n), !kind(p, "assignment"), line(n, l).
+.decl left_kinds(l: number, k: symbol)
+left_kinds(l, k) :- kind(b, "binary_operator"), field(b, "left", x), node(_, x, k, _, _), line(x, l).
+.output operands, not_assigned, left_kinds
+"#;
+    kind_batches_forced(Some(true));
+    let before = kind_batched_rows();
+    let got = run(&dir, program, &["operands", "not_assigned", "left_kinds"]);
+    kind_batches_forced(None);
+    assert!(kind_batched_rows() > before + 256, "read in batches ({} rows)", kind_batched_rows() - before);
+    let of = |rows: &Vec<Vec<String>>| rows.iter().map(|r| (r[0].parse::<i64>().unwrap(), r[1].trim_matches('"').to_owned())).collect::<BTreeSet<_>>();
+    let both: BTreeSet<(i64, String)> = (1..=400).flat_map(|l| [(l, "left".to_owned()), (l, "right".to_owned())]).collect();
+    assert_eq!(of(&got[0]), both);
+    assert_eq!(of(&got[1]), both, "the assignments' left sides are under an assignment");
+    let ids: BTreeSet<(i64, String)> = (1..=400).map(|l| (l, "identifier".to_owned())).collect();
+    assert_eq!(of(&got[2]), ids);
+}
+
+/// A text the walk holds for a slot (its scratch, `TEXT_OUT`: a node's text read only to be joined) lives while the
+/// step that made it runs, so no step after one is read in batches: a batch's rows wait past it. Batched there, the
+/// rows named texts gone, and `@cat("m", x)` of each function's name was the one `m.`.
+#[test]
+fn a_text_the_walk_holds_is_joined_whatever_steps_batch() {
+    use crate::code_rule_dsl::logic::native::component::kind_batches_forced;
+    let body: String = (0..300).map(|i| format!("def f{i}():\n    return {i}\n")).collect();
+    let dir = corpus("held-texts-joined", &[("a.py", body.as_str())]);
+    let program = r#"
+.decl named(s: symbol)
+named(@cat("m", x)) :- kind(n, "function_definition"), field(n, "name", i), text(i, x).
+.output named
+"#;
+    kind_batches_forced(Some(true));
+    let got = run(&dir, program, &["named"]);
+    kind_batches_forced(None);
+    let names: BTreeSet<String> = got[0].iter().map(|r| r[0].trim_matches('"').to_owned()).collect();
+    assert_eq!(names, (0..300).map(|i| format!("m.f{i}")).collect::<BTreeSet<_>>());
+}
+
+/// Decision 0706 E5: a step probing a computed relation by bound slots and binding its other columns (`owner(n, f)`
+/// by `n`, `pair(f, g)` by `f`) probes a batch of rows sorted by their keys; a membership test by two slots
+/// (`seen(n, f)`) is probed as it comes (E2's). The rows are the same as each probed as it comes.
+#[test]
+fn keyed_probes_in_sorted_batches_give_each_rows_rows() {
+    use crate::code_rule_dsl::logic::native::component::{keyed_batched_rows, keyed_batches_forced};
+    let body: String = (0..300).map(|i| format!("def f{i}(a, b):\n    return a{} + b\n", (i * 7) % 300)).collect();
+    // Each run of a source of its own: a second run of one source is the first's results (kept by its content).
+    let body_on = format!("{body}# on\n");
+    let (dir_off, dir_on) = (corpus("keyed-probes-off", &[("a.py", body.as_str())]), corpus("keyed-probes-on", &[("a.py", body_on.as_str())]));
+    let program = r#"
+.decl owner(n: number, f: number)
+owner(n, f) :- kind(f, "function_definition"), field(f, "body", b), within(n, b), kind(n, "identifier").
+.decl pair(f: number, g: number)
+pair(f, g) :- owner(n, f), owner(m, g), docof(f, d), docof(g, d), text(n, t), text(m, t), f != g.
+.decl seen(n: number, f: number)
+seen(n, f) :- kind(n, "identifier"), within(n, f), kind(f, "function_definition").
+.decl counted(l: number, k: number)
+counted(l, k) :- owner(n, f), seen(n, f), pair(f, g), line(g, l), line(n, k).
+.output owner, pair, counted
+"#;
+    keyed_batches_forced(Some(false));
+    let off = run(&dir_off, program, &["owner", "pair", "counted"]);
+    keyed_batches_forced(Some(true));
+    let before = keyed_batched_rows();
+    let on = run(&dir_on, program, &["owner", "pair", "counted"]);
+    keyed_batches_forced(None);
+    assert!(keyed_batched_rows() > before + 256, "probed in sorted batches ({} rows)", keyed_batched_rows() - before);
+    let sets = |g: &Vec<Vec<Vec<String>>>| g.iter().map(|rows| rows.iter().cloned().collect::<BTreeSet<_>>()).collect::<Vec<_>>();
+    assert!(!off[0].is_empty() && !off[1].is_empty() && !off[2].is_empty(), "every relation has rows");
+    assert_eq!(sets(&on), sets(&off));
+}
+
+/// A fused probe's keyed batch runs as one chunk (`rowcode::spanning`): `pair(f, g)` probed by `f` for a batch of
+/// `owner` rows, every row's candidates gathered together, and its filters (`n < g`, a slot bound before the probe
+/// against one it binds; `!seen(n, g)`, a negation asked of the chunk) run once over them. The rows are the same as
+/// each binding's chunk run alone.
+#[test]
+fn a_fused_probes_batch_runs_its_bindings_rows_as_one_chunk() {
+    use crate::code_rule_dsl::logic::native::component::{keyed_batches_forced, span_batches_forced, spanned_rows};
+    let body: String = (0..200).map(|i| format!("def f{i}(a, b):\n    return a{} + b\n", (i * 7) % 200)).collect();
+    let body_on = format!("{body}# on\n");
+    let (dir_off, dir_on) = (corpus("span-batch-off", &[("a.py", body.as_str())]), corpus("span-batch-on", &[("a.py", body_on.as_str())]));
+    let program = r#"
+.decl owner(n: number, f: number)
+owner(n, f) :- kind(f, "function_definition"), field(f, "body", b), within(n, b), kind(n, "identifier").
+.decl pair(f: number, g: number)
+pair(f, g) :- owner(n, f), owner(m, g), docof(f, d), docof(g, d), text(n, t), text(m, t), f != g.
+.decl seen(n: number, f: number)
+seen(n, f) :- kind(n, "identifier"), within(n, f), kind(f, "function_definition").
+.decl far(n: number, g: number)
+far(n, g) :- owner(n, f), pair(f, g), n < g, !seen(n, g).
+.output owner, pair, far
+"#;
+    keyed_batches_forced(Some(true));
+    span_batches_forced(Some(false));
+    let off = run(&dir_off, program, &["owner", "pair", "far"]);
+    span_batches_forced(Some(true));
+    let before = spanned_rows();
+    let on = run(&dir_on, program, &["owner", "pair", "far"]);
+    span_batches_forced(None);
+    keyed_batches_forced(None);
+    assert!(spanned_rows() > before + 256, "a fused probe's batch ran as chunks ({} rows)", spanned_rows() - before);
+    let sets = |g: &Vec<Vec<Vec<String>>>| g.iter().map(|rows| rows.iter().cloned().collect::<BTreeSet<_>>()).collect::<Vec<_>>();
+    assert!(!off[2].is_empty(), "far has rows");
+    assert_eq!(sets(&on), sets(&off));
+}
+
+/// Decision 0706 E5: `within(n, f)` with both nodes bound, and its negation, is asked a batch of pairs at a time
+/// (`within`'s interval walk). The rows are the same as each pair asked as it comes, and every identifier of a
+/// function's body is inside it, none outside.
+#[test]
+fn within_pairs_in_batches_give_each_pairs_rows() {
+    use crate::code_rule_dsl::logic::native::component::{keyed_batched_rows, keyed_batches_forced};
+    let body: String = (0..100).map(|i| format!("def f{i}(a):\n    return a + b{i}\n")).collect();
+    let body_on = format!("{body}# on\n");
+    let (dir_off, dir_on) = (corpus("within-pairs-off", &[("a.py", body.as_str())]), corpus("within-pairs-on", &[("a.py", body_on.as_str())]));
+    let program = r#"
+.decl cand(n: number, f: number)
+cand(n, f) :- kind(n, "identifier"), kind(f, "function_definition"), docof(n, d), docof(f, d).
+.decl held_in(l: number, k: number)
+held_in(l, k) :- cand(n, f), within(n, f), line(n, l), line(f, k).
+.decl held_out(n: number)
+held_out(n) :- cand(n, f), !within(n, f), line(n, l), line(f, l).
+.output held_in, held_out
+"#;
+    keyed_batches_forced(Some(false));
+    let off = run(&dir_off, program, &["held_in", "held_out"]);
+    keyed_batches_forced(Some(true));
+    let before = keyed_batched_rows();
+    let on = run(&dir_on, program, &["held_in", "held_out"]);
+    keyed_batches_forced(None);
+    assert!(keyed_batched_rows() > before + 256, "asked in batches ({} rows)", keyed_batched_rows() - before);
+    let sets = |g: &Vec<Vec<Vec<String>>>| g.iter().map(|rows| rows.iter().cloned().collect::<BTreeSet<_>>()).collect::<Vec<_>>();
+    assert_eq!(sets(&on), sets(&off));
+    // Each function's lines are 2i+1 and 2i+2; its identifiers `a` (both) and `b{i}` lie in them.
+    let inside: BTreeSet<(i64, i64)> = on[0].iter().map(|r| (r[0].parse().unwrap(), r[1].parse().unwrap())).collect();
+    assert!((0..100).all(|i| inside.contains(&(2 * i + 2, 2 * i + 1))), "each body's identifiers are inside its function");
+    assert!(inside.iter().all(|&(l, k)| l == k || l == k + 1), "no identifier is inside another function");
+    assert!(on[1].is_empty(), "the identifiers on a function's own line are its own ({:?})", &on[1][..on[1].len().min(4)]);
 }

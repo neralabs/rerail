@@ -56,6 +56,24 @@ pub fn mark_word_rows(out: &mut String, mark_words: &[(u8, u16)]) {
     }
 }
 
+/// The marks that ask their token's column: `markcolumn K C` (`Words::mark_columns`).
+pub fn mark_column_rows(out: &mut String, mark_columns: &[(u8, u8)]) {
+    for &(k, c) in mark_columns {
+        let _ = writeln!(out, "  markcolumn {k} {c}");
+    }
+}
+
+/// A node's supertypes by its slot and kind: `superclass #S #K #C…` (`Words::super_classes`).
+pub fn super_class_rows(out: &mut String, rows: &[(u16, u16, Vec<u16>)]) {
+    for (s, k, cs) in rows {
+        let _ = write!(out, "  superclass #{s} #{k}");
+        for c in cs {
+            let _ = write!(out, " #{c}");
+        }
+        out.push('\n');
+    }
+}
+
 /// The marks each mark passes: `markpasses K MASK` (`Words::mark_passes`).
 pub fn mark_pass_rows(out: &mut String, mark_passes: &[(u8, u64)]) {
     use std::fmt::Write as _;
@@ -134,6 +152,9 @@ fn elem_rows(out: &mut String, elems: &[crate::program::TokenElem]) {
             }
             if e.since {
                 out.push_str(" since");
+            }
+            if e.whole != 0 {
+                let _ = write!(out, " whole{:x}", e.whole);
             }
             if e.without != 0 {
                 let _ = write!(out, " w{:x}", e.without);
@@ -252,7 +273,7 @@ pub fn rule_rows(out: &mut String, rules: &[u16]) {
 }
 
 /// A reading's rows: `reading N #K as #M`, `reading N #K gone`, `reading N #K keep`,
-/// `reading N field #F as #G`; then `provisional #F`; then `extra #K`, the extras' kinds.
+/// `reading N field #F as #G`; then `extra #K`, the extras' kinds.
 pub fn reading_rows(out: &mut String, readings: &crate::stream_ir::Readings) {
     use std::fmt::Write as _;
     for (at, r) in readings.maps.iter().enumerate() {
@@ -272,9 +293,6 @@ pub fn reading_rows(out: &mut String, readings: &crate::stream_ir::Readings) {
             Some(crate::stream_ir::GONE) => writeln!(out, "  reading {at} root gone"),
             Some(m) => writeln!(out, "  reading {at} root as #{m}"),
         };
-    }
-    for f in &readings.provisional {
-        let _ = writeln!(out, "  provisional #{f}");
     }
     for k in &readings.extras {
         let _ = writeln!(out, "  extra #{k}");

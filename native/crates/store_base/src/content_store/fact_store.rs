@@ -22,6 +22,11 @@ pub trait AtomTable: Send + Sync {
     fn intern_all(&self, values: &[&str]) -> StoreResult<rerail_blocks::vector::Vector<Sym>>;
     /// An atom's text (`Atoms::value`).
     fn value(&self, atom: Sym) -> StoreResult<Option<String>>;
+    /// The database file the atoms are of (`Atoms::database`): two tables of one file number their atoms alike, its
+    /// ids given out through it. `None` for an in-memory database's.
+    fn database(&self) -> Option<&std::path::Path> {
+        None
+    }
 }
 
 /// An open content store, as the facts read and write it.
@@ -97,6 +102,8 @@ pub trait FactStore: Send + Sync + std::any::Any {
     fn atoms_handle(&self) -> Arc<dyn AtomTable>;
     fn atom(&self, value: &str) -> StoreResult<Option<Sym>>;
     fn atom_value(&self, atom: Sym) -> StoreResult<Option<String>>;
+    // The kept facts: a space's chain read, and puts queued (`ContentStore::kept_space`, `queue_kept_as`).
+    fn kept(&self) -> &dyn super::observer_store::base::Kept;
 }
 
 impl dyn FactStore {

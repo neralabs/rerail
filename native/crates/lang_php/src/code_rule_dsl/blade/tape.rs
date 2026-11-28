@@ -10,14 +10,14 @@ use crate::code_rule_dsl::blade::view::{ReadError, View};
 use crate::code_rule_dsl::language::Via;
 use crate::code_rule_dsl::tape::{
     DerivedImage, ERROR_CODE, FIELD_LIMIT, FileImage, Grammar, KIND_LIMIT, TapeImage, TemplateError, TreeOut, TreeParser, Visit,
-    checked,
+    checked, Source,
 };
 
 /// Blade's tree parser.
 pub struct Forte;
 
 impl TreeParser for Forte {
-    fn parse(&self, grammar: &Grammar, source: &str, budget: &dyn Fn() -> bool) -> Option<Result<FileImage, TemplateError>> {
+    fn parse(&self, grammar: &Grammar, source: &Source<'_>, budget: &dyn Fn() -> bool) -> Option<Result<FileImage, TemplateError>> {
         Some(encode_template(grammar, source, &budget))
     }
 

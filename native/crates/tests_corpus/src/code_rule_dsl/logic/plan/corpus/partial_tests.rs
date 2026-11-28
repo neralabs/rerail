@@ -35,7 +35,8 @@ const FILES: &[(&str, &str)] = &[
 ];
 
 /// A cross-file rule (`at`) reads `col` of the nodes an export (`called`) names, joined with another file's export
-/// (`defined`); a file-local rule (`flagged`) is the one edited, its body testing `kind`. `both` and `doubled` are
+/// (`defined`); a file-local rule (`flagged`) is the one edited, its body testing `kind`. `both` pairs the files that
+/// define a name (by their document keys: no node crosses, decision 0677). `both` and `doubled` are
 /// read by a later stratum (`many` reads `doubled`), so a cold run hands `both` off once `doubled` has read it, which
 /// its hand-off asserts (Q206; the counting supports, gone with decision 0364, were the relations it handed before).
 fn program(kind: &str) -> String {
@@ -46,9 +47,11 @@ called(c, x) :- kind(c, "call"), field(c, "function", f), text(f, x).
 .decl defined(d: node, x: symbol)
 defined(d, x) :- kind(d, "function_definition"), field(d, "name", n), text(n, x).
 .decl at(x: symbol, k: number) cross_file
-at(x, k) :- called(c, x), defined(_, x), col(c, k).
-.decl both(d: node, e: node, x: symbol) cross_file
-both(d, e, x) :- defined(d, x), defined(e, x), d != e.
+at(x, k) :- called(c, x), defined(_, x), node_start_column(c, k).
+.decl def_in(a: number, x: symbol)
+def_in(a, x) :- defined(d, x), docof(d, a).
+.decl both(a: number, b: number, x: symbol) cross_file
+both(a, b, x) :- def_in(a, x), def_in(b, x), a != b.
 .decl doubled(x: symbol)
 doubled(x) :- both(_, _, x).
 .decl many(x: symbol)
@@ -56,7 +59,7 @@ many(x) :- doubled(x), at(x, _).
 .decl flagged(n: node)
 flagged(n) :- kind(n, "assert_statement"), !kind(n, "{kind}").
 .decl flag_col(k: number, l: number)
-flag_col(k, l) :- flagged(n), col(n, k), line(n, l).
+flag_col(k, l) :- flagged(n), node_start_column(n, k), node_line_number(n, l).
 .output at, flag_col, many
 "#
     )
@@ -260,15 +263,15 @@ defined(d, x) :- kind(d, "function_definition"), field(d, "name", n), text(n, x)
 .decl noted(c: node, x: symbol)
 noted(c, x) :- comment(c, x).
 .decl remark(x: symbol, l: number, k: number) cross_file
-remark(x, l, k) :- noted(c, x), defined(_, x), line(c, l), col(c, k).
-.decl said(sp: span, x: symbol)
-said(sp, x) :- src_line(_, _, sp), text(sp, x).
+remark(x, l, k) :- noted(c, x), defined(_, x), node_line_number(c, l), node_start_column(c, k).
+.decl said(sp: place, x: symbol)
+said(sp, x) :- document_line(_, sp), place_text(sp, x).
 .decl spoken(x: symbol, l: number, k: number) cross_file
-spoken(x, l, k) :- said(sp, x), defined(_, x), line(sp, l), col(sp, k).
+spoken(x, l, k) :- said(sp, x), defined(_, x), place_line_number(sp, l), place_start_column(sp, k).
 .decl flagged(n: node)
 flagged(n) :- kind(n, "assert_statement"), !kind(n, "{kind}").
 .decl flag_col(k: number, l: number)
-flag_col(k, l) :- flagged(n), col(n, k), line(n, l).
+flag_col(k, l) :- flagged(n), node_start_column(n, k), node_line_number(n, l).
 .output remark, spoken, flag_col
 "#
     )
@@ -397,7 +400,7 @@ names(x) :- string_annotation(n), parsed(n, "annotation", r), within(m, r), iden
 .decl flagged(n: node)
 flagged(n) :- kind(n, "assert_statement"), !kind(n, "{flagged_edit}").
 .decl flag_col(k: number, l: number)
-flag_col(k, l) :- flagged(n), col(n, k), line(n, l).
+flag_col(k, l) :- flagged(n), node_start_column(n, k), node_line_number(n, l).
 .decl ids(m: node, x: symbol)
 ids(m, x) :- idents(m, x), x != "{ids_edit}".
 .output names, flag_col, ids

@@ -81,7 +81,7 @@ air311_attribute_fallback(n) :- air311_demand_attribute_fallback(n), inside(n, p
 
 // moved_bare(n): the JSON util `moved-bare`, used where the JSON says `matches: "moved-bare"`
 //   N, ORIG: metavariables this relation binds for the calling rule
-.decl air311_moved_bare(n: node, n_mv: loc, orig: loc)
+.decl air311_moved_bare(n: node, n_mv: node, orig: node)
 air311_moved_bare(n, N, ORIG) :- kind(n, "identifier"), node(_, n, _, _, _), N = n, air311_alt_2(n, ORIG), !air311_alt_4(n).
 air311_moved_bare(n, N, ORIG) :- kind(n, "attribute"), field(n, "attribute", c10), node(_, c10, _, _, _), N = c10,
     node(_, c10, _, _, _), ORIG = c10.
@@ -111,27 +111,27 @@ air311_replacement_1(n) :- air311_statement_name(n, q1),
 
 // moved_1(n): the JSON util `moved-1`, used where the JSON says `matches: "moved-1"`
 //   N, ORIG: metavariables this relation binds for the calling rule
-.decl air311_moved_1(n: node, n_mv: loc, orig: loc)
+.decl air311_moved_1(n: node, n_mv: node, orig: node)
 air311_moved_1(n, N, ORIG) :- air311_moved_bare(n, N, ORIG), !air311_alt_6(n, ORIG).
 
 // moved_2(n): the JSON util `moved-2`, used where the JSON says `matches: "moved-2"`
 //   N: metavariable this relation binds for the calling rule
-.decl air311_moved_2(n: node, n_mv: loc)
+.decl air311_moved_2(n: node, n_mv: node)
 air311_moved_2(n, N) :- air311_moved_bare(n, N, _), !air311_alt_7(n).
 
 // moved_3(n): the JSON util `moved-3`, used where the JSON says `matches: "moved-3"`
 //   N: metavariable this relation binds for the calling rule
-.decl air311_moved_3(n: node, n_mv: loc)
+.decl air311_moved_3(n: node, n_mv: node)
 air311_moved_3(n, N) :- air311_moved_bare(n, N, _), !air311_alt_8(n).
 
 // moved_4(n): the JSON util `moved-4`, used where the JSON says `matches: "moved-4"`
 //   N: metavariable this relation binds for the calling rule
-.decl air311_moved_4(n: node, n_mv: loc)
+.decl air311_moved_4(n: node, n_mv: node)
 air311_moved_4(n, N) :- air311_moved_bare(n, N, _), !air311_alt_9(n).
 
 // moved_5(n): the JSON util `moved-5`, used where the JSON says `matches: "moved-5"`
 //   N: metavariable this relation binds for the calling rule
-.decl air311_moved_5(n: node, n_mv: loc)
+.decl air311_moved_5(n: node, n_mv: node)
 air311_moved_5(n, N) :- air311_moved_bare(n, N, _), !air311_alt_10(n).
 
 // replacement_6(n): the JSON util `replacement-6`, used where the JSON says `matches: "replacement-6"`
@@ -147,22 +147,22 @@ air311_replacement_6(n) :- air311_statement_name(n, q1),
 
 // moved_6(n): the JSON util `moved-6`, used where the JSON says `matches: "moved-6"`
 //   N, ORIG: metavariables this relation binds for the calling rule
-.decl air311_moved_6(n: node, n_mv: loc, orig: loc)
+.decl air311_moved_6(n: node, n_mv: node, orig: node)
 air311_moved_6(n, N, ORIG) :- air311_moved_bare(n, N, ORIG), !air311_alt_11(n, ORIG).
 
 // moved_7(n): the JSON util `moved-7`, used where the JSON says `matches: "moved-7"`
 //   N: metavariable this relation binds for the calling rule
-.decl air311_moved_7(n: node, n_mv: loc)
+.decl air311_moved_7(n: node, n_mv: node)
 air311_moved_7(n, N) :- air311_moved_bare(n, N, _), !air311_alt_12(n).
 
 // moved_8(n): the JSON util `moved-8`, used where the JSON says `matches: "moved-8"`
 //   N: metavariable this relation binds for the calling rule
-.decl air311_moved_8(n: node, n_mv: loc)
+.decl air311_moved_8(n: node, n_mv: node)
 air311_moved_8(n, N) :- air311_moved_bare(n, N, _), !air311_alt_13(n).
 
 // moved_9(n): the JSON util `moved-9`, used where the JSON says `matches: "moved-9"`
 //   N: metavariable this relation binds for the calling rule
-.decl air311_moved_9(n: node, n_mv: loc)
+.decl air311_moved_9(n: node, n_mv: node)
 air311_moved_9(n, N) :- air311_moved_bare(n, N, _), !air311_alt_14(n).
 
 // replacement(n, key): 8 copies of one rule set (`replacement-10`, `replacement-2`, `replacement-3` and 5 more), folded into one: row `key` of
@@ -172,7 +172,7 @@ air311_replacement(n, q2) :- air311_replacement_case(q2, s1), air311_statement_n
 
 // moved_10(n): the JSON util `moved-10`, used where the JSON says `matches: "moved-10"`
 //   N: metavariable this relation binds for the calling rule
-.decl air311_moved_10(n: node, n_mv: loc)
+.decl air311_moved_10(n: node, n_mv: node)
 air311_moved_10(n, N) :- air311_moved_bare(n, N, _), !air311_alt_15(n).
 
 // replacement_11(n): the JSON util `replacement-11`, used where the JSON says `matches: "replacement-11"`
@@ -186,13 +186,13 @@ air311_replacement_11(n) :- air311_statement_name(n, q1),
 
 // moved_11(n): the JSON util `moved-11`, used where the JSON says `matches: "moved-11"`
 //   N, ORIG: metavariables this relation binds for the calling rule
-.decl air311_moved_11(n: node, n_mv: loc, orig: loc)
+.decl air311_moved_11(n: node, n_mv: node, orig: node)
 air311_moved_11(n, N, ORIG) :- air311_moved_bare(n, N, ORIG), !air311_alt_16(n, ORIG).
 
 // AIR311(n): a finding at node n, from clause `name-1`.
 // Each rule below is one way the JSON `rule` can match.
 // Columns after `at` are the metavariables the JSON's message, anchor or `each` names: one finding per distinct row.
-.violation AIR311(at: loc, n_mv: node, orig: loc) "Import `{orig}` from `airflow.sdk` instead (needs apache-airflow-task-sdk>=1.0.0); the old name still works in Airflow 3 but is expected to be removed later."
+.violation AIR311(at: node, n_mv: node, orig: node) "Import `{orig}` from `airflow.sdk` instead (needs apache-airflow-task-sdk>=1.0.0); the old name still works in Airflow 3 but is expected to be removed later."
     suppress noqa "AIR311"
 AIR311(N, n, ORIG) :- (air311_old(n), air311_moved_1(n, N, ORIG) ; air311_quoted(n, N, ORIG)),
     inside(n, p1, "module"), within(c2, p1), air311_airflow_name(c2), air311_seen_airflow(n).
@@ -203,14 +203,14 @@ air311_old(n) :- sym_of(n, q1), air311_set_17(q1).
 
 // quoted(n): the JSON util `quoted`, used where the JSON says `matches: "quoted"`
 //   N, ORIG: metavariables this relation binds for the calling rule
-.decl air311_quoted(n: node, n_mv: loc, orig: loc)
+.decl air311_quoted(n: node, n_mv: node, orig: node)
 air311_quoted(n, N, ORIG) :- air311_demand_quoted(n), air311_string_literal(n), parsed(n, "annotation", r1),
     within(c2, r1), air311_alt_19(c2, N, ORIG).
 
 // AIR311_name_2(n, detail): findings from clauses `name-2`, `name-3`, `name-4`, `name-5` and 4 more. Their messages differ only in
 // `detail`: each rule's head gives its clause's words. Each rule is one way a JSON `rule` can match.
 // Columns after `at` are the metavariables the JSON's message, anchor or `each` names: one finding per distinct row.
-.violation AIR311_name_2(at: loc, n_mv: node, detail: symbol) code "AIR311" "{detail}; the old name still works in Airflow 3 but is expected to be removed later."
+.violation AIR311_name_2(at: node, n_mv: node, detail: symbol) code "AIR311" "{detail}; the old name still works in Airflow 3 but is expected to be removed later."
     suppress noqa "AIR311"
 AIR311_name_2(N, n, "Import `Asset` from `airflow.sdk` instead (needs apache-airflow-task-sdk>=1.0.0)") :- (air311_old_name_2(n), air311_moved_2(n, N) ; air311_quoted_name_2(n, N)),
     inside(n, p1, "module"), within(c2, p1), air311_airflow_name(c2), air311_seen_airflow(n).
@@ -235,32 +235,32 @@ air311_old_name_2(n) :- (sym_of(n, "airflow.Dataset") ; sym_of(n, "airflow.datas
 
 // quoted_name_2(n): the JSON util `quoted`, used where the JSON says `matches: "quoted"`
 //   N: metavariable this relation binds for the calling rule
-.decl air311_quoted_name_2(n: node, n_mv: loc)
+.decl air311_quoted_name_2(n: node, n_mv: node)
 air311_quoted_name_2(n, N) :- air311_demand_quoted_name_2(n), air311_string_literal(n),
     parsed(n, "annotation", r1), within(c2, r1), air311_alt_23(c2, N).
 
 // quoted_name_3(n): the JSON util `quoted`, used where the JSON says `matches: "quoted"`
 //   N: metavariable this relation binds for the calling rule
-.decl air311_quoted_name_3(n: node, n_mv: loc)
+.decl air311_quoted_name_3(n: node, n_mv: node)
 air311_quoted_name_3(n, N) :- air311_demand_quoted_name_3(n), air311_string_literal(n),
     parsed(n, "annotation", r1), within(c2, r1), air311_alt_27(c2, N).
 
 // quoted_name_4(n): the JSON util `quoted`, used where the JSON says `matches: "quoted"`
 //   N: metavariable this relation binds for the calling rule
-.decl air311_quoted_name_4(n: node, n_mv: loc)
+.decl air311_quoted_name_4(n: node, n_mv: node)
 air311_quoted_name_4(n, N) :- air311_demand_quoted_name_4(n), air311_string_literal(n),
     parsed(n, "annotation", r1), within(c2, r1), air311_alt_31(c2, N).
 
 // quoted_name_5(n): the JSON util `quoted`, used where the JSON says `matches: "quoted"`
 //   N: metavariable this relation binds for the calling rule
-.decl air311_quoted_name_5(n: node, n_mv: loc)
+.decl air311_quoted_name_5(n: node, n_mv: node)
 air311_quoted_name_5(n, N) :- air311_demand_quoted_name_5(n), air311_string_literal(n),
     parsed(n, "annotation", r1), within(c2, r1), air311_alt_35(c2, N).
 
 // AIR311_name_6(n): a finding at node n, from clause `name-6`.
 // Each rule below is one way the JSON `rule` can match.
 // Columns after `at` are the metavariables the JSON's message, anchor or `each` names: one finding per distinct row.
-.violation AIR311_name_6(at: loc, n_mv: node, orig: loc) code "AIR311" "Import `{orig}` from `airflow.sdk.bases.decorator` instead (needs apache-airflow-task-sdk>=1.0.0); the old name still works in Airflow 3 but is expected to be removed later."
+.violation AIR311_name_6(at: node, n_mv: node, orig: node) code "AIR311" "Import `{orig}` from `airflow.sdk.bases.decorator` instead (needs apache-airflow-task-sdk>=1.0.0); the old name still works in Airflow 3 but is expected to be removed later."
     suppress noqa "AIR311"
 AIR311_name_6(N, n, ORIG) :- (air311_old_name_6(n), air311_moved_6(n, N, ORIG) ; air311_quoted_name_6(n, N, ORIG)),
     inside(n, p1, "module"), within(c2, p1), air311_airflow_name(c2), air311_seen_airflow(n).
@@ -271,25 +271,25 @@ air311_old_name_6(n) :- sym_of(n, q1), air311_set_38(q1).
 
 // quoted_name_6(n): the JSON util `quoted`, used where the JSON says `matches: "quoted"`
 //   N, ORIG: metavariables this relation binds for the calling rule
-.decl air311_quoted_name_6(n: node, n_mv: loc, orig: loc)
+.decl air311_quoted_name_6(n: node, n_mv: node, orig: node)
 air311_quoted_name_6(n, N, ORIG) :- air311_demand_quoted_name_6(n), air311_string_literal(n),
     parsed(n, "annotation", r1), within(c2, r1), air311_alt_40(c2, N, ORIG).
 
 // quoted_name_7(n): the JSON util `quoted`, used where the JSON says `matches: "quoted"`
 //   N: metavariable this relation binds for the calling rule
-.decl air311_quoted_name_7(n: node, n_mv: loc)
+.decl air311_quoted_name_7(n: node, n_mv: node)
 air311_quoted_name_7(n, N) :- air311_demand_quoted_name_7(n), air311_string_literal(n),
     parsed(n, "annotation", r1), within(c2, r1), air311_alt_44(c2, N).
 
 // quoted_name_8(n): the JSON util `quoted`, used where the JSON says `matches: "quoted"`
 //   N: metavariable this relation binds for the calling rule
-.decl air311_quoted_name_8(n: node, n_mv: loc)
+.decl air311_quoted_name_8(n: node, n_mv: node)
 air311_quoted_name_8(n, N) :- air311_demand_quoted_name_8(n), air311_string_literal(n),
     parsed(n, "annotation", r1), within(c2, r1), air311_alt_48(c2, N).
 
 // quoted_name_9(n): the JSON util `quoted`, used where the JSON says `matches: "quoted"`
 //   N: metavariable this relation binds for the calling rule
-.decl air311_quoted_name_9(n: node, n_mv: loc)
+.decl air311_quoted_name_9(n: node, n_mv: node)
 air311_quoted_name_9(n, N) :- air311_demand_quoted_name_9(n), air311_string_literal(n),
     parsed(n, "annotation", r1), within(c2, r1), air311_alt_52(c2, N).
 
@@ -300,7 +300,7 @@ air311_old_name(n, q1) :- air311_old_name_case(q1, s1), sym_of(n, s1).
 
 // quoted_name_10(n): the JSON util `quoted`, used where the JSON says `matches: "quoted"`
 //   N: metavariable this relation binds for the calling rule
-.decl air311_quoted_name_10(n: node, n_mv: loc)
+.decl air311_quoted_name_10(n: node, n_mv: node)
 air311_quoted_name_10(n, N) :- air311_demand_quoted_name_10(n), air311_string_literal(n),
     parsed(n, "annotation", r1), within(c2, r1), air311_alt_56(c2, N).
 
@@ -308,7 +308,7 @@ air311_quoted_name_10(n, N) :- air311_demand_quoted_name_10(n), air311_string_li
 // Each rule below is one way the JSON `rule` can match.
 // Columns after `at` are the metavariables the JSON's message, anchor or `each` names: one finding per distinct row.
 // The JSON `constraints` on ORIG are added to every rule.
-.violation AIR311_name_param(at: loc, n_mv: node, orig: loc) code "AIR311" "Import `{orig}` from `airflow.sdk.definitions.param` instead (needs apache-airflow-task-sdk>=1.0.0); the old name still works in Airflow 3 but is expected to be removed later."
+.violation AIR311_name_param(at: node, n_mv: node, orig: node) code "AIR311" "Import `{orig}` from `airflow.sdk.definitions.param` instead (needs apache-airflow-task-sdk>=1.0.0); the old name still works in Airflow 3 but is expected to be removed later."
     suppress noqa "AIR311"
 AIR311_name_param(N, n, ORIG) :- (air311_old_name_param(n), air311_moved_11(n, N, ORIG) ; air311_quoted_name_param(n, N, ORIG)),
     inside(n, p1, "module"), within(c2, p1), air311_airflow_name(c2), air311_seen_airflow(n),
@@ -320,14 +320,14 @@ air311_old_name_param(n) :- sym_of(n, q1), match("(airflow\\.models)(\\.|$).*", 
 
 // quoted_name_param(n): the JSON util `quoted`, used where the JSON says `matches: "quoted"`
 //   N, ORIG: metavariables this relation binds for the calling rule
-.decl air311_quoted_name_param(n: node, n_mv: loc, orig: loc)
+.decl air311_quoted_name_param(n: node, n_mv: node, orig: node)
 air311_quoted_name_param(n, N, ORIG) :- air311_demand_quoted_name_param(n), air311_string_literal(n),
     parsed(n, "annotation", r1), within(c2, r1), air311_alt_60(c2, N, ORIG).
 
 // AIR311_name_no_replacement(n): a finding at node n, from clause `name-no-replacement`.
 // Each rule below is one way the JSON `rule` can match.
 // Columns after `at` are the metavariables the JSON's message, anchor or `each` names: one finding per distinct row.
-.violation AIR311_name_no_replacement(at: loc, n_mv: node, orig: loc) code "AIR311" "`{orig}` has no replacement and is expected to be removed in a future Airflow version; stop relying on it where you can."
+.violation AIR311_name_no_replacement(at: node, n_mv: node, orig: node) code "AIR311" "`{orig}` has no replacement and is expected to be removed in a future Airflow version; stop relying on it where you can."
     suppress noqa "AIR311"
 AIR311_name_no_replacement(N, n, ORIG) :-
     ( air311_old_name(n, "no_replacement"), air311_moved_bare(n, N, ORIG)
@@ -337,7 +337,7 @@ AIR311_name_no_replacement(N, n, ORIG) :-
 
 // quoted_name_no_replacement(n): the JSON util `quoted`, used where the JSON says `matches: "quoted"`
 //   N, ORIG: metavariables this relation binds for the calling rule
-.decl air311_quoted_name_no_replacement(n: node, n_mv: loc, orig: loc)
+.decl air311_quoted_name_no_replacement(n: node, n_mv: node, orig: node)
 air311_quoted_name_no_replacement(n, N, ORIG) :- air311_demand_quoted_name_no_replacement(n),
     air311_string_literal(n), parsed(n, "annotation", r1), within(c2, r1),
     air311_alt_64(c2, N, ORIG).
@@ -346,7 +346,7 @@ air311_quoted_name_no_replacement(n, N, ORIG) :- air311_demand_quoted_name_no_re
 // Each rule below is one way the JSON `rule` can match.
 // Columns after `at` are the metavariables the JSON's message, anchor or `each` names: one finding per distinct row.
 // The JSON `constraints` on ORIG are added to every rule.
-.violation AIR311_dag_sla_miss_callback(at: loc, k: node) code "AIR311" "`{k}` has no replacement and is expected to be removed in a future Airflow version; keep it only while the code must still support Airflow 2."
+.violation AIR311_dag_sla_miss_callback(at: node, k: node) code "AIR311" "`{k}` has no replacement and is expected to be removed in a future Airflow version; keep it only while the code must still support Airflow 2."
     suppress noqa "AIR311"
 AIR311_dag_sla_miss_callback(K, n) :- kind(n, "keyword_argument"),
     field(n, "name", c1), glob("sla_miss_callback", c1), node(_, c1, _, _, _), K = c1,
@@ -358,7 +358,7 @@ AIR311_dag_sla_miss_callback(K, n) :- kind(n, "keyword_argument"),
 
 // callee(n): the JSON util `callee`, used where the JSON says `matches: "callee"`
 //   ORIG: metavariable this relation binds for the calling rule
-.decl air311_callee(n: node, orig: loc)
+.decl air311_callee(n: node, orig: node)
 air311_callee(n, ORIG) :- sym_of(n, q1), match("(airflow)(\\.|$).*", q1),
     air311_moved_bare(n, _, ORIG).
 air311_callee(n, ORIG) :- kind(n, "parenthesized_expression"), child(n, c2, _),
@@ -367,7 +367,7 @@ air311_callee(n, ORIG) :- kind(n, "parenthesized_expression"), child(n, c2, _),
 // AIR311_timetable_datasets(n): a finding at node n, from clause `timetable-datasets`.
 // Each rule below is one way the JSON `rule` can match.
 // Columns after `at` are the metavariables the JSON's message, anchor or `each` names: one finding per distinct row.
-.violation AIR311_timetable_datasets(at: loc, k: node) code "AIR311" "Rename the `{k}` argument to `assets`; the old name still works in Airflow 3 but is expected to be removed later."
+.violation AIR311_timetable_datasets(at: node, k: node) code "AIR311" "Rename the `{k}` argument to `assets`; the old name still works in Airflow 3 but is expected to be removed later."
     suppress noqa "AIR311"
 AIR311_timetable_datasets(K, n) :- kind(n, "keyword_argument"), field(n, "name", c1),
     glob("datasets", c1), node(_, c1, _, _, _), K = c1,
@@ -387,7 +387,7 @@ air311_callee_timetable_datasets(n) :- kind(n, "parenthesized_expression"), chil
 // Each rule below is one way the JSON `rule` can match.
 // Columns after `at` are the metavariables the JSON's message, anchor or `each` names: one finding per distinct row.
 // The JSON `constraints` on ORIG are added to every rule.
-.violation AIR311_builtin_operator_sla(at: loc, k: node) code "AIR311" "`{k}` has no replacement and is expected to be removed in a future Airflow version; keep it only while the code must still support Airflow 2."
+.violation AIR311_builtin_operator_sla(at: node, k: node) code "AIR311" "`{k}` has no replacement and is expected to be removed in a future Airflow version; keep it only while the code must still support Airflow 2."
     suppress noqa "AIR311"
 AIR311_builtin_operator_sla(K, n) :- kind(n, "keyword_argument"), field(n, "name", c1),
     glob("sla", c1), node(_, c1, _, _, _), K = c1,
@@ -399,7 +399,7 @@ AIR311_builtin_operator_sla(K, n) :- kind(n, "keyword_argument"), field(n, "name
 
 // callee_builtin_operator_sla(n): the JSON util `callee`, used where the JSON says `matches: "callee"`
 //   ORIG: metavariable this relation binds for the calling rule
-.decl air311_callee_builtin_operator_sla(n: node, orig: loc)
+.decl air311_callee_builtin_operator_sla(n: node, orig: node)
 air311_callee_builtin_operator_sla(n, ORIG) :- sym_of(n, q1), match("(airflow\\.operators)(\\.|$).*", q1),
     air311_moved_bare(n, _, ORIG).
 air311_callee_builtin_operator_sla(n, ORIG) :- kind(n, "parenthesized_expression"),
@@ -409,7 +409,7 @@ air311_callee_builtin_operator_sla(n, ORIG) :- kind(n, "parenthesized_expression
 // Each rule below is one way the JSON `rule` can match.
 // Columns after `at` are the metavariables the JSON's message, anchor or `each` names: one finding per distinct row.
 // The JSON `constraints` on ORIG are added to every rule.
-.violation AIR311_provider_operator_sla(at: loc, k: node) code "AIR311" "`{k}` has no replacement and is expected to be removed in a future Airflow version; keep it only while the code must still support Airflow 2."
+.violation AIR311_provider_operator_sla(at: node, k: node) code "AIR311" "`{k}` has no replacement and is expected to be removed in a future Airflow version; keep it only while the code must still support Airflow 2."
     suppress noqa "AIR311"
 AIR311_provider_operator_sla(K, n) :- kind(n, "keyword_argument"),
     field(n, "name", c1), glob("sla", c1), node(_, c1, _, _, _), K = c1,
@@ -421,7 +421,7 @@ AIR311_provider_operator_sla(K, n) :- kind(n, "keyword_argument"),
 
 // callee_provider_operator_sla(n): the JSON util `callee`, used where the JSON says `matches: "callee"`
 //   ORIG: metavariable this relation binds for the calling rule
-.decl air311_callee_provider_operator_sla(n: node, orig: loc)
+.decl air311_callee_provider_operator_sla(n: node, orig: node)
 air311_callee_provider_operator_sla(n, ORIG) :- sym_of(n, q1), match("(airflow\\.providers)(\\.|$).*", q1),
     air311_moved_bare(n, _, ORIG), air311_operators_segment(n).
 air311_callee_provider_operator_sla(n, ORIG) :- kind(n, "parenthesized_expression"),
@@ -619,15 +619,15 @@ air311_tok_has_13(n) :- node_text(n, g5), !child(n, _, _),
     match("(?s)^(?:(?:.*\\W)?(?:sla)(?:\\W.*)?)$", g5).
 
 // demand_alt_11: the rows of alt_11 its callers ask for (the metavariable columns they pass in)
-.decl air311_demand_alt_11(n: node, orig: loc)
+.decl air311_demand_alt_11(n: node, orig: node)
 air311_demand_alt_11(n, ORIG) :- air311_moved_bare(n, N, ORIG).
 
 // demand_alt_16: the rows of alt_16 its callers ask for (the metavariable columns they pass in)
-.decl air311_demand_alt_16(n: node, orig: loc)
+.decl air311_demand_alt_16(n: node, orig: node)
 air311_demand_alt_16(n, ORIG) :- air311_moved_bare(n, N, ORIG).
 
 // demand_alt_6: the rows of alt_6 its callers ask for (the metavariable columns they pass in)
-.decl air311_demand_alt_6(n: node, orig: loc)
+.decl air311_demand_alt_6(n: node, orig: node)
 air311_demand_alt_6(n, ORIG) :- air311_moved_bare(n, N, ORIG).
 
 // demand_alt_19: the nodes alt_19 is asked at (its recursion looks at every descendant)
@@ -954,7 +954,7 @@ air311_replacement_case("9", "airflow.models.asset.expand_alias_to_assets").
 
 // alt_2(n): the JSON `any`: n matches if any one of these rules does
 //   ORIG: metavariable this relation binds for the calling rule
-.decl air311_alt_2(n: node, orig: loc)
+.decl air311_alt_2(n: node, orig: node)
 air311_alt_2(n, ORIG) :- ref_site(n, b1), (st2 = b1 ; within(b1, st2)),
     kind(st2, "aliased_import"), field(st2, "name", c3), child(c3, c4, _),
     kind(c4, "identifier"), node(_, c4, _, _, _), ORIG = c4,
@@ -974,7 +974,7 @@ air311_alt_4(n) :- within_stop(n, p2, air311_stop_3), kind(p2, "delete_statement
 
 // alt_6(n): the JSON `any`: n matches if any one of these rules does
 //   ORIG: metavariable of the calling rule, passed in (bound by the caller)
-.decl air311_alt_6(n: node, orig: loc)
+.decl air311_alt_6(n: node, orig: node)
 air311_alt_6(n, ORIG) :- air311_demand_alt_6(n, ORIG), kind(n, "identifier"), ref_site(n, b1),
     st2 = b1, air311_import_fallback(st2), within_stop(st2, p3, "try_statement"),
     kind(p3, "try_statement"), field(p3, "body", c4), has(c4, c5, "dotted_name"),
@@ -1026,7 +1026,7 @@ air311_alt_10(n) :- kind(n, "attribute"), air311_attribute_fallback(n), air311_u
 
 // alt_11(n): the JSON `any`: n matches if any one of these rules does
 //   ORIG: metavariable of the calling rule, passed in (bound by the caller)
-.decl air311_alt_11(n: node, orig: loc)
+.decl air311_alt_11(n: node, orig: node)
 air311_alt_11(n, ORIG) :- air311_demand_alt_11(n, ORIG), kind(n, "identifier"), ref_site(n, b1),
     st2 = b1, air311_import_fallback(st2), within_stop(st2, p3, "try_statement"),
     kind(p3, "try_statement"), field(p3, "body", c4), has(c4, c5, "dotted_name"),
@@ -1081,7 +1081,7 @@ air311_alt_15(n) :- kind(n, "attribute"), air311_attribute_fallback(n), air311_u
 
 // alt_16(n): the JSON `any`: n matches if any one of these rules does
 //   ORIG: metavariable of the calling rule, passed in (bound by the caller)
-.decl air311_alt_16(n: node, orig: loc)
+.decl air311_alt_16(n: node, orig: node)
 air311_alt_16(n, ORIG) :- air311_demand_alt_16(n, ORIG), kind(n, "identifier"), ref_site(n, b1),
     st2 = b1, air311_import_fallback(st2), within_stop(st2, p3, "try_statement"),
     kind(p3, "try_statement"), field(p3, "body", c4), has(c4, c5, "dotted_name"),
@@ -1093,14 +1093,14 @@ air311_alt_16(n, ORIG) :- air311_demand_alt_16(n, ORIG), kind(n, "attribute"), a
 
 // alt_19(n): the JSON `any`: n matches if any one of these rules does
 //   N, ORIG: metavariables this relation binds for the calling rule
-.decl air311_alt_19(n: node, n_mv: loc, orig: loc)
+.decl air311_alt_19(n: node, n_mv: node, orig: node)
 air311_alt_19(n, N, ORIG) :- air311_demand_alt_19(n), kind(n, "identifier"), N = n, ORIG = n,
     (air311_old(n) ; air311_after_dot(n), child(p1, n, _), kind(p1, "attribute"), air311_old(p1)).
 air311_alt_19(n, N, ORIG) :- air311_demand_alt_19(n), air311_quoted(n, N, ORIG).
 
 // alt_23(n): the JSON `any`: n matches if any one of these rules does
 //   N: metavariable this relation binds for the calling rule
-.decl air311_alt_23(n: node, n_mv: loc)
+.decl air311_alt_23(n: node, n_mv: node)
 air311_alt_23(n, N) :- air311_demand_alt_23(n), kind(n, "identifier"), N = n, ORIG = n,
     ( air311_old_name_2(n)
     ; air311_after_dot(n), child(p1, n, _), kind(p1, "attribute"), air311_old_name_2(p1)
@@ -1110,7 +1110,7 @@ air311_alt_23(n, N) :- air311_demand_alt_23(n), air311_quoted_name_2(n, N).
 
 // alt_27(n): the JSON `any`: n matches if any one of these rules does
 //   N: metavariable this relation binds for the calling rule
-.decl air311_alt_27(n: node, n_mv: loc)
+.decl air311_alt_27(n: node, n_mv: node)
 air311_alt_27(n, N) :- air311_demand_alt_27(n), kind(n, "identifier"), N = n, ORIG = n,
     ( air311_old_name(n, "3")
     ; air311_after_dot(n), child(p1, n, _), kind(p1, "attribute"), air311_old_name(p1, "3")
@@ -1120,7 +1120,7 @@ air311_alt_27(n, N) :- air311_demand_alt_27(n), air311_quoted_name_3(n, N).
 
 // alt_31(n): the JSON `any`: n matches if any one of these rules does
 //   N: metavariable this relation binds for the calling rule
-.decl air311_alt_31(n: node, n_mv: loc)
+.decl air311_alt_31(n: node, n_mv: node)
 air311_alt_31(n, N) :- air311_demand_alt_31(n), kind(n, "identifier"), N = n, ORIG = n,
     ( air311_old_name(n, "4")
     ; air311_after_dot(n), child(p1, n, _), kind(p1, "attribute"), air311_old_name(p1, "4")
@@ -1130,7 +1130,7 @@ air311_alt_31(n, N) :- air311_demand_alt_31(n), air311_quoted_name_4(n, N).
 
 // alt_35(n): the JSON `any`: n matches if any one of these rules does
 //   N: metavariable this relation binds for the calling rule
-.decl air311_alt_35(n: node, n_mv: loc)
+.decl air311_alt_35(n: node, n_mv: node)
 air311_alt_35(n, N) :- air311_demand_alt_35(n), kind(n, "identifier"), N = n, ORIG = n,
     ( air311_old_name(n, "5")
     ; air311_after_dot(n), child(p1, n, _), kind(p1, "attribute"), air311_old_name(p1, "5")
@@ -1140,7 +1140,7 @@ air311_alt_35(n, N) :- air311_demand_alt_35(n), air311_quoted_name_5(n, N).
 
 // alt_40(n): the JSON `any`: n matches if any one of these rules does
 //   N, ORIG: metavariables this relation binds for the calling rule
-.decl air311_alt_40(n: node, n_mv: loc, orig: loc)
+.decl air311_alt_40(n: node, n_mv: node, orig: node)
 air311_alt_40(n, N, ORIG) :- air311_demand_alt_40(n), kind(n, "identifier"), N = n, ORIG = n,
     ( air311_old_name_6(n)
     ; air311_after_dot(n), child(p1, n, _), kind(p1, "attribute"), air311_old_name_6(p1)
@@ -1150,7 +1150,7 @@ air311_alt_40(n, N, ORIG) :- air311_demand_alt_40(n), air311_quoted_name_6(n, N,
 
 // alt_44(n): the JSON `any`: n matches if any one of these rules does
 //   N: metavariable this relation binds for the calling rule
-.decl air311_alt_44(n: node, n_mv: loc)
+.decl air311_alt_44(n: node, n_mv: node)
 air311_alt_44(n, N) :- air311_demand_alt_44(n), kind(n, "identifier"), N = n, ORIG = n,
     ( air311_old_name(n, "7")
     ; air311_after_dot(n), child(p1, n, _), kind(p1, "attribute"), air311_old_name(p1, "7")
@@ -1160,7 +1160,7 @@ air311_alt_44(n, N) :- air311_demand_alt_44(n), air311_quoted_name_7(n, N).
 
 // alt_48(n): the JSON `any`: n matches if any one of these rules does
 //   N: metavariable this relation binds for the calling rule
-.decl air311_alt_48(n: node, n_mv: loc)
+.decl air311_alt_48(n: node, n_mv: node)
 air311_alt_48(n, N) :- air311_demand_alt_48(n), kind(n, "identifier"), N = n, ORIG = n,
     ( air311_old_name(n, "8")
     ; air311_after_dot(n), child(p1, n, _), kind(p1, "attribute"), air311_old_name(p1, "8")
@@ -1170,7 +1170,7 @@ air311_alt_48(n, N) :- air311_demand_alt_48(n), air311_quoted_name_8(n, N).
 
 // alt_52(n): the JSON `any`: n matches if any one of these rules does
 //   N: metavariable this relation binds for the calling rule
-.decl air311_alt_52(n: node, n_mv: loc)
+.decl air311_alt_52(n: node, n_mv: node)
 air311_alt_52(n, N) :- air311_demand_alt_52(n), kind(n, "identifier"), N = n, ORIG = n,
     ( air311_old_name(n, "9")
     ; air311_after_dot(n), child(p1, n, _), kind(p1, "attribute"), air311_old_name(p1, "9")
@@ -1180,7 +1180,7 @@ air311_alt_52(n, N) :- air311_demand_alt_52(n), air311_quoted_name_9(n, N).
 
 // alt_56(n): the JSON `any`: n matches if any one of these rules does
 //   N: metavariable this relation binds for the calling rule
-.decl air311_alt_56(n: node, n_mv: loc)
+.decl air311_alt_56(n: node, n_mv: node)
 air311_alt_56(n, N) :- air311_demand_alt_56(n), kind(n, "identifier"), N = n, ORIG = n,
     ( air311_old_name(n, "10")
     ; air311_after_dot(n), child(p1, n, _), kind(p1, "attribute"), air311_old_name(p1, "10")
@@ -1190,7 +1190,7 @@ air311_alt_56(n, N) :- air311_demand_alt_56(n), air311_quoted_name_10(n, N).
 
 // alt_60(n): the JSON `any`: n matches if any one of these rules does
 //   N, ORIG: metavariables this relation binds for the calling rule
-.decl air311_alt_60(n: node, n_mv: loc, orig: loc)
+.decl air311_alt_60(n: node, n_mv: node, orig: node)
 air311_alt_60(n, N, ORIG) :- air311_demand_alt_60(n), kind(n, "identifier"),
     glob("{Param,ParamsDict,DagParam}", n), N = n, ORIG = n,
     ( air311_old_name_param(n)
@@ -1201,7 +1201,7 @@ air311_alt_60(n, N, ORIG) :- air311_demand_alt_60(n), air311_quoted_name_param(n
 
 // alt_64(n): the JSON `any`: n matches if any one of these rules does
 //   N, ORIG: metavariables this relation binds for the calling rule
-.decl air311_alt_64(n: node, n_mv: loc, orig: loc)
+.decl air311_alt_64(n: node, n_mv: node, orig: node)
 air311_alt_64(n, N, ORIG) :- air311_demand_alt_64(n), kind(n, "identifier"), N = n, ORIG = n,
     ( air311_old_name(n, "no_replacement")
     ; air311_after_dot(n), child(p1, n, _), kind(p1, "attribute"), air311_old_name(p1, "no_replacement")

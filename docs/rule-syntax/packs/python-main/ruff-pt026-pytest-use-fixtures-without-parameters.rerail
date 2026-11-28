@@ -10,7 +10,7 @@
 // PT026(n): a finding at node n, from clause `usefixtures-without-fixtures`.
 // Each rule below is one way the JSON `rule` can match.
 // Columns after `at` are the metavariables the JSON's message, anchor or `each` names: one finding per distinct row.
-.violation PT026(at: loc, span: node) "Remove this `usefixtures` decorator, or pass it the names of the fixtures to apply; without arguments it does nothing."
+.violation PT026(at: place, span: place) "Remove this `usefixtures` decorator, or pass it the names of the fixtures to apply; without arguments it does nothing."
     suppress noqa "PT026"
 // SPAN: not bound by every branch, so empty (unset) where not bound, as in ast-grep.
 PT026(rr_at, SPAN) :- kind(n, "decorator"), child(n, c1, _),

@@ -20,17 +20,17 @@
     suppress ruff "UP009"
     fix safe remove "Remove the encoding declaration"
 UP009(c) :- declared(d, l, 0, x), l <= 2, (x = "utf-8" ; x = "utf8"), (declared(d, _, 1, y), (y = "utf-8" ; y = "utf8") ; !declared(d, _, 1, _)),
-    kind(c, "comment"), docof(c, d), line(c, l).
+    kind(c, "comment"), docof(c, d), node_line_number(c, l).
 // Ruff deletes the whole line: here the line's span (indentation included); see NOTES for its terminator.
-remove(c) :- docof(c, d), line(c, l), src_line(d, l, sp) => delete(sp).
+remove(c) :- docof(c, d), node_line_number(c, l), document_line(d, sp), line_number(sp, l) => delete(sp).
 
 // coding(d, l, x): line l is a comment-only line declaring encoding x. The regex is PEP 263's, greedy
 // where Python's `.*?` is lazy: they differ only on a line that says "coding" twice.
 .decl coding(d: number, l: number, x: symbol)
-coding(d, l, x) :- src_line(d, l, sp), match("[ \\t\\f]*#.*coding[:=][ \\t]*(?<xs>[-\\w.]+)[\\s\\S]*", sp), text(xs, x).
+coding(d, l, x) :- document_line(d, sp), line_number(sp, l), match("[ \\t\\f]*#.*coding[:=][ \\t]*(?<xs>[-\\w.]+)[\\s\\S]*", sp), match_text(xs, x).
 // head(d, l): line l is in the leading block: no code line above it.
 .decl code_line(d: number, l: number)
-code_line(d, l) :- src_line(d, l, sp), !match("[ \\t\\f]*(#[\\s\\S]*)?", sp).
+code_line(d, l) :- document_line(d, sp), line_number(sp, l), !match("[ \\t\\f]*(#[\\s\\S]*)?", sp).
 .decl head(d: number, l: number)
 head(d, l) :- coding(d, l, _), count : { code_line(d, k), k < l } = 0.
 // declared(d, l, i, x): the i-th coding comment (from 0) of the leading block is on line l and names x.

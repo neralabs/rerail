@@ -101,42 +101,7 @@ impl Names {
     }
 }
 
-/// A name in a table's text: `\\`, `\n`, `\r`, `\t` and `\0` escaped (C's and Go's tokens hold a newline and a NUL).
-fn escaped(name: &str) -> String {
-    let mut s = String::with_capacity(name.len());
-    for c in name.chars() {
-        match c {
-            '\\' => s.push_str("\\\\"),
-            '\n' => s.push_str("\\n"),
-            '\r' => s.push_str("\\r"),
-            '\t' => s.push_str("\\t"),
-            '\0' => s.push_str("\\0"),
-            c => s.push(c),
-        }
-    }
-    s
-}
-
-/// `escaped`'s inverse; `None` for an escape it does not write.
-fn unescaped(s: &str) -> Option<String> {
-    let mut out = String::with_capacity(s.len());
-    let mut chars = s.chars();
-    while let Some(c) = chars.next() {
-        if c != '\\' {
-            out.push(c);
-            continue;
-        }
-        out.push(match chars.next()? {
-            '\\' => '\\',
-            'n' => '\n',
-            'r' => '\r',
-            't' => '\t',
-            '0' => '\0',
-            _ => return None,
-        });
-    }
-    Some(out)
-}
+use crate::codes::escaped;
 
 impl Lang {
     /// `table` by number (the lab's: every code the grammar allows and no other, decision 0631, numbered by how often
@@ -244,34 +209,19 @@ impl Lang {
 
     /// The choices from their text (`to_text`).
     pub fn from_text(text: &str) -> Result<Self, String> {
+        use crate::codes::Line;
         let (mut revision, mut widths, mut entries, mut names) = (None, None, Vec::new(), Names::default());
         for (k, line) in text.lines().enumerate() {
-            if line.is_empty() || line.starts_with('#') {
-                continue;
-            }
-            let bad = || format!("line {}: {line}", k + 1);
-            let c: Vec<&str> = line.split('\t').collect();
-            let num = |s: &str| s.parse::<u64>().map_err(|_| bad());
-            match c[0] {
-                "revision" if c.len() == 2 => revision = Some(num(c[1])? as u8),
-                "widths" if c.len() == 4 => widths = Some([num(c[1])? as usize, num(c[2])? as usize, num(c[3])? as usize]),
-                "code" if c.len() == 6 => {
-                    let alias = match c[4] {
-                        "-" => None,
-                        a => {
-                            let (named, name) = a.split_once(':').ok_or_else(bad)?;
-                            Some((name.to_owned(), named == "1"))
-                        }
-                    };
-                    let classes = if c[5] == "-" { Vec::new() } else { c[5].split(',').map(|x| x.parse::<u16>().map_err(|_| bad())).collect::<Result<_, _>>()? };
-                    entries.push(Entry { kind: num(c[1])? as u16, field: num(c[2])? as u16, flags: num(c[3])? as u8, alias, classes });
-                }
-                "kind" if c.len() == 4 => names.kinds.push((num(c[1])? as u16, c[2] == "1", unescaped(c[3]).ok_or_else(bad)?)),
-                "lookup" if c.len() == 4 => names.lookups.push((c[1] == "1", unescaped(c[2]).ok_or_else(bad)?, num(c[3])? as u16)),
-                "field" if c.len() == 3 => names.fields.push((num(c[1])? as u16, unescaped(c[2]).ok_or_else(bad)?)),
-                "class" if c.len() == 3 => names.classes.push((num(c[1])? as u16, unescaped(c[2]).ok_or_else(bad)?)),
-                "supertype" if c.len() == 3 => names.supertypes.push((unescaped(c[1]).ok_or_else(bad)?, num(c[2])? as u16)),
-                _ => return Err(bad()),
+            match crate::codes::line(line).map_err(|line| format!("line {}: {line}", k + 1))? {
+                Line::Revision(r) => revision = Some(r),
+                Line::Widths(w) => widths = Some(w),
+                Line::Code { kind, field, flags, alias, classes } => entries.push(Entry { kind, field, flags, alias, classes }),
+                Line::Kind(id, named, name) => names.kinds.push((id, named, name)),
+                Line::Lookup(named, name, id) => names.lookups.push((named, name, id)),
+                Line::Field(id, name) => names.fields.push((id, name)),
+                Line::Class(id, name) => names.classes.push((id, name)),
+                Line::Supertype(name, id) => names.supertypes.push((name, id)),
+                Line::None(_) => {}
             }
         }
         Ok(Lang::new(CodeTable::new(entries), widths.ok_or("no widths")?, revision.ok_or("no revision")?)?.with_names(names))
@@ -898,6 +848,34 @@ impl<'a> StoredPresence<'a> {
 /// What a writer's `finish` gives: the tape, its presence laid in its home after it (decision 0434 §4, step 6).
 pub struct Finished {
     pub tape: Written,
+    /// Its nodes as its writer's ops were given them (`aux_index::Nodes`), what its auxiliary index is laid from;
+    /// `None` where they were not all given through them.
+    pub nodes: Option<crate::aux_index::Nodes>,
+    /// Its source's SHA-256, where its writer took it.
+    pub digest: Option<SourceDigest>,
+}
+
+/// The SHA-256 of the bytes a writer read (`Finished::digest`), and where they lay.
+#[derive(Clone, Copy, Debug)]
+pub struct SourceDigest {
+    pub sha256: [u8; 32],
+    at: (usize, usize),
+}
+
+impl SourceDigest {
+    /// The digest of `bytes`, read where they lie.
+    pub fn of(bytes: &[u8]) -> SourceDigest {
+        SourceDigest { sha256: sha2::Digest::finalize(sha2::Digest::chain_update(sha2::Sha256::default(), bytes)).into(), at: (bytes.as_ptr() as usize, bytes.len()) }
+    }
+    /// `sha256`, the digest its reader took of `bytes`, where they lie.
+    pub fn taken(sha256: [u8; 32], bytes: &[u8]) -> SourceDigest {
+        SourceDigest { sha256, at: (bytes.as_ptr() as usize, bytes.len()) }
+    }
+    /// The digest, where it was taken of `source` itself (the same bytes where they lie): a parser given another text
+    /// of the same length (a template's view) was given other bytes.
+    pub fn of_source(&self, source: &[u8]) -> Option<[u8; 32]> {
+        (self.at == (source.as_ptr() as usize, source.len())).then_some(self.sha256)
+    }
 }
 
 impl Written {
@@ -950,14 +928,11 @@ impl Written {
     /// Its bytes, where it owns them (a writer's tape, not a placed one): for the writer to write the next tape in
     /// (`ops::Writer::recycle`).
     pub fn into_own(self) -> Option<crate::Vector<u8>> {
-        let home = match self {
+        match self {
             Written::F16(t) => t.buf,
             Written::F16Z(t) => t.buf,
-        };
-        match home {
-            crate::home::Home::Own(v) => Some(v),
-            crate::home::Home::Placed(_) => None,
         }
+        .into_own()
     }
     pub fn extent(&self) -> &[u8] {
         match self {
@@ -1005,6 +980,13 @@ impl Written {
     }
 }
 
+/// What builds a tape's auxiliary index (decision 0656 step 3), for its writer to lay in its home
+/// (`ops::Writer::finish_laid`): in its room before giving it out (0353 row 17), else in its own vector. It is given
+/// the tape as it lies (its header), the writer's record of its nodes, which the index is built from (the tape is never
+/// read back, decision 0703), and the source's digest the writer took. A tape without a presence is refused: every
+/// place is read in its index (0656 step 4).
+pub type LayAux<'a> = &'a dyn Fn(&Written, &crate::aux_index::Nodes, Option<&SourceDigest>) -> Result<Vec<u8>, String>;
+
 /// A tape's presence in its home (decision 0434 §4, step 6): after the tape, at its end rounded up to 8 bytes, a
 /// header of four u32s (its kinds' words, its fields' words, its presences, its faults), then the document's words
 /// (kinds', then fields') and each block's after them, then its faults: each ERROR or MISSING node's index (u32), in
@@ -1013,8 +995,8 @@ impl Written {
 pub mod presence {
     use super::{Presence, u32_at};
 
-    /// The header's bytes.
-    pub const HEAD: usize = 16;
+    /// The header's bytes, and where a home's auxiliary index lies after a presence: the reads'.
+    pub use rerail_reads::tape::presence::{HEAD, aux_at};
 
     /// A code's word in the table the writers read (their `KINDS` part): its kind, `FAULT` where it is MISSING,
     /// and its field above. An ERROR code's kind is `ERROR_CODE`, so a node of either sets the presence's bit
@@ -1065,7 +1047,7 @@ pub mod presence {
 
     /// The faults the presence `bytes` (`find`'s) lists: each ERROR or MISSING node's index, in preorder.
     pub fn faults(bytes: &[u8]) -> impl Iterator<Item = u32> + '_ {
-        fault_bytes(bytes).chunks_exact(4).map(|c| u32::from_le_bytes(c.try_into().expect("4 bytes")))
+        fault_bytes(bytes).as_chunks::<4>().0.iter().map(|c| u32::from_le_bytes(*c))
     }
 
     /// `faults`, read where they lie: u32s at a multiple of 8 bytes into the home (`at`, `HEAD` and the words are),
@@ -1083,13 +1065,6 @@ pub mod presence {
     fn len_at(buf: &[u8], at: usize) -> u64 {
         let w = |k: usize| u64::from(u32_at(buf, at + 4 * k));
         HEAD as u64 + 8 * (w(0) + w(1)) * w(2) + 4 * w(3)
-    }
-
-    /// Where a home's auxiliary index lies after the presence at `at` that ends at `end` (decision 0656): its bytes
-    /// rounded up to 16, counted from the presence (a view's presence counts from its batch's block, not its home), as
-    /// `<ukl/reads/aux_index_tape.h>`'s `ukl_aux_in_home` finds it.
-    pub fn aux_at(at: usize, end: usize) -> usize {
-        at + (end - at).next_multiple_of(16)
     }
 
     /// Where the presence and the auxiliary index in the home `buf` of a tape `end` bytes long and of `blocks` blocks
@@ -1295,8 +1270,8 @@ pub(crate) fn write_with(mut w: impl WriterOps, n: usize, mut node: impl FnMut(u
 const NONE: u32 = u32::MAX;
 
 /// Format 16 (or 16z where `z`) written from the tree `t`, each node's code mapped to the language's number
-/// (`number`, by `t`'s code), in one pass (`write`): the tests' tapes (f16's, the auxiliary index's, the GPU's, through
-/// `test-hooks`).
+/// (`number`, by `t`'s code), in one pass (`write`): the tests' tapes (f16's, the auxiliary index's, the GPU's; other
+/// crates' tests' too, through `test-hooks`).
 #[cfg(any(test, feature = "test-hooks"))]
 pub fn write_from<T: Tape>(lang: &Lang, t: &T, number: &[u32], source: &[u8], terminators: crate::newlines::Terminators, tag: u8, z: bool) -> Result<Written, String> {
     write(lang, t.len(), source, terminators, tag, z, nodes_of(t, number))
@@ -2660,7 +2635,7 @@ mod tests {
     /// generations turn while it reads).
     #[test]
     fn the_rust_16z_reads_are_the_jits() {
-        use crate::reads::f16z::slice::Z;
+        use crate::reads::f16z::Z;
         use rerail_clif::view::cache;
         let jit = rerail_clif::jit::Reads::new();
         // SAFETY: the read's signature: the tape's base, its view, a node; a u64.
@@ -2714,97 +2689,58 @@ mod tests {
         assert!(cache::Spec::check(own_cache).is_ok(), "the cache as its reads leave it");
     }
 
-    /// The Rust 16z reads (`crate::reads::f16z`, written directly, where the tape lies) read every node and line as
-    /// the CLIF's do through the JIT, each through a cache of its own of two blocks a generation (so it turns and
-    /// promotes), forward and back; then Rust and JIT readers on several threads share one cache, as a batch's
-    /// readers do, and every value read that is not the node's comes with a failure the cache counted (decision 0463).
+    /// Rust and JIT readers of a 16z tape on 8 threads share one cache, as a batch's readers do, each in an order of
+    /// its own (decision 0353 step 4b): the Rust reads (`reads::f16z::Z`) find it at its address, the JIT's at its
+    /// offset in the view, and every value read that is not the node's comes with a failure the cache counted
+    /// (decision 0463).
     #[test]
-    fn the_16z_rust_reads_are_the_jits() {
-        use crate::reads::{InPlace, f16z};
+    fn the_rust_and_jit_16z_reads_share_one_cache() {
+        use crate::reads::f16z::Z;
         use rerail_clif::view::cache;
         let jit = rerail_clif::jit::Reads::new();
-        // SAFETY: the read's signature: the tape's base, its view, a node; a u64.
-        let slot: extern "C" fn(*const u8, *const TapeView, u32) -> u64 = unsafe { std::mem::transmute(jit.function("tape_slot")) };
         let entries: Vec<Entry> = (0..600u16).map(|k| Entry { kind: k, field: 0, flags: 0, alias: None, classes: Vec::new() }).collect();
         let table = CodeTable::new(entries);
         let lang = lang_of(&table);
         let (nodes, pos) = escaped_nodes();
         let plain = Plain(&nodes, &table);
         let Ok(Written::F16Z(z)) = write_from(&lang, &plain, &(0..600).collect::<Vec<_>>(), &source_of(pos + 2), crate::newlines::Terminators::Lf, 0, true) else { panic!("16z") };
-        assert!(z.len() > 3 * Z, "the tape spans blocks");
-        let view = z.view(&lang).unwrap();
-        let b = z.as_bytes();
-        // A cache of its own for each reader, named by its address from the tape's (the view's `side[0..2]`), not
-        // shared (`columns[4]` 0).
+        let mut view = z.view(&lang).unwrap();
+        assert!(z.p.block_count() > 2, "more blocks than a cache's generation holds");
+        let n = view.nodes;
+        // The values to read, by the Rust reads through a cache of their own, read on this thread alone.
         let spec = cache::Spec::new(3, 2, view.columns[3] as usize);
-        let own = || {
-            let mut words = vec![0u128; spec.bytes().div_ceil(16)];
-            // SAFETY: the words just made, as bytes.
-            spec.init(unsafe { std::slice::from_raw_parts_mut(words.as_mut_ptr().cast::<u8>(), spec.bytes()) }).unwrap();
-            let mut v = view;
-            let rel = (words.as_ptr() as i64).wrapping_sub(b.as_ptr() as i64);
-            (v.side[0], v.side[1], v.columns[4]) = (rel as u32, (rel >> 32) as u32, 0);
-            (words, v)
-        };
-        let ((rust, vr), (cl, vj)) = (own(), own());
-        let vj = &vj;
-        // SAFETY: the tape's bytes, held while the reads run.
-        let t = unsafe { InPlace::new(b.as_ptr()) };
-        let n = vr.nodes;
-        let mut prev = 0;
-        for i in (0..n).chain((0..n).rev()) {
-            let k = i as usize;
-            assert_eq!(f16z::size(t, &vr, i), jit.one("tape_size", b, vj, k), "size of {i}");
-            assert_eq!(f16z::number(t, &vr, i), jit.one("tape_number", b, vj, k), "number of {i}");
-            assert_eq!(f16z::start_stated(t, &vr, i), jit.one("tape_start_stated", b, vj, k), "stated start of {i}");
-            assert_eq!(f16z::start(t, &vr, i), jit.one("tape_start", b, vj, k), "start of {i}");
-            assert_eq!(f16z::end(t, &vr, i), jit.one("tape_end", b, vj, k), "end of {i}");
-            assert_eq!(f16z::length(t, &vr, i), jit.one("tape_length", b, vj, k), "length of {i}");
-            assert_eq!(f16z::parent(t, &vr, i), jit.one("tape_parent", b, vj, k), "parent of {i}");
-            assert_eq!(f16z::slot(t, &vr, i), slot(b.as_ptr(), vj, i), "slot of {i}");
-            assert_eq!(f16z::start_next(t, &vr, i, prev), jit.two("tape_start_next", b, vj, k, prev), "next start of {i}");
-            prev = f16z::start(t, &vr, i);
-        }
-        for x in 0..=vr.source_len {
-            assert_eq!(f16z::line(t, &vr, x), jit.one("tape_line", b, vj, x as usize), "line of byte {x}");
-        }
-        for k in 0..vr.line_count {
-            assert_eq!(f16z::line_start(t, &vr, k), jit.one("tape_line_start", b, vj, k as usize), "line {k}'s start");
-        }
-        // SAFETY: each cache's bytes, which no read uses now.
-        let counts = |w: &Vec<u128>| cache::Counts::checked(unsafe { std::slice::from_raw_parts(w.as_ptr().cast::<u8>(), spec.bytes()) });
-        let (r, j) = (counts(&rust), counts(&cl));
-        assert_eq!((r.failed, r.misses, r.rotated, r.promoted), (j.failed, j.misses, j.rotated, j.promoted), "the caches' counts");
-        assert!(r.rotated > 0 && r.promoted > 0, "the caches turned and promoted: {r:?}");
-        // One cache, shared (the view's `columns[4]`), by Rust and JIT readers on 8 threads, each in an order of its own.
-        let expect: Vec<[u32; 3]> = (0..n).map(|i| [f16z::size(t, &vr, i), f16z::start(t, &vr, i), f16z::parent(t, &vr, i)]).collect();
-        let mut words = vec![0u128; spec.bytes().div_ceil(16)];
-        // SAFETY: the words just made, as bytes.
-        let buf = unsafe { std::slice::from_raw_parts_mut(words.as_mut_ptr().cast::<u8>(), spec.bytes()) };
-        spec.init(buf).unwrap();
-        let mut shared = view;
-        let rel = (buf.as_ptr() as i64).wrapping_sub(b.as_ptr() as i64);
-        (shared.side[0], shared.side[1], shared.columns[4]) = (rel as u32, (rel >> 32) as u32, 1);
+        let mut own = vec![0u64; (spec.bytes() + 64).div_ceil(8)];
+        let own_at = (64 - (own.as_ptr() as usize) % 64) % 64;
+        // SAFETY: the buffer's bytes past the alignment.
+        let own_cache = unsafe { std::slice::from_raw_parts_mut(own.as_mut_ptr().cast::<u8>().add(own_at), spec.bytes()) };
+        spec.init(own_cache).unwrap();
+        let alone = Z { t: z.as_bytes(), v: &view, cache: own_cache.as_ptr() };
+        let expect: Vec<[u32; 3]> = (0..n).map(|i| [alone.size(i), alone.start(i), alone.parent(i)]).collect();
+        // One cache after the tape, the view naming it by its offset (the JIT's) and the Rust reads by its address.
+        let at = z.as_bytes().len().next_multiple_of(64);
+        let mut bytes = z.as_bytes().to_vec();
+        bytes.resize(at + spec.bytes() + 64, 0);
+        let cache_at = at + (64 - (bytes.as_ptr() as usize + at) % 64) % 64;
+        spec.init(&mut bytes[cache_at..cache_at + spec.bytes()]).unwrap();
+        (view.side[0], view.side[1], view.columns[3], view.columns[4]) = (cache_at as u32, 0, spec.entry_bytes() as u32, 1);
         let wrong = std::sync::atomic::AtomicU32::new(0);
         type Read = extern "C" fn(*const u8, *const TapeView, u32) -> u32;
         // SAFETY: each read's signature: the tape's base, its view, a node.
         let jits: [Read; 3] = ["tape_size", "tape_start", "tape_parent"].map(|name| unsafe { std::mem::transmute::<*const u8, Read>(jit.function(name)) });
-        let base = b.as_ptr() as usize;
+        let (t, view) = (&bytes[..z.as_bytes().len()], &view);
+        let (base, cache) = (bytes.as_ptr() as usize, bytes[cache_at..].as_ptr() as usize);
         std::thread::scope(|s| {
             for w in 0..8u32 {
-                let (expect, wrong, shared) = (&expect, &wrong, &shared);
+                let (expect, wrong) = (&expect, &wrong);
                 s.spawn(move || {
+                    let rust = Z { t, v: view, cache: cache as *const u8 };
                     let mut x = w.wrapping_mul(0x9E37_79B9) | 1;
                     for _ in 0..4 * n {
                         x ^= x << 13;
                         x ^= x >> 17;
                         x ^= x << 5;
                         let i = x % n;
-                        let got = if w % 2 == 0 {
-                            [f16z::size(t, shared, i), f16z::start(t, shared, i), f16z::parent(t, shared, i)]
-                        } else {
-                            jits.map(|f| f(base as *const u8, shared, i))
-                        };
+                        let got = if w % 2 == 0 { [rust.size(i), rust.start(i), rust.parent(i)] } else { jits.map(|f| f(base as *const u8, view, i)) };
                         if got != expect[i as usize] {
                             wrong.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
                         }
@@ -2812,7 +2748,7 @@ mod tests {
                 });
             }
         });
-        let counts = cache::Counts::checked(buf);
+        let counts = cache::Counts::checked(&bytes[cache_at..cache_at + spec.bytes()]);
         let wrong = wrong.into_inner();
         assert!(wrong <= 3 * counts.failed, "{wrong} reads wrong with {} failures counted: {counts:?}", counts.failed);
         assert!(counts.rotated > 0, "the shared cache turned: {counts:?}");
@@ -3459,20 +3395,20 @@ mod tests {
         let host_misses = counts(&c).misses;
         assert_eq!(host_misses as usize, z.block_count(), "the host decoded each block once: {:?}", counts(&c));
         let view = jit_view(&c);
-        for i in 0..n {
-            assert_eq!(jit(&view, i as u32), want[i], "node {i}, the JIT reading the host's entries");
+        for (i, want) in want.iter().enumerate() {
+            assert_eq!(jit(&view, i as u32), *want, "node {i}, the JIT reading the host's entries");
         }
         assert_eq!(counts(&c).misses, host_misses, "the JIT found every block the host decoded: {:?}", counts(&c));
         // JIT first: every block decoded by the JIT, then read by the host with no miss.
         let c = ZCache::host(z.block_count(), z.entry_size());
         let view = jit_view(&c);
-        for i in 0..n {
-            assert_eq!(jit(&view, i as u32), want[i], "node {i}, the JIT");
+        for (i, want) in want.iter().enumerate() {
+            assert_eq!(jit(&view, i as u32), *want, "node {i}, the JIT");
         }
         let jit_misses = counts(&c).misses;
         let t = z.reader(&lang, Some(&c)).unwrap();
-        for i in 0..n {
-            assert_eq!(answers(&t, i), want[i], "node {i}, the host reading the JIT's entries");
+        for (i, want) in want.iter().enumerate() {
+            assert_eq!(answers(&t, i), *want, "node {i}, the host reading the JIT's entries");
         }
         assert_eq!(counts(&c).misses, jit_misses, "the host found every block the JIT decoded: {:?}", counts(&c));
     }
@@ -3599,7 +3535,7 @@ mod tests {
             for b in 0..nodes.len().div_ceil(Z) {
                 let mut want = vec![0u64; p.kind_words + p.field_words];
                 for &(code, ..) in &nodes[b * Z..nodes.len().min((b + 1) * Z)] {
-                    let e = table.entry(code as u32);
+                    let e = table.entry(code);
                     want[usize::from(e.kind) / 64] |= 1 << (e.kind % 64);
                     want[p.kind_words + usize::from(e.field) / 64] |= 1 << (e.field % 64);
                 }
@@ -3681,12 +3617,22 @@ mod tests {
             while let Some((_, end)) = ends.pop() {
                 w.close(end);
             }
-            match w.finish().unwrap().tape {
-                Written::F16(t) => assert_eq!(t.as_bytes(), want.as_bytes(), "16 retagged"),
+            let f = w.finish().unwrap();
+            // The writer's nodes, its edits in them, lay the index the tape's read does; its digest is the source's.
+            let codes = crate::aux_index::CodeSets { named: crate::aux_index::named_codes(600, |c| c % 2 == 0), comments: crate::aux_index::named_codes(600, |c| c % 5 == 0) };
+            let all = crate::aux_index::Sections::ALL;
+            let laid = crate::aux_index::build_from(f.nodes.as_ref().expect("every node given through the ops"), &source, 7, &codes, all).unwrap();
+            assert_eq!(f.digest.and_then(|d| d.of_source(&source)), Some(sha2::Digest::finalize(sha2::Digest::chain_update(sha2::Sha256::default(), &source)).into()), "the source's digest");
+            match f.tape {
+                Written::F16(t) => {
+                    assert_eq!(t.as_bytes(), want.as_bytes(), "16 retagged");
+                    assert_eq!(laid, crate::aux_index::build(&t.reader(&lang).unwrap(), &source, 7, &codes, all).unwrap(), "16: the writer's index");
+                }
                 Written::F16Z(t) => {
                     let mut d = vec![0u8; t.decoded_len()];
                     t.decode_into(&mut d).unwrap();
                     assert_eq!(d, want.as_bytes(), "16z retagged");
+                    assert_eq!(laid, crate::aux_index::build(&t.reader(&lang, Some(&ZCache::of([&t]))).unwrap(), &source, 7, &codes, all).unwrap(), "16z: the writer's index");
                 }
             }
         }
@@ -3871,7 +3817,7 @@ mod tests {
             let w = match home.borrow_mut().take() {
                 Some(mut w) => {
                     used.set(used.get() + 1);
-                    w.begin(lang, source, crate::newlines::Terminators::Lf, 3, z, blocks, nodes / 3);
+                    w.begin(&Document { lang, source, tag: 3, z, blocks, nodes: nodes / 3, sha256: None }, crate::newlines::Terminators::Lf);
                     w
                 }
                 None => Writer::new(lang, source, crate::newlines::Terminators::Lf, 3, z, blocks, nodes / 3),
@@ -3896,11 +3842,155 @@ mod tests {
         let want = first.extent().to_vec();
         let at = first.extent().as_ptr();
         w.recycle(first);
-        w.begin(&lang, &source, crate::newlines::Terminators::Lf, 0, false, true, nodes.len());
+        w.begin(&Document { lang: &lang, source: &source, tag: 0, z: false, blocks: true, nodes: nodes.len(), sha256: None }, crate::newlines::Terminators::Lf);
         by_ops(&mut w, &nodes, 1);
         let again = Writer::finish(&mut w).expect("the second tape").tape;
         assert_eq!(again.extent(), &want[..], "the tape written in the room given back");
         assert_eq!(again.extent().as_ptr(), at, "the tape is the room given back");
+    }
+
+    /// Test rooms (`home::Rooms`): regions of leaked memory, every `refuse`-th asked refused (0: none).
+    struct TestRooms {
+        asked: std::sync::atomic::AtomicUsize,
+        refuse: usize,
+    }
+
+    struct TestRegion(&'static mut [u8]);
+
+    #[derive(Debug)]
+    struct TestRoom(&'static [u8]);
+
+    impl crate::home::Room for TestRoom {
+        fn bytes(&self) -> &[u8] {
+            self.0
+        }
+        fn as_any(&self) -> &dyn std::any::Any {
+            self
+        }
+    }
+
+    impl crate::home::Rooms for TestRooms {
+        fn region(&self, len: usize) -> Option<Box<dyn crate::home::Region>> {
+            let k = self.asked.fetch_add(1, std::sync::atomic::Ordering::Relaxed) + 1;
+            if self.refuse != 0 && k.is_multiple_of(self.refuse) {
+                return None;
+            }
+            Some(Box::new(TestRegion(Box::leak(vec![0x5au8; len].into_boxed_slice()))))
+        }
+    }
+
+    impl crate::home::Region for TestRegion {
+        fn free(&mut self) -> &mut [u8] {
+            self.0
+        }
+        fn give(&mut self, len: usize) -> std::sync::Arc<dyn crate::home::Room> {
+            let (tape, rest) = std::mem::take(&mut self.0).split_at_mut(len);
+            self.0 = rest;
+            std::sync::Arc::new(TestRoom(tape))
+        }
+    }
+
+    fn test_rooms(refuse: usize) -> Option<std::sync::Arc<dyn crate::home::Rooms>> {
+        Some(std::sync::Arc::new(TestRooms { asked: Default::default(), refuse }))
+    }
+
+    /// Decision 0353 step 4a (row 17): a writer given rooms writes the reference writer's tape and presence in them,
+    /// R13's cases: its tape in a region from the start, the region grown as it fills (each case's hint a third of
+    /// its nodes), and a region refused in the middle of a tape leaving it in a vector of the writer's own.
+    #[test]
+    fn a_writer_with_rooms_writes_the_references_tape() {
+        for refuse in [0, 2, 3] {
+            writes_the_references_tape(|lang, source, z, blocks, nodes| {
+                let mut w = Writer::placing(test_rooms(refuse));
+                w.begin(&Document { lang, source, tag: 3, z, blocks, nodes: nodes / 3, sha256: None }, crate::newlines::Terminators::Lf);
+                w
+            });
+        }
+    }
+
+    /// A writer given rooms gives its tape out where it wrote it: placed, the bytes a writer without rooms writes, and
+    /// a writer used again writes the next tape in bytes of its own (the rest of its region, or a new one), the first
+    /// as it was.
+    #[test]
+    fn a_writer_with_rooms_gives_its_tape_out_where_it_lies() {
+        let entries: Vec<Entry> = (0..600u16).map(|k| Entry { kind: k % 300, field: k % 7, flags: 0, alias: None, classes: Vec::new() }).collect();
+        let table = CodeTable::new(entries);
+        let lang = lang_of(&table);
+        let (nodes, pos) = escaped_nodes();
+        let source = source_of(pos + 2);
+        for z in [false, true] {
+            let mut own = Writer::new(&lang, &source, crate::newlines::Terminators::Lf, 0, z, true, nodes.len());
+            by_ops(&mut own, &nodes, 1);
+            let want = Writer::finish(&mut own).expect("the tape").tape;
+            let mut w = Writer::placing(test_rooms(0));
+            let mut tapes = Vec::new();
+            for _ in 0..2 {
+                w.begin(&Document { lang: &lang, source: &source, tag: 0, z, blocks: true, nodes: nodes.len(), sha256: None }, crate::newlines::Terminators::Lf);
+                by_ops(&mut w, &nodes, 1);
+                tapes.push(Writer::finish(&mut w).expect("the tape").tape);
+            }
+            for t in &tapes {
+                let home = match t {
+                    Written::F16(t) => t.home(),
+                    Written::F16Z(t) => t.home(),
+                };
+                assert!(home.placed(), "z {z}: the tape given out of its region");
+                assert_eq!(t.extent(), want.extent(), "z {z}: the tape a writer without rooms writes");
+            }
+            let (a, b) = (tapes[0].extent().as_ptr_range(), tapes[1].extent().as_ptr_range());
+            assert!(b.start >= a.end || b.end <= a.start, "z {z}: the second tape in bytes of its own, the first kept");
+        }
+    }
+
+    /// Decision 0656 step 3 with 0353 row 17: a writer given rooms lays its tape's auxiliary index in the room after its
+    /// presence, before the room is given out (a room is never written after): the home a writer without rooms lays
+    /// (tape, presence, index), in one room; a region refused leaves the tape and its index in the writer's own bytes.
+    #[test]
+    fn a_writer_with_rooms_lays_its_auxiliary_index_in_the_room() {
+        let entries: Vec<Entry> = (0..600u16).map(|k| Entry { kind: k % 300, field: k % 7, flags: 0, alias: None, classes: Vec::new() }).collect();
+        let table = CodeTable::new(entries);
+        let lang = lang_of(&table);
+        let (nodes, pos) = escaped_nodes();
+        let source = source_of(pos + 2);
+        let named = crate::aux_index::CodeSets { named: crate::aux_index::named_codes(600, |c| c % 2 == 0), comments: crate::aux_index::named_codes(600, |_| false) };
+        // The index from the writer's record of its nodes (decision 0703), held to the one built by reading the tape
+        // back (the oracle).
+        let lay = |t: &Written, record: &crate::aux_index::Nodes, _: Option<&SourceDigest>| -> Result<Vec<u8>, String> {
+            let all = crate::aux_index::Sections::ALL;
+            let built = crate::aux_index::build_from(record, &source, 7, &named, all)?;
+            let read_back = match t {
+                Written::F16(t) => crate::aux_index::build(&t.reader(&lang)?, &source, 7, &named, all)?,
+                Written::F16Z(t) => {
+                    let cache = ZCache::of([t]);
+                    crate::aux_index::build(&t.reader(&lang, Some(&cache))?, &source, 7, &named, all)?
+                }
+            };
+            assert_eq!(built, read_back, "the index from the record is the tape's");
+            Ok(built)
+        };
+        let home = |t: &Written| -> crate::home::Home {
+            match t {
+                Written::F16(t) => t.home().clone(),
+                Written::F16Z(t) => t.home().clone(),
+            }
+        };
+        for z in [false, true] {
+            let mut own = Writer::new(&lang, &source, crate::newlines::Terminators::Lf, 0, z, true, nodes.len());
+            by_ops(&mut own, &nodes, 1);
+            let want = Writer::finish_laid(&mut own, Some(&lay)).expect("the tape").tape;
+            assert!(want.aux_bytes().is_some(), "z {z}: a writer without rooms lays the index in its own bytes");
+            for refuse in [0, 1, 2] {
+                let mut w = Writer::placing(test_rooms(refuse));
+                w.begin(&Document { lang: &lang, source: &source, tag: 0, z, blocks: true, nodes: nodes.len(), sha256: None }, crate::newlines::Terminators::Lf);
+                by_ops(&mut w, &nodes, 1);
+                let got = Writer::finish_laid(&mut w, Some(&lay)).expect("the tape").tape;
+                if refuse == 0 {
+                    assert!(home(&got).placed(), "z {z}: the tape, its presence and its index given out of the region");
+                }
+                assert_eq!(&*home(&got), &*home(&want), "z {z}, refuse {refuse}: the home a writer without rooms lays");
+                assert_eq!(got.aux_bytes(), want.aux_bytes(), "z {z}, refuse {refuse}: the index found where it lies");
+            }
+        }
     }
 
     /// Decision 0434 §6, R15: the writer's ops compiled by the JIT write the reference writer's tape and presence:
@@ -4333,8 +4423,10 @@ mod tests {
                     c.reserve_run(2 * ops.len(), 41);
                     c.final_as_written();
                     {
-                        // SAFETY: `c`'s state, its room reserved for every node and level, written by the cursor alone.
-                        let mut cur = unsafe { Cursor::<X>::begin(c.state_address()) };
+                        // SAFETY: `c`'s state and record, its room reserved for every node and level, written by the cursor
+                        // alone.
+                        let (state, record) = c.cursor_parts();
+                        let mut cur = unsafe { Cursor::<X>::recording(state, record, &[]) };
                         for &op in &ops {
                             // SAFETY: as `begin`'s; each close is an open's.
                             unsafe {
@@ -4351,6 +4443,8 @@ mod tests {
                     let (a, b, c) = (a.finish().unwrap(), b.finish().unwrap(), c.finish().unwrap());
                     assert!(a.tape.extent() == b.tape.extent(), "widths {widths:?}, seed {seed}, 16z {z}: the constant widths' bytes");
                     assert!(a.tape.extent() == c.tape.extent(), "widths {widths:?}, seed {seed}, 16z {z}: the cursor's bytes");
+                    // The cursor's record is the ops': its tape's auxiliary index is laid from it, not read back.
+                    assert!(c.nodes.is_some() && a.nodes == c.nodes, "widths {widths:?}, seed {seed}, 16z {z}: the cursor's record");
                 }
             }
             edges

@@ -444,10 +444,16 @@ unsafe fn stjf_u64(v: [uint32x4_t; 4], mut at: impl FnMut(usize) -> *mut u8) {
 		(at(j) as *mut u64).write_unaligned((x[8 + j] as u64) << 32 | x[j] as u64);
 	}
 }
-/// Each lane's address of its halves `lo` and `hi`; a lane mask `k` has off, the first on's.
+/// Where a load reads when no lane of its mask runs (a block entered under a uniform branch none of its lanes
+/// takes): zeros, as a store's lanes that are off write to a sink. Its loads' constant offsets lie inside it.
+static NO_LANE: [u8; 4096] = [0; 4096];
+/// Each lane's address of its halves `lo` and `hi`; a lane mask `k` has off, the first on's (none on: `NO_LANE`).
 #[inline(always)]
 unsafe fn addrs(lo: [uint32x4_t; 2], hi: [uint32x4_t; 2], k: [uint32x4_t; 2]) -> [usize; 8] {
 	let (l, h, b) = (words2(lo), words2(hi), bits(&k));
+	if b == 0 {
+		return [NO_LANE.as_ptr() as usize; 8];
+	}
 	let f = b.trailing_zeros() as usize % 8;
 	core::array::from_fn(|j| {
 		let j = if b >> j & 1 != 0 { j } else { f };
@@ -1378,7 +1384,7 @@ unsafe fn b17_r0ls_p(l: &Launch, lid0: u32, k: [uint32x4_t; 2], arg0: *const u8,
 		let t9 = words2([t7[2], t7[3]]);
 		let t10 = bits(&live);
 		let t11 = t10.trailing_zeros() as usize % 8;
-		let t12: [usize; 8] = [{ let j = if t10 >> 0 & 1 != 0 { 0 } else { t11 }; ((t9[j] as u64) << 32 | t8[j] as u64) as usize }, { let j = if t10 >> 1 & 1 != 0 { 1 } else { t11 }; ((t9[j] as u64) << 32 | t8[j] as u64) as usize }, { let j = if t10 >> 2 & 1 != 0 { 2 } else { t11 }; ((t9[j] as u64) << 32 | t8[j] as u64) as usize }, { let j = if t10 >> 3 & 1 != 0 { 3 } else { t11 }; ((t9[j] as u64) << 32 | t8[j] as u64) as usize }, { let j = if t10 >> 4 & 1 != 0 { 4 } else { t11 }; ((t9[j] as u64) << 32 | t8[j] as u64) as usize }, { let j = if t10 >> 5 & 1 != 0 { 5 } else { t11 }; ((t9[j] as u64) << 32 | t8[j] as u64) as usize }, { let j = if t10 >> 6 & 1 != 0 { 6 } else { t11 }; ((t9[j] as u64) << 32 | t8[j] as u64) as usize }, { let j = if t10 >> 7 & 1 != 0 { 7 } else { t11 }; ((t9[j] as u64) << 32 | t8[j] as u64) as usize }];
+		let t12: [usize; 8] = if t10 == 0 { [NO_LANE.as_ptr() as usize; 8] } else { [{ let j = if t10 >> 0 & 1 != 0 { 0 } else { t11 }; ((t9[j] as u64) << 32 | t8[j] as u64) as usize }, { let j = if t10 >> 1 & 1 != 0 { 1 } else { t11 }; ((t9[j] as u64) << 32 | t8[j] as u64) as usize }, { let j = if t10 >> 2 & 1 != 0 { 2 } else { t11 }; ((t9[j] as u64) << 32 | t8[j] as u64) as usize }, { let j = if t10 >> 3 & 1 != 0 { 3 } else { t11 }; ((t9[j] as u64) << 32 | t8[j] as u64) as usize }, { let j = if t10 >> 4 & 1 != 0 { 4 } else { t11 }; ((t9[j] as u64) << 32 | t8[j] as u64) as usize }, { let j = if t10 >> 5 & 1 != 0 { 5 } else { t11 }; ((t9[j] as u64) << 32 | t8[j] as u64) as usize }, { let j = if t10 >> 6 & 1 != 0 { 6 } else { t11 }; ((t9[j] as u64) << 32 | t8[j] as u64) as usize }, { let j = if t10 >> 7 & 1 != 0 { 7 } else { t11 }; ((t9[j] as u64) << 32 | t8[j] as u64) as usize }] };
 		let mut t13 = [vdupq_n_u32(0); 4];
 		{ let v = (t12[0] as *const u64).read_unaligned(); t13[0] = vsetq_lane_u32::<0>(v as u32, t13[0]); t13[2] = vsetq_lane_u32::<0>((v >> 32) as u32, t13[2]); }
 		{ let v = (t12[1] as *const u64).read_unaligned(); t13[0] = vsetq_lane_u32::<1>(v as u32, t13[0]); t13[2] = vsetq_lane_u32::<1>((v >> 32) as u32, t13[2]); }
@@ -1404,7 +1410,7 @@ unsafe fn b17_r0ls_p(l: &Launch, lid0: u32, k: [uint32x4_t; 2], arg0: *const u8,
 		let t23 = words2([t21[2], t21[3]]);
 		let t24 = bits(&live);
 		let t25 = t24.trailing_zeros() as usize % 8;
-		let t26: [usize; 8] = [{ let j = if t24 >> 0 & 1 != 0 { 0 } else { t25 }; ((t23[j] as u64) << 32 | t22[j] as u64) as usize }, { let j = if t24 >> 1 & 1 != 0 { 1 } else { t25 }; ((t23[j] as u64) << 32 | t22[j] as u64) as usize }, { let j = if t24 >> 2 & 1 != 0 { 2 } else { t25 }; ((t23[j] as u64) << 32 | t22[j] as u64) as usize }, { let j = if t24 >> 3 & 1 != 0 { 3 } else { t25 }; ((t23[j] as u64) << 32 | t22[j] as u64) as usize }, { let j = if t24 >> 4 & 1 != 0 { 4 } else { t25 }; ((t23[j] as u64) << 32 | t22[j] as u64) as usize }, { let j = if t24 >> 5 & 1 != 0 { 5 } else { t25 }; ((t23[j] as u64) << 32 | t22[j] as u64) as usize }, { let j = if t24 >> 6 & 1 != 0 { 6 } else { t25 }; ((t23[j] as u64) << 32 | t22[j] as u64) as usize }, { let j = if t24 >> 7 & 1 != 0 { 7 } else { t25 }; ((t23[j] as u64) << 32 | t22[j] as u64) as usize }];
+		let t26: [usize; 8] = if t24 == 0 { [NO_LANE.as_ptr() as usize; 8] } else { [{ let j = if t24 >> 0 & 1 != 0 { 0 } else { t25 }; ((t23[j] as u64) << 32 | t22[j] as u64) as usize }, { let j = if t24 >> 1 & 1 != 0 { 1 } else { t25 }; ((t23[j] as u64) << 32 | t22[j] as u64) as usize }, { let j = if t24 >> 2 & 1 != 0 { 2 } else { t25 }; ((t23[j] as u64) << 32 | t22[j] as u64) as usize }, { let j = if t24 >> 3 & 1 != 0 { 3 } else { t25 }; ((t23[j] as u64) << 32 | t22[j] as u64) as usize }, { let j = if t24 >> 4 & 1 != 0 { 4 } else { t25 }; ((t23[j] as u64) << 32 | t22[j] as u64) as usize }, { let j = if t24 >> 5 & 1 != 0 { 5 } else { t25 }; ((t23[j] as u64) << 32 | t22[j] as u64) as usize }, { let j = if t24 >> 6 & 1 != 0 { 6 } else { t25 }; ((t23[j] as u64) << 32 | t22[j] as u64) as usize }, { let j = if t24 >> 7 & 1 != 0 { 7 } else { t25 }; ((t23[j] as u64) << 32 | t22[j] as u64) as usize }] };
 		let mut t27 = [vdupq_n_u32(0); 2];
 		t27[0] = vsetq_lane_u32::<0>((t26[0] as *const u32).read_unaligned() as u32, t27[0]);
 		t27[0] = vsetq_lane_u32::<1>((t26[1] as *const u32).read_unaligned() as u32, t27[0]);
@@ -1431,7 +1437,7 @@ unsafe fn b17_r0ls_p(l: &Launch, lid0: u32, k: [uint32x4_t; 2], arg0: *const u8,
 		let t38 = words2([t36[2], t36[3]]);
 		let t39 = bits(&live);
 		let t40 = t39.trailing_zeros() as usize % 8;
-		let t41: [usize; 8] = [{ let j = if t39 >> 0 & 1 != 0 { 0 } else { t40 }; ((t38[j] as u64) << 32 | t37[j] as u64) as usize }, { let j = if t39 >> 1 & 1 != 0 { 1 } else { t40 }; ((t38[j] as u64) << 32 | t37[j] as u64) as usize }, { let j = if t39 >> 2 & 1 != 0 { 2 } else { t40 }; ((t38[j] as u64) << 32 | t37[j] as u64) as usize }, { let j = if t39 >> 3 & 1 != 0 { 3 } else { t40 }; ((t38[j] as u64) << 32 | t37[j] as u64) as usize }, { let j = if t39 >> 4 & 1 != 0 { 4 } else { t40 }; ((t38[j] as u64) << 32 | t37[j] as u64) as usize }, { let j = if t39 >> 5 & 1 != 0 { 5 } else { t40 }; ((t38[j] as u64) << 32 | t37[j] as u64) as usize }, { let j = if t39 >> 6 & 1 != 0 { 6 } else { t40 }; ((t38[j] as u64) << 32 | t37[j] as u64) as usize }, { let j = if t39 >> 7 & 1 != 0 { 7 } else { t40 }; ((t38[j] as u64) << 32 | t37[j] as u64) as usize }];
+		let t41: [usize; 8] = if t39 == 0 { [NO_LANE.as_ptr() as usize; 8] } else { [{ let j = if t39 >> 0 & 1 != 0 { 0 } else { t40 }; ((t38[j] as u64) << 32 | t37[j] as u64) as usize }, { let j = if t39 >> 1 & 1 != 0 { 1 } else { t40 }; ((t38[j] as u64) << 32 | t37[j] as u64) as usize }, { let j = if t39 >> 2 & 1 != 0 { 2 } else { t40 }; ((t38[j] as u64) << 32 | t37[j] as u64) as usize }, { let j = if t39 >> 3 & 1 != 0 { 3 } else { t40 }; ((t38[j] as u64) << 32 | t37[j] as u64) as usize }, { let j = if t39 >> 4 & 1 != 0 { 4 } else { t40 }; ((t38[j] as u64) << 32 | t37[j] as u64) as usize }, { let j = if t39 >> 5 & 1 != 0 { 5 } else { t40 }; ((t38[j] as u64) << 32 | t37[j] as u64) as usize }, { let j = if t39 >> 6 & 1 != 0 { 6 } else { t40 }; ((t38[j] as u64) << 32 | t37[j] as u64) as usize }, { let j = if t39 >> 7 & 1 != 0 { 7 } else { t40 }; ((t38[j] as u64) << 32 | t37[j] as u64) as usize }] };
 		let mut t42 = [vdupq_n_u32(0); 2];
 		t42[0] = vsetq_lane_u32::<0>((t41[0] as *const u16).read_unaligned() as u32, t42[0]);
 		t42[0] = vsetq_lane_u32::<1>((t41[1] as *const u16).read_unaligned() as u32, t42[0]);
@@ -1458,7 +1464,7 @@ unsafe fn b17_r0ls_p(l: &Launch, lid0: u32, k: [uint32x4_t; 2], arg0: *const u8,
 		let t53 = words2([t51[2], t51[3]]);
 		let t54 = bits(&live);
 		let t55 = t54.trailing_zeros() as usize % 8;
-		let t56: [usize; 8] = [{ let j = if t54 >> 0 & 1 != 0 { 0 } else { t55 }; ((t53[j] as u64) << 32 | t52[j] as u64) as usize }, { let j = if t54 >> 1 & 1 != 0 { 1 } else { t55 }; ((t53[j] as u64) << 32 | t52[j] as u64) as usize }, { let j = if t54 >> 2 & 1 != 0 { 2 } else { t55 }; ((t53[j] as u64) << 32 | t52[j] as u64) as usize }, { let j = if t54 >> 3 & 1 != 0 { 3 } else { t55 }; ((t53[j] as u64) << 32 | t52[j] as u64) as usize }, { let j = if t54 >> 4 & 1 != 0 { 4 } else { t55 }; ((t53[j] as u64) << 32 | t52[j] as u64) as usize }, { let j = if t54 >> 5 & 1 != 0 { 5 } else { t55 }; ((t53[j] as u64) << 32 | t52[j] as u64) as usize }, { let j = if t54 >> 6 & 1 != 0 { 6 } else { t55 }; ((t53[j] as u64) << 32 | t52[j] as u64) as usize }, { let j = if t54 >> 7 & 1 != 0 { 7 } else { t55 }; ((t53[j] as u64) << 32 | t52[j] as u64) as usize }];
+		let t56: [usize; 8] = if t54 == 0 { [NO_LANE.as_ptr() as usize; 8] } else { [{ let j = if t54 >> 0 & 1 != 0 { 0 } else { t55 }; ((t53[j] as u64) << 32 | t52[j] as u64) as usize }, { let j = if t54 >> 1 & 1 != 0 { 1 } else { t55 }; ((t53[j] as u64) << 32 | t52[j] as u64) as usize }, { let j = if t54 >> 2 & 1 != 0 { 2 } else { t55 }; ((t53[j] as u64) << 32 | t52[j] as u64) as usize }, { let j = if t54 >> 3 & 1 != 0 { 3 } else { t55 }; ((t53[j] as u64) << 32 | t52[j] as u64) as usize }, { let j = if t54 >> 4 & 1 != 0 { 4 } else { t55 }; ((t53[j] as u64) << 32 | t52[j] as u64) as usize }, { let j = if t54 >> 5 & 1 != 0 { 5 } else { t55 }; ((t53[j] as u64) << 32 | t52[j] as u64) as usize }, { let j = if t54 >> 6 & 1 != 0 { 6 } else { t55 }; ((t53[j] as u64) << 32 | t52[j] as u64) as usize }, { let j = if t54 >> 7 & 1 != 0 { 7 } else { t55 }; ((t53[j] as u64) << 32 | t52[j] as u64) as usize }] };
 		let mut t57 = [vdupq_n_u32(0); 2];
 		t57[0] = vsetq_lane_u32::<0>((t56[0] as *const u8).read_unaligned() as u32, t57[0]);
 		t57[0] = vsetq_lane_u32::<1>((t56[1] as *const u8).read_unaligned() as u32, t57[0]);
@@ -1496,7 +1502,7 @@ unsafe fn b17_r0ls_p(l: &Launch, lid0: u32, k: [uint32x4_t; 2], arg0: *const u8,
 	let t79 = words2([x3[2], x3[3]]);
 	let t80 = bits(&live);
 	let t81 = t80.trailing_zeros() as usize % 8;
-	let t82: [usize; 8] = [{ let j = if t80 >> 0 & 1 != 0 { 0 } else { t81 }; ((t79[j] as u64) << 32 | t78[j] as u64) as usize }, { let j = if t80 >> 1 & 1 != 0 { 1 } else { t81 }; ((t79[j] as u64) << 32 | t78[j] as u64) as usize }, { let j = if t80 >> 2 & 1 != 0 { 2 } else { t81 }; ((t79[j] as u64) << 32 | t78[j] as u64) as usize }, { let j = if t80 >> 3 & 1 != 0 { 3 } else { t81 }; ((t79[j] as u64) << 32 | t78[j] as u64) as usize }, { let j = if t80 >> 4 & 1 != 0 { 4 } else { t81 }; ((t79[j] as u64) << 32 | t78[j] as u64) as usize }, { let j = if t80 >> 5 & 1 != 0 { 5 } else { t81 }; ((t79[j] as u64) << 32 | t78[j] as u64) as usize }, { let j = if t80 >> 6 & 1 != 0 { 6 } else { t81 }; ((t79[j] as u64) << 32 | t78[j] as u64) as usize }, { let j = if t80 >> 7 & 1 != 0 { 7 } else { t81 }; ((t79[j] as u64) << 32 | t78[j] as u64) as usize }];
+	let t82: [usize; 8] = if t80 == 0 { [NO_LANE.as_ptr() as usize; 8] } else { [{ let j = if t80 >> 0 & 1 != 0 { 0 } else { t81 }; ((t79[j] as u64) << 32 | t78[j] as u64) as usize }, { let j = if t80 >> 1 & 1 != 0 { 1 } else { t81 }; ((t79[j] as u64) << 32 | t78[j] as u64) as usize }, { let j = if t80 >> 2 & 1 != 0 { 2 } else { t81 }; ((t79[j] as u64) << 32 | t78[j] as u64) as usize }, { let j = if t80 >> 3 & 1 != 0 { 3 } else { t81 }; ((t79[j] as u64) << 32 | t78[j] as u64) as usize }, { let j = if t80 >> 4 & 1 != 0 { 4 } else { t81 }; ((t79[j] as u64) << 32 | t78[j] as u64) as usize }, { let j = if t80 >> 5 & 1 != 0 { 5 } else { t81 }; ((t79[j] as u64) << 32 | t78[j] as u64) as usize }, { let j = if t80 >> 6 & 1 != 0 { 6 } else { t81 }; ((t79[j] as u64) << 32 | t78[j] as u64) as usize }, { let j = if t80 >> 7 & 1 != 0 { 7 } else { t81 }; ((t79[j] as u64) << 32 | t78[j] as u64) as usize }] };
 	let t83: u64 = ((arg0) as usize as u64);
 	let t84 = [vdupq_n_u32((t83) as u32); 2];
 	let t85 = [vdupq_n_u32(((t83) >> 32) as u32); 2];
@@ -1679,7 +1685,7 @@ unsafe fn b17_r0al1s_p(l: &Launch, lid0: u32, k: [uint32x4_t; 2], arg0: *const u
 	let t40 = words2([x3[2], x3[3]]);
 	let t41 = bits(&live);
 	let t42 = t41.trailing_zeros() as usize % 8;
-	let t43: [usize; 8] = [{ let j = if t41 >> 0 & 1 != 0 { 0 } else { t42 }; ((t40[j] as u64) << 32 | t39[j] as u64) as usize }, { let j = if t41 >> 1 & 1 != 0 { 1 } else { t42 }; ((t40[j] as u64) << 32 | t39[j] as u64) as usize }, { let j = if t41 >> 2 & 1 != 0 { 2 } else { t42 }; ((t40[j] as u64) << 32 | t39[j] as u64) as usize }, { let j = if t41 >> 3 & 1 != 0 { 3 } else { t42 }; ((t40[j] as u64) << 32 | t39[j] as u64) as usize }, { let j = if t41 >> 4 & 1 != 0 { 4 } else { t42 }; ((t40[j] as u64) << 32 | t39[j] as u64) as usize }, { let j = if t41 >> 5 & 1 != 0 { 5 } else { t42 }; ((t40[j] as u64) << 32 | t39[j] as u64) as usize }, { let j = if t41 >> 6 & 1 != 0 { 6 } else { t42 }; ((t40[j] as u64) << 32 | t39[j] as u64) as usize }, { let j = if t41 >> 7 & 1 != 0 { 7 } else { t42 }; ((t40[j] as u64) << 32 | t39[j] as u64) as usize }];
+	let t43: [usize; 8] = if t41 == 0 { [NO_LANE.as_ptr() as usize; 8] } else { [{ let j = if t41 >> 0 & 1 != 0 { 0 } else { t42 }; ((t40[j] as u64) << 32 | t39[j] as u64) as usize }, { let j = if t41 >> 1 & 1 != 0 { 1 } else { t42 }; ((t40[j] as u64) << 32 | t39[j] as u64) as usize }, { let j = if t41 >> 2 & 1 != 0 { 2 } else { t42 }; ((t40[j] as u64) << 32 | t39[j] as u64) as usize }, { let j = if t41 >> 3 & 1 != 0 { 3 } else { t42 }; ((t40[j] as u64) << 32 | t39[j] as u64) as usize }, { let j = if t41 >> 4 & 1 != 0 { 4 } else { t42 }; ((t40[j] as u64) << 32 | t39[j] as u64) as usize }, { let j = if t41 >> 5 & 1 != 0 { 5 } else { t42 }; ((t40[j] as u64) << 32 | t39[j] as u64) as usize }, { let j = if t41 >> 6 & 1 != 0 { 6 } else { t42 }; ((t40[j] as u64) << 32 | t39[j] as u64) as usize }, { let j = if t41 >> 7 & 1 != 0 { 7 } else { t42 }; ((t40[j] as u64) << 32 | t39[j] as u64) as usize }] };
 	let t44: [uint32x4_t; 2] = [x1i[0], x1i[1]];
 	let t45: u64 = (((x1b).wrapping_add((((arg0) as usize as u64)) as usize)) as usize as u64);
 	let t46 = [vdupq_n_u32((t45) as u32); 2];

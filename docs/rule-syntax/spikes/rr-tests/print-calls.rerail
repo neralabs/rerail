@@ -46,7 +46,7 @@ banned_call(p, n) :- called(p, n), banned(n).
             print(2)
         ```
     .decl printed_line(l: number)
-    printed_line(l) :- print_call(c), line(c, l).
+    printed_line(l) :- print_call(c), node_line_number(c, l).
     .expect printed_line(2)
     .expect printed_line(3)
     .expect no printed_line(1)

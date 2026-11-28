@@ -26,6 +26,7 @@ mod embedded;
 mod engine_dialect;
 mod fold;
 mod lower;
+mod place_columns;
 mod main_terms;
 #[doc(hidden)]
 pub mod patterns;
@@ -62,11 +63,14 @@ pub struct Display {
 pub struct Translator {
     reserved: BTreeSet<String>,
     px: patterns::Patterns,
+    /// The library's node columns, for the place types of a translation's own columns (decision 0724).
+    node_columns: place_columns::NodeColumns,
 }
 
 impl Translator {
     pub fn new() -> Self {
-        Translator { reserved: fold::reserved(&super::rr::library()), px: patterns::Patterns::new() }
+        let lib = super::rr::library();
+        Translator { reserved: fold::reserved(&lib), px: patterns::Patterns::new(), node_columns: place_columns::library_node_columns(&lib) }
     }
 
     /// One JSON policy's text as engine `.rerail` text. `id` names the rule (the file's stem), as the Python takes it.
@@ -77,7 +81,7 @@ impl Translator {
             return tool_calls::translate(&doc).map_err(|e| format!("{id}: {e}"));
         }
         let (rr, _) = translate::translate(&self.px, &doc, &self.reserved).map_err(|e| format!("{id}: {e}"))?;
-        engine_dialect::engine_text(&self.px, rr, id).map_err(|e| format!("{id}: {e}"))
+        engine_dialect::engine_text(&self.px, rr, id, &self.node_columns).map_err(|e| format!("{id}: {e}"))
     }
 
     /// One JSON policy's display translation (the rules docs' generated view: before the engine's dialect), with

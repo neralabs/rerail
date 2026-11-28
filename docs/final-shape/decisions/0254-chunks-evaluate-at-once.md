@@ -1,6 +1,6 @@
 # 0254: A run's chunks evaluate at once, each on a connection of its own
 
-Status: built (audited 2026-11-23). Building (2026-11-15). Refines the chunked file-local part
+Status: built (audited 2026-11-23); §6 amends §1 (2026-11-25). Building (2026-11-15). Refines the chunked file-local part
 (`corpus::run_observed`, the chunk builder of decision 0029) and the native engine's loaded inputs (`setfix::INPUTS`).
 
 ## Intro
@@ -85,6 +85,30 @@ Measured with 0279 §7's lock on the relation names, alternated: wall 40.7 and 3
 207 and 208 s against 200 and 200 s; the same 29,747 violations. The main thread still waits 10.5–11.5 s for the
 front chunk and 4.3–4.9 s for the builder, running nothing. So the sequencer is not what bounds the phase now, and
 Begin and Finish need not move to the pool's threads (the filing state is the run's frame: its cells and locals).
+
+### 6. A run without the memo evaluates its chunks at once too (2026-11-25)
+
+§1 kept a run without the memo to one chunk at a time, on the run's connection, its exports handed off as it ran.
+That was not needed: `Finish` files the exports a chunk gives back (`Evaluated::export_rows`) the same way with the
+memo or without it, in the chunks' order. A run over T's facts still evaluates here: they are bound on the run's
+connection alone.
+
+One relation is enough to turn the memo off. On the 300-file bench (`rules300m`, 300 Python files, the M1 Max, CPU) it
+was `rr_rankq29`, an export with no location column. With the memo off, every chunk ran alone, on the main thread.
+`sample` of that run showed:
+
+- the main thread on a core for 22.4 of its 25.0 s, 13.3 s of it in chunks' evaluations;
+- the 9 pool threads on a core for 48.1 s in all, about 2 of them at a time.
+
+The parent commit and this one, built alike (profiling), alternated, a warm-up of each first (load average 7–12):
+
+| | wall s | user s | violations |
+|---|---|---|---|
+| one at a time | 35.65, 28.97, 27.82 | 83.8, 76.7, 79.6 | 463 |
+| at once | 22.08, 20.88, 22.88 | 71.0, 71.7, 72.9 | 463 (`outputs.rro` the same, sorted) |
+
+After it, the main thread waits 13.9 s of its run for the chunks. The chunks reach 2 at once: the room at the
+default budget (1 GB, and 1 GB for Metal) holds two of 65k nodes at about 10 KB a node.
 
 ## Measured
 

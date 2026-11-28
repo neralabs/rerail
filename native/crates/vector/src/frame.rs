@@ -79,9 +79,11 @@ thread_local! {
 }
 
 impl Arena {
-    fn chunks(&self) -> &mut Vec<Chunk> {
-        // SAFETY: the arena is its thread's alone, and no reference to its list outlives a call of its own.
-        unsafe { &mut *self.chunks.get() }
+    /// `f` of its chunks' list: the one borrow of it while `f` runs.
+    fn with_chunks<R>(&self, f: impl FnOnce(&mut Vec<Chunk>) -> R) -> R {
+        // SAFETY: the arena is its thread's alone, and none of `f`'s callers (`bump_slow`, `trim`, a test) borrows
+        // the list again while it runs.
+        f(unsafe { &mut *self.chunks.get() })
     }
 
     /// `bytes` at `align`, past the top: in the current chunk, else the next (made, or made bigger, as needed).
@@ -101,7 +103,10 @@ impl Arena {
     #[cold]
     #[inline(never)]
     fn bump_slow(&self, bytes: usize, align: usize) -> *mut u8 {
-        let chunks = self.chunks();
+        self.with_chunks(|chunks| self.bump_in(chunks, bytes, align))
+    }
+
+    fn bump_in(&self, chunks: &mut Vec<Chunk>, bytes: usize, align: usize) -> *mut u8 {
         let mut cur = self.cur.get();
         let mut top = chunks.get(cur).filter(|_| !self.top.get().is_null()).map_or(0, |c| self.top.get() as usize - c.ptr as usize);
         loop {
@@ -138,7 +143,7 @@ impl Arena {
     /// Whether `end` is the top's address.
     #[inline]
     fn at_top(&self, end: *const u8) -> bool {
-        !end.is_null() && self.top.get() as *const u8 == end
+        !end.is_null() && std::ptr::eq(self.top.get(), end)
     }
 
     /// Grows the take that ends at the top by `extra` bytes, where its chunk has them.
@@ -161,7 +166,10 @@ impl Arena {
 
     /// Keeps at most `KEEP` bytes of chunks (with no frame open), and puts the top at the first one's start.
     fn trim(&self) {
-        let chunks = self.chunks();
+        self.with_chunks(|chunks| self.trim_in(chunks))
+    }
+
+    fn trim_in(&self, chunks: &mut Vec<Chunk>) {
         let mut kept = 0;
         let n = chunks.iter().take_while(|c| {
             kept += c.len;
@@ -844,7 +852,7 @@ mod tests {
             small.fill(3);
             assert_eq!(big[MOST * 2 - 1], 1);
         });
-        ARENA.with(|a| assert!(a.chunks().iter().map(|c| c.len).sum::<usize>() <= KEEP.max(MOST * 2 + ALIGN), "kept within the bound"));
+        ARENA.with(|a| assert!(a.with_chunks(|c| c.iter().map(|c| c.len).sum::<usize>()) <= KEEP.max(MOST * 2 + ALIGN), "kept within the bound"));
     }
 
     #[test]

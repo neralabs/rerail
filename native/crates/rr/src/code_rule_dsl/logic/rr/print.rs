@@ -192,7 +192,13 @@ impl<'v> Printer<'v> {
             return Ok(if has { format!("{bang}has({x}, {n}, {set})") } else { format!("{bang}inside({n}, {x}, {set})") });
         }
         let builtin = BUILTINS.contains(&rel) && !self.v.declares(rel);
-        let name = if builtin { rel.to_owned() } else { relation(rel) };
+        // An engine read the program does not derive (a T program derives its own `docof`) by its typed name.
+        let derived = self.v.rel(rel).is_some_and(|r| self.v.heads(r).next().is_some());
+        let name = match super::place_type::printed_name(rel).filter(|_| !derived) {
+            Some(typed) => typed.to_owned(),
+            None if builtin => rel.to_owned(),
+            None => relation(rel),
+        };
         Ok(format!("{bang}{name}({})", self.args(r, a)?))
     }
 
@@ -304,7 +310,10 @@ impl<'v> Printer<'v> {
                 let coordinates: Vec<_> = (0..).map(|i| format!("rr_position{i}")).filter(|v| !groups.contains(v) && v != &s).take(if *positions { 3 } else { 0 }).map(|v| var(&v)).collect();
                 let args = std::iter::once(var(&s)).chain(groups.iter().map(|g| var(g))).chain(coordinates.iter().cloned()).collect::<Vec<_>>().join(", ");
                 let matched = std::iter::once(quote(pattern)).chain(std::iter::once(var(&s))).chain(coordinates).collect::<Vec<_>>().join(", ");
-                format!("{}({args}) :- {}({}), match_all({matched}).", relation(head_rel), relation(input), var(&s))
+                // The input's other columns place each text in its file (`lower::text_matches`), left unread.
+                let places = self.v.decl_of(input).map_or(1, |d| d.cols().count()).saturating_sub(1);
+                let read = std::iter::once(var(&s)).chain(std::iter::repeat_n("_".to_owned(), places)).collect::<Vec<_>>().join(", ");
+                format!("{}({args}) :- {}({read}), match_all({matched}).", relation(head_rel), relation(input))
             }
         })
     }
@@ -369,9 +378,13 @@ fn print_written(v: &Version) -> Result<String, Error> {
                     };
                     printed.push(format!("{c}: {column}"));
                 }
-                // `core.rerail`'s `docof` over nodes and spans stays an input (`lower::projections`).
-                _ if i == 0 && name == "docof" && inputs.iter().any(|r| r == "docof") => printed.push(format!("{c}: loc")),
+                // `core.rerail`'s `docof` over every place stays an input (`lower::projections`).
+                _ if i == 0 && name == "docof" && inputs.iter().any(|r| r == "docof") => printed.push(format!("{c}: place")),
                 _ if tapes.get(&name).is_some_and(|cols| cols.contains(&i)) => printed.push(format!("{c}: tape")),
+                // A program's own place column: the lowering holds every place as a node (`lower::ty`, decision 0724
+                // §3), so which place it held is not known here; `place` lowers to the same column, and the type check
+                // takes it for the one type its rows' other columns give.
+                _ if t == "node" && !super::lower::core::is_core(&name) => printed.push(format!("{c}: place")),
                 _ => printed.push(format!("{c}: {}", ty(t))),
             }
         }
@@ -379,7 +392,7 @@ fn print_written(v: &Version) -> Result<String, Error> {
         if let Some(k) = lattice.and_then(|l| l.widen) {
             write!(out, " widen {k}").expect("a string");
         }
-        for q in qualifiers.get(&name).into_iter().flatten().filter(|q| crate::code_rule_dsl::logic::front::QUALIFIERS.contains(&q.as_str())) {
+        for q in qualifiers.get(&name).into_iter().flatten().filter(|q| crate::code_rule_dsl::logic::front::QUALIFIERS.contains(&q.as_str()) || *q == "extensible") {
             write!(out, " {q}").expect("a string");
         }
         out.push('\n');

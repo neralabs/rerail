@@ -15,7 +15,7 @@ note measures four things:
 
 - where the store's bytes actually go;
 - what three kinds of dictionary save per language, for sources, full
-  tapes and named-only tapes (RER-131);
+  tapes and named-only tapes (decision 0161);
 - an upper bound on what any dictionary could save, from a suffix
   array over many files;
 - what it would take to ship this, and which wins are easy.
@@ -230,7 +230,7 @@ In order of effort:
    tape's in-memory image, and check it against `hashes` when the tape
    is read.
    - Saves 32 B per tape; on the Python store, 5.7 MB (7% of tapes).
-   - This changes the tape format, so it goes with RER-131's version
+   - This changes the tape format, so it goes with decision 0161's version
      bump.
 2. **Ship trained per-language dictionaries for small frames**, with
    the codec id in `codec_id`. On the Python store:
@@ -239,7 +239,7 @@ In order of effort:
    - together 15–18% of sources and tapes.
 
    Corpora of large files gain 5–10%.
-3. **Named-only tapes (RER-131)**, already planned: 0.77–0.81× of tape
+3. **Named-only tapes (decision 0161)**, already planned: 0.77–0.81× of tape
    frames on their own, and about 0.75× together with a dictionary.
 4. **Not worth it:** hand-written keyword or standard-library
    dictionaries. A trained dictionary already contains whatever

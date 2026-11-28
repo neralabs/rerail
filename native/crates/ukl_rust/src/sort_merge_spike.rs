@@ -375,12 +375,15 @@ pub(crate) mod vk {
     pub unsafe fn pack(v: V, bits: u64, p: *mut u64) -> usize {
         // Every lane kept: the vector as it is, one store.
         if bits == 0xff {
-            p.cast::<[u64; 8]>().write_unaligned(v.to_array());
+            // SAFETY: `p..p + 8` writable (the caller's).
+            unsafe { p.cast::<[u64; 8]>().write_unaligned(v.to_array()) };
             return 8;
         }
-        let bytes = Simd::<u8, 64>::from_array(core::mem::transmute::<[u64; 8], [u8; 64]>(v.to_array()));
+        // SAFETY: 8 `u64`s are 64 bytes, any bits a valid `u8`.
+        let bytes = Simd::<u8, 64>::from_array(unsafe { core::mem::transmute::<[u64; 8], [u8; 64]>(v.to_array()) });
         let ix = Simd::<u8, 64>::from_array(PACK64[bits as usize]);
-        p.cast::<[u8; 64]>().write_unaligned(bytes.swizzle_dyn(ix).to_array());
+        // SAFETY: `p..p + 8` writable (the caller's).
+        unsafe { p.cast::<[u8; 64]>().write_unaligned(bytes.swizzle_dyn(ix).to_array()) };
         bits.count_ones() as usize
     }
 
@@ -390,7 +393,8 @@ pub(crate) mod vk {
     /// `p..p + 8` is readable.
     #[inline(always)]
     pub unsafe fn load(p: *const u64) -> V {
-        V::from_array(p.cast::<[u64; 8]>().read_unaligned())
+        // SAFETY: `p..p + 8` readable (the caller's).
+        V::from_array(unsafe { p.cast::<[u64; 8]>().read_unaligned() })
     }
 
     /// The first place from `i` of `s` (sorted by `k >> sh`) whose `k >> sh` is past `t`: 8 compares a step.
@@ -448,7 +452,8 @@ pub(crate) mod vk32 {
     /// `p..p + 8` is readable.
     #[inline(always)]
     pub unsafe fn load(p: *const u32) -> V {
-        V::from_array(p.cast::<[u32; 8]>().read_unaligned())
+        // SAFETY: `p..p + 8` readable (the caller's).
+        V::from_array(unsafe { p.cast::<[u32; 8]>().read_unaligned() })
     }
 
     /// The lanes of `v` whose bits are in `bits`, in order, at `p`; `p..p + 8` written. Their count.
@@ -458,12 +463,15 @@ pub(crate) mod vk32 {
     #[inline(always)]
     pub unsafe fn pack(v: V, bits: u64, p: *mut u32) -> usize {
         if bits == 0xff {
-            p.cast::<[u32; 8]>().write_unaligned(v.to_array());
+            // SAFETY: `p..p + 8` writable (the caller's).
+            unsafe { p.cast::<[u32; 8]>().write_unaligned(v.to_array()) };
             return 8;
         }
-        let bytes = Simd::<u8, 32>::from_array(core::mem::transmute::<[u32; 8], [u8; 32]>(v.to_array()));
+        // SAFETY: 8 `u32`s are 32 bytes, any bits a valid `u8`.
+        let bytes = Simd::<u8, 32>::from_array(unsafe { core::mem::transmute::<[u32; 8], [u8; 32]>(v.to_array()) });
         let ix = Simd::<u8, 32>::from_array(PACK32[bits as usize]);
-        p.cast::<[u8; 32]>().write_unaligned(bytes.swizzle_dyn(ix).to_array());
+        // SAFETY: `p..p + 8` writable (the caller's).
+        unsafe { p.cast::<[u8; 32]>().write_unaligned(bytes.swizzle_dyn(ix).to_array()) };
         bits.count_ones() as usize
     }
 
@@ -897,10 +905,6 @@ pub(crate) struct Closure {
     /// Rows into the minus (each round's new rows, distinct), and run rows it walked or searched past.
     pub minus_in: usize,
     pub runs_seen: usize,
-}
-
-fn closure(d: &Data) -> Closure {
-    closure_with(d, false, false)
 }
 
 /// `runs`: h0 as sorted runs (`Runs`), new rows searched for by galloping; else one sorted h0 merged whole each round.

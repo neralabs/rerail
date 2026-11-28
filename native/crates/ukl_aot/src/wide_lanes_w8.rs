@@ -444,10 +444,16 @@ unsafe fn stjf_u64(v: [uint32x4_t; 4], mut at: impl FnMut(usize) -> *mut u8) {
 		(at(j) as *mut u64).write_unaligned((x[8 + j] as u64) << 32 | x[j] as u64);
 	}
 }
-/// Each lane's address of its halves `lo` and `hi`; a lane mask `k` has off, the first on's.
+/// Where a load reads when no lane of its mask runs (a block entered under a uniform branch none of its lanes
+/// takes): zeros, as a store's lanes that are off write to a sink. Its loads' constant offsets lie inside it.
+static NO_LANE: [u8; 4096] = [0; 4096];
+/// Each lane's address of its halves `lo` and `hi`; a lane mask `k` has off, the first on's (none on: `NO_LANE`).
 #[inline(always)]
 unsafe fn addrs(lo: [uint32x4_t; 2], hi: [uint32x4_t; 2], k: [uint32x4_t; 2]) -> [usize; 8] {
 	let (l, h, b) = (words2(lo), words2(hi), bits(&k));
+	if b == 0 {
+		return [NO_LANE.as_ptr() as usize; 8];
+	}
 	let f = b.trailing_zeros() as usize % 8;
 	core::array::from_fn(|j| {
 		let j = if b >> j & 1 != 0 { j } else { f };
@@ -1629,7 +1635,7 @@ unsafe fn b5_r0ns_p(l: &Launch, lid0: u32, k: [uint32x4_t; 2], arg0: *const u8, 
 	let t73 = words2([x3[2], x3[3]]);
 	let t74 = bits(&live);
 	let t75 = t74.trailing_zeros() as usize % 8;
-	let t76: [usize; 8] = [{ let j = if t74 >> 0 & 1 != 0 { 0 } else { t75 }; ((t73[j] as u64) << 32 | t72[j] as u64) as usize }, { let j = if t74 >> 1 & 1 != 0 { 1 } else { t75 }; ((t73[j] as u64) << 32 | t72[j] as u64) as usize }, { let j = if t74 >> 2 & 1 != 0 { 2 } else { t75 }; ((t73[j] as u64) << 32 | t72[j] as u64) as usize }, { let j = if t74 >> 3 & 1 != 0 { 3 } else { t75 }; ((t73[j] as u64) << 32 | t72[j] as u64) as usize }, { let j = if t74 >> 4 & 1 != 0 { 4 } else { t75 }; ((t73[j] as u64) << 32 | t72[j] as u64) as usize }, { let j = if t74 >> 5 & 1 != 0 { 5 } else { t75 }; ((t73[j] as u64) << 32 | t72[j] as u64) as usize }, { let j = if t74 >> 6 & 1 != 0 { 6 } else { t75 }; ((t73[j] as u64) << 32 | t72[j] as u64) as usize }, { let j = if t74 >> 7 & 1 != 0 { 7 } else { t75 }; ((t73[j] as u64) << 32 | t72[j] as u64) as usize }];
+	let t76: [usize; 8] = if t74 == 0 { [NO_LANE.as_ptr() as usize; 8] } else { [{ let j = if t74 >> 0 & 1 != 0 { 0 } else { t75 }; ((t73[j] as u64) << 32 | t72[j] as u64) as usize }, { let j = if t74 >> 1 & 1 != 0 { 1 } else { t75 }; ((t73[j] as u64) << 32 | t72[j] as u64) as usize }, { let j = if t74 >> 2 & 1 != 0 { 2 } else { t75 }; ((t73[j] as u64) << 32 | t72[j] as u64) as usize }, { let j = if t74 >> 3 & 1 != 0 { 3 } else { t75 }; ((t73[j] as u64) << 32 | t72[j] as u64) as usize }, { let j = if t74 >> 4 & 1 != 0 { 4 } else { t75 }; ((t73[j] as u64) << 32 | t72[j] as u64) as usize }, { let j = if t74 >> 5 & 1 != 0 { 5 } else { t75 }; ((t73[j] as u64) << 32 | t72[j] as u64) as usize }, { let j = if t74 >> 6 & 1 != 0 { 6 } else { t75 }; ((t73[j] as u64) << 32 | t72[j] as u64) as usize }, { let j = if t74 >> 7 & 1 != 0 { 7 } else { t75 }; ((t73[j] as u64) << 32 | t72[j] as u64) as usize }] };
 	let t77: [uint32x4_t; 2] = [vmlaq_u32(vdupq_n_u32(x1f), vld1q_u32(LANE[0].as_ptr()), vdupq_n_u32(x1s)), vmlaq_u32(vdupq_n_u32(x1f), vld1q_u32(LANE[1].as_ptr()), vdupq_n_u32(x1s))];
 	let t78: [uint32x4_t; 2] = [t77[0], t77[1]];
 	let t79: u64 = ((((((arg0) as usize as u64)) as usize as *const u8)) as usize as u64);

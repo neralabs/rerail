@@ -242,6 +242,12 @@ impl ColRead {
         while i < hi {
             let (chunk, place) = chunk_of(i, self.min_log);
             let n = ((chunk_rows(chunk, self.min_log) - place as u64).min(u64::from(hi - i))) as usize;
+            // A sealed chunk's values lie packed (decision 0622): read as `get` reads them.
+            if let Some(sealed) = d.sealed(chunk) {
+                (place..place + n).for_each(|q| f(sealed.get(q)));
+                i += n as u32;
+                continue;
+            }
             let p = d.at(self.min_log, i);
             unsafe {
                 if self.width == 4 {
@@ -252,6 +258,24 @@ impl ColRead {
             }
             i += n as u32;
         }
+    }
+
+    /// Where row `i`'s value lies and the rows of its chunk from it on, each next value 8 bytes on: a reader of a
+    /// stretch of rows resolves it once, and reads and writes each value with one access. `None` for a column whose
+    /// values are not each 8 bytes where they lie (4 bytes wide, or the chunk sealed, decision 0622).
+    ///
+    /// # Safety
+    /// Row `i` is reserved: its chunk is made.
+    #[inline]
+    pub unsafe fn run(&self, i: u32) -> Option<(*mut i64, u32)> {
+        let (chunk, place) = chunk_of(i, self.min_log);
+        // SAFETY: the caller's; the directory is its relation's, which outlives the reader.
+        let d = unsafe { &*self.dir };
+        if self.width != 8 || d.sealed(chunk).is_some() {
+            return None;
+        }
+        let left = chunk_rows(chunk, self.min_log) - place as u64;
+        Some((d.at(self.min_log, i).cast::<i64>(), left.min(u64::from(u32::MAX)) as u32))
     }
 }
 
@@ -279,17 +303,20 @@ impl Rows {
         true
     }
 
-    /// `init` with the columns' directories at `cols` (zeroed, `widths.len()` of them, in the same block).
+    /// `init` with the columns' directories at `cols` (`widths.len()` of them, in the same block): it and they written
+    /// whole, empty but for their widths.
     ///
     /// # Safety
     /// As `init`, and `cols` as said.
     pub unsafe fn init_in(this: *mut Rows, cols: *mut ColDir, widths: &[u32], min_log: u32) {
         assert!(min_log >= MIN_LOG, "min_log {min_log} under {MIN_LOG}");
         unsafe {
+            Rows::write_empty(this);
             for (c, &w) in widths.iter().enumerate() {
                 assert!(w == 4 || w == 8);
+                // Every field written: its memory holds what was there.
+                ColDir::write_empty(cols.add(c));
                 (*cols.add(c)).width = w;
-                (*cols.add(c)).runs = 0;
             }
             (*this).min_log = min_log;
             (*this).ncols = widths.len() as u32;
@@ -305,6 +332,24 @@ impl Rows {
     #[inline]
     pub fn is_empty(&self) -> bool {
         self.len() == 0
+    }
+
+    /// The bytes of its columns' chunks made that are in memory now (`mem::resident`; a sealed chunk's piece is
+    /// not read): a profile's measure beside the room they reserve.
+    pub fn resident(&self) -> usize {
+        let n = self.nchunks.load(Acquire) as usize;
+        (0..self.ncols as usize)
+            .map(|c| {
+                let d = self.col(c);
+                (0..n.min(d.chunk.len()))
+                    .filter(|&s| d.chunk[s].load(Relaxed) & SEALED == 0)
+                    .map(|s| {
+                        let start = std::ptr::from_ref(d).cast::<u8>().wrapping_offset(d.chunk[s].load(Relaxed) as isize);
+                        crate::mem::resident(start as usize, chunk_rows(s, self.min_log) as usize * d.width as usize)
+                    })
+                    .sum::<usize>()
+            })
+            .sum()
     }
 
     /// The rows the chunks made hold.
@@ -409,7 +454,7 @@ impl Rows {
                 let d = self.col(c);
                 let bytes = rows * d.width as usize;
                 // Not zeroed: a value is read only below `len`, written before its row is claimed (0325 step 5).
-                let Some(off) = block.try_alloc_chunk_any(bytes, align(bytes)) else {
+                let Some(off) = block.try_alloc_chunk(bytes, align(bytes)) else {
                     // The chunks this round took go back (to the free list, when the block keeps one).
                     for (c2, &at) in taken.iter().enumerate().take(c.min(8)) {
                         block.free_chunk(at, rows * self.col(c2).width as usize);
@@ -496,11 +541,14 @@ impl Rows {
                 if bytes * 4 > held * 3 {
                     continue;
                 }
-                let Some(at) = block.try_alloc_chunk_any(bytes, 64) else { continue };
-                // SAFETY: a fresh piece of `bytes` in this block: the descriptor, then its words.
+                let Some((at, fresh)) = block.try_alloc_chunk_fresh(bytes, 64) else { continue };
+                // SAFETY: a piece of `bytes` in this block, just taken: the descriptor, then its words, whose bits
+                // are set as packed (clear where the piece was used before).
                 unsafe {
-                    std::ptr::write_bytes(block.ptr::<u8>(at), 0, bytes);
                     let this = block.ptr::<crate::col::IntCol>(at);
+                    crate::col::IntCol::write_empty(this);
+                    let head = std::mem::size_of::<crate::col::IntCol>();
+                    block.clear_where_used(at + head, bytes - head, fresh);
                     let words = block.ptr::<u8>(at).add(std::mem::size_of::<crate::col::IntCol>()).cast::<u64>();
                     let (data, runs) = crate::col::IntCol::lay_out_at(this, words, &choice);
                     crate::col::write(&choice, &vals, data, runs);
@@ -572,6 +620,45 @@ impl Rows {
             .map(|(_, len, p)| unsafe { std::slice::from_raw_parts(p as *const u32, len) })
     }
 
+    /// Column `c`'s values at rows `from..from + out.len()` into `out`, read where they lie a chunk at a time: a
+    /// sealed chunk's decoded in one pass (`Dec::fill`), a raw chunk's as a slice; no per-row chunk arithmetic or
+    /// encoding dispatch (`get`'s). The rows are reserved.
+    pub fn read_range(&self, c: usize, from: u32, out: &mut [i64]) {
+        let d = self.col(c);
+        let end = u64::from(from) + out.len() as u64;
+        let mut done = 0usize;
+        while done < out.len() {
+            let i = from + done as u32;
+            let (k, place) = chunk_of(i, self.min_log);
+            let first = chunk_first(k, self.min_log);
+            let len = (chunk_rows(k, self.min_log).min(end - first) as usize) - place;
+            let o = &mut out[done..done + len];
+            if let Some(sealed) = d.sealed(k) {
+                sealed.dec().fill(place, o);
+            } else {
+                let (_, _, p) = self.chunk_raw(c, k, end).expect("a reserved row's chunk");
+                if d.width == 4 {
+                    // SAFETY: the chunk holds its rows' 4-byte values from `p`, `place + len` of them reserved.
+                    let s = unsafe { std::slice::from_raw_parts((p as *const u32).add(place), len) };
+                    if d.has_runs() {
+                        for (j, (o, &v)) in o.iter_mut().zip(s).enumerate() {
+                            // SAFETY: the column's runs are set (`set_runs`).
+                            *o = i64::from(unsafe { d.high(i + j as u32) }) << 32 | i64::from(v);
+                        }
+                    } else {
+                        for (o, &v) in o.iter_mut().zip(s) {
+                            *o = i64::from(v);
+                        }
+                    }
+                } else {
+                    // SAFETY: as above, 8-byte values.
+                    o.copy_from_slice(unsafe { std::slice::from_raw_parts((p as *const i64).add(place), len) });
+                }
+            }
+            done += len;
+        }
+    }
+
     /// Column `c`'s first `n` values into `out`, a chunk at a time (no per-row chunk arithmetic).
     pub fn read_col(&self, c: usize, n: u32, out: &mut [i64]) {
         let d = self.col(c);
@@ -632,7 +719,11 @@ impl Rows {
         if lo >= hi {
             return lo;
         }
-        if self.col(c).has_runs() && (0..1 << 63).contains(&key) {
+        // A column under key runs is ordered as its rows lie: by run (the high bits, unsigned), then by low bits, a
+        // value's `u64` order. A document's key past 2^31 makes its ids negative as `i64`, so a signed search of
+        // those rows answers out of that order. (This was `0..1 << 63`, which on an `i64` is `0..i64::MIN`, empty:
+        // the runs were never searched.)
+        if self.col(c).has_runs() {
             return self.lower_bound_in_runs(c, lo, hi, key);
         }
         let ml = self.min_log;
@@ -654,14 +745,6 @@ impl Rows {
         let a = (lo as u64).saturating_sub(start) as usize;
         let at = if let Some(sealed) = self.col(c).sealed(k) {
             sealed.lower_bound(a, len, key)
-        } else if self.col(c).has_runs() {
-            // A value's high bits are its run's: the search reads each row's value.
-            let (mut l, mut h) = (a, len);
-            while l < h {
-                let m = l + (h - l) / 2;
-                if r.get(start as u32 + m as u32) < key { l = m + 1 } else { h = m }
-            }
-            l
         } else if r.width == 4 {
             let s = unsafe { std::slice::from_raw_parts(p as *const u32, len) };
             a + s[a..].partition_point(|&v| (v as i64) < key)
@@ -738,10 +821,14 @@ impl Rows {
     /// `key`: galloping forward from `lo`, for a key whose rows are few.
     pub fn upper_from(&self, c: usize, lo: u32, hi: u32, key: i64) -> u32 {
         let r = self.reader(c);
+        // A column under key runs in its rows' order, a value's `u64` (`lower_bound`): another document's negative
+        // ids after `key`'s rows are past it, not at most it.
+        let runs = self.col(c).has_runs();
+        let at_most = |v: i64| if runs { (v as u64) <= (key as u64) } else { v <= key };
         // Rows lo..lo + step are at most key; find a step past which a row is greater.
         let mut step = 1u32;
         let mut a = lo;
-        while a < hi && r.get(a) <= key {
+        while a < hi && at_most(r.get(a)) {
             a = lo + step;
             step *= 2;
         }
@@ -749,7 +836,7 @@ impl Rows {
         let (mut l, mut h) = (lo + (step / 4).min(hi - lo), a.min(hi));
         while l < h {
             let m = l + (h - l) / 2;
-            if r.get(m) <= key { l = m + 1 } else { h = m }
+            if at_most(r.get(m)) { l = m + 1 } else { h = m }
         }
         l
     }
@@ -842,6 +929,18 @@ mod tests {
                 assert_eq!(rows.get(i, c), want, "row {i} of column {c}");
                 assert_eq!(r.get(i), want);
                 assert_eq!(back[i as usize], want);
+            }
+            // Ranges from inside a chunk, across chunks' ends, to the last row (`read_range`).
+            for (from, len) in [(0u32, n), (1, 9), (63, 2), (1_000, 7_777), (n - 300, 300), (12_345, 1)] {
+                let mut got = vec![0i64; len as usize];
+                rows.read_range(c, from, &mut got);
+                for (j, &g) in got.iter().enumerate() {
+                    assert_eq!(g, col(c, i64::from(from) + j as i64), "row {} of column {c}, read from {from}", from as usize + j);
+                }
+                // A chunk at a time (`ColRead::each`), sealed chunks included.
+                let mut each = Vec::with_capacity(len as usize);
+                r.each(from, from + len, |v| each.push(v));
+                assert_eq!(each, got, "column {c}'s rows from {from}, a chunk at a time");
             }
         }
         let vals: Vec<i64> = (0..n).map(|i| col(0, i64::from(i))).collect();
@@ -946,14 +1045,16 @@ mod tests {
         assert_eq!(back, vals);
         // The searches, the runs searched once and then a run's low bits (`lower_bound_in_runs`), raw and then sealed
         // (a sealed chunk holds whole values, searched by the whole key). Keys between runs, inside a run, past its
-        // last low bits, and below and past every row.
-        let keys = [vals[0] - 1, vals[0], vals[1], vals[2_899] + 1, vals[2_900] - 1, vals[2_901], vals[12_345], vals[12_345] + 1, vals[19_998] + 2, vals[19_999], 5 << 32, i64::MAX];
+        // last low bits, and below and past every row. The rows are in their values' `u64` order: the last document's
+        // key, `u32::MAX`, makes its ids negative as `i64` (keys `i64::MIN` and -1 fall before and past them).
+        assert!(vals.windows(2).all(|w| (w[0] as u64) <= (w[1] as u64)), "the rows in their values' u64 order");
+        let keys = [vals[0] - 1, vals[0], vals[1], vals[2_899] + 1, vals[2_900] - 1, vals[2_901], vals[12_345], vals[12_345] + 1, vals[19_998] + 2, vals[19_999], 5 << 32, i64::MAX, i64::MIN, -1];
         let search = |what: &str| {
             for key in keys {
-                for (lo, hi) in [(0, n), (17, n - 5), (4_000, 4_100), (2_899, 2_902), (2_901, 2_901)] {
-                    let want_lo = lo + vals[lo as usize..hi as usize].partition_point(|&v| v < key) as u32;
+                for (lo, hi) in [(0, n), (17, n - 5), (4_000, 4_100), (2_899, 2_902), (2_901, 2_901), (19_990, n)] {
+                    let want_lo = lo + vals[lo as usize..hi as usize].partition_point(|&v| (v as u64) < (key as u64)) as u32;
                     assert_eq!(rows.lower_bound(0, lo, hi, key), want_lo, "{what}: lower {key:#x} in {lo}..{hi}");
-                    let want_hi = lo.max(want_lo) + vals[want_lo as usize..hi as usize].partition_point(|&v| v <= key) as u32;
+                    let want_hi = lo.max(want_lo) + vals[want_lo as usize..hi as usize].partition_point(|&v| (v as u64) <= (key as u64)) as u32;
                     assert_eq!(rows.upper_from(0, want_lo, hi, key), want_hi, "{what}: upper {key:#x} in {lo}..{hi}");
                 }
             }

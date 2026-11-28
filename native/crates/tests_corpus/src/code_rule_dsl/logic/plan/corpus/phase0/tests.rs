@@ -41,7 +41,7 @@
         }
         // A text made from a program file keeps the graph a run of `bootstrap.rerail` would give it (`keep_text`).
         let programs = crate::source_tree::native().join("src/code_rule_dsl/typing/programs");
-        for file in [programs.join("calls_cx.rerail"), lib.join("python/conditions.rerail")] {
+        for file in [programs.join("calls_p3.rerail"), lib.join("python/conditions.rerail")] {
             let text = crate::code_rule_dsl::logic::settings::program_text(&file).unwrap();
             let seed = crate::code_rule_dsl::logic::rr::text_seed(&text).unwrap().expect("includes");
             let kept = super::graph(&seed).unwrap();
@@ -284,8 +284,22 @@
         let mut files: Vec<PathBuf> = std::fs::read_dir(lib.join("../packs/python")).unwrap().flatten().map(|e| e.path()).filter(|p| p.extension().is_some_and(|x| x == "rerail")).collect();
         files.sort();
         files.truncate(6);
-        files.push(native.join("src/code_rule_dsl/typing/programs/calls.rerail"));
+        files.push(native.join("src/code_rule_dsl/typing/programs/calls_p3.rerail"));
         files.push(native.join("src/code_rule_dsl/typing/programs/struct.rerail"));
+        // A program in T's shape: T's inputs declared by the program, and library modules without `core.rerail` (as
+        // the typing program `calls.rerail` was, before decision 0677 retired it).
+        let t_shape = crate::code_rule_dsl::fixtures::temp().with_extension("t-shape.rerail");
+        std::fs::write(
+            &t_shape,
+            ".decl doc(d: number, path: symbol, module: symbol)\n.decl node(d: number, n: node, kind: symbol, start: number, end: number)\n\
+             .decl child(p: node, c: node, i: number)\n.decl field(p: node, f: symbol, c: node)\n.decl text(n: node, s: symbol)\n\
+             .decl kind(n: node, k: symbol)\n.decl docof(n: node, d: number)\n.input doc, node, child, field, text, kind, docof\n\
+             .decl env(key: symbol, value: symbol)\n.decl dir_entry(dir: symbol, name: symbol, is_dir: number)\n\
+             .decl file_line(path: symbol, i: number, text: symbol)\n.decl load(path: symbol, module: symbol, grammar: symbol)\n\
+             .decl loaded(path: symbol, module: symbol, grammar: symbol)\n#include \"python/modules.rerail\"\n#include \"python/conditions.rerail\"\n",
+        )
+        .unwrap();
+        files.push(t_shape.clone());
         let texts: Vec<String> = files.iter().map(|f| crate::code_rule_dsl::logic::settings::program_text(f).unwrap()).collect();
         let seeds: Vec<super::Seed> = texts.iter().map(|t| crate::code_rule_dsl::logic::rr::text_seed(t).unwrap().expect("includes")).collect();
         let hex = |d: &[u8; 32]| d.iter().map(|b| format!("{b:02x}")).collect::<String>();
@@ -322,6 +336,7 @@
         }
         assert!(bare > 0, "a program in T's shape among them");
         assert_eq!(keys.values().collect::<BTreeSet<_>>().len(), keys.len(), "a key a module");
+        let _ = std::fs::remove_file(&t_shape);
     }
 
     /// Phase 0 over every `.rerail` file of `RERAIL_P0_RULES` (a pack's directory), as a pack's run reads them
@@ -373,29 +388,48 @@
         }
     }
 
-    /// T4 (decision 0639 §3): a program's graph, derived in a store copied from the template, asks for no module's
-    /// lowering: the template's run of every library file lowered every module and kept its image. A program with a
-    /// module the store does not hold asks for that module alone, once.
+    /// T4 (decision 0639 §3): a module is lowered once in a process. The answer inside the waves reads no store
+    /// (decision 0104, aec6f2539e): it takes a module the process holds, else lowers it (deterministic, and cheap), and
+    /// keeps its image behind the run. So a program's graph derived again asks for no module's lowering, and a program
+    /// with a module the process does not hold asks for that module alone, once. (A store copied from the template
+    /// lowered nothing only where the template was made in the same process: under Relax, not under a process a test.)
     #[test]
     fn phase_0_lowers_each_module_its_store_does_not_hold() {
         let lib = dunce::canonicalize(crate::code_rule_dsl::logic::rr::library()).unwrap();
         let text = crate::code_rule_dsl::logic::settings::program_text(&lib.join("python/conditions.rerail")).unwrap();
         let seed = crate::code_rule_dsl::logic::rr::text_seed(&text).unwrap().expect("includes");
-        let before = crate::code_rule_dsl::logic::rr::planned_modules_lowered();
+        // The plan's modules this process lowered since `before`, by key: tests beside this one lower their own, and
+        // the template, made in this process when the build is new, lowers every module (made first, here).
+        let _ = crate::code_rule_dsl::logic::plan::corpus::test_store::template();
+        let before = crate::code_rule_dsl::logic::rr::planned_modules_made();
+        macro_rules! made {
+            ($graph:expr) => {
+                $graph
+                    .plan
+                    .values()
+                    .map(|m| m.key.clone())
+                    .filter(|k| crate::code_rule_dsl::logic::rr::planned_module_made(k) && crate::code_rule_dsl::logic::rr::planned_key(k).is_some_and(|h| !before.contains(&h)))
+                    .collect::<Vec<String>>()
+            };
+        }
         let graph = super::derive(std::slice::from_ref(&seed)).unwrap().of(&seed, 0);
         assert!(!graph.plan.is_empty(), "{}", graph.describe());
         assert_eq!(graph.lowered.len(), graph.plan.len(), "every planned module lowered: {:?}", graph.lowered);
-        assert_eq!(crate::code_rule_dsl::logic::rr::planned_modules_lowered(), before, "the template's modules, lowered again");
+        assert_eq!(made!(graph), Vec::<String>::new(), "the template's modules, lowered again");
+        let again = super::derive(std::slice::from_ref(&seed)).unwrap().of(&seed, 0);
+        assert_eq!(again.lowered, graph.lowered, "the same images");
+        assert_eq!(made!(again), Vec::<String>::new(), "the process's modules, lowered again");
         // A module of the program's own directory, beside it: lowered once.
         let dir = tempfile::tempdir().unwrap();
         std::fs::write(dir.path().join("extra.rerail"), ".decl extra(x: number)\nextra(1).\n").unwrap();
         std::fs::write(dir.path().join("p.rerail"), "#include \"python/env.rerail\"\n#include \"extra.rerail\"\n.decl y(x: number)\ny(x) :- extra(x).\n.output y\n").unwrap();
         let p = super::Seed::File(dunce::canonicalize(dir.path().join("p.rerail")).unwrap());
         let graph = super::derive(std::slice::from_ref(&p)).unwrap().of(&p, 0);
-        assert_eq!(crate::code_rule_dsl::logic::rr::planned_modules_lowered(), before + 1, "the new module alone: {}", graph.describe());
+        let new = made!(graph);
+        assert_eq!(new.len(), 1, "the new module alone: {}", graph.describe());
         assert_eq!(graph.lowered.len(), graph.plan.len());
-        let _ = super::derive(std::slice::from_ref(&p)).unwrap();
-        assert_eq!(crate::code_rule_dsl::logic::rr::planned_modules_lowered(), before + 1, "lowered once");
+        let again = super::derive(std::slice::from_ref(&p)).unwrap().of(&p, 0);
+        assert_eq!(made!(again), new, "lowered once");
     }
 
     /// T9 (decision 0639 §4): a module's key names its scope's files by their interfaces (`p0_interface`), so an
@@ -425,6 +459,39 @@
         assert_ne!(body[&2], decl[&2], "a declaration in its scope: top's key");
         let fact = keys(".decl c(x: number)\nc(1).\nc(2).\n.decl d(x: number)\n.decl base(x: number)\nbase(x) :- c(x), x > 0.\n");
         assert_ne!(decl[&2], fact[&2], "a fact in its scope: top's key");
+    }
+
+    /// T14 (decision 0639 §6a): a module's tail key (`p0_tail_key`) names its scope's files by their bytes, so an edit
+    /// of a rule's body in its scope tails it again and lowers nothing again: its key, by its scope's interfaces, stays.
+    /// Phase 0 keeps every planned module's tail (`p0_module_tailed`).
+    #[test]
+    fn a_body_edit_in_a_scope_tails_its_readers_again_and_lowers_none_again() {
+        let dir = tempfile::tempdir().unwrap();
+        // Each module's (key, tail key): base.rerail's (1) and top.rerail's (2).
+        let keys = |base: &str| -> std::collections::BTreeMap<i64, (String, String)> {
+            std::fs::write(dir.path().join("base.rerail"), base).unwrap();
+            std::fs::write(dir.path().join("top.rerail"), "#include \"base.rerail\"\n.decl top(x: number)\ntop(x) :- base(x).\n").unwrap();
+            std::fs::write(dir.path().join("p.rerail"), "#include \"top.rerail\"\n.decl y(x: number)\ny(x) :- top(x).\n.output y\n").unwrap();
+            let p = super::Seed::File(dunce::canonicalize(dir.path().join("p.rerail")).unwrap());
+            let graph = super::derive(std::slice::from_ref(&p)).unwrap().of(&p, 0);
+            assert_eq!(graph.tailed.len(), graph.plan.len(), "every planned module tailed: {}", graph.describe());
+            assert!(graph.plan.values().all(|m| graph.tailed.contains_key(&m.tail)), "{}", graph.describe());
+            let of = |file: &str| -> (String, String) {
+                let d = graph.digests.iter().find(|(p, _)| p.ends_with(file)).map(|(_, d)| d.iter().map(|b| format!("{b:02x}")).collect::<String>()).unwrap_or_else(|| panic!("{file}: {}", graph.describe()));
+                graph.plan.iter().find(|(name, _)| name.ends_with(&d)).map(|(_, m)| (m.key.clone(), m.tail.clone())).unwrap_or_else(|| panic!("{file}'s module: {}", graph.describe()))
+            };
+            [(1, of("base.rerail")), (2, of("top.rerail"))].into()
+        };
+        let before = keys(".decl c(x: number)\nc(1).\n.decl base(x: number)\nbase(x) :- c(x).\n");
+        let body = keys(".decl c(x: number)\nc(1).\n.decl base(x: number)\nbase(x) :- c(x), x > 0.\n");
+        assert_ne!(before[&1], body[&1], "base's own file changed: its keys");
+        // Top's image is the one kept under its key, which the edit leaves: it is not lowered again.
+        assert_eq!(before[&2].0, body[&2].0, "a rule's body in its scope: top's key as it was");
+        assert_ne!(before[&2].1, body[&2].1, "a rule's body in its scope: top's tail key");
+        // By key, as tests beside this one lower and tail their own modules.
+        use crate::code_rule_dsl::logic::rr::{planned_module_made, planned_tail_made};
+        assert!(planned_module_made(&body[&1].0), "base lowered again");
+        assert!(planned_tail_made(&body[&1].1) && planned_tail_made(&body[&2].1), "base and top tailed again");
     }
 
     /// A graph read back from the store's kept facts or the shipped image is the graph kept: its module plan and
@@ -475,4 +542,32 @@
         let mut without = (*graph).clone();
         without.lowered.insert(gone, "cd".repeat(32));
         assert!(!without.holds_now(), "a graph naming an image no store holds");
+    }
+
+    /// A graph a store keeps as facts (t33 step 2) reads back as the graph it was: its module plan (decision 0639 §1)
+    /// and its modules' images too. Kept without them, a graph read back planned no module, and a text that took it
+    /// found `core.rerail` in none ("in no module of phase 0's plan"): the test stores' template held no library.
+    #[test]
+    fn a_graph_kept_as_facts_keeps_its_plan() {
+        let lib = dunce::canonicalize(crate::code_rule_dsl::logic::rr::library()).unwrap();
+        let text = crate::code_rule_dsl::logic::settings::program_text(&lib.join("python/conditions.rerail")).unwrap();
+        let seed = crate::code_rule_dsl::logic::rr::text_seed(&text).unwrap().expect("includes");
+        let graph = super::graph(&seed).unwrap();
+        assert!(!graph.plan.is_empty(), "{}", graph.describe());
+        let back = graph.kept_and_read().expect("the graph read back from its facts");
+        assert_eq!(back.plan, graph.plan, "the module plan");
+        assert_eq!(back.lowered, graph.lowered, "the modules' images");
+        assert_eq!(back.digests, graph.digests, "the modules' digests");
+        // A rule file outside the library, including a pack's table beside it (`../packs/…`), as the bench's rules do.
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(dir.path().join("r.rerail"), "#include \"python/ruff-classes.rerail\"\n#include \"../packs/python/ruff-ruf013-implicit-optional.stdlib.rerail\"\n.decl k(m: symbol)\nk(m) :- stdlib_module(m).\n.output k\n").unwrap();
+        let seed = super::Seed::File(dunce::canonicalize(dir.path().join("r.rerail")).unwrap());
+        let graph = super::derive(std::slice::from_ref(&seed)).unwrap().of(&seed, 0);
+        let back = graph.kept_and_read().expect("the graph read back from its facts");
+        assert!(!graph.plan.is_empty(), "{}", graph.describe());
+        // The pack's table keeps its include's spelling here (`lib/../packs/…`, a module of the library, decision 0639
+        // §2), and is the program's canonical `packs/…` spelled once (`Library::scope`).
+        let table = lib.join("../packs/python/ruff-ruf013-implicit-optional.stdlib.rerail");
+        assert_eq!(crate::code_rule_dsl::logic::rr::one_spelling(&table), dunce::canonicalize(&table).unwrap(), "one spelling");
+        assert_eq!(format!("{back:#?}"), format!("{graph:#?}"), "the graph, as its facts keep it");
     }
