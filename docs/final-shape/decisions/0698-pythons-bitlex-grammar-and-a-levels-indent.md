@@ -718,3 +718,19 @@ statements and blocks end.
       (1644 files) at 1, 2, 3 and 16 blocks a chunk: 1641 the same, 0 differ, 3 read by A. Where both refuse, the
       byte each refuses at is not compared (each its own order of reading). The serial lexer's speed is as before
       (B 1.04x the lean lexer's in turn, the host loaded).
+
+98. **Passes 1 and 3 for strata 1 to 3** (as built: each chunk's summary by running B from every lane).
+    - **Stratum 1's carries need no lane:** an odd run of backslashes, a `'\r'` an odd run escapes, and an odd run
+      of `{`, each ending just below the block, are read from the bytes below it (`s1_at`).
+    - **Variant B's carries are 144 lanes:** the triples' machine's state (3), the one-line strings' (3), the
+      comment's carry, the line-end bit, and the triple closer's taken bits (4). B's layers each read as if the ones
+      above were not there, so the states do not exclude each other: a quote in a comment moves the strings'
+      machine, and an entry of a one-line string and a comment's carry at once was found on the corpus when the
+      lanes were six region states.
+    - **The depth is a clamped counter:** a range's run is `max(d + net, net - min)` out and `max(d + max, k)` at
+      its deepest (the refusal past 31), and two ranges' runs compose to one (`Depth::then`).
+    - **A chunk's summary** is each lane's exit lane and depth run, none where B's reading from it is wrong; pass 3
+      composes the summaries by Hillis and Steele's scan, as JSON's stage 1 does, each round's chunks in any order.
+    - **As tested:** each chunk's carries and depth by the scan are those the chunks lexed one after another leave,
+      on the corpus at 1, 2, 3 and 16 blocks a chunk (1632 files, 0 differ; the other 12 refused or read by A), and
+      on random texts with each pass in seeded random orders.

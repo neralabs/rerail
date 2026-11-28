@@ -65,6 +65,20 @@ fn main() {
                     }
                 }
             }
+            let (mut ok, mut bad) = (0, 0);
+            for (p, b) in &all {
+                match strata::middle::entries_are_the_folds(b, blocks, &strata::middle::in_order) {
+                    Some(Ok(())) => ok += 1,
+                    Some(Err(e)) => {
+                        bad += 1;
+                        if bad <= 3 {
+                            println!("{} :: {e}", p.strip_prefix(dir).unwrap_or(p).display());
+                        }
+                    }
+                    None => {}
+                }
+            }
+            println!("chunks of {blocks} blocks: the scan of summaries gives each chunk its entry in {ok} files, not in {bad}");
             println!("chunks of {blocks} blocks: {same} the serial lexer's records, {differ} not, {not_b} read by A (B's reading wrong); {:.1} s", t0.elapsed().as_secs_f64());
         }
         return;

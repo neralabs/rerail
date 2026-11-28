@@ -17,9 +17,9 @@ use crate::lex::{Extra, Lexed, Refusal, Tok};
 /// prefix in the block below its quote), and the walk's at its first item from byte `64 * from` on.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Entry {
-    s1: S1,
-    rb: RB,
-    depth: i8,
+    pub(crate) s1: S1,
+    pub(crate) rb: RB,
+    pub(crate) depth: i8,
     p: usize,
     open: bool,
     header: bool,
@@ -165,12 +165,190 @@ pub fn chunked_is_serial(src: &[u8], blocks: usize) -> Result<bool, String> {
     Err(format!("{blocks} blocks a chunk, {:?}:\n  chunked:\n{}\n  serial:\n{}", String::from_utf8_lossy(src), around(&a), around(&b)))
 }
 
+/// Stratum 1's carries into block `k`, from the bytes below it alone (no lane: they are the bytes'): an odd run of
+/// backslashes, a `'\r'` an odd run escapes, an odd run of `{`, each ending at the block's last byte below it.
+pub(crate) fn s1_at(src: &[u8], k: usize) -> S1 {
+    let at = 64 * k;
+    // The length of the run of `c` ending just below `i`, odd.
+    let odd = |i: usize, c: u8| (src[..i.min(src.len())].iter().rev().take_while(|&&x| x == c).count() & 1) as u64;
+    if k == 0 {
+        return S1::default();
+    }
+    let cr = u64::from(src.get(at - 1) == Some(&b'\r')) & odd(at - 1, b'\\');
+    S1 { carry: odd(at, b'\\'), cr, lb: odd(at, b'{') }
+}
+
+/// A bracket depth's run over a range of code, as a function of the depth it enters with (the lean lexer's counter,
+/// which a closer clamps at 0): out goes `max(d + net, net - min)`, and the deepest it goes is `max(d + max, k)`.
+/// `min` and `max` are the lowest and highest of the range's running sums (each with the empty one, 0), `k` the most
+/// a sum rises above the lowest before it.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct Depth {
+    net: i32,
+    min: i32,
+    max: i32,
+    k: i32,
+}
+
+impl Depth {
+    /// The range `a` then `b`.
+    pub fn then(a: Depth, b: Depth) -> Depth {
+        Depth { net: a.net + b.net, min: a.min.min(a.net + b.min), max: a.max.max(a.net + b.max), k: a.k.max(b.k).max(a.net - a.min + b.max) }
+    }
+
+    /// The depth out of the range from `d`, none where it goes past the bound (refused).
+    pub fn apply(self, d: i8) -> Option<i8> {
+        let d = i32::from(d);
+        if (d + self.max).max(self.k) > i32::from(super::MAX_DEPTH) {
+            return None;
+        }
+        Some((d + self.net).max(self.net - self.min) as i8)
+    }
+
+    /// A block's brackets in code, opener `up`, closer `down`.
+    fn of_block(up: u64, down: u64) -> Depth {
+        let (mut x, mut s, mut lo) = (Depth::default(), 0i32, 0i32);
+        let mut m = up | down;
+        while m != 0 {
+            let i = m.trailing_zeros();
+            m &= m - 1;
+            s += if up >> i & 1 == 1 { 1 } else { -1 };
+            lo = lo.min(s);
+            x.min = x.min.min(s);
+            x.max = x.max.max(s);
+            x.k = x.k.max(s - lo);
+        }
+        x.net = s;
+        x
+    }
+}
+
+/// The values of variant B's carries a chunk can be entered with, a lane each: the triples' machine's state (3), the
+/// one-line strings' (3), the comment's carry, the line-end bit, the triple closer's taken bits (4). B's layers each
+/// read as if the ones above were not there, so the machines' states do not exclude each other (a quote in a comment
+/// moves the strings' machine).
+pub const LANES: usize = 144;
+
+/// Lane `l`'s carries.
+pub(crate) fn lane_rb(l: usize) -> RB {
+    let l = l as u64;
+    RB { t0: (l / 48) as u8, s0: (l / 16 % 3) as u8, ccarry: l / 8 & 1, cext_prev: l / 4 & 1, tr_taken: l & 3 }
+}
+
+/// The lane of carries `c`, none where they are no lane's.
+pub(crate) fn rb_lane(c: RB) -> Option<usize> {
+    (c.t0 < 3 && c.s0 < 3 && c.ccarry < 2 && c.cext_prev < 2 && c.tr_taken < 4)
+        .then(|| usize::from(c.t0) * 48 + usize::from(c.s0) * 16 + c.ccarry as usize * 8 + c.cext_prev as usize * 4 + c.tr_taken as usize)
+}
+
+/// A chunk's summary (pass 1): for each lane of the carries it can be entered with, the lane it leaves in and its
+/// depth's run, none where B's reading from that entry is wrong.
+pub type Summary = [Option<(u8, Depth)>; LANES];
+
+/// The range of blocks strata 2 and 3 cover for the chunk `from..to` (`blocks` the text's): from the block below its
+/// first to the one below the next chunk's, the last chunk to the text's end.
+fn region_range(from: usize, to: usize, blocks: usize) -> (usize, usize) {
+    let (_, r0) = firsts(from);
+    (r0, if to >= blocks { blocks } else { firsts(to).1 })
+}
+
+/// Pass 1: chunk `from..to`'s summary, from every lane at once, by its bytes alone (stratum 1's carries read from the
+/// bytes below it).
+pub fn summary(src: &[u8], from: usize, to: usize) -> Summary {
+    let blocks = src.len().div_ceil(64);
+    let to = to.min(blocks);
+    let (c0, _) = firsts(from);
+    let (r0, r1) = region_range(from, to, blocks);
+    let mut b: Vec<B> = Vec::with_capacity(r1 + 2 - c0);
+    classes_in(src, c0, (r1 + 1).min(blocks), &mut s1_at(src, c0), &mut b, usize::MAX, &mut S1::default());
+    if r1 == blocks {
+        b.push(B::default());
+    }
+    core::array::from_fn(|l| {
+        let mut t = Text { src, b: b.clone(), first: c0 };
+        let mut c = lane_rb(l);
+        if !t.regions_b_in(r0, r1, &mut c) || (r1 == blocks && (c.t0 != 0 || c.s0 != 0)) {
+            return None;
+        }
+        let d = t.b[r0 - c0..r1 - c0].iter().fold(Depth::default(), |d, b| Depth::then(d, Depth::of_block(b.ob & b.code, b.cb & b.code)));
+        Some((rb_lane(c)? as u8, d))
+    })
+}
+
+/// The order a pass runs its chunks in: a permutation of `0..n`, asked each time a pass runs them (0726's `Order`).
+/// Each chunk is on its own, so any order gives the same answer.
+pub type Order<'a> = &'a dyn Fn(usize) -> Vec<usize>;
+
+/// The chunks in order.
+pub fn in_order(n: usize) -> Vec<usize> {
+    (0..n).collect()
+}
+
+/// `f` of each of `n` chunks, run in `order`'s order (0726's `each`).
+fn each<T>(n: usize, order: Order<'_>, mut f: impl FnMut(usize) -> T) -> Vec<T> {
+    let mut out: Vec<Option<T>> = (0..n).map(|_| None).collect();
+    for c in order(n) {
+        assert!(out[c].is_none(), "a chunk run twice");
+        out[c] = Some(f(c));
+    }
+    out.into_iter().map(|x| x.expect("every chunk run")).collect()
+}
+
+/// Summary `a` then `b`: each lane of `a` on in the lane of `b` it leaves in.
+pub fn compose(a: &Summary, b: &Summary) -> Summary {
+    core::array::from_fn(|l| a[l].and_then(|(e, d)| b[usize::from(e)].map(|(e2, d2)| (e2, Depth::then(d, d2)))))
+}
+
+/// Pass 3: each chunk's carries into its first block of strata 2 and 3 and its depth there, from the chunks' summaries,
+/// by Hillis and Steele's scan of their compositions (JSON's `entries_in`), each round's chunks in `order`'s order.
+/// None from the first chunk whose entry B reads wrongly or whose depth goes past the bound.
+pub fn entries_in(sums: &[Summary], order: Order<'_>) -> Vec<Option<(RB, i8)>> {
+    let mut acc = sums.to_vec();
+    let mut d = 1;
+    while d < acc.len() {
+        acc = each(acc.len(), order, |c| if c < d { acc[c] } else { compose(&acc[c - d], &acc[c]) });
+        d *= 2;
+    }
+    let start = rb_lane(RB::default()).expect("the start's lane");
+    each(acc.len(), order, |c| {
+        if c == 0 {
+            return Some((RB::default(), 0));
+        }
+        let (e, dep) = acc[c - 1][start]?;
+        Some((lane_rb(usize::from(e)), dep.apply(0)?))
+    })
+}
+
+/// Passes 1 and 3 against the chunks lexed one after another: whether every chunk's entry by the scan of the
+/// summaries (each pass in `order`) is the one the chunk before left, and stratum 1's carries read from the bytes the
+/// ones it carried. None where B's reading is wrong (the text is read by A) or the text is refused.
+pub fn entries_are_the_folds(src: &[u8], blocks: usize, order: Order<'_>) -> Option<Result<(), String>> {
+    let (got, fold) = lex_chunked(src, blocks)?;
+    got.ok()?;
+    let n = src.len().div_ceil(64);
+    let k = n.div_ceil(blocks.max(1)).max(1);
+    let sums = each(k, order, |c| summary(src, c * blocks.max(1), (c + 1) * blocks.max(1)));
+    let es = entries_in(&sums, order);
+    for (c, (e, f)) in es.iter().zip(&fold).enumerate() {
+        let from = c * blocks.max(1);
+        if *e != Some((f.rb, f.depth)) {
+            return Some(Err(format!("chunk {c} (block {from}) of {k}, {blocks} blocks a chunk: the scan's {e:?}, the fold's {:?}", (f.rb, f.depth))));
+        }
+        let s1 = s1_at(src, firsts(from).0);
+        if s1 != f.s1 {
+            return Some(Err(format!("chunk {c} (block {from}): stratum 1's carries from the bytes {s1:?}, carried {:?}", f.s1)));
+        }
+    }
+    Some(Ok(()))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
 
-    #[test]
-    fn chunks_lexed_from_their_entries_are_the_serial_lexer() {
+    /// The texts the tests lex from the middle: each region, bracket, indent and long token crossing a block's edge
+    /// somewhere.
+    fn texts() -> Vec<String> {
         let mut texts: Vec<String> = [
             "if a:\n    b\nc\n",
             "x = (1,\n 2)\n",
@@ -191,8 +369,13 @@ mod tests {
             long.push_str(&format!("if x{k}:\n{}y = rf'{}{{x{k}}}'\n{}name_{} = 0\n", " ".repeat(k % 9 + 1), "\\\\".repeat(k), " ".repeat(k % 9 + 1), "n".repeat(k * 2)));
         }
         texts.push(long);
+        texts
+    }
+
+    #[test]
+    fn chunks_lexed_from_their_entries_are_the_serial_lexer() {
         let (mut same, mut not_b) = (0, 0);
-        for t in &texts {
+        for t in &texts() {
             for blocks in [1, 2, 3, 16] {
                 match chunked_is_serial(t.as_bytes(), blocks) {
                     Ok(true) => same += 1,
@@ -224,5 +407,57 @@ mod tests {
             }
         }
         assert!(checked > 0);
+    }
+
+    /// A seeded random order of `n` chunks, another each time it is asked.
+    fn shuffled(seed: u64) -> impl Fn(usize) -> Vec<usize> {
+        let x = core::cell::Cell::new(seed | 1);
+        move |n| {
+            let mut v: Vec<usize> = (0..n).collect();
+            for i in (1..n).rev() {
+                let mut y = x.get();
+                y ^= y << 13;
+                y ^= y >> 7;
+                y ^= y << 17;
+                x.set(y);
+                v.swap(i, (y % (i as u64 + 1)) as usize);
+            }
+            v
+        }
+    }
+
+    #[test]
+    fn the_scan_of_summaries_gives_each_chunk_its_entry() {
+        let mut checked = 0;
+        for (i, t) in texts().iter().enumerate() {
+            for blocks in [1, 2, 3, 16] {
+                let order = shuffled(i as u64 * 31 + blocks as u64);
+                match entries_are_the_folds(t.as_bytes(), blocks, &order) {
+                    Some(Ok(())) => checked += 1,
+                    Some(Err(e)) => panic!("{e}"),
+                    None => {}
+                }
+            }
+        }
+        assert!(checked > 20, "{checked}");
+        // Random texts: quotes, comments, escapes and brackets across blocks' edges.
+        let mut x = 0x2545_f491_4f6c_dd1du64;
+        for len in [65usize, 130, 400, 1000] {
+            for k in 0..200 {
+                let src: Vec<u8> = (0..len)
+                    .map(|_| {
+                        x ^= x << 13;
+                        x ^= x >> 7;
+                        x ^= x << 17;
+                        b"''\\\"\"#\n\n  ab(rf{}x)\n\r[]"[(x >> 8) as usize % 23]
+                    })
+                    .collect();
+                for blocks in [1, 2, 3] {
+                    if let Some(Err(e)) = entries_are_the_folds(&src, blocks, &shuffled(k + len as u64)) {
+                        panic!("{e}: {:?}", String::from_utf8_lossy(&src));
+                    }
+                }
+            }
+        }
     }
 }

@@ -278,10 +278,10 @@ fn classes(src: &[u8]) -> Vec<B> {
 /// Stratum 1's carries into a block: the escape bit of a run of backslashes, of a `'\r'` an escaped one ends, and of a
 /// run of `{`.
 #[derive(Clone, Copy, Default, Debug, PartialEq, Eq)]
-pub(crate) struct S1 {
-    carry: u64,
-    cr: u64,
-    lb: u64,
+pub struct S1 {
+    pub(crate) carry: u64,
+    pub(crate) cr: u64,
+    pub(crate) lb: u64,
 }
 
 /// Blocks `from..to`'s classes after `out`, from the carries `c` into block `from` (left as those out of block `to - 1`),
@@ -992,14 +992,15 @@ fn hold(s: u8, r: u64) -> (u64, u64, u8) {
 }
 
 /// Variant B's stratum 2's carries into a block: the triples' and the one-line strings' machines' states, a comment's
-/// carry, the last bit of the comment's line-end mask, and the bytes a triple's closer from the block before takes.
+/// carry, the last bit of the block before's comment line-end mask, and the bytes a triple's closer from the block
+/// before takes (bits 0 and 1).
 #[derive(Clone, Copy, Default, Debug, PartialEq, Eq)]
-pub(crate) struct RB {
-    t0: u8,
-    s0: u8,
-    ccarry: u64,
-    cext_prev: u64,
-    tr_taken: u64,
+pub struct RB {
+    pub(crate) t0: u8,
+    pub(crate) s0: u8,
+    pub(crate) ccarry: u64,
+    pub(crate) cext_prev: u64,
+    pub(crate) tr_taken: u64,
 }
 
 impl<'s> Text<'s> {
@@ -1069,9 +1070,9 @@ impl<'s> Text<'s> {
             let carries = x ^ a ^ g;
             let comment = g | (a & carries);
             // A comment reaches a line end where the byte below it is the comment's (or a `'\r'` just past it).
-            let cext = comment | (b.eol & !b.lf & (comment << 1 | cext_prev >> 63));
-            let lend = cext << 1 | cext_prev >> 63;
-            cext_prev = cext;
+            let cext = comment | (b.eol & !b.lf & (comment << 1 | cext_prev));
+            let lend = cext << 1 | cext_prev;
+            cext_prev = cext >> 63;
             // The layers' guesses, checked.
             let wrong = (t_open & (sb | comment))
                 | (b.bare_lf & sb & !tr & !lend)
