@@ -68,6 +68,9 @@ pub struct DocSet {
     /// The asks' head the set was last read against (`forget_unasked`; `None`: never): every document read since was
     /// asked there, so while the asks stay at it no document is unasked.
     covered: Option<Option<BlockId>>,
+    /// The set's head and the residency's counts (slabs retired, drops) when every document of it was last made
+    /// resident (`resident`): while both stay, no slab of it went and no document came, so it is resident still.
+    resident_at: Option<(BlockId, (u64, u64))>,
 }
 
 impl DocSet {
@@ -75,7 +78,7 @@ impl DocSet {
     /// lasts; `kept` the pins block that run left (let go when the next run keeps its own).
     pub fn new(world: World, dir: &Directory, head: Option<BlockId>, kept: Option<BlockId>) -> Result<DocSet, String> {
         let tape = Trace::new(&tape_shape())?.with_roll_up(RollUp::Never).resumed(dir.lasting(), head);
-        Ok(DocSet { world, tape, kept, covered: None })
+        Ok(DocSet { world, tape, kept, covered: None, resident_at: None })
     }
 
     /// The row of the document at `path`, by its path's symbol (the set's index on its path), when it has one.
@@ -260,6 +263,11 @@ impl DocSet {
     /// directory holds by the blob store's `forget_dead`); the loads are the file layer's and the touches the residency's.
     pub fn resident(&mut self, bench: &mut Bench) -> Result<(), String> {
         let Some(h) = self.tape.head() else { return Ok(()) };
+        // Resident still: no slab retired or dropped since, and the same documents (L4: an identity run's are its checks).
+        let at = (h, bench.dir.residency());
+        if self.resident_at == Some(at) {
+            return Ok(());
+        }
         bench.blobs.forget_dead(&bench.ops, &mut bench.dir)?;
         let n = self.tape.reading(&bench.dir, Some(h), |s| Read::end(s).get() as usize)?;
         let (blocks, missing) = match bench.blobs.head() {
@@ -282,6 +290,9 @@ impl DocSet {
         })();
         blocks.release(&mut bench.dir);
         missing.release(&mut bench.dir);
+        if loaded.is_ok() {
+            self.resident_at = Some(at);
+        }
         loaded
     }
 
@@ -516,4 +527,106 @@ pub fn cold_k_form(bench: &mut Bench, base: &std::path::Path) -> Result<Vec<std:
     let mut docs = DocSet::new(world, &bench.dir, None, None)?;
     run(&L1, &mut inst, PATH, "bootstrap-l0", atoms, &mut docs, bench, None)?;
     inst.outs.iter().map(|t| crate::contract::oracle_rows(&bench.dir, t, t.head())).collect()
+}
+
+/// One run of a boot chain (`boot_chain`): the pins it started from and where it left every trace, its document, its
+/// work, its launches (`Runner::launches`), the digest of L1's cache block, L1's K-form at its outputs' heads and the
+/// plain function's K-form on the document set as the run left it (L1's reference, by the same atoms).
+#[cfg(any(test, feature = "test-hooks"))]
+pub struct Ran {
+    pub before: Option<Pins>,
+    pub after: Pins,
+    pub doc: Doc,
+    pub work: Work,
+    pub launches: u64,
+    pub cache: u64,
+    pub kform: Vec<std::collections::BTreeSet<Vec<i64>>>,
+    pub plain: Vec<std::collections::BTreeSet<Vec<i64>>>,
+}
+
+/// l0's boot run once per version of `versions`, on `bench`, each from the last run's pins (B§8): the file at a root of
+/// its own under `base` is written again only when a version's text differs from the one before (then with another
+/// modification time, older than the racy window), so an unchanged version is the same file with the same stat.
+#[cfg(any(test, feature = "test-hooks"))]
+pub fn boot_chain(bench: &mut Bench, base: &std::path::Path, versions: &[&str]) -> Result<Vec<Ran>, String> {
+    const PATH: &str = "bootstrap-l0.rerail";
+    let root = base.join("root");
+    std::fs::create_dir_all(&root).map_err(|e| e.to_string())?;
+    let store = crate::files::Store::open(&base.join("store"))?;
+    let atoms = Atoms::new(&mut bench.dir);
+    let world = World::new(root.clone(), store, &bench.dir, [None; 3])?;
+    let mut inst = Instance::new(&L1, &mut bench.dir)?;
+    let mut docs = DocSet::new(world, &bench.dir, None, None)?;
+    let (mut last, mut text): (Option<Pins>, Option<&str>) = (None, None);
+    let mut out = Vec::with_capacity(versions.len()); // copy: not block data (the chain's runs)
+    for (k, &v) in versions.iter().enumerate() {
+        if text != Some(v) {
+            std::fs::write(root.join(PATH), v).map_err(|e| e.to_string())?;
+            let f = std::fs::File::options().write(true).open(root.join(PATH)).map_err(|e| e.to_string())?;
+            f.set_modified(std::time::SystemTime::now() - std::time::Duration::from_secs(600 - 10 * k as u64)).map_err(|e| e.to_string())?;
+            text = Some(v);
+        }
+        let launched = bench.ops.launches();
+        let (pins, doc, work) = run(&L1, &mut inst, PATH, "bootstrap-l0", atoms, &mut docs, bench, last.as_ref())?;
+        let launches = bench.ops.launches() - launched;
+        let cache = rerail_blocks::maps::hash_bytes(bench.dir.read("L1's cache", &[inst.cache.0])?.block(0));
+        let kform = inst.outs.iter().map(|t| crate::contract::oracle_rows(&bench.dir, t, t.head())).collect::<Result<_, _>>()?;
+        let globals = [Global { block: atoms.0, count: u64::from(atoms.count(&bench.dir)) }];
+        let plain = crate::contract::apply(&L1, &mut bench.cx(), &[(&docs.tape, docs.tape.head())], &globals)?;
+        out.push(Ran { before: last.replace(pins.clone()), after: pins, doc, work, launches, cache, kform, plain });
+    }
+    Ok(out)
+}
+
+/// l0's versions for the boot chain: as shipped, the same again, comments only (above the first rule, between two
+/// rules, inside a body, after the last), and the comments' version with one rule added after the last.
+#[cfg(any(test, feature = "test-hooks"))]
+pub fn chain_versions() -> [String; 4] {
+    let first = "kind(d, c, \"clause\"), ";
+    let second = "k_arg(d, c, -1, -1, i, a) :-";
+    assert!(crate::L0.contains(first) && crate::L0.contains(second));
+    let comments = format!("// more comments: above the rules,\n{}// and after the last.\n", crate::L0.replacen(first, "kind(d, c, \"clause\"), // inside a body\n    ", 1).replacen(second, &format!("// between two rules\n{second}"), 1));
+    let added = format!("{comments}b6_added(c, h) :- k_rule(_, c, h), !k_wild(_, c).\n");
+    [crate::L0.to_string(), crate::L0.to_string(), comments, added]
+}
+
+/// What a run of the boot chain must show (0686: Shape and Invariants, §3), whatever runs its launches: cold, ∅ → l0's
+/// 14 rules (L2); unchanged, every trace where it was, the cache unchanged, no read and no launch (L4); comments only,
+/// a new source and tape and the same program by value (what leaves a module is judged by value, L9); a rule added,
+/// by value exactly that rule's rows added and none gone; and every run's K-form the plain function's on the document
+/// set as the run left it (L1, L3).
+#[cfg(any(test, feature = "test-hooks"))]
+pub fn check_boot_chain(runs: &[Ran], atoms: impl Fn(&str) -> Option<i64>) {
+    use crate::kform::by_value;
+    let [cold, same, comments, added] = runs else { panic!("four runs") };
+    for (k, r) in runs.iter().enumerate() {
+        assert_eq!(r.kform, r.plain, "run {k}: L1's K-form is the plain function's on the document set");
+    }
+    // Cold.
+    assert!(cold.before.is_none() && !cold.doc.is_identity());
+    assert_eq!(cold.kform[0].len(), 14, "l0's 14 rules");
+    // Unchanged: the identity everywhere.
+    assert!(same.doc.is_identity());
+    assert_eq!(same.before.as_ref(), Some(&same.after), "an unchanged run leaves every trace where it was");
+    assert!(same.work.is_checks_only(), "{:?}", same.work);
+    assert_eq!(same.launches, 1, "an identity run's launches are its checks: l0's stat (answer_load, D2)");
+    assert_eq!((same.cache, &same.kform), (cold.cache, &cold.kform), "the cache and the K-form unchanged");
+    // Comments only.
+    let (b, a) = (comments.doc.before.expect("a document before"), comments.doc.after);
+    assert!(b.source != a.source && b.tape != a.tape, "a new source and a new tape");
+    assert_eq!(by_value(&comments.kform), by_value(&same.kform), "comments only: the same program by value");
+    // A rule added: by value, its rows alone.
+    let (was, now) = (by_value(&comments.kform), by_value(&added.kform));
+    let gone: usize = was.iter().zip(&now).map(|(w, n)| w.difference(n).count()).sum();
+    assert_eq!(gone, 0, "a rule added takes no row away");
+    let new: Vec<Vec<Vec<i64>>> = was.iter().zip(&now).map(|(w, n)| n.difference(w).cloned().collect()).collect();
+    let head = atoms("b6_added").expect("the new rule's head interned");
+    assert_eq!(new[0].len(), 1, "one rule added: {:?}", new[0]);
+    let (m, rule) = (new[0][0][0], new[0][0][1]);
+    assert_eq!(new[0][0][2], head, "the new rule writes b6_added");
+    let terms: std::collections::BTreeSet<i64> = new[2].iter().map(|r| r[5]).collect();
+    assert!(new[1].iter().chain(&new[2]).all(|r| r[0] == m && r[1] == rule), "every added step and argument is the new rule's");
+    assert!(new[3..7].iter().flatten().all(|r| r[0] == m && terms.contains(&r[1])), "every added term is one of its arguments");
+    assert_eq!((new[1].len(), new[2].len(), new[3].len(), new[6].len()), (2, 7, 5, 2), "two steps, seven arguments (two in the head), five variables, two wildcards");
+    assert!(new[7].is_empty(), "the module's stratum unchanged");
 }

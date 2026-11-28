@@ -729,6 +729,8 @@ pub struct Runner {
     device: Option<Box<dyn Kernels>>,
     /// A mixed runner's seed (`Runner::mixed`), then each launch's, and its launches on the CPU and on the device.
     mix: Option<Mix>,
+    /// Its launches so far (`run`, and each `MAX_WIDE` of a `run_wide`), wherever each ran.
+    launched: std::sync::atomic::AtomicU64,
 }
 
 /// Each launch of a mixed runner on the CPU or its device, by a seed (`Runner::mixed`).
@@ -748,7 +750,7 @@ impl Runner {
         crate::k0::register(&mut reg)?;
         crate::drop::register(&mut reg)?;
         crate::semi::register(&mut reg)?;
-        Ok(Runner { reg, device: None, mix: None })
+        Ok(Runner { reg, device: None, mix: None, launched: 0.into() })
     }
 
     /// A runner on `device`: every operation's UKL version checked there against its twin and registered
@@ -763,7 +765,7 @@ impl Runner {
     /// A runner of a test's own registry (its own operations and versions).
     #[cfg(any(test, feature = "test-hooks"))]
     pub fn of(reg: Registry) -> Runner {
-        Runner { reg, device: None, mix: None }
+        Runner { reg, device: None, mix: None, launched: 0.into() }
     }
 
     /// A runner on `device` (`Runner::on`) that runs each launch there or on the CPU, picked by `seed`: both read and
@@ -773,6 +775,12 @@ impl Runner {
         let mut r = Runner::on(device)?;
         r.mix = Some(Mix { seed: seed.into(), on: [0.into(), 0.into()] });
         Ok(r)
+    }
+
+    /// Its launches so far, wherever each ran: what a test counts a run's launches by (L4: an identity run's are its
+    /// checks alone).
+    pub fn launches(&self) -> u64 {
+        self.launched.load(std::sync::atomic::Ordering::Relaxed)
     }
 
     /// A mixed runner's launches so far, on the CPU and on its device.
@@ -801,6 +809,7 @@ impl Runner {
     /// Runs the operation `sig` declares on the CPU (`run_cpu`): on the blocks `slots` name, with `params`' bytes,
     /// its phases cut by `tiling`.
     pub fn run(&self, dir: &Directory, sig: &'static Signature, slots: &[BlockId], params: &[u8], tiling: Tiling) -> Result<(), String> {
+        self.launched.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
         let device = self.device.as_ref().filter(|_| {
             let Some(m) = &self.mix else { return true };
             use std::sync::atomic::Ordering::Relaxed;
@@ -820,6 +829,7 @@ impl Runner {
     pub fn run_wide(&self, dir: &Directory, sig: &'static Signature, wide: &Wide<'_>, tiling: Tiling) -> Result<(), String> {
         let op = self.op(sig)?;
         for part in wide.chunks(MAX_WIDE) {
+            self.launched.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
             let device = self.device.as_ref().filter(|_| {
                 let Some(m) = &self.mix else { return true };
                 use std::sync::atomic::Ordering::Relaxed;

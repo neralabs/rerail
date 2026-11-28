@@ -274,6 +274,42 @@ fn the_boot_run_on_the_device_or_mixed_is_the_cpus() {
     }
 }
 
+/// The boot chain (0686: Shape and Invariants, §3) on the tests' device and on three mixed runners: cold, unchanged,
+/// comments only and a rule added, each from the last run's pins. Every run shows what the CPU's must
+/// (`check_boot_chain`), and its K-form, its pins' changes and its launches are the CPU run's.
+#[test]
+fn the_boot_runs_as_a_delta_on_the_device_or_mixed() {
+    use rerail_delta_exec::boot::{Ran, boot_chain, chain_versions, check_boot_chain};
+    use rerail_delta_exec::contract::Bench;
+    device();
+    let base = |name: &str| std::env::temp_dir().join(format!("rerail-chain-{}-{name}", std::process::id()));
+    let versions = chain_versions();
+    let versions = versions.each_ref().map(String::as_str);
+    let chain = |bench: &mut Bench, name: &str| -> Vec<Ran> {
+        let runs = boot_chain(bench, &base(name), &versions).unwrap_or_else(|e| panic!("{name}: {e}"));
+        let atoms = rerail_delta_exec::sym::Atoms(runs[0].after.atoms.block);
+        check_boot_chain(&runs, |x| atoms.find(&bench.dir, x));
+        runs
+    };
+    let want = chain(&mut Bench::new().unwrap(), "cpu");
+    let same = |name: &str, got: &[Ran]| {
+        for (k, (g, w)) in got.iter().zip(&want).enumerate() {
+            assert!(g.kform == w.kform, "{name}, run {k}: the K-form is the CPU's");
+            assert_eq!(g.launches, w.launches, "{name}, run {k}: the CPU's launches");
+            assert_eq!(g.before.as_ref() == Some(&g.after), w.before.as_ref() == Some(&w.after), "{name}, run {k}: the identity where the CPU's is");
+        }
+    };
+    let on = Runner::on(Box::new(Gpu::host().expect("the tests' device"))).unwrap_or_else(|e| panic!("{e}"));
+    same("the device", &chain(&mut Bench::on(on), "device"));
+    for seed in 1..=3u64 {
+        let mut bench = Bench::on(Runner::mixed(Box::new(Gpu::host().expect("the tests' device")), seed).unwrap_or_else(|e| panic!("{e}")));
+        let runs = chain(&mut bench, &format!("mixed-{seed}"));
+        let [cpu, dev] = bench.ops.mixed_launches().expect("a mixed runner");
+        assert!(cpu > 0 && dev > 0, "seed {seed}: launches on both ({cpu} on the CPU, {dev} on the device)");
+        same(&format!("seed {seed}"), &runs);
+    }
+}
+
 /// l0's cold boot run on the tests' device, `RERAIL_BOOT_RUNS` times (default 1) on one runner: what a profiler
 /// samples the device's boot run by. Prints the runner's making (its kernels compiled and checked) and each run's time.
 #[test]

@@ -467,3 +467,13 @@ fn the_cold_boot_run_repeated() {
         crate::boot::cold_k_form(&mut bench, &base.join(k.to_string())).unwrap();
     }
 }
+
+#[test]
+fn the_boot_runs_as_a_delta() {
+    let mut bench = Bench::new().unwrap();
+    let base = std::env::temp_dir().join(format!("rerail-chain-{}", std::process::id()));
+    let versions = crate::boot::chain_versions();
+    let runs = crate::boot::boot_chain(&mut bench, &base, &versions.each_ref().map(String::as_str)).unwrap_or_else(|e| panic!("{e}"));
+    let atoms = crate::sym::Atoms(runs[0].after.atoms.block);
+    crate::boot::check_boot_chain(&runs, |x| atoms.find(&bench.dir, x));
+}

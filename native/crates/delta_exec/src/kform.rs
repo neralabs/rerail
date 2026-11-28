@@ -48,3 +48,37 @@ impl std::fmt::Display for Refused {
         write!(f, "module {} rule {}: {}", self.module, self.rule, self.why)
     }
 }
+
+/// Each relation's columns that hold a rule's or a term's id: a node id of the module's tape, local to it (L9).
+pub const ID_COLS: [&[usize]; 8] = [&[1], &[1], &[1, 5], &[1], &[1], &[1], &[1], &[]];
+
+/// K-form rows (by relation, in `RELATIONS`' order) read by value: each module's ids, which are its own and renumber
+/// on any edit (L9, 0686's O3), read as their place among the ids its rows hold, in order. Two programs with the same
+/// rules, read in the same order, read the same whatever ids their tapes gave them (a test's reading: what leaves a
+/// module is judged by value).
+#[cfg(any(test, feature = "test-hooks"))]
+pub fn by_value(rows: &[std::collections::BTreeSet<Vec<i64>>]) -> Vec<std::collections::BTreeSet<Vec<i64>>> {
+    use std::collections::{BTreeMap, BTreeSet};
+    // copy: derived (a test's reading of the rows)
+    let mut ids: BTreeMap<i64, BTreeSet<i64>> = BTreeMap::new();
+    for (k, rel) in rows.iter().enumerate() {
+        for r in rel {
+            ids.entry(r[0]).or_default().extend(ID_COLS[k].iter().map(|&c| r[c]));
+        }
+    }
+    let place: BTreeMap<(i64, i64), i64> = ids.iter().flat_map(|(&m, s)| s.iter().enumerate().map(move |(i, &id)| ((m, id), i as i64))).collect();
+    rows.iter()
+        .enumerate()
+        .map(|(k, rel)| {
+            rel.iter()
+                .map(|r| {
+                    let mut v = r.clone();
+                    for &c in ID_COLS[k] {
+                        v[c] = place[&(r[0], r[c])];
+                    }
+                    v
+                })
+                .collect()
+        })
+        .collect()
+}
