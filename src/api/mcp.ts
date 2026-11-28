@@ -94,6 +94,30 @@ function callerCheckout(real: string): string {
   return checkout;
 }
 
+/** Forgets every kept caller checkout once `recordedVersion`, the recorded checkouts' version, moves. */
+function forgetOnRecordedChange(recordedVersion: string | undefined): void {
+  if (recordedVersion === undefined || recordedVersion === callerCacheVersion) return;
+  callerCheckouts.clear();
+  callerCacheVersion = recordedVersion;
+}
+
+/**
+ * The real path of the folder `header` names, URI-encoded; undefined where it is not the absolute path of an existing
+ * folder.
+ */
+function callerFolder(header: string): string | undefined {
+  try {
+    const cwd = decodeURIComponent(header);
+    if (cwd.includes("\0") || !isAbsolute(cwd)) return undefined;
+    // Spelt as the checkout is (on Windows each name's long form), or a folder sent with 8.3 short names (an account
+    // folder named `RUNNER~1`) lies outside it.
+    const real = checkoutRealpath(cwd);
+    return statSync(real).isDirectory() ? real : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
 /**
  * The calling agent from {@link CALLER_CWD_HEADER}: the URI-encoded real path of the folder its bridge started in,
  * resolved to the checkout that folder is in and the folder inside it. No header is an agent with no checkout, which
@@ -101,21 +125,9 @@ function callerCheckout(real: string): string {
  */
 export function callerFromHeader(header: string | null, recordedVersion?: string): ApiCaller | string {
   if (header === null) return { kind: "agent", checkout: undefined, folder: "" };
-  if (recordedVersion !== undefined && recordedVersion !== callerCacheVersion) {
-    callerCheckouts.clear();
-    callerCacheVersion = recordedVersion;
-  }
-  let real: string;
-  try {
-    const cwd = decodeURIComponent(header);
-    if (cwd.includes("\0") || !isAbsolute(cwd)) return INVALID_CALLER;
-    // Spelt as the checkout is (on Windows each name's long form), or a folder sent with 8.3 short names
-    // (`C:\Users\RUNNER~1\...`) lies outside it.
-    real = checkoutRealpath(cwd);
-    if (!statSync(real).isDirectory()) return INVALID_CALLER;
-  } catch {
-    return INVALID_CALLER;
-  }
+  forgetOnRecordedChange(recordedVersion);
+  const real = callerFolder(header);
+  if (real === undefined) return INVALID_CALLER;
   try {
     const checkout = callerCheckout(real);
     const inside = within(checkout, real);
