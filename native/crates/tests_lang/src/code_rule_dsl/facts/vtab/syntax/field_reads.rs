@@ -38,6 +38,57 @@ fn a_fields_rows_by_field_alone_are_the_rows_a_scan_finds() {
     }
 }
 
+/// A read by parent and field (`field(p, #f, $c)`, `p` bound, the field the cursor's second key): for every parent and
+/// field the rows hold, a field the parent has none of, and a node that is no parent, the read gives exactly the rows
+/// whose parent and field are those (a scan of every row), in row order, with each row's values; probed in the
+/// parents' order, as a join's step probes, and then shuffled, one cursor kept across them (its run checked, not
+/// trusted).
+#[test]
+fn a_fields_rows_by_parent_and_field_are_the_rows_a_scan_finds() {
+    let store = ContentStore::open(&temp("by-parent-field")).unwrap();
+    let (_, field) = sources(&store, documents().into_iter().take(4).collect()).unwrap().into_iter().find(|(name, _)| *name == "field").unwrap();
+    let n = field.len();
+    assert!(n > 100, "the documents have fielded nodes: {n}");
+    let mut by: BTreeMap<(i64, i64), Vec<usize>> = BTreeMap::new();
+    for r in 0..n {
+        by.entry((field.value(r, 0), field.value(r, 1))).or_default().push(r);
+    }
+    let fields: BTreeSet<i64> = by.keys().map(|k| k.1).collect();
+    let parents: BTreeSet<i64> = by.keys().map(|k| k.0).collect();
+    // A field each of some parents has none of, and children that are no parent, with each field.
+    let mut probes: Vec<(i64, i64)> = by.keys().copied().collect();
+    for &p in parents.iter().step_by(7) {
+        if let Some(&f) = fields.iter().find(|&&f| !by.contains_key(&(p, f))) {
+            probes.push((p, f));
+        }
+    }
+    for r in (0..n).step_by(11) {
+        let c = field.value(r, 2);
+        if !parents.contains(&c) {
+            probes.push((c, *fields.first().unwrap()));
+        }
+    }
+    probes.sort_unstable();
+    probes.dedup();
+    let columns: Vec<usize> = (0..field.columns().len()).collect();
+    let mut shuffled = probes.clone();
+    let mut x = 11u64;
+    for i in (1..shuffled.len()).rev() {
+        x = x.wrapping_mul(6364136223846793005).wrapping_add(1);
+        shuffled.swap(i, (x >> 33) as usize % (i + 1));
+    }
+    for (order, probes) in [("in order", &probes), ("shuffled", &shuffled)] {
+        let mut cursor = ProbeCursor::default();
+        for &(p, f) in probes {
+            cursor.also = Some((1, f));
+            let mut read = Vec::new();
+            assert!(field.lookup_read_at(0, p, &columns, &mut cursor, &mut |r, vals| read.push((r, vals.to_vec()))), "({p}, {f}): read as found");
+            let want: Vec<(usize, Vec<i64>)> = by.get(&(p, f)).map_or(&[][..], |v| &v[..]).iter().map(|&r| (r, columns.iter().map(|&c| field.value(r, c)).collect())).collect();
+            assert_eq!(read, want, "({p}, {f}), {order}");
+        }
+    }
+}
+
 /// A chunk's source as it binds a relation (`Layered`: the batch's rows, then the values admitted past them) filters to
 /// the rows a per-row read keeps: for every source, on each column at every seventh row's value, and on two columns at
 /// once. Its own scan, where the trait's read each row's columns one select at a time.
@@ -180,4 +231,57 @@ fn a_layered_sources_node_atom_is_the_atom_of_the_text_it_reads() {
         }
     }
     assert!(read[0] > 10 && read[1] > 3, "{read:?}");
+}
+
+/// What a probe of `field` by its parent and field costs (`field(p, f, $c)`, `p` bound, as a join's step probes it):
+/// every `(p, f)` pair the rows of `WALK_DIRS`' first 600 Python files hold, field by field and each field's in the
+/// parents' order (a step's probes: one field, the rows before it in order), each read for its child, one cursor kept
+/// across them. A measurement.
+#[test]
+#[ignore]
+fn what_a_fields_probe_by_parent_and_field_costs() {
+    let dirs = std::env::var("WALK_DIRS").expect("WALK_DIRS");
+    let mut files: Vec<PathBuf> = Vec::new();
+    let mut stack: Vec<PathBuf> = dirs.split(':').map(PathBuf::from).collect();
+    while let Some(d) = stack.pop() {
+        let Ok(rd) = std::fs::read_dir(&d) else { continue };
+        for e in rd.flatten() {
+            let p = e.path();
+            if p.is_dir() {
+                stack.push(p);
+            } else if p.extension().is_some_and(|x| x == "py") {
+                files.push(p);
+            }
+        }
+    }
+    files.sort();
+    let docs: Vec<Document> = files
+        .iter()
+        .filter_map(|p| Some((p, std::fs::read_to_string(p).ok()?)))
+        .take(600)
+        .enumerate()
+        .map(|(k, (p, src))| document(k as u32 + 1, &p.to_string_lossy(), "python", &src))
+        .collect();
+    assert!(!docs.is_empty(), "no Python file under {dirs}");
+    let store = ContentStore::open(&temp("by-parent")).unwrap();
+    let (_, field) = sources(&store, docs).unwrap().into_iter().find(|(name, _)| *name == "field").unwrap();
+    let mut pairs: Vec<(i64, i64)> = (0..field.len()).map(|r| (field.value(r, 1), field.value(r, 0))).collect();
+    pairs.sort_unstable();
+    pairs.dedup();
+    let pairs: Vec<(i64, i64)> = pairs.into_iter().map(|(f, p)| (p, f)).collect();
+    let columns = [2usize];
+    let mut cursor = ProbeCursor::default();
+    let (reps, mut rows, mut sum) = (20, 0u64, 0i64);
+    let t = std::time::Instant::now();
+    for _ in 0..reps {
+        for &(p, f) in &pairs {
+            cursor.also = Some((1, f));
+            assert!(field.lookup_read_at(0, p, &columns, &mut cursor, &mut |_, vals| {
+                rows += 1;
+                sum = sum.wrapping_add(vals[0]);
+            }));
+        }
+    }
+    let ns = t.elapsed().as_secs_f64() * 1e9 / (reps * pairs.len()) as f64;
+    eprintln!("{} field rows, {} (p, f) probes: {ns:.0} ns a probe, {:.2} rows a probe ({sum})", field.len(), pairs.len(), rows as f64 / (reps * pairs.len()) as f64);
 }

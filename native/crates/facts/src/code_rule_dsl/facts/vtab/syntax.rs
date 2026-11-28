@@ -2598,6 +2598,12 @@ impl KindRows {
 /// read of the view's row reads it, `Projected::parent_of_node`; `NONE` for the root's). A probe by a field alone
 /// walked every node of the batch for the few in the field, 884 probes of an idc run at 572 ns a row out (1.84 s).
 ///
+/// Each field's rows are kept in a second order too, by parent (`by_up`: `(document, parent)`, then row order), for a
+/// probe by parent and field (`field(p, #f, $c)`, `p` bound): its matches are the run of the parent's entries, found by
+/// stepping on from the last probe's run. That probe walked the parent's children on the tape and, for each one in the
+/// field, ranked it for its local id and its row and read its row through the document's directory: 312 ns a probe
+/// of an idc run (4.26 M probes, 1.33 s), 123 ns a probe alone.
+///
 /// In the batch's block (decision 0353 step 4: an index in its relation's block, not a host structure).
 struct FieldRows {
     /// The field atoms, ascending.
@@ -2605,6 +2611,9 @@ struct FieldRows {
     /// Where each field's rows start in `at`, and one past the last.
     starts: Cells<u32>,
     at: Cells<[u32; 4]>,
+    /// Each field's rows by parent: indices into `at`, laid out as `at` is (`starts`), each field's ordered by its
+    /// entries' `(document, parent)`, then row.
+    by_up: Cells<u32>,
 }
 
 impl FieldRows {
@@ -2632,7 +2641,20 @@ impl FieldRows {
             }
         }
         starts.push(all.len() as u32);
-        FieldRows { keys: in_block(&b.block, &keys), starts: in_block(&b.block, &starts), at: in_block(&b.block, &all.iter().map(|e| e.1).collect::<Vec<_>>()) }
+        // Ordered by `(document, parent)`, then the index itself (a parent's rows stay in row order): one 64-bit key
+        // and the index, sorted in place (a stable sort's buffer and its key calls were about as much as the probes
+        // saved). The entries come in document order, and nearly in their parents'.
+        let mut keyed: Vec<(u64, u32)> = all.iter().enumerate().map(|(i, e)| ((u64::from(e.1[0]) << 32) | u64::from(e.1[3]), i as u32)).collect();
+        for w in starts.windows(2) {
+            keyed[w[0] as usize..w[1] as usize].sort_unstable();
+        }
+        let by_up: Vec<u32> = keyed.into_iter().map(|(_, i)| i).collect();
+        FieldRows {
+            keys: in_block(&b.block, &keys),
+            starts: in_block(&b.block, &starts),
+            at: in_block(&b.block, &all.iter().map(|e| e.1).collect::<Vec<_>>()),
+            by_up: in_block(&b.block, &by_up),
+        }
     }
 }
 
@@ -4550,6 +4572,15 @@ impl Batch {
         let k = self.fields.get_or_init(|| FieldRows::new(self));
         k.keys.binary_search(&field).map_or(&[][..], |i| &k.at[k.starts[i] as usize..k.starts[i + 1] as usize])
     }
+    /// The `field` view's rows whose field is `field` (`by_field`'s), and their order by parent (`FieldRows::by_up`:
+    /// indices into all the fields' rows, so into the first slice less its start, the second value).
+    fn by_field_parent(&self, field: i64) -> (&[[u32; 4]], &[u32], u32) {
+        let k = self.fields.get_or_init(|| FieldRows::new(self));
+        k.keys.binary_search(&field).map_or((&[][..], &[][..], 0), |i| {
+            let (s, e) = (k.starts[i] as usize, k.starts[i + 1] as usize);
+            (&k.at[s..e], &k.by_up[s..e], s as u32)
+        })
+    }
     /// The document index and node or span of id `n`.
     fn loc(&self, n: i64, memo: &mut u32) -> Option<(usize, u32)> {
         let doc = self.doc(n >> 32, memo)?;
@@ -5409,6 +5440,69 @@ impl Viewed {
                 }
                 each(firsts.at(doc as usize) + r as usize, &vals[..columns.len()]);
             }
+            return true;
+        }
+        // A field's rows by parent and field (`field(p, #f, $c)`, `p` bound): the parent's run among the field's rows
+        // by parent (`FieldRows::by_up`), found by stepping on from the last probe's run, each row's values its parent's
+        // id, the field and the child's id (from the last one's granule). The parent's local id from the read's memo
+        // (`node_hint`): a body probes `kind(p, k)` first.
+        if matches!(self.view, View::Field)
+            && Some(column) == self.parent()
+            && let Some((1, f)) = cursor.also
+            && columns.len() <= 8
+            && columns.iter().all(|&c| c < 3)
+        {
+            if value == -1 {
+                return false;
+            }
+            let b = &*self.batch;
+            let own_node = std::cell::Cell::new(super::NodeMemo::default());
+            let node: &std::cell::Cell<super::NodeMemo> = cursor.node.as_deref().unwrap_or(&own_node);
+            let [doc_hint, granule] = &mut cursor.hint;
+            let Some((doc, local, _)) = b.node_hint(value, doc_hint, node) else { return true };
+            let (rows, by_up, start) = b.by_field_parent(f);
+            let key = |i: usize| {
+                let e = &rows[(by_up[i] - start) as usize];
+                (e[0], e[3])
+            };
+            let want = (doc as u32, local);
+            let n = by_up.len();
+            // The first entry at or past the parent: on from the last probe's run where that is this field's and before
+            // it, else searched (the cursor's place is among all the fields' rows, so another field's is no place here).
+            let at = cursor.at.wrapping_sub(start) as usize;
+            let mut i = at.min(n);
+            if at > n || (i > 0 && key(i - 1) >= want) {
+                i = by_up.partition_point(|&k| {
+                    let e = &rows[(k - start) as usize];
+                    (e[0], e[3]) < want
+                });
+            } else {
+                let mut step = 1;
+                while i + step <= n && key(i + step - 1) < want {
+                    i += step;
+                    step *= 2;
+                }
+                let hi = (i + step).min(n);
+                i += by_up[i..hi].partition_point(|&k| {
+                    let e = &rows[(k - start) as usize];
+                    (e[0], e[3]) < want
+                });
+            }
+            let (p, first, mut vals) = (&b.docs[doc], b.firsts(View::Field).at(doc), [0i64; 8]);
+            while i < n && key(i) == want {
+                let e = &rows[(by_up[i] - start) as usize];
+                let child = if columns.contains(&2) { p.global_near(e[2], granule) } else { 0 };
+                for (o, &c) in vals.iter_mut().zip(columns) {
+                    *o = match c {
+                        0 => value,
+                        1 => f,
+                        _ => child,
+                    };
+                }
+                each(first + e[1] as usize, &vals[..columns.len()]);
+                i += 1;
+            }
+            cursor.at = start + i as u32;
             return true;
         }
         // A field's rows are its fielded nodes: a probe's match without a field has no row (`row_of_node`), and is

@@ -140,6 +140,10 @@ pub struct ProbeCursor {
     /// join gives each of its steps' cursors, as a rule's body probes several views by the same node in turn, each
     /// from inside the step before's read. None: the probe's own (a lookup alone).
     pub node: Option<std::rc::Rc<std::cell::Cell<NodeMemo>>>,
+    /// Where the last probe's matches ended in the source's index the probe searched, where the source keeps one in
+    /// its probes' order (`field` by parent and field: the field's rows by parent), so a probe in that order finds
+    /// its first match by stepping on from there. A hint too: checked against the index's keys.
+    pub at: u32,
 }
 
 /// A source's memo of the node id it last found (`Batch::node_hint`): its documents (their address), the id, its
