@@ -223,6 +223,25 @@ DEFINE_KERNEL2(tests, sa_rerank,
     keep[k] = (heads[k] != 0u && (k + 1u == args.n || heads[k + 1u] != 0u)) ? 0u : 1u;
 }
 
+// The last round's rows, past the prefix asked for: each its own slot, its old group's slot and its place among the
+// group's rows (their order the sort's, stable: by position where their prefixes tie).
+DEFINE_KERNEL2(tests, sa_final_rank,
+               ARGS,     SaArgs,   args,   ,
+               ROBUFFER, uint64_t, keys,   "[1]",
+               ROBUFFER, uint32_t, pos,    "[1]",
+               ROBUFFER, uint32_t, oheads, "[1]",
+               ROBUFFER, uint32_t, soid,   "[1]",
+               ROBUFFER, uint32_t, ofirst, "[1]",
+               RWBUFFER, uint32_t, rank,   "[1]",
+               GID0,     uint32_t, k,      )
+{
+    if (k >= args.n)
+        return;
+    uint32_t oid = soid[k] + oheads[k] - 1u;
+    uint32_t base = args.pad != 0u ? 1u : (uint32_t)(keys[k] >> args.b);
+    rank[pos[k]] = base + k - ofirst[oid];
+}
+
 // The rows that stay, packed in order.
 DEFINE_KERNEL2(tests, sa_compact,
                ARGS,     SaArgs,   args, ,

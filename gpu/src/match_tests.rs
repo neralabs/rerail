@@ -332,7 +332,10 @@ unsafe impl crate::Pod for SaArgs {}
 /// The suffix array of `t` on the device, by prefix doubling over the rows not yet alone in their group: its entries,
 /// each round's GPU seconds (its sort's, its ranks' and its compaction's) and rows sorted, and the launches. Each sort
 /// takes a multiple of 16 bits, an even number of passes, so the rows end in the pair they started in.
-fn suffix_array_device(q: &mut crate::device::ComputeQueue, t: &[u8]) -> (Vec<u32>, Vec<(f64, usize)>, usize) {
+/// Sorted only to the first `limit` bytes (`usize::MAX`: wholly): the rounds stop once the ranks cover `limit` bytes,
+/// and the suffixes still tied keep the sort's order, by position. The last is the bytes the order covers (7 · 2^r,
+/// at least `limit`; the text's length where it sorted wholly).
+fn suffix_array_device(q: &mut crate::device::ComputeQueue, t: &[u8], limit: usize) -> (Vec<u32>, Vec<(f64, usize)>, usize, usize) {
     use crate::kernels::{alloc, buffer_of, launch, program_with, read};
     use crate::library::{radix_sort_pairs_in, scan_exclusive_u32_in, RadixSpace, ScanSpace, Sorted};
     let p = program_with("match_tests.uglykl", MATCH, &[]).unwrap();
@@ -343,6 +346,7 @@ fn suffix_array_device(q: &mut crate::device::ComputeQueue, t: &[u8]) -> (Vec<u3
     let w = || alloc::<u32>(n + 1).unwrap();
     let (heads, sid, oheads, soid, first, ofirst, rank, keep, koff) = (w(), w(), w(), w(), w(), w(), w(), w(), w());
     let (space, sspace) = (RadixSpace::new(n as u32).unwrap(), ScanSpace::new(n as u32).unwrap());
+    let sa_b = alloc::<u32>(n).unwrap();
     let b = 32 - (n as u32 + 1).leading_zeros();
     let (mut launches, mut rounds) = (2, Vec::new());
     let grid = |m: usize| [m.div_ceil(256).max(1) as u64];
@@ -371,6 +375,20 @@ fn suffix_array_device(q: &mut crate::device::ComputeQueue, t: &[u8]) -> (Vec<u3
             .buffer("keep", &keep)
             .run(&grid(m), &[256])
             .unwrap();
+        // The bytes the ranks now cover: 7 after the first round, then `h` (the keys' shift, doubled since).
+        let covered = if first_round { 7 } else { h as usize };
+        if covered >= limit {
+            launch(q, p.function("sa_final_rank").unwrap()).value("args", &a).buffer("keys", &keys).buffer("pos", &pos).buffer("oheads", &oheads).buffer("soid", &soid).buffer("ofirst", &ofirst).buffer("rank", &rank).run(&grid(m), &[256]).unwrap();
+            launches += made + s1 + s2 + 4;
+            q.flush().await_().unwrap();
+            let g1 = crate::device::gpu_seconds_awaited();
+            rounds.push((g1 - g0, m));
+            g0 = g1;
+            launch(q, p.function("sa_out").unwrap()).value("args", &SaArgs { n: n as u32, h: 0, b, pad: 0 }).buffer("rank", &rank).buffer("sa", &sa_b).run(&grid(n), &[256]).unwrap();
+            q.flush().await_().unwrap();
+            rounds.last_mut().unwrap().0 += crate::device::gpu_seconds_awaited() - g0;
+            return (read::<u32>(&sa_b, n), rounds, launches, covered);
+        }
         let s3 = scan_exclusive_u32_in(q, &keep, &koff, m as u32, false, &sspace).unwrap();
         launch(q, p.function("sa_compact").unwrap()).value("args", &a).buffer("pos", &pos).buffer("keep", &keep).buffer("koff", &koff).buffer("out", &p1).run(&grid(m), &[256]).unwrap();
         launches += made + s1 + s2 + s3 + 5;
@@ -389,11 +407,62 @@ fn suffix_array_device(q: &mut crate::device::ComputeQueue, t: &[u8]) -> (Vec<u3
         h *= 2;
         bits = (2 * b).next_multiple_of(16);
     }
-    let sa = alloc::<u32>(n).unwrap();
-    launch(q, p.function("sa_out").unwrap()).value("args", &SaArgs { n: n as u32, h: 0, b, pad: 0 }).buffer("rank", &rank).buffer("sa", &sa).run(&grid(n), &[256]).unwrap();
+    launch(q, p.function("sa_out").unwrap()).value("args", &SaArgs { n: n as u32, h: 0, b, pad: 0 }).buffer("rank", &rank).buffer("sa", &sa_b).run(&grid(n), &[256]).unwrap();
     q.flush().await_().unwrap();
     rounds.last_mut().unwrap().0 += crate::device::gpu_seconds_awaited() - g0;
-    (read::<u32>(&sa, n), rounds, launches)
+    (read::<u32>(&sa_b, n), rounds, launches, n)
+}
+
+/// Whether `sa` is a permutation of `t`'s suffixes ordered by their first `limit` bytes (a suffix that ends first
+/// before), ties by position.
+fn prefix_sorted(t: &[u8], sa: &[u32], limit: usize) -> bool {
+    let mut seen = vec![false; t.len()];
+    for &p in sa {
+        if std::mem::replace(&mut seen[p as usize], true) {
+            return false;
+        }
+    }
+    let pre = |p: u32| &t[p as usize..(p as usize + limit).min(t.len())];
+    sa.windows(2).all(|w| match pre(w[0]).cmp(pre(w[1])) {
+        std::cmp::Ordering::Less => true,
+        std::cmp::Ordering::Equal => w[0] < w[1],
+        std::cmp::Ordering::Greater => false,
+    })
+}
+
+/// A suffix array sorted only to a prefix (what a match finder reads: LZ4's matches are found by their first bytes and
+/// measured where they lie), on the device: each input's tape and JSON at prefixes of 16, 32, 64 and 256 bytes, each
+/// checked (`prefix_sorted`), its rounds and GPU time, against the whole sort's and libsais's. Run by name: `--ignored
+/// suffix_array_prefix_cost`.
+#[test]
+#[ignore]
+fn suffix_array_prefix_cost() {
+    let Some(shared) = crate::shared::get() else { return };
+    let mut q = crate::device::ComputeQueue::new(&shared.queue);
+    let cpu = crate::device::backend() == "CPU";
+    eprintln!("{} ({})", crate::device::backend(), shared.device.name());
+    for (name, f) in inputs() {
+        let Some(t) = tape_of(&f) else { continue };
+        for (what, s) in [("tape", &t), ("JSON", &f)] {
+            let s: &[u8] = if cpu { &s[..s.len().min(20_000)] } else { s };
+            let (_, _, cpu_s, _) = suffix_array(s);
+            let mut line = format!("  {name}'s {what}, {} bytes, libsais {:.2} ms:", s.len(), cpu_s * 1e3);
+            for limit in [16usize, 32, 64, 256, usize::MAX] {
+                let mut best = (f64::MAX, 0);
+                for _ in 0..3 {
+                    let (got, rounds, _, covered) = suffix_array_device(&mut q, s, limit);
+                    assert!(prefix_sorted(s, &got, covered.min(s.len())), "{name}'s {what}: not sorted to {covered} bytes");
+                    let total: f64 = rounds.iter().map(|r| r.0).sum();
+                    if total < best.0 {
+                        best = (total, rounds.len());
+                    }
+                }
+                let l = if limit == usize::MAX { "all".to_string() } else { limit.to_string() };
+                line += &format!(" {l}: {:.2} ms ({} rounds);", best.0 * 1e3, best.1);
+            }
+            eprintln!("{line}");
+        }
+    }
 }
 
 /// The suffix array on the device equals libsais's, entry by entry, and what it costs: each input's tape (and its
@@ -418,7 +487,7 @@ fn suffix_array_device_cost() {
         let (want, _, cpu_s, _) = suffix_array(s);
         let mut best: Option<(f64, Vec<(f64, usize)>, usize)> = None;
         for _ in 0..3 {
-            let (got, rounds, launches) = suffix_array_device(&mut q, s);
+            let (got, rounds, launches, _) = suffix_array_device(&mut q, s, usize::MAX);
             assert!(got.iter().zip(&want).all(|(&g, &w)| g as i32 == w), "{name}: the device's suffix array is not libsais's");
             let total: f64 = rounds.iter().map(|r| r.0).sum();
             if best.as_ref().is_none_or(|b| total < b.0) {
