@@ -463,7 +463,9 @@ imp(m, x) :- kind(s, "import_from_statement"), field(s, "module_name", mn), text
 asked(m, x) :- imp(m, x).
 asked(m2, y) :- asked(m, x), k = @cat(m, x), forward(k, m2, y).
 .decl ask_in(p: symbol, x: symbol)
-ask_in(p, x) :- asked(m, x), doc(_, p, m).
+.decl module_path(m: symbol, p: symbol)
+module_path(m, p) :- doc(_, p, m).
+ask_in(p, x) :- asked(m, x), module_path(m, p).
 .decl q__ask_in(p: symbol, x: symbol)
 .decl answer(k: symbol, q: symbol)
 answer(@cat(m, x), @cat(m, t)) :- doc(d, p, m), q__ask_in(p, x), kind(f, "function_definition"), docof(f, d), field(f, "name", i), text(i, x), field(f, "parameters", ps), text(ps, t0), t = @cat(x, t0).
@@ -668,7 +670,9 @@ asked_at(p, @cat(m, x)) :- imp(p, m, x).
 .decl defn(m: symbol, x: symbol, t: symbol)
 defn(m, x, t) :- kind(f, "function_definition"), field(f, "name", i), text(i, x), field(f, "parameters", ps), text(ps, t), docof(f, d), doc(d, _, m).
 .decl resolved(k: symbol, q: symbol)
-resolved(k, q) :- asked_at(_, k), split_dot(k, m, x), imp(p2, m2, x), doc(_, p2, m), q = @cat(m2, x).
+.decl module_path(m: symbol, p: symbol)
+module_path(m, p) :- doc(_, p, m).
+resolved(k, q) :- asked_at(_, k), split_dot(k, m, x), imp(p2, m2, x), module_path(m, p2), q = @cat(m2, x).
 resolved(k, k) :- asked_at(_, k), split_dot(k, m, x), defn(m, x, _).
 .decl params(q: symbol, t: symbol)
 params(@cat(m, x), t) :- defn(m, x, t).
@@ -735,7 +739,9 @@ asked_at(p, @cat(m, x)) :- kind(s, "import_from_statement"), field(s, "module_na
 .decl asked(m: symbol, x: symbol)
 asked(m, x) :- kind(s, "import_from_statement"), field(s, "module_name", mn), text(mn, m), field(s, "name", nn), text(nn, x).
 .decl ask_in(p: symbol, x: symbol)
-ask_in(p, x) :- asked(m, x), doc(_, p, m).
+.decl module_path(m: symbol, p: symbol)
+module_path(m, p) :- doc(_, p, m).
+ask_in(p, x) :- asked(m, x), module_path(m, p).
 .decl q__ask_in(p: symbol, x: symbol)
 .decl defn(f: node, x: symbol)
 defn(f, x) :- kind(f, "function_definition"), field(f, "name", i), text(i, x).

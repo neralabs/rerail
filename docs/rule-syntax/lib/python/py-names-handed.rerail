@@ -22,6 +22,9 @@
 .decl handed_sym(q: symbol) extensible
 .decl handed_obj(q: symbol) extensible
 .decl handed_attr(q: symbol) extensible
+// py_module_path(m, p): the file at path p is module m, each file's own row (py_names'): what a cross-file relation
+// keyed by module is named by its path through, the cross part reading no base relation (decision 0727).
+.decl py_module_path(m: symbol, p: symbol) extensible
 
 // ---- a file's asks ----------------------------------------------------------------------------------------------------
 // lsym(n, q): a symbol node n may denote, from its own file: what python/scopes gives it (its file's definitions,
@@ -57,7 +60,7 @@ own_rcv_at(p, f) :- own_def(p, f), h_dj_receiver_fn(f, _, _).
 // public_name, its third case of exported): the one part of a file's own names' being public that another file
 // decides. The rest is the file's own (python/names' site_exported).
 .decl star_public(p: symbol, x: symbol)
-star_public(p, x) :- doc(_, p, m), star_from(m, m2), exported(m2, x), public_name(m2, x), !has_all(m),
+star_public(p, x) :- py_module_path(m, p), star_from(m, m2), exported(m2, x), public_name(m2, x), !has_all(m),
     !prefix("_", x).
 // res(k, q): what k, a symbol as a file has it, denotes: itself; through an import, the definition the exports
 // follow it to (python/names' rule 1, export_at); a definition `c.a` of the run, c what k's prefix denotes (rule 3).

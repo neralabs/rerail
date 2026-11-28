@@ -74,7 +74,7 @@ tx_ask(d, t, x) :- import_binding(ns, l, s, "*"), docof(ns, d), target(d, s, t),
 // asks_at(p, k): the file at p asks for k = t#x of a workspace module t. A package is asked of no file (tsx/names
 // names a package's symbol by its target alone), so its names are no ask.
 .decl asks_at(p: symbol, k: symbol)
-asks_at(p, @qname(t, x)) :- tx_ask(d, t, x), module(t), doc(d, p, _).
+asks_at(p, @qname(t, x)) :- tx_ask(d, t, x), module(t), ts_doc_path(d, p).
 // asked(m, x): workspace module m is asked for x, by a file or through a re-export of a module asked. A package is
 // asked of no file: tsx/names names its exports by the package.
 .decl asked(m: symbol, x: symbol) cross_file
@@ -89,6 +89,10 @@ ask_in(p, x) :- asked(m, x), ts_module_path(p, m).
 // base relation, decision 0727).
 .decl ts_module_path(p: symbol, m: symbol)
 ts_module_path(p, m) :- ts_module(d, m), doc(d, p, _).
+// ts_doc_path(d, p): document d's path, its own row (decision 0727): what a cross-file relation keyed by document
+// (`target`, `tx_ask`) is named by its path through.
+.decl ts_doc_path(d: number, p: symbol)
+ts_doc_path(d, p) :- doc(d, p, _).
 .decl tsx_names__ask_in(p: symbol, x: symbol)
 // fwd(m, x, t, y): module m re-exports its target t's y as x (`export { y as x } from "s"`); star_of(m, t): m has
 // `export * from "s"`, which names t. Each file's own, made whatever is asked.
@@ -117,6 +121,6 @@ exports(m, x, q) :- asked(m, x), star_of(m, t), exports(t, x, q), x != "default"
 resolved(@qname(t, x), q) :- exports(t, x, q).
 
 .decl target_at(p: symbol, spec: symbol, t: symbol)
-target_at(p, s, t) :- target(d, s, t), doc(d, p, _).
+target_at(p, s, t) :- target(d, s, t), ts_doc_path(d, p).
 .decl module(m: symbol)
 module(m) :- ts_module(_, m).

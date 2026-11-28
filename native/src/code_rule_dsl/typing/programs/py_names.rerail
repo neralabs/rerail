@@ -101,8 +101,7 @@ spelled_at(p, k) :- qn(n, k), docof(n, d), doc(d, p, _).
 // so round 1 follows every ask through every re-export, and round 2 only answers: a cold run takes two rounds, not
 // one more for each re-export an ask passes.
 // py_module_path(m, p): the file at path p is module m's: its own row, read in its own part (the cross part reads no
-// base relation, decision 0727).
-.decl py_module_path(m: symbol, p: symbol)
+// base relation, decision 0727). Declared by python/py-names-handed, whose `star_public` reads it.
 py_module_path(m, p) :- doc(_, p, m).
 .decl asked(m: symbol, x: symbol) cross_file
 asked(m, x) :- spelled_at(_, k), split_dot(k, m, x), py_module_path(m, _).
