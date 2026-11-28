@@ -143,8 +143,9 @@ describe("rerail scan and settings CLI", () => {
     ].join("\n"));
 
     await commands.get("rerail-start")!.handler("", { ui });
-    // Restarting a set-up repository ends on its scoped rules link, as the terminal's `rerail start` does.
-    expect(notices.at(-1)).toMatch(/rules are on, as you left them\.\n {2}http:\/\/\S+\?repository=[^#\s]+&checkout=[^#\s]+#rules$/u);
+    // Restarting a set-up repository ends on its scoped rules link, as the terminal's `rerail start` does. The launcher
+    // finds no daemon of this home and the suite's RERAIL_AUTOSTART=0 keeps it from starting one, so the reason follows.
+    expect(notices.at(-1)).toMatch(/rules are on, as you left them\.\n {2}http:\/\/\S+\?repository=[^#\s]+&checkout=[^#\s]+#rules\n {2}△ The dashboard did not start: RERAIL_AUTOSTART=0 keeps set-up from starting it$/u);
     expect(isRerailStarted(root)).toBe(true);
     // Every command that changed something rebuilds the runtime; the cancelled set-up changed nothing.
     expect(reattached).toBe(3);
