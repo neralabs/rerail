@@ -94,6 +94,12 @@ fn opts(args: &[String]) -> Result<Opts, String> {
                     "code-slot" => Cells::CodeSlot,
                     "indent" => Cells::Indent,
                     "local" => Cells::Local,
+                    "decoded" => Cells::Decoded,
+                    "sibling" => Cells::Sibling,
+                    "sibling-indent" => Cells::SiblingIndent,
+                    "shape" => Cells::Shape,
+                    "closes" => Cells::Closes,
+                    "closes-trail" => Cells::ClosesTrail,
                     c => return Err(format!("--cells {c}: row, code-slot, indent or local")),
                 }
             }
@@ -809,6 +815,54 @@ fn o_clone(o: &Opts) -> Opts {
     }
 }
 
+/// `dumpcols <capture> <out dir>`: each variant's structure, gap and length columns as format 16 stores a column (a
+/// byte a node, all ones an escape, the escaped values as u32 in a side file), for measuring how they compress.
+fn dumpcols_command(o: Opts) -> Result<(), String> {
+    let [cap, out] = &o.pos[..] else { return Err("usage: dupsa dumpcols <capture> <out dir>".into()) };
+    let mut capture = Capture::load(Path::new(cap))?;
+    capture.files.retain(|f| {
+        (o.include.is_empty() || o.include.iter().any(|i| f.path.starts_with(i.as_str())))
+            && (o.ext.is_empty() || f.path.rsplit_once('.').is_some_and(|(_, e)| o.ext.iter().any(|x| x == e)))
+    });
+    let tag = capture.files[0].tag;
+    std::fs::create_dir_all(out).map_err(|e| e.to_string())?;
+    for (name, cells) in [("decoded", Cells::Decoded), ("sibling", Cells::Sibling), ("closes", Cells::Closes), ("shape", Cells::Shape), ("closes-trail", Cells::ClosesTrail)] {
+        let docs = NodeDocs::bare(&capture, tag, cells)?;
+        let mut cols: Vec<(Vec<u8>, Vec<u8>)> = vec![Default::default(); 4];
+        for d in 0..docs.files.len() {
+            docs.each_row(d, |v| {
+                let slot = (v >> 16) & ((1 << 34) - 1);
+                let gap = (v >> 50) & ((1 << 34) - 1);
+                // A gap across a line break (bit 32): the previous line's rest, tagged; else the gap, tagged.
+                let gap = if gap >> 32 != 0 { (gap & 0xffff_ffff) << 1 | 1 } else { gap << 1 };
+                let gap = if matches!(cells, Cells::Shape) { gap } else { gap >> 1 };
+                let len = (v >> 84) & 0xffff_ffff;
+                for (k, x) in [slot, gap, len].into_iter().enumerate() {
+                    if x < 255 {
+                        cols[k].0.push(x as u8);
+                    } else {
+                        cols[k].0.push(255);
+                        cols[k].1.extend_from_slice(&(x as u32).to_le_bytes());
+                    }
+                }
+            });
+            for &x in docs.trailers.borrow().iter() {
+                if x < 255 {
+                    cols[3].0.push(x as u8);
+                } else {
+                    cols[3].0.push(255);
+                    cols[3].1.extend_from_slice(&x.to_le_bytes());
+                }
+            }
+        }
+        for (k, col) in ["slots", "gaps", "lengths", "trailers"].iter().enumerate() {
+            std::fs::write(format!("{out}/{name}-{col}.bin"), &cols[k].0).map_err(|e| e.to_string())?;
+            std::fs::write(format!("{out}/{name}-{col}.side"), &cols[k].1).map_err(|e| e.to_string())?;
+        }
+    }
+    Ok(())
+}
+
 fn main() {
     let args: Vec<String> = std::env::args().skip(1).collect();
     let r = match args.first().map(String::as_str) {
@@ -819,6 +873,7 @@ fn main() {
         Some("readcost") => opts(&args[1..]).and_then(readcost_command),
         Some("explain") => opts(&args[1..]).and_then(explain_command),
         Some("probe") => opts(&args[1..]).and_then(probe_command),
+        Some("dumpcols") => opts(&args[1..]).and_then(dumpcols_command),
         _ => Err("usage: dupsa lines <root> … | dupsa nodes <capture> …".into()),
     };
     if let Err(e) = r {

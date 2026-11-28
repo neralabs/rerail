@@ -98,6 +98,8 @@ pub struct NodeDocs<'a> {
     /// reads only the tapes it uses).
     tapes: Vec<std::cell::OnceCell<(Placement, TapeView)>>,
     tag: u8,
+    /// The last document's inner nodes' trailing distances, in close order (`ClosesTrail`, for `dumpcols`).
+    pub trailers: std::cell::RefCell<Vec<u32>>,
     rank: Dict,
     cells: Cells,
     /// The symbol relation: each node's symbol (its row's rank), derived once from the tape in tape order and kept
@@ -229,6 +231,22 @@ pub enum Cells {
     /// - a leaf's slot steps back to its previous sibling, or to its parent on every K-th sibling, so it depends on
     ///   the sibling's index mod K and can reach outside the copy.
     Local,
+    /// The stored row's values with escapes resolved: today's format, like for like (derived in tape order only).
+    Decoded,
+    /// `Decoded`, as if a leaf's slot always held its next node's previous sibling's size, never the parent's
+    /// distance (the every-8th-sibling parent step moved out of the row).
+    Sibling,
+    /// `Sibling` with `Indent`'s gap and lengths.
+    SiblingIndent,
+    /// `Local`, plus each node's count of subtrees that close right after it: the window's exact shape, read from the
+    /// sizes in order (balanced parentheses' closes), not stored.
+    Shape,
+    /// `Shape`'s structure (leaf bit and closes) with the stored gaps, and a leaf's length only: the format with sizes
+    /// replaced by closes, indentation kept.
+    Closes,
+    /// `Closes`, with each inner node's end kept where it closes: for every subtree closing after a node, its end less
+    /// its last node's end (a block's `}` past its last named node), hashed into the node's symbol.
+    ClosesTrail,
 }
 
 impl<'a> NodeDocs<'a> {
@@ -237,7 +255,17 @@ impl<'a> NodeDocs<'a> {
         f16::lang(tag).ok_or_else(|| format!("tape tag {tag} has no format 16 table"))?;
         let files: Vec<usize> = capture.files.iter().enumerate().filter(|(_, f)| f.tag == tag).map(|(k, _)| k).collect();
         let tapes = files.iter().map(|_| std::cell::OnceCell::new()).collect();
-        Ok(Self { capture, files, tapes, tag, rank, cells, joined: Vec::new().into(), starts: Vec::new().into() })
+        Ok(Self { capture, files, tapes, tag, trailers: Default::default(), rank, cells, joined: Vec::new().into(), starts: Vec::new().into() })
+    }
+
+    /// The language's tapes, with no dictionary and no symbols: for reading rows in order (`each_row`).
+    pub fn bare(capture: &'a Capture, tag: u8, cells: Cells) -> Result<Self, String> {
+        Self::open(capture, tag, cells, Dict::default())
+    }
+
+    /// Document `d`'s rows in tape order, as this variant packs them.
+    pub fn each_row(&self, d: usize, f: impl FnMut(u128)) {
+        self.rows(d, f)
     }
 
     /// Document `d`'s tape's placement and view.
@@ -311,10 +339,87 @@ impl<'a> NodeDocs<'a> {
         Ok(docs)
     }
 
+    /// The variants derived from the tree in order: sizes, closes and previous siblings by one pass with a stack.
+    fn rows_derived(&self, d: usize, mut f: impl FnMut(u128)) {
+        let (t, v, src) = (self.image(d), &self.tape(d).1, self.source(d));
+        let n = self.tape(d).0.n;
+        let size: Vec<u32> = (0..n as u32).map(|i| reads::size(t, v, i)).collect();
+        // closes[k]: subtrees ending right after node k; next_prev[k]: the size of node k + 1's previous sibling.
+        let (mut closes, mut next_prev) = (vec![0u32; n], vec![0u32; n]);
+        // trail[k]: a hash of the trailing distances of the inner subtrees closing right after node k, innermost first.
+        let mut trail = vec![0u64; n];
+        self.trailers.borrow_mut().clear();
+        let mut stack: Vec<(u32, u32)> = Vec::new();
+        for k in 0..=n {
+            let (mut c, mut outer) = (0, None);
+            while let Some(&(j, e)) = stack.last() {
+                if e as usize > k {
+                    break;
+                }
+                stack.pop();
+                c += 1;
+                outer = Some(j);
+                if size[j as usize] > 1 {
+                    let t_end = reads::end(t, v, j);
+                    let last_end = reads::end(t, v, k as u32 - 1);
+                    let x = t_end.saturating_sub(last_end);
+                    self.trailers.borrow_mut().push(x);
+                    trail[k - 1] = (trail[k - 1] ^ u64::from(x)).wrapping_mul(0x9e37_79b9_7f4a_7c15).rotate_left(17);
+                }
+            }
+            if k > 0 {
+                closes[k - 1] = c;
+                if let Some(j) = outer {
+                    next_prev[k - 1] = k as u32 - j;
+                }
+            }
+            if k < n {
+                stack.push((k as u32, k as u32 + size[k]));
+            }
+        }
+        let indent = matches!(self.cells, Cells::SiblingIndent | Cells::Shape);
+        let mut prev = 0u32;
+        for j in 0..n {
+            let i = j as u32;
+            let raw = reads::slot(t, v, i);
+            let leaf = raw & 1 == 1;
+            let code = u128::from(reads::number(t, v, i));
+            let s = reads::start_next(t, v, i, prev).min(v.source_len);
+            let length = u128::from(reads::length(t, v, i));
+            let slot: u128 = match self.cells {
+                Cells::Decoded => u128::from(raw),
+                Cells::Sibling | Cells::SiblingIndent if leaf => u128::from(next_prev[j]) << 2 | 1,
+                Cells::Sibling | Cells::SiblingIndent => u128::from(raw),
+                // Closes below 2^11; the trailing distances' hash in the field's 22 bits above them.
+                Cells::ClosesTrail => u128::from(leaf) | u128::from(closes[j].min(2047)) << 1 | u128::from(trail[j] & 0x3f_ffff) << 12,
+                _ => u128::from(leaf) | u128::from(closes[j]) << 1,
+            };
+            let closes_form = matches!(self.cells, Cells::Closes | Cells::ClosesTrail);
+            let (gap, len) = if !indent {
+                (u128::from(s - prev), if closes_form && !leaf { 0 } else { length })
+            } else {
+                let gap = if j == 0 {
+                    0
+                } else {
+                    match src[prev as usize..s as usize].iter().position(|&c| c == b'\n') {
+                        None => u128::from(s - prev),
+                        Some(k) => 1 << 32 | (k as u128 + 1),
+                    }
+                };
+                (gap, if leaf { length } else { 0 })
+            };
+            prev = s;
+            f(code | slot << 16 | gap << 50 | len << 84);
+        }
+    }
+
     /// Document `d`'s rows in tape order (`value`'s), each read once: starts by the running sum of gaps
     /// (`start_next`, a checkpoint every K nodes), the line breaks by one scan of the source.
     fn rows(&self, d: usize, mut f: impl FnMut(u128)) {
         let n = self.tape(d).0.n;
+        if matches!(self.cells, Cells::Decoded | Cells::Sibling | Cells::SiblingIndent | Cells::Shape | Cells::Closes | Cells::ClosesTrail) {
+            return self.rows_derived(d, f);
+        }
         if !matches!(self.cells, Cells::Indent | Cells::Local) {
             (0..n).for_each(|j| f(self.value(d, j, self.cells)));
             return;
@@ -377,6 +482,9 @@ impl<'a> NodeDocs<'a> {
         let [w0, w1, w2] = p.widths;
         let code_slot = cell(0, 1) | cell(1, w0) << 8;
         match cells {
+            Cells::Decoded | Cells::Sibling | Cells::SiblingIndent | Cells::Shape | Cells::Closes | Cells::ClosesTrail => {
+                unreachable!("a derived variant is read in tape order (rows_derived), never at a point")
+            }
             Cells::CodeSlot => code_slot,
             Cells::Row => code_slot | cell(2, w1) << 40 | cell(3, w2) << 72,
             Cells::Indent | Cells::Local => {
