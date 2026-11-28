@@ -542,7 +542,7 @@ fn cone_digests<'a>(exports: &exports::Exports, per_file: &[String], locations: 
         .enumerate()
         .filter_map(|(i, rel)| locations.get(rel).and_then(|l| l.first().copied()).map(|at| (i, rel, at, program.arity(rel).unwrap_or(0))))
         .collect();
-    let mut nodes: HashMap<i64, BTreeSet<i64>> = HashMap::new();
+    let mut nodes: rustc_hash::FxHashMap<i64, BTreeSet<i64>> = Default::default();
     for &(_, rel, at, width) in &located {
         exports.visit(rel, width, |row| {
             let d = memo::document_of(row[at]);
@@ -550,31 +550,34 @@ fn cone_digests<'a>(exports: &exports::Exports, per_file: &[String], locations: 
             mine.extend(row.iter().copied().filter(|v| *v >= 1 << 32 && v >> 32 == d));
         });
     }
-    let rank: HashMap<i64, HashMap<i64, i64>> = nodes.into_iter().map(|(d, n)| (d, n.into_iter().enumerate().map(|(k, v)| (v, -1 - k as i64)).collect())).collect();
+    let rank: rustc_hash::FxHashMap<i64, rustc_hash::FxHashMap<i64, i64>> = nodes.into_iter().map(|(d, n)| (d, n.into_iter().enumerate().map(|(k, v)| (v, -1 - k as i64)).collect())).collect();
     // Then each row's hash (its relation's place, its values with nodes ranked), summed per document: a digest of
-    // the document's set of rows whatever order they lie in.
-    let mut sums: HashMap<i64, (u64, [u64; 4])> = HashMap::new();
-    let none = HashMap::new();
+    // the document's set of rows whatever order they lie in. A row's hash is SipHash-1-3's 128 bits under fixed keys
+    // (a row is a few values: one SHA-256 block a row was the digest's cost).
+    use std::hash::Hasher as _;
+    use siphasher::sip128::Hasher128 as _;
+    const KEYS: (u64, u64) = (0x7265_7261_696c_636f, 0x6e65_6469_6765_7374);
+    let mut sums: rustc_hash::FxHashMap<i64, (u64, [u64; 2])> = Default::default();
+    let none = rustc_hash::FxHashMap::default();
     for &(i, rel, at, width) in &located {
         exports.visit(rel, width, |row| {
             let d = memo::document_of(row[at]);
             let ranks = rank.get(&d).unwrap_or(&none);
-            let mut h = Sha256::new();
-            h.update((i as u64).to_le_bytes());
+            let mut h = siphasher::sip128::SipHasher13::new_with_keys(KEYS.0, KEYS.1);
+            h.write(&(i as u64).to_le_bytes());
             for v in row {
-                h.update(ranks.get(v).copied().unwrap_or(*v).to_le_bytes());
+                h.write(&ranks.get(v).copied().unwrap_or(*v).to_le_bytes());
             }
-            let hash = h.finalize();
-            let (n, sum) = sums.entry(d).or_insert((0, [0; 4]));
+            let hash = h.finish128();
+            let (n, sum) = sums.entry(d).or_insert((0, [0; 2]));
             *n += 1;
-            for (lane, bytes) in sum.iter_mut().zip(hash.chunks_exact(8)) {
-                *lane = lane.wrapping_add(u64::from_le_bytes(bytes.try_into().expect("8 bytes")));
-            }
+            sum[0] = sum[0].wrapping_add(hash.h1);
+            sum[1] = sum[1].wrapping_add(hash.h2);
         });
     }
     let mut out = BTreeMap::new();
     for (d, path) in docs {
-        let (n, sum) = sums.remove(d).unwrap_or((0, [0; 4]));
+        let (n, sum) = sums.remove(d).unwrap_or((0, [0; 2]));
         let mut h = Sha256::new();
         h.update(n.to_le_bytes());
         for lane in sum {

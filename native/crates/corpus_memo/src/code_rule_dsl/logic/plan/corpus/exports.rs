@@ -358,12 +358,18 @@ impl Exports {
                 row(&cells);
             }
         } else if held.width() >= width {
-            for id in held.live_ids() {
-                for (c, v) in cells.iter_mut().enumerate() {
-                    *v = held.get(id, c);
+            // Part by part (`Rows::each_run`): a row's part is found once a run of them, not once a value.
+            held.rows.each_run(0, held.len() as u32, |part, lo, hi, first| {
+                for (i, id) in (lo..hi).zip(first..) {
+                    if held.is_dead(id) {
+                        continue;
+                    }
+                    for (c, v) in cells.iter_mut().enumerate() {
+                        *v = part.get(i, c);
+                    }
+                    row(&cells);
                 }
-                row(&cells);
-            }
+            });
         }
     }
 

@@ -5007,6 +5007,7 @@ dependencies = [
  "serde_yaml_ng",
  "sha1",
  "sha2 0.11.1",
+ "siphasher",
  "tempfile",
  "tikv-jemalloc-ctl",
  "tikv-jemalloc-sys",
