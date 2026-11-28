@@ -24,6 +24,10 @@ UKL_INLINE uint32_t ukl_tiles_first(UklTiles t, uint32_t n, uint32_t tile)
     return f < n ? (uint32_t)f : n;
 }
 
+// The sort of rows' stages for `bits` bits, and its histograms' words for `n` rows (`ukl_sort_rows_stage`, below).
+#define UKL_SORT_ROWS_STAGES(bits) (2u + 5u * (((bits) + 7u) / 8u))
+#define UKL_SORT_ROWS_HIST(n) (UKL_RADIX_DIGITS * (((n) + UKL_RADIX_TILE - 1u) / UKL_RADIX_TILE) + 1u)
+
 // At most this many values, a scan or a segmented scan is tile 0's alone: its tiles one after another, one stage.
 #define UKL_STAGE_SMALL 4096u
 // The scans one call runs at once at most.
@@ -510,5 +514,66 @@ UKL_ONCE void ukl_sort_scatter(UklTiles t, uint32_t n, uint32_t digit, UKL_COHER
     uint32_t first = ukl_tiles_first(t, args.tiles, t.tile), end = ukl_tiles_first(t, args.tiles, t.tile + 1u);
     for (uint32_t tile = first; tile < end; tile++)
         ukl_radix_scatter_tile_u64_stage(ki, vi, hist, ko, vo, args, l.counts, l.before, l.base, l.digits, tile, t.lid, t.lsz __UKL_ARGS);
+}
+
+// --- A sort of rows in fixed stages: rows of three words, by word 0's low `bits` bits (a multiple of 8), stable.
+// Every stage runs whatever the rows, so a program launches the same stages for every input, and each reads the
+// rows' count `*count` on the device (no host read decides a stage). Stage 0 takes the rows into the sort's keys
+// (words 0 and 1) and values (word 2); each digit is five stages (its tiles' histograms, the three of their scan, the
+// scatter); the last puts them back, sorted. Each stage over the same `t.tiles` tiles, of `UKL_RADIX_THREADS`
+// threads. The buffers (`UklSortRows`): `keys`, `keys2` `n` u64s, `values`, `values2` `n` u32s, `hist`
+// `UKL_SORT_ROWS_HIST(n)` words, `sums` `t.tiles + 1` words; at most `n` rows.
+typedef struct UklSortRows {
+    UKL_COHERENT uint64_t* keys;
+    UKL_COHERENT uint32_t* values;
+    UKL_COHERENT uint64_t* keys2;
+    UKL_COHERENT uint32_t* values2;
+    UKL_COHERENT uint32_t* hist;
+    UKL_COHERENT uint32_t* sums;
+} UklSortRows;
+
+UKL_ONCE void ukl_sort_rows_stage(UklTiles t, uint32_t stage, UKL_COHERENT const uint32_t* count, uint32_t bits, UKL_COHERENT uint32_t* rows, UklSortRows b,
+                                    UklSortLocal l, UKL_LOCAL uint32_t* scratch __UKL_PARAMS)
+{
+    uint32_t n = *count, digits = (bits + 7u) / 8u;
+    uint32_t rf = ukl_tiles_first(t, n, t.tile), re = ukl_tiles_first(t, n, t.tile + 1u);
+    if (stage == 0u) {
+        for (uint32_t r = rf + t.lid; r < re; r += t.lsz) {
+            b.keys[r] = (uint64_t)rows[3u * r] | ((uint64_t)rows[3u * r + 1u] << 32);
+            b.values[r] = rows[3u * r + 2u];
+        }
+        return;
+    }
+    if (stage == 1u + 5u * digits) {
+        // Digit `d`'s pass reads the first buffers where `d` is even: the rows end in them where the digits are even.
+        bool second = digits % 2u != 0u;
+        UKL_COHERENT const uint64_t* k = second ? b.keys2 : b.keys;
+        UKL_COHERENT const uint32_t* v = second ? b.values2 : b.values;
+        for (uint32_t r = rf + t.lid; r < re; r += t.lsz) {
+            uint64_t key = k[r];
+            rows[3u * r] = (uint32_t)key;
+            rows[3u * r + 1u] = (uint32_t)(key >> 32);
+            rows[3u * r + 2u] = v[r];
+        }
+        return;
+    }
+    uint32_t d = (stage - 1u) / 5u, step = (stage - 1u) % 5u;
+    bool even = d % 2u == 0u;
+    UklScanJob job;
+    job.n = UKL_SORT_ROWS_HIST(n) - 1u;
+    job.in = b.hist;
+    job.out = b.hist;
+    job.total = b.hist + job.n;
+    if (step == 0u)
+        ukl_sort_hist(t, n, d, even ? b.keys : b.keys2, b.hist, l);
+    else if (step == 1u)
+        ukl_scans_sum(t, &job, 1u, b.sums, scratch __UKL_ARGS);
+    else if (step == 2u) {
+        if (t.tile == 0u)
+            ukl_scans_sums(t, t.tiles, 1u, b.sums, scratch __UKL_ARGS);
+    } else if (step == 3u)
+        ukl_scans_out(t, &job, 1u, b.sums, scratch __UKL_ARGS);
+    else
+        ukl_sort_scatter(t, n, d, even ? b.keys : b.keys2, even ? b.values : b.values2, b.hist, even ? b.keys2 : b.keys, even ? b.values2 : b.values, l __UKL_ARGS);
 }
 #endif

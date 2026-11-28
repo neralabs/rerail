@@ -864,6 +864,44 @@ fn stage(q: &ComputeQueue, f: &crate::device::ComputeFunction, args: TestArgs, r
     l.run(&[groups as u64], &[lsz as u64]).unwrap();
 }
 
+/// `ukl/stages.h`'s sort of rows in fixed stages (`ukl_sort_rows_stage`): rows of three words, sorted by word 0's low
+/// 8, 16 or 24 bits, equal the host's stable sort, at 1, 8 and 32 tiles, across tile boundaries, with many ties: every
+/// stage launched whatever the rows, their count read on the device.
+#[test]
+fn the_stages_sort_of_rows_is_the_hosts_stable_sort() {
+    let Some((p, mut q)) = setup() else { return };
+    if crate::device::max_threadgroup() < 256 {
+        return;
+    }
+    let f = p.function("t_sort_rows").unwrap();
+    let mut rng = Rng(53);
+    for tiles in STAGE_TILES {
+        for (n, bits) in [(0u32, 16u32), (1, 16), (5, 8), (1023, 16), (1024, 16), (1025, 24), (4097, 16), (70_001, 16)] {
+            if n > 10_000 && crate::device::backend() == "CPU" {
+                continue;
+            }
+            // Word 0 a few hundred values (ties) with high bits the sort leaves alone; words 1 and 2 the row's own.
+            let rows: Vec<u32> = (0..n).flat_map(|i| [(rng.below(300) as u32) | (rng.below(4) as u32) << bits, i * 7, !i]).collect();
+            let m = n.max(1) as usize;
+            let rtiles = n.div_ceil(1024).max(1) as usize;
+            let (count, rb) = (buffer_of(&[n]).unwrap(), if n == 0 { alloc::<u32>(3).unwrap() } else { buffer_of(&rows).unwrap() });
+            let (kb, vb, k2, v2) = (alloc::<u64>(m).unwrap(), alloc::<u32>(m).unwrap(), alloc::<u64>(m).unwrap(), alloc::<u32>(m).unwrap());
+            let (hist, sums) = (alloc::<u32>(256 * rtiles + 1).unwrap(), alloc::<u32>(tiles as usize + 1).unwrap());
+            let bufs = [("count", &count), ("rows", &rb), ("keys", &kb), ("values", &vb), ("keys2", &k2), ("values2", &v2), ("hist", &hist), ("sums", &sums)];
+            let stages = 2 + 5 * bits.div_ceil(8);
+            for s in 0..stages {
+                stage(&q, f, TestArgs { n: n.max(1), w: s | bits << 8 }, &bufs, tiles, 256);
+            }
+            q.flush().await_().unwrap();
+            let got: Vec<u32> = read(&rb, 3 * n as usize);
+            let mut want: Vec<[u32; 3]> = rows.chunks(3).map(|r| [r[0], r[1], r[2]]).collect();
+            let mask = if bits >= 32 { !0u32 } else { (1u32 << bits) - 1 };
+            want.sort_by_key(|r| r[0] & mask);
+            assert!(got == want.concat(), "{}: {tiles} tiles, {n} rows by {bits} bits: the host's stable sort", crate::device::backend());
+        }
+    }
+}
+
 /// R5 of decision 0468, decision 0653: the stages' exclusive scan equals the host's from 0 to 10^6 values, across
 /// tile and share boundaries, at 32 and 256 threads a group, its count read on the device: one tile's stage alone where
 /// it holds the values, and the three stages (the tiles' sums, their scan by one tile, the shares) at 1, 8 and 32

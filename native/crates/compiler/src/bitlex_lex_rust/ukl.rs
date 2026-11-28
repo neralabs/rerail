@@ -1865,7 +1865,6 @@ DEFINE_KERNEL2(tier2, {p}tokens,
     ph.insert("bracket_byte".into(), format!("{p}bracket"));
     ph.insert("NONE".into(), format!("{p}NONE"));
     ph.insert("D0".into(), format!("{p}D0"));
-    ph.insert("KEYS".into(), format!("{p}KEYS"));
     ph.insert("step_cont_t".into(), format!("{p}step_cont_t"));
     for c in ["STEP_PLACES", "STEP_DEPTH", "STEP_REFUSED", "STEP_ENDS", "SHAPE_W", "ROOT", "FRAME_W"] {
         ph.insert(c.into(), format!("{p}{c}"));
@@ -1877,7 +1876,7 @@ DEFINE_KERNEL2(tier2, {p}tokens,
         .iter()
         .find_map(|l| l.strip_prefix("pub const STEP_PLACES: usize = ").and_then(|r| r.strip_suffix(';')))
         .ok_or("as UKL: no STEP_PLACES")?;
-    let _ = writeln!(out, "#define {p}KEYS 256u\n#define {p}STEP_PLACES {places}u\n#define {p}STEP_DEPTH {p}DEPTH\n#define {p}STEP_REFUSED 255u\n#define {p}STEP_ENDS 254u\n#define {p}SHAPE_W 10u\n#define {p}FRAME_W UKL_WMID_FRAME");
+    let _ = writeln!(out, "#define {p}STEP_PLACES {places}u\n#define {p}STEP_DEPTH {p}DEPTH\n#define {p}STEP_REFUSED 255u\n#define {p}STEP_ENDS 254u\n#define {p}SHAPE_W 10u\n#define {p}FRAME_W UKL_WMID_FRAME");
     for f in PHASE_FNS {
         print_fn(&lines, f, &format!("{p}{f}"), "", p, &ph, &returns, &mut out)?;
     }
@@ -1888,10 +1887,6 @@ DEFINE_KERNEL2(tier2, {p}tokens,
 {{
     if (op == UKL_T2_OP_P1)
         {p}p1_merge(a, b, out);
-    else if (op == UKL_T2_OP_ADD1)
-        {p}add1_merge(a, b, out);
-    else if (op == UKL_T2_OP_KEYS)
-        {p}p2_merge(a, b, out);
     else if (op == UKL_T2_OP_LAST)
         {p}last_merge(a, b, out);
     else if (op == UKL_T2_OP_PLACES)
@@ -1905,10 +1900,6 @@ UKL_INLINE void ukl_ph_unit(uint32_t op, UKL_COHERENT uint32_t* out)
 {{
     if (op == UKL_T2_OP_P1)
         {p}p1_unit(out);
-    else if (op == UKL_T2_OP_ADD1)
-        {p}add1_unit(out);
-    else if (op == UKL_T2_OP_KEYS)
-        {p}p2_unit(out);
     else if (op == UKL_T2_OP_LAST)
         {p}last_unit(out);
     else if (op == UKL_T2_OP_PLACES)
@@ -1919,8 +1910,6 @@ UKL_INLINE void ukl_ph_unit(uint32_t op, UKL_COHERENT uint32_t* out)
         {p}kids_unit(out);
 }}
 UKL_INLINE void ukl_t2_p1_run(UKL_GLOBAL const uint8_t* src, UKL_GLOBAL const uint32_t* starts, uint32_t n, uint32_t a, uint32_t b, UKL_COHERENT uint32_t* out) {{ {p}p1_run(src, starts, n, a, b, out); }}
-UKL_INLINE void ukl_t2_p2_run(UKL_GLOBAL const uint32_t* items, uint32_t a, uint32_t b, uint32_t shift, UKL_COHERENT uint32_t* out) {{ {p}p2_run(items, a, b, shift, out); }}
-UKL_INLINE void ukl_t2_p2_write(UKL_GLOBAL const uint32_t* items, uint32_t a, uint32_t b, uint32_t shift, UKL_COHERENT uint32_t* sum, UKL_GLOBAL const uint32_t* keys, UKL_GLOBAL uint32_t* out) {{ {p}p2_write(items, a, b, shift, sum, keys, out); }}
 UKL_INLINE void ukl_t2_p3_run(UKL_GLOBAL const uint32_t* items, uint32_t a, uint32_t b, UKL_COHERENT uint32_t* out) {{ {p}p3_run(items, a, b, out); }}
 UKL_INLINE void ukl_t2_p3_write(UKL_GLOBAL const uint32_t* items, uint32_t a, uint32_t b, UKL_COHERENT const uint32_t* sum, UKL_GLOBAL uint32_t* container, UKL_GLOBAL uint32_t* head_at) {{ {p}p3_write(items, a, b, sum, container, head_at); }}
 UKL_INLINE void ukl_t2_p8a_write(UKL_GLOBAL const uint32_t* items, uint32_t a, uint32_t b, UKL_COHERENT const uint32_t* sum, UKL_GLOBAL uint32_t* frame_of) {{ {p}p8a_write(items, a, b, sum, frame_of); }}
@@ -2013,7 +2002,7 @@ UKL_INLINE void ukl_t2_p1_write(UKL_GLOBAL const uint8_t* src, UKL_GLOBAL const 
 }
 
 /// The phases' block operators the printer prints, in order (each after the ones it calls).
-const PHASE_FNS: &[&str] = &["bracket_code", "empty_close_at", "p1_unit", "p1_run", "p1_merge", "p1_write", "add1_unit", "add1_merge", "p2_unit", "p2_merge", "p2_run", "p2_write", "starts_level", "last_unit", "last_merge", "p3_run", "p3_write", "step_cont", "walk_depth_at", "known_rets", "places_unit_w", "places_merge_w", "shape_unit", "shape_merge", "p8a_write", "kids_unit", "kids_merge", "p8b_run", "p8b_write", "chunk_frames"];
+const PHASE_FNS: &[&str] = &["bracket_code", "empty_close_at", "p1_unit", "p1_run", "p1_merge", "p1_write", "starts_level", "last_unit", "last_merge", "p3_run", "p3_write", "step_cont", "walk_depth_at", "known_rets", "places_unit_w", "places_merge_w", "shape_unit", "shape_merge", "p8a_write", "kids_unit", "kids_merge", "p8b_run", "p8b_write", "chunk_frames"];
 
 /// Tier 2 as phases as UKL kernels (decision 0726), launched a phase at a time in order: `{p}phases` the program's
 /// phases, each lane its item, and `{p}zphases` those of group items (16z's).
@@ -2095,6 +2084,42 @@ DEFINE_KERNEL2(tier2, {p}zphases,
     r.refused = lexed[UKL_LEX_REFUSED] != 0u || lexed[UKL_LEX_SHORT] != 0u;
     ukl_ph_worker_sg(&r, lane __UKL_ARGS);
 }}
+
+#if UKL_SIMD_WIDTH >= 8
+// The program's sorts (P2, P7, 16z's ZS): a stage of the library's sort of rows, the phase `args.phase` saying which
+// sort and stage, its tiles the launch's threadgroups of `UKL_RADIX_THREADS` threads.
+DEFINE_KERNEL2(tier2, {p}sort,
+               ARGS,     {p}PArgs, args,    ,
+               ROBUFFER, uint32_t, lexed,   "[32]",
+               RWBUFFER, uint32_t, pool,    "[pool]",
+               RWBUFFER, uint32_t, arrays,  "[arrays]",
+               SHARED,   uint32_t, h,       UKL_RADIX_DIGITS,
+               SHARED,   uint32_t, counts,  UKL_RADIX_GROUPS * UKL_RADIX_DIGITS,
+               SHARED,   uint32_t, before,  UKL_RADIX_DIGITS,
+               SHARED,   uint32_t, base,    UKL_RADIX_DIGITS,
+               SHARED,   uint32_t, digits,  UKL_RADIX_SPILL,
+               SHARED,   uint32_t, scratch, UKL_TG_SCRATCH,
+               GSZ0,     uint32_t, gsz,     ,
+               TGID0,    uint32_t, group,   ,
+               LID0,     uint32_t, lid,     ,
+               LSZ0,     uint32_t, lsz,     )
+{{
+    UklTiles t;
+    t.tiles = gsz / lsz;
+    t.tile = group;
+    t.lid = lid;
+    t.lsz = lsz;
+    UklSortLocal l;
+    l.h = h;
+    l.counts = counts;
+    l.before = before;
+    l.base = base;
+    l.digits = digits;
+    l.tile = (UKL_LOCAL uint32_t*)0;
+    bool refused = lexed[UKL_LEX_REFUSED] != 0u || lexed[UKL_LEX_SHORT] != 0u;
+    ukl_t2_sort_stage((UklPhPool)pool, refused, arrays, args.phase, t, l, scratch __UKL_ARGS);
+}}
+#endif
 "#
     );
 }

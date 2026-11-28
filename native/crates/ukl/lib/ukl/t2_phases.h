@@ -7,11 +7,8 @@
 //   P1   each chunk's depth summary (`p1_run`), a leaf of P1's tree (`p1_merge`).
 //   P1W  each chunk's sum walked down, its records' depths and items written from it (`p1_write`); item 0 says the
 //        items (P1's root), and the level sort's chunks (its trees' leaves).
-//   P2   the level sort, two digits of 8 bits, each four phases: C, each chunk of items' keyed counts (`p2_run`), a
-//        leaf of the digit's tree (`p2_merge`); K, each key's total (the tree's root) a leaf of the keys' tree
-//        (`add1_merge`); KW, each key's start (its sum) written; S, each chunk's items scattered at their keys' starts
-//        and its counts before them (`p2_write`, its sum counted on in place). The items from `items` to `items2`, and
-//        back.
+//   P2   the level sort: the items sorted by level, stable, by the library's sort of rows (`<ukl/stages.h>`, a stage a
+//        launch of `json_t2_sort`), in place in `items`.
 //   P3   over the items in level order, each chunk's segmented last-value of the heads (`p3_run`, `last_merge`); P3W
 //        each record's container and each head's place written from its sum (`p3_write`).
 //   P4   each chunk walked from every place (`ukl_t2_walk`), its levels known (`known_rets`): its map of places, a leaf
@@ -20,7 +17,7 @@
 //   P5   each chunk from its place: its shape (`ukl_t2_walk`'s events folded), a leaf of P5's tree (`shape_merge`);
 //        P5W each chunk's sum written, and its walk again writing each event at its number, with its items; item 0
 //        says the events, their items and the nodes (P5's root).
-//   P7   the events' items sorted by frame depth, as P2 (`ukl_t2_sort`), from `eitems` to `eitems2` and back.
+//   P7   the events' items sorted by frame depth, as P2.
 //   P8   over the events' items in frame order: P8a each item's frame, the segmented last-value of the heads (`p3_run`,
 //        `last_merge`, `p8a_write`); P8b each item's frame's children so far and the last one's node (`p8b_run`,
 //        `kids_merge`, `p8b_write`).
@@ -32,7 +29,7 @@
 //        from its sum, and the newline index, where they go.
 //   Z    16z by phases (`Writer::finish_by_phases_with` and the device's encoder, `lz4_greedy`), from the finished
 //        tape: ZP1 each piece's bytes where they lie, their hash and their LZ4 block's length (a group a piece, its
-//        table the group's); ZS the pieces sorted by their hash's low 16 bits (the level sort); ZH each sorted piece's
+//        table the group's); ZS the pieces sorted by their hash's low 16 bits (as P2); ZH each sorted piece's
 //        run of like hashes from its head (a Last scan) and ZF its first piece of the same bytes in it, compared; ZP3
 //        each piece's stored bytes (a repeat's 4, its LZ4 block's, or its own) and their prefix sum; ZP3W each one's
 //        place; ZP4 each piece at its place (a group a piece: its LZ4 block made again, written), the head, the piece
@@ -41,6 +38,7 @@
 #pragma once
 #include <ukl/writer_mid.h>
 #include <ukl/z16_pieces.h>
+#include <ukl/stages.h>
 #define UKL_PH_GROUP
 #define UKL_PH_FIELDS UKL_GLOBAL const uint8_t* src; UKL_GLOBAL const uint32_t* starts; UKL_GLOBAL uint32_t* arrays; UKL_GLOBAL const uint32_t* toks; \
     UKL_GLOBAL uint8_t* rets; UKL_GLOBAL const uint8_t* t; UKL_GLOBAL uint32_t* f2; UKL_GLOBAL uint8_t* z; UKL_LOCAL uint32_t* table; uint32_t n; uint32_t len; bool refused;
@@ -59,8 +57,8 @@
 #define UKL_T2_O_ITEMS (UKL_PH_H + 6u)
 #define UKL_T2_ITEMS (UKL_PH_H + 7u)
 #define UKL_T2_ICHUNKS (UKL_PH_H + 9u)
-#define UKL_T2_O_ITEMS2 (UKL_PH_H + 10u)
-#define UKL_T2_O_KEYS (UKL_PH_H + 11u)
+#define UKL_T2_O_SK1 (UKL_PH_H + 10u)
+#define UKL_T2_O_SV1 (UKL_PH_H + 11u)
 #define UKL_T2_O_CONTAINER (UKL_PH_H + 12u)
 #define UKL_T2_O_HEAD_AT (UKL_PH_H + 13u)
 #define UKL_T2_O_PLACE (UKL_PH_H + 14u)
@@ -72,9 +70,9 @@
 #define UKL_T2_EVENTS (UKL_PH_H + 19u)
 #define UKL_T2_EITEMS (UKL_PH_H + 20u)
 #define UKL_T2_NODES (UKL_PH_H + 21u)
-#define UKL_T2_O_EITEMS2 (UKL_PH_H + 22u)
+#define UKL_T2_O_SK2 (UKL_PH_H + 22u)
 #define UKL_T2_ECHUNKS (UKL_PH_H + 23u)
-#define UKL_T2_O_EKEYS (UKL_PH_H + 24u)
+#define UKL_T2_O_SV2 (UKL_PH_H + 24u)
 #define UKL_T2_O_FRAME_OF (UKL_PH_H + 25u)
 #define UKL_T2_O_KIDS (UKL_PH_H + 26u)
 #define UKL_T2_NB (UKL_PH_H + 27u)
@@ -101,8 +99,8 @@
 #define UKL_T2_O_ZR (UKL_PH_H + 53u)
 #define UKL_T2_O_ZL (UKL_PH_H + 54u)
 #define UKL_T2_O_ZITEMS (UKL_PH_H + 55u)
-#define UKL_T2_O_ZITEMS2 (UKL_PH_H + 56u)
-#define UKL_T2_O_ZKEYS (UKL_PH_H + 57u)
+#define UKL_T2_O_SHIST (UKL_PH_H + 56u)
+#define UKL_T2_O_SSUMS (UKL_PH_H + 57u)
 #define UKL_T2_O_ZREP (UKL_PH_H + 58u)
 #define UKL_T2_O_ZSTORED (UKL_PH_H + 59u)
 #define UKL_T2_O_ZSTART (UKL_PH_H + 60u)
@@ -121,34 +119,37 @@
 #define UKL_T2_PH_LAY 0u
 #define UKL_T2_PH_P1 1u
 #define UKL_T2_PH_P1W 2u
-// The level sort's digit `d`'s four: `UKL_T2_PH_P2 + 4d` its C, then K, KW and S.
+// The level sort: `UKL_T2_SORT` stages of the library's sort of rows (`json_t2_sort`'s launches).
+#define UKL_T2_SORT UKL_SORT_ROWS_STAGES(16u)
 #define UKL_T2_PH_P2 3u
-#define UKL_T2_PH_P3 11u
-#define UKL_T2_PH_P3W 12u
-#define UKL_T2_PH_P4 13u
-#define UKL_T2_PH_P4W 14u
-#define UKL_T2_PH_P5 15u
-#define UKL_T2_PH_P5W 16u
-#define UKL_T2_PH_P7 17u
-#define UKL_T2_PH_P8A 25u
-#define UKL_T2_PH_P8AW 26u
-#define UKL_T2_PH_P8B 27u
-#define UKL_T2_PH_P8BW 28u
-#define UKL_T2_PH_MAKE 29u
-#define UKL_T2_PH_P6C 30u
-#define UKL_T2_PH_P6W 31u
-#define UKL_T2_PH_END 32u
-#define UKL_T2_PH_FIN 33u
-#define UKL_T2_PH_TAIL 34u
-#define UKL_T2_PH_PIECES 35u
-#define UKL_T2_PH_ZP1 36u
-#define UKL_T2_PH_ZS 37u
-#define UKL_T2_PH_ZH 45u
-#define UKL_T2_PH_ZF 46u
-#define UKL_T2_PH_ZP3 47u
-#define UKL_T2_PH_ZP3W 48u
-#define UKL_T2_PH_ZP4 49u
-#define UKL_T2_PHASES 50u
+#define UKL_T2_PH_P3 (UKL_T2_PH_P2 + UKL_T2_SORT)
+#define UKL_T2_PH_P3W (UKL_T2_PH_P3 + 1u)
+#define UKL_T2_PH_P4 (UKL_T2_PH_P3 + 2u)
+#define UKL_T2_PH_P4W (UKL_T2_PH_P3 + 3u)
+#define UKL_T2_PH_P5 (UKL_T2_PH_P3 + 4u)
+#define UKL_T2_PH_P5W (UKL_T2_PH_P3 + 5u)
+// The frame sort, as the level sort.
+#define UKL_T2_PH_P7 (UKL_T2_PH_P3 + 6u)
+#define UKL_T2_PH_P8A (UKL_T2_PH_P7 + UKL_T2_SORT)
+#define UKL_T2_PH_P8AW (UKL_T2_PH_P8A + 1u)
+#define UKL_T2_PH_P8B (UKL_T2_PH_P8A + 2u)
+#define UKL_T2_PH_P8BW (UKL_T2_PH_P8A + 3u)
+#define UKL_T2_PH_MAKE (UKL_T2_PH_P8A + 4u)
+#define UKL_T2_PH_P6C (UKL_T2_PH_P8A + 5u)
+#define UKL_T2_PH_P6W (UKL_T2_PH_P8A + 6u)
+#define UKL_T2_PH_END (UKL_T2_PH_P8A + 7u)
+#define UKL_T2_PH_FIN (UKL_T2_PH_P8A + 8u)
+#define UKL_T2_PH_TAIL (UKL_T2_PH_P8A + 9u)
+#define UKL_T2_PH_PIECES (UKL_T2_PH_P8A + 10u)
+#define UKL_T2_PH_ZP1 (UKL_T2_PH_P8A + 11u)
+// 16z's sort of the pieces by their hash, as the level sort.
+#define UKL_T2_PH_ZS (UKL_T2_PH_ZP1 + 1u)
+#define UKL_T2_PH_ZH (UKL_T2_PH_ZS + UKL_T2_SORT)
+#define UKL_T2_PH_ZF (UKL_T2_PH_ZH + 1u)
+#define UKL_T2_PH_ZP3 (UKL_T2_PH_ZH + 2u)
+#define UKL_T2_PH_ZP3W (UKL_T2_PH_ZH + 3u)
+#define UKL_T2_PH_ZP4 (UKL_T2_PH_ZH + 4u)
+#define UKL_T2_PHASES (UKL_T2_PH_ZH + 5u)
 // A repeat's fewest bytes, and its kind's (`writer16`'s REPEAT_MIN, RAW, LZ4, REPEAT).
 #define UKL_T2_REPEAT_MIN 8u
 #define UKL_T2_ZRAW 0u
@@ -156,22 +157,16 @@
 #define UKL_T2_ZREPEAT 2u
 
 #define UKL_T2_TP1 0u
-// Digit `d`'s trees: its chunks' counts `UKL_T2_TP2 + 2d`, its keys' after it.
-#define UKL_T2_TP2 1u
 #define UKL_T2_TP3 5u
 #define UKL_T2_TP4 6u
 #define UKL_T2_TP5 7u
-#define UKL_T2_TP7 8u
 #define UKL_T2_TP8A 12u
 #define UKL_T2_TP8B 13u
 #define UKL_T2_TB 14u
-// 16z's: the sort's (digit `d`'s counts `UKL_T2_TZ2 + 2d`, its keys' after), the heads' (Last), the stored bytes'.
-#define UKL_T2_TZ2 15u
+// 16z's: the heads' (Last), the stored bytes'.
 #define UKL_T2_TZH 19u
 #define UKL_T2_TZ3 20u
 #define UKL_T2_OP_P1 0u
-#define UKL_T2_OP_ADD1 1u
-#define UKL_T2_OP_KEYS 2u
 #define UKL_T2_OP_LAST 3u
 #define UKL_T2_OP_PLACES 4u
 #define UKL_T2_OP_SHAPE 5u
@@ -181,13 +176,11 @@
 #define UKL_T2_W_SHAPE 10u
 #define UKL_T2_NONE 4294967295u
 #define UKL_T2_W_P1 3u
-#define UKL_T2_KEYS 256u
+// The sorts' tiles at most (`json_t2_sort`'s threadgroups).
+#define UKL_T2_SORT_TILES 1024u
 
 // The grammar's block operators (the printer's).
 UKL_INLINE void ukl_t2_p1_run(UKL_GLOBAL const uint8_t* src, UKL_GLOBAL const uint32_t* starts, uint32_t n, uint32_t a, uint32_t b, UKL_COHERENT uint32_t* out);
-UKL_INLINE void ukl_t2_p2_run(UKL_GLOBAL const uint32_t* items, uint32_t a, uint32_t b, uint32_t shift, UKL_COHERENT uint32_t* out);
-UKL_INLINE void ukl_t2_p2_write(UKL_GLOBAL const uint32_t* items, uint32_t a, uint32_t b, uint32_t shift, UKL_COHERENT uint32_t* sum, UKL_GLOBAL const uint32_t* keys,
-                                UKL_GLOBAL uint32_t* out);
 UKL_INLINE void ukl_t2_p3_run(UKL_GLOBAL const uint32_t* items, uint32_t a, uint32_t b, UKL_COHERENT uint32_t* out);
 UKL_INLINE void ukl_t2_p3_write(UKL_GLOBAL const uint32_t* items, uint32_t a, uint32_t b, UKL_COHERENT const uint32_t* sum, UKL_GLOBAL uint32_t* container,
                                 UKL_GLOBAL uint32_t* head_at);
@@ -232,29 +225,17 @@ UKL_INLINE void ukl_t2_lay(UKL_PRIVATE UklPh* r)
     uint32_t at = ukl_t2_tree(m, UKL_T2_TP1, UKL_T2_H, chunks, UKL_T2_W_P1, UKL_T2_OP_P1);
     // The level sort's trees, at the items' bound (two a record): P1W says their leaves.
     uint32_t most = 2u * (n + 1u), ichunks = (most + size - 1u) / size;
-    for (uint32_t d = 0u; d < 2u; d++) {
-        at = ukl_t2_tree(m, UKL_T2_TP2 + 2u * d, at, ichunks, UKL_T2_KEYS, UKL_T2_OP_KEYS);
-        at = ukl_t2_tree(m, UKL_T2_TP2 + 2u * d + 1u, at, UKL_T2_KEYS, 1u, UKL_T2_OP_ADD1);
-    }
     at = ukl_t2_tree(m, UKL_T2_TP3, at, ichunks, 2u, UKL_T2_OP_LAST);
     at = ukl_t2_tree(m, UKL_T2_TP4, at, chunks, UKL_T2_W_PLACES, UKL_T2_OP_PLACES);
     at = ukl_t2_tree(m, UKL_T2_TP5, at, chunks, UKL_T2_W_SHAPE, UKL_T2_OP_SHAPE);
     // The events' items' trees, at their bound (P5W says their leaves).
     uint32_t most_ev = 2u * (n + 1u) + 2u, echunks = (2u * most_ev + size - 1u) / size;
-    for (uint32_t d = 0u; d < 2u; d++) {
-        at = ukl_t2_tree(m, UKL_T2_TP7 + 2u * d, at, echunks, UKL_T2_KEYS, UKL_T2_OP_KEYS);
-        at = ukl_t2_tree(m, UKL_T2_TP7 + 2u * d + 1u, at, UKL_T2_KEYS, 1u, UKL_T2_OP_ADD1);
-    }
     at = ukl_t2_tree(m, UKL_T2_TP8A, at, echunks, 2u, UKL_T2_OP_LAST);
     at = ukl_t2_tree(m, UKL_T2_TP8B, at, echunks, 3u, UKL_T2_OP_KIDS);
     // The tape's blocks at the host's room (`most`): B's leaves the blocks MAKE makes.
     at = ukl_t2_tree(m, UKL_T2_TB, at, m[UKL_T2_MOST], 5u, UKL_PH_OP_ADD);
     // 16z's pieces at their bound, four a block.
     uint32_t zchunks = (4u * m[UKL_T2_MOST] + size - 1u) / size;
-    for (uint32_t d = 0u; d < 2u; d++) {
-        at = ukl_t2_tree(m, UKL_T2_TZ2 + 2u * d, at, zchunks, UKL_T2_KEYS, UKL_T2_OP_KEYS);
-        at = ukl_t2_tree(m, UKL_T2_TZ2 + 2u * d + 1u, at, UKL_T2_KEYS, 1u, UKL_T2_OP_ADD1);
-    }
     at = ukl_t2_tree(m, UKL_T2_TZH, at, zchunks, 2u, UKL_T2_OP_LAST);
     at = ukl_t2_tree(m, UKL_T2_TZ3, at, zchunks, 1u, UKL_PH_OP_ADD);
     m[UKL_T2_STOPPED] = UKL_T2_NONE;
@@ -264,10 +245,6 @@ UKL_INLINE void ukl_t2_lay(UKL_PRIVATE UklPh* r)
     aw += n + 1u;
     m[UKL_T2_O_ITEMS] = aw;
     aw += 3u * most;
-    m[UKL_T2_O_ITEMS2] = aw;
-    aw += 3u * most;
-    m[UKL_T2_O_KEYS] = aw;
-    aw += 2u * UKL_T2_KEYS;
     m[UKL_T2_O_CONTAINER] = aw;
     aw += n + 1u;
     m[UKL_T2_O_HEAD_AT] = aw;
@@ -281,10 +258,6 @@ UKL_INLINE void ukl_t2_lay(UKL_PRIVATE UklPh* r)
     aw += 8u * most_ev;
     m[UKL_T2_O_EITEMS] = aw;
     aw += 6u * most_ev;
-    m[UKL_T2_O_EITEMS2] = aw;
-    aw += 6u * most_ev;
-    m[UKL_T2_O_EKEYS] = aw;
-    aw += 2u * UKL_T2_KEYS;
     m[UKL_T2_O_FRAME_OF] = aw;
     aw += 2u * most_ev;
     m[UKL_T2_O_KIDS] = aw;
@@ -297,10 +270,23 @@ UKL_INLINE void ukl_t2_lay(UKL_PRIVATE UklPh* r)
     aw += zp;
     m[UKL_T2_O_ZITEMS] = aw;
     aw += 3u * zp;
-    m[UKL_T2_O_ZITEMS2] = aw;
-    aw += 3u * zp;
-    m[UKL_T2_O_ZKEYS] = aw;
-    aw += 2u * UKL_T2_KEYS;
+    // The sorts' buffers (the library's sort of rows), for the most rows any of the three sorts: they run one after
+    // another. Its keys at even words.
+    uint32_t ns = most > 2u * most_ev ? most : 2u * most_ev;
+    ns = ns > zp ? ns : zp;
+    aw += aw & 1u;
+    m[UKL_T2_O_SK1] = aw;
+    aw += 2u * ns;
+    m[UKL_T2_O_SK2] = aw;
+    aw += 2u * ns;
+    m[UKL_T2_O_SV1] = aw;
+    aw += ns;
+    m[UKL_T2_O_SV2] = aw;
+    aw += ns;
+    m[UKL_T2_O_SHIST] = aw;
+    aw += UKL_SORT_ROWS_HIST(ns);
+    m[UKL_T2_O_SSUMS] = aw;
+    aw += UKL_T2_SORT_TILES + 1u;
     m[UKL_T2_O_ZREP] = aw;
     aw += zp;
     m[UKL_T2_O_ZSTORED] = aw;
@@ -316,27 +302,48 @@ UKL_INLINE void ukl_t2_lay(UKL_PRIVATE UklPh* r)
     ukl_fence_device();
 }
 
-// A level sort (P2 of the records' items, P7 of the events'), its trees from `t0` (digit `d`'s counts `t0 + 2d`, its
-// keys' after): digit `d`'s step `k` (C, K, KW, S), item `c`, over `ni` items from `oa` to `ob` (digit 1 back), the
-// keys' starts at `okeys`.
-UKL_INLINE void ukl_t2_sort(UKL_PRIVATE UklPh* r, uint32_t t0, uint32_t d, uint32_t k, uint32_t c, uint32_t ni, uint32_t oa, uint32_t ob, uint32_t okeys)
+// The sorts (P2 the records' items by level, P7 the events' items by frame depth, ZS 16z's pieces by their hash's low
+// 16 bits): each `UKL_T2_SORT` stages of the library's stable sort of rows (`<ukl/stages.h>`'s `ukl_sort_rows_stage`),
+// a launch each of `json_t2_sort` over `UKL_T2_SORT_TILES` tiles at most, the rows in place where they were written.
+UKL_INLINE bool ukl_t2_sorting(uint32_t ph)
 {
-    uint32_t size = r->m[UKL_T2_SIZE], tc = t0 + 2u * d, tk = tc + 1u, ia = c * size, ib = ia + size < ni ? ia + size : ni;
-    UKL_GLOBAL uint32_t* from = r->arrays + (d == 0u ? oa : ob);
-    UKL_GLOBAL uint32_t* to = r->arrays + (d == 0u ? ob : oa);
-    UKL_GLOBAL uint32_t* keys = r->arrays + okeys + d * UKL_T2_KEYS;
-    if (k == 0u) {
-        ukl_t2_p2_run(from, ia, ib, 8u * d, ukl_ph_leaf(r, tc, c));
-        ukl_ph_up(r, tc, c);
-    } else if (k == 1u) {
-        ukl_ph_leaf(r, tk, c)[0] = ukl_ph_total(r, tc)[c];
-        ukl_ph_up(r, tk, c);
-    } else if (k == 2u) {
-        keys[c] = ukl_ph_sum(r, tk, c)[0];
-    } else {
-        ukl_t2_p2_write(from, ia, ib, 8u * d, ukl_ph_sum(r, tc, c), keys, to);
-    }
+    return (ph >= UKL_T2_PH_P2 && ph < UKL_T2_PH_P3) || (ph >= UKL_T2_PH_P7 && ph < UKL_T2_PH_P8A) || (ph >= UKL_T2_PH_ZS && ph < UKL_T2_PH_ZH);
 }
+
+#if UKL_SIMD_WIDTH >= 8
+// Sort phase `ph`'s stage on its tiles; nothing where the run stopped before it (its rows not written).
+UKL_INLINE void ukl_t2_sort_stage(UklPhPool m, bool refused, UKL_GLOBAL uint32_t* arrays, uint32_t ph, UklTiles t, UklSortLocal l, UKL_LOCAL uint32_t* scratch __UKL_PARAMS)
+{
+    if (refused || ukl_atomic_poll(&m[UKL_T2_NEED]) != 0u)
+        return;
+    uint32_t stage, count, rows;
+    if (ph < UKL_T2_PH_P3) {
+        stage = ph - UKL_T2_PH_P2;
+        count = UKL_T2_ITEMS;
+        rows = m[UKL_T2_O_ITEMS];
+    } else if (ph < UKL_T2_PH_P8A) {
+        if (ukl_atomic_poll(&m[UKL_T2_REFUSED_AT]) != UKL_T2_NONE)
+            return;
+        stage = ph - UKL_T2_PH_P7;
+        count = UKL_T2_EITEMS;
+        rows = m[UKL_T2_O_EITEMS];
+    } else {
+        if (ukl_atomic_poll(&m[UKL_PH_FAIL]) != 0u || ukl_atomic_poll(&m[UKL_T2_DONE]) != 1u)
+            return;
+        stage = ph - UKL_T2_PH_ZS;
+        count = UKL_T2_NP;
+        rows = m[UKL_T2_O_ZITEMS];
+    }
+    UklSortRows b;
+    b.keys = (UKL_COHERENT uint64_t*)(arrays + m[UKL_T2_O_SK1]);
+    b.keys2 = (UKL_COHERENT uint64_t*)(arrays + m[UKL_T2_O_SK2]);
+    b.values = (UKL_COHERENT uint32_t*)(arrays + m[UKL_T2_O_SV1]);
+    b.values2 = (UKL_COHERENT uint32_t*)(arrays + m[UKL_T2_O_SV2]);
+    b.hist = (UKL_COHERENT uint32_t*)(arrays + m[UKL_T2_O_SHIST]);
+    b.sums = (UKL_COHERENT uint32_t*)(arrays + m[UKL_T2_O_SSUMS]);
+    ukl_sort_rows_stage(t, stage, m + count, 16u, (UKL_COHERENT uint32_t*)(arrays + rows), b, l, scratch __UKL_ARGS);
+}
+#endif
 
 // ---- The finish (the old middle's, on the phases' pool and B's tree) --------------------------------------------
 
@@ -796,9 +803,6 @@ UKL_INLINE uint32_t ukl_t2z_items(UKL_PRIVATE UklPh* r, uint32_t ph)
         UklZ16P p = ukl_z16_placement(ukl_t2z_tape(r));
         return m[UKL_T2_NP] + 1u + ukl_t2z_copies(&p);
     }
-    // The sort's K and KW steps, over its keys.
-    if (ph < UKL_T2_PH_ZH && ((ph - UKL_T2_PH_ZS) % 4u == 1u || (ph - UKL_T2_PH_ZS) % 4u == 2u))
-        return UKL_T2_KEYS;
     return m[UKL_T2_ZCHUNKS];
 }
 
@@ -909,10 +913,7 @@ UKL_INLINE void ukl_t2z_item(UKL_PRIVATE UklPh* r, uint32_t ph, uint32_t c)
     uint32_t np = m[UKL_T2_NP], size = m[UKL_T2_SIZE], a = c * size, b = a + size < np ? a + size : np;
     UKL_GLOBAL uint32_t* items = r->arrays + m[UKL_T2_O_ZITEMS];
     UKL_GLOBAL uint32_t* rep = r->arrays + m[UKL_T2_O_ZREP];
-    if (ph < UKL_T2_PH_ZH) {
-        uint32_t k = ph - UKL_T2_PH_ZS;
-        ukl_t2_sort(r, UKL_T2_TZ2, k / 4u, k % 4u, c, np, m[UKL_T2_O_ZITEMS], m[UKL_T2_O_ZITEMS2], m[UKL_T2_O_ZKEYS]);
-    } else if (ph == UKL_T2_PH_ZH) {
+    if (ph == UKL_T2_PH_ZH) {
         // The last head's place in the chunk (a run of like keys starts at a head).
         UklPhPool leaf = ukl_ph_leaf(r, UKL_T2_TZH, c);
         uint32_t v = UKL_NONE;
@@ -980,14 +981,12 @@ UKL_INLINE uint32_t ukl_ph_items(UKL_PRIVATE UklPh* r, uint32_t ph)
         return 1u;
     if (ukl_atomic_poll(&r->m[UKL_T2_NEED]) != 0u)
         return 0u;
-    if (ph >= UKL_T2_PH_P2 && ph < UKL_T2_PH_P2 + 8u)
-        return (ph - UKL_T2_PH_P2) % 4u == 1u || (ph - UKL_T2_PH_P2) % 4u == 2u ? UKL_T2_KEYS : r->m[UKL_T2_ICHUNKS];
+    if (ukl_t2_sorting(ph))
+        return 0u;
     if (ph == UKL_T2_PH_P3 || ph == UKL_T2_PH_P3W)
         return r->m[UKL_T2_ICHUNKS];
     if (ph >= UKL_T2_PH_P5 && ukl_atomic_poll(&r->m[UKL_T2_REFUSED_AT]) != UKL_T2_NONE)
         return 0u;
-    if (ph >= UKL_T2_PH_P7 && ph < UKL_T2_PH_P7 + 8u)
-        return (ph - UKL_T2_PH_P7) % 4u == 1u || (ph - UKL_T2_PH_P7) % 4u == 2u ? UKL_T2_KEYS : r->m[UKL_T2_ECHUNKS];
     if (ph >= UKL_T2_PH_MAKE && ukl_atomic_poll(&r->m[UKL_PH_FAIL]) != 0u)
         return 0u;
     if (ph >= UKL_T2_PH_ZP1)
@@ -1025,8 +1024,6 @@ UKL_INLINE void ukl_ph_item(UKL_PRIVATE UklPh* r, uint32_t ph, uint32_t c)
             uint32_t ni = ukl_ph_total(r, UKL_T2_TP1)[2], ic = (ni + size - 1u) / size;
             m[UKL_T2_ITEMS] = ni;
             m[UKL_T2_ICHUNKS] = ic;
-            m[UKL_PH_TREE + UKL_PH_TW * UKL_T2_TP2 + 3u] = ic;
-            m[UKL_PH_TREE + UKL_PH_TW * (UKL_T2_TP2 + 2u) + 3u] = ic;
             m[UKL_PH_TREE + UKL_PH_TW * UKL_T2_TP3 + 3u] = ic;
         }
     } else if (ph >= UKL_T2_PH_P4 && ph <= UKL_T2_PH_P5W) {
@@ -1070,8 +1067,6 @@ UKL_INLINE void ukl_ph_item(UKL_PRIVATE UklPh* r, uint32_t ph, uint32_t c)
                 m[UKL_T2_EITEMS] = total[2];
                 uint32_t ec = (total[2] + size - 1u) / size;
                 m[UKL_T2_ECHUNKS] = ec;
-                m[UKL_PH_TREE + UKL_PH_TW * UKL_T2_TP7 + 3u] = ec;
-                m[UKL_PH_TREE + UKL_PH_TW * (UKL_T2_TP7 + 2u) + 3u] = ec;
                 m[UKL_PH_TREE + UKL_PH_TW * UKL_T2_TP8A + 3u] = ec;
                 m[UKL_PH_TREE + UKL_PH_TW * UKL_T2_TP8B + 3u] = ec;
                 // The tape's blocks.
@@ -1082,8 +1077,6 @@ UKL_INLINE void ukl_ph_item(UKL_PRIVATE UklPh* r, uint32_t ph, uint32_t c)
                 uint32_t zc = (4u * nb + size - 1u) / size;
                 m[UKL_T2_NP] = 4u * nb;
                 m[UKL_T2_ZCHUNKS] = zc;
-                m[UKL_PH_TREE + UKL_PH_TW * UKL_T2_TZ2 + 3u] = zc;
-                m[UKL_PH_TREE + UKL_PH_TW * (UKL_T2_TZ2 + 2u) + 3u] = zc;
                 m[UKL_PH_TREE + UKL_PH_TW * UKL_T2_TZH + 3u] = zc;
                 m[UKL_PH_TREE + UKL_PH_TW * UKL_T2_TZ3 + 3u] = zc;
                 if (nb > m[UKL_T2_MOST])
@@ -1120,11 +1113,5 @@ UKL_INLINE void ukl_ph_item(UKL_PRIVATE UklPh* r, uint32_t ph, uint32_t c)
         } else {
             ukl_t2_p8b_write(items, events, ia, ib, ukl_ph_sum(r, UKL_T2_TP8B, c), r->arrays + m[UKL_T2_O_KIDS]);
         }
-    } else if (ph >= UKL_T2_PH_P7) {
-        uint32_t k = ph - UKL_T2_PH_P7;
-        ukl_t2_sort(r, UKL_T2_TP7, k / 4u, k % 4u, c, m[UKL_T2_EITEMS], m[UKL_T2_O_EITEMS], m[UKL_T2_O_EITEMS2], m[UKL_T2_O_EKEYS]);
-    } else {
-        uint32_t k = ph - UKL_T2_PH_P2;
-        ukl_t2_sort(r, UKL_T2_TP2, k / 4u, k % 4u, c, m[UKL_T2_ITEMS], m[UKL_T2_O_ITEMS], m[UKL_T2_O_ITEMS2], m[UKL_T2_O_KEYS]);
     }
 }

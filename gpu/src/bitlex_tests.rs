@@ -247,7 +247,7 @@ fn json_tier2_timings() {
 }
 
 /// The program's phases (`<ukl/t2_phases.h>`'s numbers) by the page's names: each name's first and past-last phase.
-const PHASE_GROUPS: [(&str, usize, usize); 14] = [("LAY", 0, 1), ("P1", 1, 3), ("P2", 3, 11), ("P3", 11, 13), ("P4", 13, 15), ("P5", 15, 17), ("P7", 17, 25), ("P8", 25, 29), ("MAKE", 29, 30), ("P6", 30, 32), ("END", 32, 33), ("FIN", 33, 34), ("TAIL", 34, 36), ("16z", 36, 50)];
+const PHASE_GROUPS: [(&str, usize, usize); 14] = [("LAY", 0, 1), ("P1", 1, 3), ("P2", 3, 15), ("P3", 15, 17), ("P4", 17, 19), ("P5", 19, 21), ("P7", 21, 33), ("P8", 33, 37), ("MAKE", 37, 38), ("P6", 38, 40), ("END", 40, 41), ("FIN", 41, 42), ("TAIL", 42, 44), ("16z", 44, 62)];
 
 /// A JSON file of at least `bytes` bytes: a list of objects (numbers, strings, lists, a nest every 50), its numbers
 /// from `seed`.
@@ -833,8 +833,10 @@ struct Ph {
 
 impl Ph {
     /// The program's phases, and those of group items (16z's ZP1 and ZP4).
-    const PHASES: u32 = 50;
-    const GROUP: [u32; 2] = [36, 49];
+    const PHASES: u32 = 62;
+    const GROUP: [u32; 2] = [44, 61];
+    /// The sorts' stages (P2, P7, 16z's ZS: the library's sort of rows, `json_t2_sort`).
+    const SORTS: [std::ops::Range<u32>; 3] = [3..15, 21..33, 45..57];
 
     /// The rooms of `lex`'s file in chunks of `size` records, from its records' bound; the writer `mw` (begun) hands
     /// its region over; the pool's header set.
@@ -850,10 +852,12 @@ impl Ph {
         let most_blocks = most.div_ceil(1024).max(1);
         let zc = (4 * most_blocks).div_ceil(size);
         let ms = [ichunks, echunks, most_blocks, zc].into_iter().map(|n| 2 * n + 40).max().unwrap();
-        let room = T2_H + tree(chunks, 3) + 2 * (tree(ichunks, 256) + tree(256, 1)) + tree(ichunks, 2) + tree(chunks, 32) + tree(chunks, 10);
-        let room = room + 2 * (tree(echunks, 256) + tree(256, 1)) + tree(echunks, 2) + tree(echunks, 3) + tree(most_blocks, 5);
-        let room = room + 2 * (tree(zc, 256) + tree(256, 1)) + tree(zc, 2) + tree(zc, 1);
-        let aroom = 15 * (lex.records + 1) + 1024 + 11 * chunks + 28 * most_ev + 48 * most_blocks + 512;
+        let room = T2_H + tree(chunks, 3) + tree(ichunks, 2) + tree(chunks, 32) + tree(chunks, 10);
+        let room = room + tree(echunks, 2) + tree(echunks, 3) + tree(most_blocks, 5);
+        let room = room + tree(zc, 2) + tree(zc, 1);
+        // The arrays as LAY lays them, and the sorts' (`<ukl/stages.h>`'s sort of rows) for the most rows of the three.
+        let ns = (2 * (lex.records + 1)).max(2 * most_ev).max(4 * most_blocks);
+        let aroom = 9 * (lex.records + 1) + 11 * chunks + 22 * most_ev + 36 * most_blocks + 6 * ns + 256 * ns.div_ceil(1024) + 1 + 1025 + 1;
         // The writer's region, with room for the nodes the records and their tokens can make.
         mw.reserve_run(most, (1024 + 1) * 3 + 1);
         mw.final_as_written();
@@ -887,7 +891,16 @@ impl Ph {
     /// Phase `phase`'s launch.
     fn launch(&self, q: &mut crate::device::ComputeQueue, p: &crate::kernels::Program, lex: &Lex, phase: u32) {
         let args = T2PArgs { phase, pad: 0 };
-        if Ph::GROUP.contains(&phase) {
+        if Ph::SORTS.iter().any(|r| r.contains(&phase)) {
+            // The sort's tiles: at most the program's 1,024 (`UKL_T2_SORT_TILES`), of 256 threads.
+            launch(q, p.function("json_t2_sort").unwrap())
+                .value("args", &args)
+                .buffer("lexed", &lex.pool)
+                .buffer("pool", &self.pb)
+                .buffer("arrays", &self.ab)
+                .run(&[(groups() as u64).min(1024)], &[256])
+                .unwrap();
+        } else if Ph::GROUP.contains(&phase) {
             launch(q, p.function("json_t2_zphases").unwrap())
                 .value("args", &args)
                 .buffer("src", &lex.src)
