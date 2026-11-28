@@ -394,10 +394,10 @@ pub(in crate::code_rule_dsl) fn arith_op(name: &str) -> Option<u32> {
 }
 
 /// A step's fusion as the device runs it: the filters after its atom, not the tests of an input the CPU's walk asks
-/// in the chunk (`rowcode::Test`), nor the node reads it computes (`rowcode::Word::Order`).
+/// in the chunk (`rowcode::Test`), nor the calls it computes (`rowcode::Word::Call`).
 fn fused_at(j: &JoinRule, i: usize) -> Option<std::borrow::Cow<'_, rowcode::Fused>> {
     let f = j.fused_at(i)?;
-    if f.tests.is_empty() && f.nodes.is_none() {
+    if f.tests.is_empty() && f.calls.is_empty() {
         return Some(std::borrow::Cow::Borrowed(f));
     }
     let Step::Atom { binds, .. } = &j.steps[i] else { return None };
@@ -412,7 +412,7 @@ fn program(d: &mut mj::Stage, f: &rowcode::Fused, kind: u32) -> Result<(), Strin
         return Err("a row program larger than a stage holds".into());
     }
     for (k, w) in f.columns.iter().enumerate() {
-        let (c, doc) = match *w { rowcode::Word::Col(c) => (c, 0), rowcode::Word::Doc(c) => (c, 1), rowcode::Word::Held(_) | rowcode::Word::Look(..) | rowcode::Word::Bound { .. } | rowcode::Word::Order { .. } => unreachable!("the device's fusion asks no input, reads no node and spans no rows (`fused_at`)") };
+        let (c, doc) = match *w { rowcode::Word::Col(c) => (c, 0), rowcode::Word::Doc(c) => (c, 1), rowcode::Word::Held(_) | rowcode::Word::Look(..) | rowcode::Word::Bound { .. } | rowcode::Word::Call(_) => unreachable!("the device's fusion asks no input, calls nothing and spans no rows (`fused_at`)") };
         d.col_kind[k] = kind;
         d.col_idx[k] = c as u32;
         d.col_doc[k] = doc;

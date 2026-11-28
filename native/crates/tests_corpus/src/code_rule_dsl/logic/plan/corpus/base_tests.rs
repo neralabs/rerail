@@ -1793,7 +1793,7 @@ same_bound(n, m) :- pair(n, p), pair(m, p), n < m, kind(n, k), kind(m, j), j = k
 }
 
 /// Nodes compared (`n < m`, lowered to their preorder keys, `@rr_node_order`) after the atom that binds one are
-/// compared in its row program, each chunk's keys read at once (`rowcode::Word::Order`), the other node's a parameter.
+/// compared in its row program, each chunk's keys computed with it (`rowcode::Word::Call`), the other node's a parameter.
 /// Its rows are those of the comparison made on `node`'s start (siblings never nest, so their preorder is their starts'
 /// order), both ways round.
 #[test]
@@ -1815,8 +1815,8 @@ after_at(n, m) :- pair(n, p), pair(m, p), n != m, node(_, n, _, s, _), node(_, m
     // The run's own scope, held here: its counts are read before it ends.
     let _run = crate::code_rule_dsl::logic::run::scope(crate::code_rule_dsl::logic::native::width::Settings::from_env);
     let got = run(&dir, program, &["before", "before_at", "after", "after_at"]);
-    let ordered = crate::code_rule_dsl::logic::native::setfix::run_counts().node_orders.load(std::sync::atomic::Ordering::Relaxed);
-    assert!(ordered > 0, "a row program read its nodes' preorder keys");
+    let called = crate::code_rule_dsl::logic::native::setfix::run_counts().chunk_calls.load(std::sync::atomic::Ordering::Relaxed);
+    assert!(called > 0, "a row program computed its nodes' preorder keys");
     assert!(!got[0].is_empty() && !got[2].is_empty(), "{got:?}");
     assert_eq!(got[0], got[1], "before: fused against the starts");
     assert_eq!(got[2], got[3], "after: fused against the starts");

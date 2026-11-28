@@ -4051,8 +4051,8 @@ pub fn scans(conn: &Connection, name: &str) -> Result<Vec<ScanCase>> {
     for (label, j) in rules {
         for i in 0..j.steps.len() {
             let Some(f) = j.fused_at(i) else { continue };
-            // A device runs a scan's program alone: no input asked, no node read.
-            if !f.tests.is_empty() || f.nodes.is_some() { continue; }
+            // A device runs a scan's program alone: no input asked, no call.
+            if !f.tests.is_empty() || !f.calls.is_empty() { continue; }
             let Step::Atom { src: src @ Src::In(..), keys, tests, .. } = &j.steps[i] else { continue };
             if keys.iter().any(|(_, k)| matches!(k, Key::Slot(_))) || f.params.iter().any(|p| matches!(p.key, Key::Slot(_))) { continue; }
             let key: Vector<i64> = keys.iter().map(|&(_, k)| match k { Key::Const(c) => c, Key::Slot(_) => unreachable!("constants") }).collect();
@@ -9439,16 +9439,7 @@ fn analysed(mut plan: steps::Plan, fuse: bool, is_dot: impl Fn(i64) -> bool, is_
         (v.read_by_own() && rel.ndead == 0 && view_tests_on()).then(|| (Arc::clone(&v.src), v.cols.clone(), v.eqs.clone()))
     };
     plan.lookups = lookups(&s, &plan.ranges);
-    // A node read's source, held by its step (`NodeTexts::Held`; one the walk finds through the database it reads at
-    // its first call, `At`, is not read in a chunk).
-    let nodes = |st: &Step| -> Option<Arc<dyn crate::code_rule_dsl::facts::vtab::Source>> {
-        let Step::Func { texts, .. } = st else { return None };
-        match &**s.bound(texts.as_ref()?) {
-            NodeTexts::Held(n) => Some(Arc::clone(n)),
-            NodeTexts::At(_) => None,
-        }
-    };
-    plan.fused = if fuse { rowcode::fuse(&s.steps, &plan.lookups, &view, &nodes).into_iter().map(|f| f.map(|f| rerail_section::Bound(Arc::from(f)))).collect() } else { s.steps.iter().map(|_| None).collect() };
+    plan.fused = if fuse { rowcode::fuse(&s.steps, &plan.lookups, &view).into_iter().map(|f| f.map(|f| rerail_section::Bound(Arc::from(f)))).collect() } else { s.steps.iter().map(|_| None).collect() };
     // A fused probe's spanning form, for the walk's keyed batch: its candidates of many bindings in one chunk.
     plan.spans = s.steps.iter().enumerate().map(|(i, st)| match st {
         Step::Atom { neg: false, keys, binds, .. } if i > 0 && !keys.is_empty() && plan.fused[i].is_some() => {
@@ -10046,6 +10037,115 @@ fn run_join_in_each_unframed(j: &JoinRule, head: usize, store: &Store, syms: &mu
         }
         cx.extreme[i] = Some(ids);
     }
+    /// Step `i`'s call (`Step::Func`) of the arguments in `slots`: its value, `None` where it has none (no row holds
+    /// it). The walk's step, and a fused chunk's (`rowcode::Word::Call`), evaluate it here.
+    fn func_value(cx: &mut Ctx<'_, '_>, i: usize, slots: &[i64]) -> Option<i64> {
+        let j = cx.j;
+        let Step::Func { name, kinds, args, bind, texts, kept, .. } = &j.steps[i] else { unreachable!("a call") };
+        let _kind = rerail_prof::work::doing(rerail_prof::work::TEXT);
+        use crate::code_rule_dsl::logic::strings::functions::{eval, Kind};
+        use crate::code_rule_dsl::facts::vtab::NodeRead;
+        use rusqlite::types::Value;
+        // A text kept for its symbol (decision 0478 step 2e), the CPU's or the device's.
+        let keep = kept.and_then(|f| u32::try_from(val(slots, args[0])).ok().filter(|_| !matches!(args[0], Key::Const(_))).map(|s| (f, s)));
+        let found = keep.and_then(|(f, s)| cx.syms.atoms.kept().text(f, s));
+        // A text is read where it lies (a node's, on its tape) and given its value (`text_value`).
+        let probe = j.probes[i];
+        let text_v = |cx: &mut Ctx<'_, '_>, t: &str| match text_value(cx, probe, *bind, t) {
+            // Looked up and no atom: no row holds it.
+            -1 if probe & PROBE_OUT != 0 => None,
+            v => Some(v),
+        };
+        let at_nodes;
+        if let Some(t) = found {
+            text_v(cx, &t)
+        } else if let Some(nodes) = texts.as_ref().map(|h| &**j.bound(h)) {
+            // A node read's further arguments (`op_at`'s place).
+            let more: Vec<i64> = args[1..].iter().map(|a| val(slots, *a)).collect();
+            let nodes: Option<&dyn crate::code_rule_dsl::facts::vtab::Source> = match nodes {
+                NodeTexts::Held(nodes) => Some(&**nodes),
+                NodeTexts::At(at) => {
+                    at_nodes = at.upgrade().and_then(|d| crate::code_rule_dsl::facts::vtab::bound_source_in(&d, crate::code_rule_dsl::facts::vtab::syntax::LONG_TEXT_NODES));
+                    at_nodes.as_deref()
+                }
+            };
+            // A node's text as its value, read where it lies (decision 0706 E1, `Source::node_atom`), for every way
+            // of reading the text out but a scratch text's or an unread one's: as `held` gives it (its atom, or the
+            // value this walk deferred it as, as `Interner::id` takes them), else, bound, its atom made where `id`
+            // would make it or defer it (the `text` view's reads make it so). A probe takes an atom alone: a value
+            // deferred it reads as before (`before_walk` drops it).
+            let atom = if probe & (TEXT_OUT | UNREAD_OUT) == 0 {
+                let make = probe & PROBE_OUT == 0;
+                let syms = &cx.syms;
+                let existing = |s: &str| syms.held(s).filter(|&v| make || u32::try_from(v).is_ok());
+                // The run's atom table, which the source's atoms must be (a batch shaped in another store numbers its
+                // atoms apart).
+                let table = (Arc::as_ptr(syms.atoms()).cast(), syms.atoms().database());
+                nodes.and_then(|s| s.node_atom(name, val(slots, args[0]), make, &existing, table))
+            } else { None };
+            if let Some(a) = atom {
+                kinds::count_term_atom_for_tests();
+                Some(a)
+            } else { match nodes.and_then(|s| s.node_read_ref(name, val(slots, args[0]), &more)) {
+                Some(NodeRead::Text(t)) => text_v(cx, t),
+                Some(NodeRead::Value(Value::Text(t))) => text_v(cx, &t),
+                Some(NodeRead::Value(Value::Integer(n))) => Some(n),
+                _ => None,
+            } }
+        } else {
+            // The arguments' texts read into one buffer, the interner's, and their places, numbers and
+            // slices in arrays: a string an argument and two lists a call were 3.7 M on cold PostHog.
+            const ARGS: usize = 8;
+            let v = if args.len() <= ARGS {
+                let mut buf = std::mem::take(&mut cx.syms.buf);
+                buf.clear();
+                let (mut ends, mut numbers) = ([0usize; ARGS], [0i64; ARGS]);
+                let (mut nt, mut nn) = (0, 0);
+                for (k, a) in kinds.iter().zip(args) {
+                    let x = val(slots, *a);
+                    match k {
+                        Kind::Text => {
+                            match scratch(cx, x) {
+                                Some(t) => buf.push_str(t),
+                                None => cx.syms.with_name(x, |t| buf.push_str(t)),
+                            }
+                            ends[nt] = buf.len();
+                            nt += 1;
+                        }
+                        Kind::Number => {
+                            numbers[nn] = x;
+                            nn += 1;
+                        }
+                    }
+                }
+                let mut strs = [""; ARGS];
+                let mut from = 0;
+                for (s, &end) in strs.iter_mut().zip(&ends[..nt]) {
+                    *s = &buf[from..end];
+                    from = end;
+                }
+                let v = eval(name, &strs[..nt], &numbers[..nn]);
+                cx.syms.buf = buf;
+                v
+            } else {
+                let mut strs = Vec::new();
+                let mut numbers = Vec::new();
+                for (k, a) in kinds.iter().zip(args) {
+                    match k { Kind::Text => strs.push(text(cx, val(slots, *a))), Kind::Number => numbers.push(val(slots, *a)) }
+                }
+                let strs: Vec<&str> = strs.iter().map(String::as_str).collect();
+                eval(name, &strs, &numbers)
+            };
+            if let (Some((f, s)), Value::Text(t)) = (keep, &v) {
+                cx.syms.atoms.kept().keep_text(f, s, t);
+            }
+            match v {
+                Value::Integer(n) => Some(n),
+                Value::Text(t) => text_v(cx, &t),
+                _ => None,
+            }
+        }
+    }
     fn go<'a>(cx: &mut Ctx<'a, '_>, i: usize, slots: &mut [i64]) {
         let Some(clock) = cx.clock.as_mut() else { return walk_step(cx, i, slots) };
         let was = clock.to(i);
@@ -10539,13 +10639,12 @@ fn run_join_in_each_unframed(j: &JoinRule, head: usize, store: &Store, syms: &mu
                     let cut = i >= cx.cut_from;
                     let mut limit = if cut { 8 } else { rowcode::CHUNK };
                     fn flush(cx: &mut Ctx<'_, '_>, i: usize, f: &rowcode::Fused, s: &mut rowcode::Scratch, slots: &mut [i64], cut: Option<u64>) {
-                        let counts = &cx.counts;
                         // Each fused step's entries and its passes, as `go` counts them step by step.
-                        let bump = |m: usize, n: u64| {
+                        let bump = |counts: &[[std::cell::Cell<u64>; 2]], m: usize, n: u64| {
                             let c = &counts[i + m][1]; c.set(c.get() + n);
                             let c = &counts[i + 1 + m][0]; c.set(c.get() + n);
                         };
-                        bump(0, s.rows as u64);
+                        bump(&cx.counts, 0, s.rows as u64);
                         let added = std::cell::Cell::new(s.rows as u64);
                         // On the stack (decision 0687): a chunk's words, `CHUNK / 64` at most.
                         if f.tests.iter().any(|t| t.view.is_some()) {
@@ -10592,9 +10691,24 @@ fn run_join_in_each_unframed(j: &JoinRule, head: usize, store: &Store, syms: &mu
                             if profiled { count_match(j, at, u64::from(found), true); }
                             found
                         };
+                        let mark = cx.texts.len();
                         let words: rerail_blocks::frame::InlineVec<u64, { rowcode::CHUNK / 64 }> =
-                            { let _kind = rerail_prof::work::doing(rerail_prof::work::CHUNK); f.run(s, |m, n| if m + 1 < f.steps { bump(m + 1, n); added.set(added.get() + n) }, ask, held) }.iter().copied().collect();
-                        s.asked = asked.into_inner();
+                            {
+                                let _kind = rerail_prof::work::doing(rerail_prof::work::CHUNK);
+                                f.tests(s, ask, held);
+                                s.asked = asked.into_inner();
+                                // The fused calls (`rowcode::Word::Call`), each row's as the walk's step evaluates it:
+                                // its texts kept until the chunk's rows have run (`mark`).
+                                f.calls(s, |c, r, columns, params| {
+                                    let call = &f.calls[c];
+                                    for &(slot, b) in &call.args {
+                                        slots[slot] = match b { rowcode::Bind::Column(k) => columns[k][r], rowcode::Bind::Param(k) => params[k] };
+                                    }
+                                    func_value(cx, i + 1 + call.at, slots)
+                                });
+                                let counts = &cx.counts;
+                                f.program(s, |m, n| if m + 1 < f.steps { bump(counts, m + 1, n); added.set(added.get() + n) })
+                            }.iter().copied().collect();
                         // The chunk's filter work is charged after its rows run (below): charged first, a chunk
                         // whose filters alone spend the budget cut before its first row, every run (no progress).
                         'rows: for (w, &word) in words.iter().enumerate() {
@@ -10617,6 +10731,7 @@ fn run_join_in_each_unframed(j: &JoinRule, head: usize, store: &Store, syms: &mu
                                 if cut.is_some_and(|made| cx.n > made) { break 'rows; }
                             }
                         }
+                        cx.texts.truncate(mark);
                         cx.work += added.get();
                         if cx.work > cx.budget { cx.stop = true; }
                         s.rows = 0;
@@ -10954,112 +11069,9 @@ fn run_join_in_each_unframed(j: &JoinRule, head: usize, store: &Store, syms: &mu
             }
             Step::Eq { a, b } => if val(slots, *a) == val(slots, *b) { go(cx, i + 1, slots) },
             Step::Ne { a, b } => if val(slots, *a) != val(slots, *b) { go(cx, i + 1, slots) },
-            Step::Func { name, kinds, args, out, bind, texts, kept } => {
-                let _kind = rerail_prof::work::doing(rerail_prof::work::TEXT);
-                use crate::code_rule_dsl::logic::strings::functions::{eval, Kind};
-                use crate::code_rule_dsl::facts::vtab::NodeRead;
-                use rusqlite::types::Value;
-                // A text kept for its symbol (decision 0478 step 2e), the CPU's or the device's.
-                let keep = kept.and_then(|f| u32::try_from(val(slots, args[0])).ok().filter(|_| !matches!(args[0], Key::Const(_))).map(|s| (f, s)));
-                let found = keep.and_then(|(f, s)| cx.syms.atoms.kept().text(f, s));
+            Step::Func { out, bind, .. } => {
                 let mark = cx.texts.len();
-                // A text is read where it lies (a node's, on its tape) and given its value (`text_value`).
-                let probe = j.probes[i];
-                let text_v = |cx: &mut Ctx<'_, '_>, t: &str| match text_value(cx, probe, *bind, t) {
-                    // Looked up and no atom: no row holds it.
-                    -1 if probe & PROBE_OUT != 0 => None,
-                    v => Some(v),
-                };
-                let at_nodes;
-                let v = if let Some(t) = found {
-                    text_v(cx, &t)
-                } else if let Some(nodes) = texts.as_ref().map(|h| &**j.bound(h)) {
-                    // A node read's further arguments (`op_at`'s place).
-                    let more: Vec<i64> = args[1..].iter().map(|a| val(slots, *a)).collect();
-                    let nodes: Option<&dyn crate::code_rule_dsl::facts::vtab::Source> = match nodes {
-                        NodeTexts::Held(nodes) => Some(&**nodes),
-                        NodeTexts::At(at) => {
-                            at_nodes = at.upgrade().and_then(|d| crate::code_rule_dsl::facts::vtab::bound_source_in(&d, crate::code_rule_dsl::facts::vtab::syntax::LONG_TEXT_NODES));
-                            at_nodes.as_deref()
-                        }
-                    };
-                    // A node's text as its value, read where it lies (decision 0706 E1, `Source::node_atom`), for every way
-                    // of reading the text out but a scratch text's or an unread one's: as `held` gives it (its atom, or the
-                    // value this walk deferred it as, as `Interner::id` takes them), else, bound, its atom made where `id`
-                    // would make it or defer it (the `text` view's reads make it so). A probe takes an atom alone: a value
-                    // deferred it reads as before (`before_walk` drops it).
-                    let atom = if probe & (TEXT_OUT | UNREAD_OUT) == 0 {
-                        let make = probe & PROBE_OUT == 0;
-                        let syms = &cx.syms;
-                        let existing = |s: &str| syms.held(s).filter(|&v| make || u32::try_from(v).is_ok());
-                        // The run's atom table, which the source's atoms must be (a batch shaped in another store numbers its
-                        // atoms apart).
-                        let table = (Arc::as_ptr(syms.atoms()).cast(), syms.atoms().database());
-                        nodes.and_then(|s| s.node_atom(name, val(slots, args[0]), make, &existing, table))
-                    } else { None };
-                    if let Some(a) = atom {
-                        kinds::count_term_atom_for_tests();
-                        Some(a)
-                    } else { match nodes.and_then(|s| s.node_read_ref(name, val(slots, args[0]), &more)) {
-                        Some(NodeRead::Text(t)) => text_v(cx, t),
-                        Some(NodeRead::Value(Value::Text(t))) => text_v(cx, &t),
-                        Some(NodeRead::Value(Value::Integer(n))) => Some(n),
-                        _ => None,
-                    } }
-                } else {
-                    // The arguments' texts read into one buffer, the interner's, and their places, numbers and
-                    // slices in arrays: a string an argument and two lists a call were 3.7 M on cold PostHog.
-                    const ARGS: usize = 8;
-                    let v = if args.len() <= ARGS {
-                        let mut buf = std::mem::take(&mut cx.syms.buf);
-                        buf.clear();
-                        let (mut ends, mut numbers) = ([0usize; ARGS], [0i64; ARGS]);
-                        let (mut nt, mut nn) = (0, 0);
-                        for (k, a) in kinds.iter().zip(args) {
-                            let x = val(slots, *a);
-                            match k {
-                                Kind::Text => {
-                                    match scratch(cx, x) {
-                                        Some(t) => buf.push_str(t),
-                                        None => cx.syms.with_name(x, |t| buf.push_str(t)),
-                                    }
-                                    ends[nt] = buf.len();
-                                    nt += 1;
-                                }
-                                Kind::Number => {
-                                    numbers[nn] = x;
-                                    nn += 1;
-                                }
-                            }
-                        }
-                        let mut strs = [""; ARGS];
-                        let mut from = 0;
-                        for (s, &end) in strs.iter_mut().zip(&ends[..nt]) {
-                            *s = &buf[from..end];
-                            from = end;
-                        }
-                        let v = eval(name, &strs[..nt], &numbers[..nn]);
-                        cx.syms.buf = buf;
-                        v
-                    } else {
-                        let mut strs = Vec::new();
-                        let mut numbers = Vec::new();
-                        for (k, a) in kinds.iter().zip(args) {
-                            match k { Kind::Text => strs.push(text(cx, val(slots, *a))), Kind::Number => numbers.push(val(slots, *a)) }
-                        }
-                        let strs: Vec<&str> = strs.iter().map(String::as_str).collect();
-                        eval(name, &strs, &numbers)
-                    };
-                    if let (Some((f, s)), Value::Text(t)) = (keep, &v) {
-                        cx.syms.atoms.kept().keep_text(f, s, t);
-                    }
-                    match v {
-                        Value::Integer(n) => Some(n),
-                        Value::Text(t) => text_v(cx, &t),
-                        _ => None,
-                    }
-                };
-                let Some(v) = v else { return };
+                let Some(v) = func_value(cx, i, slots) else { return };
                 if *bind { slots[*out] = v } else if slots[*out] != v { return }
                 go(cx, i + 1, slots);
                 cx.texts.truncate(mark);
@@ -12570,8 +12582,8 @@ pub struct SetfixCounts {
     /// Rows of chunks whose row program read a lookup's values with the chunk's others (`setfix::lookups`,
     /// `rowcode::ViewTest::looks`).
     pub view_looks: std::sync::atomic::AtomicU64,
-    /// Rows of chunks whose row program read their nodes' preorder keys (`rowcode::Word::Order`).
-    pub node_orders: std::sync::atomic::AtomicU64,
+    /// Rows of chunks whose row program computed calls (`rowcode::Word::Call`).
+    pub chunk_calls: std::sync::atomic::AtomicU64,
     /// A fused chunk's tests of derived inputs asked of it at once (`cands::ask_chunk`): by a node-keyed bit, by value,
     /// by the whole key's hash (`cands::ask_derived_chunk`).
     pub chunk_asks: [std::sync::atomic::AtomicU64; 3],
