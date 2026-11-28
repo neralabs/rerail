@@ -22,6 +22,10 @@
 //!   (`kind(n, #k)` after the atom that binds `n`, t57 E6) is asked of those rows at once and in place
 //!   (`Test::view`, `Source::read_own_batch`: the rows' nodes read as one batch, every node found first, then the
 //!   tested column read and compared).
+//! - a node's preorder key (`$o = @rr_node_order($n)`, a node read, `syntax::NODE_READS`) is computed too, after the
+//!   tests, from a row's column or a parameter (`Word::Order`): read through the run's long-text nodes (the step's
+//!   `texts`), the walk's source for it, a chunk at a time; a row whose node has none fails, as the walk's call does.
+//!   `rf_same_qn`'s two orders and their comparison were three steps of 96 rows each.
 //!
 //! The steps' observed fanouts (`JoinRule::counts`) stay exact: the program outputs each fused
 //! step's running mask, and its popcount is the rows that step passed on.
@@ -52,7 +56,17 @@ pub enum Word {
     /// A slot bound before the atom, for a chunk that spans the rows of many bindings (`spanning`): each row's value
     /// is its binding's (its document's, `doc`), gathered beside the atom's columns.
     Bound { slot: usize, doc: bool },
+    /// A node's preorder key (`@rr_node_order`) of program column `arg`, or of parameter `arg` (`param`), read through
+    /// `Fused::nodes` after the tests; `NO_ORDER` for a node with none.
+    Order { arg: usize, param: bool },
 }
+
+/// `Word::Order`'s value for a node with no preorder key: no key's (`Located::new(key, order)`), and tested against.
+pub const NO_ORDER: i64 = i64::MIN;
+
+/// The node source a node read reads through (`Step::Func`'s `texts`), where the chunk may read it: the run's
+/// long-text nodes, held by the step.
+pub type NodesOf<'a> = &'a dyn Fn(&Step) -> Option<Arc<dyn Source>>;
 
 /// A test fused as a computed column: the step (after the atom) whose atom it asks, and each slot its keys read with
 /// where its value is: a program column (the row's), or a parameter (a slot bound before the atom, or a constant,
@@ -145,6 +159,8 @@ pub struct Fused {
     pub tests: Vec<Test>,
     /// A spanning fusion's bound slots (`Word::Bound`): (program column, slot, its document). Empty otherwise.
     pub(super) bound: Vec<(usize, usize, bool)>,
+    /// The source its node reads (`Word::Order`) read through, where it has any.
+    pub nodes: Option<Arc<dyn Source>>,
 }
 
 #[derive(Clone, Copy)]
@@ -215,7 +231,7 @@ impl Build {
 /// sum pending (the run checks each step for it, which fused steps would skip).
 /// A lookup (`lookups`, `setfix::lookups`) is no atom's scan: its one row is read, by the walk or, after a fused atom,
 /// with the chunk's others as its computed columns.
-pub(super) fn fuse(steps: &[Step], lookups: &[bool], view: ViewOf<'_>) -> Vec<Option<Box<Fused>>> {
+pub(super) fn fuse(steps: &[Step], lookups: &[bool], view: ViewOf<'_>, nodes: NodesOf<'_>) -> Vec<Option<Box<Fused>>> {
     let mut out: Vec<Option<Box<Fused>>> = (0..steps.len()).map(|_| None).collect();
     for (i, step) in steps.iter().enumerate() {
         if steps[..i].iter().any(|s| matches!(s, Step::Scalar { kind: ScalarKind::Sum, bind: true, .. })) {
@@ -225,7 +241,7 @@ pub(super) fn fuse(steps: &[Step], lookups: &[bool], view: ViewOf<'_>) -> Vec<Op
             && !binds.is_empty()
             && !lookups.get(i).copied().unwrap_or(false)
         {
-            out[i] = fused_viewing(binds, &steps[i + 1..], tests_on(), lookups.get(i + 1..).unwrap_or(&[]), view, i > 0).map(Box::new);
+            out[i] = fused_in(binds, &steps[i + 1..], tests_on(), lookups.get(i + 1..).unwrap_or(&[]), view, nodes, false, i > 0).map(Box::new);
         }
     }
     out
@@ -240,7 +256,7 @@ fn tests_on() -> bool {
 /// `fused_viewing` with no view's tests (a reader that has none, the device's): its lookups (`lookups`, per step of
 /// `after`) end the fusion.
 pub fn fused(binds: &[(usize, usize)], after: &[Step], ask: bool, lookups: &[bool]) -> Option<Fused> {
-    fused_in(binds, after, ask, lookups, &|_| None, false, true)
+    fused_in(binds, after, ask, lookups, &|_| None, &|_| None, false, true)
 }
 
 /// The steps after an atom that binds `binds` fused with it, as far as each is row code: a comparison, a document's
@@ -248,23 +264,24 @@ pub fn fused(binds: &[(usize, usize)], after: &[Step], ask: bool, lookups: &[boo
 /// view reads with the chunk's others, its values computed columns. `ask`: whether a test of an input is asked row
 /// by row (which only the CPU's walk does); a view's step read a chunk at a time (`view`) is fused either way.
 pub fn fused_viewing(binds: &[(usize, usize)], after: &[Step], ask: bool, lookups: &[bool], view: ViewOf<'_>, factors: bool) -> Option<Fused> {
-    fused_in(binds, after, ask, lookups, view, false, factors)
+    fused_in(binds, after, ask, lookups, view, &|_| None, false, factors)
 }
 
 /// A probe's fusion for a chunk of many bindings' rows (the walk's keyed batch, decision 0706 E5): as `fused` (its
 /// tests asked), but each slot bound before the atom a column of the row's own binding (`Word::Bound`), not a
 /// parameter of the chunk. Its rows are many bindings' candidates gathered together, its program run once over them.
 pub fn spanning(binds: &[(usize, usize)], after: &[Step], lookups: &[bool]) -> Option<Fused> {
-    fused_in(binds, after, true, lookups, &|_| None, true, true)
+    fused_in(binds, after, true, lookups, &|_| None, &|_| None, true, true)
 }
 
-fn fused_in(binds: &[(usize, usize)], after: &[Step], ask: bool, lookups: &[bool], view: ViewOf<'_>, span: bool, factors: bool) -> Option<Fused> {
+fn fused_in(binds: &[(usize, usize)], after: &[Step], ask: bool, lookups: &[bool], view: ViewOf<'_>, nodes: NodesOf<'_>, span: bool, factors: bool) -> Option<Fused> {
     let mut env: Vec<(usize, Val)> = binds.iter().map(|&(c, s)| (s, Val::Row(Word::Col(c)))).collect();
     let mut b = Build::default();
     let mut acc: Option<u16> = None;
     let mut passed: Vec<Option<u16>> = Vec::new();
     let mut steps = 0;
     let mut tests: Vec<Test> = Vec::new();
+    let mut node_src: Option<Arc<dyn Source>> = None;
     for (at, step) in after.iter().enumerate() {
         let val = |env: &[(usize, Val)], k: Key| -> Val {
             match k {
@@ -433,6 +450,24 @@ fn fused_in(binds: &[(usize, usize)], after: &[Step], ask: bool, lookups: &[bool
                     None
                 }
             }
+            // A node's preorder key (`Word::Order`), of a row's value or a parameter, read through the step's node
+            // source (one for the whole program): a computed column, and a test that the node has one.
+            Step::Func { ref name, ref args, out, bind: true, .. } if name.as_str() == "rr_node_order" && args.len() == 1 => {
+                let arg = match val(&env, args[0]) {
+                    Val::Row(w @ (Word::Col(_) | Word::Look(..) | Word::Bound { doc: false, .. })) => Some((usize::from(b.column(w)), false)),
+                    Val::Param(p @ Param { doc: false, .. }) => Some((usize::from(b.param(p)), true)),
+                    _ => None,
+                };
+                match (arg, nodes(step)) {
+                    (Some((arg, param)), Some(src)) if node_src.as_ref().is_none_or(|h| Arc::ptr_eq(h, &src)) => {
+                        node_src = Some(src);
+                        let w = Word::Order { arg, param };
+                        env.push((out, Val::Row(w)));
+                        b.compare(Val::Row(w), CmpOp::Ne, Val::Param(Param { key: Key::Const(NO_ORDER), doc: false })).map(Some)
+                    }
+                    _ => None,
+                }
+            }
             _ => None,
         };
         let Some(mask) = mask else { break };
@@ -465,7 +500,7 @@ fn fused_in(binds: &[(usize, usize)], after: &[Step], ask: bool, lookups: &[bool
             keys.iter().any(|&(_, k)| k == Key::Slot(s))
         });
         if !binds.iter().all(|&(_, s)| read(s)) {
-            return fused_in(binds, after, false, lookups, view, span, factors);
+            return fused_in(binds, after, false, lookups, view, nodes, span, factors);
         }
     }
     // Only the binds the kept steps made, and the atom's.
@@ -497,13 +532,14 @@ fn fused_in(binds: &[(usize, usize)], after: &[Step], ask: bool, lookups: &[bool
     let program = BlockProgram::row_program(shape, b.ops, outputs, extracts).ok()?;
     let gather = b.columns.iter().enumerate().filter_map(|(k, w)| match *w {
         Word::Col(c) => Some((k, c)),
-        Word::Doc(_) | Word::Held(_) | Word::Look(..) | Word::Bound { .. } => None,
+        Word::Doc(_) | Word::Held(_) | Word::Look(..) | Word::Bound { .. } | Word::Order { .. } => None,
     }).collect();
     let bound = b.columns.iter().enumerate().filter_map(|(k, w)| match *w {
         Word::Bound { slot, doc } => Some((k, slot, doc)),
         _ => None,
     }).collect();
-    Some(Fused { steps, program, columns: b.columns, params: b.params, passed, last, binds: bind_list, gather, tests, bound })
+    let nodes = node_src.filter(|_| b.columns.iter().any(|w| matches!(w, Word::Order { .. })));
+    Some(Fused { steps, program, columns: b.columns, params: b.params, passed, last, binds: bind_list, gather, tests, bound, nodes })
 }
 
 /// A view's step a chunk reads at once (`Test::view`), as `ViewTest` says: a pair test, or a node's own row by its
@@ -588,7 +624,7 @@ fn view_test(b: &mut Build, env: &[(usize, Val)], val: impl Fn(&[(usize, Val)], 
 
 /// The slots the steps bind (`docof` into an unbound slot, `let`), in order.
 fn count_binds(steps: &[Step]) -> usize {
-    steps.iter().filter(|s| matches!(s, Step::DocOf { bind: true, .. } | Step::Let { .. })).count()
+    steps.iter().filter(|s| matches!(s, Step::DocOf { bind: true, .. } | Step::Let { .. } | Step::Func { bind: true, .. })).count()
 }
 
 /// A chunk's columns and the program's values, kept from chunk to chunk.
@@ -807,6 +843,28 @@ impl Fused {
                 };
                 dst.clear();
                 dst.extend(src.iter().map(|&x| rerail_blocks::located::Located::key_wide(x)));
+            }
+        }
+        // The nodes' preorder keys (`Word::Order`), after the tests and the documents: of a column computed before
+        // them, or of a parameter, one read for the chunk.
+        if self.nodes.is_some() {
+            super::run_counts().node_orders.fetch_add(n as u64, std::sync::atomic::Ordering::Relaxed);
+        }
+        for (k, w) in self.columns.iter().enumerate() {
+            if let Word::Order { arg, param } = *w {
+                let src = self.nodes.as_deref().expect("a node order's source");
+                let order = |x: i64| match src.node_read_ref("rr_node_order", x, &[]) {
+                    Some(crate::code_rule_dsl::facts::vtab::NodeRead::Value(rusqlite::types::Value::Integer(v))) => v,
+                    _ => NO_ORDER,
+                };
+                let mut dst = std::mem::take(&mut s.columns[k]);
+                dst.clear();
+                if param {
+                    dst.resize(n, order(s.params[arg]));
+                } else {
+                    dst.extend(s.columns[arg][..n].iter().map(|&x| order(x)));
+                }
+                s.columns[k] = dst;
             }
         }
         // On the stack (decision 0687): a fused chunk's columns and outputs are few.

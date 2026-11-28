@@ -713,9 +713,11 @@ fn the_matcher_wave_allocates_little() {
 }
 
 /// Blocks freed in the run go back to the system: at its end none wait on the free lists (`all`: 829 MB did at the
-/// peak).
+/// peak). On a machine of its own (decision 0442): the tests' machine counts the blocks of every test's run under way
+/// beside this one, whose free lists are still in use.
 #[test]
 fn freed_blocks_are_given_back() {
+    let _own = crate::code_rule_dsl::logic::profile::within(crate::code_rule_dsl::logic::run::Shared::new());
     let (_c, _) = case();
     // What the free lists keep resident: their chunks whose pages went to the OS are no memory of the run's.
     let (held, free) = rerail_accel::blocks::host_held();

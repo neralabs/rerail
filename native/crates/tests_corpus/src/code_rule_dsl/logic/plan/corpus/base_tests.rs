@@ -1792,6 +1792,37 @@ same_bound(n, m) :- pair(n, p), pair(m, p), n < m, kind(n, k), kind(m, j), j = k
     let _ = std::fs::remove_dir_all(&dir);
 }
 
+/// Nodes compared (`n < m`, lowered to their preorder keys, `@rr_node_order`) after the atom that binds one are
+/// compared in its row program, each chunk's keys read at once (`rowcode::Word::Order`), the other node's a parameter.
+/// Its rows are those of the comparison made on `node`'s start (siblings never nest, so their preorder is their starts'
+/// order), both ways round.
+#[test]
+fn nodes_compared_after_a_fused_atom_are_ordered_in_its_row_program() {
+    let dir = corpus("order-looks", &[TREE]);
+    let program = r#"
+.decl pair(n: node, p: node)
+pair(n, p) :- child(p, n, _).
+.decl before(n: node, m: node)
+before(n, m) :- pair(n, p), pair(m, p), n < m.
+.decl before_at(n: node, m: node)
+before_at(n, m) :- pair(n, p), pair(m, p), n != m, node(_, n, _, s, _), node(_, m, _, t, _), s < t.
+.decl after(n: node, m: node)
+after(n, m) :- pair(n, p), pair(m, p), n > m.
+.decl after_at(n: node, m: node)
+after_at(n, m) :- pair(n, p), pair(m, p), n != m, node(_, n, _, s, _), node(_, m, _, t, _), s > t.
+.output before, before_at, after, after_at
+"#;
+    // The run's own scope, held here: its counts are read before it ends.
+    let _run = crate::code_rule_dsl::logic::run::scope(crate::code_rule_dsl::logic::native::width::Settings::from_env);
+    let got = run(&dir, program, &["before", "before_at", "after", "after_at"]);
+    let ordered = crate::code_rule_dsl::logic::native::setfix::run_counts().node_orders.load(std::sync::atomic::Ordering::Relaxed);
+    assert!(ordered > 0, "a row program read its nodes' preorder keys");
+    assert!(!got[0].is_empty() && !got[2].is_empty(), "{got:?}");
+    assert_eq!(got[0], got[1], "before: fused against the starts");
+    assert_eq!(got[2], got[3], "after: fused against the starts");
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
 /// A lookup (`setfix::lookups`: a node's own facts by its id, `kind(n, k)` binding `k`) after a fused atom is read
 /// with the chunk's other rows, its values computed columns (`rowcode::ViewTest::looks`, one `read_own_batch` a
 /// chunk): no probe a row. A lookup keyed by another's value (`child(g, p, _)` then `kind(g, k)`) reads it. Its rows

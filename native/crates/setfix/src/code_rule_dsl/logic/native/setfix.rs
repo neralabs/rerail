@@ -4051,7 +4051,8 @@ pub fn scans(conn: &Connection, name: &str) -> Result<Vec<ScanCase>> {
     for (label, j) in rules {
         for i in 0..j.steps.len() {
             let Some(f) = j.fused_at(i) else { continue };
-            if !f.tests.is_empty() { continue; }
+            // A device runs a scan's program alone: no input asked, no node read.
+            if !f.tests.is_empty() || f.nodes.is_some() { continue; }
             let Step::Atom { src: src @ Src::In(..), keys, tests, .. } = &j.steps[i] else { continue };
             if keys.iter().any(|(_, k)| matches!(k, Key::Slot(_))) || f.params.iter().any(|p| matches!(p.key, Key::Slot(_))) { continue; }
             let key: Vector<i64> = keys.iter().map(|&(_, k)| match k { Key::Const(c) => c, Key::Slot(_) => unreachable!("constants") }).collect();
@@ -9438,7 +9439,16 @@ fn analysed(mut plan: steps::Plan, fuse: bool, is_dot: impl Fn(i64) -> bool, is_
         (v.read_by_own() && rel.ndead == 0 && view_tests_on()).then(|| (Arc::clone(&v.src), v.cols.clone(), v.eqs.clone()))
     };
     plan.lookups = lookups(&s, &plan.ranges);
-    plan.fused = if fuse { rowcode::fuse(&s.steps, &plan.lookups, &view).into_iter().map(|f| f.map(|f| rerail_section::Bound(Arc::from(f)))).collect() } else { s.steps.iter().map(|_| None).collect() };
+    // A node read's source, held by its step (`NodeTexts::Held`; one the walk finds through the database it reads at
+    // its first call, `At`, is not read in a chunk).
+    let nodes = |st: &Step| -> Option<Arc<dyn crate::code_rule_dsl::facts::vtab::Source>> {
+        let Step::Func { texts, .. } = st else { return None };
+        match &**s.bound(texts.as_ref()?) {
+            NodeTexts::Held(n) => Some(Arc::clone(n)),
+            NodeTexts::At(_) => None,
+        }
+    };
+    plan.fused = if fuse { rowcode::fuse(&s.steps, &plan.lookups, &view, &nodes).into_iter().map(|f| f.map(|f| rerail_section::Bound(Arc::from(f)))).collect() } else { s.steps.iter().map(|_| None).collect() };
     // A fused probe's spanning form, for the walk's keyed batch: its candidates of many bindings in one chunk.
     plan.spans = s.steps.iter().enumerate().map(|(i, st)| match st {
         Step::Atom { neg: false, keys, binds, .. } if i > 0 && !keys.is_empty() && plan.fused[i].is_some() => {
@@ -12560,6 +12570,8 @@ pub struct SetfixCounts {
     /// Rows of chunks whose row program read a lookup's values with the chunk's others (`setfix::lookups`,
     /// `rowcode::ViewTest::looks`).
     pub view_looks: std::sync::atomic::AtomicU64,
+    /// Rows of chunks whose row program read their nodes' preorder keys (`rowcode::Word::Order`).
+    pub node_orders: std::sync::atomic::AtomicU64,
     /// A fused chunk's tests of derived inputs asked of it at once (`cands::ask_chunk`): by a node-keyed bit, by value,
     /// by the whole key's hash (`cands::ask_derived_chunk`).
     pub chunk_asks: [std::sync::atomic::AtomicU64; 3],
