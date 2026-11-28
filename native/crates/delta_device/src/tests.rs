@@ -291,7 +291,7 @@ fn the_harness_passes_l1_over_edits_of_l0_on_the_device_or_mixed() {
 #[test]
 fn the_laws_hold_on_the_device_or_mixed() {
     use rerail_delta_exec::contract::Bench;
-    use rerail_delta_exec::laws::{coalescing, composition_and_cutoff, edit_among};
+    use rerail_delta_exec::laws::{Edit, coalescing, composition_and_cutoff, edit_among, edit_of_among, let_go_among};
     device();
     let base = |name: &str| std::env::temp_dir().join(format!("rerail-laws-dev-{}-{name}", std::process::id()));
     let versions = rerail_delta_exec::boot::chain_versions();
@@ -299,8 +299,11 @@ fn the_laws_hold_on_the_device_or_mixed() {
     let laws = |bench: &mut Bench, name: &str| {
         let c = composition_and_cutoff(bench, &base(&format!("{name}-l6")), &versions).unwrap_or_else(|e| panic!("{name}: {e}"));
         let among = [0, 3].map(|n| edit_among(bench, &base(&format!("{name}-among-{n}")), n).unwrap_or_else(|e| panic!("{name}: {e}")));
+        // Each edit P1 holds fixed, among 3 modules; and one document let go among 3 (its driver refuses where D5 breaks).
+        let edits: Vec<_> = Edit::ALL.iter().enumerate().map(|(i, &(what, edit))| edit_of_among(bench, &base(&format!("{name}-edit-{i}")), 3, edit).unwrap_or_else(|e| panic!("{name}, {what}: {e}"))).collect();
+        let_go_among(bench, &base(&format!("{name}-let-go")), 3).unwrap_or_else(|e| panic!("{name}: {e}"));
         let l8 = coalescing(bench, &base(&format!("{name}-l8"))).unwrap_or_else(|e| panic!("{name}: {e}"));
-        (c.same_as_cold, (c.touched.asked, c.touched.launches, c.touched.work), among, l8)
+        (c.same_as_cold, (c.touched.asked, c.touched.launches, c.touched.work), among, edits, l8)
     };
     // D5 holds on each (its driver refuses where it breaks).
     for (name, b) in [("the device", Runner::on(Box::new(Gpu::host().expect("the tests' device")))), ("mixed", Runner::mixed(Box::new(Gpu::host().expect("the tests' device")), 9))] {

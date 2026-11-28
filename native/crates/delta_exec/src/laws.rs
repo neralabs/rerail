@@ -86,8 +86,28 @@ pub struct EditAmong {
     pub step_ledger: Vec<PhaseWork>,
 }
 
-/// The edited module's two versions, and the `i`-th unchanged module's text.
-const EDITED: [&str; 2] = ["e(1, 2).\np(x) :- e(x, _).\n", "e(1, 2).\np(x) :- e(x, _).\nq(x) :- p(x), !e(x, 1).\n"];
+/// The edited module's first version, and the `i`-th unchanged module's text.
+const EDITED: &str = "e(1, 2).\np(x) :- e(x, _).\n";
+
+/// An edit P1 holds fixed while the rest doubles: of the edited module's text (`EDITED` to the version given), or the
+/// module added to the set (its text `EDITED`, the set's documents named again).
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum Edit {
+    Text(&'static str),
+    Added,
+}
+
+impl Edit {
+    /// The edits L1 sees: a rule added, a rule gone, a fact's value changed, comments alone (a new tape, the program
+    /// the same by value), and a new module.
+    pub const ALL: [(&'static str, Edit); 5] = [
+        ("a rule added", Edit::Text("e(1, 2).\np(x) :- e(x, _).\nq(x) :- p(x), !e(x, 1).\n")),
+        ("a rule removed", Edit::Text("e(1, 2).\n")),
+        ("a fact's value changed", Edit::Text("e(1, 3).\np(x) :- e(x, _).\n")),
+        ("comments alone", Edit::Text("// a note above\ne(1, 2). // and one after a fact\np(x) :- e(x, _).\n")),
+        ("a module added", Edit::Added),
+    ];
+}
 fn other(i: usize) -> String {
     format!("e({i}, {}).\np(x) :- e(x, _), !q(x).\nr(x, y) :- e(x, y), p(y).\n", i + 1)
 }
@@ -96,7 +116,12 @@ fn other(i: usize) -> String {
 /// read and stepped. Refused where L7 breaks: an output's changed partitions other than the edited module's, an
 /// unchanged module's rows moved, or L1's output not the plain function's on the set. What the edit's step cost.
 pub fn edit_among(bench: &mut Bench, base: &Path, others: usize) -> Result<EditAmong, String> {
-    edit_among_in(bench, base, others)
+    edit_among_in(bench, base, others, Edit::ALL[0].1)
+}
+
+/// `edit_among` of edit `edit`.
+pub fn edit_of_among(bench: &mut Bench, base: &Path, others: usize, edit: Edit) -> Result<EditAmong, String> {
+    edit_among_in(bench, base, others, edit)
 }
 
 /// Equal where the runners must agree (CPU, device, mixed): the work, the launches and the asks. The ledgers are the
@@ -148,11 +173,15 @@ pub fn work_grows(base: &[PhaseWork], at: &[PhaseWork], doublings: u64) -> Vec<S
     out
 }
 
-fn edit_among_in(bench: &mut Bench, base: &Path, others: usize) -> Result<EditAmong, String> {
+fn edit_among_in(bench: &mut Bench, base: &Path, others: usize, edit: Edit) -> Result<EditAmong, String> {
     let root = base.join("root");
     std::fs::create_dir_all(&root).map_err(|e| e.to_string())?;
     let paths: Vec<(String, String)> = std::iter::once(("e.rerail".to_string(), "e".to_string())).chain((0..others).map(|i| (format!("m{i}.rerail"), format!("m{i}")))).collect();
-    write(&root.join("e.rerail"), EDITED[0], 600)?;
+    // A module added is no document of the set before the edit, nor a file.
+    let first = if edit == Edit::Added { &paths[1..] } else { &paths[..] };
+    if edit != Edit::Added {
+        write(&root.join("e.rerail"), EDITED, 600)?;
+    }
     for i in 0..others {
         write(&root.join(format!("m{i}.rerail")), &other(i), 600)?;
     }
@@ -161,14 +190,20 @@ fn edit_among_in(bench: &mut Bench, base: &Path, others: usize) -> Result<EditAm
     let mut docs = DocSet::new(world, &bench.dir, None, None)?;
     let mut inst = Instance::new(&L1, &mut bench.dir)?;
     // Every document read (its stat; loaded, parsed and interned when new or changed), then L1 stepped over the set.
-    let read_all = |bench: &mut Bench, docs: &mut DocSet| -> Result<(), String> {
+    // The set's documents named, `paths`, each read (its stat) where the journal cannot say what changed.
+    let read_all = |bench: &mut Bench, docs: &mut DocSet, paths: &[(String, String)], new: &[(String, String)]| -> Result<(), String> {
         // A run of the world (decision 0105): the journal asked once what changed under the root, the rest trusted.
         docs.world.begin();
         let mut leaves = docs.world.leaves_w(&mut bench.dir);
-        // What the journal names changed since the last run, read alone; every document where it cannot say.
+        // What the journal names changed since the last run, read alone; every document where it cannot say. A new
+        // document is the caller's to name (a run's demand does).
         let module = |p: &str| p.trim_end_matches(".rerail").to_string();
         if docs.read_changed(bench, &mut leaves, atoms, &module)?.is_none() {
             let named: Vec<(&str, &str)> = paths.iter().map(|(p, m)| (p.as_str(), m.as_str())).collect();
+            docs.read_all(bench, &mut leaves, atoms, &named)?;
+        }
+        if !new.is_empty() {
+            let named: Vec<(&str, &str)> = new.iter().map(|(p, m)| (p.as_str(), m.as_str())).collect();
             docs.read_all(bench, &mut leaves, atoms, &named)?;
         }
         docs.world.commit_leaves(&bench.ops, &mut bench.dir, leaves)?;
@@ -179,18 +214,22 @@ fn edit_among_in(bench: &mut Bench, base: &Path, others: usize) -> Result<EditAm
         let count = u64::from(atoms.count(&bench.dir));
         inst.step(&L1, &mut bench.cx(), &[(&docs.tape, from.0, docs.tape.head())], &[GlobalIn { block: atoms.0, before: from.1, after: count }], None)
     };
-    read_all(bench, &mut docs).map_err(|e| format!("the cold read: {e}"))?;
+    read_all(bench, &mut docs, first, &[]).map_err(|e| format!("the cold read: {e}"))?;
     step(bench, &docs, &mut inst, (None, None)).map_err(|e| format!("the cold step: {e}"))?;
     let (h1, c1, o1) = (docs.tape.head(), u64::from(atoms.count(&bench.dir)), inst.heads());
     // The outputs' befores, held as a reader holds a generation: the step may roll them up.
     let _held: Vec<_> = o1.iter().flatten().filter_map(|&h| bench.dir.block(h)).collect();
     let rows1 = outs(bench, &inst)?;
     // The edit.
-    write(&root.join("e.rerail"), EDITED[1], 300)?;
+    match edit {
+        Edit::Text(t) => write(&root.join("e.rerail"), t, 300)?,
+        Edit::Added => write(&root.join("e.rerail"), EDITED, 300)?,
+    }
+    let new = if edit == Edit::Added { &paths[..1] } else { &[] };
     let (asked0, launched) = (docs.world.asked, bench.ops.launches());
     bench.dir.take_work();
     bench.dir.validate(true);
-    read_all(bench, &mut docs).map_err(|e| format!("the edit's read: {e}"))?;
+    read_all(bench, &mut docs, &paths, new).map_err(|e| format!("the edit's read: {e}"))?;
     let read_ledger = bench.dir.take_work();
     let a = docs.world.asked;
     let asked = crate::files::Asked { reads: a.reads - asked0.reads, loads: a.loads - asked0.loads, parses: a.parses - asked0.parses, interns: a.interns - asked0.interns };
@@ -356,4 +395,46 @@ pub fn demand_moves(bench: &mut Bench, base: &Path) -> Result<(), String> {
         return Err("D5: l0 asked again is not its 14 rules alone".into());
     }
     plain(bench, &docs, &inst)
+}
+
+/// P1 of letting a document go (D5): a set of `others` modules and one more, `e`, all asked; the set read against the
+/// asks (`DocSet::forget_unasked`, from ∅: nothing to let go); then `e` no longer asked, and the set read against the
+/// asks again in the validation mode. Refused where the set does not hold the others alone after. That forget's ledger.
+pub fn let_go_among(bench: &mut Bench, base: &Path, others: usize) -> Result<Vec<PhaseWork>, String> {
+    use crate::contract::{asks_shape, push_layer};
+    use crate::trace::{RollUp, Trace};
+    let root = base.join("root");
+    std::fs::create_dir_all(&root).map_err(|e| e.to_string())?;
+    let paths: Vec<(String, String)> = std::iter::once(("e.rerail".to_string(), "e".to_string())).chain((0..others).map(|i| (format!("m{i}.rerail"), format!("m{i}")))).collect();
+    write(&root.join("e.rerail"), EDITED, 600)?;
+    for i in 0..others {
+        write(&root.join(format!("m{i}.rerail")), &other(i), 600)?;
+    }
+    let atoms = Atoms::new(&mut bench.dir);
+    let world = World::new(root.clone(), Store::open(&base.join("store"))?, &bench.dir, [None; 3])?;
+    let mut docs = DocSet::new(world, &bench.dir, None, None)?;
+    docs.world.begin();
+    let mut leaves = docs.world.leaves_w(&mut bench.dir);
+    let named: Vec<(&str, &str)> = paths.iter().map(|(p, m)| (p.as_str(), m.as_str())).collect();
+    docs.read_all(bench, &mut leaves, atoms, &named)?;
+    docs.world.commit_leaves(&bench.ops, &mut bench.dir, leaves)?;
+    docs.world.end();
+    let keys: Vec<i64> = paths.iter().map(|(p, _)| docs.key(&bench.dir, atoms, p)).collect::<Result<_, _>>()?;
+    // The asks: every document, then every one but `e`.
+    let mut asks = Trace::new(&asks_shape())?.with_roll_up(RollUp::Never);
+    let all: Vec<(Vec<i64>, i32)> = keys.iter().map(|&k| (vec![k], 1)).collect();
+    push_layer(&bench.ops, &mut bench.dir, &mut asks, &all)?;
+    docs.forget_unasked(bench, Some(&asks)).map_err(|e| format!("the first forget: {e}"))?;
+    push_layer(&bench.ops, &mut bench.dir, &mut asks, &[(vec![keys[0]], -1)])?;
+    bench.dir.take_work();
+    bench.dir.validate(true);
+    let forgot = docs.forget_unasked(bench, Some(&asks));
+    bench.dir.validate(false);
+    forgot.map_err(|e| format!("e let go: {e}"))?;
+    let ledger = bench.dir.take_work();
+    let held: BTreeSet<i64> = oracle_rows(&bench.dir, &docs.tape, docs.tape.head())?.into_iter().map(|r| r[0]).collect();
+    if held != keys[1..].iter().copied().collect() {
+        return Err(format!("D5: the set holds {held:?} after e ({}) was let go", keys[0]));
+    }
+    Ok(ledger)
 }

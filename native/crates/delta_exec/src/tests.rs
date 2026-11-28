@@ -446,19 +446,22 @@ fn k0_pass_keeps_each_documents_sizes_and_a_gone_one_takes_its_entry() {
     pass(&mut fx, &[da, db], &[]);
     let rows = |fx: &mut Fx, d: crate::k0::K0Doc| -> Vec<u32> { k0_rows(fx, &[d]).unwrap().iter().map(|r| r.len() as u32).collect() };
     let (want_a, want_b) = (rows(&mut fx, da), rows(&mut fx, db));
-    let read = |fx: &Fx| fx.dir.read("t", &[cache]).unwrap().block(0).to_vec(); // copy: not block data (the test's look at the cache)
-    let bytes = read(&fx);
-    assert_eq!(c::sizes(&bytes, 7).unwrap(), &want_a[..]);
-    assert_eq!(c::sizes(&bytes, 8).unwrap(), &want_b[..]);
-    let used = c::used(&bytes);
+    // The cache read where it lies (a 1 GB reservation, touched only where it is written).
+    let look = |fx: &Fx, f: &mut dyn FnMut(&[u8])| f(fx.dir.read("t", &[cache]).unwrap().block(0));
+    let mut used = 0;
+    look(&fx, &mut |b| {
+        assert_eq!(c::sizes(b, 7).unwrap(), &want_a[..]);
+        assert_eq!(c::sizes(b, 8).unwrap(), &want_b[..]);
+        used = c::used(b);
+    });
     // Module 7 gone, with no document read: its entry let go; then module 9 takes its room.
     pass(&mut fx, &[], &[7]);
-    let bytes = read(&fx);
-    assert!(c::sizes(&bytes, 7).is_none() && c::sizes(&bytes, 8).is_some());
+    look(&fx, &mut |b| assert!(c::sizes(b, 7).is_none() && c::sizes(b, 8).is_some()));
     let d9 = k0_doc(&fx, &a, 9);
     pass(&mut fx, &[d9], &[]);
-    let bytes = read(&fx);
-    assert_eq!(c::sizes(&bytes, 9).unwrap(), &want_a[..]);
-    assert_eq!(c::used(&bytes), used, "the gone document's room, taken");
+    look(&fx, &mut |b| {
+        assert_eq!(c::sizes(b, 9).unwrap(), &want_a[..]);
+        assert_eq!(c::used(b), used, "the gone document's room, taken");
+    });
     runs.into_iter().for_each(|r| fx.dir.release(r));
 }

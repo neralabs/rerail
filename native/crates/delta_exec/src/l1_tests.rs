@@ -442,21 +442,40 @@ fn edits_coalesce_two_as_one_and_an_undo_as_the_identity() {
 /// Below 4 the set's geometric roll-up (O5) merges the edit's layer, as big as the set, in two launches more.
 #[test]
 fn the_work_of_one_edit_does_not_grow_with_the_rest() {
-    // P1, in the validation mode: each operation's launches, items and state reads, one edit among 4 to 64 unchanged
-    // modules (`laws::work_grows`).
+    // P1, in the validation mode: each operation's launches, items and state reads (L1's own among them), each edit
+    // L1 sees among 4 to 64 unchanged modules (`laws::work_grows`).
     let sizes = [4u64, 8, 16, 32, 64];
-    let runs: Vec<crate::laws::EditAmong> = sizes.iter().map(|&n| crate::laws::edit_among(&mut Bench::new().unwrap(), &laws_base(&format!("p1-{n}")), n as usize).unwrap_or_else(|e| panic!("{n}: {e}"))).collect();
-    let b = &runs[0];
-    let load = b.read_ledger.iter().find(|w| w.op == "answer_load").map(|w| w.items);
-    assert_eq!((load, b.asked.reads), (Some(1), 1), "the edit's read asks the load answer of the edited document alone (the journal names it): {:?}", b.asked);
-    assert_eq!(b.read_launches, 5, "the edit's read: its load answer, its parse and intern, the set's replace and commit");
-    for (r, n) in runs.iter().zip(sizes) {
-        let m = crate::laws::merges(&r.read_ledger) + crate::laws::merges(&r.step_ledger);
-        assert_eq!((&r.work, r.asked, r.launches + r.read_launches - m), (&b.work, b.asked, b.launches + b.read_launches), "{n} unchanged modules beside the edit");
-        let d = (n / sizes[0]).ilog2() as u64;
-        for (what, base, at) in [("read", &b.read_ledger, &r.read_ledger), ("step", &b.step_ledger, &r.step_ledger)] {
-            let grew = crate::laws::work_grows(base, at, d);
-            assert!(grew.is_empty(), "the edit's {what} beside {n} unchanged modules grew with them:\n{}", grew.join("\n"));
+    for (what, edit) in crate::laws::Edit::ALL {
+        let runs: Vec<crate::laws::EditAmong> = sizes
+            .iter()
+            .map(|&n| crate::laws::edit_of_among(&mut Bench::new().unwrap(), &laws_base(&format!("p1-{}-{n}", what.replace(' ', "-").replace('\'', ""))), n as usize, edit).unwrap_or_else(|e| panic!("{what}, {n}: {e}")))
+            .collect();
+        let b = &runs[0];
+        let load = b.read_ledger.iter().find(|w| w.op == "answer_load").map(|w| w.items);
+        assert_eq!((load, b.asked.reads), (Some(1), 1), "{what}: the edit's read asks the load answer of the edited document alone (the journal names it): {:?}", b.asked);
+        assert!(b.read_launches <= 5, "{what}: the edit's read: its load answer, its parse and intern (none of no new name), the set's replace and commit: {}", b.read_launches);
+        assert!(b.step_ledger.iter().any(|w| w.op == "L1" && w.phase == "host"), "{what}: L1's own reads in the ledger");
+        for (r, n) in runs.iter().zip(sizes) {
+            let m = crate::laws::merges(&r.read_ledger) + crate::laws::merges(&r.step_ledger);
+            assert_eq!((&r.work, r.asked, r.launches + r.read_launches - m), (&b.work, b.asked, b.launches + b.read_launches), "{what}: {n} unchanged modules beside the edit");
+            let d = (n / sizes[0]).ilog2() as u64;
+            for (side, base, at) in [("read", &b.read_ledger, &r.read_ledger), ("step", &b.step_ledger, &r.step_ledger)] {
+                let grew = crate::laws::work_grows(base, at, d);
+                assert!(grew.is_empty(), "{what}: the edit's {side} beside {n} unchanged modules grew with them:\n{}", grew.join("\n"));
+            }
         }
+    }
+}
+
+/// P1 of D5: letting one document go among 4 to 64 kept ones costs each operation what it costs among 4
+/// (`laws::let_go_among`, `laws::work_grows`): the set reads the asks' change since it last let documents go.
+#[test]
+fn letting_one_document_go_does_not_grow_with_the_documents_kept() {
+    let sizes = [4u64, 8, 16, 32, 64];
+    let runs: Vec<Vec<crate::dir::PhaseWork>> = sizes.iter().map(|&n| crate::laws::let_go_among(&mut Bench::new().unwrap(), &laws_base(&format!("d5-p1-{n}")), n as usize).unwrap_or_else(|e| panic!("{n}: {e}"))).collect();
+    assert!(runs[0].iter().any(|w| w.op == "semi_change"), "the asks' change read by semi_change: {:?}", runs[0]);
+    for (r, n) in runs.iter().zip(sizes) {
+        let grew = crate::laws::work_grows(&runs[0], r, (n / sizes[0]).ilog2() as u64);
+        assert!(grew.is_empty(), "letting one document go beside {n} kept grew with them:\n{}", grew.join("\n"));
     }
 }

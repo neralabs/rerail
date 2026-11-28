@@ -65,9 +65,10 @@ pub struct DocSet {
     pub tape: Trace,
     /// The last run's pins, kept (`Pins::keep`).
     kept: Option<BlockId>,
-    /// The asks' head the set was last read against (`forget_unasked`; `None`: never): every document read since was
-    /// asked there, so while the asks stay at it no document is unasked.
-    covered: Option<Option<BlockId>>,
+    /// The asks' head the set was last read against (`forget_unasked`; `None`: never), and the set's head then, its
+    /// unasked documents gone: every document read since was asked there, so while the asks stay at it no document is
+    /// unasked, and once they move the documents to let go are the change since those two states.
+    covered: Option<(Option<BlockId>, Option<BlockId>)>,
     /// The residency's counts (slabs retired, drops) when every document of the set was last made resident
     /// (`resident`): while they stay, no slab of it went, and a document come since was placed by its read, so the
     /// set is resident still.
@@ -103,16 +104,24 @@ impl DocSet {
     pub fn forget_unasked(&mut self, bench: &mut Bench, asks: Option<&Trace>) -> Result<(), String> {
         // Asks where the set was last read against them: the set holds only what they ask (each read is of an ask).
         let at = asks.and_then(Trace::head);
-        if self.covered == Some(at) {
+        if self.covered.map(|c| c.0) == Some(at) {
             return Ok(());
         }
         let Some(h) = self.tape.head() else {
-            self.covered = Some(at);
+            self.covered = Some((at, None));
             return Ok(());
         };
+        // The change since the set was last read against the asks, where both those states lie in their chains: the
+        // set then held no row the asks did not ask, so the rows it holds unasked now are the change of `A ▷ B` since
+        // (its rows of sign +1), found from the change's candidates (P1). Else, from ∅: every row of the set.
+        let chained = |t: &Trace, at: Option<BlockId>| at.map_or(Ok(true), |b| t.holds(&bench.dir, b));
+        let since = match (self.covered, asks) {
+            (Some((ca, cs)), Some(t)) if chained(&self.tape, cs)? && chained(t, ca)? => Some((ca, cs)),
+            _ => None,
+        };
         let n = self.tape.reading(&bench.dir, Some(h), |s| Read::end(s).get() as usize)?;
-        let a = Side { before: None, after: Some(h), arity: TAPE_ARITY, col: 0 };
-        let b = asks.map(|t| Side { before: None, after: t.head(), arity: 1, col: 0 });
+        let a = Side { before: since.and_then(|s| s.1), after: Some(h), arity: TAPE_ARITY, col: 0 };
+        let b = asks.map(|t| Side { before: since.and_then(|s| s.0), after: t.head(), arity: 1, col: 0 });
         let nk = match asks {
             Some(t) => t.reading(&bench.dir, t.head(), |s| Read::end(s).get() as usize)?,
             None => 0,
@@ -138,9 +147,18 @@ impl DocSet {
         let dropped = self.drop_from(bench, &parts);
         parts.release(&mut bench.dir);
         if dropped.is_ok() {
-            self.covered = Some(at);
+            self.covered = Some((at, self.tape.head()));
         }
         dropped
+    }
+
+    /// The set's tape and L1's tape port's asks rolled up at a run's end (`Trace::roll_up_run`, each since its head at
+    /// the run's start), the tape from `tape_was` and the asks from `asks_was` to `asks_now`: where the set was last
+    /// read against the asks at both heads, it is so still at the rolled-up ones (a roll-up changes no state).
+    pub fn rolled_up(&mut self, tape_was: Option<BlockId>, asks_was: Option<BlockId>, asks_now: Option<BlockId>) {
+        if self.covered == Some((asks_was, tape_was)) {
+            self.covered = Some((asks_now, self.tape.head()));
+        }
     }
 
     /// The documents `parts` lists retracted from the set and from the world's places, where each keeps them.
@@ -531,8 +549,16 @@ pub fn run(l1: &L1, inst: &mut Instance, l0: &str, module: &str, globals: Atoms,
         }
         // Its delta read, the run's before is no longer a layer the set needs: its layers rolled up (P§11.4's roll-up,
         // the document set's), so the next run's before is one head.
+        let (tape_was, asks_was) = (docs.tape.head(), inst.ask_heads());
         docs.tape.roll_up_run(&bench.ops, &mut bench.dir, last.and_then(|p| p.tape), Tiling::WHOLE)?;
         inst.roll_up_want(&mut bench.cx(), last.and_then(|p| p.want))?;
+        let since: Vec<Option<BlockId>> = match last {
+            Some(p) => p.asks.clone(),
+            None => vec![None; asks_was.len()],
+        };
+        inst.roll_up_asks(&mut bench.cx(), &since)?;
+        let t = L1Ports::TAPE.index();
+        docs.rolled_up(tape_was, asks_was[t], inst.ask_heads()[t]);
         let doc = doc.ok_or("l0 was not asked")?;
         Ok::<_, String>((doc, work, from.1.unwrap_or(0)))
     })();

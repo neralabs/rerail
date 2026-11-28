@@ -541,7 +541,9 @@ impl Instance {
     pub fn new<O: DeltaOp>(_: &O, dir: &mut Directory) -> Result<Instance, String> {
         let ports = ports_of::<O>()?;
         let outs = ports.outs.iter().map(|p| Trace::new(&p.shape)).collect::<Result<_, _>>()?;
-        let asks = (0..ports.ins.len()).map(|p| O::Ports::ASKED.contains(&p).then(|| Trace::new(&asks_shape())).transpose()).collect::<Result<_, _>>()?;
+        // A requests trace is read as a chain, as the want is: the document set reads its change since it last let
+        // documents go (`DocSet::forget_unasked`); rolled up at a run's end (`roll_up_asks`).
+        let asks = (0..ports.ins.len()).map(|p| O::Ports::ASKED.contains(&p).then(|| Trace::new(&asks_shape()).map(|t| t.with_roll_up(RollUp::Never))).transpose()).collect::<Result<_, _>>()?;
         Ok(Instance { outs, cache: OpCache::new(dir), want: Self::want_trace()?, asks })
     }
 
@@ -556,6 +558,16 @@ impl Instance {
         self.want.roll_up_run(cx.ops, cx.dir, since, Tiling::WHOLE).map(drop)
     }
 
+    /// Its requests traces' layers since `since` (a port each, its head at the run's start) rolled up: a run's end.
+    pub fn roll_up_asks(&mut self, cx: &mut Cx<'_>, since: &[Option<BlockId>]) -> Result<(), String> {
+        for (t, s) in self.asks.iter_mut().zip(since) {
+            if let Some(t) = t {
+                t.roll_up_run(cx.ops, cx.dir, *s, Tiling::WHOLE)?;
+            }
+        }
+        Ok(())
+    }
+
     /// The instance with its traces' layers placed at `place` (`dir::PLACE_KEPT`: they last across processes), at a
     /// kept run's heads (`[]`, `None`: none). Its cache is in memory: a new process's is ∅ (L5).
     pub fn resumed(mut self, place: u32, outs: &[Option<BlockId>], want: Option<BlockId>, asks: &[Option<BlockId>]) -> Instance {
@@ -563,6 +575,22 @@ impl Instance {
         self.want = std::mem::replace(&mut self.want, Self::want_trace().expect("the want's shape")).resumed(place, want);
         self.asks = std::mem::take(&mut self.asks).into_iter().enumerate().map(|(p, t)| t.map(|t| t.resumed(place, asks.get(p).copied().flatten()))).collect();
         self
+    }
+
+    /// Output `o` read by a later operator as a chain (a pipeline's wire, L6): no roll-up while a run reads it, for its
+    /// reader's before is a layer of its chain; rolled up at the run's end (`roll_up_outs`), as the document set's tape
+    /// is under L1.
+    pub fn read_as_chain(&mut self, o: usize) {
+        self.outs[o].set_roll_up(RollUp::Never);
+    }
+
+    /// A run's end, for the outputs read as chains: each one's layers since `since` (its head at the run's start)
+    /// rolled up, then the geometric policy below (`Trace::roll_up_run`).
+    pub fn roll_up_outs(&mut self, cx: &mut Cx<'_>, chained: &[usize], since: &[Option<BlockId>]) -> Result<(), String> {
+        for &o in chained {
+            self.outs[o].roll_up_run(cx.ops, cx.dir, since[o], Tiling::WHOLE)?;
+        }
+        Ok(())
     }
 
     /// Its outputs' heads.
@@ -665,11 +693,15 @@ impl Instance {
             // After an attempt that outgrew its runs, a cache it wrote is open: it reads as ∅, and its first write
             // resets it.
             let mut cache = CacheW::<O::Cache>::new(self.cache, from);
+            // The validation mode: the operator's own reads of its ports' states and its want's (the host's), counted
+            // apart from its launches' (each launch accounts its own).
+            let host_reads = std::sync::atomic::AtomicU64::new(0);
+            let validating = cx.dir.validating();
             let work = {
                 let wanted = want.map_or(Vec::new(), |(b, a)| [b, a].into_iter().flatten().collect());
                 let heads: Vec<BlockId> = ins.iter().flat_map(|p| [p.1, p.2]).flatten().chain(wanted).collect();
                 let l = cx.dir.read("an operator's inputs", &heads)?;
-                let table = l.table();
+                let table = if validating { l.table().counting(&host_reads) } else { l.table() };
                 let mut ports = Vec::with_capacity(ins.len());
                 for (t, b, a) in ins {
                     let after = t.state(&table, *a)?;
@@ -693,6 +725,9 @@ impl Instance {
                     return Err(e);
                 }
             };
+            if validating {
+                cx.dir.account(op_name::<O>(), "host", again == 0, 1, host_reads.load(std::sync::atomic::Ordering::Relaxed));
+            }
             let mut over = false;
             for (k, &r) in out.runs.iter().enumerate() {
                 let l = cx.dir.read("an operator's output", &[r])?;
@@ -743,6 +778,12 @@ impl Instance {
             return Ok(work);
         }
     }
+}
+
+/// An operator's name in the validation mode's ledger: its type's, without its path.
+fn op_name<O>() -> &'static str {
+    let n = std::any::type_name::<O>();
+    n.rsplit("::").next().unwrap_or(n)
 }
 
 impl Instance {
@@ -894,6 +935,191 @@ pub fn harness_under<O: DeltaOp>(op: &O, chain: &Chain, drop_at: usize, wants: O
     harness_on(op, &mut bench, &mut ins, &heads, &globals, drop_at, wants)
 }
 
+#[cfg(any(test, feature = "test-hooks"))]
+/// L7's work, for an operator declared per partition: each input port `parts` partitions of `rows` rows
+/// (`row(port, partition, i)`), stepped cold, then an edit of partition 0 alone (each port's row 0 gone and a row
+/// `rows` added) stepped in the validation mode: that step's ledger, the operator's own reads (`host`) among it.
+/// Compared across `parts` (`laws::work_grows`), an edit's work does not grow with the partitions it leaves alone.
+pub fn partition_work<O: DeltaOp>(op: &O, parts: i64, rows: u64, row: &dyn Fn(usize, i64, u64) -> Vec<i64>) -> Result<Vec<crate::dir::PhaseWork>, String> {
+    if !<O::Ports as PortSet>::PER_PARTITION {
+        return Err("L7's work is of an operator declared per partition".into());
+    }
+    let shapes: Vec<Shape> = ports_of::<O>()?.ins.into_iter().map(|p| p.shape).collect();
+    let cold: Vec<Vec<(Vec<i64>, i32)>> = (0..shapes.len()).map(|p| (0..parts).flat_map(|q| (0..rows).map(move |i| (row(p, q, i), 1))).collect()).collect();
+    let edit: Vec<Vec<(Vec<i64>, i32)>> = (0..shapes.len()).map(|p| vec![(row(p, 0, 0), -1), (row(p, 0, rows), 1)]).collect();
+    let mut bench = Bench::new()?;
+    let (ins, heads) = inputs_of(&mut bench, &shapes, &vec![cold, edit])?;
+    let mut inst = Instance::new(op, &mut bench.dir)?;
+    let between = |a: usize, b: usize| -> Vec<InPort<'_>> { ins.iter().enumerate().map(|(p, t)| (t, heads[a][p], heads[b][p])).collect() };
+    inst.step(op, &mut bench.cx(), &between(0, 1), &[], None)?;
+    bench.dir.take_work();
+    bench.dir.validate(true);
+    let stepped = inst.step(op, &mut bench.cx(), &between(1, 2), &[], None);
+    bench.dir.validate(false);
+    stepped?;
+    Ok(bench.dir.take_work())
+}
+
+#[cfg(any(test, feature = "test-hooks"))]
+/// Where an input port of a pipeline's stage reads: an input of the pipeline, or output `.1` of an earlier stage `.0`.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Wire {
+    Input(usize),
+    Stage(usize, usize),
+}
+
+#[cfg(any(test, feature = "test-hooks"))]
+/// A pipeline's stage: an operator and its instance, its port set's type erased, so stages of any operators wire into
+/// one pipeline (`pipeline_laws`). A stage takes no globals.
+pub trait Stage {
+    fn ports(&self) -> Result<Ports, String>;
+    /// The instance's step over its input ports.
+    fn step(&mut self, cx: &mut Cx<'_>, ins: &[InPort<'_>]) -> Result<Work, String>;
+    fn instance(&self) -> &Instance;
+    fn instance_mut(&mut self) -> &mut Instance;
+    /// The plain function on its inputs' states.
+    fn apply(&self, cx: &mut Cx<'_>, ins: &[(&Trace, Option<BlockId>)]) -> Result<Vec<BTreeSet<Vec<i64>>>, String>;
+}
+
+#[cfg(any(test, feature = "test-hooks"))]
+/// Operator `op` as a pipeline's stage, its instance from ∅.
+pub struct Staged<'o, O: DeltaOp> {
+    pub op: &'o O,
+    pub inst: Instance,
+}
+
+#[cfg(any(test, feature = "test-hooks"))]
+impl<'o, O: DeltaOp> Staged<'o, O> {
+    pub fn new(op: &'o O, dir: &mut Directory) -> Result<Staged<'o, O>, String> {
+        Ok(Staged { op, inst: Instance::new(op, dir)? })
+    }
+}
+
+#[cfg(any(test, feature = "test-hooks"))]
+impl<O: DeltaOp> Stage for Staged<'_, O> {
+    fn ports(&self) -> Result<Ports, String> {
+        ports_of::<O>()
+    }
+
+    fn step(&mut self, cx: &mut Cx<'_>, ins: &[InPort<'_>]) -> Result<Work, String> {
+        self.inst.step(self.op, cx, ins, &[], None)
+    }
+
+    fn instance(&self) -> &Instance {
+        &self.inst
+    }
+
+    fn instance_mut(&mut self) -> &mut Instance {
+        &mut self.inst
+    }
+
+    fn apply(&self, cx: &mut Cx<'_>, ins: &[(&Trace, Option<BlockId>)]) -> Result<Vec<BTreeSet<Vec<i64>>>, String> {
+        apply(self.op, cx, ins, &[])
+    }
+}
+
+#[cfg(any(test, feature = "test-hooks"))]
+/// What a pipeline's run saw: its states stepped, and its stages' cutoffs (a step of a stage whose every input was
+/// the identity).
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct Piped {
+    pub steps: usize,
+    pub cutoffs: usize,
+}
+
+#[cfg(any(test, feature = "test-hooks"))]
+/// L6 over any wiring of operators: `stages`, in an order where each reads only the pipeline's inputs `ins` and
+/// earlier stages (its ports wired by `wires`), stepped state by state of `heads` (the first state ∅), each stage's
+/// step over its sources' change. At every state each stage's output is the composed function's: its plain function
+/// on its sources' composed outputs, the pipeline run cold from the inputs. A stage whose every input is the identity
+/// cuts off (L4 of the next): checks only, no launch, its output where it was. The first breach is returned.
+pub fn pipeline_laws(bench: &mut Bench, ins: &[Trace], heads: &[Vec<Option<BlockId>>], stages: &mut [Box<dyn Stage + '_>], wires: &[Vec<Wire>]) -> Result<Piped, Broken> {
+    let fail = |law, step, what: String| Broken { law, step, what };
+    let ports: Vec<Ports> = stages.iter().map(|s| s.ports()).collect::<Result<_, _>>().map_err(|e| fail("setup", 0, e))?;
+    for (s, w) in wires.iter().enumerate() {
+        let wrong = w.len() != ports[s].ins.len()
+            || w.iter().any(|w| match *w {
+                Wire::Input(p) => p >= ins.len(),
+                Wire::Stage(t, o) => t >= s || o >= ports[t].outs.len(),
+            });
+        if wrong {
+            return Err(fail("setup", 0, format!("stage {s}'s wires {w:?} name no port, or a later stage")));
+        }
+    }
+    // Each output a later stage reads, read as a chain (`Instance::read_as_chain`): a geometric roll-up at its commit
+    // would renumber the rows its reader's before holds.
+    let chained: Vec<Vec<usize>> = (0..stages.len()).map(|t| (0..ports[t].outs.len()).filter(|&o| wires.iter().flatten().any(|w| *w == Wire::Stage(t, o))).collect()).collect();
+    for (st, c) in stages.iter_mut().zip(&chained) {
+        c.iter().for_each(|&o| st.instance_mut().read_as_chain(o));
+    }
+    let mut seen = Piped::default();
+    for k in 0..heads.len() {
+        let mut cx = bench.cx();
+        // The composed reference: each stage's plain function on its sources' composed outputs, in traces of its own.
+        let mut composed: Vec<Vec<BTreeSet<Vec<i64>>>> = Vec::new(); // copy: derived (the reference's rows)
+        let mut built: Vec<(Vec<Trace>, Vec<Option<BlockId>>)> = Vec::new();
+        for (s, st) in stages.iter().enumerate() {
+            let rows = {
+                let srcs: Vec<(&Trace, Option<BlockId>)> = wires[s]
+                    .iter()
+                    .map(|w| match *w {
+                        Wire::Input(p) => (&ins[p], heads[k][p]),
+                        Wire::Stage(t, o) => (&built[t].0[o], built[t].1[o]),
+                    })
+                    .collect();
+                st.apply(&mut cx, &srcs).map_err(|e| fail("reference", k, e))?
+            };
+            let mut traces = Vec::new();
+            let mut at = Vec::new();
+            for (o, r) in rows.iter().enumerate() {
+                let mut t = Trace::new(&ports[s].outs[o].shape).map_err(|e| fail("reference", k, e))?.with_roll_up(RollUp::Never);
+                let pairs: Vec<(&Vec<i64>, i32)> = r.iter().map(|r| (r, 1)).collect();
+                at.push(if pairs.is_empty() { None } else { Some(push_layer(cx.ops, cx.dir, &mut t, &pairs).map_err(|e| fail("reference", k, e))?) });
+                traces.push(t);
+            }
+            composed.push(rows);
+            built.push((traces, at));
+        }
+        // The threaded pipeline: each stage stepped over its sources' change, its sources' befores held (a stage's
+        // commit may roll them up).
+        let befores: Vec<Vec<Option<BlockId>>> = stages.iter().map(|s| s.instance().heads()).collect();
+        let _held: Vec<_> = befores.iter().flatten().flatten().filter_map(|&h| cx.dir.block(h)).collect(); // copy: not block data (handles held)
+        for s in 0..stages.len() {
+            let (done, rest) = stages.split_at_mut(s);
+            let st = &mut rest[0];
+            let src: Vec<InPort<'_>> = wires[s]
+                .iter()
+                .map(|w| match *w {
+                    Wire::Input(p) => (&ins[p], if k == 0 { None } else { heads[k - 1][p] }, heads[k][p]),
+                    Wire::Stage(t, o) => (&done[t].instance().outs[o], befores[t][o], done[t].instance().heads()[o]),
+                })
+                .collect();
+            let identity = k > 0 && src.iter().all(|p| p.1 == p.2);
+            let launched = cx.ops.launches();
+            let work = st.step(&mut cx, &src).map_err(|e| fail("L6", k, format!("stage {s}: {e}")))?;
+            if identity {
+                seen.cutoffs += 1;
+                if !work.is_checks_only() || cx.ops.launches() != launched {
+                    return Err(fail("L6", k, format!("stage {s}'s every input the identity, and it did not cut off: {work:?}, {} launches", cx.ops.launches() - launched)));
+                }
+                if st.instance().heads() != befores[s] {
+                    return Err(fail("L6", k, format!("stage {s}'s every input the identity, and its output moved")));
+                }
+            }
+            let got: Vec<BTreeSet<Vec<i64>>> = st.instance().outs.iter().map(|t| oracle_rows(cx.dir, t, t.head())).collect::<Result<_, _>>().map_err(|e| fail("L6", k, e))?;
+            if got != composed[s] {
+                return Err(fail("L6", k, format!("stage {s}'s output is not the composed function's: {got:?}, want {:?}", composed[s])));
+            }
+        }
+        // The run's end: the outputs read as chains rolled up, their readers done.
+        for (s, st) in stages.iter_mut().enumerate() {
+            st.instance_mut().roll_up_outs(&mut cx, &chained[s], &befores[s]).map_err(|e| fail("L6", k, format!("stage {s}'s roll-up: {e}")))?;
+        }
+        seen.steps += 1;
+    }
+    Ok(seen)
+}
+
 /// What operators run in (a run's, a harness's): the operations runner, a directory and the blobs.
 pub struct Bench {
     /// The operations runner: every operation declared, its twin registered.
@@ -953,9 +1179,21 @@ impl Bench {
 /// The input traces of a chain of row changes, a trace a port, every state kept (a layer a step, none rolled up), and
 /// each step's heads.
 #[allow(clippy::type_complexity)]
-fn inputs<O: DeltaOp>(bench: &mut Bench, chain: &Chain) -> Result<(Vec<Trace>, Vec<Vec<Option<BlockId>>>), String> {
+fn inputs<O: DeltaOp>(bench: &mut Bench, chain: &Chain) -> Result<Inputs, String> {
+    let shapes: Vec<Shape> = ports_of::<O>()?.ins.into_iter().map(|p| p.shape).collect();
+    inputs_of(bench, &shapes, chain)
+}
+
+#[cfg(any(test, feature = "test-hooks"))]
+/// A chain's input traces, and their heads at each of its states.
+pub type Inputs = (Vec<Trace>, Vec<Vec<Option<BlockId>>>);
+
+#[cfg(any(test, feature = "test-hooks"))]
+/// A trace a shape of `shapes`, each state of `chain` a layer on it: the traces, and their heads at each state (the
+/// first, ∅).
+pub fn inputs_of(bench: &mut Bench, shapes: &[Shape], chain: &Chain) -> Result<Inputs, String> {
     let Bench { ops, dir, .. } = &mut *bench;
-    let mut ins: Vec<Trace> = ports_of::<O>()?.ins.iter().map(|p| Trace::new(&p.shape).map(|t| t.with_roll_up(RollUp::Never))).collect::<Result<_, _>>()?;
+    let mut ins: Vec<Trace> = shapes.iter().map(|s| Trace::new(s).map(|t| t.with_roll_up(RollUp::Never))).collect::<Result<_, _>>()?;
     let mut heads: Vec<Vec<Option<BlockId>>> = vec![vec![None; ins.len()]];
     for step in chain {
         let mut now = heads.last().cloned().expect("a state");
@@ -1046,6 +1284,11 @@ pub fn harness_on<O: DeltaOp>(op: &O, bench: &mut Bench, ins: &mut [Trace], head
         let cold: Vec<InPort<'_>> = ins.iter().enumerate().map(|(p, t)| (t, None, heads[k][p])).collect();
         let (gstep, gcold) = (between(Some(k - 1), k), between(None, k));
         full.push(apply(op, &mut cx, &at(k), &globals[k]).map_err(|e| fail("reference", k, e))?);
+        // L9 by meaning: an operator declared per partition gives each partition's output from that partition's inputs
+        // alone.
+        if <O::Ports as PortSet>::PER_PARTITION {
+            by_partition(op, &mut cx, &ports, ins, &heads[k], &globals[k], &full[k]).map_err(|e| fail("L9", k, e))?;
+        }
         // L2: a null start, from ∅ and an empty cache, is ∅ → op(X).
         let mut fresh = Instance::new(op, cx.dir).map_err(setup)?;
         let w = move_want(&mut cx, &mut fresh, k).map_err(|e| fail("L2", k, e))?;
@@ -1089,32 +1332,16 @@ pub fn harness_on<O: DeltaOp>(op: &O, bench: &mut Bench, ins: &mut [Trace], head
                 return Err(fail("D1", k, "over-demand (every output) changed what the want asks".into()));
             }
             // The asks suffice: each asked port restricted to the keys asked of it.
-            let mut narrowed: Vec<Trace> = Vec::new();
-            let mut nheads: Vec<Option<BlockId>> = Vec::new();
-            for (p, t) in ins.iter().enumerate() {
-                if threaded.asks[p].is_none() {
-                    continue;
-                }
-                let at = threaded.asks[p].as_ref().expect("a port asked of");
-                let asked: BTreeSet<i64> = oracle_rows(cx.dir, at, at.head()).map_err(|e| fail("D1", k, e))?.into_iter().map(|r| r[0]).collect();
-                let c = ports.ins[p].shape.partition.map_or(0, |c| c as usize);
-                let rows: Vec<(Vec<i64>, i32)> = oracle_rows(cx.dir, t, heads[k][p]).map_err(|e| fail("D1", k, e))?.into_iter().filter(|r| asked.contains(&r[c])).map(|r| (r, 1)).collect();
-                let mut n = Trace::new(&ports.ins[p].shape).map_err(|e| fail("D1", k, e))?.with_roll_up(RollUp::Never);
-                nheads.push(if rows.is_empty() { None } else { Some(push_layer(cx.ops, cx.dir, &mut n, &rows).map_err(|e| fail("D1", k, e))?) });
-                narrowed.push(n);
+            let mut asked: Vec<Option<BTreeSet<i64>>> = Vec::new(); // copy: derived (the keys asked of each port)
+            for a in &threaded.asks {
+                asked.push(match a {
+                    None => None,
+                    Some(at) => Some(oracle_rows(cx.dir, at, at.head()).map_err(|e| fail("D1", k, e))?.into_iter().map(|r| r[0]).collect()),
+                });
             }
-            let mut j = 0;
-            let restricted: Vec<(&Trace, Option<BlockId>)> = ins
-                .iter()
-                .enumerate()
-                .map(|(p, t)| {
-                    if threaded.asks[p].is_none() {
-                        return (t, heads[k][p]);
-                    }
-                    j += 1;
-                    (&narrowed[j - 1], nheads[j - 1])
-                })
-                .collect();
+            let keep = |p: usize, r: &[i64]| asked[p].as_ref().is_none_or(|a| a.contains(&r[ports.ins[p].shape.partition.map_or(0, |c| c as usize)]));
+            let (narrowed, nheads) = inputs_where(&mut cx, &ports, ins, &heads[k], &keep).map_err(|e| fail("D1", k, e))?;
+            let restricted: Vec<(&Trace, Option<BlockId>)> = narrowed.iter().zip(nheads).collect();
             let on_asks = apply(op, &mut cx, &restricted, &globals[k]).map_err(|e| fail("D1", k, e))?;
             if narrow(&on_asks, k) != narrow(&full[k], k) {
                 return Err(fail("D1", k, format!("on the inputs it asked ({:?}), the wanted output differs", threaded.ask_heads())));
@@ -1152,6 +1379,58 @@ pub fn harness_on<O: DeltaOp>(op: &O, bench: &mut Bench, ins: &mut [Trace], head
         for p in 0..threaded.outs.len() {
             if na[p] != nc[p] {
                 return Err(fail("L3", k, format!("port {}: the chain's output drifted from a cold run's", ports.outs[p].name)));
+            }
+        }
+    }
+    Ok(())
+}
+
+#[cfg(any(test, feature = "test-hooks"))]
+/// The inputs `ins` at `heads`, each port's rows kept where `keep(port, row)` holds, in traces of the harness's own
+/// (each a layer of the rows kept, or ∅).
+fn inputs_where(cx: &mut Cx<'_>, ports: &Ports, ins: &[Trace], heads: &[Option<BlockId>], keep: &dyn Fn(usize, &[i64]) -> bool) -> Result<(Vec<Trace>, Vec<Option<BlockId>>), String> {
+    let mut traces = Vec::with_capacity(ins.len());
+    let mut at = Vec::with_capacity(ins.len());
+    for (p, t) in ins.iter().enumerate() {
+        // copy: derived (the harness's restricted input, a test's)
+        let rows: Vec<(Vec<i64>, i32)> = oracle_rows(cx.dir, t, heads[p])?.into_iter().filter(|r| keep(p, r)).map(|r| (r, 1)).collect();
+        let mut n = Trace::new(&ports.ins[p].shape)?.with_roll_up(RollUp::Never);
+        at.push(if rows.is_empty() { None } else { Some(push_layer(cx.ops, cx.dir, &mut n, &rows)?) });
+        traces.push(n);
+    }
+    Ok((traces, at))
+}
+
+#[cfg(any(test, feature = "test-hooks"))]
+/// L9 by meaning, for an operator declared per partition (`PortSet::PER_PARTITION`): at the inputs' states `heads`,
+/// each partition's inputs alone, run by the plain function, give in every output exactly the rows `full` (the plain
+/// function's on all of them) holds in that partition, and none in another; and no output holds a row of a partition
+/// no input holds. Where it breaks, the operator reads across partitions, whatever its ports' types say.
+fn by_partition<O: DeltaOp>(op: &O, cx: &mut Cx<'_>, ports: &Ports, ins: &[Trace], heads: &[Option<BlockId>], globals: &[Global], full: &[BTreeSet<Vec<i64>>]) -> Result<(), String> {
+    let col = |s: &Shape| s.partition.map(|c| c as usize).ok_or("a per-partition operator's port with no partition");
+    let mut parts = BTreeSet::new(); // copy: derived (the inputs' partitions)
+    for (p, t) in ins.iter().enumerate() {
+        let c = col(&ports.ins[p].shape)?;
+        parts.extend(oracle_rows(cx.dir, t, heads[p])?.into_iter().map(|r| r[c]));
+    }
+    for (o, rows) in full.iter().enumerate() {
+        let c = col(&ports.outs[o].shape)?;
+        if let Some(r) = rows.iter().find(|r| !parts.contains(&r[c])) {
+            return Err(format!("output {}'s row {r:?} is in a partition no input holds", ports.outs[o].name));
+        }
+    }
+    for &q in &parts {
+        let keep = |p: usize, r: &[i64]| ports.ins[p].shape.partition.is_some_and(|c| r[c as usize] == q);
+        let (alone, at) = inputs_where(cx, ports, ins, heads, &keep)?;
+        let at: Vec<(&Trace, Option<BlockId>)> = alone.iter().zip(at).collect();
+        let got = apply(op, cx, &at, globals)?;
+        for (o, rows) in got.iter().enumerate() {
+            let c = col(&ports.outs[o].shape)?;
+            if let Some(r) = rows.iter().find(|r| r[c] != q) {
+                return Err(format!("partition {q}'s inputs alone give output {} a row of another partition: {r:?}", ports.outs[o].name));
+            }
+            if *rows != full[o].iter().filter(|r| r[c] == q).cloned().collect::<BTreeSet<_>>() {
+                return Err(format!("output {}'s partition {q} is not what its inputs alone give: it reads across partitions", ports.outs[o].name));
             }
         }
     }

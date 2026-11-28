@@ -270,6 +270,27 @@ impl Trace {
         Trace { roll, ..self }
     }
 
+    /// Whether the state at `at` is one of its chain's (`at` its head or a layer below it): a reader's before that a
+    /// later state's change can be read from. A walk of its layers.
+    pub fn holds(&self, dir: &Directory, at: BlockId) -> Result<bool, String> {
+        let Some(head) = self.head else { return Ok(false) };
+        let l = dir.read("a trace's chain", &[head])?;
+        let table = l.table();
+        let mut id = Some(head.0);
+        while let Some(b) = id {
+            if b == at.0 {
+                return Ok(true);
+            }
+            id = Layer::new(table.block(b).ok_or("a layer below")?)?.below().map(|(b, _)| b);
+        }
+        Ok(false)
+    }
+
+    /// Its roll-up policy set to `roll`.
+    pub fn set_roll_up(&mut self, roll: RollUp) {
+        self.roll = roll;
+    }
+
     pub fn head(&self) -> Option<BlockId> {
         self.head
     }
