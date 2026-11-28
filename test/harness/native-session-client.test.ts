@@ -194,6 +194,88 @@ describe("pi session routing", () => {
     expect(nativeBoundary.startDaemonForPackage).not.toHaveBeenCalled();
     expect(active).toEqual([]);
   });
+
+  it("closes the daemon's runtime the host held when a checkout's pi session keeps its in-process one", async () => {
+    nativeBoundary.isMainRerailBuild.mockReturnValue(false);
+    const held = new NativeSessionClient({
+      instance: { workspaceRoot: "/workspace", url: new URL("http://127.0.0.1:4737") },
+      token: "private-token",
+      host: "pi", sessionId: "pi-session", entries: () => [],
+      appendEntry() {},
+      deliver() {},
+    });
+    const close = vi.fn(async () => undefined);
+
+    await expect(createNativeSession({ ...piHost([]), current: () => held, close }, {}, piSession, false, {})).resolves.toBe("host");
+
+    expect(close).toHaveBeenCalledOnce();
+  });
+});
+
+describe("the daemon a session's runtime reaches", () => {
+  const daemonAnswers = (state: Record<string, string>): void => {
+    nativeBoundary.startDaemonForPackage.mockResolvedValue({
+      started: false,
+      daemon: { state: { url: "http://127.0.0.1:4737", ...state }, health: { workspaceRoot: "/workspace" } },
+    });
+  };
+  const hostHolding = (active: NativeSessionClient[], current?: NativeSessionClient) => ({
+    current: () => current,
+    matchesCurrent: () => current !== undefined,
+    close: async () => undefined,
+    activate(client: NativeSessionClient) { active.push(client); },
+    entries: () => [],
+    appendEntry() {},
+    deliver() {},
+    reattach: async () => undefined,
+  });
+  const session = { host: "omp" as const, sessionId: "session", cwd: "/workspace" };
+
+  it("starts the host's runtime of the session again in place where the daemon, its certificate pin and its token are the same", async () => {
+    daemonAnswers({ nativeToken: "private-token", tlsFingerprint256: "pin" });
+    vi.stubGlobal("fetch", async () => Response.json({ deliveries: [], entries: [] }));
+    const held = new NativeSessionClient({
+      instance: { workspaceRoot: "/workspace", url: new URL("http://127.0.0.1:4737"), tlsFingerprint256: "pin" },
+      token: "private-token",
+      host: "omp", sessionId: "session", entries: () => [],
+      appendEntry() {},
+      deliver() {},
+    });
+    const active: NativeSessionClient[] = [];
+
+    await expect(createNativeSession(hostHolding(active, held), {}, session, false, {})).resolves.toBe("attached");
+
+    expect(active).toHaveLength(1);
+    expect(active[0]).toBe(held);
+    await held.close();
+  });
+
+  it("sends the daemon's access capability with each request", async () => {
+    daemonAnswers({ nativeToken: "private-token", accessToken: "access-capability" });
+    const access: Array<string | null> = [];
+    vi.stubGlobal("fetch", async (_url: URL, init: RequestInit) => {
+      access.push(new Headers(init.headers).get("x-rerail-access"));
+      return Response.json({ deliveries: [], entries: [] });
+    });
+    const active: NativeSessionClient[] = [];
+
+    await expect(createNativeSession(hostHolding(active), {}, session, false, {})).resolves.toBe("attached");
+    await active[0]?.close();
+
+    expect(access).not.toHaveLength(0);
+    expect(new Set(access)).toEqual(new Set(["access-capability"]));
+  });
+
+  it("builds no runtime for a daemon without native sessions, and says how to replace it", async () => {
+    daemonAnswers({});
+    vi.stubGlobal("fetch", async () => Response.json({ deliveries: [], entries: [] }));
+    const active: NativeSessionClient[] = [];
+
+    await expect(createNativeSession(hostHolding(active), {}, session, false, {}))
+      .rejects.toThrow("Rerail daemon lacks native session support; run rerail daemon stop and retry.");
+
+    expect(active).toEqual([]);
+  });
 });
 
 describe("daemon native client branch encoding", () => {
@@ -944,6 +1026,50 @@ describe("daemon native client polling resilience", () => {
       expect.objectContaining({ count: 1, recovered: true }),
     ]);
     await active[0]!.close();
+  });
+
+  it("leaves the gap of another session's runtime it replaces to that session's marker", async () => {
+    vi.spyOn(process.stderr, "write").mockReturnValue(true);
+    const recorded: Array<string | null> = [];
+    let restarted = false;
+    vi.stubGlobal("fetch", async (_url: URL, init: RequestInit) => {
+      const token = new Headers(init.headers).get("authorization");
+      if (restarted && token === "Bearer old-token") return Response.json({ error: "native-authorization-invalid" }, { status: 401 });
+      if (readBody(init).operation === "record-gap") recorded.push(token);
+      return Response.json({ deliveries: [], entries: [], result: { ok: true } });
+    });
+    nativeBoundary.startDaemonForPackage.mockResolvedValue({
+      started: false,
+      daemon: { state: { url: "http://127.0.0.1:4737", nativeToken: "new-token" }, health: { workspaceRoot: "/workspace" } },
+    });
+    const left = new NativeSessionClient({
+      instance: { workspaceRoot: "/workspace", url: new URL("http://127.0.0.1:4737") },
+      token: "old-token",
+      host: "omp", sessionId: "left", entries: () => [],
+      appendEntry() {},
+      deliver() {},
+    });
+    await left.initialize({});
+    await left.activate();
+    restarted = true;
+    await left.ingest({ kind: "user-prompt", sessionId: "left", eventId: "lost", text: "lost" });
+    const active: NativeSessionClient[] = [];
+
+    await expect(createNativeSession({
+      current: () => left,
+      matchesCurrent: () => false,
+      close: () => left.close().then(() => undefined),
+      activate(client) { active.push(client); },
+      entries: () => [],
+      appendEntry() {},
+      deliver() {},
+      reattach: async () => undefined,
+    }, {}, { host: "omp", sessionId: "next", cwd: "/workspace" }, false, {})).resolves.toBe("attached");
+    // A runtime offers the daemon every gap it holds as it closes, so one handed over would be recorded by now.
+    await active[0]!.close();
+
+    expect(active).toHaveLength(1);
+    expect(recorded).toEqual([]);
   });
 
   it("hands over an event the retired runtime drops while it drains its last requests, leaving the footer to its replacement", async () => {
