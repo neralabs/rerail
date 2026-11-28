@@ -1176,6 +1176,8 @@ UKL_INLINE void stage_scatter_one(Longs L, Longs R_rows, JSPACE const uint8_t* R
         }
         return;
     }
+    // A binding its count found no row for writes none: not walked again (`join_program::stage_scatter_one`).
+    if ((offsets[t + 1] - o0) <= at) return;
     candidates(s, L, t, R, F, kv, &lo, &hi, &how);
     Walked wk = {0u, 3u};
     for (uint32_t q = lo; q < hi && at < s->cap_out; q = cand_next(s, how, q)) {

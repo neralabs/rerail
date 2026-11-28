@@ -8,8 +8,19 @@ use std::cell::{Cell, RefCell};
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex, OnceLock};
 
-/// (stratum tag, item kind, stage read) -> [items, cycles, instructions, threads' rows (t1 - t0 summed)].
-type Table = HashMap<(u32, u32, u32), [u64; 4]>;
+/// (stratum tag, item kind, stage read) -> [items, cycles, instructions, threads' rows (t1 - t0 summed)], then the
+/// item's tallies (`tally`).
+type Table = HashMap<(u32, u32, u32), [u64; 4 + TALLIES]>;
+
+/// What an item tallies (`tally`), by index: its bindings; each binding's walk by its kind (`Walk::how` 0 to 6: rows,
+/// an index group, children, ancestors, a subtree, by kind, field rows); the candidates walked, those that matched,
+/// its rows out; a scatter's binding by its path (its one row kept, its finds kept, walked again); the bindings run
+/// at lanes; and a witness's probes.
+pub const TALLIES: usize = 16;
+pub const TALLY_NAMES: [&str; TALLIES] = [
+    "bindings", "walk_rows", "walk_group", "walk_children", "walk_climb", "walk_subtree", "walk_kind", "walk_field",
+    "cands", "matched", "out", "sc_one", "sc_finds", "sc_walk", "lanes", "probes",
+];
 
 struct Global {
     file: String,
@@ -41,6 +52,27 @@ unsafe extern "C" {
 thread_local! {
     static TAG: Cell<u32> = const { Cell::new(0) };
     static MINE: RefCell<Option<Arc<Mutex<Table>>>> = const { RefCell::new(None) };
+    static TALLY: Cell<[u64; TALLIES]> = const { Cell::new([0; TALLIES]) };
+}
+
+/// Whether items tally what they walk (`RERAIL_STAGE_TALLY=1`, with `RERAIL_STAGE_PROF`): apart from the cycles,
+/// which the tallies' own work adds to (some 15 G instructions of `stage_count` on all).
+#[inline]
+pub fn tallies_on() -> bool {
+    static ON: OnceLock<bool> = OnceLock::new();
+    *ON.get_or_init(|| on() && std::env::var("RERAIL_STAGE_TALLY").is_ok_and(|v| v == "1"))
+}
+
+/// Adds `n` to this thread's tally `i` (`TALLY_NAMES`), counted into the item that runs (`add`). Off, one load.
+#[inline]
+pub fn tally(i: usize, n: u64) {
+    if tallies_on() {
+        TALLY.with(|t| {
+            let mut a = t.get();
+            a[i] += n;
+            t.set(a);
+        });
+    }
 }
 
 /// Whether items are counted.
@@ -107,6 +139,10 @@ pub fn add(kind: u32, read: u32, since: [u64; 2], rows: u64) {
         e[1] += now[1].wrapping_sub(since[1]);
         e[2] += now[0].wrapping_sub(since[0]);
         e[3] += rows;
+        let a = TALLY.with(|t| t.replace([0; TALLIES]));
+        for (x, v) in e[4..].iter_mut().zip(a) {
+            *x += v;
+        }
     });
 }
 
@@ -117,18 +153,27 @@ fn write() {
     for t in g.tables.lock().unwrap().iter() {
         for (k, v) in t.lock().unwrap().iter() {
             let e = all.entry(*k).or_default();
-            for i in 0..4 {
-                e[i] += v[i];
+            for (x, y) in e.iter_mut().zip(v) {
+                *x += y;
             }
         }
     }
     let tags = g.tags.lock().unwrap();
     let mut rows: Vec<_> = all.into_iter().collect();
     rows.sort_by_key(|(_, v)| std::cmp::Reverse(v[1]));
-    let mut s = String::from("stratum\tkind\tread\titems\tcycles\tinstructions\trows\n");
+    let mut s = String::from("stratum\tkind\tread\titems\tcycles\tinstructions\trows");
+    for n in TALLY_NAMES {
+        s.push('\t');
+        s.push_str(n);
+    }
+    s.push('\n');
     for ((tag, kind, read), v) in rows {
         let name = tags.get(tag as usize).map_or("?", String::as_str);
-        s.push_str(&format!("{name}\t{kind}\t{read}\t{}\t{}\t{}\t{}\n", v[0], v[1], v[2], v[3]));
+        s.push_str(name);
+        for x in [u64::from(kind), u64::from(read)].into_iter().chain(v) {
+            s.push_str(&format!("\t{x}"));
+        }
+        s.push('\n');
     }
     let _ = std::fs::write(&g.file, s);
 }

@@ -1929,6 +1929,11 @@ unsafe fn stage_count_one(st: &St, j: &Job, b: &Bufs, t: u32, acc: &mut [u32; 17
     }
     let mut kv = [0i64; 8];
     let w = st.candidates(t, j.f, &mut kv);
+    let prof = crate::stage_prof::tallies_on();
+    if prof {
+        crate::stage_prof::tally(0, 1);
+        crate::stage_prof::tally(1 + w.how.min(6) as usize, 1);
+    }
     if s.mode == 4 {
         let got = st.aggregate(t, w, &kv);
         if got == Err(2) && s.counter != NONE {
@@ -1946,10 +1951,13 @@ unsafe fn stage_count_one(st: &St, j: &Job, b: &Bufs, t: u32, acc: &mut [u32; 17
     let mut finds = 0u32;
     // The one row out where the walk's is one (`FINDS_ONE`): its row and its tape node.
     let mut one = (NONE, X_NONE);
+    let (mut walked, mut matched) = (0u64, 0u64);
     st.each(w, &kv, |r, q, key| {
+        walked += 1;
         if if s.mode == 3 { !st.row_live(r) } else { !st.matches(r, &kv, key) } {
             return true;
         }
+        matched += 1;
         if exists {
             found = true;
             return false;
@@ -1970,6 +1978,11 @@ unsafe fn stage_count_one(st: &St, j: &Job, b: &Bufs, t: u32, acc: &mut [u32; 17
         }
         true
     });
+    if prof {
+        crate::stage_prof::tally(8, walked);
+        crate::stage_prof::tally(9, matched);
+        crate::stage_prof::tally(10, u64::from(c));
+    }
     if exists {
         c = (found != (s.mode == 2)) as u32;
     } else if s.mode == 0 {
@@ -2036,6 +2049,7 @@ unsafe fn stage_scatter_one(st: &St, j: &Job, b: &Bufs, t: u32) {
         }
         0 if *b.v.add(t as usize) as u64 & FINDS_ONE != 0 => {
             // Its one row out (`stage_count_one`'s), found again from its tape node: no walk, no select.
+            crate::stage_prof::tally(11, 1);
             let found = *b.v.add(t as usize) as u64;
             let (r, x) = (found as u32, (found >> 32) as u32 & X_NONE);
             st.seat(r, x);
@@ -2043,6 +2057,7 @@ unsafe fn stage_scatter_one(st: &St, j: &Job, b: &Bufs, t: u32) {
         }
         0 if *b.v.add(t as usize) as u32 != NONE => {
             // Its finds (`stage_count_one`'s): its rows out, each found once, none walked again.
+            crate::stage_prof::tally(12, 1);
             let found = *b.v.add(t as usize) as u64;
             let (first, mut bits) = (found as u32, (found >> 32) as u32);
             while bits != 0 && a < s.cap_out {
@@ -2052,16 +2067,27 @@ unsafe fn stage_scatter_one(st: &St, j: &Job, b: &Bufs, t: u32) {
                 a += 1;
             }
         }
+        // A binding its count found no row for writes none: not walked again (on all, most of the bindings walked
+        // twice, `rf_crossing`'s 740 k of 806 k).
+        _ if !kept => {}
         _ => {
             let mut kv = [0i64; 8];
             let w = st.candidates(t, j.f, &mut kv);
+            let prof = crate::stage_prof::tallies_on();
+            if prof {
+                crate::stage_prof::tally(13, 1);
+                crate::stage_prof::tally(1 + w.how.min(6) as usize, 1);
+            }
+            let (mut walked, mut matched) = (0u64, 0u64);
             st.each(w, &kv, |r, _, key| {
                 if a >= s.cap_out {
                     return false;
                 }
+                walked += 1;
                 if if s.mode == 3 { !st.row_live(r) } else { !st.matches(r, &kv, key) } {
                     return true;
                 }
+                matched += 1;
                 if !st.defined(t, r) || (s.last != NONE && !st.out_bit(st.eval(t, r), s.last)) {
                     return true;
                 }
@@ -2069,6 +2095,10 @@ unsafe fn stage_scatter_one(st: &St, j: &Job, b: &Bufs, t: u32) {
                 a += 1;
                 true
             });
+            if prof {
+                crate::stage_prof::tally(8, walked);
+                crate::stage_prof::tally(9, matched);
+            }
         }
     }
 }
@@ -2107,16 +2137,30 @@ unsafe fn witness_count_one(st: &St, j: &Job, b: &Bufs, t: u32) {
     let w = st.candidates(t, j.f, &mut kv);
     let nb = s.agg[0].min(3) as usize;
     let mut found = 0;
+    let (mut walked, mut matched, mut probes) = (0u64, 0u64, 0u64);
     st.each(w, &kv, |r, _, key| {
+        walked += 1;
         if !st.matches(r, &kv, key) {
             return true;
         }
-        let all = (0..nb).all(|k| witness_probe(&*j.bs.add(k), st.l, t, s.cap_in, st, r, j.w[k], j.wf[k]));
+        matched += 1;
+        let all = (0..nb).all(|k| {
+            probes += 1;
+            witness_probe(&*j.bs.add(k), st.l, t, s.cap_in, st, r, j.w[k], j.wf[k])
+        });
         if all {
             found = 1;
         }
         !all
     });
+    if crate::stage_prof::tallies_on() {
+        crate::stage_prof::tally(0, 1);
+        crate::stage_prof::tally(1 + w.how.min(6) as usize, 1);
+        crate::stage_prof::tally(8, walked);
+        crate::stage_prof::tally(9, matched);
+        crate::stage_prof::tally(10, found as u64);
+        crate::stage_prof::tally(15, probes);
+    }
     *b.c.add(t as usize) = found;
 }
 
@@ -2226,7 +2270,9 @@ unsafe fn scan_count_one(st: &St, j: &Job, b: &Bufs, kv: &[i64; 8], cands: &Scan
         return;
     };
     let mut c = 0;
+    crate::stage_prof::tally(8, 1);
     if st.matches(id, kv, false) {
+        crate::stage_prof::tally(9, 1);
         let v = if s.nops > 0 { st.eval(0, id) } else { 0 };
         if s.counter != NONE {
             at(j.counters.add(s.counter as usize)).fetch_add(1, SeqCst);
@@ -2757,6 +2803,7 @@ unsafe fn stage_count_range(st: &St, j: &Job, b: &Bufs, t0: u32, t1: u32) {
     // The stage's counters, the range's added once.
     let mut acc = [0u32; 17];
     if stage_lanes::runs_at_lanes(s) {
+        crate::stage_prof::tally(14, u64::from(live.saturating_sub(t0)));
         stage_lanes::stage_count_lanes::<{ stage_lanes::LANES }>(st, j, b.c, b.v, t0.min(live), live, &mut acc);
     } else {
         for t in t0..live {
@@ -2789,6 +2836,10 @@ unsafe fn scan_count_range(st: &St, j: &Job, b: &Bufs, t0: u32, t1: u32) {
     // Its counts are its candidates' and one (its row word is `n`, its prep's), or its relation's rows' (a late
     // prep's): none past its candidates.
     let (kv, cands) = st.scan_cands(b.v);
+    if t0 == 0 {
+        crate::stage_prof::tally(0, 1);
+        crate::stage_prof::tally(1 + cands.how.min(6) as usize, 1);
+    }
     fill_u32(b.c, t0.max(cands.n), t1, 0);
     for r in t0..t1.min(cands.n) {
         scan_count_one(st, j, b, &kv, &cands, r);
