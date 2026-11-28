@@ -283,8 +283,8 @@ UKL_INLINE uint32_t k0_n(CBlk t, UKL_GLOBAL const uint32_t* slots, UKL_GLOBAL co
 
 // `count`: each statement's rows by relation; a refused one marks its first word K0_UNCLAIMED (`scan` finds the first
 // by document and node order: the first statement so marked).
-DELTA_KERNEL(k0_pass_count_items) { if (i == 0u) res[0] = k0_n(t, slots, p); }
-DELTA_KERNEL(k0_pass_count)
+DELTA_COUNT(k0_pass_count_items) { COUNT(k0_n(t, slots, p)); }
+DELTA_LANES(k0_pass_count)
 {
     DELTA_ITEM(item);
     if (!REACH(K0_CONTROL, K0_PLACES_AT + 4u * R * (item + 1u))) return;
@@ -334,8 +334,8 @@ DELTA_ONE(k0_pass_scan)
 }
 
 // `place`: each statement walked again, its rows written at its places with the run's sign.
-DELTA_KERNEL(k0_pass_place_items) { if (i == 0u) res[0] = k0_n(t, slots, p); }
-DELTA_KERNEL(k0_pass_place)
+DELTA_COUNT(k0_pass_place_items) { COUNT(k0_n(t, slots, p)); }
+DELTA_LANES(k0_pass_place)
 {
     DELTA_ITEM(item);
     Blk control = SLOT(K0_CONTROL);

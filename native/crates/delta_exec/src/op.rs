@@ -831,12 +831,34 @@ pub trait Kernels {
 
 /// A launch bound on a device (`Kernels::bind`).
 pub trait OnDevice {
-    /// Runs kernel `name` of `source` on items `lo..hi`, a thread an item (item `lo + i` for thread `i`), and waits
-    /// for it: the word it wrote to its result (an item count, or whether its phase runs again; 0 otherwise). Its
-    /// slots' capacities are `room.capacity` (how far each block's allocations may reach) and their fronts
-    /// `room.fronts`, which its claims move; an item that found one too small wrote nothing past it and recorded what
-    /// it needs, into `room.needs` (0686 D6: the executor grows the block and runs it again).
-    fn run(&mut self, source: &'static str, name: &str, lo: u32, hi: u32, room: &mut Meter) -> Result<u64, String>;
+    /// Runs the phases `phases` of `source`'s kernels named `{entry}_{phase}` as one command, and waits for it: each
+    /// phase's count kernel (`_items`), then its kernel over that many items (a thread an item, or a threadgroup an
+    /// item for a `Threadgroup` phase), each turn of a phase that runs again followed by its `_again` kernel, up to its
+    /// bound on turns. Its slots' capacities are `room.capacity` (how far each block's allocations may reach) and
+    /// their fronts `room.fronts`, which its claims move; an item that found one too small wrote nothing past it and
+    /// recorded what it needs, into `room.needs`, and no phase after it did work (0686 D6: the executor grows the
+    /// blocks and runs the launch again). The turns each phase ran.
+    fn program(&mut self, source: &'static str, entry: &str, phases: &[DevicePhase], room: &mut Meter) -> Result<Vec<u32>, String>;
+}
+
+/// A phase as a device queues it (`OnDevice::program`).
+#[derive(Clone, Copy, Debug)]
+pub struct DevicePhase {
+    pub name: &'static str,
+    /// An item a threadgroup's (`Unit::Threadgroup`), else a lane's.
+    pub group: bool,
+    /// Its turns at most: 1, or a round phase's bound.
+    pub turns: u32,
+    /// Whether it runs again (`Across::Rounds`): its `_again` kernel after each turn.
+    pub rounds: bool,
+}
+
+impl DevicePhase {
+    /// A version's phase as its device runs it.
+    pub fn of(p: &Phase) -> DevicePhase {
+        let rounds = p.across == Across::Rounds;
+        DevicePhase { name: p.name, group: p.unit == Unit::Threadgroup, turns: if rounds { p.turns() } else { 1 }, rounds }
+    }
 }
 
 /// What runs a version's phases: its twin's calls, or a device's kernels.
@@ -885,52 +907,6 @@ impl Runs for TwinRuns<'_, '_, '_> {
 }
 
 /// A UKL version's kernels on a bound launch.
-struct UklRuns<'b> {
-    bound: Box<dyn OnDevice + 'b>,
-    source: &'static str,
-    entry: &'static str,
-    shape: &'static [Phase],
-    /// Its slots' capacities, and the room its kernels found they need: a capacity bound's only report.
-    room: Meter,
-}
-
-impl UklRuns<'_> {
-    fn kernel(&mut self, p: usize, suffix: &str, lo: u32, hi: u32) -> Result<u64, String> {
-        let name = format!("{}_{}{suffix}", self.entry, self.shape[p].name);
-        #[cfg(any(test, feature = "test-hooks"))]
-        if std::env::var_os("RERAIL_KERNEL_TIMES").is_some() {
-            // A profiler's reading: each launch's kernel, items and wall time, to stderr.
-            let t = std::time::Instant::now();
-            let r = self.bound.run(self.source, &name, lo, hi, &mut self.room);
-            eprintln!("kernel {name} {} {}", hi - lo, t.elapsed().as_micros());
-            return r;
-        }
-        self.bound.run(self.source, &name, lo, hi, &mut self.room)
-    }
-}
-
-impl Runs for UklRuns<'_> {
-    fn items(&mut self, p: usize) -> Result<u32, String> {
-        let n = self.kernel(p, "_items", 0, 1)?;
-        u32::try_from(n).map_err(|_| format!("phase {}: {n} items", self.shape[p].name))
-    }
-    fn run(&mut self, p: usize, t: Tile) -> Result<(), String> {
-        if t.lo < t.hi {
-            self.kernel(p, "", t.lo, t.hi)?;
-        }
-        Ok(())
-    }
-    fn again(&mut self, p: usize) -> Result<bool, String> {
-        if !matches!(self.shape[p].across, Across::Rounds) {
-            return Ok(false);
-        }
-        Ok(self.kernel(p, "_again", 0, 1)? != 0)
-    }
-    fn meter(&mut self) -> Option<&mut Meter> {
-        Some(&mut self.room)
-    }
-}
-
 /// Item `i` of a shuffle of `0..n` by `seed` (Fisher–Yates, splitmix64): the order tiles run in.
 fn shuffled(n: usize, seed: u64) -> Vec<usize> {
     let mut order: Vec<usize> = (0..n).collect();
@@ -966,7 +942,7 @@ fn execute(sig: &Signature, v: &Version, dir: &Directory, slots: &[BlockId], par
     // Its launches count in the open evaluation, or in one of its own (0601).
     let _evaluation = dir.evaluation(crate::dir::LAUNCH_BUDGET);
     let modes: Vec<(BlockId, bool)> = slots.iter().zip(sig.slots).map(|(&id, s)| (id, s.mode.writes())).collect();
-    let mut reran = false;
+    let mut reran = 0;
     loop {
         let launch = dir.launch(sig.name, &modes)?;
         let drove = match v.imp {
@@ -984,22 +960,24 @@ fn execute(sig: &Signature, v: &Version, dir: &Directory, slots: &[BlockId], par
                 d
             }
             // Bound to the device and handed to its fence, the launch is the device's: it ends with the work.
-            Impl::Ukl { source, entry } => on_device(sig, v, dir, slots, params, tiling, device, launch, source, entry)?,
+            Impl::Ukl { source, entry } => on_device(sig, v, dir, slots, params, device, launch, source, entry)?,
             Impl::Compiled(_) => return Err(format!("{}: {} is compiled ahead, which is not built", sig.name, v.name)),
         };
         let needs = match drove {
             Drove::Done => return Ok(()),
             Drove::Rerun(needs) => needs,
         };
-        // Run again from the first phase, once, each slot that needed room grown to what it needs: past that, the need
-        // was not the exact size, and the launch fails.
-        if reran {
+        // Run again from the first phase, each slot that needed room grown to what it needs: a twin's once (past that,
+        // the need was not the exact size, and the launch fails); a device's command up to 32 times (its items stop
+        // at the first slot found too small, so a later one's need shows on a later run).
+        let most = if matches!(v.imp, Impl::Ukl { .. }) { 32 } else { 1 };
+        if reran >= most {
             return Err(format!("{}: run again at the capacity its slots needed, and they needed more: {needs:?}", sig.name));
         }
         for (s, need) in needs {
             dir.grow(slots[s], need).map_err(|e| format!("{}: slot {} ({}): {e}", sig.name, s, sig.slots[s].name))?;
         }
-        reran = true;
+        reran += 1;
     }
 }
 
@@ -1012,7 +990,6 @@ fn on_device(
     dir: &Directory,
     slots: &[BlockId],
     params: &[u8],
-    tiling: Tiling,
     device: Option<&dyn Kernels>,
     launch: Launch,
     source: &'static str,
@@ -1043,10 +1020,10 @@ fn on_device(
         drop(bound);
         return done(Err(b.1));
     }
-    let mut runs = UklRuns { bound, source, entry, shape: v.shape, room };
-    let r = done(drive(sig, v, tiling, dir, slots, &mut runs));
+    let mut bound = bound;
+    let r = done(program(sig, v, dir, &mut *bound, source, entry, &mut room));
     // What its kernels claimed is the blocks' from now on.
-    for ((spec, &id), &front) in sig.slots.iter().zip(slots).zip(&runs.room.fronts) {
+    for ((spec, &id), &front) in sig.slots.iter().zip(slots).zip(&room.fronts) {
         if let (true, Some(b)) = (spec.mode.writes(), dir.block(id)) {
             b.claimed_to(front);
         }
@@ -1060,6 +1037,31 @@ fn on_device(
         }
     }
     r
+}
+
+/// A UKL version's phases run on its device as one command (`OnDevice::program`), each phase's turns charged: done,
+/// or, where a slot was found too small, to run again at the capacities its slots need (`execute` grows them and binds
+/// the launch again: a phase that bounds its capacity by growing or by running again; else refused).
+fn program(sig: &Signature, v: &Version, dir: &Directory, bound: &mut dyn OnDevice, source: &'static str, entry: &'static str, room: &mut Meter) -> Result<Drove, String> {
+    let phases: Vec<DevicePhase> = v.shape.iter().map(DevicePhase::of).collect(); // copy: not block data (the phases' launch settings)
+    let turns = bound.program(source, entry, &phases, room)?;
+    for (p, &n) in v.shape.iter().zip(&turns) {
+        for _ in 0..n.max(1) {
+            dir.charge(sig.name, p.name)?;
+        }
+    }
+    if let Some(f) = room.fault.take() {
+        return Err(format!("{}: {f}", sig.name));
+    }
+    if room.no_needs() {
+        return Ok(Drove::Done);
+    }
+    let needs: Vec<(usize, usize)> = room.take_needs().iter().enumerate().filter(|n| *n.1 > 0).map(|(s, &n)| (s, n)).collect(); // copy: not block data (the host's list of the slots to grow)
+    if v.shape.iter().any(|p| matches!(p.capacity(), Some(Over::Grow | Over::Rerun))) {
+        return Ok(Drove::Rerun(needs));
+    }
+    let (s, need) = needs[0];
+    Err(format!("{}: slot {s} ({}) needs a capacity of {need} bytes, and has {}: refused", sig.name, sig.slots[s].name, room.capacity[s]))
 }
 
 /// How a launch's phases ended: every one ran, or one asked for the launch to run again at the capacities it needs.

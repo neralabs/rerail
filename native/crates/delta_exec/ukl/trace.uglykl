@@ -415,11 +415,11 @@ UKL_INLINE void phase_seal(Src s, Work w, Blk out, Blk ctl) {
 
 #define TRACE_KERNELS(op)                                                                                           \
     DELTA_ONE(op##_sort) { if (i == 0u) phase_sort(SRC, WORK, meter); }                                             \
-    DELTA_KERNEL(op##_kills_items) { if (i == 0u) res[0] = U32(WORK.b, W_NOUT); }                                   \
-    DELTA_KERNEL(op##_kills) { DELTA_ITEM(o); phase_kill(SRC, WORK, o); }                                           \
+    DELTA_COUNT(op##_kills_items) { COUNT(U32(WORK.b, W_NOUT)); }                                   \
+    DELTA_LANES(op##_kills) { DELTA_ITEM(o); phase_kill(SRC, WORK, o); }                                           \
     DELTA_ONE(op##_layer) { if (i == 0u) phase_layer(SRC, WORK, OUT, meter); }                                      \
-    DELTA_KERNEL(op##_sketch_items) { if (i == 0u) res[0] = src_arity(SRC); }                                       \
-    DELTA_KERNEL(op##_sketch) { DELTA_ITEM(c); phase_sketch(SRC, WORK, OUT, SLOT(SCRATCH), c, meter); }             \
+    DELTA_COUNT(op##_sketch_items) { COUNT(src_arity(SRC)); }                                       \
+    DELTA_LANES(op##_sketch) { DELTA_ITEM(c); phase_sketch(SRC, WORK, OUT, SLOT(SCRATCH), c, meter); }             \
     DELTA_ONE(op##_seal) { if (i == 0u) phase_seal(SRC, WORK, OUT, CONTROL); }
 
 #define CONS true

@@ -30,8 +30,8 @@ UKL_INLINE Names names_of(UKL_PRIVATE const Rr* r, uint32_t n) {
 }
 
 // The hash phase: each node's names found, the rest marked (SYM_NEW, SYM_FIND). It writes no atom.
-DELTA_KERNEL(intern_hash_items) { if (i == 0u) res[0] = syms_n(SLOT(3)); }
-DELTA_KERNEL(intern_hash)
+DELTA_COUNT(intern_hash_items) { COUNT(syms_n(SLOT(3))); }
+DELTA_LANES(intern_hash)
 {
     DELTA_ITEM(n);
     Rr r = doc_of(t, slots, p);

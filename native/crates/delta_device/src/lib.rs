@@ -16,31 +16,66 @@
 
 use rerail_blocks::ledger::Fence;
 use rerail_delta_exec::dir::{BlockId, Directory, Launch};
-use rerail_delta_exec::op::{Devices, Kernels, MAX_SLOTS, Meter, OnDevice};
+use rerail_delta_exec::op::{DevicePhase, Devices, Kernels, MAX_SLOTS, Meter, OnDevice};
 use rerail_gpu::device::{Buffer, ComputeQueue, Device, alloc_uninitialized_array_sync, transfer_to_host_sync};
 use rerail_gpu::kernels::{Program, launch};
 use rerail_gpu::shared::Shared;
 use std::collections::HashMap;
 use std::sync::Arc;
 
-/// What every version's source starts with: the backend, the descriptor table's reads, and the tile's argument.
+/// What every version's source starts with, after the backend and the descriptor table's reads: a kernel's phase
+/// argument, and the grid kernel each phase's dispatch is sized by (`<ukl/delta/op.h>`'s control words: each phase's
+/// count, whether it runs, its grid).
 pub const PRELUDE: &str = r#"
-typedef struct TileP { uint32_t lo; uint32_t hi; } TileP;
-UKL_REFLECT_STRUCT(TileP, lo, hi)
+typedef struct PhaseP { uint32_t k; uint32_t pad; } PhaseP;
+UKL_REFLECT_STRUCT(PhaseP, k, pad)
+typedef struct GridP { uint32_t k; uint32_t group; uint32_t threads; uint32_t pad; } GridP;
+UKL_REFLECT_STRUCT(GridP, k, group, threads, pad)
+DEFINE_KERNEL2(delta_exec, delta_grid, ARGS, GridP, gp, , RWBUFFER, uint32_t, ctl, "[ctl]", RWBUFFER, uint32_t, meter, "[meter]", GID0, uint32_t, i, )
+{
+    if (i != 0u) return;
+    uint32_t n = ctl[gp.k], go = ctl[32u + gp.k], over = meter[3u * 30u] | meter[3u * 30u + 1u];
+    uint32_t groups = go == 0u || over != 0u ? 0u : gp.group != 0u ? n : (n + gp.threads - 1u) / gp.threads;
+    ctl[64u + 3u * gp.k] = groups;
+    ctl[65u + 3u * gp.k] = 1u;
+    ctl[66u + 3u * gp.k] = 1u;
+}
 "#;
 
 #[repr(C)]
 #[derive(Clone, Copy)]
-struct TileP {
-    lo: u32,
-    hi: u32,
+struct PhaseP {
+    k: u32,
+    pad: u32,
 }
 
-// SAFETY: two u32s, no padding.
-unsafe impl rerail_gpu::Pod for TileP {}
+#[repr(C)]
+#[derive(Clone, Copy)]
+struct GridP {
+    k: u32,
+    group: u32,
+    threads: u32,
+    pad: u32,
+}
 
-/// The threads of a threadgroup a kernel's items run in.
+// SAFETY: u32s, no padding.
+unsafe impl rerail_gpu::Pod for PhaseP {}
+unsafe impl rerail_gpu::Pod for GridP {}
+
+/// The phases a launch runs at most, and the control words (`<ukl/delta/op.h>`: `DELTA_PHASES`, `DELTA_CTL_WORDS`).
+const PHASES: usize = 32;
+const CTL_WORDS: usize = 5 * PHASES;
+/// The meter's words: each slot's capacity, need and front, the refusal and whether it overflowed; then the control
+/// words, after it in the launch's one state buffer.
+const METER_WORDS: usize = 3 * MAX_SLOTS + 2;
+const CTL_AT: usize = METER_WORDS.next_multiple_of(16);
+const STATE_WORDS: usize = CTL_AT + CTL_WORDS;
+const _: () = assert!(MAX_SLOTS == 30, "the prelude's grid kernel reads the meter at 3 * 30");
+
+/// The threads of a threadgroup a phase of lanes runs in, and of a phase whose item is a threadgroup's
+/// (`<ukl/delta/op.h>`'s `DELTA_TG`).
 const GROUP: u64 = 64;
+const DELTA_TG: u32 = 64;
 
 /// The process's device, as the executor's `Kernels`, in one memory domain.
 pub struct Gpu {
@@ -105,16 +140,10 @@ impl Kernels for Gpu {
         let words = |n: usize| alloc_uninitialized_array_sync::<u64>(&self.shared.device, n.max(1));
         let slots_b = words(slots.len().div_ceil(2));
         let params_b = words(params.len().div_ceil(8));
-        let res = words(1);
-        let room = words(3 * MAX_SLOTS / 2 + 1);
-        let mut q = ComputeQueue::new(&self.shared.queue);
-        // The kernels' arguments, written by the queue: the slots' ids and the params' bytes (not block data).
-        q.enqueue_copy_from_host(&slots_b, 0, as_bytes(slots));
-        if !params.is_empty() {
-            q.enqueue_copy_from_host(&params_b, 0, params);
-        }
-        q.flush().await_()?;
-        Ok(Box::new(GpuBound { shared: self.shared, table, at, reached, slots: slots_b, params: params_b, res, room, programs: HashMap::new() }))
+        let state = words(STATE_WORDS.div_ceil(2));
+        // The kernels' arguments, written by the program's command (not block data): the slots' ids and the params.
+        let args = (slots.to_vec(), params.to_vec()); // copy: not block data (a launch's arguments)
+        Ok(Box::new(GpuBound { shared: self.shared, table, at, reached, slots: slots_b, params: params_b, state, args, programs: HashMap::new() }))
     }
 }
 
@@ -132,15 +161,19 @@ struct GpuBound {
     reached: Vec<Buffer>,
     slots: Buffer,
     params: Buffer,
-    res: Buffer,
-    /// Each slot's capacity, the room an item found it needs and its front (u32s, `MAX_SLOTS` each; `<ukl/delta/op.h>`'s
-    /// `reach` and `claim`), then the kernel's refusal (`FAULT`).
-    room: Buffer,
+    /// The meter (each slot's capacity, the room an item found it needs and its front, u32s, `MAX_SLOTS` each; the
+    /// refusal; whether it overflowed), then the control words: `<ukl/delta/op.h>`'s.
+    state: Buffer,
+    /// The slots' ids and the params' bytes, written into `slots` and `params` by the program's command.
+    args: (Vec<u32>, Vec<u8>),
     programs: HashMap<usize, &'static Program>,
 }
 
 impl OnDevice for GpuBound {
-    fn run(&mut self, source: &'static str, name: &str, lo: u32, hi: u32, meter: &mut Meter) -> Result<u64, String> {
+    fn program(&mut self, source: &'static str, entry: &str, phases: &[DevicePhase], meter: &mut Meter) -> Result<Vec<u32>, String> {
+        if phases.len() > PHASES {
+            return Err(format!("{entry}: {} phases, past the device's {PHASES}", phases.len()));
+        }
         let program = match self.programs.get(&(source.as_ptr() as usize)) {
             Some(p) => *p,
             None => {
@@ -150,44 +183,84 @@ impl OnDevice for GpuBound {
                 p
             }
         };
-        let f = program.function(name)?;
-        let mut q = ComputeQueue::new(&self.shared.queue);
-        q.enqueue_fill_array(&self.res, &0u64, 0, Some(1));
-        // The capacities, a word each (a block past 4 GiB is held to 4 GiB), no need yet, and the fronts.
-        let mut room = [0u32; 3 * MAX_SLOTS + 2];
-        for (r, &c) in room.iter_mut().zip(&meter.capacity) {
+        let grid = program.function("delta_grid")?;
+        // The meter: capacities (a block past 4 GiB held to 4 GiB), no need yet, the fronts, no refusal; every phase
+        // set to run.
+        let mut state = [0u32; STATE_WORDS];
+        for (r, &c) in state.iter_mut().zip(&meter.capacity) {
             *r = u32::try_from(c).unwrap_or(u32::MAX);
         }
-        for (r, &f) in room[2 * MAX_SLOTS..].iter_mut().zip(&meter.fronts) {
-            *r = u32::try_from(f).map_err(|_| format!("{name}: a slot's front past 4 GiB"))?;
+        for (r, &f) in state[2 * MAX_SLOTS..].iter_mut().zip(&meter.fronts) {
+            *r = u32::try_from(f).map_err(|_| format!("{entry}: a slot's front past 4 GiB"))?;
         }
-        q.enqueue_copy_from_host(&self.room, 0, as_bytes(&room));
-        let mut run = launch(&q, f)
-            .buffer_at("t", &self.table, self.at)
-            .buffer("slots", &self.slots)
-            .buffer("p", &self.params)
-            .value("tile", &TileP { lo, hi })
-            .buffer("res", &self.res)
-            .buffer("meter", &self.room);
-        for r in &self.reached {
-            run = run.uses(r);
+        for go in &mut state[CTL_AT + PHASES..CTL_AT + 2 * PHASES] {
+            *go = 1;
         }
-        run.run(&[u64::from(hi - lo).div_ceil(GROUP)], &[GROUP]).map_err(|e| format!("{name}: {e}"))?;
-        q.flush().await_().map_err(|e| format!("{name}: {e}"))?;
-        let words = transfer_to_host_sync::<u64>(&self.room, 3 * MAX_SLOTS / 2 + 1);
-        let word = |k: usize| (words[k / 2] >> (32 * (k % 2)) & 0xFFFF_FFFF) as usize;
+        let mut q = ComputeQueue::new(&self.shared.queue);
+        q.enqueue_copy_from_host(&self.state, 0, as_bytes(&state));
+        q.enqueue_copy_from_host(&self.slots, 0, as_bytes(&self.args.0));
+        if !self.args.1.is_empty() {
+            q.enqueue_copy_from_host(&self.params, 0, &self.args.1);
+        }
+        let (meter_at, ctl_at) = (0u64, 4 * CTL_AT as u64);
+        let kernel = |name: &str, k: usize| -> Result<_, String> {
+            let mut run = launch(&q, program.function(name)?)
+                .buffer_at("t", &self.table, self.at)
+                .buffer("slots", &self.slots)
+                .buffer("p", &self.params)
+                .value("ph", &PhaseP { k: k as u32, pad: 0 })
+                .buffer_at("ctl", &self.state, ctl_at)
+                .buffer_at("meter", &self.state, meter_at);
+            for r in &self.reached {
+                run = run.uses(r);
+            }
+            Ok(run)
+        };
+        for (k, ph) in phases.iter().enumerate() {
+            let name = format!("{entry}_{}", ph.name);
+            let threads = if ph.group { u64::from(DELTA_TG) } else { GROUP };
+            for _ in 0..ph.turns {
+                kernel(&format!("{name}_items"), k)?.run(&[1], &[1]).map_err(|e| format!("{name}_items: {e}"))?;
+                launch(&q, grid)
+                    .value("gp", &GridP { k: k as u32, group: u32::from(ph.group), threads: threads as u32, pad: 0 })
+                    .buffer_at("ctl", &self.state, ctl_at)
+                    .buffer_at("meter", &self.state, meter_at)
+                    .run(&[1], &[1])
+                    .map_err(|e| format!("{name}: its grid: {e}"))?;
+                kernel(&name, k)?.run_indirect(&self.state, ctl_at + 4 * (2 * PHASES + 3 * k) as u64, &[MAX_GROUPS], &[threads]).map_err(|e| format!("{name}: {e}"))?;
+                if ph.rounds {
+                    kernel(&format!("{name}_again"), k)?.run(&[1], &[1]).map_err(|e| format!("{name}_again: {e}"))?;
+                }
+            }
+        }
+        q.flush().await_().map_err(|e| format!("{entry}: {e}"))?;
+        let words = transfer_to_host_sync::<u64>(&self.state, STATE_WORDS.div_ceil(2));
+        let word = |k: usize| (words[k / 2] >> (32 * (k % 2)) & 0xFFFF_FFFF) as u32;
         for (k, n) in meter.needs.iter_mut().enumerate() {
-            *n = (*n).max(word(MAX_SLOTS + k));
+            *n = (*n).max(word(MAX_SLOTS + k) as usize);
         }
         for (k, f) in meter.fronts.iter_mut().enumerate() {
-            *f = word(2 * MAX_SLOTS + k);
+            *f = word(2 * MAX_SLOTS + k) as usize;
         }
         if word(3 * MAX_SLOTS) != 0 {
-            return Err(format!("{name}: the kernel refused the launch (why {}): one its kernels do not do", word(3 * MAX_SLOTS)));
+            return Err(format!("{entry}: the kernel refused the launch (why {}): one its kernels do not do", word(3 * MAX_SLOTS)));
         }
-        Ok(transfer_to_host_sync::<u64>(&self.res, 1)[0])
+        let overflowed = word(3 * MAX_SLOTS + 1) != 0;
+        // Each phase's turns: a round phase's until its `again` said no more; one still going ran past its bound.
+        let mut turns = Vec::with_capacity(phases.len()); // copy: not block data (the turns each phase ran)
+        for (k, ph) in phases.iter().enumerate() {
+            if ph.rounds && word(CTL_AT + PHASES + k) != 0 && !overflowed {
+                return Err(format!("{entry}: phase {} ran past its bound of {} turns", ph.name, ph.turns));
+            }
+            turns.push(ph.turns);
+        }
+        Ok(turns)
     }
 }
+
+/// The threadgroups an indirect dispatch takes at most (a backend that launches them all: its kernels end past their
+/// phase's items).
+const MAX_GROUPS: u64 = 65535;
 
 #[cfg(test)]
 mod tests;
