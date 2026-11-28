@@ -41,7 +41,7 @@
         }
         // A text made from a program file keeps the graph a run of `bootstrap.rerail` would give it (`keep_text`).
         let programs = crate::source_tree::native().join("src/code_rule_dsl/typing/programs");
-        for file in [programs.join("calls_cx.rerail"), lib.join("python/conditions.rerail")] {
+        for file in [programs.join("calls_p3.rerail"), lib.join("python/conditions.rerail")] {
             let text = crate::code_rule_dsl::logic::settings::program_text(&file).unwrap();
             let seed = crate::code_rule_dsl::logic::rr::text_seed(&text).unwrap().expect("includes");
             let kept = super::graph(&seed).unwrap();
@@ -255,8 +255,22 @@
         let mut files: Vec<PathBuf> = std::fs::read_dir(lib.join("../packs/python")).unwrap().flatten().map(|e| e.path()).filter(|p| p.extension().is_some_and(|x| x == "rerail")).collect();
         files.sort();
         files.truncate(6);
-        files.push(native.join("src/code_rule_dsl/typing/programs/calls.rerail"));
+        files.push(native.join("src/code_rule_dsl/typing/programs/calls_p3.rerail"));
         files.push(native.join("src/code_rule_dsl/typing/programs/struct.rerail"));
+        // A program in T's shape: T's inputs declared by the program, and library modules without `core.rerail` (as
+        // the typing program `calls.rerail` was, before decision 0677 retired it).
+        let t_shape = crate::code_rule_dsl::fixtures::temp().with_extension("t-shape.rerail");
+        std::fs::write(
+            &t_shape,
+            ".decl doc(d: number, path: symbol, module: symbol)\n.decl node(d: number, n: node, kind: symbol, start: number, end: number)\n\
+             .decl child(p: node, c: node, i: number)\n.decl field(p: node, f: symbol, c: node)\n.decl text(n: node, s: symbol)\n\
+             .decl kind(n: node, k: symbol)\n.decl docof(n: node, d: number)\n.input doc, node, child, field, text, kind, docof\n\
+             .decl env(key: symbol, value: symbol)\n.decl dir_entry(dir: symbol, name: symbol, is_dir: number)\n\
+             .decl file_line(path: symbol, i: number, text: symbol)\n.decl load(path: symbol, module: symbol, grammar: symbol)\n\
+             .decl loaded(path: symbol, module: symbol, grammar: symbol)\n#include \"python/modules.rerail\"\n#include \"python/conditions.rerail\"\n",
+        )
+        .unwrap();
+        files.push(t_shape.clone());
         let texts: Vec<String> = files.iter().map(|f| crate::code_rule_dsl::logic::settings::program_text(f).unwrap()).collect();
         let seeds: Vec<super::Seed> = texts.iter().map(|t| crate::code_rule_dsl::logic::rr::text_seed(t).unwrap().expect("includes")).collect();
         let hex = |d: &[u8; 32]| d.iter().map(|b| format!("{b:02x}")).collect::<String>();
@@ -293,6 +307,7 @@
         }
         assert!(bare > 0, "a program in T's shape among them");
         assert_eq!(keys.values().collect::<BTreeSet<_>>().len(), keys.len(), "a key a module");
+        let _ = std::fs::remove_file(&t_shape);
     }
 
     /// Phase 0 over every `.rerail` file of `RERAIL_P0_RULES` (a pack's directory), as a pack's run reads them

@@ -76,9 +76,12 @@ pub fn is_probed(rel: &str) -> bool {
 pub enum Keyed {
     /// Keyed by a file's path in column 0; `Some(c)`: column `c` names keys whose `ByKey` rows the file reads too.
     ByPath(Option<usize>),
-    /// Keyed by column 0, a key a `ByPath` row of the reading file names.
-    ByKey,
-    /// Read whole by every file (`env`, `package_export`).
+    /// Keyed by column 0, a key a `ByPath` row of the reading file names, or a `ByKey` row it reads; `Some(c)`: column
+    /// `c` names keys whose `ByKey` rows the file reads too (`resolved(k, q) by_key 1`: an ask's answer, the key of
+    /// the facts about it).
+    ByKey(Option<usize>),
+    /// Read whole by every file (`env`, `package_export`; a phase's export declared `whole`, `py_names`'
+    /// `dj_app_defers`): every reader's memo entry is keyed by its rows.
     Whole,
 }
 
@@ -96,9 +99,9 @@ pub fn key_items(texts: &[String]) -> Vec<(String, Vec<String>)> {
 }
 
 /// A phase's `.export` items (`key_items`), each the relation its program makes, the export's name its readers read
-/// (`<phase>__<export>`), and its key's words: `asked_exports as exports by_key` hands on relation `asked_exports` as
-/// export `exports` (decision 0705: an asked phase answers under the name its readers already read, where an
-/// included library makes a relation of that name eagerly).
+/// (`<phase>__<export>`), and its key's words: `asks_at as asked_at by_path 1` hands on relation `asks_at` as
+/// export `asked_at` (decision 0705: a phase hands a relation on under the name its readers read, where its program
+/// makes another of that name, as an included library's).
 pub fn export_items(texts: &[String]) -> Vec<(String, String, Vec<String>)> {
     key_items(texts)
         .into_iter()
@@ -109,14 +112,16 @@ pub fn export_items(texts: &[String]) -> Vec<(String, String, Vec<String>)> {
         .collect()
 }
 
-/// The key `words` write (`by_path`, `by_path C`, `by_key`), or why they are none.
+/// The key `words` write (`by_path`, `by_path C`, `by_key`, `by_key C`, `whole`; none in `.keyed` is `whole`), or why
+/// they are none. An export written with no key is no setting (`declared_in`): a phase's ordinary export.
 pub fn key_of(words: &[String]) -> Result<Keyed, String> {
     match words.iter().map(String::as_str).collect::<Vec<_>>().as_slice() {
-        [] => Ok(Keyed::Whole),
-        ["by_key"] => Ok(Keyed::ByKey),
+        [] | ["whole"] => Ok(Keyed::Whole),
+        ["by_key"] => Ok(Keyed::ByKey(None)),
+        ["by_key", c] => c.parse().map(|c| Keyed::ByKey(Some(c))).map_err(|_| format!("{c} is no column")),
         ["by_path"] => Ok(Keyed::ByPath(None)),
         ["by_path", c] => c.parse().map(|c| Keyed::ByPath(Some(c))).map_err(|_| format!("{c} is no column")),
-        _ => Err(format!("`{}`: write `by_path`, `by_path C` or `by_key`", words.join(" "))),
+        _ => Err(format!("`{}`: write `by_path`, `by_path C`, `by_key`, `by_key C` or `whole`", words.join(" "))),
     }
 }
 
@@ -172,21 +177,9 @@ pub fn builtin_phase_dir() -> std::path::PathBuf {
     rerail_store::source_tree::native().join("src/code_rule_dsl/typing/programs")
 }
 
-/// The switch that lets a phase declare `.rounds`, and runs an engine phase's asked program (`<name>.asked.rerail`)
-/// in place of its eager one (decision 0705).
-pub const ASKED_PHASES: &str = "RERAIL_ASKED_PHASES";
-
-/// Whether asked phases run (`ASKED_PHASES`).
-pub fn asked_phases_on() -> bool {
-    rerail_prof::code_rule_dsl::logic::profile::var(ASKED_PHASES).is_ok_and(|v| !v.is_empty() && v != "0" && v != "off")
-}
-
-/// The file of the engine's phase program `name`: its asked program while asked phases run and it has one
-/// (`py_names.asked.rerail`), else `<name>.rerail`.
+/// The file of the engine's phase program `name`.
 pub fn builtin_phase_file(name: &str) -> std::path::PathBuf {
-    let dir = builtin_phase_dir();
-    let asked = dir.join(format!("{name}.asked.rerail"));
-    if asked_phases_on() && asked.exists() { asked } else { dir.join(format!("{name}.rerail")) }
+    builtin_phase_dir().join(format!("{name}.rerail"))
 }
 
 /// How `rel` is keyed as a setting, if it is one: a phase's export as the run's phases declared it (`DeclaredKeys`),

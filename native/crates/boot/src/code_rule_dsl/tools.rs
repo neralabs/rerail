@@ -2724,7 +2724,8 @@ mod settings_tests {
     }
 }
 
-/// Every pack and the data layer's policies are split with no undeclared crossing (decision 0652): each run as
+/// Every pack and the data layer's policies are split with no undeclared crossing (decision 0652) and no node id in
+/// their cross-file part (decision 0677, which the split refuses): each run as
 /// `run-policies` runs them, as one pack per language (`RERAIL_BATCH_PACK=strict`: a failed pack is its error), over
 /// a file of each language. Their `.scope` lines are dropped, so the file is in every policy's scope. Any run error
 /// fails the test, every one shown.
@@ -2749,19 +2750,11 @@ mod pack_split_tests {
         pack_runs_as(dir, None, "off")
     }
 
-    /// The relations of the cross-file part that still hold a node id (decision 0677), by pack: `<pack> <relation>`, a
-    /// line each, as `NodeCrossing::named` names them. The list only shrinks: a rule that carries a node into the
-    /// cross-file part fails its pack's test, and a relation fixed leaves the list in the same commit.
-    const NODE_CROSSINGS: &str = include_str!("node_crossings.txt");
-
     fn pack_runs_as(dir: &str, shard: Option<(usize, usize)>, batch: &str) {
         // SAFETY: nextest runs each test in a process of its own.
         unsafe { std::env::set_var("RERAIL_BATCH_PACK", batch) };
         let from = crate::source_tree::native().join("../docs/rule-syntax").join(dir);
         let tmp = tempfile::tempdir().unwrap();
-        let crossings = tmp.path().join("node-crossings");
-        // SAFETY: as above.
-        unsafe { std::env::set_var("RERAIL_NODE_CROSSINGS", &crossings) };
         let rules = tmp.path().join("rules").join(dir);
         let mut policies = Vec::new();
         let mut walk = vec![from.clone()];
@@ -2819,38 +2812,8 @@ mod pack_split_tests {
         errors.sort();
         errors.dedup();
         assert!(errors.is_empty(), "{dir}: {} policies, {} distinct errors:\n{}", policies.len(), errors.len(), errors.join("\n\n"));
-        // A run of each policy alone splits each policy's program alone, which can place a relation the pack's does not:
-        // its list is its own.
-        let listed_as = if batch == "off" { format!("{dir}:alone") } else { dir.to_owned() };
-        let dir = listed_as.as_str();
-        // Each relation, and the crossing it is in the cross-file part under (`-`: its own).
-        let under: std::collections::BTreeMap<String, String> =
-            std::fs::read_to_string(&crossings).unwrap_or_default().lines().filter_map(|l| l.split_once(' ')).map(|(r, u)| (r.to_owned(), u.to_owned())).collect();
-        let found: std::collections::BTreeSet<String> = under.keys().cloned().collect();
-        // `RERAIL_SHOW_CROSSINGS=1`: each relation found, with its crossing, for the fixes' work (`--no-capture`).
-        if std::env::var_os("RERAIL_SHOW_CROSSINGS").is_some() {
-            for (r, u) in &under {
-                println!("crossing: {dir} {r} under {u}");
-            }
-        }
-        let listed: std::collections::BTreeSet<String> =
-            NODE_CROSSINGS.lines().filter(|l| !l.starts_with('#')).filter_map(|l| l.split_once(' ')).filter(|(d, _)| *d == dir).map(|(_, r)| r.trim().to_owned()).collect();
-        let new: Vec<&String> = found.difference(&listed).collect();
-        assert!(
-            new.is_empty(),
-            "{dir}: {} relation(s) of the cross-file part hold a node id (decision 0677), not in node_crossings.txt, the list of \
-             those still to fix, which only shrinks. Key each by a symbol (a module, a qualified name), a path, a document key \
-             or a value, relating the file's nodes to it in the file's own rules, or keep it per file \
-             (RERAIL_STRICT_NODES=1 shows each one's rule):\n{}",
-            new.len(),
-            new.iter().map(|r| format!("{dir} {r}  under {}", under[*r])).collect::<Vec<_>>().join("\n")
-        );
-        // A shard, and a run of each policy alone, sees part of the pack's programs: only the whole pack's run tells a
-        // relation fixed.
-        if shard.is_none() && batch == "strict" {
-            let fixed: Vec<&String> = listed.difference(&found).collect();
-            assert!(fixed.is_empty(), "{dir}: no longer hold a node id (decision 0677); take them out of node_crossings.txt:\n{}", fixed.iter().map(|r| format!("{dir} {r}")).collect::<Vec<_>>().join("\n"));
-        }
+        // A node id carried into the cross-file part (decision 0677) is one of those errors: the split refuses the
+        // program, whatever made the crossing, naming each relation with its rule.
     }
 
     /// `policy`'s findings over `files` (path, text), each as (code, path, line, message), sorted.
@@ -3186,24 +3149,24 @@ mod pack_split_tests {
     }
 
     packs! {
-        the_data_layer_is_split_with_its_crossings_declared: "data-layer",
-        the_blade_pack_is_split_with_its_crossings_declared: "packs/blade",
-        the_complexity_pack_is_split_with_its_crossings_declared: "packs/complexity",
-        the_django_pack_is_split_with_its_crossings_declared: "packs/django",
-        the_next_pack_is_split_with_its_crossings_declared: "packs/next",
-        the_node_pack_is_split_with_its_crossings_declared: "packs/node",
-        the_php_pack_is_split_with_its_crossings_declared: "packs/php",
-        the_react_pack_is_split_with_its_crossings_declared: "packs/react",
-        the_rerail_pack_is_split_with_its_crossings_declared: "packs/rerail",
-        the_rr_pack_is_split_with_its_crossings_declared: "packs/rr",
-        the_rust_pack_is_split_with_its_crossings_declared: "packs/rust",
-        the_sql_pack_is_split_with_its_crossings_declared: "packs/sql",
-        the_typescript_pack_is_split_with_its_crossings_declared: "packs/typescript",
-        the_vue_pack_is_split_with_its_crossings_declared: "packs/vue",
+        the_data_layer_is_split_with_no_node_crossing: "data-layer",
+        the_blade_pack_is_split_with_no_node_crossing: "packs/blade",
+        the_complexity_pack_is_split_with_no_node_crossing: "packs/complexity",
+        the_django_pack_is_split_with_no_node_crossing: "packs/django",
+        the_next_pack_is_split_with_no_node_crossing: "packs/next",
+        the_node_pack_is_split_with_no_node_crossing: "packs/node",
+        the_php_pack_is_split_with_no_node_crossing: "packs/php",
+        the_react_pack_is_split_with_no_node_crossing: "packs/react",
+        the_rerail_pack_is_split_with_no_node_crossing: "packs/rerail",
+        the_rr_pack_is_split_with_no_node_crossing: "packs/rr",
+        the_rust_pack_is_split_with_no_node_crossing: "packs/rust",
+        the_sql_pack_is_split_with_no_node_crossing: "packs/sql",
+        the_typescript_pack_is_split_with_no_node_crossing: "packs/typescript",
+        the_vue_pack_is_split_with_no_node_crossing: "packs/vue",
     }
 
     #[test]
-    fn the_data_layer_is_split_with_its_crossings_declared_policy_by_policy() {
+    fn the_data_layer_is_split_with_no_node_crossing_policy_by_policy() {
         pack_alone_runs("data-layer")
     }
 
@@ -3215,31 +3178,31 @@ mod pack_split_tests {
 
     shards! {
         "packs/python-main", 12,
-        the_python_main_pack_is_split_with_its_crossings_declared_0: 0,
-        the_python_main_pack_is_split_with_its_crossings_declared_1: 1,
-        the_python_main_pack_is_split_with_its_crossings_declared_2: 2,
-        the_python_main_pack_is_split_with_its_crossings_declared_3: 3,
-        the_python_main_pack_is_split_with_its_crossings_declared_4: 4,
-        the_python_main_pack_is_split_with_its_crossings_declared_5: 5,
-        the_python_main_pack_is_split_with_its_crossings_declared_6: 6,
-        the_python_main_pack_is_split_with_its_crossings_declared_7: 7,
-        the_python_main_pack_is_split_with_its_crossings_declared_8: 8,
-        the_python_main_pack_is_split_with_its_crossings_declared_9: 9,
-        the_python_main_pack_is_split_with_its_crossings_declared_10: 10,
-        the_python_main_pack_is_split_with_its_crossings_declared_11: 11,
+        the_python_main_pack_is_split_with_no_node_crossing_0: 0,
+        the_python_main_pack_is_split_with_no_node_crossing_1: 1,
+        the_python_main_pack_is_split_with_no_node_crossing_2: 2,
+        the_python_main_pack_is_split_with_no_node_crossing_3: 3,
+        the_python_main_pack_is_split_with_no_node_crossing_4: 4,
+        the_python_main_pack_is_split_with_no_node_crossing_5: 5,
+        the_python_main_pack_is_split_with_no_node_crossing_6: 6,
+        the_python_main_pack_is_split_with_no_node_crossing_7: 7,
+        the_python_main_pack_is_split_with_no_node_crossing_8: 8,
+        the_python_main_pack_is_split_with_no_node_crossing_9: 9,
+        the_python_main_pack_is_split_with_no_node_crossing_10: 10,
+        the_python_main_pack_is_split_with_no_node_crossing_11: 11,
     }
 
     shards! {
         "packs/python", 2,
-        the_python_pack_is_split_with_its_crossings_declared_0: 0,
-        the_python_pack_is_split_with_its_crossings_declared_1: 1,
+        the_python_pack_is_split_with_no_node_crossing_0: 0,
+        the_python_pack_is_split_with_no_node_crossing_1: 1,
     }
 
     shards! {
         "packs/javascript", 3,
-        the_javascript_pack_is_split_with_its_crossings_declared_0: 0,
-        the_javascript_pack_is_split_with_its_crossings_declared_1: 1,
-        the_javascript_pack_is_split_with_its_crossings_declared_2: 2,
+        the_javascript_pack_is_split_with_no_node_crossing_0: 0,
+        the_javascript_pack_is_split_with_no_node_crossing_1: 1,
+        the_javascript_pack_is_split_with_no_node_crossing_2: 2,
     }
 }
 

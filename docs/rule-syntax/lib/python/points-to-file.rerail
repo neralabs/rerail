@@ -619,6 +619,9 @@ pt_litq(n, "builtins.bytes") :- pt_bytes_lit(n).
 
 // ---- library values, by symbol (P2's exports) --------------------------------------------------------------------
 // pt_wsmod(q): a module of this phase's documents, the workspace's. A symbol whose module is another is a library's.
+// Where the analysis runs (python/points-to-solve, which reads sources' `source_library`), a library read from its
+// source (an untyped package under `python.untyped = read`) is among the documents, its definitions typed as the
+// workspace's are: its module is one of these.
 .decl pt_wsmod(q: symbol)
 pt_wsmod(q) :- pt_modname(_, q).
 // pt_lres(q, d): the qualified name q (an import, a dotted name read from one, a builtin) is symbol d: a module, else a
@@ -812,10 +815,13 @@ pt_scope_tm(m, p) :- pt_modnode(d, m), doc(d, p, "").
 pt_tm_ord(f, k) :- pt_rdefn(s, x, f), node(_, f, _, b, _), k = count : { pt_rdefn(s, x, g), node(_, g, _, c, _), c < b }.
 .decl pt_tm_def(k: symbol)
 pt_tm_def("function_definition"). pt_tm_def("class_definition").
-pt_scope_tm(f, @dot(q, x)) :- kind(f, k), pt_tm_def(k), field(f, "name", nm), text(nm, x), nearest(f, s, pt_scope),
-    pt_scope_tm(s, q), pt_tm_ord(f, 0).
-pt_scope_tm(f, cat(@dot(q, x), "#", to_string(i))) :- kind(f, k), pt_tm_def(k), field(f, "name", nm), text(nm, x),
-    nearest(f, s, pt_scope), pt_scope_tm(s, q), pt_tm_ord(f, i), i > 0.
+// Each definition's place under its scope, made once, outside the recursion: the recursive rules then join a new
+// scope's term to its definitions by the scope. Written inside them, a round's new terms were joined to every name
+// field first and `nearest` kept the few under the scope (4.2 M rows a round for 1,625 kept, 45% of the phase).
+.decl pt_tm_child(f: node, s: node, x: symbol, i: number)
+pt_tm_child(f, s, x, i) :- kind(f, k), pt_tm_def(k), field(f, "name", nm), text(nm, x), nearest(f, s, pt_scope), pt_tm_ord(f, i).
+pt_scope_tm(f, @dot(q, x)) :- pt_scope_tm(s, q), pt_tm_child(f, s, x, 0).
+pt_scope_tm(f, cat(@dot(q, x), "#", to_string(i))) :- pt_scope_tm(s, q), pt_tm_child(f, s, x, i), i > 0.
 pt_scope_tm(f, @path_spelling(@node_path(f))) :- kind(f, k), pt_tm_def(k), py_dead_at(f).
 pt_scope_tm(f, @path_spelling(@node_path(f))) :- kind(f, "lambda").
 

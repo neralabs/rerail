@@ -69,9 +69,11 @@ fn ours_at(dir: &std::path::Path, out: &std::path::Path, setting: &str) -> Graph
 .scope include \"**/*.py\", \"**/*.pyi\"
 #include \"python/references.rerail\"
 .decl edge(sp: symbol, ss: number, se: number, tp: symbol, ts: number, te: number, via: symbol)
-edge(sp, ss, se, tp, ts, te, v) :- reference_edge(s, t, v), node(d, s, _, ss, se), doc(d, sp, _), node(e, t, _, ts, te), doc(e, tp, _).
+// The graph is by symbol (decision 0677): each definition placed on its node by reference_def.
+edge(sp, ss, se, tp, ts, te, v) :- reference_edge(s, t, v), reference_def(sn, s), node(d, sn, _, ss, se), doc(d, sp, _),
+    reference_def(tn, t), node(e, tn, _, ts, te), doc(e, tp, _).
 .decl open(p: symbol, s: number, e: number)
-open(p, s, e) :- reference_open(n), node(d, n, _, s, e), doc(d, p, _).
+open(p, s, e) :- reference_open(k), reference_def(n, k), node(d, n, _, s, e), doc(d, p, _).
 .output edge, open
 "
     );

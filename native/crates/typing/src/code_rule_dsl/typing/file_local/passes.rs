@@ -186,10 +186,13 @@ impl ProgramPass for Locate {
         let node_declared = f.declared("node");
         let node_typed = |rel: &str, c: usize| f.column_type(rel, c) == Some("node");
         let doc_type = f.column_type("node", 0).unwrap_or("int");
-        // How many rules of a file-local head read each relation (not their own): a target read so is blocked.
+        // How many rules of a file-local head read each relation (not their own): a target read so is blocked. A covered
+        // view of values (decision 0672) is not counted: it reads a relayed target's located form, as a cross-file rule
+        // does (below), so `run_class(q) :- class(_, q)` leaves `class` located in each file, its rule reading the
+        // file's nodes, not moved to the cross-file part with them (decision 0677).
         let reads = |r: &RuleRef<'_>| -> BTreeSet<&str> { r.body().filter_map(|l| l.atom()).map(|a| v.rel_name(a.rel())).filter(|a| *a != head(r)).collect() };
         let mut readers: HashMap<&str, usize> = HashMap::new();
-        for r in rules.iter().filter(|r| local.contains(head(r))) {
+        for r in rules.iter().filter(|r| local.contains(head(r)) && !views.contains(head(r))) {
             for a in reads(r) {
                 *readers.entry(a).or_default() += 1;
             }

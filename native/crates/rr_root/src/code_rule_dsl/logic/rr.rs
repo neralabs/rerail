@@ -1935,7 +1935,8 @@ impl LibraryFile {
 /// The relations `core.rerail` declares for libraries to derive for the engine to read: the documents they load (t21 E2).
 pub const LIBRARY_DERIVED: [&str; 1] = ["load"];
 /// The relations `core.rerail` declares that one library file derives, and that file (decision 0483: the reference graph).
-pub const DERIVED_BY: [(&str, &str); 2] = [("reference_edge", "python/references.rerail"), ("reference_open", "python/references.rerail")];
+pub const DERIVED_BY: [(&str, &str); 3] =
+    [("reference_def", "python/references.rerail"), ("reference_edge", "python/references.rerail"), ("reference_open", "python/references.rerail")];
 /// The library's programs the engine adds to a run itself (decision 0076's import components).
 const ENGINE_FILES: [&str; 1] = ["components.rerail"];
 

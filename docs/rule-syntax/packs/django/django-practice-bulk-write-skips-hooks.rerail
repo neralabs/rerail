@@ -64,7 +64,7 @@ bwh_skips("delete", "delete").
 // def, or the def a `.connect(fn, …)` names), which write in bulk on purpose (to skip the hooks they are).
 .decl bwh_in_hook(c: node, mq: symbol)
 bwh_in_hook(c, mq) :- bwh_model(c, _, mq, m), kind(f, "function_definition"), within(c, f), def_name(f, x),
-    (x = "save" ; x = "delete"), nearest(f, cb, scope), class_def(cb, bq), (bq = mq ; py_names__ancestor(m, mq, bq)).
+    (x = "save" ; x = "delete"), nearest(f, cb, scope), class_def(cb, bq), (bq = mq ; py_names__ancestor(mq, m, bq)).
 bwh_in_hook(c, mq) :- bwh_model(c, _, mq, _), within(c, f), dj_receiver_def(f, mq).
 
 // The cases, `cases/django-practice-bulk-write-skips-hooks/`, read as one repository: each line ending in `# caught` is

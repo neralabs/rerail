@@ -1,0 +1,141 @@
+// python/py-names-handed: what the phase py_names hands on (decisions 0677, 0705), stated once for
+// typing/programs/py_names.rerail. A reader (python/names, python/django) reads it keyed
+// by its own asks: the symbols its nodes may denote at its own path (`asked_at(p, k)`), what each denotes
+// (`denotes(k, q)`), its own classes and receivers (`own_at(p, q)`, `own_rcv_at(p, f)`), and the facts about each
+// symbol so reached, by that symbol in column 0 (`ancestor(q, m, b)`). Its memo entry is keyed by those rows alone
+// (decision 0665, `by_path 1`, `by_key 1`, `by_key`): an edit misses the files whose asks' answers changed, not
+// every file of a module that changed. Each fact keeps the module that defines its symbol (`m`). `asked_at`,
+// `own_at` and `own_rcv_at` are three exports, so a reader that reads no fact of its own definitions (python/names'
+// rules 1 and 3 alone) is handed no `own_at` row (decision 0702: a phase makes only the exports its reader reads).
+//
+// The including program gives: `exports_of(m, x, q)` (module m's export x denotes q, re-exports followed); the
+// symbols whose facts it hands on, every one of the run's or those its files ask: `handed_sym(q)` (a node denotes q),
+// `handed_obj(q)` (an attribute's object denotes q: its `class`), `handed_attr(q)` (an attribute denotes q: its
+// `defined`); and its own relations, keyed by the module: class, defined, ancestor, library_ancestor, the
+// members', the ancestors' and the Django facts.
+
+.decl exports_of(m: symbol, x: symbol, q: symbol) extensible
+.decl handed_sym(q: symbol) extensible
+.decl handed_obj(q: symbol) extensible
+.decl handed_attr(q: symbol) extensible
+
+// ---- a file's asks ----------------------------------------------------------------------------------------------------
+// lsym(n, q): a symbol node n may denote, from its own file: what python/scopes gives it (its file's definitions,
+// builtins), what it spells through an import (qn), and an attribute of either, at any depth (`c.a`, python/names'
+// sym_of rule 3's).
+.decl lsym(n: node, q: symbol)
+lsym(n, q) :- sym_of(n, q).
+lsym(n, q) :- qn(n, q).
+lsym(n, @dot(c, a)) :- attr_of(n, o, a), lsym(o, c).
+// sym_at(p, k): a symbol a node of the file at path p may denote.
+.decl sym_at(p: symbol, k: symbol)
+sym_at(p, q) :- lsym(n, q), docof(n, d), doc(d, p, _).
+// obj_at(p, k), attr_at(p, k): the same, of an attribute's object (what rule 3 reads `class` of) and of an attribute
+// (what it reads `defined` of).
+.decl obj_at(p: symbol, k: symbol)
+obj_at(p, q) :- attr_of(_, o, _), lsym(o, q), docof(o, d), doc(d, p, _).
+.decl attr_at(p: symbol, k: symbol)
+attr_at(p, q) :- attr_of(n, _, _), lsym(n, q), docof(n, d), doc(d, p, _).
+// own_def(p, q): a definition of the file at path p (a def or class, nested ones too). Each is asked of itself, so
+// its facts are made by its symbol (`handed_any`), never in full.
+.decl own_def(p: symbol, q: symbol)
+own_def(p, q) :- qualname(f, q), docof(f, d), doc(d, p, _).
+// own_at(p, q), handed on as itself: a class of the file at path p, what its readers ask of their own definitions:
+// its ancestry, its body's and its ancestors' members, its Django facts. Made of the file alone, so no fact need be
+// made to say which: a reader reads only the facts it reads of them (decision 0702), and a def or method is no row.
+.decl own_at(p: symbol, q: symbol)
+own_at(p, q) :- class_def(c, q), docof(c, d), doc(d, p, _).
+// own_rcv_at(p, f), handed on as itself: a function of the file at path p that is a receiver (`dj_receiver_fn`), the
+// one fact a reader reads of its own functions. Made only for a reader that reads it.
+.decl own_rcv_at(p: symbol, f: symbol)
+own_rcv_at(p, f) :- own_def(p, f), h_dj_receiver_fn(f, _, _).
+// star_public(p, x): x is public in the module of the file at path p through a star import (python/imports'
+// public_name, its third case of exported): the one part of a file's own names' being public that another file
+// decides. The rest is the file's own (python/names' site_exported).
+.decl star_public(p: symbol, x: symbol)
+star_public(p, x) :- doc(_, p, m), star_from(m, m2), exported(m2, x), public_name(m2, x), !has_all(m),
+    !prefix("_", x).
+// res(k, q): what k, a symbol as a file has it, denotes: itself; through an import, the definition the exports
+// follow it to (python/names' rule 1, export_at); a definition `c.a` of the run, c what k's prefix denotes (rule 3).
+.decl res(k: symbol, q: symbol) cross_file
+res(k, k) :- sym_at(_, k).
+res(k, r) :- sym_at(_, k), split_dot(k, m, x), exports_of(m, x, r).
+res(k, q) :- sym_at(_, k), split_dot(k, k0, a), res(k0, c), c != k0, defined(_, q), split_dot(q, c, a).
+// resolved_k(k, q): k, `m.x` as a file spells it through an import, is module m's export x, which denotes q
+// (python/names' export_at).
+.decl resolved_k(k: symbol, q: symbol) cross_file
+resolved_k(k, q) :- sym_at(_, k), split_dot(k, m, x), exports_of(m, x, q).
+
+// handed_any(q): a symbol a fact of may be handed on: one a node denotes, or a file's own definition.
+.decl handed_any(q: symbol) cross_file
+handed_any(q) :- handed_sym(q).
+handed_any(q) :- own_def(_, q).
+
+// ---- handed on: the asks and their answers ---------------------------------------------------------------------------
+// asks_at(p, k), handed on as asked_at: the file's asks that denote a symbol a fact is handed on of, or resolve
+// through an export.
+.decl asks_at(p: symbol, k: symbol)
+asks_at(p, k) :- sym_at(p, k), res(k, q), handed_sym(q).
+asks_at(p, k) :- sym_at(p, k), resolved_k(k, _).
+// denotes_k(k, q), handed on as denotes: an ask's symbols.
+.decl denotes_k(k: symbol, q: symbol)
+denotes_k(k, q) :- res(k, q), handed_sym(q).
+
+// ---- handed on: the facts, by symbol -------------------------------------------------------------------------------
+.decl h_class(q: symbol, m: symbol)
+h_class(q, m) :- handed_obj(q), class(m, q).
+.decl h_class_named(q: symbol, m: symbol)
+h_class_named(q, m) :- handed_sym(q), class(m, q).
+.decl h_defined(q: symbol, m: symbol)
+h_defined(q, m) :- handed_attr(q), defined(m, q).
+.decl h_ancestor(q: symbol, m: symbol, b: symbol)
+h_ancestor(q, m, b) :- handed_any(q), ancestor(m, q, b).
+.decl h_library_ancestor(q: symbol, m: symbol, b: symbol)
+h_library_ancestor(q, m, b) :- handed_any(q), library_ancestor(m, q, b).
+.decl h_anc_call(q: symbol, m: symbol, x: symbol, f: symbol)
+h_anc_call(q, m, x, f) :- handed_any(q), anc_call(m, q, x, f).
+.decl h_anc_kw(q: symbol, m: symbol, x: symbol, k: symbol, v: symbol)
+h_anc_kw(q, m, x, k, v) :- handed_any(q), anc_kw(m, q, x, k, v).
+.decl h_anc_ref(q: symbol, m: symbol, x: symbol, s: symbol)
+h_anc_ref(q, m, x, s) :- handed_any(q), anc_ref(m, q, x, s).
+.decl h_anc_method(q: symbol, m: symbol, x: symbol)
+h_anc_method(q, m, x) :- handed_any(q), anc_method(m, q, x).
+.decl h_member_call(q: symbol, m: symbol, x: symbol, f: symbol)
+h_member_call(q, m, x, f) :- handed_any(q), member_call(m, q, x, f).
+.decl h_member_kw(q: symbol, m: symbol, x: symbol, k: symbol, v: symbol)
+h_member_kw(q, m, x, k, v) :- handed_any(q), member_kw(m, q, x, k, v).
+.decl h_member_method(q: symbol, m: symbol, x: symbol)
+h_member_method(q, m, x) :- handed_any(q), member_method(m, q, x).
+.decl h_plain_def(q: symbol, m: symbol)
+h_plain_def(q, m) :- handed_any(q), plain_def(m, q).
+.decl h_dj_group(q: symbol, m: symbol, g: symbol, x: symbol)
+h_dj_group(q, m, g, x) :- handed_any(q), dj_group(m, q, g, x).
+.decl h_dj_cond_group(q: symbol, m: symbol, g: symbol, x: symbol)
+h_dj_cond_group(q, m, g, x) :- handed_any(q), dj_cond_group(m, q, g, x).
+.decl h_dj_opaque(q: symbol, m: symbol)
+h_dj_opaque(q, m) :- handed_any(q), dj_opaque(m, q).
+.decl h_dj_unmanaged(q: symbol, m: symbol)
+h_dj_unmanaged(q, m) :- handed_any(q), dj_unmanaged(m, q).
+.decl h_dj_abstract(q: symbol, m: symbol)
+h_dj_abstract(q, m) :- handed_any(q), dj_abstract(m, q).
+.decl h_dj_manager_method(q: symbol, m: symbol, a: symbol, x: symbol)
+h_dj_manager_method(q, m, a, x) :- handed_any(q), dj_manager_method(m, q, a, x).
+.decl h_dj_hook(q: symbol, m: symbol, k: symbol, h: symbol)
+h_dj_hook(q, m, k, h) :- handed_any(q), dj_hook(m, q, k, h).
+.decl h_dj_receiver_fn(f: symbol, m: symbol, q: symbol)
+h_dj_receiver_fn(f, m, q) :- handed_any(f), dj_receiver_fn(m, f, q).
+.decl h_dj_deferred_task(f: symbol, m: symbol)
+h_dj_deferred_task(f, m) :- handed_any(f), dj_deferred_task(m, f).
+.decl h_dj_task_def(f: symbol, m: symbol)
+h_dj_task_def(f, m) :- handed_any(f), dj_task_def(m, f).
+.decl h_dj_view_model(q: symbol, m: symbol, s: symbol)
+h_dj_view_model(q, m, s) :- handed_any(q), dj_view_model(m, q, s).
+.decl h_dj_anc_clean_call(q: symbol, m: symbol, x: symbol)
+h_dj_anc_clean_call(q, m, x) :- handed_any(q), dj_anc_clean_call(m, q, x).
+
+// h_dj_number_fields(q, m, x), handed on as dj_number_fields: class q declares field x, in its body or an ancestor's
+// of the run, of a field class holding a number (dj_number_field), a query expression's `output_field` aside: the
+// number fields of the models a counter's file names (django-practice-bulk-not-loop).
+.decl h_dj_number_fields(q: symbol, m: symbol, x: symbol)
+h_dj_number_fields(q, m, x) :- handed_any(q), (member_call(m, q, x, f) ; anc_call(m, q, x, f)), x != "output_field",
+    split_dot(f, fm, t), dj_field_module(fm), dj_number_field(t).

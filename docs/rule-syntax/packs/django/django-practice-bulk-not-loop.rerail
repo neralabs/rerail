@@ -57,14 +57,14 @@ bnl_counter(body, v) :- bnl_loop(v, body), kind(a, "assignment"), within(a, body
     (bnl_number_literal(n) ; docof(a, d), bnl_number_field(d, x)).
 // Field x moved by step n is a number: n is an int or float literal (bnl_number_literal, a test of the step), or a
 // model the counter's file can name declares x as a number field (bnl_number_field(d, x), python/django's
-// dj_number_field), in its body or an ancestor's of the run. The models are read by symbol, in the rows the phase
-// py_names hands on for the modules document d reads, as dj_model_field reads them: no node crosses (decision 0677).
+// dj_number_field), in its body or an ancestor's of the run: the phase py_names' verdict for each class document d
+// names or defines (dj_number_fields), by the class's symbol, no node crossing (decision 0677).
 .decl bnl_number_literal(n: node)
 bnl_number_literal(n) :- unparen(n, m), (kind(m, "integer") ; kind(m, "float")).
 .decl bnl_number_field(d: number, x: symbol)
-bnl_number_field(d, x) :- doc(d, p, _), py_names__reads_at(p, m),
-    (py_names__member_call(m, _, x, f) ; py_names__anc_call(m, _, x, f)), x != "output_field", split_dot(f, fm, t),
-    dj_field_module(fm), dj_number_field(t).
+bnl_number_field(d, x) :- doc(d, p, _), py_names__asked_at(p, k), py_names__denotes(k, q),
+    py_names__dj_number_fields(q, _, x).
+bnl_number_field(d, x) :- doc(d, p, _), py_names__own_at(p, q), py_names__dj_number_fields(q, _, x).
 
 // bnl_model_is(c, body): c's manager belongs to a name the loop that runs body binds each iteration, as its target
 // (`for model in models: model.objects.get(...)`) or in its body (`cls = apps.get_model(...)`): each iteration may

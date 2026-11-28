@@ -258,14 +258,18 @@ violation("data-layer-imperative-private-functions", "eager-signature", "eager_s
 //     whose declared type types the field.
 // Every edge counts (EngRefs builds the graph with this policy's config; via names the link kind). An open
 // definition (`reference_open`) makes W's term Unknown only where no seed is reached: no finding either way.
-.decl caller_seed(f: node)
-caller_seed(f) :- direct_execution_imperative(f).
-caller_seed(f) :- direct_execution_symbol(f), eager_signature_eager(f).
+// The graph is by symbol (decision 0677): the walk is over the definitions' symbols, and the finding places its own.
+.decl caller_seed(s: symbol)
+caller_seed(s) :- direct_execution_imperative(f), reference_def(f, s).
+caller_seed(s) :- direct_execution_symbol(f), eager_signature_eager(f), reference_def(f, s).
+// caller_fn(s): definition s is a function.
+.decl caller_fn(s: symbol)
+caller_fn(s) :- node(_, g, "function_definition", _, _), reference_def(g, s).
 // A function from which a seed is reachable, the seed included, through functions only.
-.decl caller_reaches(g: node)
-caller_reaches(g) :- caller_seed(g), node(_, g, "function_definition", _, _).
-caller_reaches(g) :- node(_, g, "function_definition", _, _), reference_edge(g, h, _), caller_reaches(h).
+.decl caller_reaches(g: symbol)
+caller_reaches(g) :- caller_seed(g), caller_fn(g).
+caller_reaches(g) :- caller_fn(g), reference_edge(g, h, _), caller_reaches(h).
 violation("data-layer-imperative-private-functions", "caller", "calls_imperative", p, l) :-
     direct_execution_symbol(f), !direct_execution_direct(f), !eager_signature_eager(f),
-    reference_edge(f, g, _), caller_reaches(g),
+    reference_def(f, s), reference_edge(s, g, _), caller_reaches(g),
     node(d, f, _, _, _), in_scope(d), !out_scope(d), !tape_syntax_error(d), doc(d, p, _), line(f, l).

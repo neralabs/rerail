@@ -1,7 +1,7 @@
 #!/bin/bash
-# The layout-invariance gate (decision 0094 §8, t22's step 0) on corpus0's `conform` package (95 files): calls_cx cold,
+# The layout-invariance gate (decision 0094 §8, t22's step 0) on corpus0's `conform` package (95 files): calls_p3 cold,
 # warm, the move warm on the same store, and the moved layout cold on a fresh store; then each layout's answers, its
-# nodes placed by line and the moved layout's lines mapped back. Each run is capped at 60 s.
+# terms placed by line and the moved layout's lines mapped back. Each run is capped at 60 s.
 #
 # Prepare the inputs here, from the shared data folder's corpus0 (bench-steps.sh's):
 #   mkdir -p tmp/li/orig && cp -R "$RERAIL_SHARED/bench/step-vs-main/corpus0/conform" tmp/li/orig/
@@ -17,16 +17,17 @@ W=${TMPDIR:-/tmp}/oscar_li
 rm -rf "$W"; mkdir -p -m 700 "$W"; chmod 700 "$W"
 nice -n 19 cargo build --profile profiling --bin rerail-engine > "$W/build.log" 2>&1 || { echo "build failed"; grep -E '^error' -A5 "$W/build.log" | head -20; exit 1; }
 E=$T/profiling/rerail-engine
-# calls_cx, and the span of each node its answers name (as the oracle test's `oracle_jedi_at`), to compare layouts.
-P=$W/calls_cx_at.rerail
-cat src/code_rule_dsl/typing/programs/calls_cx.rerail > "$P"
+# calls_p3, and where each term its answers name is (as the oracle test's `oracle_jedi_at`): its answers are keyed by
+# terms (`pt_tm`, decision 0677), a definition's by its symbol.
+P=$W/calls_p3_at.rerail
+cat src/code_rule_dsl/typing/programs/calls_p3.rerail > "$P"
 cat >> "$P" <<'RR'
 
-.decl answer_at(n: node, s: number)
-answer_at(n, s) :- call_target(n, _), node(_, n, _, s, _).
-answer_at(f, s) :- call_target(_, f), node(_, f, _, s, _).
-answer_at(n, s) :- call_open(n), node(_, n, _, s, _).
-answer_at(n, s) :- type_of(n, _), node(_, n, _, s, _).
+.decl answer_at(t: symbol, p: symbol, s: number)
+answer_at(t, p, s) :- answer_kind(k), kind(n, k), pt_tm(n, t), node(d, n, _, s, _), doc(d, p, _).
+answer_at(t, p, s) :- pt_vpos(n), pt_tm(n, t), node(d, n, _, s, _), doc(d, p, _).
+.decl answer_kind(k: symbol)
+answer_kind("call"). answer_kind("function_definition"). answer_kind("class_definition").
 .output answer_at
 RR
 

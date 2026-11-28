@@ -40,14 +40,27 @@
         assert_eq!(m.order, Order::Down);
     }
 
-    /// A graph that can cycle is not: its relation has no node column, or its step is a relation the check does not
-    /// read as a tree step.
+    /// A graph that can cycle is not: its relation has no node column and no index step, or its step is a relation the
+    /// check does not read as a tree step.
     #[test]
     fn graphs_that_can_cycle_are_not_proved() {
         let reach = check_of(".decl reach(a: symbol, b: symbol)\nreach(a, b) :- edge(a, b).\nreach(a, c) :- reach(a, b), edge(b, c).\n", &["reach"]);
-        assert_eq!(reach, Err("a relation with no node column".into()));
+        assert!(reach.unwrap_err().starts_with("a relation with no node column, and no index step"));
         let linked = check_of(".decl r(a: node, b: node)\nr(a, b) :- link(a, b).\nr(a, c) :- r(a, b), link(b, c).\n", &["r"]);
         assert!(linked.unwrap_err().starts_with("an unknown step: link"));
+    }
+
+    /// A relation with no node column (a cross-file stratum keyed by symbols, decision 0677) is proved by an index that
+    /// climbs beside its key.
+    #[test]
+    fn an_index_climbing_beside_a_symbol_is_proved() {
+        let m = check_of(
+            ".decl size(q: symbol, k: number)\n.decl below(q: symbol, i: number)\nbelow(q, 0) :- size(q, _).\n\
+             below(q, @add(i, 1)) :- below(q, i), size(q, k), i < k.\n",
+            &["below"],
+        )
+        .expect("proved");
+        assert_eq!((m.order, m.col["below"]), (Order::Climbs, 1));
     }
 
     /// A component whose measures are past the bound is refused, however many: the product of 70 relations' four node

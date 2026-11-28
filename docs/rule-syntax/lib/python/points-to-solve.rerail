@@ -43,7 +43,8 @@
 // classes (`list[C]`'s `__iter__`, `dict[str, C].get`), overloads fitted by arity (every overload's return is
 // taken), and `async def` in stubs. Those values are unknown here (`vopen`), never wrong.
 //
-// What follows is calls_cx.rerail's header.
+// What follows is calls_cx.rerail's header. calls_cx.rerail, calls.rerail and make_cx.py are removed (decision 0677):
+// these rules are the Python typing program, and `calls_p3` runs them.
 // calls_cx.rerail (P3's source): calls.rerail with every cross-file lookup a function of the reader's import closure (decision 0076, O114),
 // so its fixpoint can be memoised per import component. Generated from calls.rerail by
 // fixtures/python/calls/make_cx.py; edit calls.rerail and regenerate. What differs:
@@ -454,12 +455,12 @@ pt_wkey(d, w) :- pt_starx(_, _, d), w = @replace_all(d, "#[0-9]+$", "").
 // pt_wres(q, w): the name q a document reads is workspace binding w.
 .decl pt_wres(q: symbol, w: symbol)
 pt_wres(q, w) :- pt_lres(q, d), pt_wkey(d, w).
+// pt_starx(m, x, d): a star import into scope m binds x to the imported module's d, where m binds no x of its own.
+// Each read is of the scope's node, so the rule is its file's (decision 0652): a factor of symbols alone (the scope's
+// term and the module) placed no document.
 .decl pt_starx(m: symbol, x: symbol, d: symbol)
-.decl pt_starx_l_0(m: symbol, q: symbol)
-pt_starx_l_0(m__t, q) :- pt_star_from(m, _), pt_modname(m, q), pt_scope_tm(m, m__t).
-.decl pt_rbound_t(m: symbol, x: symbol)
-pt_rbound_t(m__t, x) :- pt_rbound(m, x), pt_scope_tm(m, m__t).
-pt_starx(m, x, d) :- pt_starx_l_0(m, q), types__binds(q, x, d), x != "*", !pt_rbound_t(m, x).
+pt_starx(t, x, d) :- pt_star_from(m, _), pt_modname(m, q), pt_scope_tm(m, t), types__binds(q, x, d), x != "*",
+    !pt_rbound(m, x).
 pt_bv(m, x, k, v) :- pt_starx(m, x, d), pt_wkey(d, w), pt_qv(_, w, k, v).
 pt_bv_g(m, x, v) :- pt_starx(m, x, d), pt_wkey(d, w), pt_qv_g(_, w, v).
 
@@ -620,6 +621,10 @@ pt_lval(d, "cls", d) :- struct__def(d, "class"), !pt_wsown(d).
 pt_lval(d, "fn", d) :- struct__def(d, "function"), !pt_wsown(d).
 pt_lval(d, "inst", c) :- types__vtype(d, _, c), struct__def(c, "class"), !struct__def(d, _), !pt_wsown(d).
 pt_lval(d, "none", "builtins.None") :- types__vtype(d, _, "builtins.None"), !struct__def(d, _), !pt_wsown(d).
+// A builtin class P2 names with no builtins stub read (`-> str` resolves to `builtins.str`): the class, as a workspace
+// annotation's (`pt_dtype`).
+pt_lret(f, "inst", t) :- types__rtype(f, _, t), pt_bclass(x), t = cat("builtins.", x), !struct__def(t, "class"),
+    !struct__flag(f, "async").
 // pt_lret(f, k, v): a call of library function f holds an instance of its declared return's class (each of a union's), or
 // None.
 .decl pt_lret(f: symbol, k: symbol, v: symbol)
@@ -1154,11 +1159,11 @@ pt_vopen(c) :- pt_vpos_t(c), pt_vopen_l_15(f, r), pt_ifn(c, f), pt_vopen(r), !pt
 pt_vopen(c) :- pt_vpos_t(c), pt_vopen_l_19(f), pt_ifn(c, f), !pt_rclosed(f).
 
 // ---- call targets ---------------------------------------------------------------------------------------------
-.decl call_target(c: node_path, f: symbol)
-call_target(c, f) :- pt_callee_t(c, e), pt_pv(e, "fn", f), !pt_mro_dropped(e, f).
-call_target(c, f) :- pt_wcall(c, f, _).
-call_target(c, f) :- pt_callee_t(c, e), pt_pv(e, "dfn", f), !pt_mro_dropped(e, f).
-call_target(c, f) :- pt_callee_t(c, e), pt_dec1_t(f, d), pt_pv(e, "wfn", f), pt_lv(d, "fn", g), pt_lwrap(g, _).
+.decl pt_call_target_all(c: node_path, f: symbol)
+pt_call_target_all(c, f) :- pt_callee_t(c, e), pt_pv(e, "fn", f), !pt_mro_dropped(e, f).
+pt_call_target_all(c, f) :- pt_wcall(c, f, _).
+pt_call_target_all(c, f) :- pt_callee_t(c, e), pt_pv(e, "dfn", f), !pt_mro_dropped(e, f).
+pt_call_target_all(c, f) :- pt_callee_t(c, e), pt_dec1_t(f, d), pt_pv(e, "wfn", f), pt_lv(d, "fn", g), pt_lwrap(g, _).
 // Method resolution order. `found` is the union over every base, depth first, so in a diamond (`class D(B, C)`,
 // both from `A`) `D.who` finds `A.who` through `B` and `C.who` through `C`. C3 gives `C.who`. A definition found
 // on a class that another candidate class subclasses is never the one called, so it is dropped here, at the
@@ -1179,24 +1184,24 @@ pt_mro_dropped(n, f) :- pt_mro_kept_l_0(a, n), pt_mro_cand(n, c, at), pt_mro_sha
     !pt_mro_kept(n, f).
 .decl pt_mro_ambiguous(n: node_path)
 pt_mro_ambiguous(n) :- pt_mro_cand(n, c, x), pt_mro_cand(n, c, y), x != y, !pt_mro_shadowed(n, c, x), !pt_mro_shadowed(n, c, y).
-call_target(c, f) :- pt_callee_t(c, e), pt_pv(e, "cls", k), pt_found(k, "__init__", at), pt_bv(at, "__init__", "fn", f).
-call_target(c, f) :- pt_callee_t(c, e), pt_pv(e, "inst", k), pt_found(k, "__call__", at), pt_bv(at, "__call__", "fn", f).
+pt_call_target_all(c, f) :- pt_callee_t(c, e), pt_pv(e, "cls", k), pt_found(k, "__init__", at), pt_bv(at, "__init__", "fn", f).
+pt_call_target_all(c, f) :- pt_callee_t(c, e), pt_pv(e, "inst", k), pt_found(k, "__call__", at), pt_bv(at, "__call__", "fn", f).
 // A class call also runs the class's `__new__` and its metaclass's `__call__`, where the workspace defines them.
-call_target(c, f) :- pt_callee_t(c, e), pt_pv(e, "cls", k), pt_found(k, "__new__", at), pt_bv(at, "__new__", "fn", f).
-call_target(c, f) :- pt_callee_t(c, e), pt_pv(e, "cls", k), pt_anc(k, b), pt_metacls(b, mc), pt_found(mc, "__call__", at),
+pt_call_target_all(c, f) :- pt_callee_t(c, e), pt_pv(e, "cls", k), pt_found(k, "__new__", at), pt_bv(at, "__new__", "fn", f).
+pt_call_target_all(c, f) :- pt_callee_t(c, e), pt_pv(e, "cls", k), pt_anc(k, b), pt_metacls(b, mc), pt_found(mc, "__call__", at),
     pt_bv(at, "__call__", "fn", f).
 .decl pt_metacls(c: symbol, m: symbol)
 .decl pt_metacls_l_0(c: symbol, v: node_path)
 pt_metacls_l_0(c__t, v__t) :- kind(c, "class_definition"), field(c, "superclasses", al), child(al, kw, _), kind(kw, "keyword_argument"),
     field(kw, "name", nm), text(nm, "metaclass"), field(kw, "value", v), pt_scope_tm(c, c__t), v__t = @node_path(v).
 pt_metacls(c, mc) :- pt_metacls_l_0(c, v), pt_pv(v, "cls", mc).
-.decl call_open(c: node_path)
-call_open(c) :- pt_callee_t(c, e), pt_vopen(e).
-call_open(c) :- pt_callee_t(c, e), pt_pv(e, "cls", k), pt_attr_open(c, k, "__init__").
-call_open(c) :- pt_callee_t(c, e), pt_pv(e, "inst", k), pt_attr_open(c, k, "__call__").
-call_open(c) :- pt_callee_t(c, e), pt_pv(e, "mod", _).
-call_open(c) :- pt_callee_t(c, e), pt_pv(e, "super", _).
-call_open(c) :- pt_callee_t(c, e), pt_mro_ambiguous(e).
+.decl pt_call_open_all(c: node_path)
+pt_call_open_all(c) :- pt_callee_t(c, e), pt_vopen(e).
+pt_call_open_all(c) :- pt_callee_t(c, e), pt_pv(e, "cls", k), pt_attr_open(c, k, "__init__").
+pt_call_open_all(c) :- pt_callee_t(c, e), pt_pv(e, "inst", k), pt_attr_open(c, k, "__call__").
+pt_call_open_all(c) :- pt_callee_t(c, e), pt_pv(e, "mod", _).
+pt_call_open_all(c) :- pt_callee_t(c, e), pt_pv(e, "super", _).
+pt_call_open_all(c) :- pt_callee_t(c, e), pt_mro_ambiguous(e).
 .decl pt_ext_import(s: symbol, x: symbol, p: node_path)
 pt_ext_import(s, x, p) :- pt_run_import_l_0(m, s, x, p), !pt_wsmod(m).
 pt_ext_import(s, x, p) :- pt_run_import_l_1(q, s, x, p), !pt_wsmod(q).
@@ -1204,16 +1209,16 @@ pt_ext_import(s, x, p) :- pt_run_import_l_1(q, s, x, p), !pt_wsmod(q).
 .decl pt_calls(f: symbol, g: symbol)
 .decl pt_owner_t(c: node_path, f: symbol)
 pt_owner_t(c__t, f__t) :- pt_owner(c, f), c__t = @node_path(c), pt_scope_tm(f, f__t).
-pt_calls(f, g) :- pt_owner_t(c, f), call_target(c, g).
+pt_calls(f, g) :- pt_owner_t(c, f), pt_call_target_all(c, g).
 .decl pt_calls_open(f: symbol)
-pt_calls_open(f) :- pt_owner_t(c, f), call_open(c).
+pt_calls_open(f) :- pt_owner_t(c, f), pt_call_open_all(c).
 .decl pt_blocks(f: symbol)
 .decl pt_blocks_l_0(f: symbol)
 pt_blocks_l_0(f__t) :- pt_owner(c, f), pt_callee(c, e), pt_qn(e, q), pt_blocking(q), pt_scope_tm(f, f__t).
 pt_blocks(f) :- pt_blocks_l_0(f).
 .decl pt_blocks_l_1(g: symbol)
 pt_blocks_l_1(g__t) :- pt_dq(g, q), pt_blocking(q), pt_scope_tm(g, g__t).
-pt_blocks(f) :- pt_owner_t(c, f), pt_blocks_l_1(g), call_target(c, g).
+pt_blocks(f) :- pt_owner_t(c, f), pt_blocks_l_1(g), pt_call_target_all(c, g).
 .decl pt_reach_sync(f: symbol)
 pt_reach_sync(f) :- pt_blocks(f), !pt_isasync_t(f).
 pt_reach_sync(f) :- pt_calls(f, g), pt_reach_sync(g), !pt_isasync_t(f).
@@ -1224,10 +1229,10 @@ pt_open_sync(f) :- pt_calls(f, g), pt_open_sync(g), !pt_isasync_t(f).
 .decl pt_finding(rule: symbol, n: node_path)
 .decl pt_finding_l_0(c: node_path)
 pt_finding_l_0(c__t) :- pt_owner(c, a), pt_isasync(a), !pt_in_await(c), c__t = @node_path(c).
-pt_finding("ASYNC_BLOCKING", c) :- pt_finding_l_0(c), call_target(c, g), pt_reach_sync(g).
+pt_finding("ASYNC_BLOCKING", c) :- pt_finding_l_0(c), pt_call_target_all(c, g), pt_reach_sync(g).
 .decl pt_async_open(c: node_path)
-pt_async_open(c) :- pt_finding_l_0(c), call_target(c, g), pt_open_sync(g), !pt_reach_sync(g).
-pt_async_open(c) :- pt_finding_l_0(c), call_open(c).
+pt_async_open(c) :- pt_finding_l_0(c), pt_call_target_all(c, g), pt_open_sync(g), !pt_reach_sync(g).
+pt_async_open(c) :- pt_finding_l_0(c), pt_call_open_all(c).
 // The witness chain for a message: each step of a reaching path.
 .decl pt_chain_step(f: symbol, g: symbol)
 pt_chain_step(f, g) :- pt_calls(f, g), pt_reach_sync(g), pt_reach_sync(f).
@@ -1278,19 +1283,26 @@ pt_tv_l_5(f__t, r__t) :- pt_retval(f, r), !pt_isasync(f), !pt_isgen(f), pt_scope
 pt_tv(c, k, v) :- pt_tv_l_5(f, r), pt_cfn(c, e, f), pt_tv(r, k, v).
 pt_tv(c, k, v) :- pt_pv_l_4(f, i), pt_posarg_t(c, i, a), pt_cfn(c, e, f), pt_tv(a, k, v).
 
-.decl type_of(n: node_path, t: symbol)
+.decl pt_type_of_all(n: node_path, t: symbol)
 .decl pt_cls_q_t(c: symbol, q: symbol)
 pt_cls_q_t(c__t, q) :- pt_cls_q(c, q), pt_scope_tm(c, c__t).
-type_of(n, q) :- pt_vpos_t(n), pt_cls_q_t(c, q), pt_pv(n, "inst", c).
-type_of(n, t) :- pt_vpos_t(n), pt_tv(n, "builtin", v), pt_btype(v, t).
+pt_type_of_all(n, q) :- pt_vpos_t(n), pt_cls_q_t(c, q), pt_pv(n, "inst", c).
+pt_type_of_all(n, t) :- pt_vpos_t(n), pt_tv(n, "builtin", v), pt_btype(v, t).
 .decl pt_dtype_t(m: node_path, t: symbol)
 pt_dtype_t(m__t, t) :- pt_dtype(m, t), m__t = @node_path(m).
-type_of(n, t) :- pt_vpos_t(n), pt_dtype_t(m, t), pt_tv(n, "decl", m).
+pt_type_of_all(n, t) :- pt_vpos_t(n), pt_dtype_t(m, t), pt_tv(n, "decl", m).
+// A library's instance, by its class's qualified name (a builtin's bare, as `pt_btype` names one), and a library's
+// None: what a library declares a call returns (`pt_lret`, P2's `rtype`), an attribute holds, and so on. The value
+// stays open (`ext`), as every library value is: the library's declarations are not checked.
+.decl pt_lname(k: symbol, t: symbol)
+pt_lname(k, t) :- pt_lv(_, "inst", k), t = @replace_all(k, "^builtins\\.", "").
+pt_type_of_all(n, t) :- pt_vpos_t(n), pt_lv(n, "inst", k), pt_lname(k, t).
+pt_type_of_all(n, "None") :- pt_vpos_t(n), pt_lv(n, "none", _).
 // A class object's class is `type`, unless a metaclass may make it another: a `metaclass=` keyword, an external base
 // (`enum.Enum`, `abc.ABC`) or a base that is no known class, on the class or an ancestor. A builtin base keeps `type`.
-type_of(n, "type") :- pt_vpos_t(n), pt_pv(n, "cls", c), !pt_meta_open(c).
-type_of(n, "module") :- pt_vpos_t(n), pt_pv(n, "mod", _).
-type_of(n, "module") :- pt_ext_mod(n).
+pt_type_of_all(n, "type") :- pt_vpos_t(n), pt_pv(n, "cls", c), !pt_meta_open(c).
+pt_type_of_all(n, "module") :- pt_vpos_t(n), pt_pv(n, "mod", _).
+pt_type_of_all(n, "module") :- pt_ext_mod(n).
 // A name an `import` statement binds to a module outside the workspace (`import asyncio`), where nothing else binds it.
 .decl pt_ext_mod(n: node_path)
 .decl pt_ext_mod_l_0(n: node_path, s: symbol, x: symbol)
@@ -1306,47 +1318,79 @@ pt_meta_open(c) :- pt_meta_open_l_0(b), pt_anc(c, b).
 pt_meta_open_l_1(b__t, e__t) :- pt_basex(b, e), !pt_builtin_ref(e, _), pt_scope_tm(b, b__t), e__t = @node_path(e).
 pt_meta_open(c) :- pt_meta_open_l_1(b, e), pt_anc(c, b), pt_extb(e).
 pt_meta_open(c) :- pt_anc(c, b), pt_base_open(b).
-.decl type_open(n: node_path)
-type_open(n) :- pt_vpos_t(n), pt_vopen(n), !pt_ext_mod(n).
-type_open(n) :- pt_vpos_t(n), !pt_vopen(n), !pt_pv(n, _, _), !pt_pv_g(n, _), !pt_tv(n, _, _), !pt_ext_mod(n).
+.decl pt_type_open_all(n: node_path)
+pt_type_open_all(n) :- pt_vpos_t(n), pt_vopen(n), !pt_ext_mod(n).
+pt_type_open_all(n) :- pt_vpos_t(n), !pt_vopen(n), !pt_pv(n, _, _), !pt_pv_g(n, _), !pt_tv(n, _, _), !pt_ext_mod(n).
 // Functions and `super()` objects are values the relations do not name a class for.
-type_open(n) :- pt_vpos_t(n), pt_pv(n, k, _), k != "inst", k != "cls", k != "mod", k != "gen".
-type_open(n) :- pt_vpos_t(n), pt_tv(n, "ext", _), !pt_ext_mod(n).
-type_open(n) :- pt_vpos_t(n), pt_pv(n, "cls", c), pt_meta_open(c).
+pt_type_open_all(n) :- pt_vpos_t(n), pt_pv(n, k, _), k != "inst", k != "cls", k != "mod", k != "gen".
+pt_type_open_all(n) :- pt_vpos_t(n), pt_tv(n, "ext", _), !pt_ext_mod(n).
+pt_type_open_all(n) :- pt_vpos_t(n), pt_pv(n, "cls", c), pt_meta_open(c).
 .decl type_open_n_0(c: symbol)
 type_open_n_0(c__t) :- pt_cls_q(c, _), pt_scope_tm(c, c__t).
-type_open(n) :- pt_vpos_t(n), pt_pv(n, "inst", c), !type_open_n_0(c).
+pt_type_open_all(n) :- pt_vpos_t(n), pt_pv(n, "inst", c), !type_open_n_0(c).
 // A class whose `__new__` or metaclass `__call__` the workspace defines may make something else than its instance.
-type_open(c) :- pt_vopen_l_11(c, e), pt_pv(e, "cls", k), pt_found(k, "__new__", _).
-type_open(c) :- pt_vopen_l_11(c, e), pt_pv(e, "cls", k), pt_anc(k, b), pt_metacls(b, _).
+pt_type_open_all(c) :- pt_vopen_l_11(c, e), pt_pv(e, "cls", k), pt_found(k, "__new__", _).
+pt_type_open_all(c) :- pt_vopen_l_11(c, e), pt_pv(e, "cls", k), pt_anc(k, b), pt_metacls(b, _).
 // Subclassing between the names `type_of` gives: a workspace class's workspace bases, its external bases by
 // qualified name, and its builtin bases.
 .decl pt_tsub(n: node_path, t: symbol, u: symbol)
-pt_tsub(n, t, t) :- type_of(n, t).
-pt_tsub(n, t, "object") :- type_of(n, t).
-pt_tsub(n, "bool", "int") :- type_of(n, "bool").
-pt_tsub(n, t, u) :- pt_cls_q_t(c, t), pt_cls_q_t(b, u), type_of(n, t), pt_anc(c, b).
+pt_tsub(n, t, t) :- pt_type_of_all(n, t).
+pt_tsub(n, t, "object") :- pt_type_of_all(n, t).
+pt_tsub(n, "bool", "int") :- pt_type_of_all(n, "bool").
+pt_tsub(n, t, u) :- pt_cls_q_t(c, t), pt_cls_q_t(b, u), pt_type_of_all(n, t), pt_anc(c, b).
 .decl pt_tsub_l_0(b: symbol, e: node_path, u: symbol)
 pt_tsub_l_0(b__t, e__t, u) :- pt_basex(b, e), pt_qn(e, u), pt_scope_tm(b, b__t), e__t = @node_path(e).
-pt_tsub(n, t, u) :- pt_cls_q_t(c, t), pt_tsub_l_0(b, e, u), type_of(n, t), pt_anc(c, b), !pt_xknown(e, u).
+pt_tsub(n, t, u) :- pt_cls_q_t(c, t), pt_tsub_l_0(b, e, u), pt_type_of_all(n, t), pt_anc(c, b), !pt_xknown(e, u).
 .decl pt_tsub_l_1(b: symbol, x: symbol)
 pt_tsub_l_1(b__t, x) :- pt_basex(b, e), pt_builtin_ref(e, x), pt_scope_tm(b, b__t).
-pt_tsub(n, t, x) :- pt_cls_q_t(c, t), pt_tsub_l_1(b, x), type_of(n, t), pt_anc(c, b).
+pt_tsub(n, t, x) :- pt_cls_q_t(c, t), pt_tsub_l_1(b, x), pt_type_of_all(n, t), pt_anc(c, b).
 // A listed class some of whose superclasses are unknown: a base that is no known class, or an external base
 // (whose own bases the program does not read).
 .decl pt_tsup_open(n: node_path, t: symbol)
-pt_tsup_open(n, t) :- pt_cls_q_t(c, t), type_of(n, t), pt_anc(c, b), pt_base_open(b).
+pt_tsup_open(n, t) :- pt_cls_q_t(c, t), pt_type_of_all(n, t), pt_anc(c, b), pt_base_open(b).
 .decl pt_tsup_open_l_0(b: symbol, e: node_path)
 pt_tsup_open_l_0(b__t, e__t) :- pt_basex(b, e), !pt_builtin_ref(e, "object"), pt_scope_tm(b, b__t), e__t = @node_path(e).
-pt_tsup_open(n, t) :- pt_cls_q_t(c, t), pt_tsup_open_l_0(b, e), type_of(n, t), pt_anc(c, b), pt_extb(e).
+pt_tsup_open(n, t) :- pt_cls_q_t(c, t), pt_tsup_open_l_0(b, e), pt_type_of_all(n, t), pt_anc(c, b), pt_extb(e).
 .decl pt_type_miss(n: node_path, u: symbol)
 // u is a supertype of one of n's types and not of another. Every type of a proven n is a subtype of u, so
 // u's candidates are any type's supertypes (no "first" type: a min over symbols has no order, 0483).
-pt_type_miss(n, u) :- pt_tsub(n, t0, u), type_of(n, t0), type_of(n, t), !pt_tsub(n, t, u).
+pt_type_miss(n, u) :- pt_tsub(n, t0, u), pt_type_of_all(n, t0), pt_type_of_all(n, t), !pt_tsub(n, t, u).
+.decl pt_proven_type_all(n: node_path, u: symbol)
+pt_proven_type_all(n, u) :- pt_type_of_all(n, t), pt_tsub(n, t, u), !pt_type_open_all(n), !pt_type_miss(n, u).
+.decl pt_possible_type_all(n: node_path, u: symbol)
+pt_possible_type_all(n, u) :- pt_type_of_all(n, t), pt_tsub(n, t, u).
+.decl pt_possible_open_all(n: node_path)
+pt_possible_open_all(n) :- pt_type_open_all(n).
+pt_possible_open_all(n) :- pt_type_of_all(n, t), pt_tsup_open(n, t).
+
+// ---- the checked documents ---------------------------------------------------------------------------------------
+// The library documents read from their source (phase 1's `source_library`: an untyped package's `.py` files, under
+// `python.untyped = read`). Reading that export makes them documents of this program (and no other library), so their
+// bodies are typed as the workspace's: a call of their functions has a target and their returns a type (the user,
+// 2026-11-27, of the ways to type such a library's calls: "do B"). Read by path, each document its own row. Here, not
+// in python/points-to-file: a rule that reads the answers (python/points-to) takes no library as its document.
+// pt_chk(t): t is the path of a call or a value position of a checked document, which the interface is about.
+.decl sources__source_library(p: symbol)
+.decl pt_srclib(d: number)
+pt_srclib(d) :- doc(d, p, _), sources__source_library(p).
+.decl pt_chk(t: node_path)
+pt_chk(t) :- kind(n, "call"), t = @node_path(n), docof(n, d), !pt_srclib(d).
+pt_chk(t) :- pt_vpos(n), t = @node_path(n), docof(n, d), !pt_srclib(d).
+
+// ---- the interface -----------------------------------------------------------------------------------------------
+// About the checked documents' calls and value positions alone (`pt_chk`): a library read from its source is typed as
+// the workspace is (`pt_wsmod`), and its own answers are no reader's.
+.decl call_target(c: node_path, f: symbol)
+call_target(c, f) :- pt_call_target_all(c, f), pt_chk(c).
+.decl call_open(c: node_path)
+call_open(c) :- pt_call_open_all(c), pt_chk(c).
+.decl type_of(n: node_path, t: symbol)
+type_of(n, t) :- pt_type_of_all(n, t), pt_chk(n).
+.decl type_open(n: node_path)
+type_open(n) :- pt_type_open_all(n), pt_chk(n).
 .decl proven_type(n: node_path, u: symbol)
-proven_type(n, u) :- type_of(n, t), pt_tsub(n, t, u), !type_open(n), !pt_type_miss(n, u).
+proven_type(n, u) :- pt_proven_type_all(n, u), pt_chk(n).
 .decl possible_type(n: node_path, u: symbol)
-possible_type(n, u) :- type_of(n, t), pt_tsub(n, t, u).
+possible_type(n, u) :- pt_possible_type_all(n, u), pt_chk(n).
 .decl possible_open(n: node_path)
-possible_open(n) :- type_open(n).
-possible_open(n) :- type_of(n, t), pt_tsup_open(n, t).
+possible_open(n) :- pt_possible_open_all(n), pt_chk(n).

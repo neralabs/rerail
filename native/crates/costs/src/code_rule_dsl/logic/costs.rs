@@ -464,20 +464,19 @@ const TRAINING_THREADS: usize = 2;
 fn fit(path: &PathBuf, samples: &[rerail_accel::score::Sample], upkeep: bool, stop: &(dyn Fn() -> bool + Sync)) -> bool {
         // Its threads hold the caller's object, as the engine's threads do (decision 0442): the model is the machine's.
         let starter = crate::code_rule_dsl::logic::profile::shared_here();
-        let pool = rayon::ThreadPoolBuilder::new()
-            .num_threads(TRAINING_THREADS)
-            .thread_name(|i| format!("rerail-cost-model-{i}"))
-            .start_handler(move |_| {
-                rerail_prof::code_rule_dsl::logic::profile::engine_thread();
-                // Held for the thread's life: the pool's threads end with it.
-                std::mem::forget(rerail_prof::code_rule_dsl::logic::profile::within(std::sync::Arc::clone(&starter)));
-                if upkeep {
-                    rerail_accel::upkeep::lower_this_thread();
-                } else {
-                    rerail_accel::cost_model::utility();
-                }
-            })
-            .build();
+        // One of the engine's pools: a loop or a wait in the training stays on its threads.
+        let builder = rayon::ThreadPoolBuilder::new().num_threads(TRAINING_THREADS).thread_name(|i| format!("rerail-cost-model-{i}"));
+        let pool = rerail_prof::code_rule_dsl::logic::profile::engine_pool(builder, move |_| {
+            rerail_prof::code_rule_dsl::logic::profile::engine_thread();
+            // Held for the thread's life: the pool's threads end with it.
+            std::mem::forget(rerail_prof::code_rule_dsl::logic::profile::within(std::sync::Arc::clone(&starter)));
+            if upkeep {
+                rerail_accel::upkeep::lower_this_thread();
+            } else {
+                rerail_accel::cost_model::utility();
+            }
+        })
+        .build();
         let started = std::time::Instant::now();
         let r = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
             match &pool {

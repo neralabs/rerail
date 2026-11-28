@@ -2,17 +2,19 @@
 // tests and the Jedi benchmark. Its rules are python/points-to-solve's, the ones the phase `points_to` runs (a rule
 // reads them through python/points-to); this program names their outputs. Each is keyed by terms (decision 0677,
 // note t55): a call's or a value position's node path (decision 0722), and a definition's symbol (`pt_scope_tm`).
+// The answers about a node are about the checked documents' (`pt_chk`): a library read from its source is typed among
+// them (sources' `source_library`), and its own calls are none of these outputs.
 #include "core.rerail"
 #include "python/points-to-solve.rerail"
 
 .decl call_lib(c: node_path)
-call_lib(c) :- pt_call_lib(c).
+call_lib(c) :- pt_call_lib(c), pt_chk(c).
 .decl base(c: symbol, b: symbol)
 base(c, b) :- pt_base(c, b).
 .decl finding(rule: symbol, n: node_path)
-finding(r, n) :- pt_finding(r, n).
+finding(r, n) :- pt_finding(r, n), pt_chk(n).
 .decl async_open(c: node_path)
-async_open(c) :- pt_async_open(c).
+async_open(c) :- pt_async_open(c), pt_chk(c).
 .decl chain_step(f: symbol, g: symbol)
 chain_step(f, g) :- pt_chain_step(f, g).
 .decl calls(f: symbol, g: symbol)

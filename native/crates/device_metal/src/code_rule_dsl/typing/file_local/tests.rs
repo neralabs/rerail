@@ -15,6 +15,17 @@ fn split_of(v: &Arc<Version>) -> Arc<FileLocal> {
     manager::analysis::<FileLocal>(v).unwrap()
 }
 
+/// The split as `programs_of` makes it, short of its refusal of a node in the cross-file part (decision 0677): what a
+/// test of a report on such a program (0649's positions, 0677's own) reads.
+fn unrefused(version: Arc<Version>) -> Programs {
+    let split = split_of(&version);
+    let (local, constants) = split.found();
+    let mut p = assemble(version, local, constants, split.views(), split.locations.clone(), split.same_doc.clone()).unwrap();
+    p.causes = split.causes.clone();
+    crossings_under(&p.program, &mut p.nodes, &split.causes);
+    p
+}
+
 /// `v` with the file-local joins of its cross-file rules pushed into the chunks (`PushLocalJoins`), and the joins made.
 fn pushed(v: Arc<Version>) -> (Arc<Version>, Vec<String>) {
     let mut pass = PushLocalJoins::default();
@@ -276,9 +287,9 @@ fn a_row_is_located_by_its_path_not_a_name_built_from_it() {
 fn a_rule_resolving_through_a_phases_names_stays_per_file() {
     let text = ".decl doc(d: number, path: symbol, module: symbol)\n.input doc\n.decl docof(n: node, d: number)\n.input docof\n\
                 .decl import_ref(n: node, s: symbol)\n.input import_ref\n\
-                .decl tsx_names__target_at(p: symbol, spec: symbol, t: symbol)\n.decl tsx_names__exports(m: symbol, x: symbol, q: symbol)\n\
+                .decl tsx_names__target_at(p: symbol, spec: symbol, t: symbol)\n.decl tsx_names__module(m: symbol)\n\
                 .decl target(d: number, spec: symbol, t: symbol)\ntarget(d, s, t) :- doc(d, p, _), tsx_names__target_at(p, s, t).\n\
-                .decl sym(n: node, q: symbol)\nsym(n, q) :- import_ref(n, s), docof(n, d), target(d, s, t), tsx_names__exports(t, \"default\", q).\n.output sym\n\
+                .decl sym(n: node, q: symbol)\nsym(n, q) :- import_ref(n, s), docof(n, d), target(d, s, q), tsx_names__module(q).\n.output sym\n\
                 .decl near(d: number, s: symbol, t: symbol)\nnear(d, s, m) :- docof(n, d), import_ref(n, s), doc(_, s, m).\n.output near\n";
     let split = split_of(&read(text));
     for rel in ["target", "sym"] {
@@ -430,7 +441,10 @@ far(c) :- node(_, c, "call", _, _), child(c, f, 0), alias(_, x), callee2(f, x).
     for rel in ["rr_reader_demand_callee2", "callee2"] {
         assert!(!split.local.contains(rel), "{rel} is every file's: {:?}", split.local);
     }
-    let p = programs_of(v).unwrap();
+    // `far` and `callee2` hold nodes in the cross-file part: the split refuses the program (decision 0677), and the
+    // rest is read from the split short of that.
+    assert!(programs_of(Arc::clone(&v)).err().unwrap().contains("  callee2: holds a node"));
+    let p = unrefused(v);
     assert!(!p.exports.iter().any(|x| x == "rr_reader_demand_callee"), "each file's own: {:?}", p.exports);
     crossings_checked(&p).unwrap();
 }
@@ -1226,18 +1240,19 @@ same_ann(f, g) :- ann_of(f, a), ann_of(g, a), f != g.
 
 /// An undeclared crossing is refused (decision 0652): a rule joining two documents by a value names its relation,
 /// cause and rule. Declared `cross_file`, it is accepted, and its reader follows it with no declaration. A relation
-/// the lowering made for a rule is named with that rule's relation.
+/// the lowering made for a rule is named with that rule's relation. The relations pair documents, not nodes: a node in
+/// the cross-file part is refused whatever is declared (decision 0677).
 #[test]
 fn an_undeclared_crossing_is_refused_and_a_declared_one_is_not() {
     let base = r#"
 .decl node(d: number, n: node, kind: symbol, start: number, end: number)
 .decl text(n: node, s: symbol)
 .input node, text
-.decl named(n: node, s: symbol)
-named(n, s) :- node(_, n, "identifier", _, _), text(n, s).
-.decl twin(a: node, b: node)DECL
+.decl named(d: number, s: symbol)
+named(d, s) :- node(d, n, "identifier", _, _), text(n, s).
+.decl twin(a: number, b: number)DECL
 twin(a, b) :- named(a, s), named(b, s), a != b.
-.decl has_twin(a: node)
+.decl has_twin(a: number)
 has_twin(a) :- twin(a, _).
 .output has_twin
 "#;
@@ -1252,8 +1267,10 @@ has_twin(a) :- twin(a, _).
 .decl node(d: number, n: node, kind: symbol, start: number, end: number)
 .decl text(n: node, s: symbol)
 .input node, text
-.decl alone(a: node)
-alone(a) :- node(_, a, "identifier", _, _), text(a, s), !(text(b, s), b != a).
+.decl named(d: number, s: symbol)
+named(d, s) :- node(d, n, "identifier", _, _), text(n, s).
+.decl alone(a: number)
+alone(a) :- named(a, s), !(named(b, s), b != a).
 .output alone
 "#);
     let refused = crossings_checked(&programs_of(helper).unwrap()).unwrap_err();
@@ -1320,8 +1337,9 @@ bare(e) :- node(d, e, "attribute", _, _), child(e, o, _), node(d, m, "module", _
     // A reader leaving a location column to the view (`o` placed by nothing else) asks of every document's rows.
     let open = located.replace("child(e, o, _), node(d, m, \"module\", _, _), !modattr(m, o)", "node(d, m, \"module\", _, _), modattr(m, o), e = m");
     assert_ne!(open, located);
-    let refused = crossings_checked(&programs_of(read(&open)).unwrap()).unwrap_err();
-    assert!(refused.contains("modattr"), "{refused}");
+    // Its nodes then cross into the cross-file part, which the split refuses (decision 0677) before 0652's check.
+    let refused = programs_of(read(&open)).err().unwrap();
+    assert!(refused.contains("decision 0677") && refused.contains("  modattr: holds a node in modattr.m, modattr.o"), "{refused}");
 }
 
 /// A covered view is placed by its readers, which its own rules' digests do not hold (decision 0652): `alt` joins any
@@ -1468,7 +1486,11 @@ found(n, l) :- call(n, s), first_of(s, _), line(n, l).
     };
     let refused = programs_of(program("first_of(s, i) :- call(n, s), call(m, s), n != m, visit_index(n, i).")).err().expect("a cross-file rule reads visit_index");
     assert!(refused.contains("first_of reads visit_index") && !refused.contains("found") && !refused.contains("local_at"), "{refused}");
-    let parts = programs_of(program("first_of(s, 0) :- call(n, s), call(m, s), n != m.")).unwrap();
+    // Without the position, `first_of` still reads its nodes in the cross-file part: the split refuses it (decision
+    // 0677), and reads no position, read from the split short of that.
+    let nodes = program("first_of(s, 0) :- call(n, s), call(m, s), n != m.");
+    assert!(programs_of(Arc::clone(&nodes)).err().unwrap().contains("  first_of: reads a node"));
+    let parts = unrefused(nodes);
     assert!(!parts.file_local.contains("first_of") && parts.positions.is_empty(), "{:?} {:?}", parts.file_local, parts.positions);
     assert!(positions_checked(&[]).is_ok());
 }
@@ -1521,7 +1543,7 @@ pick(n) :- ident(n, x), names(x).
 .decl hit(n: node, l: number)
 hit(n, l) :- pick(n), line(n, l).
 {extra}
-.output hit
+.output hit, pick
 "#);
     // As the corpus run splits: after the file-local joins are pushed into the chunks.
     let split = |text: &str| programs_of(pushed(read(text)).0).unwrap();
@@ -1534,7 +1556,7 @@ hit(n, l) :- pick(n), line(n, l).
     let parts = split(&source(".decl kid(c: node, l: number)\nkid(c, l) :- pick(p), child(p, c, _), line(c, l).\n.output kid"));
     assert!(parts.base.iter().any(|b| b == "child"), "{:?}", parts.base);
     assert!(!semijoin_bases(&parts.versions.cross, &parts.base).unwrap().contains("line"));
-    let parts = programs_of(read(&source(".decl own(n: node)\nown(n) :- node(_, n, \"identifier\", _, _), text(n, x), names(x).\n.decl seen(n: node, l: number)\nseen(n, l) :- own(n), line(n, l).\n.output seen"))).unwrap();
+    let parts = programs_of(read(&source(".decl own(n: node)\nown(n) :- node(_, n, \"identifier\", _, _), text(n, x), names(x).\n.decl seen(n: node, l: number)\nseen(n, l) :- own(n), line(n, l).\n.output seen, own"))).unwrap();
     let held = semijoin_bases(&parts.versions.cross, &parts.base).unwrap();
     assert!(!held.contains("line") && !held.contains("node") && !held.contains("text"), "{held:?}");
     // Per relation: a walk of `child` that looks up no attribute leaves `line` a semi-join for the other rules.
@@ -1571,7 +1593,7 @@ at(n, x) :- node(_, n, "identifier", _, _), text(n, x).
 warn(n) :- at(n, x), !names(x).
 .decl found(p: symbol, n: node, l: number)
 found(p, n, l) :- warn(n), node(d, n, _, _, _), doc(d, p, _), line(n, l).
-.output found
+.output found, warn
 "#;
     let (v, made) = pushed(read(text));
     let found = rules_of(&v, "found");
@@ -2442,7 +2464,8 @@ counted(s) :- key_doc(_, _), resolved(s).
 sig_at(n, f) :- text(n, f), types__sig(f, n).
 .output sig_at
 "#;
-    let p = programs_of(read(text)).unwrap();
+    let version = read(text);
+    let p = unrefused(Arc::clone(&version));
     let named: std::collections::BTreeMap<&str, &str> = p.nodes.iter().map(|c| (c.rel.as_str(), c.why.as_str())).collect();
     assert!(named.get("target").is_some_and(|w| w.contains("target.r") && w.contains("target.d") && w.contains("reads ref_name's column 0")), "{named:#?}");
     assert!(named.get("keyed").is_some_and(|w| w.contains("keyed.k")), "a value made of a node: {named:#?}");
@@ -2452,8 +2475,9 @@ sig_at(n, f) :- text(n, f), types__sig(f, n).
     for kept in ["resolved", "in_doc", "def_doc", "counted", "uncalled", "unresolved", "def_name", "ref_name", "callee", "key_doc", "used_def"] {
         assert!(!named.contains_key(kept), "{kept}: {named:#?}");
     }
-    // Reported, not refused, until the offenders are fixed; refused under `RERAIL_STRICT_NODES`.
-    let refused = nodes_checked(&p.nodes, true).unwrap_err();
+    // Refused, whatever made them (decision 0677): the split itself refuses the program, naming each with its rule.
+    assert_eq!(nodes_checked(&p.nodes).unwrap_err(), programs_of(version).err().unwrap());
+    let refused = nodes_checked(&p.nodes).unwrap_err();
     assert!(refused.contains("decision 0677") && refused.contains("  target: holds a node in target.r, target.d"), "{refused}");
 }
 
@@ -2486,7 +2510,12 @@ decoded_in_head(@path_node(p)) :- target(p).
 seen2(n) :- decoded_in_head(n), node(_, n, _, _, _).
 .output seen2
 "#;
-    let p = programs_of(read(text)).unwrap();
+    // A decoded node is a node id in the cross-file part: the split refuses it (decision 0677), naming each, and the
+    // report is read from the split short of that.
+    let v = read(text);
+    let refused = programs_of(Arc::clone(&v)).err().unwrap();
+    assert!(refused.contains("  decoded: holds a node in decoded.n") && !refused.contains("  target:"), "{refused}");
+    let p = unrefused(v);
     let named: std::collections::BTreeMap<&str, &str> = p.nodes.iter().map(|c| (c.rel.as_str(), c.why.as_str())).collect();
     assert!(!named.contains_key("target") && !named.contains_key("def_path"), "a node path is no node id: {named:#?}");
     assert!(named.get("decoded").is_some_and(|w| w.contains("decoded.n") && w.contains("@path_node")), "{named:#?}");
