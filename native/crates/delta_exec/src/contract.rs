@@ -102,6 +102,10 @@ pub trait PortSet {
     /// The input ports it writes demand on (P§7.1's demand out, `Asks`): each is asked by key, its partition's, and
     /// the driver answers only what is asked. An input port not listed is wanted whole.
     const ASKED: &'static [usize] = &[];
+    /// Whether it is a single-file wave (P§3): each output partition is made from its inputs' same partition alone, so
+    /// its ports may carry ids local to a partition (`Shape::local`, L9). An operator across partitions carries none:
+    /// what crosses holds symbols, content, paths and values.
+    const PER_PARTITION: bool = false;
 }
 
 macro_rules! port_handle {
@@ -479,6 +483,21 @@ fn ports_of<O: DeltaOp>() -> Result<Ports, String> {
     let p = O::Ports::ports();
     if (p.ins.len(), p.globals.len(), p.outs.len()) != (O::Ports::INS, O::Ports::GLOBALS, O::Ports::OUTS) {
         return Err("a port set's ports are not its counts".into());
+    }
+    // L9, by the ports' column types: ids local to a partition stay in it.
+    for (side, ports) in [("input", &p.ins), ("output", &p.outs)] {
+        for port in ports.iter() {
+            port.shape.encode().map_err(|e| format!("{side} port {}: {e}", port.name))?;
+            if O::Ports::PER_PARTITION && port.shape.partition.is_none() {
+                return Err(format!("{side} port {}: a single-file wave's ports are partitioned (P§3)", port.name));
+            }
+            if !O::Ports::PER_PARTITION && !port.shape.local.is_empty() {
+                return Err(format!(
+                    "L9: {side} port {} carries ids local to a partition (columns {:?}) through an operator across partitions: what crosses holds symbols, content, paths and values",
+                    port.name, port.shape.local
+                ));
+            }
+        }
     }
     Ok(p)
 }

@@ -32,7 +32,8 @@ pub fn shape(i: usize) -> rerail_blocks::layer::Shape {
     use rerail_blocks::layer::{ColType, Shape};
     let (name, arity) = RELATIONS[i];
     let columns = (0..arity).map(|c| if name == "k_num" && c == 2 { ColType::I64 } else { ColType::I32 }).collect();
-    Shape::run(columns, (0..arity as u16).collect(), Some(0))
+    let local: Vec<u16> = ID_COLS[i].iter().map(|&c| c as u16).collect(); // copy: not block data (the shape's columns)
+    Shape::run(columns, (0..arity as u16).collect(), Some(0)).with_local(&local)
 }
 
 /// Why a program cannot run as written: its module and rule (node ids), and what.
@@ -49,7 +50,8 @@ impl std::fmt::Display for Refused {
     }
 }
 
-/// Each relation's columns that hold a rule's or a term's id: a node id of the module's tape, local to it (L9).
+/// Each relation's columns that hold a rule's or a term's id: a node id of the module's tape, local to it (L9); its
+/// shape's local columns (`Shape::local`).
 pub const ID_COLS: [&[usize]; 8] = [&[1], &[1], &[1, 5], &[1], &[1], &[1], &[1], &[]];
 
 /// K-form rows (by relation, in `RELATIONS`' order) read by value: each module's ids, which are its own and renumber

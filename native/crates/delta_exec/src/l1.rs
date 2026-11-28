@@ -70,6 +70,8 @@ impl PortSet for L1Ports {
 
     /// It asks of its tape port: the documents it needs, by key (P§7.1).
     const ASKED: &'static [usize] = &[0];
+    /// A single-file wave: a module's K-form rows are its own document's tape read, its node ids in them (L9).
+    const PER_PARTITION: bool = true;
 }
 
 /// The tape port's rows, P§11.4's document set (path → tape id, grammar; indexed by path, partitioned by document):

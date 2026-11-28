@@ -297,6 +297,109 @@ fn a_port_set_whose_ports_are_not_its_counts_is_refused() {
     assert!(e.contains("not its counts"), "{e}");
 }
 
+/// An operator of port set `P` that never runs: what `Instance::new` says of its ports.
+fn ports_verdict<P: PortSet>() -> Result<(), String> {
+    struct Never<P>(std::marker::PhantomData<P>);
+    impl<P: PortSet> DeltaOp for Never<P> {
+        type Ports = P;
+        type Cache = ();
+        fn delta(&self, _: &mut Cx<'_>, _: &In<'_, P>, _: Option<&Bistate<View<'_>>>, _: &mut CacheW<()>, _: &mut Out<P>, _: &mut Asks<P>) -> Result<Work, String> {
+            Err("never run".into())
+        }
+        fn run(&self, _: &mut Cx<'_>, _: &At<'_, P>, _: &mut Out<P>) -> Result<(), String> {
+            Err("never run".into())
+        }
+    }
+    Instance::new(&Never::<P>(std::marker::PhantomData), &mut Directory::default()).map(|_| ())
+}
+
+/// L9 by column types: an id local to a partition (a node of its document's tape) is a column of a partitioned
+/// relation, not its partition; an operator across partitions whose ports carry one is refused, its input's or its
+/// output's; a single-file wave's ports are partitioned. L1, a single-file wave, carries the K-form's node ids.
+#[test]
+fn a_shape_carrying_a_node_out_of_its_partition_is_refused() {
+    use crate::kform::shape;
+    use rerail_blocks::layer::{ColType, Shape};
+    fn two() -> Shape {
+        Shape::run(vec![ColType::I32, ColType::I32], vec![0, 1], Some(0))
+    }
+    assert!(two().with_local(&[1]).encode().is_ok());
+    assert!(Shape::run(vec![ColType::I32, ColType::I32], vec![0, 1], None).with_local(&[1]).encode().unwrap_err().contains("L9"), "a local id with no partition");
+    assert!(two().with_local(&[0]).encode().unwrap_err().contains("L9"), "the partition column is no local id");
+    assert!(two().with_local(&[2]).encode().unwrap_err().contains("L9"), "past the columns");
+    // Across partitions, a K-form relation (its rule ids) out, or in.
+    struct Out1;
+    impl PortSet for Out1 {
+        const INS: usize = 1;
+        const GLOBALS: usize = 0;
+        const OUTS: usize = 1;
+        fn ports() -> Ports {
+            Ports { ins: vec![Port { name: "values", shape: two() }], globals: vec![], outs: vec![Port { name: "k_rule", shape: shape(0) }] }
+        }
+    }
+    struct In1;
+    impl PortSet for In1 {
+        const INS: usize = 1;
+        const GLOBALS: usize = 0;
+        const OUTS: usize = 1;
+        fn ports() -> Ports {
+            Ports { ins: vec![Port { name: "k_arg", shape: shape(2) }], globals: vec![], outs: vec![Port { name: "values", shape: two() }] }
+        }
+    }
+    let e = ports_verdict::<Out1>().unwrap_err();
+    assert!(e.contains("L9") && e.contains("k_rule"), "{e}");
+    let e = ports_verdict::<In1>().unwrap_err();
+    assert!(e.contains("L9") && e.contains("k_arg") && e.contains("[1, 5]"), "{e}");
+    // A single-file wave: the same ports pass; one not partitioned is refused.
+    struct Wave;
+    impl PortSet for Wave {
+        const INS: usize = 1;
+        const GLOBALS: usize = 0;
+        const OUTS: usize = 1;
+        const PER_PARTITION: bool = true;
+        fn ports() -> Ports {
+            Out1::ports()
+        }
+    }
+    ports_verdict::<Wave>().unwrap();
+    struct Flat;
+    impl PortSet for Flat {
+        const INS: usize = 1;
+        const GLOBALS: usize = 0;
+        const OUTS: usize = 1;
+        const PER_PARTITION: bool = true;
+        fn ports() -> Ports {
+            Ports { ins: vec![Port { name: "values", shape: Shape::run(vec![ColType::I32], vec![0], None) }], globals: vec![], outs: vec![Port { name: "k_rule", shape: shape(0) }] }
+        }
+    }
+    assert!(ports_verdict::<Flat>().unwrap_err().contains("partitioned"));
+    ports_verdict::<crate::l1::L1Ports>().unwrap();
+}
+
+/// L9's columns where a run's traces lie: the K-form's node ids (each relation's rule and term ids, `ID_COLS`) are its
+/// shapes' local columns; what crosses partitions or comes from the world carries none: the document set, the blobs,
+/// the world's leaves, answers and places, the want and the asks.
+#[test]
+fn node_ids_are_local_columns_of_the_kform_alone() {
+    for k in 0..crate::kform::RELATIONS.len() {
+        let want: Vec<u16> = crate::kform::ID_COLS[k].iter().map(|&c| c as u16).collect();
+        assert_eq!(crate::kform::shape(k).local, want, "{}", crate::kform::RELATIONS[k].0);
+    }
+    let crossing = [
+        ("the document set", crate::l1::tape_shape()),
+        ("the blobs", crate::files::blobs_shape()),
+        ("the leaves", crate::files::leaves_shape()),
+        ("the answers", crate::files::answers_shape()),
+        ("the places", crate::files::places_shape()),
+        ("the want", crate::contract::want_shape()),
+        ("the asks", crate::contract::asks_shape()),
+    ];
+    for (name, s) in crossing {
+        assert!(s.local.is_empty(), "{name} carries ids local to a partition: {:?}", s.local);
+        s.encode().unwrap_or_else(|e| panic!("{name}: {e}"));
+    }
+}
+
 /// The want at each of a chain's ten states: the toy's one output wanted, then not, in turn by `seed`.
 fn wants(seed: u64, steps: usize) -> Vec<BTreeSet<(usize, i64)>> {
     (0..=steps).map(|k| if rerail_blocks::layer::mix(seed + k as u64).is_multiple_of(3) { BTreeSet::new() } else { BTreeSet::from([(0, 0)]) }).collect()

@@ -101,6 +101,10 @@ pub struct Shape {
     pub order: Vec<u16>,
     pub indexes: Vec<IndexSpec>,
     pub partition: Option<u16>,
+    /// The columns that hold an id local to the row's partition: a node of its document's tape, which renumbers on any
+    /// edit of it (P§9's L9). Such a row is read and written only by an operator of that partition alone (a
+    /// single-file wave); what crosses partitions holds symbols, content, paths and values.
+    pub local: Vec<u16>,
     /// A recursive relation's level column (0364).
     pub levels: bool,
     pub encoding: Encoding,
@@ -116,11 +120,18 @@ impl Shape {
             order,
             indexes: Vec::new(),
             partition,
+            local: Vec::new(),
             levels: false,
             encoding: Encoding::Open,
             placement: Placement::RunBlock,
             retention: Retention::Run,
         }
+    }
+
+    /// The shape with columns `local` holding ids local to the row's partition (L9).
+    pub fn with_local(mut self, local: &[u16]) -> Shape {
+        self.local = local.to_vec();
+        self
     }
 
     /// The shape as its blocks hold it, or why it cannot be stored. What is not built yet is refused by name.
@@ -142,6 +153,10 @@ impl Shape {
             && self.columns[p as usize] != ColType::I32
         {
             return Err(format!("the partition column {p} is a module's or a document's id: 32 bits"));
+        }
+        // L9: an id local to a partition is a column of a partitioned relation, and not its partition (which names it).
+        if let Some(&c) = self.local.iter().find(|&&c| c as usize >= a || self.partition.is_none_or(|p| p == c)) {
+            return Err(format!("column {c} holds an id local to its row's partition (L9): the relation is partitioned, by another column, and has it ({a} columns, partition {:?})", self.partition));
         }
         // A recursive relation's level (0364): "a level per row, as a column of its relations", its last, 32 bits, and
         // last in the canonical order, so a key's rows lie together and its probe is a prefix. A rewrite is a kill and
