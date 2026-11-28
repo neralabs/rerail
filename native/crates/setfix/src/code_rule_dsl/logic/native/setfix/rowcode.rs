@@ -223,7 +223,7 @@ pub(super) fn fuse(steps: &[Step], lookups: &[bool], view: ViewOf<'_>) -> Vec<Op
             && !binds.is_empty()
             && !lookups.get(i).copied().unwrap_or(false)
         {
-            out[i] = fused_viewing(binds, &steps[i + 1..], tests_on(), lookups.get(i + 1..).unwrap_or(&[]), view).map(Box::new);
+            out[i] = fused_viewing(binds, &steps[i + 1..], tests_on(), lookups.get(i + 1..).unwrap_or(&[]), view, i > 0).map(Box::new);
         }
     }
     out
@@ -238,25 +238,25 @@ fn tests_on() -> bool {
 /// `fused_viewing` with no view's tests (a reader that has none, the device's): its lookups (`lookups`, per step of
 /// `after`) end the fusion.
 pub fn fused(binds: &[(usize, usize)], after: &[Step], ask: bool, lookups: &[bool]) -> Option<Fused> {
-    fused_in(binds, after, ask, lookups, &|_| None, false)
+    fused_in(binds, after, ask, lookups, &|_| None, false, true)
 }
 
 /// The steps after an atom that binds `binds` fused with it, as far as each is row code: a comparison, a document's
 /// test or read, a `let`, a set's test, a test of an input (`Test`), or a lookup (`lookups`, per step of `after`) a
 /// view reads with the chunk's others, its values computed columns. `ask`: whether a test of an input is asked row
 /// by row (which only the CPU's walk does); a view's step read a chunk at a time (`view`) is fused either way.
-pub fn fused_viewing(binds: &[(usize, usize)], after: &[Step], ask: bool, lookups: &[bool], view: ViewOf<'_>) -> Option<Fused> {
-    fused_in(binds, after, ask, lookups, view, false)
+pub fn fused_viewing(binds: &[(usize, usize)], after: &[Step], ask: bool, lookups: &[bool], view: ViewOf<'_>, factors: bool) -> Option<Fused> {
+    fused_in(binds, after, ask, lookups, view, false, factors)
 }
 
 /// A probe's fusion for a chunk of many bindings' rows (the walk's keyed batch, decision 0706 E5): as `fused` (its
 /// tests asked), but each slot bound before the atom a column of the row's own binding (`Word::Bound`), not a
 /// parameter of the chunk. Its rows are many bindings' candidates gathered together, its program run once over them.
 pub fn spanning(binds: &[(usize, usize)], after: &[Step], lookups: &[bool]) -> Option<Fused> {
-    fused_in(binds, after, true, lookups, &|_| None, true)
+    fused_in(binds, after, true, lookups, &|_| None, true, true)
 }
 
-fn fused_in(binds: &[(usize, usize)], after: &[Step], ask: bool, lookups: &[bool], view: ViewOf<'_>, span: bool) -> Option<Fused> {
+fn fused_in(binds: &[(usize, usize)], after: &[Step], ask: bool, lookups: &[bool], view: ViewOf<'_>, span: bool, factors: bool) -> Option<Fused> {
     let mut env: Vec<(usize, Val)> = binds.iter().map(|&(c, s)| (s, Val::Row(Word::Col(c)))).collect();
     let mut b = Build::default();
     let mut acc: Option<u16> = None;
@@ -453,13 +453,15 @@ fn fused_in(binds: &[(usize, usize)], after: &[Step], ask: bool, lookups: &[bool
     // one with a derived input's lookup (`Test::reads`): a lookup binds, which no factoring skips, and the chunk
     // carries its rows through it (`main.node(n, ..), n < e, rf_mbind(n, m)`: 0.39 M rows a lookup the walk read a row
     // at a time).
-    if ask && !tests.is_empty() && tests.iter().all(|t| t.reads.is_empty()) {
+    // The walk factors no rule's first atom (`factored`): its tests are fused whatever slots they leave unread
+    // (`rf_want(q, h), !rf_any_named(q)`: 102 rows walked through the negation a step of its own).
+    if ask && factors && !tests.is_empty() && tests.iter().all(|t| t.reads.is_empty()) {
         let read = |s: usize| tests.iter().any(|t| {
             let Step::Atom { keys, .. } = &after[t.at] else { return false };
             keys.iter().any(|&(_, k)| k == Key::Slot(s))
         });
         if !binds.iter().all(|&(_, s)| read(s)) {
-            return fused_in(binds, after, false, lookups, view, span);
+            return fused_in(binds, after, false, lookups, view, span, factors);
         }
     }
     // Only the binds the kept steps made, and the atom's.

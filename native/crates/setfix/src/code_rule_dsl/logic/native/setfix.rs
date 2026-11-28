@@ -8499,26 +8499,20 @@ fn stored_table(conn: &Connection, schema: &str, name: &str, need: &[&str]) -> O
 
 pub use steps::{ArchivedMulti as Multi, ArchivedPlan as Plan, ArchivedSrc as Src, ArchivedStep as Step, Edit, Key};
 
-/// t50 step 7: a split whose second part a later step requires to hold no "." (`split_dot`'s `!contains(x, ".")`),
-/// and which nothing else reads, is the split at the last "." (`Step::Split::last`): one split a row in place of one
-/// at every ".", and the test, true by construction, is unused. Where the part is read nowhere else it is not interned
-/// either, so a walk up a dotted name's prefixes makes no symbol a step but the prefix its row holds. The edits, on
-/// the plan's view (`steps::Edit`).
-fn last_splits(steps: &[Step], head: &[Term], is_dot: impl Fn(i64) -> bool) -> Vec<Edit> {
-    let in_head = |s: usize| head.iter().any(|t| matches!(t, Term::Slot(x) if *x == s) || matches!(t, Term::Cat(a, b) if *a == s || *b == s));
+/// t50 step 7: a split whose second part a later step requires to hold no "." (`split_dot`'s `!contains(x, ".")`) is
+/// the split at the last "." (`Step::Split::last`): one split a row in place of one at every ".", and the test, true
+/// by construction, is unused. The rows that go on are the same whoever else reads the part (`rf_via_import`'s
+/// `$q = @cat($m, $x), @contains($x, ".") = 0, rf_imported($m, $x, $t)`: 76 splits of 22 names, 22 passing) or holds
+/// it (the head). Where the part is read nowhere else it is not interned either (`probes`), so a walk up a dotted
+/// name's prefixes makes no symbol a step but the prefix its row holds. The edits, on the plan's view (`steps::Edit`).
+fn last_splits(steps: &[Step], is_dot: impl Fn(i64) -> bool) -> Vec<Edit> {
     let mut edits = Vec::new();
     for (i, st) in steps.iter().enumerate() {
         let Step::Split { b: Some(sb), last: false, .. } = st else { continue };
         let sb = *sb;
-        if in_head(sb) {
-            continue;
-        }
-        let readers: Vec<usize> = (i + 1..steps.len()).filter(|&j| steps[j].observes(sb)).collect();
-        let [j] = readers[..] else { continue };
-        let Step::Test { op, s: Key::Slot(s), p: Key::Const(dot), want: false, .. } = &steps[j] else { continue };
-        if op.as_str() != "contains" || *s != sb || !is_dot(*dot) {
-            continue;
-        }
+        let test = (i + 1..steps.len()).find(|&j| matches!(&steps[j], Step::Test { op, s: Key::Slot(s), p: Key::Const(dot), want: false, .. }
+            if op.as_str() == "contains" && *s == sb && is_dot(*dot)));
+        let Some(j) = test else { continue };
         edits.push(Edit::Last(i));
         edits.push(Edit::Unused(j, crate::code_rule_dsl::logic::analysis::Decision::new(true, "a split at its last \".\" leaves none in its second part")));
     }
@@ -9338,7 +9332,7 @@ fn join_rule_bound(conn: impl Scoped, spec: &ArchivedJoinSpec, syms: &mut Intern
 /// bags (`scalars`), the ranged probes' orders (`ranges`), and then what is read by step: the texts only probed (`probes`) and, where `fuse`, the row programs (`rowcode`).
 fn analysed(mut plan: steps::Plan, fuse: bool, is_dot: impl Fn(i64) -> bool) -> Section<steps::Plan> {
     let mut s = plan.encode();
-    let last = last_splits(&s.steps, &s.out, is_dot);
+    let last = last_splits(&s.steps, is_dot);
     if !last.is_empty() {
         plan.edit(last);
         s = plan.encode();
@@ -12341,7 +12335,7 @@ pub mod probe_tests {
         let plan = |steps: Vec<Made>, out: Vec<Term>| {
             let mut plan = steps::Plan { steps, out, nslots: 4, multi: Vec::new(), probes: Vec::new(), fused: Vec::new(), spans: Vec::new(), spec: 0, from: Vector::new(), plan_steps: 0, ranges: Vec::new(), lookups: Vec::new(), one: Vec::new() };
             let s = plan.encode();
-            plan.edit(last_splits(&s.steps, &s.out, |c| c == DOT));
+            plan.edit(last_splits(&s.steps, |c| c == DOT));
             plan.encode()
         };
         let split = || Made::Split { whole: Key::Slot(0), a: Some(1), b: Some(2), ka: Key::Slot(1), kb: Key::Slot(2), last: false };
@@ -12350,12 +12344,14 @@ pub mod probe_tests {
         let s = plan(vec![split(), test(DOT)], vec![Term::Slot(0), Term::Slot(1)]);
         assert!(last(&s.steps) && matches!(s.steps[1], Step::Unused { .. }));
         assert_eq!(probes(&s.steps, &s.out)[0] & UNREAD_B, UNREAD_B, "the second part is unread");
-        // Held by the head.
+        // Held by the head: the same split, the part made.
         let s = plan(vec![split(), test(DOT)], vec![Term::Slot(2)]);
-        assert!(!last(&s.steps) && matches!(s.steps[1], Step::Test { .. }));
-        // Read again by another step.
-        let s = plan(vec![split(), test(DOT), Made::Eq { a: Key::Slot(2), b: Key::Slot(1) }], Vec::new());
-        assert!(!last(&s.steps));
+        assert!(last(&s.steps) && matches!(s.steps[1], Step::Unused { .. }));
+        assert_eq!(probes(&s.steps, &s.out)[0] & UNREAD_B, 0, "the head reads the second part");
+        // Read again by another step, the test after it: the same split.
+        let s = plan(vec![split(), Made::Eq { a: Key::Slot(2), b: Key::Slot(1) }, test(DOT)], Vec::new());
+        assert!(last(&s.steps) && matches!(s.steps[2], Step::Unused { .. }));
+        assert_eq!(probes(&s.steps, &s.out)[0] & UNREAD_B, 0, "the equality reads the second part");
         // A test of another text.
         let s = plan(vec![split(), test(8)], Vec::new());
         assert!(!last(&s.steps));
