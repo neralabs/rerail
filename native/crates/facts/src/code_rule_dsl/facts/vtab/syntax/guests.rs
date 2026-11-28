@@ -53,9 +53,9 @@ pub(super) const OWN_NODES: &[(&str, &[usize])] = &[("parsed", &[2])];
 /// local id in the host, plus the host's base. A host the batch's documents do not hold (a tape value admitted in an
 /// earlier batch of the growth, the host of a string annotation nested in it) is found by the growth's numbering
 /// (`Numbering::of_located`). As it is where the host is no document the chunk has made.
-fn at_id(docs: &dyn Hosts, host: u32, at: i64) -> i64 {
+fn at_id(docs: &dyn Hosts, host: u32, at: i64) -> Option<i64> {
     let low = rerail_blocks::located::Located(at).low();
-    docs.host(host).filter(|h| h.is_numbered()).and_then(|h| h.local_of(low).map(|l| h.global(l))).or_else(|| docs.of_located(at)).unwrap_or(at)
+    docs.host(host).filter(|h| h.is_numbered()).and_then(|h| h.local_of(low).map(|l| h.global(l))).or_else(|| docs.of_located(at))
 }
 
 pub(super) trait Hosts {
@@ -132,7 +132,9 @@ impl GuestRows {
             }
         }
         self.program.push([key, i64::from(g.file), grammar]);
-        let at_n = at_id(docs, g.host, g.at);
+        // A host node the batch does not number (a stage's batch, whose program reads none of the host's kinds) is
+        // no row of it: no read of the batch reaches that node, as `host_nodes` finds.
+        let Some(at_n) = at_id(docs, g.host, g.at) else { return };
         self.sub_tape.push([at_n, grammar, tape]);
         let Some(r) = root else { return };
         self.parsed.push([at_n, grammar, r]);
@@ -164,7 +166,7 @@ impl GuestRows {
     #[allow(clippy::too_many_arguments)]
     fn tape_places(&mut self, p: &Projected, places: &[TapePlace], grammar: i64, tape: i64, root: Option<i64>, docs: &dyn Hosts, [host_nodes, guest_of, guest_place]: [bool; 3]) {
         for at in places {
-            let at_n = at_id(docs, at.host, at.at);
+            let Some(at_n) = at_id(docs, at.host, at.at) else { continue };
             self.sub_tape.push([at_n, grammar, tape]);
             if let Some(r) = root {
                 self.parsed.push([at_n, grammar, r]);
@@ -186,7 +188,7 @@ impl GuestRows {
     /// text, which is no file's.
     fn guest_places(&mut self, p: &Projected, docs: &dyn Hosts, host: u32, at: i64, place: &Placement) {
         let Some(lines) = docs.host(host).and_then(|h| h.extra.as_deref()) else { return };
-        let at = at_id(docs, host, at);
+        let Some(at) = at_id(docs, host, at) else { return };
         for ((_, span), (_, _, n)) in p.spans().zip(p.node_ids()) {
             let (line, _, col) = lines.place(place.host(span));
             self.guest_place.push([n, at, i64::from(line), i64::from(col)]);

@@ -46,8 +46,12 @@ terminal_unknown(c) :- terminal_call(c, o), !lazy_terminal(c), possible_open(o).
 // of its own file that is eager. A function's file is its document key (`def_doc`), which may cross (decision 0677).
 .decl def_doc(q: symbol, d: number)
 def_doc(q, d) :- kind(f, "function_definition"), pt_scope_tm(f, q), docof(f, d).
+// eager_at(q): definition q holds a lazy terminal, said in q's own file; eager(q), the cross part's, follows the
+// calls back from those (decision 0727: a relation of names, which the violation reads in its file).
+.decl eager_at(q: symbol)
+eager_at(q) :- lazy_terminal(c), owner(c, f), pt_scope_tm(f, q).
 .decl eager(q: symbol)
-eager(q) :- lazy_terminal(c), owner(c, f), pt_scope_tm(f, q).
+eager(q) :- eager_at(q).
 eager(q) :- calls(q, g), def_doc(q, d), def_doc(g, d), eager(g).
 
 .violation LEG_083_TYPED(at: node)

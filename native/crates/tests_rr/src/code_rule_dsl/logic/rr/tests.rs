@@ -2036,7 +2036,7 @@ line_ind(l, @indent(sp), @text_len(sp)) :- src_line(_, l, sp).
 }
 
 /// A node path (decision 0722) names a node by its granule's key and its steps: `@path_node` gives back the node
-/// `@node_path` made it of, `@path_unit` its granule's own path, and an output shows a path as its text (its base's
+/// `@node_path` made it of (read in the path's own file, `docof(n, d), doc(d, f, _)`: no node crosses, decision 0727), `@path_unit` its granule's own path, and an output shows a path as its text (its base's
 /// text, `/` and its steps), the same in every process.
 #[test]
 fn node_paths_name_nodes_and_decode_back_in_rules() {
@@ -2047,8 +2047,10 @@ fn node_paths_name_nodes_and_decode_back_in_rules() {
     std::fs::write(&rule, r#"
 .decl named(t: symbol, p: node_path)
 named(t, @node_path(n)) :- kind(n, "call"), text(n, t).
+.decl named_in(f: symbol, t: symbol, p: node_path)
+named_in(f, t, @node_path(n)) :- kind(n, "call"), text(n, t), docof(n, d), doc(d, f, _).
 .decl back(t: symbol, u: symbol)
-back(t, u) :- named(t, p), n = @path_node(p), text(n, u).
+back(t, u) :- named_in(f, t, p), n = @path_node(p), docof(n, d), doc(d, f, _), text(n, u).
 .decl unit(t: symbol, u: node_path)
 unit(t, @path_unit(p)) :- named(t, p).
 .output named, back, unit
