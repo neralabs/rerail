@@ -2032,8 +2032,10 @@ impl ProgramPass for Declared {
 /// both, which the type check refuses in a rule) keeps the node's name.
 pub struct TypedReads;
 
-/// The type the value in column `c` of an atom of `rel` is, where `rel` makes it.
-fn made_type(rel: &str, c: usize) -> Option<crate::code_rule_dsl::facts::core::PlaceType> {
+/// The type the value in column `c` of an atom of `rel` (of `arity` columns) is, where `rel` makes it. The built-ins
+/// `match_all("re", sp, m)` and `match_group("re", sp, m, g, gsp)` make matches as the relations the text pass writes
+/// them as (`matchall_<k>`, `matchgroup_<k>`) do, which it does after this pass.
+fn made_type(rel: &str, c: usize, arity: usize) -> Option<crate::code_rule_dsl::facts::core::PlaceType> {
     use crate::code_rule_dsl::facts::core::{PlaceType as P, typed};
     use crate::code_rule_dsl::logic::strings::{GROUPS, MATCHES};
     if let Some((ty, node)) = typed(rel) {
@@ -2046,6 +2048,8 @@ fn made_type(rel: &str, c: usize) -> Option<crate::code_rule_dsl::facts::core::P
     match (rel, c) {
         ("source", 1) | ("src_line", 2) => Some(P::Line),
         ("rx_span", 4) => Some(P::Match),
+        ("match_all", 2) if arity == 3 => Some(P::Match),
+        ("match_group", 2 | 4) if arity == 5 => Some(P::Match),
         ("first_token" | "last_token" | "token_before" | "token_after", 1) => Some(P::Token),
         _ if rel.starts_with(MATCHES) && c == 1 => Some(P::Match),
         _ if rel.starts_with(GROUPS) && (c == 1 || c == 3) => Some(P::Match),
@@ -2069,7 +2073,7 @@ fn var_types(
         let rel = v.rel_name(a.rel());
         for (c, t) in a.args().enumerate() {
             let TermRef::Var(s) = t else { continue };
-            if let Some(ty) = made_type(rel, c) {
+            if let Some(ty) = made_type(rel, c, a.arity()) {
                 out.entry(s).or_default().insert(ty);
             } else if let Some(tys) = columns.get(&(rel.to_owned(), c)) {
                 out.entry(s).or_default().extend(tys.iter().copied());

@@ -208,9 +208,14 @@ impl Projection {
         let shape = if core_shape { Shape::Core } else { Shape::T };
         let verdict = shape == Shape::T && error_triple;
         let mut reads: BTreeSet<String> = reads.into_iter().filter(|r| !derived.contains(r)).collect();
-        // A typed read of a line, a match or a token is its node counterpart's relation (`places::typed`): made where
-        // either is read.
-        let counterparts: Vec<String> = reads.iter().filter_map(|r| crate::code_rule_dsl::facts::core::typed(r)).map(|(_, n)| n.to_owned()).collect();
+        // A typed read of a line or a token is its node counterpart's relation (`places::typed`): made where either is
+        // read. A match's are its own in core.rerail's shape (`Extra::match_reads`, decision 0724 §3).
+        let counterparts: Vec<String> = reads
+            .iter()
+            .filter_map(|r| crate::code_rule_dsl::facts::core::typed(r))
+            .filter(|(ty, _)| !(shape == Shape::Core && *ty == crate::code_rule_dsl::facts::core::PlaceType::Match))
+            .map(|(_, n)| n.to_owned())
+            .collect();
         reads.extend(counterparts);
         Projection { shape, reads: Some(reads), rx_spans, ast_patterns, text_spans: Some(spans), token_text, node_anchors: None, long_text: BTreeSet::new(), long_text_any: false, text_nodes: None, partial, verdict, derived, compiled_rx: CompiledSpans::default() }
     }
@@ -3515,6 +3520,10 @@ struct Extra {
     value_type_of: bool,
     value_type: bool,
     comment: bool,
+    /// A match's own reads (decision 0724 §3, step 3), in core.rerail's shape: `match_text`, `match_document`,
+    /// `match_line_number`, `match_end_line_number`, `match_start_column`. A match's id is its number in its document,
+    /// in no node's space, so its rows are these, never a node read's.
+    match_reads: MatchReads,
     sources: Vector<[i64; 2]>,
     src_lines: Vector<[i64; 3]>,
     line_counts: Vector<[i64; 2]>,
@@ -3542,6 +3551,22 @@ struct Extra {
     /// The last document's later spans (its comments no node is, then its matches and groups): how many, which take
     /// one run of the growth's ids (`Docs::later_ids`, plan "Chunk node numbers").
     later: u32,
+}
+
+/// Which of a match's own reads are made, and their rows (`Extra::match_reads`): each `[match, value]`.
+#[derive(Default)]
+struct MatchReads {
+    own: bool,
+    text: bool,
+    document: bool,
+    line: bool,
+    end_line: bool,
+    col: bool,
+    texts: Vector<[i64; 2]>,
+    documents: Vector<[i64; 2]>,
+    lines: Vector<[i64; 2]>,
+    end_lines: Vector<[i64; 2]>,
+    cols: Vector<[i64; 2]>,
 }
 
 /// A text's matches of one pattern: each match's groups as (match, group, start, end), offsets in the text.
@@ -3597,6 +3622,15 @@ impl Extra {
             comment: shape == Shape::T && read("comment"),
             rx_span: shape == Shape::Core && read("rx_span"),
             node_places: shape != Shape::Core,
+            match_reads: MatchReads {
+                own: shape == Shape::Core,
+                text: read("match_text"),
+                document: read("match_document"),
+                line: read("match_line_number"),
+                end_line: read("match_end_line_number"),
+                col: read("match_start_column"),
+                ..MatchReads::default()
+            },
             matches: matches
                 .iter()
                 .enumerate()
@@ -3642,6 +3676,29 @@ impl Extra {
         }
         if self.col {
             self.cols.push([sp, col as i64]);
+        }
+    }
+
+    /// Match `m`'s rows (`span`'s, a match's own reads where its ids are its own: `MatchReads`).
+    fn match_span(&mut self, m: i64, first: usize, last: usize, col: usize, body: &str, text: &mut Vector<[i64; 2]>, string: &mut dyn FnMut(&str) -> usize) {
+        if !self.match_reads.own {
+            return self.span(m, first, last, col, body, true, text, string);
+        }
+        let r = &mut self.match_reads;
+        if r.document {
+            r.documents.push([m, self.file]);
+        }
+        if r.text {
+            r.texts.push([m, string(body) as i64]);
+        }
+        if r.line {
+            r.lines.push([m, first as i64]);
+        }
+        if r.end_line {
+            r.end_lines.push([m, last as i64]);
+        }
+        if r.col {
+            r.cols.push([m, col as i64]);
         }
     }
 
@@ -3844,8 +3901,13 @@ impl Extra {
         }
         // Each regex's matches in each span, and their named groups, numbered through the document.
         let mut next: usize = 0;
+        // A match's id is its number in its document where its reads are its own (decision 0724 §3), else a span's.
+        let own = self.match_reads.own;
         let mut id = |_: &Projected| -> StoreResult<i64> {
             next += 1;
+            if own {
+                return u32::try_from(next - 1).map(|i| rerail_blocks::located::Located::of(key, i).0).map_err(|_| StoreError::Invalid(format!("document {key} has more than 2^32 matches")));
+            }
             span(ExtraSpan::Match, next - 1)
         };
         // A piece of span `r` (`at` within it): placed by its bytes, as every span is.
@@ -3863,7 +3925,7 @@ impl Extra {
                     let m = id(p)?;
                     self.matches[k].rows.push([*sp, m]);
                     let (first, last, col) = place(r, found.range());
-                    self.span(m, first, last, col, found.as_str(), true, text, string);
+                    self.match_span(m, first, last, col, found.as_str(), text, string);
                     if !groups {
                         continue;
                     }
@@ -3873,7 +3935,7 @@ impl Extra {
                         let g = id(p)?;
                         self.matches[k].group_rows.push([*sp, m, string(name) as i64, g]);
                         let (first, last, col) = place(r, group.range());
-                        self.span(g, first, last, col, group.as_str(), true, text, string);
+                        self.match_span(g, first, last, col, group.as_str(), text, string);
                     }
                 }
             }
@@ -3977,7 +4039,7 @@ impl Extra {
                         let m = id(p)?;
                         self.rx_spans.push([pat, *c, i64::from(j), string(name) as i64, m]);
                         let (first, last, col) = place(r, at.clone());
-                        self.span(m, first, last, col, &body[at.clone()], true, text, string);
+                        self.match_span(m, first, last, col, &body[at.clone()], text, string);
                         captured.entry((*pattern, name)).or_default().push((m, r.start + at.start..r.start + at.end));
                     }
                 }
@@ -3987,7 +4049,9 @@ impl Extra {
         if !rx.is_empty() {
             crate::code_rule_dsl::logic::profile::work(crate::code_rule_dsl::logic::profile::Unit::Byte, scanned);
         }
-        self.later += next as u32;
+        if !own {
+            self.later += next as u32;
+        }
         Ok(())
     }
 
@@ -4042,6 +4106,15 @@ impl Extra {
         }
         if self.rx_span {
             out.push(("rx_span", relation(&["p", "c", "j", "g", "m"], &mut self.rx_spans.iter().map(|&[p, c, j, g, m]| rerail_facts_base::row![atom(p), c, j, atom(g), m])).with_atoms(&[true, false, false, true, false])));
+        }
+        let r = &self.match_reads;
+        for (on, name, rows) in [(r.text, "match_text", &r.texts), (r.document, "match_document", &r.documents), (r.line, "match_line_number", &r.lines), (r.end_line, "match_end_line_number", &r.end_lines), (r.col, "match_start_column", &r.cols)] {
+            if on && r.own {
+                // Its columns are its node counterpart's (`facts::core::input_columns`).
+                let columns = crate::code_rule_dsl::facts::core::input_columns(name).expect("a typed read's columns");
+                let made = relation(columns, &mut rows.iter().map(|&[m, v]| if name == "match_text" { rerail_facts_base::row![m, atom(v)] } else { rerail_facts_base::row![m, v] }));
+                out.push((name, if name == "match_text" { made.with_atoms(&[false, true]) } else { made }));
+            }
         }
         let mut matched = Vec::new();
         for found in self.matches {

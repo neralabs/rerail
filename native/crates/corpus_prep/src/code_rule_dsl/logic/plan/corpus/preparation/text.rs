@@ -669,10 +669,11 @@ fn node_tests(v: &Version, of: &[(&'static str, &'static str)]) -> HashMap<Strin
 /// `document_line_by_number`), which the lowering reads as the engine's after this pass (`lower::core`).
 const LINE_SPANS: [(&str, usize); 5] = [("source", 1), ("src_line", 2), ("document_source", 1), ("document_line", 1), ("document_line_by_number", 2)];
 
-/// The typed readers of a place's text (decision 0724 §4: `line_text`, `match_text`, `token_text`, `place_text`),
-/// each the engine's `text` to the lowering (`lower::core::ALIASES`): this pass reads them as `text`, so a line's text
-/// a rule binds is read in place as the engine's name of it is.
-const TEXT_ALIASES: [&str; 4] = ["line_text", "match_text", "token_text", "place_text"];
+/// The typed readers of a place's text that are the engine's `text` to the lowering (decision 0724 §4, `lower::core::
+/// ALIASES`): `line_text`, `token_text`, `place_text`. This pass reads them as `text`, so a line's text a rule binds is
+/// read in place as the engine's name of it is. Not `match_text`: a match's id is its number in its document and its
+/// text its own relation's (`Extra::match_reads`, 932e507f14), no node read's.
+const TEXT_ALIASES: [&str; 3] = ["line_text", "token_text", "place_text"];
 
 /// Relation `name`, as the engine's per-node read where it is a typed reader of one (`TEXT_ALIASES`).
 fn read_name(name: &str) -> &str {
