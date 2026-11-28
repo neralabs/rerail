@@ -12,7 +12,7 @@ trap 'rm -f "$asm"' EXIT
 dis > "$asm"
 fail=0
 # Each function: a name it holds (two, for a closure: the function and its part), and the branches it may have.
-for spec in "middle9block_map::0" "middle10then_block::0" "classes_overKb0:fold:2" "middle10walk_blockKb0_::0" "middle10walk_blockKb1_::0" "middle9then_walk::0" "middle9far_block::0"; do
+for spec in "middle9block_map::0" "middle10then_block::0" "classes_overKb0:fold:2" "middle10walk_blockKb0_::0" "middle10walk_blockKb1_::0" "middle9then_walk::0" "middle9far_block::0" "middle16block_map_tracks::0"; do
     IFS=: read -r f g allowed <<< "$spec"
     body="$(awk -v f="$f" -v g="$g" '!on && index($0, f) && index($0, g) && /:$/ {on=1; next} on && /^[^ \t].*:$/ {exit} on' "$asm")"
     n="$(grep -c . <<< "$body" || true)"

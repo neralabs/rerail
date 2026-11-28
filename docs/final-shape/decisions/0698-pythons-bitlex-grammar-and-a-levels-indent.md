@@ -1121,3 +1121,20 @@ statements and blocks end.
     - **As measured** (as item 113, 16 blocks a chunk, the host at load 5 to 12): the strata's summaries 280
       instructions a byte (533 before item 114) and about 55 cycles a byte. From the middle, all passes about
       166 cycles a byte.
+116. **Pass 1's later blocks read on tracks: one for each state the lanes are in** (as built:
+    `middle::block_map_tracks`, `TRACKS`, `lane_states`).
+    - **Counted first** (`compare_strata states`): after a chunk's first block its lanes are in few states. At 16
+      blocks a chunk, 98.6% of the later blocks have 3 or fewer different states before them, and 1.2% have 17
+      or 18. At 2 blocks a chunk, 85.8% have 3 or fewer.
+    - **The tracks:** a chunk's first block is read from every lane, as before (`block_map`). The states its lanes
+      leave are found by a set of bits and its first `TRACKS` = 3, by selects. Where there are no more than 3,
+      each later block is read from those states alone, and each lane follows its state's track. The layers are
+      the same functions for both: `shared`, `t_layer`, `s_layer`, `c_layer`, `lane_exit`. `block_lanes` runs
+      them for every state, `block_map_tracks` for its 3. Where there are more, every block is read from every
+      lane. That choice is made once a chunk, in the loop over blocks.
+    - **As tested:** `shared_depths_and_tracks_are_each_codes` compares the tracks' exits and depths with
+      `block_map_each`'s from each lane and from `WRONG`. The 30 tests pass on AArch64 and x86-64. From the middle
+      is still the serial lexer's in 1644 of 1644 files. `block_map_tracks` has 686 instructions a block on
+      AArch64 (812 on x86-64), against `block_map`'s 12631; 0 conditional branches and 0 calls on both.
+    - **As measured** (as item 115, the host at load 13 to 17): the strata's summaries 100 instructions a byte
+      (280 before) and about 21 cycles a byte (55). From the middle, all passes about 118 cycles a byte (166).

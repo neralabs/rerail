@@ -481,9 +481,20 @@ const fn code_of(l: usize) -> usize {
     (l / 8) * 4 + l % 4
 }
 
-/// `block_map`'s layers: each lane's exit (`WRONG` where B's reading is wrong) and each code's bytes of code.
+/// A block's reads every lane's layers share: its quotes, the triples' runs and machine, and the prefixes' window.
+struct Shared<'a> {
+    blk: &'a B,
+    qs: u64,
+    qd: u64,
+    r3: u64,
+    m3: [[u64; 2]; 3],
+    x: u128,
+    all_wrong: bool,
+}
+
+/// A block's shared reads, from the block below it and the block after it.
 #[inline(always)]
-fn block_lanes(prev: &B, blk: &B, b1: &B) -> ([u8; LANES], [u64; CODES], u128) {
+fn shared<'a>(prev: &B, blk: &'a B, b1: &B) -> Shared<'a> {
     let (pqs, pqd) = (prev.sq & !prev.esc, prev.dq & !prev.esc);
     let (qs, qd) = (blk.sq & !blk.esc, blk.dq & !blk.esc);
     let runs = |q: u64, nq: u64, pq: u64| {
@@ -492,68 +503,154 @@ fn block_lanes(prev: &B, blk: &B, b1: &B) -> ([u8; LANES], [u64; CODES], u128) {
     };
     let (r3s, r4s) = runs(qs, b1.sq & !b1.esc, pqs);
     let (r3d, r4d) = runs(qd, b1.dq & !b1.esc, pqd);
-    let all_wrong = (r4s | r4d) != 0;
-    let r3 = r3s | r3d;
-    let m3 = super::machine(r3s, r3d, 0);
     // The prefixes' window: a run of prefix letters below an opener that reaches the window's bottom is B's
     // refusal of the reading (`prefixes_b`'s none).
     let x = super::win(prev.pfx, blk.pfx).reverse_bits();
+    Shared { blk, qs, qd, r3: r3s | r3d, m3: super::machine(r3s, r3d, 0), x, all_wrong: (r4s | r4d) != 0 }
+}
+
+/// The triples' layer from its state `t0`: the bytes in a triple, the triples' closers and openers, the closer's
+/// bytes carried past the block, the state after it, and the strings' machine from byte 2 on (once for the four
+/// values of `tr_taken`: they differ in bytes 0 and 1 alone).
+struct TLayer {
+    t_open: u64,
+    tr_out: usize,
+    t1: u8,
+    tr_base: u64,
+    ms2: [[u64; 2]; 3],
+}
+
+#[inline(always)]
+fn t_layer(sh: &Shared<'_>, t0: u8) -> TLayer {
+    let f = pick(t0 == 2, &sh.m3[2], pick(t0 == 1, &sh.m3[1], &sh.m3[0]));
+    let [tl, th] = *f;
+    let t1 = ((tl >> 63) | ((th >> 63) << 1)) as u8;
+    let ta = tl | th;
+    let tb = ta << 1 | u64::from(t0 != 0);
+    let t_close = sh.r3 & tb & !ta;
+    let t_open = sh.r3 & !tb;
+    let tr_out = (t_close >> 62 | t_close >> 63) as usize;
+    let tr_base = tb | ta | t_close << 1 | t_close << 2;
+    let blk = sh.blk;
+    let ms2 = super::machine((sh.qs & !tr_base) >> 2, (sh.qd & !tr_base) >> 2, blk.bare_lf >> 2);
+    TLayer { t_open, tr_out, t1, tr_base, ms2 }
+}
+
+/// The strings' layer from `tr_taken` and its state `s0`: the triples' bytes, the strings' bytes, the state after
+/// the block, and the comments' starts and the bytes their run goes through.
+struct SLayer {
+    tr: u64,
+    sa: u64,
+    sb: u64,
+    s1: u8,
+    g: u64,
+    a: u64,
+}
+
+#[inline(always)]
+fn s_layer(sh: &Shared<'_>, t: &TLayer, tr_taken: u64, s0: u8) -> SLayer {
+    let blk = sh.blk;
+    let tr = t.tr_base | tr_taken;
+    let (ex, ey) = (sh.qs & !tr, sh.qd & !tr);
+    let (sl, shi, s1) = run_from_2(&t.ms2, s0, ex, ey, blk.bare_lf);
+    let sa = sl | shi;
+    let sb = sa << 1 | u64::from(s0 != 0);
+    let g = blk.hash & !tr & !sb;
+    SLayer { tr, sa, sb, s1, g, a: !blk.eol | g }
+}
+
+/// The comments' layer from `ccarry`: the comments' bytes, the carry out, the bytes of code, and whether the lane's
+/// reading is wrong for both values of `cext_prev` (the checks of no line end, the strings' openers and the
+/// prefixes below them).
+struct CLayer {
+    comment: u64,
+    cc_out: usize,
+    code: u64,
+    bad_any: bool,
+}
+
+#[inline(always)]
+fn c_layer(sh: &Shared<'_>, t: &TLayer, s: &SLayer, ccarry: u64) -> CLayer {
+    let blk = sh.blk;
+    let (y, o1) = s.a.overflowing_add(s.g);
+    let (y, o2) = y.overflowing_add(ccarry);
+    let comment = s.g | (s.a & (y ^ s.a ^ s.g));
+    let code = !(comment | ((s.sb | s.sa) & !comment & !s.tr) | s.tr);
+    let wrong_any = (t.t_open & (s.sb | comment)) | (blk.bt & !blk.esc & !s.tr & !s.sb & !comment);
+    let s_open = (sh.qs | sh.qd) & !s.tr & !s.sb & !comment;
+    let o = super::win(0, s_open | t.t_open);
+    let (_, over) = sh.x.overflowing_add((o.reverse_bits() << 1) & sh.x);
+    CLayer { comment, cc_out: usize::from(o1 | o2), code, bad_any: sh.all_wrong | (wrong_any != 0) | over }
+}
+
+/// The lane's exit from `cext_prev` (`WRONG` where B's reading is wrong) and whether it is wrong.
+#[inline(always)]
+fn lane_exit(sh: &Shared<'_>, t: &TLayer, s: &SLayer, c: &CLayer, cext_prev: u64) -> (u8, bool) {
+    let blk = sh.blk;
+    let cext = c.comment | (blk.eol & !blk.lf & (c.comment << 1 | cext_prev));
+    let lend = cext << 1 | cext_prev;
+    let wrong = (blk.bare_lf & s.sb & !s.tr & !lend) | (blk.lf & blk.esc & s.sb & lend);
+    let exit = usize::from(t.t1) * 48 + usize::from(s.s1) * 16 + c.cc_out * 8 + (cext >> 63) as usize * 4 + t.tr_out;
+    let bad = c.bad_any | (wrong != 0);
+    (pick(bad, WRONG as u8, exit as u8), bad)
+}
+
+/// `block_map`'s layers: each lane's exit (`WRONG` where B's reading is wrong), each code's bytes of code, and the
+/// codes one of whose lanes is not at `WRONG` (a bit each). Each layer once for each state of the layers it reads.
+#[inline(always)]
+fn block_lanes(prev: &B, blk: &B, b1: &B) -> ([u8; LANES], [u64; CODES], u128) {
+    let sh = shared(prev, blk, b1);
     let mut exit_of = [0u8; LANES];
     let mut codes = [0u64; CODES];
-    // The codes one of whose lanes is not at `WRONG` (a lane there reads no depth): a bit each.
     let mut live = 0u128;
     each_of!(t0 in [0u8, 1, 2] {
-        let (tl, th, t1) = super::run_from(&m3, t0);
-        let ta = tl | th;
-        let tb = ta << 1 | u64::from(t0 != 0);
-        let t_close = r3 & tb & !ta;
-        let t_open = r3 & !tb;
-        let tr_out = (t_close >> 62 | t_close >> 63) as usize;
-        // The strings' machine from byte 2 on, once for the four values of `tr_taken` (they differ in bytes 0 and 1
-        // alone): each value's first two bytes are two steps of it, then the runs from the state they leave.
-        let tr_base = tb | ta | t_close << 1 | t_close << 2;
-        let ms2 = super::machine((qs & !tr_base) >> 2, (qd & !tr_base) >> 2, blk.bare_lf >> 2);
+        let t = t_layer(&sh, t0);
         each_of!(tr_taken in [0u64, 1, 2, 3] {
-            let tr = tr_base | tr_taken;
-            let (ex, ey) = (qs & !tr, qd & !tr);
             each_of!(s0 in [0u8, 1, 2] {
-                let (sl, sh, s1) = run_from_2(&ms2, s0, ex, ey, blk.bare_lf);
-                let sa = sl | sh;
-                let sb = sa << 1 | u64::from(s0 != 0);
-                let g = blk.hash & !tr & !sb;
-                let a = !blk.eol | g;
+                let s = s_layer(&sh, &t, tr_taken, s0);
                 each_of!(ccarry in [0u64, 1] {
-                    let (y, o1) = a.overflowing_add(g);
-                    let (y, o2) = y.overflowing_add(ccarry);
-                    let cc_out = usize::from(o1 | o2);
-                    let comment = g | (a & (y ^ a ^ g));
-                    let code = !(comment | ((sb | sa) & !comment & !tr) | tr);
-                    codes[usize::from(t0) * 24 + usize::from(s0) * 8 + ccarry as usize * 4 + tr_taken as usize] = code;
-                    // What both values of `cext_prev` read alike, once: the checks of no line end, the strings' openers
-                    // and the prefixes below them.
-                    let wrong_any = (t_open & (sb | comment)) | (blk.bt & !blk.esc & !tr & !sb & !comment);
-                    let s_open = (qs | qd) & !tr & !sb & !comment;
-                    let o = super::win(0, s_open | t_open);
-                    let (_, over) = x.overflowing_add((o.reverse_bits() << 1) & x);
-                    let bad_any = all_wrong | (wrong_any != 0) | over;
-                    let sb_code = sb & !tr;
+                    let c = c_layer(&sh, &t, &s, ccarry);
+                    let ci = usize::from(t0) * 24 + usize::from(s0) * 8 + ccarry as usize * 4 + tr_taken as usize;
+                    codes[ci] = c.code;
                     each_of!(cext_prev in [0u64, 1] {
-                        let cext = comment | (blk.eol & !blk.lf & (comment << 1 | cext_prev));
-                        let lend = cext << 1 | cext_prev;
-                        let wrong = (blk.bare_lf & sb_code & !lend) | (blk.lf & blk.esc & sb & lend);
-                        let l = usize::from(t0) * 48 + usize::from(s0) * 16 + ccarry as usize * 8 + cext_prev as usize * 4 + tr_taken as usize;
-                        let exit = usize::from(t1) * 48 + usize::from(s1) * 16 + cc_out * 8 + (cext >> 63) as usize * 4 + tr_out;
-                        let bad = u8::from(bad_any | (wrong != 0));
-                        live |= u128::from(bad == 0) << (usize::from(t0) * 24 + usize::from(s0) * 8 + ccarry as usize * 4 + tr_taken as usize);
-                        // A select by mask: `WRONG` where bad.
-                        let keep = bad.wrapping_sub(1);
-                        exit_of[l] = (exit as u8 & keep) | (WRONG as u8 & !keep);
+                        let (e, bad) = lane_exit(&sh, &t, &s, &c, cext_prev);
+                        live |= u128::from(!bad) << ci;
+                        exit_of[usize::from(t0) * 48 + usize::from(s0) * 16 + ccarry as usize * 8 + cext_prev as usize * 4 + tr_taken as usize] = e;
                     });
                 });
             });
         });
     });
     (exit_of, codes, live)
+}
+
+/// The most states a chunk's lanes may be in after its first block for its later blocks to be read by tracks.
+const TRACKS: usize = 3;
+
+/// One block's map from each of `TRACKS` states (`WRONG` stays `WRONG`): each one's exit and depth, by the same
+/// layers as `block_lanes`, each for its state alone. No branch.
+#[inline(never)]
+fn block_map_tracks(prev: &B, blk: &B, b1: &B, st: &[u8; TRACKS]) -> ([u8; TRACKS], [Depth; TRACKS]) {
+    let sh = shared(prev, blk, b1);
+    let one = |l: u8| {
+        let wrong_in = usize::from(l) == WRONG;
+        let l = l.min(LANES as u8 - 1);
+        let (t0, s0, ccarry, cext_prev, tr_taken) = (l / 48, (l / 16) % 3, u64::from((l / 8) & 1), u64::from((l / 4) & 1), u64::from(l & 3));
+        let t = t_layer(&sh, t0);
+        let s = s_layer(&sh, &t, tr_taken, s0);
+        let c = c_layer(&sh, &t, &s, ccarry);
+        let (e, _) = lane_exit(&sh, &t, &s, &c, cext_prev);
+        (pick(wrong_in, WRONG as u8, e), Depth::of_masks(blk.ob & c.code, blk.cb & c.code))
+    };
+    // The tracks written out (a closure called three times may stay a call: each a local macro's expansion).
+    macro_rules! track {
+        ($k:expr) => {
+            one(st[$k])
+        };
+    }
+    const _: () = assert!(TRACKS == 3);
+    let (a, b, c) = (track!(0), track!(1), track!(2));
+    ([a.0, b.0, c.0], [a.1, b.1, c.1])
 }
 
 /// How many different codes a block's lanes read (`block_lanes`), over a text's blocks: by the bytes of code, and by
@@ -618,13 +715,55 @@ pub fn summary_superposed(src: &[u8], from: usize, to: usize) -> Summary {
     let mut dep = [Depth::default(); LANES];
     // The block's map, written by each block over the last's.
     let mut m = BlockMap { exit: [0; LANES], depth: [Depth::default(); LANES] };
-    for w in b[r0 + lead - c0 - 1..r1 + lead - c0 + 1].windows(3) {
-        // The loop over blocks: a block whose lanes hold more sets of brackets than `block_map` shares among is
-        // `block_map_each`'s.
+    let ws = &b[r0 + lead - c0 - 1..r1 + lead - c0 + 1];
+    // The loop over blocks. The first block from every lane (`block_map`; a block whose lanes hold more sets of
+    // brackets than it shares among is `block_map_each`'s). Its lanes are then in few states: each later block is
+    // read from those alone (`block_map_tracks`), each lane on its state's track. Where they are in more, every
+    // block from every lane.
+    let mut wi = ws.windows(3);
+    if let Some(w) = wi.next() {
         if block_map(&w[0], &w[1], &w[2], &mut m) {
             m = block_map_each(&w[0], &w[1], &w[2]);
         }
         then_block(&mut exit, &mut dep, &m);
+    }
+    // The states the lanes are in, as a set of bits (`WRONG`'s cleared), and its first `TRACKS`: selects only.
+    let mut seen = [0u64; 3];
+    for &e in &exit {
+        seen[usize::from(e) / 64] |= 1 << (e % 64);
+    }
+    seen[WRONG / 64] &= !(1 << (WRONG % 64));
+    let n = (seen[0].count_ones() + seen[1].count_ones() + seen[2].count_ones()) as usize;
+    let mut st = [WRONG as u8; TRACKS];
+    for k in st.iter_mut() {
+        let w = pick(seen[0] != 0, 0, pick(seen[1] != 0, 1, 2));
+        let i = 64 * w + seen[w].trailing_zeros() as usize;
+        *k = i.min(WRONG) as u8;
+        seen[w] &= seen[w].wrapping_sub(1);
+    }
+    let track: [u8; LANES] = core::array::from_fn(|l| pick(exit[l] == st[0], 0, pick(exit[l] == st[1], 1, 2)));
+    if n <= TRACKS {
+        let mut tdep = [Depth::default(); TRACKS];
+        for w in wi {
+            let (e, d) = block_map_tracks(&w[0], &w[1], &w[2], &st);
+            for k in 0..TRACKS {
+                tdep[k] = Depth::then(tdep[k], d[k]);
+            }
+            st = e;
+        }
+        for l in 0..LANES {
+            let k = usize::from(track[l]);
+            let live = usize::from(exit[l]) != WRONG;
+            exit[l] = pick(live, st[k], exit[l]);
+            dep[l] = pick(live, Depth::then(dep[l], tdep[k]), dep[l]);
+        }
+    } else {
+        for w in wi {
+            if block_map(&w[0], &w[1], &w[2], &mut m) {
+                m = block_map_each(&w[0], &w[1], &w[2]);
+            }
+            then_block(&mut exit, &mut dep, &m);
+        }
     }
     // At the text's end, a string open is B's reading wrong: selected by masks.
     let at_end = u8::from(r1 == blocks);
@@ -635,6 +774,35 @@ pub fn summary_superposed(src: &[u8], from: usize, to: usize) -> Summary {
         *e = (*e & keep) | (WRONG as u8 & !keep);
     }
     BlockMap { exit, depth: dep }
+}
+
+/// How many different states a chunk's lanes are in before each of its blocks after the first, over a text in chunks of
+/// `blocks` blocks: a histogram of blocks by that count (a lane at `WRONG` not counted).
+pub fn lane_states(src: &[u8], blocks: usize) -> [usize; LANES + 1] {
+    let n = src.len().div_ceil(64);
+    let mut h = [0; LANES + 1];
+    let mut b: Vec<B> = vec![B::default()];
+    classes_in(src, 0, n, &mut s1_at(src, 0), &mut b, usize::MAX, &mut S1::default());
+    b.push(B::default());
+    b.push(B::default());
+    for c in 0..n.div_ceil(blocks.max(1)) {
+        let mut exit: [u8; LANES] = core::array::from_fn(|l| l as u8);
+        let mut dep = [Depth::default(); LANES];
+        let mut m = BlockMap { exit: [0; LANES], depth: [Depth::default(); LANES] };
+        for bi in c * blocks..((c + 1) * blocks).min(n) {
+            if bi > c * blocks {
+                let mut st: Vec<u8> = exit.iter().copied().filter(|&e| usize::from(e) != WRONG).collect();
+                st.sort_unstable();
+                st.dedup();
+                h[st.len()] += 1;
+            }
+            if block_map(&b[bi], &b[bi + 1], &b[bi + 2], &mut m) {
+                m = block_map_each(&b[bi], &b[bi + 1], &b[bi + 2]);
+            }
+            then_block(&mut exit, &mut dep, &m);
+        }
+    }
+    h
 }
 
 /// Pass 1 superposed against B run from each lane, chunk by chunk of `blocks` blocks: the same summary, or the first
@@ -2360,12 +2528,24 @@ mod tests {
                     assert_eq!(m.depth[l], e.depth[l], "block {bi}, lane {l}: {src:?}");
                 }
             }
+            // The tracks' map from each lane's state alone, and from `WRONG`.
+            for l in (0..LANES).step_by(TRACKS) {
+                let st = [l as u8, (l + 1) as u8, WRONG as u8];
+                let (x, d) = block_map_tracks(&w[0], &w[1], &w[2], &st);
+                for k in 0..2 {
+                    assert_eq!(x[k], e.exit[l + k], "block {bi}, track of lane {}: {src:?}", l + k);
+                    if usize::from(e.exit[l + k]) != WRONG {
+                        assert_eq!(d[k], e.depth[l + k], "block {bi}, track of lane {}: {src:?}", l + k);
+                    }
+                }
+                assert_eq!(usize::from(x[2]), WRONG);
+            }
         }
         more
     }
 
     #[test]
-    fn shared_depths_are_each_codes() {
+    fn shared_depths_and_tracks_are_each_codes() {
         for t in texts() {
             shared_is_each(t.as_bytes());
         }

@@ -109,6 +109,24 @@ fn main() {
         println!("loop tops by masks: {files} files, {same} blocks the walk's, {differ} files with a block that differs");
         return;
     }
+    if only == Some("states") {
+        // How many different states a chunk's lanes are in before each block after its first.
+        let blocks = std::env::var("CHUNK_BLOCKS").ok().and_then(|v| v.parse().ok()).unwrap_or(16);
+        let mut h = vec![0usize; strata::middle::LANES + 1];
+        for (_, b) in &all {
+            h.iter_mut().zip(strata::middle::lane_states(b, blocks)).for_each(|(p, q)| *p += q);
+        }
+        let total: usize = h.iter().sum();
+        let mut acc = 0;
+        println!("{blocks} blocks a chunk: {total} blocks after a chunk's first, by the lanes' different states before them:");
+        for (i, x) in h.iter().enumerate() {
+            if *x > 0 {
+                acc += x;
+                println!("  {i:>3}: {x:>7}  ({:.2}% at most)", 100.0 * acc as f64 / total as f64);
+            }
+        }
+        return;
+    }
     if only == Some("codes") {
         // How many different codes a block's lanes read: blocks by that count.
         let (mut a, mut k) = (vec![0usize; 73], vec![0usize; 73]);
