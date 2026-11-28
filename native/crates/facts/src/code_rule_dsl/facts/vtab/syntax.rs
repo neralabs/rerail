@@ -1426,13 +1426,14 @@ impl Numbering {
         let (p, dialect) = self.p.as_ref()?;
         (local < p.len()).then(|| p.node(local)).map(|id| (id, dialect.name(p.f(), id)))
     }
-    /// The root's id; `None` for a document with no nodes.
+    /// The root's place, located (its document's key and the node's low bits, as a guest's `at` is: decision 0724, no
+    /// batch numbers it here); `None` for a document with no nodes.
     pub fn root(&self) -> Option<i64> {
         let (p, _) = self.p.as_ref()?;
-        (p.len() > 0).then(|| p.global(0))
+        (p.len() > 0).then(|| p.located(0))
     }
-    /// The id of the innermost numbered node over host bytes `[a, b]`: from the root, down through the child whose
-    /// span holds them (`GuestRows::host_nodes`' walk); `None` without a root.
+    /// The place, located as `root`'s, of the innermost numbered node over host bytes `[a, b]`: from the root, down
+    /// through the child whose span holds them (`GuestRows::host_nodes`' walk); `None` without a root.
     pub fn over(&self, [a, b]: [u32; 2]) -> Option<i64> {
         let (p, _) = self.p.as_ref()?;
         if p.len() == 0 {
@@ -1445,7 +1446,7 @@ impl Numbering {
         }) {
             over = c;
         }
-        Some(p.global(over))
+        Some(p.located(over))
     }
     /// The kind name of core id `id`, if the projection numbers it.
     pub fn kind_of(&self, id: u32) -> Option<&'static str> {
