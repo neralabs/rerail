@@ -1,1 +1,0 @@
-A running Rerail reads a rule pack again when its installed path is linked by hand to another folder, even one whose `package.json` and `pack.json` have the same times and sizes as the old folder's, as a copy that kept its files' times has; before, it kept the old folder's rules until something else changed or it restarted.

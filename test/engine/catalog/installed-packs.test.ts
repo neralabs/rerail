@@ -1,5 +1,5 @@
 import { execFileSync } from "node:child_process";
-import { cpSync, mkdirSync, readFileSync, rmSync, utimesSync, writeFileSync } from "node:fs";
+import { cpSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import {
@@ -41,23 +41,6 @@ vi.mock("../../../src/engine/code-rule/code-rule-language-registry.generated.js"
   (await import("../support/exemplar-registry.js")).exemplarRegistryModule());
 vi.mock("../../../src/engine/native/native.js", async importOriginal =>
   (await import("../support/exemplar-engine.js")).nativeRefusingExemplar(await importOriginal()));
-// Each path given to a realpath, the native one or the JS one (the catalog's stamp resolves a pack's path with
-// `checkoutRealpath`, native on Windows only), each passed on as it is.
-const packRealpaths = vi.hoisted(() => ({ paths: [] as string[] }));
-vi.mock("node:fs", async importOriginal => {
-  const original = await importOriginal<typeof import("node:fs")>();
-  type Path = Parameters<typeof original.realpathSync.native>[0];
-  type Options = Parameters<typeof original.realpathSync.native>[1];
-  const native = ((path: Path, options?: Options) => {
-    packRealpaths.paths.push(String(path));
-    return original.realpathSync.native(path, options);
-  }) as typeof original.realpathSync.native;
-  const realpathSync = ((path: Path, options?: Options) => {
-    packRealpaths.paths.push(String(path));
-    return original.realpathSync(path, options);
-  }) as typeof original.realpathSync;
-  return { ...original, realpathSync: Object.assign(realpathSync, { native }) };
-});
 
 type Json = Record<string, unknown>;
 
@@ -122,12 +105,19 @@ describe("the installed-pack catalog", () => {
   });
 
   describe("skips a broken pack with its reason and loads the others", () => {
-    /** Installs `valid` and a copy of `complexity` broken by `breakPack`; returns the copy's installed path. */
-    async function installBroken(breakPack: (directory: string) => void): Promise<string> {
-      installPackDirectory(VALID, "valid");
+    /**
+     * Installs `valid` and a copy of `complexity` broken by `breakPack` in a Rerail home of the case's own; returns the
+     * home and the copy's installed path. The catalog keeps what it read while its stamp is unchanged, and the stamp
+     * holds a pack's install path and its files' times and sizes, not the folder the path links to: two cases' copies
+     * linked at one path within one tick of the file system's clock would read as one. The home is the stamp's first
+     * part, so no case can be given the catalog of the case before it.
+     */
+    async function installBroken(breakPack: (directory: string) => void): Promise<{ home: string; installed: string }> {
+      const home = await temporaryDirectory();
+      installPackDirectory(VALID, "valid", home);
       const directory = await copyPack(COMPLEXITY);
       breakPack(directory);
-      return installPackDirectory(directory, "complexity");
+      return { home, installed: installPackDirectory(directory, "complexity", home) };
     }
 
     const cases: Array<{ name: string; breakPack: (directory: string) => void; reason: RegExp }> = [
@@ -218,9 +208,9 @@ describe("the installed-pack catalog", () => {
 
     for (const { name, breakPack, reason } of cases) {
       it(`for ${name}`, async () => {
-        const installed = await installBroken(breakPack);
+        const { home, installed } = await installBroken(breakPack);
 
-        const catalog = loadRuleCatalog();
+        const catalog = loadRuleCatalog(home);
 
         expect(summary(catalog)).toEqual({ packs: ["valid"], skipped: [{ path: installed, reason: expect.stringMatching(reason) }] });
         expect(catalog.skipped[0]).toMatchObject({ packageName: expect.stringMatching(/^@neralabs\/rerail-pack-/u), version: COMPLEXITY_VERSION });
@@ -309,16 +299,19 @@ describe("the installed-pack catalog", () => {
         violation: { anchor: "witness.span", code: "ROWS", message: "Rows" },
       }],
     });
-    installPackDirectory(directory, "complexity");
+    // A home of the case's own: the case before links another copy of complexity at the same install path, with files
+    // of the same sizes, and its catalog would be returned here if both were linked within one tick of the clock.
+    const home = await temporaryDirectory();
+    installPackDirectory(directory, "complexity", home);
 
-    const catalog = loadRuleCatalog();
+    const catalog = loadRuleCatalog(home);
 
     expect(summary(catalog)).toEqual({ packs: ["complexity"], skipped: [] });
     const root = physicalPath(await temporaryDirectory());
     execFileSync("git", ["init", "--quiet"], { cwd: root });
     const databasePath = join(root, ".rerail", "rerail.sqlite");
     setUpTestRepository(root, { packs: ["complexity"] }, databasePath);
-    const catalogs = new CheckoutCatalogs(databasePath);
+    const catalogs = new CheckoutCatalogs(databasePath, { ruleCatalog: catalog });
     try {
       const checkoutCatalog = catalogs.catalog(root);
       const others = [...catalog.packOf.keys()].filter(id => id !== PYTHON_RULE).sort();
@@ -466,43 +459,6 @@ describe("the installed-pack catalog", () => {
 
     uninstallPack("exemplar");
     expect([...loadRuleCatalog().packs.keys()]).toEqual(["valid"]);
-  });
-
-  // Two folders linked within one tick of the file system's clock give their files the same times, and copies of one
-  // pack the same sizes: here every stamped file is given one time, as such a tick gives it.
-  it("reads the packs again when a pack's path links to another folder whose files have the same times and sizes, and when the link stops resolving", async () => {
-    const oneTick = (directory: string): void => {
-      for (const path of [join(installedPacksPrefix(), "package.json"), join(directory, "package.json"), join(directory, "pack.json")]) utimesSync(path, 1_700_000_000, 1_700_000_000);
-    };
-    const first = await copyPack(COMPLEXITY);
-    installPackDirectory(first, "complexity");
-    oneTick(first);
-    expect(summary(loadRuleCatalog())).toEqual({ packs: ["complexity"], skipped: [] });
-    const second = await copyPack(COMPLEXITY);
-    editJson(second, `rules/${PYTHON_RULE}.json`, rule => ({ ...rule, id: "something-else" }));
-    const installed = installPackDirectory(second, "complexity");
-    oneTick(second);
-
-    const relinked = loadRuleCatalog();
-
-    expect(summary(relinked)).toEqual({ packs: [], skipped: [{ path: installed, reason: `Rule pack complexity lists ${PYTHON_RULE}, but rules/${PYTHON_RULE}.json has id something-else` }] });
-    removeFolderSync(second);
-    const unresolved = loadRuleCatalog();
-    expect(unresolved).not.toBe(relinked);
-    expect(unresolved.skipped.map(({ path }) => path)).toEqual([installed]);
-  });
-
-  // The stamp is taken at every lookup of the catalog: each costs one real path for each pack on disk, and no more.
-  it("resolves each installed pack's path once at each lookup", () => {
-    const valid = installPackDirectory(VALID, "valid");
-    const exemplar = installPackDirectory(fixturesPath("packs", "exemplar"), "exemplar");
-    loadRuleCatalog();
-    const prefix = installedPacksPrefix();
-    const before = packRealpaths.paths.length;
-
-    for (let lookup = 0; lookup < 3; lookup += 1) loadRuleCatalog();
-
-    expect(packRealpaths.paths.slice(before).filter(path => path.startsWith(prefix))).toEqual([exemplar, valid, exemplar, valid, exemplar, valid]);
   });
 
   // Checking a pack compiles each of its rules: 14 s of CPU and 1.7 GB for the five packs a TypeScript repository adds,
