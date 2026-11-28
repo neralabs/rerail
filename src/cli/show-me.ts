@@ -14,7 +14,6 @@ import type { RepositoryKey } from "../engine/catalog/repository-model.js";
 import { lookupCheckout, recordCheckout } from "../engine/catalog/repository-registry.js";
 import { addAttachment, removeAttachment } from "../engine/catalog/rule-configuration.js";
 import { removeLibraryRule, storedLibraryRows, upsertLibraryRule } from "../engine/catalog/rule-library.js";
-import { storedObject } from "../engine/catalog/rule-quarantine.js";
 import { approve, ruleSubject } from "../engine/catalog/rule-approval.js";
 import { defaultRerailDatabasePath, openRerailDatabase, type RerailDatabase } from "../engine/storage/database.js";
 import { libraryRules, ruleAttachments } from "../engine/storage/schema.js";
@@ -89,7 +88,7 @@ function fileOwner(file: string): "absent" | "demo" | "foreign" {
 function ruleOwner(database: RerailDatabase): "absent" | "demo" | "foreign" {
   const [row] = storedLibraryRows(database, eq(libraryRules.ruleId, SHOW_ME_RULE_ID));
   if (row === undefined) return "absent";
-  const stored = storedObject(row.document);
+  const stored = row.document;
   // A document that is no JSON object, which only a damaged file or a hand edit leaves, is not the demo's.
   const rule = typeof stored === "string" ? undefined : stored.rule as { description?: unknown } | null | undefined;
   return row.kind === "code" && rule?.description === SHOW_ME_DESCRIPTION ? "demo" : "foreign";

@@ -512,7 +512,7 @@ describe("a library rule or a setting whose stored text is no JSON", () => {
     setRuleSetting(db, repositorySetting("", "rule", "no-console", { on: null, mode: null, config: { word: "alert" } }));
     const readable = ruleConfigurationSignature(db, ruleCatalog, REPOSITORY, [WORKTREE]);
     expect(loadCheckoutRuleSet(db, ruleCatalog, checkout(WORKTREE), RUNNING, []).signature.startsWith(`${readable}:`)).toBe(true);
-    damage(db, "rule_settings", "config_json", "target_id = 'no-console' AND folder = ''", "[");
+    damage(db, "rule_settings", "config_json", "owner_kind = 'repository' AND target_id = 'no-console' AND folder = ''", "[");
     const damaged = logged(() => ruleConfigurationSignature(db, ruleCatalog, REPOSITORY, [WORKTREE])).value;
     expect(damaged).not.toBe(readable);
     expect(logged(() => loadCheckoutRuleSet(db, ruleCatalog, checkout(WORKTREE), RUNNING, [])).value.signature.startsWith(`${damaged}:`)).toBe(true);

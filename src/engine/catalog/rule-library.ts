@@ -31,14 +31,18 @@ type LibraryRow = typeof libraryRules.$inferSelect;
 type Queries = Pick<RerailDatabase, "select" | "insert" | "update" | "delete">;
 
 /**
- * A `library_rules` row with `document_json` as the text the database holds, which `readLibraryRow` parses, so one rule
- * whose text a damaged file or a hand edit left is quarantined, never failing every read of the library that holds it.
+ * A `library_rules` row with `document_json` parsed by `storedObject` where the ORM's JSON column would parse it, once a
+ * row, so one rule whose text a damaged file or a hand edit left is quarantined (`readLibraryRow`), never failing every
+ * read of the library that holds it.
  */
-const STORED_COLUMNS = { ...getTableColumns(libraryRules), document: sql<string>`${libraryRules.document}` };
-/** A `library_rules` row as the database holds it: its document as text. */
-export type StoredLibraryRow = Omit<LibraryRow, "document"> & { readonly document: string };
+const STORED_COLUMNS = {
+  ...getTableColumns(libraryRules),
+  document: sql<string>`${libraryRules.document}`.mapWith(storedObject),
+};
+/** A `library_rules` row as read: its document the JSON object the database holds, or, as a string, why it holds none. */
+export type StoredLibraryRow = Omit<LibraryRow, "document"> & { readonly document: Record<string, unknown> | string };
 
-/** The library rows `where` selects (every one without it), by id, each as the database holds it. */
+/** The library rows `where` selects (every one without it), by id, each with its document read (`STORED_COLUMNS`). */
 export function storedLibraryRows(db: Pick<Queries, "select">, where?: SQL): StoredLibraryRow[] {
   return db.select(STORED_COLUMNS).from(libraryRules).where(where).orderBy(asc(libraryRules.ruleId)).all();
 }
@@ -143,7 +147,7 @@ export function upsertLibraryRule(
  * once in `named`'s log (`nameOnce`), since no validation of Rerail's own reports it.
  */
 export function readLibraryRow(row: StoredLibraryRow, named?: StoredRowLog): LibraryRowRead {
-  const stored = storedObject(row.document);
+  const stored = row.document;
   if (typeof stored === "string") {
     if (named !== undefined) sayUnreadDocument(named, row.ruleId, stored);
     return quarantine(row, `its document in the database is no JSON object (${stored}), which only a damaged file or a hand edit leaves`);

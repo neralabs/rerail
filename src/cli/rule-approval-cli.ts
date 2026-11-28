@@ -17,7 +17,6 @@ import { experimentEnabled } from "../engine/experimental-features.js";
 import { defaultRerailDatabasePath, openRerailDatabase, type RerailDatabase } from "../engine/storage/database.js";
 import { libraryRules } from "../engine/storage/schema.js";
 import { storedLibraryRows } from "../engine/catalog/rule-library.js";
-import { storedObject } from "../engine/catalog/rule-quarantine.js";
 import type { RuleDocument } from "../engine/catalog/rule-store.js";
 import { ruleDocumentDigest } from "../engine/stable-json.js";
 import { clean } from "../harness/setup-screens.js";
@@ -100,7 +99,7 @@ function approvalText(db: RerailDatabase, catalog: RuleCatalog, subject: RuleApp
  */
 function ruleApprovalText(db: RerailDatabase, catalog: RuleCatalog, id: string): string {
   const [row] = storedLibraryRows(db, eq(libraryRules.ruleId, id));
-  const stored = row === undefined ? undefined : storedObject(row.document);
+  const stored = row?.document;
   if (typeof stored === "string") return `● ${clean(id)} has content that is no JSON object (${clean(stored)}), which only a damaged file or a hand edit leaves; it runs nowhere\n`;
   // The library's own writer stored it as a rule document; `main` read it so unchecked.
   const document = (stored as RuleDocument | undefined) ?? catalog.documents.get(id);

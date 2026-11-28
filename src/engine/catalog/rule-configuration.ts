@@ -44,11 +44,16 @@ type SettingRow = typeof ruleSettings.$inferSelect;
 type LibraryRow = typeof libraryRules.$inferSelect;
 
 /**
- * A `rule_settings` row with `config_json` as the text the database holds, which `readSettings` parses, so a setting
- * whose text a damaged file or a hand edit left costs its own rule's options, never every rule of the repository.
+ * A `rule_settings` row with `config_json` parsed by `storedObject` where the ORM's JSON column would parse it, so a
+ * setting whose text a damaged file or a hand edit left costs its own rule's options (`readSettings`), never every rule
+ * of the repository.
  */
-const STORED_SETTING_COLUMNS = { ...getTableColumns(ruleSettings), config: sql<string | null>`${ruleSettings.config}` };
-type StoredSettingRow = Omit<SettingRow, "config"> & { readonly config: string | null };
+const STORED_SETTING_COLUMNS = {
+  ...getTableColumns(ruleSettings),
+  config: sql<Record<string, unknown> | string | null>`${ruleSettings.config}`.mapWith(storedObject),
+};
+/** A `rule_settings` row as `STORED_SETTING_COLUMNS` reads it: its options, or, as a string, why the text holds none. */
+type StoredSettingRow = Omit<SettingRow, "config"> & { readonly config: Record<string, unknown> | string | null };
 /** A setting as read: its options, or none where their stored text holds no JSON object, and then why (`unread`). */
 export type ReadSetting = SettingRow & { readonly unread: string | null };
 
@@ -68,9 +73,8 @@ export function readSettings(
   });
 }
 
-/** Stored options text as a setting reads it: the object it holds, or none and why it holds none. */
-function readConfig(text: string | null): Pick<ReadSetting, "config" | "unread"> {
-  const stored = text === null ? null : storedObject(text);
+/** Stored options as a setting reads them (`storedObject` read their text): the object, or none and why. */
+function readConfig(stored: Record<string, unknown> | string | null): Pick<ReadSetting, "config" | "unread"> {
   if (typeof stored === "string") return { config: null, unread: stored };
   // The type the ORM's JSON column gave these values: Rerail writes only option values there, and no reader checked them.
   return { config: stored as RuleConfig | null, unread: null };
@@ -298,6 +302,11 @@ function tuples<Tuple extends readonly unknown[]>(json: string): Tuple[] {
   return JSON.parse(json) as Tuple[]; // Built by json_group_array over the table's own columns.
 }
 
+/** A setting's options text as {@link signatureStatement} gives it, read as `STORED_SETTING_COLUMNS` reads it. */
+function configOfText(text: string | null): Record<string, unknown> | string | null {
+  return text === null ? null : storedObject(text);
+}
+
 /** {@link SignatureRows} from {@link signatureStatement}'s row: the same rows {@link readRows} gives the signature. */
 function signatureRowsOf(read: SignatureRead, ruleCatalog: RuleCatalog, repositoryKey: RepositoryKey): SignatureRows {
   const attachments = [
@@ -310,7 +319,7 @@ function signatureRowsOf(read: SignatureRead, ruleCatalog: RuleCatalog, reposito
     configuredAt: read.configuredAt,
     attachments,
     settings: tuples<Setting>(read.settings).map(([ownerKind, ownerId, folder, targetKind, targetId, on, mode, suppressions, config]) =>
-      ({ ownerKind, ownerId, folder, targetKind, targetId, on: on === null ? null : on === 1, mode, suppressions, ...readConfig(config) })),
+      ({ ownerKind, ownerId, folder, targetKind, targetId, on: on === null ? null : on === 1, mode, suppressions, ...readConfig(configOfText(config)) })),
     library: tuples<[string, number, string]>(read.library).filter(([ruleId]) => ids.has(ruleId)).map(([ruleId, revision, payloadHash]) => ({ ruleId, revision, payloadHash })),
     approvals: new Set(tuples<[RuleApprovalSubject["kind"], string, string]>(read.approvals).map(([kind, id, digest]) => approvalKey({ kind, id, digest }))),
   };
