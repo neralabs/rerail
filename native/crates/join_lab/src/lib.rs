@@ -13,6 +13,8 @@ pub mod counters;
 pub mod metal;
 pub mod page;
 pub mod sample;
+#[cfg(feature = "scalar")]
+pub mod scalar;
 
 use rerail_blocks::block::{Block, PAGE};
 use std::io::{self, Read as _};
@@ -24,6 +26,8 @@ pub struct Label {
     pub shape: String,
     pub rule: String,
     pub work: u64,
+    /// Its stratum's identity across runs (`setfix::replay`): `0` in a capture that does not name it.
+    pub stratum: u64,
 }
 
 /// A region a launch reached (`region` lines): its name, its role (one of `join_run`'s binds, `top`, `hold`, `text`,
@@ -110,11 +114,15 @@ impl Wave {
                 "unbound" => w.unbound = num(rest)?,
                 // Where they lie, and a few of them: what a capture's reader looks into.
                 "unresolved_in" => {}
+                // `label <shape> rule_<key> <work> [<stratum>]`: a shape's name may hold spaces, its rule's never.
                 "label" => {
-                    let mut p = rest.rsplitn(3, ' ');
-                    let (work, rule, shape) = (p.next(), p.next(), p.next());
-                    let (Some(work), Some(rule), Some(shape)) = (work, rule, shape) else { return Err(bad(format!("label: {line}"))) };
-                    w.labels.push(Label { shape: shape.to_owned(), rule: rule.replace('_', " "), work: num(work)? });
+                    let words: Vec<&str> = rest.split(' ').collect();
+                    let Some(r) = words.iter().rposition(|x| x.starts_with("rule_")).filter(|&r| r > 0 && r + 1 < words.len()) else { return Err(bad(format!("label: {line}"))) };
+                    let stratum = match words.get(r + 2) {
+                        Some(h) => u64::from_str_radix(h, 16).map_err(|e| bad(format!("label: {line}: {e}")))?,
+                        None => 0,
+                    };
+                    w.labels.push(Label { shape: words[..r].join(" "), rule: words[r].replace('_', " "), work: num(words[r + 1])?, stratum });
                 }
                 "region" => {
                     let f: Vec<&str> = rest.splitn(7, ' ').collect();
@@ -218,7 +226,7 @@ impl Wave {
         #[cfg(feature = "metal")]
         let wraps = match e {
             Engine::Metal => Some(metal::Wraps::of(&mems).map_err(bad)?),
-            Engine::Program | Engine::Class => None,
+            Engine::Program | Engine::Class | Engine::Scalar => None,
         };
         #[cfg(not(feature = "metal"))]
         if e == Engine::Metal {
@@ -466,6 +474,8 @@ impl Loaded {
             }
             #[cfg(not(feature = "metal"))]
             Engine::Metal => Err(bad("the metal engine: this lab was built without its `metal` feature".into())),
+            // A capture's strata in the engine's own run of them, not a launch's chain (`scalar`).
+            Engine::Scalar => Err(bad("the scalar engine runs a capture's run again, not a launch (`scalar::rerun`)".into())),
         }
     }
 
@@ -944,6 +954,8 @@ pub enum Engine {
     Metal,
     /// Its shapes' classes (`rerail_join_shapes::parts::CLASSES`), where each has one.
     Class,
+    /// Setfix's scalar joins over its strata, in the engine's run of them again (`scalar`, the `scalar` feature).
+    Scalar,
 }
 
 impl Engine {
@@ -953,7 +965,8 @@ impl Engine {
             "program" => Ok(Engine::Program),
             "metal" => Ok(Engine::Metal),
             "class" => Ok(Engine::Class),
-            _ => Err(format!("no engine {name} (engines: class, program, metal)")),
+            "scalar" => Ok(Engine::Scalar),
+            _ => Err(format!("no engine {name} (engines: class, program, scalar, metal)")),
         }
     }
 
@@ -962,6 +975,7 @@ impl Engine {
             Engine::Program => "program",
             Engine::Metal => "metal",
             Engine::Class => "class",
+            Engine::Scalar => "scalar",
         }
     }
 }

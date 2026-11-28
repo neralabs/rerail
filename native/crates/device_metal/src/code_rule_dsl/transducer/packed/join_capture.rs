@@ -22,6 +22,9 @@
 //!   and its parameters' words that hold an address its jobs reach, `Job::reach`), as (region, offset, region it
 //!   points into, offset there): decision 0353's two-part references, bound again where the replay places each
 //!   region.
+//! - `run.txt`: the run the captures are of (its working directory, arguments and `RERAIL_` settings), and
+//!   `strata.txt`: what each stratum a captured launch ran made, by its identity across runs (a label's last word):
+//!   the scalar replay runs the run again with the scalar joins and compares its strata's (`setfix::replay`).
 
 use rerail_device::device::Buffer;
 use rerail_reads::views::ViewDir;
@@ -35,6 +38,8 @@ pub(in crate::code_rule_dsl) struct Label {
     pub(in crate::code_rule_dsl) shape: String,
     pub(in crate::code_rule_dsl) rule: String,
     pub(in crate::code_rule_dsl) work: u64,
+    /// Its stratum's identity across runs (`setfix::replay`): the scalar replay's link to the stratum.
+    pub(in crate::code_rule_dsl) stratum: u64,
 }
 
 /// Where captures go, and what selects them (`RERAIL_JOIN_CAPTURE`, `_ONLY`, `_MIN`, `_MB`): read once a batch.
@@ -76,6 +81,7 @@ struct ChosenState {
 
 /// The machine's join launches captured under `dir` from its next batch on (`RERAIL_JOIN_CAPTURE`'s, set by a caller).
 pub fn capture_to(dir: PathBuf) {
+    crate::code_rule_dsl::logic::native::setfix::replay::capture_to(dir.clone());
     crate::code_rule_dsl::logic::profile::machine::<Chosen>().0.lock().unwrap_or_else(|e| e.into_inner()).dir = Some(dir);
 }
 
@@ -216,14 +222,37 @@ fn wave_dir(cfg: &Config, id: u64) -> PathBuf {
 /// about to run. `None`: not captured (or its writing failed, which the profile names).
 pub(in crate::code_rule_dsl) fn before(cfg: &Config, labels: &[Label], reach: &Reached<'_>) -> Option<Pending> {
     let id = choose(cfg, labels)?;
-    match write_before(cfg, id, labels, reach) {
-        Ok(p) => Some(p),
+    match write_before(cfg, id, labels, reach).and_then(|p| write_run(cfg).map(|()| p)) {
+        Ok(p) => {
+            // The strata its runs are of, whose records the scalar replay compares with its own (`setfix::replay`).
+            crate::code_rule_dsl::logic::native::setfix::replay::captured(&cfg.dir, labels.iter().map(|l| l.stratum));
+            Some(p)
+        }
         Err(e) => {
             crate::code_rule_dsl::logic::profile::decision("a join capture not written", || format!("{e}"));
             let _ = std::fs::remove_dir_all(wave_dir(cfg, id));
             None
         }
     }
+}
+
+/// The run the captures are of, as the scalar replay runs it again (`<dir>/run.txt`, once a process): its working
+/// directory, its arguments and its `RERAIL_` settings but the captures' own.
+fn write_run(cfg: &Config) -> std::io::Result<()> {
+    let path = cfg.dir.join("run.txt");
+    if path.exists() {
+        return Ok(());
+    }
+    let mut text = format!("cwd {}\n", std::env::current_dir()?.display());
+    for a in std::env::args() {
+        text.push_str(&format!("arg {a}\n"));
+    }
+    let mut vars: Vec<(String, String)> = std::env::vars().filter(|(k, _)| k.starts_with("RERAIL_") && !k.starts_with("RERAIL_JOIN_CAPTURE")).collect();
+    vars.sort();
+    for (k, v) in vars {
+        text.push_str(&format!("env {k}={v}\n"));
+    }
+    std::fs::write(path, text)
 }
 
 /// A relocation's target bit (`relocs.zst`'s third word): the word holds the target's host address (a view's home's
@@ -522,7 +551,7 @@ fn write_before(cfg: &Config, id: u64, labels: &[Label], reach: &Reached<'_>) ->
         writeln!(w, "unresolved_in {} {n} {}", regions[*i].name, some.join(" "))?;
     }
     for l in labels {
-        writeln!(w, "label {} {} {}", l.shape, l.rule.replace(' ', "_"), l.work)?;
+        writeln!(w, "label {} {} {} {:016x}", l.shape, l.rule.replace(' ', "_"), l.work, l.stratum)?;
     }
     for r in &regions {
         writeln!(w, "region {} {} {:#x} {:#x} {} {} {}", r.name, r.role, r.base, r.dev, r.len, r.kind, r.source)?;

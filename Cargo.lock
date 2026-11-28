@@ -4372,9 +4372,16 @@ name = "rerail-join-lab"
 version = "0.1.0"
 dependencies = [
  "libc",
+ "rerail-accel-gpu",
  "rerail-blocks",
+ "rerail-context",
+ "rerail-device",
+ "rerail-device-metal",
+ "rerail-engine",
  "rerail-join-lab",
+ "rerail-join-shapes",
  "rerail-reads",
+ "rerail-setfix",
  "rerail-tape-format",
  "rerail-ukl-rust",
  "rustc-hash",

@@ -75,6 +75,8 @@ use std::time::Instant;
 
 /// Strata captured and run again on their own (decision 0095, step 0).
 pub mod lab;
+/// The join lab's scalar replay: strata known across runs, and what they made (`replay`).
+pub mod replay;
 pub mod spec;
 pub mod steps;
 #[cfg(test)]
@@ -2184,7 +2186,10 @@ enum Body { Sql(String), Join(Box<JoinRule>), Unplanned }
 /// `full`: its head reached the width cap under `RERAIL_WIDEST=cut` (decision 0462): it derives no more this run.
 struct ProbeRule { head: usize, delta: usize, body: Body, whole: Option<JoinRule>, wkey: Option<Join>, budget: std::cell::Cell<Option<u64>>, full: std::cell::Cell<bool> }
 
-pub struct Store { pub rels: Vec<Rel>, syms: Arc<Symbols> }
+pub struct Store { pub rels: Vec<Rel>, syms: Arc<Symbols>,
+                   /// Its stratum's identity across runs (`replay::opened`), which the device names on each run it
+                   /// encodes: `0` where strata are not identified.
+                   pub stratum: u64 }
 /// `seeded`: the seed joins have run (in the first wave). `write`: at the fixpoint, insert the new rows into the
 /// relations' tables (else they stay native, in `DERIVED`, until `set_fixpoint_materialize`).
 /// `requests`: relations whose new rows the caller answers (`pending`, `add`), each with the rows answered so far.
@@ -3191,7 +3196,9 @@ fn open_spec_within(conn: impl Scoped, section: &Spec) -> Result<String> {
             }
         }
     }
-    let store = Arc::new(RwLock::new(Store { rels, syms: symbols }));
+    // The join lab's: the stratum known across runs, by its name, its relations and its batch's documents.
+    let stratum = replay::opened(&name, rels.iter().map(|r| r.table.as_str()), || batch_paths(conn));
+    let store = Arc::new(RwLock::new(Store { rels, syms: symbols, stratum }));
     forgotten_on_close();
     let on = on(conn);
     let mut reg = on.components.lock();
@@ -3278,7 +3285,9 @@ pub fn run(conn: impl Scoped, name: &str, max_waves: u32) -> Result<String> {
     let limits = super::width::Limits::here();
     let comp = component(conn, name)?;
     let mut comp = comp.lock().unwrap();
-    let (nrels, symbols) = { let s = comp.store.read().unwrap(); (s.rels.len(), Arc::clone(&s.syms)) };
+    let (nrels, symbols, stratum) = { let s = comp.store.read().unwrap(); (s.rels.len(), Arc::clone(&s.syms), s.stratum) };
+    // The join lab's: this run's CPU charged to its stratum (`replay::Charge`), where strata are identified.
+    let charge = replay::Charge::new(stratum);
     // This run's own cursor over the shared atoms (decision 0114 §3): the atoms lock themselves, so a stratum need
     // not hold the connection's symbols for its run, and strata on other threads intern at once.
     let mut cursor = Interner::for_loading(&symbols);
@@ -3889,6 +3898,17 @@ pub fn run(conn: impl Scoped, name: &str, max_waves: u32) -> Result<String> {
         return Ok(format!("0 {waves} {visits} {runs} {skips} {:.1} {:.1} {} 0", solve.as_secs_f64() * 1e3, t0.elapsed().as_secs_f64() * 1e3, per.join(",")));
     }
     comp.done = true;
+    // The join lab's: what the stratum made, where its record is wanted (a captured launch's, or a replay's).
+    if let Some(charge) = &charge && replay::wanted(stratum) {
+        let store = comp.store.read().unwrap();
+        let rels = store.rels.iter().map(|rel| {
+            let rows = (0..rel.n).filter(|&i| !rel.dead(i as u32)).map(|i| (0..rel.k).map(|c| rel.value(i, c)).collect::<Vec<i64>>());
+            let (n, d) = replay::digest(rows, &rel.types, &mut |v| cursor.name(v));
+            (rel.table.replace(char::is_whitespace, "_"), n, d)
+        }).collect();
+        let record = replay::Record { stratum, name: name.replace(char::is_whitespace, "_"), cpu: charge.so_far(), rels };
+        replay::done(&record).map_err(|e| err(format!("the join lab's record of {name}: {e}")))?;
+    }
     let mut new_rows = 0usize;
     if comp.write {
         // Each relation's new rows into its table, many rows per statement (SQLite binds at most 32766 values).
@@ -8290,6 +8310,18 @@ fn bound_rows(conn: impl Scoped, sql: &str, types: &[u8], syms: &mut Interner) -
         rows.push(row);
     }
     Ok(Some(rows))
+}
+
+/// The paths of the documents of the batch bound on `conn` (its `node`, `child` or `doc` source's): none where no
+/// batch is bound.
+fn batch_paths(conn: impl Scoped) -> Vec<String> {
+    use crate::code_rule_dsl::facts::vtab::syntax::PythonBatch as _;
+    let conn = conn.db();
+    ["node", "child", "doc"]
+        .iter()
+        .find_map(|n| crate::code_rule_dsl::facts::vtab::bound_source(conn, n).and_then(|s| s.python_batch()))
+        .map(|b| (0..b.docs.len()).map(|i| b.docs.path(i).to_owned()).collect())
+        .unwrap_or_default()
 }
 
 /// A base input over a bound vtab, read in place: `main.<table>` with `<col> = <int>` filters (joined by AND), its

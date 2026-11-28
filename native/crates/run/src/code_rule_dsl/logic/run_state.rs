@@ -46,6 +46,7 @@ use Class::*;
 /// Every thread-local outside the tests: `(file under native/, name, class, why)` (Carried ones need no why: they
 /// are carried).
 pub const STATE: &[(&str, &str, Class, &str)] = &[
+    ("crates/setfix/src/code_rule_dsl/logic/native/setfix/replay.rs", "WATCH", Thread, "the join lab's watch of a replay's strata run on this thread (a measuring aid: its sampler and counters), set and told on that one thread"),
     ("crates/blocks/src/census.rs", "ID", Thread, "this thread's number in the anonymous room's census (a measuring aid, off by default)"),
     ("crates/blocks/src/census.rs", "N", Thread, "the census's next thread number, read once by `ID`'s first use on a thread"),
     ("crates/blocks/src/maps.rs", "STACK", Thread, "this thread's handle on its stack's room (`scratch::StackRoom`): the same on any thread"),

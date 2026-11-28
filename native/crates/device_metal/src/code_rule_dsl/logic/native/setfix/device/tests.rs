@@ -929,7 +929,9 @@ use rerail_blocks::vector::Vector;
     }
 
     /// The join lab's captures (`join_capture`): a stratum's launch on the device written as what it reads, each
-    /// block it reaches once, its own buffers before and after it, its labels the shapes it runs; finished ("done").
+    /// block it reaches once, its own buffers before and after it, its labels the shapes it runs and their stratum;
+    /// finished ("done"). The run is recorded (`run.txt`), and what the stratum made (`strata.txt`, `setfix::replay`):
+    /// its relation's rows, by the identity its labels name.
     #[test]
     fn a_launch_captured_names_its_shapes_and_regions() {
         if !crate::code_rule_dsl::transducer::packed::metal_join::available() {
@@ -986,10 +988,33 @@ use rerail_blocks::vector::Vector;
             assert!(l.relocations > 0, "its addresses bound again");
             let ran = l.run();
             assert!(ran.dispatches > 0 && ran.groups > 0, "it ran: {ran:?}");
-            for d in l.compare().unwrap() {
+            for d in l.compare(!w.exact_on(rerail_join_lab::Engine::Program)).unwrap() {
                 assert!(d.compared > 0 && d.differ == 0, "{}: the replay leaves what the launch left: {d:?}", w.dir.display());
             }
+            // Its runs' stratum, and what that stratum made: q's 300 seed rows and the 300 its step adds.
+            let strata = crate::code_rule_dsl::logic::native::setfix::replay::records(&std::fs::read_to_string(dir.join("strata.txt")).expect("the strata's records"));
+            for label in &w.labels {
+                assert_ne!(label.stratum, 0, "a run's stratum named: {label:?}");
+                let r = strata.get(&label.stratum).unwrap_or_else(|| panic!("a record of the stratum {label:?} names: {strata:?}"));
+                assert_eq!(r.name, "captured");
+                assert!(r.rels.iter().any(|(t, n, _)| t == "q" && *n == 600), "q's rows: {r:?}");
+            }
         }
+        let run = std::fs::read_to_string(dir.join("run.txt")).expect("the run recorded");
+        assert!(run.lines().next().is_some_and(|l| l.starts_with("cwd ")) && run.lines().any(|l| l.starts_with("arg ")), "its directory and arguments: {run}");
+        // The join lab's scalar engine (`join_lab::scalar`): the stratum run again on the scalar joins under a replay
+        // of the capture is known there by the same identity, and makes the same rows: its record is the capture's.
+        use crate::code_rule_dsl::logic::native::setfix::replay;
+        let captured = replay::records(&std::fs::read_to_string(dir.join("strata.txt")).unwrap());
+        let want = captured.values().find(|r| r.name == "captured").expect("the stratum recorded").clone();
+        replay::replay_to(&dir, dir.join("replay.txt"));
+        let scalar = spec.lines().filter(|l| *l != "device").collect::<Vec<_>>().join("\n");
+        super::super::open(&db, &scalar).unwrap();
+        super::super::run(&db, "captured", 0).unwrap();
+        super::super::close(&db, "captured").unwrap();
+        let got = replay::records(&std::fs::read_to_string(dir.join("replay.txt")).expect("the replay's records"));
+        let got = got.get(&want.stratum).unwrap_or_else(|| panic!("the stratum known again by its identity {:016x}: {got:?}", want.stratum));
+        assert_eq!(want.differs(got), None, "the scalar joins make the program's rows");
         let _ = std::fs::remove_dir_all(&dir);
     }
 

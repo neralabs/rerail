@@ -2,13 +2,18 @@
 //!
 //! - `join-lab list <capture> [--shapes shapes.yaml]`: each launch, its shapes by work, its regions and bytes; with the
 //!   catalogue, each shape by its rows, its class or the part it lacks, and its launches captured.
-//! - `join-lab run <capture> [--engine class,program,metal] [--only <text>]`: each launch replayed on each engine, held
-//!   to what the engine's launch left; an engine that leaves otherwise is an error naming its first differing region. A
-//!   launch whose shapes have no class is listed as such on `class`, not failed.
+//! - `join-lab run <capture> [--engine class,program,scalar,metal] [--only <text>]`: each launch replayed on each
+//!   engine, held to what the engine's launch left; an engine that leaves otherwise is an error naming its first
+//!   differing region. A launch whose shapes have no class is listed as such on `class`, not failed. On `scalar` (the
+//!   `scalar` feature), the capture's run is run again with the scalar joins (`scalar::rerun`, once for every launch),
+//!   and each launch's strata are held to the capture's records of them, a difference naming the first relation.
 //! - `join-lab profile <capture> [--engine class,program,metal] [--repeat N] [--core N] [--sample] [--only <text>]
 //!   [-o results.tsv]`: each launch run warm N times (loaded afresh each time, the load not timed): its best and median
 //!   wall time, the thread's CPU time, instructions and cycles, the program's items by kind, written as a results
-//!   table; with `--sample`, each engine's stacks folded beside it (`results.<engine>.folded`).
+//!   table; with `--sample`, each engine's stacks folded beside it (`results.<engine>.folded`). On `scalar`, the run
+//!   again once: a launch's CPU, instructions and cycles its strata's runs'.
+//! - `join-lab rerun <capture> <out> [--sample] -- <args>`: the scalar engine's run of the engine's command (its own
+//!   process, which `run` and `profile` start).
 //! - `join-lab diverge <capture> --engine a,b [--only <text>]`: where two engines' replays of each launch first part:
 //!   the first dispatch after which their regions differ, the phase it ran and its items' kinds.
 //! - `join-lab script <capture> --engine e [--upto K] [--only <text>]`: each launch's size script as the engine's
@@ -19,7 +24,7 @@ use rerail_join_lab::{Engine, Wave};
 use std::path::Path;
 
 fn usage() -> ! {
-    eprintln!("usage: join-lab list <capture> [--shapes shapes.yaml]\n       join-lab run <capture> [--engine class,program,metal] [--only <text>]\n       join-lab profile <capture> [--engine class,program,metal] [--repeat N] [--core N] [--sample] [--only <text>] [-o results.tsv]\n       join-lab diverge <capture> --engine a,b [--only <text>]\n       join-lab script <capture> --engine e [--upto K] [--only <text>]\n       join-lab page <results.tsv> [--shapes shapes.yaml] -o page.html");
+    eprintln!("usage: join-lab list <capture> [--shapes shapes.yaml]\n       join-lab run <capture> [--engine class,program,scalar,metal] [--only <text>]\n       join-lab profile <capture> [--engine class,program,scalar,metal] [--repeat N] [--core N] [--sample] [--only <text>] [-o results.tsv]\n       join-lab diverge <capture> --engine a,b [--only <text>]\n       join-lab script <capture> --engine e [--upto K] [--only <text>]\n       join-lab page <results.tsv> [--shapes shapes.yaml] -o page.html");
     std::process::exit(2);
 }
 
@@ -54,7 +59,49 @@ fn engines(args: &[String]) -> Vec<Engine> {
     })).collect()
 }
 
+/// A launch on the scalar engine: whether its strata made the capture's rows, the first that did not, how many it
+/// ran, their CPU seconds, instructions and cycles. Its run again is made once (`held`), at the first launch.
+#[cfg(feature = "scalar")]
+fn scalar_launch(held: &mut Option<Result<(std::collections::HashMap<u64, rerail_setfix::code_rule_dsl::logic::native::setfix::replay::Record>, rerail_join_lab::scalar::Rerun), String>>, target: &str, w: &Wave, sample: bool) -> Result<(bool, String, usize, f64, u64, u64), String> {
+    let run = held.get_or_insert_with(|| {
+        eprintln!("join-lab: the capture's run again, with the scalar joins");
+        let captured = rerail_join_lab::scalar::captured(Path::new(target))?;
+        let rerun = rerail_join_lab::scalar::rerun(Path::new(target), sample)?;
+        eprintln!("join-lab: the scalar run: {:.1} s, {} strata recorded of {} captured", rerun.seconds, rerun.records.len(), captured.len());
+        Ok((captured, rerun))
+    });
+    let (captured, rerun) = run.as_ref().map_err(String::clone)?;
+    let s = rerail_join_lab::scalar::of(w, captured, rerun)?;
+    Ok((s.same, s.differing, s.strata, s.cpu, s.instructions, s.cycles))
+}
+
+#[cfg(not(feature = "scalar"))]
+fn scalar_launch(_: &mut Option<()>, _: &str, _: &Wave, _: bool) -> Result<(bool, String, usize, f64, u64, u64), String> {
+    Err("the scalar engine: this lab was built without its `scalar` feature".into())
+}
+
+/// The scalar engine's samples (`profile --sample`), folded by its run again.
+#[cfg(feature = "scalar")]
+fn scalar_folded(held: &Option<Result<(std::collections::HashMap<u64, rerail_setfix::code_rule_dsl::logic::native::setfix::replay::Record>, rerail_join_lab::scalar::Rerun), String>>) -> Option<String> {
+    held.as_ref()?.as_ref().ok()?.1.folded.clone()
+}
+
+#[cfg(not(feature = "scalar"))]
+fn scalar_folded(_: &Option<()>) -> Option<String> {
+    None
+}
+
 fn main() {
+    // The scalar engine's run of the engine's command: the engine's own start, in a process of its own.
+    #[cfg(feature = "scalar")]
+    if std::env::args().nth(1).as_deref() == Some("rerun") {
+        let args: Vec<String> = std::env::args().skip(2).collect();
+        if let Err(e) = rerail_join_lab::scalar::rerun_main(&args) {
+            eprintln!("join-lab rerun: {e}");
+            std::process::exit(1);
+        }
+        return;
+    }
     // The binary's run, on a machine of its own (decision 0442): an entry point holds one, and the engine's parts the
     // engines call (the device's pipelines) read their values from it.
     let _run = rerail_context::within(rerail_context::Shared::on(&rerail_context::Machine::new()));
@@ -87,10 +134,25 @@ fn main() {
         }
         "run" => {
             let mut failed = 0;
+            let mut scalar = None;
             for w in waves(target, only) {
                 for e in engines(&args) {
                     // Its name first: a replay that faults names its launch.
                     eprintln!("join-lab: {} on {}", w.name(), e.name());
+                    if e == Engine::Scalar {
+                        match scalar_launch(&mut scalar, target, &w, false) {
+                            Ok((true, _, strata, cpu, _, _)) => println!("{:<16} {:<8} same   {strata:>4} strata {:>26.3} ms", w.name(), e.name(), cpu * 1e3),
+                            Ok((false, why, _, _, _, _)) => {
+                                failed += 1;
+                                println!("{:<16} {:<8} DIFFERS {why}", w.name(), e.name());
+                            }
+                            Err(err) => {
+                                failed += 1;
+                                println!("{:<16} {:<8} FAILED {err}", w.name(), e.name());
+                            }
+                        }
+                        continue;
+                    }
                     if e == Engine::Class
                         && let Err(why) = w.classes()
                     {
@@ -174,9 +236,22 @@ fn main() {
             // Each engine's stacks, sampled each millisecond its runs take (`--sample`).
             let sampler = args.iter().any(|a| a == "--sample").then(|| rerail_join_lab::sample::Sampler::start(std::time::Duration::from_millis(1))).and_then(|s| s.map_err(|why| eprintln!("join-lab: --sample: {why}")).ok());
             let engines = engines(&args);
+            let mut scalar = None;
             for w in waves(target, only) {
                 for (i, &e) in engines.iter().enumerate() {
                     eprintln!("join-lab: {} on {}", w.name(), e.name());
+                    if e == Engine::Scalar {
+                        // Its strata in the run again, once (`scalar_launch`): their CPU, a run of each.
+                        match scalar_launch(&mut scalar, target, &w, sampler.is_some()) {
+                            Ok((same, _, _, cpu, instructions, cycles)) => {
+                                let p = rerail_join_lab::Profile { launch: w.name(), engine: e.name(), shapes: w.labels.iter().map(|l| (l.shape.clone(), l.rule.clone(), l.work)).collect(), dispatches: 0, groups: 0, repeat: 1, best_ms: cpu * 1e3, median_ms: cpu * 1e3, cpu_ms: cpu * 1e3, instructions, cycles, bytes: w.bytes(), same, kinds: Vec::new() };
+                                println!("{}", p.line());
+                                rows.push(p.tsv());
+                            }
+                            Err(err) => println!("{:<16} {:<8} FAILED {err}", w.name(), e.name()),
+                        }
+                        continue;
+                    }
                     if e == Engine::Class
                         && let Err(why) = w.classes()
                     {
@@ -208,7 +283,8 @@ fn main() {
                 match rerail_join_lab::sample::fold(&samples) {
                     Ok(by) => {
                         for (i, e) in engines.iter().enumerate() {
-                            let folded: String = by.get(&(i as u32 + 1)).map_or(String::new(), |v| v.iter().map(|(p, n)| format!("{p} {n}\n")).collect());
+                            // The scalar engine's are its run again's, which sampled its strata (`rerun --sample`).
+                            let folded: String = if *e == Engine::Scalar { scalar_folded(&scalar).unwrap_or_default() } else { by.get(&(i as u32 + 1)).map_or(String::new(), |v| v.iter().map(|(p, n)| format!("{p} {n}\n")).collect()) };
                             let path = Path::new(out).with_extension(format!("{}.folded", e.name()));
                             eprintln!("join-lab: {} samples of {} in {}", folded.lines().map(|l| l.rsplit(' ').next().and_then(|n| n.parse::<u64>().ok()).unwrap_or(0)).sum::<u64>(), e.name(), path.display());
                             if let Err(err) = std::fs::write(&path, folded) {

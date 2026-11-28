@@ -3871,6 +3871,10 @@ impl Batch {
                 // Its stage's addresses of what it reads where it lies (a view's directory, a `has` axis's set),
                 // which its encoding copied from the relation, not reached.
                 prog.reached.extend([j.stage.v_dir, j.stage.v_set].into_iter().filter(|&a| a != 0));
+                // A witness's probes' too: each probe is a stage of its own, bound to what it reads (`witness`).
+                if let Some(probes) = &j.probes {
+                    prog.reached.extend(probes.iter().flat_map(|p| [p.v_dir, p.v_set]).filter(|&a| a != 0));
+                }
             }
             prog.uses.append(&mut j.uses);
             prog.hold.append(&mut j.own);

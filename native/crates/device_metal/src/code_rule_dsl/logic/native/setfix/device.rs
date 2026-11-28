@@ -1776,6 +1776,8 @@ struct Run<'p> {
     key: Option<mj::SortKey>,
     /// The text arena its text functions made their texts into (its batch's, shared with the batch's other jobs).
     arena: Option<Rc<mj::Arena>>,
+    /// Its stratum's identity across runs (`Store::stratum`), which the join lab's captures name it by.
+    stratum: u64,
 }
 
 /// `rel`'s rows where they lie in a block, and the columns there: a flat relation's (its dead rows marked by its
@@ -2057,7 +2059,7 @@ fn column_symbols(rel: &InRel, col: usize) -> Vector<i64> {
 }
 
 impl<'p> Run<'p> {
-    fn new(plan: &Plan) -> Result<Run<'p>, String> {
+    fn new(plan: &Plan, stratum: u64) -> Result<Run<'p>, String> {
         let mut io = Vec::new();
         let mut slot = 0;
         let mut counter = Vec::new();
@@ -2098,7 +2100,7 @@ impl<'p> Run<'p> {
         if uniq_cols.len() > 16 {
             return Err("a head of more than 16 slots".into());
         }
-        Ok(Run { plan: Rc::new(plan.clone()), _plan: std::marker::PhantomData, io, tables, caps, totals, counters, counter, rels: vec![None; plan.stages.len()], places: vec![None; plan.stages.len()], screens: vec![None; plan.stages.len()], key: None, consts: vec![Vec::new(); plan.stages.len()], probes: vec![None; plan.stages.len()], uniq: None, uniq_cols, raw: false, arena: None })
+        Ok(Run { plan: Rc::new(plan.clone()), _plan: std::marker::PhantomData, io, tables, caps, totals, counters, counter, rels: vec![None; plan.stages.len()], places: vec![None; plan.stages.len()], screens: vec![None; plan.stages.len()], key: None, consts: vec![Vec::new(); plan.stages.len()], probes: vec![None; plan.stages.len()], uniq: None, uniq_cols, raw: false, arena: None, stratum })
     }
 
     /// The space for stage `k`'s rows out, from its input's space.
@@ -2307,7 +2309,7 @@ fn encode_levels(runs: &mut [(&mut Run<'_>, usize)], batch: &mut mj::Batch, rep:
     if batch.capturing() {
         for (r, _) in runs.iter() {
             let work = r.rels.iter().flatten().map(|(rel, _)| rel.rows as u64).sum::<u64>().max(1);
-            batch.label(mj_capture::Label { shape: shape_of(r, &r.plan).name(), rule: format!("rule {:016x}", r.plan.key), work });
+            batch.label(mj_capture::Label { shape: shape_of(r, &r.plan).name(), rule: format!("rule {:016x}", r.plan.key), work, stratum: r.stratum });
         }
     }
     Ok(())
@@ -2802,7 +2804,7 @@ fn encode_runs_bounded(rules: &[(&Plan, &JoinRule, usize)], batch: &mut mj::Batc
         bytes += plan.expected().0;
         take += 1;
     }
-    let mut runs = rules[..take].iter().map(|(plan, _, _)| Run::new(plan)).collect::<Result<Vec<Run<'static>>, String>>()?;
+    let mut runs = rules[..take].iter().map(|(plan, _, _)| Run::new(plan, store.stratum)).collect::<Result<Vec<Run<'static>>, String>>()?;
     // Each head's rows made distinct in its first order where its bounds pack it (t58 increment A).
     let bounds = head_bounds(&rules[..take], store);
     for (r, (plan, _, h)) in runs.iter_mut().zip(rules) {
@@ -3603,7 +3605,7 @@ fn round_runs<'p>(rules: &[(&'p Plan, &JoinRule, usize)], own: &mut Own, names: 
             runs.push(None);
             continue;
         }
-        let mut r = Run::new(plan)?;
+        let mut r = Run::new(plan, store.stratum)?;
         // A set head's rule leaves its rows as its last stage wrote them: its head's union is made distinct less the
         // rows the head holds, once (`encode_live_tail`), so made distinct here too its rows were made so twice.
         r.raw = set_head(*h);

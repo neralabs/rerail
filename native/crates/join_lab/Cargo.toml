@@ -7,10 +7,13 @@ description = "The join lab (2026-11-27): a launch of the join program the engin
 
 [features]
 # The tests' variant of the blocks it maps (one compile of each workspace crate: `check_dev_features`).
-test-hooks = ["rerail-blocks/test-hooks", "rerail-tape-format/test-hooks", "rerail-context/test-hooks", "rerail-device-metal?/test-hooks", "rerail-accel-gpu?/test-hooks"]
+test-hooks = ["rerail-blocks/test-hooks", "rerail-tape-format/test-hooks", "rerail-context/test-hooks", "rerail-device-metal?/test-hooks", "rerail-accel-gpu?/test-hooks", "rerail-setfix?/test-hooks", "rerail-engine?/test-hooks"]
 # The `metal` engine (`src/metal.rs`): the program's kernel on the device, as the engine's launch chains it. Built on
 # a Mac with Metal (a farm host), as it links the engine's device code.
 metal = ["dep:rerail-device-metal", "dep:rerail-accel-gpu", "dep:rerail-device"]
+# The `scalar` engine (`src/scalar.rs`): setfix's scalar joins over a capture's strata, in the engine's own run of them
+# again (its views are read through the chunk's tape batch, which only the corpus pipeline makes): the engine linked.
+scalar = ["dep:rerail-engine", "dep:rerail-setfix"]
 
 [dependencies]
 # The join program's Rust, run as the CPU device runs it.
@@ -34,6 +37,9 @@ rerail-context = { path = "../context" }
 rerail-device-metal = { path = "../device_metal", optional = true }
 rerail-accel-gpu = { path = "../../../accel/gpu", optional = true }
 rerail-device = { path = "../../../gpu/device", optional = true }
+# The `scalar` engine's: the engine's command (`tools::cli`), and setfix's strata records (`setfix::replay`).
+rerail-engine = { path = "../..", optional = true }
+rerail-setfix = { path = "../setfix", optional = true }
 
 [[bin]]
 name = "join-lab"
