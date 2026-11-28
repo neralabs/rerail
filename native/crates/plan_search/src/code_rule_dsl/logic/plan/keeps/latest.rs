@@ -162,7 +162,9 @@ pub fn merged(b: &mut Builder<'_>, v: &Version, r: RuleRef<'_>, keys: &dyn Fn(&s
                 continue;
             }
             let mut rw = Merge { drop: ql.node(), keep: p.node(), fill, sub };
-            return Ok(Some(b.rewrite(v, r, &mut rw).finish()?));
+            // The merge makes the second read's other literals the first's where they test the merged variables
+            // (`!kind(s1, "module")` beside `!kind(s, "module")`): written once.
+            return Ok(Some(b.rewrite(v, r, &mut rw).each_once().finish()?));
         }
     }
     Ok(None)

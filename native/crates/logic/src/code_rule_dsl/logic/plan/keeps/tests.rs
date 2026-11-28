@@ -45,8 +45,8 @@
         assert_eq!(unfold("o(x) :- a(x), !r(x).", 1, &["r(z) :- a(z), z != 3."], 1).unwrap(), ["o($x) :- a($x), !a($x)", "o($x) :- a($x), $x = 3"]);
         assert!(unfold("o(x) :- a(x), !r(x).", 1, &["r(z) :- b(z, w), a(w)."], 1).is_none());
         // A head variable named twice equates the read's terms, the reader's own variables as they are, though one of
-        // them has the name of the rule's.
-        assert_eq!(unfold("o(n) :- a(t), c(t, n).", 1, &["c(n, n) :- a(n)."], 1).unwrap(), ["o($n) :- a($t), a($t), $t = $n"]);
+        // them has the name of the rule's. The copy's `a(t)` is the reader's, written once.
+        assert_eq!(unfold("o(n) :- a(t), c(t, n).", 1, &["c(n, n) :- a(n)."], 1).unwrap(), ["o($n) :- a($t), $t = $n"]);
     }
 
     /// The copies a read unfolds into are counted without making them (`copies`): what `unfold` makes, or `None`
@@ -105,7 +105,7 @@
     fn a_head_variable_named_twice_equates_the_readers_terms() {
         let v = parse_version(".decl a(x: node)\n.decl b(x: node, y: node)\n.decl r(x: node)\n.decl o(x: node)\n.input a\n.input r\n.output o\no(t) :- a(t), b(t, n), r(n).\nb(n, n) :- a(n).\n").unwrap();
         let copies = inline::unfolded_shown(&v, of(&v, "o")[0], 1, &of(&v, "b"), 1).unwrap();
-        assert_eq!(copies[0], "o($t) :- a($t), a($t), $t = $n, r($n)");
+        assert_eq!(copies[0], "o($t) :- a($t), $t = $n, r($n)");
     }
 
     /// A body that meets only at a variable the head projects away splits there; a join through a head variable does

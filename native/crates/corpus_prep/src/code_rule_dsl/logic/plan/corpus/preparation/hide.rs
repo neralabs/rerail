@@ -847,7 +847,11 @@ fn bounded(v: &Version, rule: &W, facts: &Facts, base_locations: &HashMap<String
     let mut out = Final::default();
     let fin = &mut out;
     let mut fresh = 0;
-    let mut bounded: BTreeMap<String, bool> = BTreeMap::new();
+    // The unscoped location variables, each with its atom's others: a base atom's location columns are one
+    // document's, so a bound on one of them bounds the document, and with it every variable that shares an atom
+    // with it (a node's id is its document's key above its index). One bound a group of them: `node(d, n, …)` with
+    // both `d` and `n` bounded passed every row through two tests of one fact.
+    let mut groups: Vec<Vec<(String, bool)>> = Vec::new();
     for (_, l) in &rule.body {
         let L::Atom(a) = l else { continue };
         let Some(cols) = base_locations.get(a.rel.as_str()) else { continue };
@@ -867,22 +871,50 @@ fn bounded(v: &Version, rule: &W, facts: &Facts, base_locations: &HashMap<String
             }
             continue;
         }
-        for &c in cols {
-            match a.args.get(c) {
-                Some(S::Var(x)) => {
-                    bounded.entry(name(*x)).or_insert(Some(c) == doc_col);
-                }
-                Some(S::Wild) => {
-                    let x = format!("rr_shown{fresh}");
-                    fresh += 1;
-                    fin.args.insert((a.node, c), x.clone());
-                    bounded.insert(x, Some(c) == doc_col);
-                }
-                _ => {}
+        let vars: Vec<(String, bool)> = cols.iter().filter_map(|&c| match a.args.get(c) {
+            Some(S::Var(x)) => Some((name(*x), Some(c) == doc_col)),
+            _ => None,
+        }).collect();
+        if !vars.is_empty() {
+            groups.push(vars);
+            continue;
+        }
+        // No variable in its location columns: its first wildcard named, for the bound.
+        if let Some(&c) = cols.iter().find(|&&c| matches!(a.args.get(c), Some(S::Wild))) {
+            let x = format!("rr_shown{fresh}");
+            fresh += 1;
+            fin.args.insert((a.node, c), x.clone());
+            groups.push(vec![(x, Some(c) == doc_col)]);
+        }
+    }
+    // The groups joined where they share a variable; each joined group bounded by its first variable.
+    let mut of: BTreeMap<String, usize> = BTreeMap::new();
+    let mut parent: Vec<usize> = (0..groups.len()).collect();
+    fn root(parent: &mut [usize], mut g: usize) -> usize {
+        while parent[g] != g {
+            parent[g] = parent[parent[g]];
+            g = parent[g];
+        }
+        g
+    }
+    for (g, vars) in groups.iter().enumerate() {
+        for (x, _) in vars {
+            if let Some(&h) = of.get(x) {
+                let (a, b) = (root(&mut parent, g), root(&mut parent, h));
+                parent[a.max(b)] = a.min(b);
+            } else {
+                of.insert(x.clone(), g);
             }
         }
     }
-    fin.bounds = bounded.into_iter().map(|(x, doc)| (x, bound_of(doc))).collect();
+    let mut bounds: BTreeMap<String, bool> = BTreeMap::new();
+    for (g, vars) in groups.iter().enumerate() {
+        if root(&mut parent, g) == g {
+            let (x, doc) = vars[0].clone();
+            bounds.insert(x, doc);
+        }
+    }
+    fin.bounds = bounds.into_iter().map(|(x, doc)| (x, bound_of(doc))).collect();
     out
 }
 

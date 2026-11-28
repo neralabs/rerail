@@ -184,7 +184,9 @@ fn unfold(b: &mut Builder<'_>, v: &Version, reader: RuleRef<'_>, at: usize, read
             let eq_terms: Vec<(T<'_>, T<'_>)> = eqs.iter().map(|&(h, r)| (term(v, h, &|s| names[&s]), term(v, r, &|s| reader_vars[s.0 as usize]))).collect();
             let mut rn = Renamed { to: &names };
             let mut keep = Until { at, k: 0 };
-            let mut rb = b.rewrite(v, reader, &mut keep);
+            // A literal the def shares with the reader (its head's variables are the reader's), or with an earlier copy's,
+            // written once: a second `!kind(s, …)` or id bound is a step every row of the plan passes again.
+            let mut rb = b.rewrite(v, reader, &mut keep).each_once();
             for l in def.body() {
                 rb = rb.lit_with(v, *def, l, &mut rn);
             }
@@ -212,7 +214,9 @@ fn unfold(b: &mut Builder<'_>, v: &Version, reader: RuleRef<'_>, at: usize, read
     }
     for pick in copies {
         let mut keep = Until { at, k: 0 };
-        let mut rb = b.rewrite(v, reader, &mut keep);
+        // A literal the def shares with the reader (its head's variables are the reader's), or with an earlier copy's,
+        // written once: a second `!kind(s, …)` or id bound is a step every row of the plan passes again.
+        let mut rb = b.rewrite(v, reader, &mut keep).each_once();
         for (alts, &k) in alternatives.iter().zip(&pick) {
             rb = match &alts[k] {
                 Alt::Atom { rel, neg: true, args } => rb.not(*rel, args),

@@ -703,6 +703,43 @@ impl<'p> Encoder<'p> {
         self.from[k as usize] = src.0;
     }
 
+    /// Drops each body literal of the open rule begun at `rule_at` that is the same nodes as an earlier one: a
+    /// conjunction holds a literal once. A dropped literal's variables all appear in the earlier one, so no slot is
+    /// its own; a big integer it held stays in the table, unread. How many it dropped.
+    pub fn dedup_body(&mut self, rule_at: usize) -> usize {
+        let end = self.kind.len();
+        let start = rule_at + 1 + self.size.get(rule_at + 1) as usize;
+        let node = |e: &Self, n: usize| {
+            let (kd, size, val) = (e.kind.get(n), e.size.get(n), e.val.get(n));
+            let big = kd & kind::MASK == kind::INT && kd & kind::BIG != 0;
+            (kd, size, if big { e.ints[val as usize] } else { i64::from(val) })
+        };
+        // The body's literals, each `size` nodes after the head.
+        let mut lits: Vec<std::ops::Range<usize>> = Vec::new();
+        let mut n = start;
+        while n < end {
+            let next = n + (self.size.get(n) as usize).max(1);
+            lits.push(n..next);
+            n = next;
+        }
+        let same = |e: &Self, a: &std::ops::Range<usize>, b: &std::ops::Range<usize>| a.len() == b.len() && (0..a.len()).all(|k| node(e, a.start + k) == node(e, b.start + k));
+        let keep: Vec<bool> = (0..lits.len()).map(|i| !lits[..i].iter().any(|p| same(self, p, &lits[i]))).collect();
+        let dropped = keep.iter().filter(|k| !**k).count();
+        if dropped == 0 {
+            return 0;
+        }
+        let kept: Vec<(u8, u32, u32)> = lits.iter().zip(&keep).filter(|(_, k)| **k).flat_map(|(r, _)| r.clone()).map(|n| (self.kind.get(n), self.size.get(n), self.val.get(n))).collect();
+        self.kind.truncate(start);
+        self.size.truncate(start);
+        self.val.truncate(start);
+        for (kd, size, val) in kept {
+            self.kind.push(kd);
+            self.size.push(size);
+            self.val.push(val);
+        }
+        dropped
+    }
+
     /// Drops the rule begun at `at` (a rule that failed to encode).
     pub fn abandon(&mut self, at: usize) {
         self.kind.truncate(at);

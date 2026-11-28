@@ -329,7 +329,7 @@ impl<'p> Builder<'p> {
     /// Starts a rule written term by term.
     pub fn rule(&mut self) -> RuleBuilder<'_, 'p> {
         let at = self.enc.begin_rule();
-        RuleBuilder { b: self, at, head: false, failed: None, done: false, from: None }
+        RuleBuilder { b: self, at, head: false, failed: None, done: false, from: None, once: false }
     }
 
     /// Opens a rule written literal by literal between other reads and edits of this builder's fields (the
@@ -485,7 +485,7 @@ impl<'p> Builder<'p> {
                 w.lit(l, rw);
             }
         }
-        RuleBuilder { b: self, at, head: true, failed: None, done: false, from: Some(rule.id()) }
+        RuleBuilder { b: self, at, head: true, failed: None, done: false, from: Some(rule.id()), once: false }
     }
 
     // -- parts --
@@ -917,6 +917,8 @@ pub struct RuleBuilder<'b, 'p> {
     done: bool,
     /// The rule it is rewritten from (`Builder::rewrite`).
     from: Option<RuleId>,
+    /// Each body literal written once (`each_once`): at `finish`, one equal to an earlier literal is dropped.
+    once: bool,
 }
 
 impl Drop for RuleBuilder<'_, '_> {
@@ -943,6 +945,13 @@ impl<'b, 'p> RuleBuilder<'b, 'p> {
         if !self.head && self.failed.is_none() {
             self.failed = Some(super::bad("a rule's body before its head"));
         }
+    }
+    /// The rule's body literal equal to an earlier one dropped when it finishes (`Encoder::dedup_body`): a conjunction
+    /// holds a literal once. For a rule written from others' literals (an unfolded read, merged reads), whose copies
+    /// may repeat one.
+    pub fn each_once(mut self) -> Self {
+        self.once = true;
+        self
     }
     pub fn head(mut self, rel: impl Into<Rel<'b>>, args: &[T<'_>]) -> Self {
         if self.head {
@@ -1101,6 +1110,9 @@ impl<'b, 'p> RuleBuilder<'b, 'p> {
     }
     /// The rule's id, once its head is written.
     pub fn finish(mut self) -> Result<RuleId, String> {
+        if self.once && self.head && self.failed.is_none() {
+            self.b.enc.dedup_body(self.at);
+        }
         if let Some(e) = self.failed.take().or_else(|| (!self.head).then(|| super::bad("a rule with no head"))) {
             return Err(e);
         }
