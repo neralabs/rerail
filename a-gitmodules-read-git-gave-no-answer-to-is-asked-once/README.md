@@ -1,6 +1,6 @@
 # A submodule read Git gives no answer to holds the daemon once
 
-For [pull request #1221](https://github.com/neralabs/rerail/pull/1221), head 923d4319fa. [report.html](report.html) is the same report as one page: download it and open it.
+For [pull request #1221](https://github.com/neralabs/rerail/pull/1221), head 5cab694e4e. [report.html](report.html) is the same report as one page: download it and open it.
 
 ## 1. The decision
 
@@ -10,7 +10,7 @@ For [pull request #1221](https://github.com/neralabs/rerail/pull/1221), head 923
 
 | Size | Risk and review | Waits on | Not verified |
 |---|---|---|---|
-| 473 lines in 6 files: 151 ship, 322 are tests and text | Automated. No high-risk path in `REVIEW.md`; the reviewer may approve. | Nothing. No CI run at this head yet: not pushed. | 3 |
+| 537 lines in 6 files: 166 ship, 371 are tests and text | Automated. No high-risk path in `REVIEW.md`; the reviewer may approve. | Nothing. No CI run at this head yet: not pushed. | 3 |
 
 ## 2. Intent, and the gap
 
@@ -30,10 +30,10 @@ Found on 28 November 2026 through the built CLI and a real daemon on Linux x64 a
 
 ## 3. Where to look
 
-1. **Read first**, 10 min: `declared-submodules.ts`: `keptPaths`, `answeredMeanwhile`, `askedAgain`, `keptAfter`, `pastLimitAfter`, `stopAskingSubmodules`. Can a listing wait on Git again, or keep an older index's answer, while one ask runs?
+1. **Read first**, 10 min: `declared-submodules.ts`: `keptPaths`, `answeredMeanwhile`, `askedAgain`, `keepLearnt`, `keptAfter`, `pastLimitAfter`, `stopAskingSubmodules`. Can a listing wait on Git again, or keep an older index's answer, while one ask runs?
 2. 3 min: `git.ts` and `daemon.ts`: the `ETIMEDOUT` code of `runGitAsync`, and the stop in the daemon's close.
 
-**Then skim**, 8 min: Twelve cases with Git stand-ins, each ending by a fact; two of them through the code-rule router pass over `main`'s source too.
+**Then skim**, 8 min: Seventeen cases with Git stand-ins, each ending by a fact; two of them through the code-rule router pass over `main`'s source too.
 
 ## 4. Risk against verification
 
@@ -113,6 +113,6 @@ We ask no ruling.
 
 The description on GitHub is the record: "How you tested it" holds the runs over `main`'s source and here, and the cost of a listing.
 
-**Sources.** The branch at 923d4319fa and its diff against `main` fde444236a, read on 28 November 2026; runs on Linux x64 machines and Windows 11 machines.
+**Sources.** The branch at 5cab694e4e and its diff against `main` fde444236a, read on 28 November 2026; runs on Linux x64 machines and Windows 11 machines.
 
 </details>
