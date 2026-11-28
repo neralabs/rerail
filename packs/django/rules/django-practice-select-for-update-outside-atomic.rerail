@@ -26,9 +26,13 @@
 .violation SelectForUpdateOutsideAtomic(at: node, f: symbol, why: symbol) "`select_for_update()` in `{f}` runs outside transaction.atomic(): {why}. In autocommit mode Django raises TransactionManagementError here on PostgreSQL, MySQL and Oracle, though a TestCase (which wraps each test in a transaction) passes. Wrap the locking read and the writes that depend on it in `transaction.atomic()`, and give any try/except of a DatabaseError inside it its own nested `atomic()`."
 SelectForUpdateOutsideAtomic(c, x, why) :- field(c, "function", e), attr_of(e, _, "select_for_update"), owner(c, f),
     pt_scope_tm(f, fq), ct = @node_path(c), sfu_site(fq, ct), def_name(f, x), sfu_exposed(fq), sfu_why(fq, why).
+.violation SelectForUpdateOutsideAtomicCalled(at: node, f: symbol, g: symbol, w: node_path) "`select_for_update()` in `{f}` runs outside transaction.atomic(): `{g}` calls it outside a transaction at {w.file}:{w.line}. In autocommit mode Django raises TransactionManagementError here on PostgreSQL, MySQL and Oracle, though a TestCase (which wraps each test in a transaction) passes. Wrap the locking read and the writes that depend on it in `transaction.atomic()`, and give any try/except of a DatabaseError inside it its own nested `atomic()`."
+SelectForUpdateOutsideAtomicCalled(c, x, g, w) :- field(c, "function", e), attr_of(e, _, "select_for_update"),
+    owner(c, f), pt_scope_tm(f, fq), ct = @node_path(c), sfu_site(fq, ct), def_name(f, x), sfu_called_from(fq, g, w).
 
 // Across files, everything is by symbol (decision 0677): a def by its symbol (`pt_scope_tm`, as `call_target` names it), a
-// call in it by its node path (decision 0722), and whether a node runs in a transaction as each file states it: for reasons of its
+// call in it by its node path (decision 0722, spelled `{w.file}:{w.line}` by the writer; no line or path crosses,
+// decision 0727), and whether a node runs in a transaction as each file states it: for reasons of its
 // own file (`sfu_loc`), or because a context manager or a decorator of the run, by its symbol, opens one
 // (`sfu_via`). Which of those do is a fixpoint over symbols (`sfu_atomic`).
 
@@ -156,14 +160,13 @@ sfu_def_atomic(fq) :- sfu_def_via_at(fq, s), sfu_atomic(s).
 sfu_up(fq) :- sfu_site(fq, _), sfu_plain(fq).
 sfu_up(gq) :- sfu_up(fq), sfu_bare(gq, _, fq), sfu_plain(gq).
 // sfu_bare(g, c, f): call c, in def g, reaches f and is not inside an atomic region. Each file states its calls
-// (sfu_call_cand, sfu_call_via) and where they are (sfu_call_at).
+// (sfu_call_cand, sfu_call_via) and the name of the def they are in (sfu_call_at).
 .decl sfu_call_cand(g: symbol, c: node_path, f: symbol)
 sfu_call_cand(gq, ct, fq) :- call_target(c, fq), owner(c, g), !sfu_loc(c), pt_scope_tm(g, gq), ct = @node_path(c).
 .decl sfu_call_via(g: symbol, c: node_path, s: symbol)
 sfu_call_via(gq, ct, s) :- call_target(c, _), owner(c, g), sfu_via(c, s), pt_scope_tm(g, gq), ct = @node_path(c).
-.decl sfu_call_at(g: symbol, c: node_path, gx: symbol, p: symbol, l: number)
-sfu_call_at(gq, ct, gx, p, l) :- call_target(c, _), owner(c, g), pt_scope_tm(g, gq), ct = @node_path(c), def_name(g, gx), node_line_number(c, l),
-    docof(c, d), doc(d, p, _).
+.decl sfu_call_at(g: symbol, c: node_path, gx: symbol)
+sfu_call_at(gq, ct, gx) :- call_target(c, _), owner(c, g), pt_scope_tm(g, gq), ct = @node_path(c), def_name(g, gx).
 .decl sfu_call_covered(g: symbol, c: node_path)
 sfu_call_covered(gq, ct) :- sfu_call_via(gq, ct, s), sfu_atomic(s).
 .decl sfu_bare(g: symbol, c: node_path, f: symbol)
@@ -242,15 +245,16 @@ sfu_atomic_view(fq) :- dj_atomic_requests(), kind(f, "function_definition"), par
 sfu_atomic_view(fq) :- dj_atomic_requests(), dj_view_class(k), nearest(f, k, scope), kind(f, "function_definition"),
     pt_scope_tm(f, fq).
 
-// sfu_why(f, why): how f runs outside a transaction: an entry point, or its first bare call by a key an edit in another
-// file does not move (decision 0695): a module-level call first (it names no caller, so no reason is given), then the
-// exposed caller of the least symbol, then the call's line in that caller's file.
+// sfu_why(f, why): f runs outside a transaction as an entry point. sfu_called_from(f, g, w): or by its first bare call,
+// by a key an edit in another file does not move (decision 0695): a module-level call first (it names no caller, so
+// no reason is given), then the exposed caller of the least symbol, then that caller's call of the least node path
+// (decision 0722), which the finding names.
 .decl sfu_why(f: symbol, why: symbol)
 sfu_why(fq, "no code in the project calls it, so it is an entry point (a view, task, command or receiver) and nothing opens a transaction around it") :-
     sfu_entry(fq).
-sfu_why(fq, cat("`", cat(g, cat("` calls it outside a transaction at ", cat(p, cat(":", to_string(l))))))) :-
-    sfu_exposed(fq), !sfu_entry(fq), !sfu_mod_bare(fq), sfu_first_caller(fq, gq),
-    l = min m : { sfu_bare(gq, c2, fq), sfu_call_at(gq, c2, _, _, m) }, sfu_bare(gq, ct, fq), sfu_call_at(gq, ct, g, p, l).
+.decl sfu_called_from(f: symbol, g: symbol, w: node_path)
+sfu_called_from(fq, g, w) :- sfu_exposed(fq), !sfu_entry(fq), !sfu_mod_bare(fq), sfu_first_caller(fq, gq),
+    w = min c2 : { sfu_bare(gq, c2, fq) }, sfu_call_at(gq, w, g).
 .decl sfu_mod_bare(f: symbol)
 sfu_mod_bare(fq) :- sfu_up(fq), sfu_mod_call(fq, _).
 .decl sfu_bare_caller(f: symbol, g: symbol)

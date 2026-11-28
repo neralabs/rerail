@@ -793,8 +793,14 @@ pub fn stage(v: &std::sync::Arc<Version>, options: &serde_json::Value) -> Result
             let bound_by = |lits: &mut dyn Iterator<Item = &crate::code_rule_dsl::logic::program_image::LitRef<'_>>| {
                 let mut bound = Vec::new();
                 for l in lits {
-                    if let Lit::Atom(a) = l.view() {
-                        a.args().for_each(|t| vars_of(t, &mut bound));
+                    match l.view() {
+                        Lit::Atom(a) => a.args().for_each(|t| vars_of(t, &mut bound)),
+                        Lit::Nearest { n, a, .. } => bound.extend([n, a]),
+                        Lit::Ast { document, node, captures, .. } => {
+                            bound.extend([document, node]);
+                            bound.extend(captures.map(|(_, slot)| slot));
+                        }
+                        _ => {}
                     }
                 }
                 bound
@@ -835,8 +841,11 @@ pub fn stage(v: &std::sync::Arc<Version>, options: &serde_json::Value) -> Result
                 if !probed(e) {
                     continue;
                 }
-                // The body without this read: the file-local atoms, and the other exports' reads.
-                let others: Vec<(usize, _)> = r.body().enumerate().filter(|(i, l)| *i != at && matches!(l.view(), Lit::Atom(a) if !a.neg())).collect();
+                // The body without this read: the file-local atoms, and the other exports' reads, with the nearest
+                // ancestors and matchers that tie their nodes (`nearest(c, f, dj_region_stop)` between a def and its
+                // call): without them a probe joined two nodes of no relation, and the split put it in the cross part
+                // (decision 0727).
+                let others: Vec<(usize, _)> = r.body().enumerate().filter(|(i, l)| *i != at && matches!(l.view(), Lit::Atom(a) if !a.neg()) || *i != at && matches!(l.view(), Lit::Nearest { .. } | Lit::Ast { .. })).collect();
                 let bound = bound_by(&mut others.iter().map(|(_, l)| l));
                 let tests = tests_over(&bound);
                 let other_names: Vec<String> = others.iter().map(|(_, l)| match l.view() {
