@@ -66,7 +66,7 @@ pub trait Form: Send + Sync {
 static FORMS: OnceLock<Vec<&'static dyn Form>> = OnceLock::new();
 
 /// The language-free forms.
-const TAPE: &[&dyn Form] = &[&SameSpan];
+const TAPE: &[&dyn Form] = &[&SameSpan, &Unwrap];
 
 /// Registers a language's forms (once, at load), with the tape's.
 pub fn install_forms(forms: Vec<&'static dyn Form>) {
@@ -145,6 +145,101 @@ impl Form for SameSpan {
                 at = up;
             }
             out.push(&[p.global(local), c]);
+            Ok(())
+        })
+    }
+}
+
+/// Kinds by name, as a form's words give them, tested on a node's kind atom: each dialect's codes of the names
+/// found once, on its first node (a name may have several codes, its aliases').
+pub struct KindSet<'a> {
+    names: &'a [&'a str],
+    by_tag: Vec<(u8, Vec<bool>)>,
+}
+
+impl<'a> KindSet<'a> {
+    pub fn new(names: &'a [&'a str]) -> KindSet<'a> {
+        KindSet { names, by_tag: Vec::new() }
+    }
+    /// Whether the node of kind atom `atom` (`FactsIn::kind`) is of one of the kinds.
+    pub fn has(&mut self, atom: u32) -> bool {
+        use crate::code_rule_dsl::facts::core::{kind_code, kind_tag};
+        let tag = kind_tag(atom);
+        let at = match self.by_tag.iter().position(|(t, _)| *t == tag) {
+            Some(i) => i,
+            None => {
+                let codes = crate::code_rule_dsl::language::from_tape_tag(tag).map(|d| d.kinds()).map_or_else(Vec::new, |k| {
+                    (0..k.kind_count()).map(|c| k.kind_name(c as u16).is_some_and(|n| self.names.contains(&n))).collect()
+                });
+                self.by_tag.push((tag, codes));
+                self.by_tag.len() - 1
+            }
+        };
+        self.by_tag[at].1.get(usize::from(kind_code(atom))).copied().unwrap_or(false)
+    }
+}
+
+/// `tape.unwrap WRAP SKIP…`: `r(e, m)`, `m` is `e` with any wrappers of kind `WRAP` taken off, down through each of
+/// its children not of a `SKIP` kind (Python's `unparen`: `((x))` gives `x`, a comment inside the parentheses
+/// skipped); any other node gives itself. Keyed by `e` (down from it) and by `m` (up from it through its wrappers).
+pub struct Unwrap;
+
+impl Form for Unwrap {
+    fn name(&self) -> &'static str {
+        "tape.unwrap"
+    }
+    fn version(&self) -> u32 {
+        1
+    }
+    fn columns(&self) -> &'static [&'static str] {
+        &["node", "node"]
+    }
+    fn keyed(&self) -> &'static [usize] {
+        &[0, 1]
+    }
+    fn rows(&self, call: &FormCall<'_>, column: usize, out: &mut FormRows) -> Result<(), String> {
+        let [wrap, skip @ ..] = call.args else { return Err("tape.unwrap takes the wrapper's kind, then the kinds it skips".into()) };
+        let wrap_names = [*wrap];
+        let (mut wraps, mut skips) = (KindSet::new(&wrap_names), KindSet::new(skip));
+        let mut stack: Vec<u32> = Vec::new();
+        each_node(call.batch, call.keys, |p, local| {
+            let kind = |l: u32| p.f().kind(p.node(l));
+            if column == 1 && call.keys.is_some() {
+                // Up from `m`: itself, then each wrapper over it while the chain is a wrapper's unskipped child.
+                if wraps.has(kind(local)) {
+                    return Ok(());
+                }
+                let m = p.global(local);
+                out.push(&[m, m]);
+                if skips.has(kind(local)) {
+                    return Ok(());
+                }
+                let mut at = local;
+                loop {
+                    let up = p.parent(at as usize);
+                    if up == NONE || !wraps.has(kind(up)) {
+                        break;
+                    }
+                    out.push(&[p.global(up), m]);
+                    at = up;
+                }
+                return Ok(());
+            }
+            // Down from `e`: through each wrapper's unskipped children, to the nodes that are no wrapper.
+            let e = p.global(local);
+            stack.clear();
+            stack.push(local);
+            while let Some(at) = stack.pop() {
+                if !wraps.has(kind(at)) {
+                    out.push(&[e, p.global(at)]);
+                    continue;
+                }
+                for c in p.children(at) {
+                    if !skips.has(kind(c)) {
+                        stack.push(c);
+                    }
+                }
+            }
             Ok(())
         })
     }

@@ -33,7 +33,7 @@ const FORM: &str = ".form same tape.same_span\n";
 
 /// A call under an expression statement and a parenthesized one; a decorated definition over its definition.
 const A: &str = "def f(x):\n    return (g(x))\nf(1)\nprint((f(2)))\n@dec\ndef h():\n    pass\n";
-const B: &str = "x = [k(i) for i in y]\n(z)\n";
+const B: &str = "x = [k(i) for i in y]\n(z)\nw = (\n    # why\n    ((a and b))\n)\n";
 
 fn corpus(tag: &str) -> std::path::PathBuf {
     let dir = crate::code_rule_dsl::fixtures::temp().with_extension(tag);
@@ -129,4 +129,49 @@ fn a_form_of_other_columns_is_refused() {
     let out = dir.join("out");
     let err = crate::code_rule_dsl::logic::plan::corpus::run(&program, &dir, None, &out, "program", crate::code_rule_dsl::typing::file_local::Binding::Cpu, 1 << 18).err().expect("refused");
     assert!(err.to_string().contains("tape.same_span makes columns"), "{err}");
+}
+
+/// `unparen(e, m)`, python/syntax's: `m` is `e` with its parentheses off, a comment inside them skipped. `inner`
+/// binds `e` (its demand keys the form by `e`), `outer` binds `m` (by `m`), `both` reads it each way.
+const UNPAREN: &str = r#"
+.decl node(d: number, n: node, kind: symbol, start: number, end: number)
+.decl child(p: node, n: node, i: number)
+.decl kind(n: node, k: symbol)
+.input node, child, kind
+.decl unparen(e: node, m: node)
+.pragma "magic-transform" "unparen"
+unparen(e, e) :- kind(e, k), k != "parenthesized_expression".
+unparen(e, m) :- kind(e, "parenthesized_expression"), child(e, i, _), !kind(i, "comment"), unparen(i, m).
+"#;
+
+const INNER: &str = r#"
+.decl inner(s: number, k: symbol)
+inner(s, k) :- node(_, a, "assignment", _, _), child(a, e, _), unparen(e, m), node(_, e, _, s, _), kind(m, k).
+.output inner
+"#;
+
+const OUTER: &str = r#"
+.decl outer(s: number, k: symbol)
+outer(s, k) :- node(_, m, "boolean_operator", _, _), unparen(e, m), node(_, e, k, s, _).
+.output outer
+"#;
+
+const UNWRAP: &str = ".form unparen tape.unwrap args parenthesized_expression comment\n";
+
+/// `unparen`'s form gives its rules' rows read by `e`, by `m`, each way at once, and unbound.
+#[test]
+fn unparens_form_gives_its_rules_rows_by_either_column() {
+    let unbound = ".decl pairs(s: number, t: number)\npairs(s, t) :- unparen(e, m), node(_, e, _, s, _), node(_, m, _, t, _).\n.output pairs\n";
+    for (tag, readers, output) in [("inner", INNER.to_owned(), "inner"), ("outer", OUTER.to_owned(), "outer"), ("both", format!("{INNER}{OUTER}"), "outer"), ("unbound", unbound.to_owned(), "pairs")] {
+        let dir = corpus(&format!("unwrap-{tag}"));
+        let prof = dir.join("prof");
+        crate::code_rule_dsl::logic::profile::set(true);
+        crate::code_rule_dsl::logic::profile::set_directory(&prof);
+        let formed = rows(&format!("{UNPAREN}{UNWRAP}{readers}"), &dir, output);
+        let made = decided(&prof, "Rust form result");
+        let ruled = rows(&format!("{UNPAREN}{readers}"), &corpus(&format!("unwrap-{tag}-rules")), output);
+        assert_eq!(formed, ruled, "{tag}");
+        assert!(!formed.is_empty(), "{tag}");
+        assert!(made.iter().any(|l| l.starts_with("unparen: form tape.unwrap")), "{tag}: {made:?}");
+    }
 }

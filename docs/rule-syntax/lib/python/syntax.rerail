@@ -11,6 +11,9 @@
 //   )                    unparen(<( … )>, <a and b>)
 .decl unparen(e: node, m: node)
 .pragma "magic-transform" "unparen"
+// Made by its Rust form (`tape.unwrap`), down from each `e` its readers ask and up from each `m`: the rules below are
+// its definition, and the form's tests' oracle.
+.form unparen tape.unwrap args parenthesized_expression comment
 unparen(e, e) :- kind(e, k), k != "parenthesized_expression".
 unparen(e, m) :- kind(e, "parenthesized_expression"), child(e, i, _), !kind(i, "comment"), unparen(i, m).
 

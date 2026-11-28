@@ -799,11 +799,11 @@ impl<'a> Run<'a, '_> {
         let vs = Arc::clone(&self.versions);
         let f = vs.whole(self.version);
         // A Rust form reads what it reads where the run holds it: nothing made a table.
-        if let ArchivedNativeSpec::Form { form, keyed, demand, reads, args } = &native.spec {
-            let demand: Vec<String> = demand.iter().map(|&d| f.rel_name(d).to_owned()).collect();
+        if let ArchivedNativeSpec::Form { form, demand, keyed, reads, args } = &native.spec {
+            let keyed: Vec<(usize, String)> = keyed.iter().zip(demand.iter()).map(|(&k, &d)| (k as usize, f.rel_name(d).to_owned())).collect();
             let reads: Vec<String> = reads.iter().map(|&d| f.rel_name(d).to_owned()).collect();
             let args: Vec<&str> = args.iter().map(|&a| f.text(a)).collect();
-            return self.form_relation(rel, f.text(*form), keyed.as_ref().map(|&k| k as usize), &demand, &reads, &args);
+            return self.form_relation(rel, f.text(*form), &keyed, &reads, &args);
         }
         let reads: Vec<String> = native.reads.iter().map(|&r| f.rel_name(r).to_owned()).collect();
         self.ensure(&reads)?;
@@ -865,9 +865,9 @@ impl<'a> Run<'a, '_> {
     }
 
     /// A Rust form's rows (`front::Native::Form`): made by the registered form over the run's batch, for the values
-    /// of column `keyed` its demand relations ask (every row without), held as the relation's rows, its symbols
-    /// interned once. It reads its relations where the run holds them (decision 0353).
-    fn form_relation(&mut self, rel: &str, name: &str, keyed: Option<usize>, demand: &[String], reads: &[String], args: &[&str]) -> Result<usize> {
+    /// each demand relation of `keyed` asks of its column (every row without), held as the relation's rows, its
+    /// symbols interned once. It reads its relations where the run holds them (decision 0353).
+    fn form_relation(&mut self, rel: &str, name: &str, keyed: &[(usize, String)], reads: &[String], args: &[&str]) -> Result<usize> {
         use super::native::component;
         use crate::code_rule_dsl::facts::vtab::{self, syntax::forms};
         let form = forms::form(name).ok_or_else(|| Error::Plan(format!("{rel}: no Rust form {name} is registered")))?;
@@ -878,17 +878,20 @@ impl<'a> Run<'a, '_> {
         if form.columns().len() != width {
             return Err(Error::Plan(format!("{rel}: form {name} makes {} columns, the relation has {width}", form.columns().len())));
         }
-        let keys = match keyed {
-            None => None,
-            Some(_) => {
-                let mut keys: Vec<i64> = Vec::new();
-                for d in demand {
-                    keys.extend(self.native_demand(d)?.iter().copied());
-                }
-                keys.sort_unstable();
-                keys.dedup();
-                Some(keys)
-            }
+        // Each keyed column's values asked, every demand relation's on it together; `None` for the whole relation.
+        let mut asks: BTreeMap<usize, Vec<i64>> = BTreeMap::new();
+        for (c, d) in keyed {
+            let values = self.native_demand(d)?;
+            asks.entry(*c).or_default().extend(values.iter().copied());
+        }
+        let calls: Vec<(usize, Option<Vec<i64>>)> = if keyed.is_empty() {
+            vec![(0, None)]
+        } else {
+            asks.into_iter().map(|(c, mut v)| {
+                v.sort_unstable();
+                v.dedup();
+                (c, Some(v))
+            }).collect()
         };
         let mut held = Vec::with_capacity(reads.len());
         for r in reads {
@@ -896,12 +899,14 @@ impl<'a> Run<'a, '_> {
             held.push(source.ok_or_else(|| Error::Plan(format!("{rel}: form {name} reads {r}, which the run does not hold")))?);
         }
         let mut out = forms::FormRows::new(width);
-        if keys.as_ref().is_none_or(|k| !k.is_empty()) {
+        if calls.iter().any(|(_, k)| k.as_ref().is_none_or(|k| !k.is_empty())) {
             let source = vtab::bound_source(self.db, "node").ok_or_else(|| Error::Plan(format!("{rel}: form {name} needs bound syntax facts")))?;
             let batch = source.python_batch().ok_or_else(|| Error::Plan(format!("{rel}: form {name} needs a syntax batch")))?;
-            let call = forms::FormCall { batch: &batch, keys: keys.as_deref(), reads: &held, args };
             let _span = super::profile::span(|| format!("form {name}: {rel}"));
-            form.rows(&call, keyed.unwrap_or(0), &mut out).map_err(|e| Error::Plan(format!("{rel}: form {name}: {e}")))?;
+            for (column, keys) in &calls {
+                let call = forms::FormCall { batch: &batch, keys: keys.as_deref(), reads: &held, args };
+                form.rows(&call, *column, &mut out).map_err(|e| Error::Plan(format!("{rel}: form {name}: {e}")))?;
+            }
         }
         let symbols: Vec<usize> = form.columns().iter().enumerate().filter(|(_, t)| **t == "sym").map(|(i, _)| i).collect();
         if !symbols.is_empty() && !out.is_empty() {
@@ -912,11 +917,16 @@ impl<'a> Run<'a, '_> {
                 }
             }
         }
-        let values: Vec<Vector<i64>> = out.cells.chunks(width.max(1)).map(|r| r.iter().copied().collect()).collect();
-        component::retain(self.db, rel, values, vec![b'i'; width])?;
+        {
+            let _span = super::profile::span(|| "form rows: held".to_owned());
+            component::retain_cells(self.db, rel, out.cells, vec![b'i'; width])?;
+        }
         self.native_rels.insert(rel.to_owned());
         let source = component::derived(self.db, rel).expect("just retained");
-        let stats = source.statistics().expect("retained relations own their statistics");
+        let stats = {
+            let _span = super::profile::span(|| "form rows: statistics".to_owned());
+            source.statistics().expect("retained relations own their statistics")
+        };
         live_stats(&mut self.model, rel, LiveRel {
             n: source.len() as i64,
             delta: source.len() as i64,
@@ -926,7 +936,8 @@ impl<'a> Run<'a, '_> {
             keys: Vec::new(),
             counts: Vec::new(),
         });
-        super::profile::decision("Rust form result", || format!("{rel}: form {name}, {}, rows={}", keys.as_ref().map_or("all keys".to_owned(), |k| format!("{} keys asked", k.len())), source.len()));
+        let asked = || calls.iter().map(|(c, k)| k.as_ref().map_or("all keys".to_owned(), |k| format!("{} keys asked of column {c}", k.len()))).collect::<Vec<_>>().join(", ");
+        super::profile::decision("Rust form result", || format!("{rel}: form {name}, {}, rows={}", asked(), source.len()));
         Ok(source.len())
     }
 

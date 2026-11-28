@@ -18,7 +18,7 @@ enum Native<'v> {
     PythonCandidates { input: &'v str, targets: &'v str, context: &'v str, member: &'v str },
     TextTest { input: &'v str, column: usize, op: &'v str, patterns: Vec<&'v str> },
     /// The form's name and its Rust's version (`Form::version`; 0 for none registered).
-    Form { form: &'v str, version: u32, keyed: Option<usize>, demand: Vec<&'v str>, reads: Vec<&'v str>, args: Vec<&'v str> },
+    Form { form: &'v str, version: u32, demand: Vec<&'v str>, keyed: Vec<usize>, reads: Vec<&'v str>, args: Vec<&'v str> },
 }
 
 #[derive(Debug)]
@@ -42,11 +42,11 @@ fn native<'v>(f: &Fields<'v>, rel: &str) -> Option<Native<'v>> {
         S::Python { kind, input, targets } => Native::Python { kind: t(*kind), input: r(*input), targets: targets.map(r) },
         S::PythonCandidates { input, targets, context, member } => Native::PythonCandidates { input: r(*input), targets: r(*targets), context: t(*context), member: t(*member) },
         S::TextTest { input, column, op, patterns } => Native::TextTest { input: r(*input), column: *column as usize, op: t(*op), patterns: patterns.iter().map(|&p| t(p)).collect() },
-        S::Form { form, keyed, demand, reads, args } => Native::Form {
+        S::Form { form, demand, keyed, reads, args } => Native::Form {
             form: t(*form),
             version: crate::code_rule_dsl::facts::vtab::syntax::forms::form(t(*form)).map_or(0, |f| f.version()),
-            keyed: keyed.as_ref().map(|&k| k as usize),
             demand: demand.iter().map(|&d| r(d)).collect(),
+            keyed: keyed.iter().map(|&k| k as usize).collect(),
             reads: reads.iter().map(|&d| r(d)).collect(),
             args: args.iter().map(|&a| t(a)).collect(),
         },

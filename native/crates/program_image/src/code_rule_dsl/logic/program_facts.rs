@@ -128,9 +128,9 @@ pub fn schema() -> BTreeMap<Name, crate::code_rule_dsl::logic::front::name::List
         ("native_reach", &["p:sym", "rel:sym", "seed:sym", "edge:sym"]),
         ("native_reach_through", &["p:sym", "rel:sym", "reach:sym", "map:sym"]),
         ("native_rank", &["p:sym", "rel:sym", "query:sym", "counted:sym", "group:int", "op:sym"]),
-        ("native_form", &["p:sym", "rel:sym", "form:sym", "keyed:int"]),
+        ("native_form", &["p:sym", "rel:sym", "form:sym"]),
         ("native_form_read", &["p:sym", "rel:sym", "i:int", "read:sym"]),
-        ("native_form_demand", &["p:sym", "rel:sym", "i:int", "demand:sym"]),
+        ("native_form_demand", &["p:sym", "rel:sym", "i:int", "demand:sym", "column:int"]),
         ("native_form_arg", &["p:sym", "rel:sym", "i:int", "arg:sym"]),
         ("rx_span", &["p:sym", "span:sym", "s:sym"]),
         // `ast_patterns`: the AST patterns the program matches (`n ~ `…``), each by its text.
@@ -403,9 +403,9 @@ impl Writer<'_> {
             Native::ReachThrough { reach, map } => self.row("native_reach_through", vec![s(rel), s(reach), s(map)]),
             Native::Rank { query, counted, group, op } => self.row("native_rank", vec![s(rel), s(query), s(counted), n(*group), s(op)]),
             Native::Form { form, keyed, reads, args } => {
-                self.row("native_form", vec![s(rel), s(form), n(keyed.as_ref().map_or(-1, |k| k.0 as i64))]);
-                for (i, d) in keyed.iter().flat_map(|k| k.1.iter()).enumerate() {
-                    self.row("native_form_demand", vec![s(rel), n(i), s(d)]);
+                self.row("native_form", vec![s(rel), s(form)]);
+                for (i, (c, d)) in keyed.iter().enumerate() {
+                    self.row("native_form_demand", vec![s(rel), n(i), s(d), n(*c)]);
                 }
                 for (i, read) in reads.iter().enumerate() {
                     self.row("native_form_read", vec![s(rel), n(i), s(read)]);
@@ -851,8 +851,7 @@ impl<'a, C: Cell> Reader<'a, C> {
             let rel = text(&row[0])?;
             let reads = ordered(form_reads.get(&rel).into_iter().flatten().map(|r| Ok((int(&r[0])?, text(&r[1])?))).collect::<Result<Vec<_>, String>>()?);
             let args = ordered(form_args.get(&rel).into_iter().flatten().map(|r| Ok((int(&r[0])?, text(&r[1])?))).collect::<Result<Vec<_>, String>>()?);
-            let demand = ordered(form_demand.get(&rel).into_iter().flatten().map(|r| Ok((int(&r[0])?, text(&r[1])?))).collect::<Result<Vec<_>, String>>()?);
-            let keyed = usize::try_from(int(&row[2])?).ok().map(|c| (c, demand));
+            let keyed = ordered(form_demand.get(&rel).into_iter().flatten().map(|r| Ok((int(&r[0])?, (int(&r[2])? as usize, text(&r[1])?)))).collect::<Result<Vec<_>, String>>()?);
             out.insert(rel, Native::Form { form: text(&row[1])?, keyed, reads, args });
         }
         for row in self.get("native_reach") {

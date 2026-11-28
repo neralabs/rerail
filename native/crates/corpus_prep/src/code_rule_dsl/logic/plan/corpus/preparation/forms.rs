@@ -5,8 +5,9 @@
 //!   (each node column over `node`, each other column a constant, each relation it reads read), and it is made a
 //!   form. Its rules stay its definition in the rule file, and its form's tests' oracle.
 //! - `FormDemand`, after the program's demand: a form whose every rule the transformation guarded by one demand
-//!   relation on a column the form is keyed by (`magic_r_bf(n)`) is made for those values alone, where that demand
-//!   does not depend on the form; any other is made whole. Whole, a form reads the tape and what it names alone, so
+//!   relation on a column the form is keyed by (`magic_r_bf(n)`, `magic_r_fb(m)`: one for each binding its readers
+//!   use) is made for the values those ask of their columns alone, where no such demand depends on the form; any
+//!   other is made whole. Whole, a form reads the tape and what it names alone, so
 //!   it is never in a recursive stratum (the planner refuses one there). The form's readers read its rows as any
 //!   relation's, by index, whatever they bind.
 
@@ -98,7 +99,7 @@ impl ProgramPass for Forms {
         for d in &declared {
             ordering_rule(v, b, &d.rel, &d.reads)?;
             let rel = Cell::Str(b.atom(&d.rel));
-            forms_rows.push([p, rel, Cell::Str(b.atom(&d.form)), Cell::Int(-1)]);
+            forms_rows.push([p, rel, Cell::Str(b.atom(&d.form))]);
             for (i, r) in d.reads.iter().enumerate() {
                 reads_rows.push([p, rel, Cell::Int(i as i64), Cell::Str(b.atom(r))]);
             }
@@ -115,16 +116,24 @@ impl ProgramPass for Forms {
     }
 }
 
-/// `rel`'s rule that only orders it after what it reads: each node column over `node`, each other column a
-/// constant, each relation in `reads` read.
+/// `rel`'s rule that only orders it after what it reads: its first node column over `node` and any other equal to
+/// it, each other column a constant, each relation in `reads` read.
 fn ordering_rule(v: &Version, b: &mut crate::code_rule_dsl::logic::program_image::Builder<'_>, rel: &str, reads: &[String]) -> Result<()> {
     let types: Vec<String> = v.decl_of(rel).ok_or_else(|| format!("{rel} is not declared"))?.cols().map(|(_, t)| v.text(t).to_owned()).collect();
     let vars: Vec<String> = (0..types.len()).map(|i| format!("rr_f{i}")).collect();
     let mut o = b.open_rule();
     b.put_head(&mut o, rel, &vars.iter().map(|x| T::Var(x)).collect::<Vec<_>>());
+    // The first node column over `node`, any other equal to it: no product of nodes.
+    let mut first: Option<&str> = None;
     for (x, t) in vars.iter().zip(&types) {
         match t.as_str() {
-            "node" => b.put_atom(&mut o, "node", &[T::Wild, T::Var(x), T::Wild, T::Wild, T::Wild], false, false),
+            "node" => match first {
+                Some(f) => b.put_cmp(&mut o, T::Var(x), CmpOp::Eq, T::Var(f)),
+                None => {
+                    b.put_atom(&mut o, "node", &[T::Wild, T::Var(x), T::Wild, T::Wild, T::Wild], false, false);
+                    first = Some(x);
+                }
+            },
             "sym" => b.put_cmp(&mut o, T::Var(x), CmpOp::Eq, T::Str("")),
             _ => b.put_cmp(&mut o, T::Var(x), CmpOp::Eq, T::Int(0)),
         }
@@ -140,18 +149,17 @@ fn ordering_rule(v: &Version, b: &mut crate::code_rule_dsl::logic::program_image
 /// Keys each form by the demand that guards its rules (module docs).
 #[derive(Default)]
 pub struct FormDemand {
-    /// Each form, and its keyed column and demand relations (`None`: made whole).
-    pub keyed: BTreeMap<String, Option<(usize, Vec<String>)>>,
+    /// Each form, and its demand relations with the column each asks (`None`: made whole).
+    pub keyed: BTreeMap<String, Option<Vec<(usize, String)>>>,
     /// Whether a form's rules were written again unguarded: its demand's rules are then unread.
     pub unguarded: bool,
 }
 
-/// The column `rel`'s rules are each guarded on by one demand relation (`magic_<rel>_…(x)`, `x` the head's column),
-/// a column in `keyed`, and those relations; `None` when a rule has no such guard, or two rules differ in it.
-fn guarded(v: &Version, rel: &str, keyed: &[usize]) -> Option<(usize, Vec<String>)> {
+/// The demand relations `rel`'s rules are each guarded by (`magic_<rel>_…(x)`, `x` the head's column `c`, one of
+/// `keyed`), with their columns; `None` when a rule has no such guard.
+fn guarded(v: &Version, rel: &str, keyed: &[usize]) -> Option<Vec<(usize, String)>> {
     let prefix = format!("magic_{rel}_");
-    let mut column: Option<usize> = None;
-    let mut demand: Vec<String> = Vec::new();
+    let mut demand: Vec<(usize, String)> = Vec::new();
     let mut any = false;
     for r in v.rules().filter(|r| v.rel_name(r.head().rel()) == rel) {
         any = true;
@@ -169,21 +177,20 @@ fn guarded(v: &Version, rel: &str, keyed: &[usize]) -> Option<(usize, Vec<String
             Some((c, name.to_owned()))
         });
         let (c, name) = guard?;
-        if !keyed.contains(&c) || column.is_some_and(|k| k != c) {
+        if !keyed.contains(&c) {
             return None;
         }
-        column = Some(c);
-        if !demand.contains(&name) {
-            demand.push(name);
+        if !demand.contains(&(c, name.clone())) {
+            demand.push((c, name));
         }
     }
     any.then_some(())?;
     // A demand made from what the form's rows make (its readers' recursion asks it again) would put the form in
     // their stratum: it is made whole instead.
-    if demand.iter().any(|d| depends_on(v, d, rel)) {
+    if demand.iter().any(|(_, d)| depends_on(v, d, rel)) {
         return None;
     }
-    column.map(|c| (c, demand))
+    Some(demand)
 }
 
 /// Whether relation `from` reads `to`, through rules and natives' reads.
@@ -223,7 +230,7 @@ impl ProgramPass for FormDemand {
         let input = w.input().clone();
         let v: &Version = &input;
         let about = About::of(v);
-        let mut found: Vec<(String, String, Option<(usize, Vec<String>)>)> = Vec::new();
+        let mut found: Vec<(String, String, Option<Vec<(usize, String)>>)> = Vec::new();
         let mut reads_of: BTreeMap<String, Vec<String>> = BTreeMap::new();
         for n in about.natives.iter().filter(|n| n.kind == NativeKind::Form) {
             let ArchivedNativeSpec::Form { form, reads, .. } = &n.spec else { continue };
@@ -255,9 +262,9 @@ impl ProgramPass for FormDemand {
         let (mut forms_rows, mut demand_rows) = (Rows::new(), Rows::new());
         for (rel, form, g) in &found {
             let r = Cell::Str(b.atom(rel));
-            forms_rows.push([p, r, Cell::Str(b.atom(form)), Cell::Int(g.as_ref().map_or(-1, |g| g.0 as i64))]);
-            for (i, d) in g.iter().flat_map(|g| g.1.iter()).enumerate() {
-                demand_rows.push([p, r, Cell::Int(i as i64), Cell::Str(b.atom(d))]);
+            forms_rows.push([p, r, Cell::Str(b.atom(form))]);
+            for (i, (c, d)) in g.iter().flatten().enumerate() {
+                demand_rows.push([p, r, Cell::Int(i as i64), Cell::Str(b.atom(d)), Cell::Int(*c as i64)]);
             }
         }
         let drop: HashSet<String> = found.iter().map(|f| f.0.clone()).collect();

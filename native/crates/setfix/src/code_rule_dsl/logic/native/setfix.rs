@@ -5406,6 +5406,55 @@ pub fn retain_with(conn: impl Scoped, table: &str, rows: Vec<Vector<i64>>, types
     Ok(())
 }
 
+/// `retain` of rows given flat, `types.len()` cells each (a Rust form's): sorted and their repeats dropped where they
+/// lie, no row a vector of its own.
+pub fn retain_cells(conn: impl Scoped, table: &str, mut cells: Vector<i64>, types: Vec<u8>) -> Result<()> {
+    let conn = conn.db();
+    let k = types.len();
+    if k == 0 || cells.len() % k != 0 { return Err(err(format!("{table}: native result width differs from its declaration"))); }
+    let n = sort_cells(cells.as_mut_slice(), k);
+    cells.truncate(n * k);
+    let mut rel = InRel::of_cells(cells, n, types);
+    Arc::get_mut(&mut rel).unwrap().stored = 0;
+    forgotten_on_close();
+    crate::code_rule_dsl::logic::profile::author_joins::observe(table, || rel.rows());
+    on(conn).derived.lock().insert(table.to_owned(), rel);
+    Ok(())
+}
+
+/// Sorts `cells`' rows of `k` cells and moves each row once to the front: the rows kept.
+fn sort_cells(cells: &mut [i64], k: usize) -> usize {
+    fn sorted<const K: usize>(cells: &mut [i64]) -> usize {
+        let (rows, _) = cells.as_chunks_mut::<K>();
+        rows.sort_unstable();
+        let mut n = 0;
+        for i in 0..rows.len() {
+            if n == 0 || rows[i] != rows[n - 1] {
+                rows[n] = rows[i];
+                n += 1;
+            }
+        }
+        n
+    }
+    match k {
+        1 => sorted::<1>(cells),
+        2 => sorted::<2>(cells),
+        3 => sorted::<3>(cells),
+        4 => sorted::<4>(cells),
+        5 => sorted::<5>(cells),
+        6 => sorted::<6>(cells),
+        _ => {
+            let mut rows: Vec<Vec<i64>> = cells.chunks(k).map(<[i64]>::to_vec).collect();
+            rows.sort_unstable();
+            rows.dedup();
+            for (i, r) in rows.iter().enumerate() {
+                cells[i * k..(i + 1) * k].copy_from_slice(r);
+            }
+            rows.len()
+        }
+    }
+}
+
 pub fn retain(conn: impl Scoped, table: &str, mut rows: Vec<Vector<i64>>, types: Vec<u8>) -> Result<()> {
     let conn = conn.db();
     if rows.iter().any(|r| r.len() != types.len()) { return Err(err(format!("{table}: native result width differs from its declaration"))); }
@@ -5595,9 +5644,12 @@ impl InRel {
     }
     /// A relation of `rows` (each of `types.len()` values), for one a run left in a table rather than in the engine.
     pub fn flat(rows: &[Vector<i64>], types: Vec<u8>) -> Arc<InRel> {
-        let k = types.len();
-        let n = rows.len();
         let flat: Vector<i64> = rows.iter().flat_map(|r| r.iter().copied()).collect();
+        Self::of_cells(flat, rows.len(), types)
+    }
+    /// A relation of `n` rows given flat, `types.len()` cells each, held where they lie.
+    pub fn of_cells(flat: Vector<i64>, n: usize, types: Vec<u8>) -> Arc<InRel> {
+        let k = types.len();
         Arc::new(InRel { vers: Default::default(), viewed: false, keyed: None, k, n, rows: Rows::frozen(k, flat, n), view: None, base: false, types, stored: n, idx: Mutex::new(HashMap::default()), chains: Vec::new(), sorted: Default::default(), sketches: Vec::new(), serves: Vec::new(), dead: crate::code_rule_dsl::facts::rows::vector_in(None, 0), ndead: 0, summaries: Default::default(), measured: Default::default(), counted: Default::default(), tables: Default::default(), name: Default::default(), from: None, uid: Default::default(), level: crate::code_rule_dsl::facts::rows::vector_in(None, 0), stats: None })
     }
     /// `src`'s columns `cols`, filtered by `eqs` (each a column of `src` and its value), as `view` opens a

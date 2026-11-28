@@ -90,9 +90,9 @@ pub enum NativeSpec {
     ReachThrough { reach: RelId, map: RelId },
     /// Its op's text.
     Rank { query: RelId, counted: RelId, group: usize, op: AtomId },
-    /// The form's name, its keyed column and the demand relations that ask its values, the relations it reads in
+    /// The form's name, its demand relations and the column each asks (none: made whole), the relations it reads in
     /// order, and its words.
-    Form { form: AtomId, keyed: Option<usize>, demand: Vec<RelId>, reads: Vec<RelId>, args: Vec<AtomId> },
+    Form { form: AtomId, demand: Vec<RelId>, keyed: Vec<usize>, reads: Vec<RelId>, args: Vec<AtomId> },
 }
 
 /// A lattice relation's declaration, as the analyses read it.
@@ -254,7 +254,7 @@ impl AboutData {
         let mut shape_after: Vec<(i64, AtomId)> = Vec::new();
         let mut shape_bound: Vec<(i64, i64, AtomId)> = Vec::new();
         let mut layouts: Vec<(RelId, i64, crate::code_rule_dsl::logic::front::ast::LayoutFact)> = Vec::new();
-        let mut form_reads: Vec<(RelId, i64, RelId, bool)> = Vec::new();
+        let mut form_reads: Vec<(RelId, i64, RelId, Option<usize>)> = Vec::new();
         let mut form_args: Vec<(RelId, i64, AtomId)> = Vec::new();
         for f in v.about_facts() {
             let name = v.text(f.name());
@@ -319,11 +319,12 @@ impl AboutData {
                     "native_form" => about.natives.extend(native(
                         NativeKind::Form,
                         &[],
-                        a(2).map(|form| NativeSpec::Form { form, keyed: int(row.get(3).copied()).and_then(|k| usize::try_from(k).ok()), demand: Vec::new(), reads: Vec::new(), args: Vec::new() }),
+                        a(2).map(|form| NativeSpec::Form { form, demand: Vec::new(), keyed: Vec::new(), reads: Vec::new(), args: Vec::new() }),
                     )),
                     "native_form_read" | "native_form_demand" => {
                         if let (Some(rel), Some(i), Some(read)) = (r(1), int(row.get(2).copied()), r(3)) {
-                            form_reads.push((rel, i, read, name == "native_form_demand"));
+                            let column = (name == "native_form_demand").then(|| int(row.get(4).copied()).unwrap_or(0) as usize);
+                            form_reads.push((rel, i, read, column));
                         }
                     }
                     "native_form_arg" => {
@@ -407,10 +408,16 @@ impl AboutData {
             }
         }
         // Reads before demand, each in its order (`front::ast::Native::reads`).
-        form_reads.sort_unstable_by_key(|&(rel, i, _, demand)| (rel, demand, i));
-        for (rel, _, x, is_demand) in form_reads {
-            if let Some(NativeRef { spec: NativeSpec::Form { reads, demand, .. }, reads: all, .. }) = about.natives.iter_mut().find(|n| n.rel == rel) {
-                if is_demand { demand.push(x) } else { reads.push(x) }
+        form_reads.sort_unstable_by_key(|&(rel, i, _, column)| (rel, column.is_some(), i));
+        for (rel, _, x, column) in form_reads {
+            if let Some(NativeRef { spec: NativeSpec::Form { reads, demand, keyed, .. }, reads: all, .. }) = about.natives.iter_mut().find(|n| n.rel == rel) {
+                match column {
+                    Some(c) => {
+                        demand.push(x);
+                        keyed.push(c);
+                    }
+                    None => reads.push(x),
+                }
                 all.push(x);
             }
         }

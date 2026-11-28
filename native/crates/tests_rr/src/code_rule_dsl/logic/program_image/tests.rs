@@ -819,8 +819,8 @@ fn every_field() -> Arc<Version> {
         ("py_x", Native::Python { kind: "calls".into(), input: "src".into(), targets: Some("tg".into()) }),
         ("py_y", Native::Python { kind: "defs".into(), input: "src".into(), targets: None }),
         ("cand_x", Native::PythonCandidates { input: "src".into(), targets: "tg".into(), context: "ctx".into(), member: "mem".into() }),
-        ("form_x", Native::Form { form: "tape.same_span".into(), keyed: Some((0, vec!["tg".into(), "src".into()])), reads: vec!["m".into(), "e".into()], args: vec!["b".into(), "a".into()] }),
-        ("form_y", Native::Form { form: "tape.same_span".into(), keyed: None, reads: vec![], args: vec![] }),
+        ("form_x", Native::Form { form: "tape.same_span".into(), keyed: vec![(0, "tg".into()), (1, "src".into())], reads: vec!["m".into(), "e".into()], args: vec!["b".into(), "a".into()] }),
+        ("form_y", Native::Form { form: "tape.same_span".into(), keyed: vec![], reads: vec![], args: vec![] }),
     ]
     .into_iter()
     .map(|(r, n)| (r.to_owned(), n))
@@ -856,9 +856,9 @@ fn native_tree(f: &crate::code_rule_dsl::logic::plan::fields::Fields<'_>, s: &su
         S::Reach { seed, edge } => Native::Reach { seed: r(*seed), edge: r(*edge) },
         S::ReachThrough { reach, map } => Native::ReachThrough { reach: r(*reach), map: r(*map) },
         S::Rank { query, counted, group, op } => Native::Rank { query: r(*query), counted: r(*counted), group: *group as usize, op: t(*op) },
-        S::Form { form, keyed, demand, reads, args } => Native::Form {
+        S::Form { form, demand, keyed, reads, args } => Native::Form {
             form: t(*form),
-            keyed: keyed.as_ref().map(|&k| (k as usize, demand.iter().map(|&d| r(d)).collect())),
+            keyed: keyed.iter().zip(demand.iter()).map(|(&k, &d)| (k as usize, r(d))).collect(),
             reads: reads.iter().map(|&d| r(d)).collect(),
             args: args.iter().map(|&a| t(a)).collect(),
         },
