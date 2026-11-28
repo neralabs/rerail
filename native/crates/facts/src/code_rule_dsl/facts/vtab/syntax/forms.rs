@@ -66,7 +66,7 @@ pub trait Form: Send + Sync {
 static FORMS: OnceLock<Vec<&'static dyn Form>> = OnceLock::new();
 
 /// The language-free forms.
-const TAPE: &[&dyn Form] = &[&SameSpan, &Unwrap];
+const TAPE: &[&dyn Form] = &[&SameSpan, &Unwrap, &NearestText];
 
 /// Registers a language's forms (once, at load), with the tape's.
 pub fn install_forms(forms: Vec<&'static dyn Form>) {
@@ -241,6 +241,55 @@ impl Form for Unwrap {
                 }
             }
             Ok(())
+        })
+    }
+}
+
+/// `tape.nearest_text KIND SCOPE… reads r`: `x(s, t)`, for each node `n` of relation `r` (its first column) of kind
+/// `KIND`, its text `t` and its nearest ancestor `s` of a `SCOPE` kind (Python's `pt_tgt_name`: a target's name and
+/// the scope it binds in). Made whole: it reads `r`'s rows, not the tape's every node.
+pub struct NearestText;
+
+impl Form for NearestText {
+    fn name(&self) -> &'static str {
+        "tape.nearest_text"
+    }
+    fn version(&self) -> u32 {
+        1
+    }
+    fn columns(&self) -> &'static [&'static str] {
+        &["node", "sym"]
+    }
+    fn keyed(&self) -> &'static [usize] {
+        &[]
+    }
+    fn rows(&self, call: &FormCall<'_>, _column: usize, out: &mut FormRows) -> Result<(), String> {
+        let [kind_name, scopes @ ..] = call.args else { return Err("tape.nearest_text takes the nodes' kind, then the scopes' kinds".into()) };
+        let [nodes] = call.reads else { return Err("tape.nearest_text reads one relation of nodes".into()) };
+        let names = [*kind_name];
+        let (mut kinds, mut scope) = (KindSet::new(&names), KindSet::new(scopes));
+        let mut keys: Vec<i64> = (0..nodes.len()).map(|r| nodes.value(r, 0)).collect();
+        keys.sort_unstable();
+        keys.dedup();
+        each_node(call.batch, Some(&keys), |p, local| {
+            let f = p.f();
+            let x = p.node(local);
+            if !kinds.has(f.kind(x)) {
+                return Ok(());
+            }
+            let mut at = local;
+            loop {
+                let up = p.parent(at as usize);
+                if up == NONE {
+                    return Ok(());
+                }
+                if scope.has(f.kind(p.node(up))) {
+                    let t = out.text(f.text(x).to_owned());
+                    out.push(&[p.global(up), t]);
+                    return Ok(());
+                }
+                at = up;
+            }
         })
     }
 }

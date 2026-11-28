@@ -175,3 +175,33 @@ fn unparens_form_gives_its_rules_rows_by_either_column() {
         assert!(made.iter().any(|l| l.starts_with("unparen: form tape.unwrap")), "{tag}: {made:?}");
     }
 }
+
+/// `name(s, x)`, python/points-to-file's `pt_tgt_name`: each identifier of `tgt` (here every identifier in a call's
+/// arguments), its text and its nearest scope.
+const NAMES: &str = r#"
+.decl node(d: number, n: node, kind: symbol, start: number, end: number)
+.decl child(p: node, n: node, i: number)
+.decl kind(n: node, k: symbol)
+.decl text(n: node, s: symbol)
+.input node, child, kind, text
+.decl scope(k: symbol)
+scope("module"). scope("function_definition"). scope("class_definition"). scope("lambda").
+.decl tgt(t: node)
+tgt(t) :- kind(a, "argument_list"), child(a, t, _).
+.decl name(s: node, x: symbol)
+name(s, x) :- tgt(t), kind(t, "identifier"), text(t, x), nearest(t, s, scope).
+.decl named(s: number, k: symbol, x: symbol)
+named(b, k, x) :- name(s, x), node(_, s, k, b, _).
+.output named
+"#;
+
+/// `pt_tgt_name`'s form gives its rules' rows: a name, its scope, for the nodes of the relation it reads.
+#[test]
+fn a_nearest_scopes_form_gives_its_rules_rows() {
+    let form = ".form name tape.nearest_text reads tgt args identifier module function_definition class_definition lambda\n";
+    let dir = corpus("nearest-text");
+    let formed = rows(&format!("{NAMES}{form}"), &dir, "named");
+    let ruled = rows(NAMES, &corpus("nearest-text-rules"), "named");
+    assert_eq!(formed, ruled);
+    assert!(formed.iter().any(|r| r[1] == "function_definition"), "{formed:?}");
+}

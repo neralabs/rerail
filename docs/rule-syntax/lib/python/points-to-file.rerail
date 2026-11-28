@@ -68,7 +68,13 @@ pt_tgt(c) :- pt_tgt(t), kind(t, "as_pattern_target"), child(t, c, _), !pt_wtgt(t
 .decl pt_wtgt(t: node)
 pt_wtgt(t) :- pt_rasg(_, _, t, a), kind(a, "with_statement").
 .decl pt_rotgt(s: node, x: symbol)
-pt_rotgt(s, x) :- pt_tgt(t), kind(t, "identifier"), text(t, x), nearest(t, s, pt_scope).
+pt_rotgt(s, x) :- pt_tgt_name(s, x).
+// pt_tgt_name(s, x): target t names x and binds it in scope s. Made by its Rust form (`tape.nearest_text`), over
+// pt_tgt's few rows: read under a scope's demand, the rule walked every node under the scope first (7.3 M rows on
+// PostHog for 216). The rule is its definition, and the form's tests' oracle; its kinds are pt_scope's.
+.decl pt_tgt_name(s: node, x: symbol)
+.form pt_tgt_name tape.nearest_text reads pt_tgt args identifier module function_definition class_definition lambda
+pt_tgt_name(s, x) :- pt_tgt(t), kind(t, "identifier"), text(t, x), nearest(t, s, pt_scope).
 
 // Imports, per scope: `pt_ibind(s, x, q)` binds x to the qualified name q; `ifrom` also keeps the module and name.
 .decl pt_impmod(i: node, m: symbol)

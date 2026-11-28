@@ -117,7 +117,7 @@ impl ProgramPass for Forms {
 }
 
 /// `rel`'s rule that only orders it after what it reads: its first node column over `node` and any other equal to
-/// it, each other column a constant, each relation in `reads` read.
+/// it, each other column a constant, each relation in `reads` read on its first node column (the form's first node).
 fn ordering_rule(v: &Version, b: &mut crate::code_rule_dsl::logic::program_image::Builder<'_>, rel: &str, reads: &[String]) -> Result<()> {
     let types: Vec<String> = v.decl_of(rel).ok_or_else(|| format!("{rel} is not declared"))?.cols().map(|(_, t)| v.text(t).to_owned()).collect();
     let vars: Vec<String> = (0..types.len()).map(|i| format!("rr_f{i}")).collect();
@@ -138,9 +138,12 @@ fn ordering_rule(v: &Version, b: &mut crate::code_rule_dsl::logic::program_image
             _ => b.put_cmp(&mut o, T::Var(x), CmpOp::Eq, T::Int(0)),
         }
     }
+    // Each relation read on its first node column, the form's first node: in the form's file, as the form reads it.
     for r in reads {
-        let width = v.decl_of(r).ok_or_else(|| format!("{rel} reads {r}, which is not declared"))?.cols().count();
-        b.put_atom(&mut o, r.as_str(), &vec![T::Wild; width], false, false);
+        let cols: Vec<String> = v.decl_of(r).ok_or_else(|| format!("{rel} reads {r}, which is not declared"))?.cols().map(|(_, t)| v.text(t).to_owned()).collect();
+        let at = first.and(cols.iter().position(|t| t == "node"));
+        let args: Vec<T<'_>> = (0..cols.len()).map(|i| if Some(i) == at { T::Var(first.expect("a node column")) } else { T::Wild }).collect();
+        b.put_atom(&mut o, r.as_str(), &args, false, false);
     }
     b.close_rule(o)?;
     Ok(())
