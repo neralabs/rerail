@@ -107,9 +107,10 @@ the fetch feeds (`queryFn` at path:line), so a shared fetcher in `lib/` is repor
 
 **Gaps:** class methods and `this.m()`; a function passed as a value (`queryFn: () => request(getTodos)`); a wrapper
 hook in a file that does not import TanStack Query (`useApiQuery({ queryFn })`); workspace packages (`@acme/api`) and
-other tsconfig `paths` keys; a Response held in an array (`Promise.all([...])`). Any `.ok`/`.status` name in those
-functions counts as a check, even when it reads something else (`session.status`). The lane split hides a `.tsx`
-component whose `queryFn` is a fetcher in a `.ts` module, and the reverse.
+other tsconfig `paths` keys; a Response held in an array (`Promise.all([...])`); an object member more than 3 deep
+(`api.a.b.c.d`), and a member taken past a local object's imported member (`{ todos: importedApi }.todos.list`). Any
+`.ok`/`.status` name in those functions counts as a check, even when it reads something else (`session.status`). The
+lane split hides a `.tsx` component whose `queryFn` is a fetcher in a `.ts` module, and the reverse.
 
 **Sources:**
 - TanStack Query, [Query Functions](https://tanstack.com/query/latest/docs/framework/react/guides/query-functions): "For TanStack Query to determine a query has errored, the query function **must throw** or return a **rejected Promise**." and "While most utilities like `axios` or `graphql-request` automatically throw errors for unsuccessful HTTP calls, some utilities like `fetch` do not throw errors by default. If that's the case, you'll need to throw them on your own."
