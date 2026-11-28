@@ -268,3 +268,17 @@ document's rows appended to its files' rows, which move into the entries: 0.023 
 runs of the same program differ by 6.4 G instructions and 43 MB of peak, more than either change, so neither is
 claimed in the run's totals (785.8 G and 792.3 G instructions, against 780.4 G with no call). Tests: `rerail-tests-corpus` (281
 passed), `rerail-tests-rr` (298), `calls::tests`, `answers::tests`, `complete_answer` (14).
+
+**The inputs' frames: the cone's relations, kept as inputs.** The call's remaining cost in the inputs' frames (+0.149
+s, 52 more jobs) is points_to's cross part having 63 more inputs (378,613 rows): 224 without the call, 286 with it.
+They are no new exports (the split exports 189 relations, against 188). They are the cone of requests' relations
+(decision 0065 §2a): `pt_vopen`'s request is asked with the column `pt_ext_attr` binds, and that relation's cone is
+much of the points-to solve (`pt_found`, `pt_pv`, `pt_asks`, `pt_look_t` and the rest), which the cone derives and
+hands to the rest of the cross part as its inputs (`loading_rows`, bound with `cross_inputs`). Without the call the
+cross part derived them itself, and kept each as a derived relation's one entry (452 relations handed off, 0.119 s);
+with it, 236 are handed off (0.088 s), and the cone's are kept as inputs are: by granule, digested by document
+(`an input's frames`, `digest inputs`). The solve's rows are kept once either way, in a costlier form with the call.
+An input's frame found each row's owner, its granule (an atom owner's content key, a search of the atoms) and its
+place in a map of (granule, owner), twice a row (`picked_ids`, about 165 of the jobs' samples): it now does each once
+a run of one owner's rows, a granule once an owner (12 samples). The inputs' frames: 0.261 s without the call (0.400
+s before), 0.445 s with it (0.598 s before); the same 5 findings. Tests: `rerail-tests-corpus` (281 passed), `rerail-tests-rr` (298).

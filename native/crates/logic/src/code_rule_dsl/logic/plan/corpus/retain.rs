@@ -3692,35 +3692,55 @@ pub(in crate::code_rule_dsl) fn write_input_kept(store: &ContentStore, was: &InK
 fn picked_ids(source: &dyn Source, g: usize, changed: &BTreeSet<i64>, granule: &dyn Fn(i64) -> i64) -> (Arc<crate::code_rule_dsl::facts::rows::Part>, Vec<(i64, (u32, u32))>) {
     use crate::code_rule_dsl::facts::rows::{Life, Part};
     let n = source.len();
-    // Per owner of a changed granule: its rows' count, then where its next row goes.
-    let mut at: BTreeMap<(i64, i64), u32> = BTreeMap::new();
-    for r in 0..n {
-        let owner = super::memo::document_of(source.value(r, g));
-        let gr = granule(owner);
-        if changed.contains(&gr) {
-            *at.entry((gr, owner)).or_insert(0) += 1;
+    // Per owner: its granule, whether that changed, and its rows' count, then where its next row goes. An input's
+    // rows lie in runs of one owner, so the owner is looked up once a run, its granule once an owner (an atom
+    // owner's is its content key's, a search of the atoms).
+    let mut of: rustc_hash::FxHashMap<i64, (i64, bool, u32)> = rustc_hash::FxHashMap::default();
+    let each_run = |f: &mut dyn FnMut(i64, u32, u32)| {
+        let mut r = 0;
+        while r < n {
+            let owner = super::memo::document_of(source.value(r, g));
+            let mut e = r + 1;
+            while e < n && super::memo::document_of(source.value(e, g)) == owner {
+                e += 1;
+            }
+            f(owner, r as u32, e as u32);
+            r = e;
         }
-    }
+    };
+    each_run(&mut |owner, lo, hi| {
+        let slot = of.entry(owner).or_insert_with(|| {
+            let gr = granule(owner);
+            (gr, changed.contains(&gr), 0)
+        });
+        slot.2 += hi - lo;
+    });
+    // The changed granules' owners, by (granule, owner): each granule's rows one range, its owners' rows in turn.
+    let mut owners: Vec<(i64, i64)> = of.iter().filter(|(_, (_, c, _))| *c).map(|(o, (gr, _, _))| (*gr, *o)).collect();
+    owners.sort_unstable();
     let mut ranges: Vec<(i64, (u32, u32))> = Vec::new();
     let mut next = 0u32;
-    for ((gr, _), count) in at.iter_mut() {
+    for (gr, owner) in &owners {
+        let slot = of.get_mut(owner).expect("counted");
+        let count = slot.2;
         match ranges.last_mut() {
-            Some((g0, (_, hi))) if g0 == gr => *hi += *count,
-            _ => ranges.push((*gr, (next, next + *count))),
+            Some((g0, (_, hi))) if g0 == gr => *hi += count,
+            _ => ranges.push((*gr, (next, next + count))),
         }
-        let c = *count;
-        *count = next;
-        next += c;
+        slot.2 = next;
+        next += count;
     }
     let ids = Part::with_index_room(Life::Run, 1, next as usize);
-    for r in 0..n {
-        let owner = super::memo::document_of(source.value(r, g));
-        if let Some(slot) = at.get_mut(&(granule(owner), owner)) {
-            // SAFETY: slot `*slot` is below the `next` rows reserved, each written once, none read before `written`.
-            unsafe { ids.put(*slot, 0, r as i64) };
-            *slot += 1;
+    each_run(&mut |owner, lo, hi| {
+        let slot = of.get_mut(&owner).expect("counted");
+        if slot.1 {
+            for r in lo..hi {
+                // SAFETY: slot `slot.2` is below the `next` rows reserved, each written once, none read before `written`.
+                unsafe { ids.put(slot.2, 0, r as i64) };
+                slot.2 += 1;
+            }
         }
-    }
+    });
     // SAFETY: rows `0..next` are written.
     unsafe { ids.written(next) };
     (Arc::new(ids), ranges)
