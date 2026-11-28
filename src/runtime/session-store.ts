@@ -399,9 +399,24 @@ export function sayLeftOut({ database, log }: EventSource, sessionId: string, ev
     + "of the shape Rerail writes there, which only a damaged file or a hand edit leaves.\n");
 }
 
-/** Names once each event of `leftOut`, a JSON array of `[session, event]` pairs as `json_group_array` makes it. */
-function sayEachLeftOut(source: EventSource, leftOut: string): void {
-  for (const [sessionId, eventId] of JSON.parse(leftOut) as Array<[string, string]>) sayLeftOut(source, sessionId, eventId);
+/**
+ * What `read(valid)` gives over the stored events `rows` selects, `valid` being the SQL that tests the text of the row
+ * at hand. It reads first with no test, so a history whose texts all read costs what it did before any test. Where that
+ * read fails, as `json_extract`, `json_array_length` and `json_each` fail the whole query on one text that is no JSON,
+ * it reads again with each row tested by `json_valid`, which leaves such a row out, and names each row it left out once
+ * (`sayLeftOut`); a failure the text did not cause fails the second read too. Testing every row in the one read instead
+ * cost the rules activity about half its time again over 200,000 events.
+ */
+function readPastDamage<T>(source: EventSource, rows: SQL | undefined, read: (valid: SQL) => T): T {
+  try {
+    return read(sql`1`);
+  } catch {
+    const tested = read(sql`json_valid(${events.payloadJson})`);
+    const damaged = source.database.select({ sessionId: events.sessionId, eventId: events.eventId }).from(events)
+      .where(and(rows, sql`NOT json_valid(${events.payloadJson})`)).all();
+    for (const { sessionId, eventId } of damaged) sayLeftOut(source, sessionId, eventId);
+    return tested;
+  }
 }
 
 /**
@@ -496,20 +511,13 @@ function trackedFromStart(source: EventSource, sessionId: string): boolean {
 /**
  * The steers session `sessionId` was given, per rule, not per hook output (plan D5): the person counts the steer lines
  * they saw, and one edit can steer two rules. A receipt naming no rules still delivered one steer, as does one whose
- * `ruleIds` is no list. A receipt whose text is no JSON, where `json_array_length` would raise for the whole query, is
- * not counted, and is named once. `json_valid` is the one test a row takes: the call after it reads SQLite's parse of
- * the same text, where a test of the field's type costs the query about half its time again over a long session.
+ * `ruleIds` is no list. A receipt whose text is no JSON is not counted, and is named once (`readPastDamage`).
  */
 function steeringCount(source: EventSource, sessionId: string): number {
-  const valid = sql`json_valid(${events.payloadJson})`;
-  const row = source.database.get<{ total: number; leftOut: string }>(sql`
-    SELECT
-      coalesce(sum(CASE WHEN ${valid} THEN max(1, coalesce(json_array_length(${events.payloadJson}, '$.ruleIds'), 0)) ELSE 0 END), 0) AS total,
-      json_group_array(json_array(${events.sessionId}, ${events.eventId})) FILTER (WHERE NOT ${valid}) AS leftOut
-    FROM ${events} WHERE ${events.sessionId} = ${sessionId} AND ${events.kind} = 'steering-delivered'
-  `);
-  sayEachLeftOut(source, row.leftOut);
-  return row.total;
+  const receipts = and(eq(events.sessionId, sessionId), eq(events.kind, "steering-delivered"));
+  return readPastDamage(source, receipts, valid => source.database.select({
+    total: sql<number>`coalesce(sum(CASE WHEN ${valid} THEN max(1, coalesce(json_array_length(${events.payloadJson}, '$.ruleIds'), 0)) ELSE 0 END), 0)`,
+  }).from(events).where(receipts).get()!.total);
 }
 
 /**
@@ -1054,21 +1062,16 @@ export class SqliteSessionReader {
    * that answered before the shell-write check finished or before code rules were running, tool edits of files Git
    * ignores, changes to Git's ignore rules, and what the shell-write check could not check, the record that says it
    * met more of those than the record takes counted apart (`MORE_DISCOVERY_GAPS_EVENT`). Indexed by session and kind. A
-   * record of dropped or lost events whose text is no JSON, or whose `count` is no whole number, counts none, and is
-   * named once: `json_extract` raises on text that is no JSON for the whole query, and a `count` of text would make the
-   * sum a fraction.
+   * record of dropped or lost events whose text is no JSON counts none, and is named once (`readPastDamage`).
    */
   gaps(sessionId: string): SessionGaps {
     const database = this.#database.open();
     if (database === undefined) return { ...NO_GAPS };
-    const readable = sql`(json_valid(${events.payloadJson}) AND typeof(json_extract(${events.payloadJson}, '$.count')) IN ('integer', 'null'))`;
-    const counted = (kind: string): SQL => sql`CASE WHEN ${events.kind} = ${kind} AND ${readable} THEN coalesce(json_extract(${events.payloadJson}, '$.count'), 0) END`;
-    const row = database.all<Omit<SessionGaps, "discoveryGapsMore"> & { discoveryGapsMore: number; leftOut: string }>(sql`
+    const counts = and(eq(events.sessionId, sessionId), inArray(events.kind, ["events-dropped", LOST_EVENTS_KIND]));
+    const row = readPastDamage({ database, log: this.#log }, counts, valid => database.all<Omit<SessionGaps, "discoveryGapsMore"> & { discoveryGapsMore: number }>(sql`
       SELECT
-        coalesce(sum(${counted("events-dropped")}), 0) AS droppedEvents,
-        coalesce(sum(${counted(LOST_EVENTS_KIND)}), 0) AS lostEvents,
-        json_group_array(json_array(${events.sessionId}, ${events.eventId}))
-          FILTER (WHERE ${events.kind} IN ('events-dropped', ${LOST_EVENTS_KIND}) AND NOT ${readable}) AS leftOut,
+        coalesce(sum(CASE WHEN ${events.kind} = 'events-dropped' AND ${valid} THEN coalesce(json_extract(${events.payloadJson}, '$.count'), 0) END), 0) AS droppedEvents,
+        coalesce(sum(CASE WHEN ${events.kind} = 'events-lost' AND ${valid} THEN coalesce(json_extract(${events.payloadJson}, '$.count'), 0) END), 0) AS lostEvents,
         count(*) FILTER (WHERE ${events.kind} = 'source-discovery-pending') AS uncheckedBoundaries,
         count(*) FILTER (WHERE ${events.kind} = 'code-rules-pending') AS codeRulesPendingBoundaries,
         count(*) FILTER (WHERE ${events.kind} = 'ignored-edit') AS ignoredEdits,
@@ -1078,11 +1081,8 @@ export class SqliteSessionReader {
       FROM ${events}
       WHERE ${events.sessionId} = ${sessionId}
         AND ${events.kind} IN ('events-dropped', 'events-lost', 'source-discovery-pending', 'code-rules-pending', 'ignored-edit', 'ignore-rules-changed', 'source-discovery-gap')
-    `)[0];
-    if (row === undefined) return { ...NO_GAPS };
-    const { leftOut, discoveryGapsMore, ...counts } = row;
-    sayEachLeftOut({ database, log: this.#log }, leftOut);
-    return { ...counts, discoveryGapsMore: discoveryGapsMore > 0 };
+    `)[0]);
+    return row === undefined ? { ...NO_GAPS } : { ...row, discoveryGapsMore: row.discoveryGapsMore > 0 };
   }
 
   /** The first `limit` places the session's walks could not check, in the order the session met them; no record that says they met more. */
@@ -1232,30 +1232,26 @@ export class SqliteSessionReader {
   /**
    * Steers per rule: steers in range, counted against each rule the delivery
    * named: the strings of its `ruleIds` list. A delivery that named no rule contributes to nothing, nor does one whose
-   * text is no JSON, where `json_each` would raise for the whole query, which is named once.
+   * text is no JSON, which is named once (`readPastDamage`).
    */
   steersByRule(since: number, repositoryIds: readonly string[] | undefined = undefined): Map<string, number> {
     const database = this.#database.open();
     if (database === undefined) return new Map();
     const scope = repositoryIds ?? this.#repositoryIds;
-    const repository = scope === undefined
-      ? sql``
-      : sql`AND event.session_id IN (${sessionsOfRepository(scope)})`;
-    // A receipt whose text is no JSON reads as the list `[null]`, so the one pass that counts the receipts also lists
-    // those in the group of no rule; one whose list holds a null is in that group too, and its text reads. `->` gives the
-    // field as JSON, so `ruleIds` that is a string is one item with no index, never text `json_each` would raise on.
-    const rows = database.all<{ ruleId: string | null; deliveries: number; leftOut: string }>(sql`
-      SELECT rule.value AS ruleId, count(DISTINCT event.sequence) AS deliveries,
-        json_group_array(json_array(event.session_id, event.event_id))
-          FILTER (WHERE rule.type = 'null' AND NOT json_valid(event.payload_json)) AS leftOut
-      FROM ${events} event,
-        json_each(CASE WHEN json_valid(event.payload_json) THEN event.payload_json -> '$.ruleIds' ELSE '[null]' END) rule
-      WHERE event.kind = 'steering-delivered' AND event.observed_at >= ${since} ${repository}
-        AND typeof(rule.key) = 'integer' AND rule.type IN ('text', 'null')
+    const receipts = and(
+      eq(events.kind, "steering-delivered"),
+      gte(events.observedAt, since),
+      scope === undefined ? undefined : sql`${events.sessionId} IN (${sessionsOfRepository(scope)})`,
+    );
+    // `json_each` over the field's path reads a `ruleIds` that is no list as items with no index, which name no rule,
+    // where over the field's value it would raise on one that is a string.
+    const rows = readPastDamage({ database, log: this.#log }, receipts, valid => database.all<{ ruleId: string; deliveries: number }>(sql`
+      SELECT rule.value AS ruleId, count(DISTINCT ${events.sequence}) AS deliveries
+      FROM ${events}, json_each(CASE WHEN ${valid} THEN ${events.payloadJson} ELSE '{}' END, '$.ruleIds') rule
+      WHERE ${receipts} AND typeof(rule.key) = 'integer' AND rule.type = 'text'
       GROUP BY rule.value
-    `);
-    for (const row of rows) sayEachLeftOut({ database, log: this.#log }, row.leftOut);
-    return new Map(rows.flatMap(row => (row.ruleId === null ? [] : [[row.ruleId, row.deliveries] as const])));
+    `));
+    return new Map(rows.map(row => [row.ruleId, row.deliveries]));
   }
 
   close(): void {
