@@ -5,6 +5,7 @@
 #include <ukl/blx64.h>
 #include <ukl/memory.h>
 #include <ukl/writer_mid.h>
+#include <ukl/lanes_mid.h>
 
 UKL_TABLE uint8_t json_t2_ROWS[256] = {3, 3, 3, 3, 3, 3, 3, 3, 3, 0, 0, 3, 3, 0, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 0, 3, 1, 3, 3, 3, 3, 3, 3, 3, 3, 3, 2, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 2, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 2, 3, 2, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 2, 3, 2, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3};
 UKL_TABLE uint32_t json_t2_HEX_VALUE[256] = {0xffff0000u, 0xffff0000u, 0xffff0000u, 0xffff0000u, 0xffff0000u, 0xffff0000u, 0xffff0000u, 0xffff0000u, 0xffff0000u, 0xffff0000u, 0xffff0000u, 0xffff0000u, 0xffff0000u, 0xffff0000u, 0xffff0000u, 0xffff0000u, 0xffff0000u, 0xffff0000u, 0xffff0000u, 0xffff0000u, 0xffff0000u, 0xffff0000u, 0xffff0000u, 0xffff0000u, 0xffff0000u, 0xffff0000u, 0xffff0000u, 0xffff0000u, 0xffff0000u, 0xffff0000u, 0xffff0000u, 0xffff0000u, 0xffff0000u, 0xffff0000u, 0xffff0000u, 0xffff0000u, 0xffff0000u, 0xffff0000u, 0xffff0000u, 0xffff0000u, 0xffff0000u, 0xffff0000u, 0xffff0000u, 0xffff0000u, 0xffff0000u, 0xffff0000u, 0xffff0000u, 0xffff0000u, 0u, 1u, 2u, 3u, 4u, 5u, 6u, 7u, 8u, 9u, 0xffff0000u, 0xffff0000u, 0xffff0000u, 0xffff0000u, 0xffff0000u, 0xffff0000u, 0xffff0000u, 10u, 11u, 12u, 13u, 14u, 15u, 0xffff0000u, 0xffff0000u, 0xffff0000u, 0xffff0000u, 0xffff0000u, 0xffff0000u, 0xffff0000u, 0xffff0000u, 0xffff0000u, 0xffff0000u, 0xffff0000u, 0xffff0000u, 0xffff0000u, 0xffff0000u, 0xffff0000u, 0xffff0000u, 0xffff0000u, 0xffff0000u, 0xffff0000u, 0xffff0000u, 0xffff0000u, 0xffff0000u, 0xffff0000u, 0xffff0000u, 0xffff0000u, 0xffff0000u, 10u, 11u, 12u, 13u, 14u, 15u, 0xffff0000u, 0xffff0000u, 0xffff0000u, 0xffff0000u, 0xffff0000u, 0xffff0000u, 0xffff0000u, 0xffff0000u, 0xffff0000u, 0xffff0000u, 0xffff0000u, 0xffff0000u, 0xffff0000u, 0xffff0000u, 0xffff0000u, 0xffff0000u, 0xffff0000u, 0xffff0000u, 0xffff0000u, 0xffff0000u, 0xffff0000u, 0xffff0000u, 0xffff0000u, 0xffff0000u, 0xffff0000u, 0xffff0000u, 0xffff0000u, 0xffff0000u, 0xffff0000u, 0xffff0000u, 0xffff0000u, 0xffff0000u, 0xffff0000u, 0xffff0000u, 0xffff0000u, 0xffff0000u, 0xffff0000u, 0xffff0000u, 0xffff0000u, 0xffff0000u, 0xffff0000u, 0xffff0000u, 0xffff0000u, 0xffff0000u, 0xffff0000u, 0xffff0000u, 0xffff0000u, 0xffff0000u, 0xffff0000u, 0xffff0000u, 0xffff0000u, 0xffff0000u, 0xffff0000u, 0xffff0000u, 0xffff0000u, 0xffff0000u, 0xffff0000u, 0xffff0000u, 0xffff0000u, 0xffff0000u, 0xffff0000u, 0xffff0000u, 0xffff0000u, 0xffff0000u, 0xffff0000u, 0xffff0000u, 0xffff0000u, 0xffff0000u, 0xffff0000u, 0xffff0000u, 0xffff0000u, 0xffff0000u, 0xffff0000u, 0xffff0000u, 0xffff0000u, 0xffff0000u, 0xffff0000u, 0xffff0000u, 0xffff0000u, 0xffff0000u, 0xffff0000u, 0xffff0000u, 0xffff0000u, 0xffff0000u, 0xffff0000u, 0xffff0000u, 0xffff0000u, 0xffff0000u, 0xffff0000u, 0xffff0000u, 0xffff0000u, 0xffff0000u, 0xffff0000u, 0xffff0000u, 0xffff0000u, 0xffff0000u, 0xffff0000u, 0xffff0000u, 0xffff0000u, 0xffff0000u, 0xffff0000u, 0xffff0000u, 0xffff0000u, 0xffff0000u, 0xffff0000u, 0xffff0000u, 0xffff0000u, 0xffff0000u, 0xffff0000u, 0xffff0000u, 0xffff0000u, 0xffff0000u, 0xffff0000u, 0xffff0000u, 0xffff0000u, 0xffff0000u, 0xffff0000u, 0xffff0000u, 0xffff0000u, 0xffff0000u, 0xffff0000u, 0xffff0000u, 0xffff0000u, 0xffff0000u, 0xffff0000u, 0xffff0000u, 0xffff0000u, 0xffff0000u, 0xffff0000u, 0xffff0000u, 0xffff0000u, 0xffff0000u, 0xffff0000u, 0xffff0000u, 0xffff0000u, 0xffff0000u, 0xffff0000u, 0xffff0000u, 0xffff0000u, 0xffff0000u, 0xffff0000u, 0xffff0000u, 0xffff0000u, 0xffff0000u, 0xffff0000u, 0xffff0000u, 0xffff0000u, 0xffff0000u, 0xffff0000u, 0xffff0000u, 0xffff0000u, 0xffff0000u, 0xffff0000u};
@@ -53,6 +54,102 @@ UKL_INLINE void json_t2_Tok_leaf_in(UKL_PRIVATE json_t2_Tok* d, uint32_t number,
     json_t2_Tok_node(d, number, cs);
 }
 UKL_INLINE void json_t2_Tok_close(UKL_PRIVATE json_t2_Tok* d, uint64_t end) {}
+
+// Pass 1's `Out` (`Shadow`): the writer's frames kept as the cursor keeps them, without writing: the nodes written
+// from the range's first (`n`), the frames the range opened (`own`, `UKL_LANE_FRAME` words each, at most `most_own`),
+// what it wrote into those open at its entry, innermost first (`touch`, two words each: children, last child or
+// `NONE`; at most `most_touch`), how many of those it closed, and the start of its last node. `full` where it passed
+// its room. It reads the token pass's answers (`toks`, five words a record) where it has them.
+typedef struct json_t2_Sh {
+    UKL_GLOBAL const uint32_t* toks;
+    uint32_t ntoks;
+    uint32_t n;
+    UKL_GLOBAL uint32_t* own;
+    uint32_t nown;
+    uint32_t most_own;
+    UKL_GLOBAL uint32_t* touch;
+    uint32_t ntouch;
+    uint32_t most_touch;
+    uint32_t closed;
+    uint64_t last_start;
+    bool has_last;
+    bool full;
+} json_t2_Sh;
+UKL_INLINE uint32_t json_t2_Sh_node(UKL_PRIVATE json_t2_Sh* d, uint64_t start)
+{
+    uint32_t i = d->n;
+    if (d->nown > 0u) {
+        UKL_GLOBAL uint32_t* f = d->own + UKL_LANE_FRAME * (d->nown - 1u);
+        f[1] += 1u;
+        f[2] = i;
+    } else if (d->closed >= d->most_touch) {
+        d->full = true;
+    } else {
+        uint32_t k = d->closed;
+        while (d->ntouch <= k) {
+            d->touch[2u * d->ntouch] = 0u;
+            d->touch[2u * d->ntouch + 1u] = json_t2_NONE;
+            d->ntouch += 1u;
+        }
+        d->touch[2u * k] += 1u;
+        d->touch[2u * k + 1u] = i;
+    }
+    d->n += 1u;
+    d->last_start = start;
+    d->has_last = true;
+    return i;
+}
+UKL_INLINE void json_t2_Sh_open(UKL_PRIVATE json_t2_Sh* d, uint32_t number, uint64_t start)
+{
+    uint32_t i = json_t2_Sh_node(d, start);
+    if (d->nown >= d->most_own) {
+        d->full = true;
+        return;
+    }
+    UKL_GLOBAL uint32_t* f = d->own + UKL_LANE_FRAME * d->nown;
+    f[0] = i;
+    f[1] = 0u;
+    f[2] = json_t2_NONE;
+    f[3] = (uint32_t)start;
+    f[4] = (uint32_t)(start >> 32);
+    d->nown += 1u;
+}
+UKL_INLINE void json_t2_Sh_leaf(UKL_PRIVATE json_t2_Sh* d, uint32_t number, uint64_t start, uint64_t end) { json_t2_Sh_node(d, start); }
+UKL_INLINE void json_t2_Sh_leaf_in(UKL_PRIVATE json_t2_Sh* d, uint32_t number, uint32_t child, uint64_t start, uint64_t cs, uint64_t ce, uint64_t end)
+{
+    json_t2_Sh_node(d, start);
+    d->n += 1u;
+    d->last_start = cs;
+}
+UKL_INLINE void json_t2_Sh_close(UKL_PRIVATE json_t2_Sh* d, uint64_t end)
+{
+    if (d->nown > 0u)
+        d->nown -= 1u;
+    else
+        d->closed += 1u;
+}
+// The token pass's answer at record `*ip` (`known`, then `skip`): where it has one, the token's nodes as one child of
+// the node open, the record past, and its end or the byte it is refused at in `*k`.
+UKL_INLINE bool json_t2_Sh_known(UKL_PRIVATE json_t2_Sh* d, UKL_GLOBAL const uint32_t* starts, UKL_PRIVATE uint32_t* ip, UKL_PRIVATE json_t2_R* k)
+{
+    uint32_t i = *ip;
+    if (i >= d->ntoks)
+        return false;
+    UKL_GLOBAL const uint32_t* t = d->toks + 5u * i;
+    if (t[4] != json_t2_NONE) {
+        *ip = i + 1u;
+        *k = json_t2_err(t[4]);
+        return true;
+    }
+    if (t[1] == json_t2_NONE)
+        return false;
+    json_t2_Sh_node(d, (uint64_t)starts[i]);
+    *ip = i + 1u;
+    d->n += t[2] - 1u;
+    d->last_start = (uint64_t)t[3];
+    *k = json_t2_ok(t[0]);
+    return true;
+}
 
 // Tier 1's records: their starts (then the index's three last entries), their count, the file's length.
 typedef struct json_t2_Lx {
@@ -893,6 +990,575 @@ else {}
 return json_t2_stop_err(UKL_NONE);
 }
 
+UKL_INLINE void json_t2_open_Sh(UKL_PRIVATE json_t2_Sh* d, uint32_t number, uint64_t start)
+{
+// SAFETY: the cursor's state's room is reserved for the run (`parse`).
+json_t2_Sh_open(d, number, start);
+}
+
+UKL_INLINE void json_t2_leaf_Sh(UKL_PRIVATE json_t2_Sh* d, uint32_t number, uint64_t start, uint64_t end)
+{
+// SAFETY: as `open`'s.
+json_t2_Sh_leaf(d, number, start, end);
+}
+
+UKL_INLINE void json_t2_leaf_in_Sh(UKL_PRIVATE json_t2_Sh* d, uint32_t number, uint32_t child, uint64_t start, uint64_t cs, uint64_t ce, uint64_t end)
+{
+// SAFETY: as `open`'s.
+json_t2_Sh_leaf_in(d, number, child, start, cs, ce, end);
+}
+
+UKL_INLINE void json_t2_close_Sh(UKL_PRIVATE json_t2_Sh* d, uint64_t end)
+{
+// SAFETY: as `open`'s; a node is open (each close is its open's).
+json_t2_Sh_close(d, end);
+}
+
+UKL_INLINE uint32_t json_t2_token_Sh(UKL_PRIVATE json_t2_Sh* d, UKL_PRIVATE uint32_t* i, uint32_t number, uint32_t s, uint32_t end)
+{
+(*i) += 1u;
+json_t2_leaf_Sh(d, number, ((uint64_t)(s)), ((uint64_t)(end)));
+return end;
+}
+
+UKL_INLINE json_t2_R json_t2_string_Sh(UKL_GLOBAL const uint8_t* src, UKL_GLOBAL const uint32_t* starts, UKL_PRIVATE json_t2_Sh* d, UKL_PRIVATE uint32_t* ip, UKL_PRIVATE const uint32_t* n)
+{
+{
+json_t2_R k_;
+if (json_t2_Sh_known(d, starts, ip, &k_))
+return k_;
+}
+uint32_t i = (*ip);
+uint32_t e = 0u;
+uint32_t s = ((uint32_t)(starts[i]));
+i += 1u;
+uint32_t lead;
+uint32_t quote;
+ukl_b32_marks(src + (s + 1u), 0x5cu, 0x22u, &lead, &quote);
+// A closer before every piece in the first block (simdjson's likely case): the node and its content at once,
+// or the node a leaf where it is empty.
+if ((((lead - 1u) & quote) != 0u)) {
+uint32_t c = ((s + 1u) + ((uint32_t)(ukl_ctz32(quote))));
+e = (c + 1u);
+if ((c == (s + 1u))) {
+json_t2_leaf_Sh(d, n[0u], ((uint64_t)(s)), ((uint64_t)(e)));
+} else {
+json_t2_leaf_in_Sh(d, n[0u], 1u, ((uint64_t)(s)), ((uint64_t)((s + 1u))), ((uint64_t)(c)), ((uint64_t)(e)));
+}
+(*ip) = i;
+return json_t2_ok(e);
+}
+json_t2_open_Sh(d, n[0u], ((uint64_t)(s)));
+// The content from `p`, read from `x` 32 bytes at a time (`backslash_quote`): its pieces' first bytes and its closers.
+uint32_t p = (s + 1u);
+uint32_t x = (s + 1u);
+lead = lead;
+quote = quote;
+// The second byte 6 after the string's last `high` piece: the only one a piece reads it at (0: none).
+uint32_t after2 = 0u;
+while (true) {
+// A closer before every piece: the end (simdjson's `(bs - 1) & quote`).
+if ((((lead - 1u) & quote) != 0u)) {
+uint32_t c = (x + ((uint32_t)(ukl_ctz32(quote))));
+if ((c > p)) {
+json_t2_leaf_Sh(d, 1u, ((uint64_t)(p)), ((uint64_t)(c)));
+}
+e = (c + 1u);
+break;
+}
+if ((lead == 0u)) {
+x += 32u;
+ukl_b32_marks(src + x, 0x5cu, 0x22u, &lead, &quote);
+continue;
+}
+uint32_t q = (x + ((uint32_t)(ukl_ctz32(lead))));
+if ((q > p)) {
+json_t2_leaf_Sh(d, 1u, ((uint64_t)(p)), ((uint64_t)(q)));
+}
+p = q;
+// The grammar's errors at an escape, from its bytes: its second byte `y`.
+uint32_t y = (p + 1u);
+// Its second byte decided once: the words', the checks at the gate's.
+{
+uint32_t m0_ = src[y];
+if ((m0_ == 0x75u)) {
+// Not the low half of the pair the escape 6 before checked (`escaped_string`'s `low_checked`): there no error
+// holds.
+if ((after2 != y)) {
+// The 4 digits as a number (simdjson's `hex_to_u32_nocheck`): a byte not hex puts bits past them.
+uint32_t cp = ((((json_t2_HEX_VALUE[((uint32_t)(src[(y + 1u)]))] << 12u) | (json_t2_HEX_VALUE[((uint32_t)(src[(y + 2u)]))] << 8u)) | (json_t2_HEX_VALUE[((uint32_t)(src[(y + 3u)]))] << 4u)) | json_t2_HEX_VALUE[((uint32_t)(src[(y + 4u)]))]);
+uint32_t n7 = ((((json_t2_HEX_VALUE[((uint32_t)(src[(y + 7u)]))] << 12u) | (json_t2_HEX_VALUE[((uint32_t)(src[(y + 8u)]))] << 8u)) | (json_t2_HEX_VALUE[((uint32_t)(src[(y + 9u)]))] << 4u)) | json_t2_HEX_VALUE[((uint32_t)(src[(y + 10u)]))]);
+// mask high
+bool m2 = (cp >= 0xd800u && cp <= 0xdbffu);
+// mask low
+bool m3 = (cp >= 0xdc00u && cp <= 0xdfffu);
+// \u without four hex digits
+if ((cp > 0xffffu)) {
+return json_t2_err(((uint32_t)(y)));
+}
+// a lone high surrogate
+if ((m2 && (!(((src[(y + 5u)] == 0x5cu) && (src[(y + 6u)] == 0x75u)) && (n7 >= 0xdc00u && n7 <= 0xdfffu))))) {
+return json_t2_err(((uint32_t)(y)));
+}
+// a lone low surrogate
+if (m3) {
+return json_t2_err(((uint32_t)(y)));
+}
+if (m2) {
+after2 = (y + 6u);
+}
+}
+}
+else if ((m0_ == 0x22u || m0_ == 0x5cu || m0_ == 0x2fu || m0_ == 0x62u || m0_ == 0x66u || m0_ == 0x6eu || m0_ == 0x72u || m0_ == 0x74u)) {}
+else {
+return json_t2_err(((uint32_t)(p)));
+}
+}
+json_t2_leaf_Sh(d, 2u, ((uint64_t)(p)), ((uint64_t)((p + 2u))));
+p += 2u;
+x = p;
+ukl_b32_marks(src + x, 0x5cu, 0x22u, &lead, &quote);
+}
+json_t2_close_Sh(d, ((uint64_t)(e)));
+(*ip) = i;
+return json_t2_ok(e);
+}
+
+UKL_INLINE json_t2_R json_t2_value_primitive_Sh(UKL_GLOBAL const uint8_t* src, UKL_GLOBAL const uint32_t* starts, UKL_PRIVATE json_t2_Sh* d, UKL_PRIVATE uint32_t* ip, UKL_PRIVATE const uint32_t* n)
+{
+{
+json_t2_R k_;
+if (json_t2_Sh_known(d, starts, ip, &k_))
+return k_;
+}
+uint32_t i = (*ip);
+uint32_t e = 0u;
+uint32_t s = ((uint32_t)(starts[i]));
+{
+uint32_t m0_ = src[s];
+if ((m0_ == 0x22u)) {
+uint32_t t1_[1] = {n[0u]};
+json_t2_R t0_ = json_t2_string_Sh(src, starts, d, (&i), t1_);
+if (!t0_.ok)
+return t0_;
+e = t0_.v;
+}
+// `number`: its words by their bytes, then its own.
+else if (((m0_ == 0x74u) && ((src[s + 0u] == 0x74u && src[s + 1u] == 0x72u && src[s + 2u] == 0x75u && src[s + 3u] == 0x65u) && json_t2_ends(src[(s + 4u)])))) {
+uint32_t end = (s + 4u);
+e = json_t2_token_Sh(d, (&i), n[1u], s, end);
+}
+else if (((m0_ == 0x66u) && ((src[s + 0u] == 0x66u && src[s + 1u] == 0x61u && src[s + 2u] == 0x6cu && src[s + 3u] == 0x73u && src[s + 4u] == 0x65u) && json_t2_ends(src[(s + 5u)])))) {
+uint32_t end = (s + 5u);
+e = json_t2_token_Sh(d, (&i), n[2u], s, end);
+}
+else if (((m0_ == 0x6eu) && ((src[s + 0u] == 0x6eu && src[s + 1u] == 0x75u && src[s + 2u] == 0x6cu && src[s + 3u] == 0x6cu) && json_t2_ends(src[(s + 4u)])))) {
+uint32_t end = (s + 4u);
+e = json_t2_token_Sh(d, (&i), n[3u], s, end);
+}
+else if ((m0_ == 0x2du || (m0_ >= 0x30u && m0_ <= 0x39u))) {
+json_t2_R t2_ = json_t2_number_end(src, s);
+if (!t2_.ok)
+return t2_;
+uint32_t end = t2_.v;
+e = json_t2_token_Sh(d, (&i), n[4u], s, end);
+}
+else {
+return json_t2_err(json_t2_at(src, starts, i));
+}
+}
+(*ip) = i;
+return json_t2_ok(e);
+}
+
+UKL_INLINE json_t2_Stop json_t2_run_range_Sh(UKL_GLOBAL const uint8_t* src, json_t2_Lx lx, UKL_PRIVATE json_t2_Sh* d, json_t2_Entry en, UKL_GLOBAL uint8_t* ret, uint32_t low, uint32_t stop)
+{
+UKL_GLOBAL const uint32_t* starts = lx.starts;
+uint32_t count = lx.count;
+uint32_t len = lx.len;
+uint32_t i = en.i;
+uint32_t e = en.e;
+uint32_t depth = en.depth;
+uint32_t st = en.st;
+uint32_t jmp_ = 0u;
+while (true) {
+if ((i >= stop)) {
+return json_t2_stop_at(i, e, depth, st);
+}
+{
+uint32_t m0_ = st;
+if ((m0_ == 0u)) {
+json_t2_open_Sh(d, 0u, ((uint64_t)(json_t2_at(src, starts, i))));
+{
+uint32_t m1_ = json_t2_peek(src, starts, i);
+if ((m1_ == 0x7bu)) {
+if ((src[((uint32_t)(starts[(count - 1u)]))] != 0x7du)) {
+return json_t2_stop_err(json_t2_at(src, starts, i));
+}
+if ((json_t2_peek(src, starts, (i + 1u)) == 0x7du)) {
+// `object`, empty.
+uint32_t s = ((uint32_t)(starts[i]));
+e = (((uint32_t)(starts[(i + 1u)])) + 1u);
+i += 2u;
+json_t2_leaf_Sh(d, 15u, ((uint64_t)(s)), ((uint64_t)(e)));
+} else {
+json_t2_open_Sh(d, 15u, ((uint64_t)(json_t2_at(src, starts, i))));
+ret[depth] = 7u;
+depth += 1u;
+st = 1u;
+continue;
+}
+}
+else if ((m1_ == 0x5bu)) {
+if ((src[((uint32_t)(starts[(count - 1u)]))] != 0x5du)) {
+return json_t2_stop_err(json_t2_at(src, starts, i));
+}
+if ((json_t2_peek(src, starts, (i + 1u)) == 0x5du)) {
+// `array`, empty.
+uint32_t s = ((uint32_t)(starts[i]));
+e = (((uint32_t)(starts[(i + 1u)])) + 1u);
+i += 2u;
+json_t2_leaf_Sh(d, 16u, ((uint64_t)(s)), ((uint64_t)(e)));
+} else {
+json_t2_open_Sh(d, 16u, ((uint64_t)(json_t2_at(src, starts, i))));
+ret[depth] = 7u;
+depth += 1u;
+st = 4u;
+continue;
+}
+}
+else {
+uint32_t t1_[5] = {3u, 4u, 5u, 6u, 7u};
+json_t2_R t0_ = json_t2_value_primitive_Sh(src, starts, d, (&i), t1_);
+if (!t0_.ok) {
+uint32_t x = t0_.v;
+return json_t2_stop_err(x);
+}
+e = t0_.v;
+}
+}
+json_t2_close_Sh(d, ((uint64_t)(len)));
+if ((i != count)) {
+return json_t2_stop_err(json_t2_at(src, starts, i));
+}
+return json_t2_stop_ok();
+}
+else if ((m0_ == 1u || m0_ == 2u)) {
+if ((st == 1u)) {
+i += 1u;
+}
+// The list: its element, then its separator back to the element, or what follows it.
+while (true) {
+json_t2_open_Sh(d, 8u, ((uint64_t)(json_t2_at(src, starts, i))));
+{
+uint32_t m2_ = json_t2_peek(src, starts, i);
+if ((m2_ == 0x22u)) {}
+else {
+return json_t2_stop_err(json_t2_at(src, starts, i));
+}
+}
+uint32_t t3_[1] = {18u};
+json_t2_R t2_ = json_t2_string_Sh(src, starts, d, (&i), t3_);
+if (!t2_.ok) {
+uint32_t x = t2_.v;
+return json_t2_stop_err(x);
+}
+e = t2_.v;
+{
+uint32_t m3_ = json_t2_peek(src, starts, i);
+if ((m3_ == 0x3au)) {
+i += 1u;
+}
+else {
+return json_t2_stop_err(json_t2_at(src, starts, i));
+}
+}
+{
+uint32_t m4_ = json_t2_peek(src, starts, i);
+if ((m4_ == 0x7bu)) {
+if ((depth == json_t2_DEPTH)) {
+return json_t2_stop_err(json_t2_at(src, starts, i));
+}
+if ((json_t2_peek(src, starts, (i + 1u)) == 0x7du)) {
+// `object`, empty.
+uint32_t s = ((uint32_t)(starts[i]));
+e = (((uint32_t)(starts[(i + 1u)])) + 1u);
+i += 2u;
+json_t2_leaf_Sh(d, 14u, ((uint64_t)(s)), ((uint64_t)(e)));
+} else {
+json_t2_open_Sh(d, 14u, ((uint64_t)(json_t2_at(src, starts, i))));
+ret[depth] = 3u;
+depth += 1u;
+st = 1u;
+jmp_ = 1u;
+break;
+}
+}
+else if ((m4_ == 0x5bu)) {
+if ((depth == json_t2_DEPTH)) {
+return json_t2_stop_err(json_t2_at(src, starts, i));
+}
+if ((json_t2_peek(src, starts, (i + 1u)) == 0x5du)) {
+// `array`, empty.
+uint32_t s = ((uint32_t)(starts[i]));
+e = (((uint32_t)(starts[(i + 1u)])) + 1u);
+i += 2u;
+json_t2_leaf_Sh(d, 17u, ((uint64_t)(s)), ((uint64_t)(e)));
+} else {
+json_t2_open_Sh(d, 17u, ((uint64_t)(json_t2_at(src, starts, i))));
+ret[depth] = 3u;
+depth += 1u;
+st = 4u;
+jmp_ = 1u;
+break;
+}
+}
+else {
+uint32_t t5_[5] = {9u, 10u, 11u, 12u, 13u};
+json_t2_R t4_ = json_t2_value_primitive_Sh(src, starts, d, (&i), t5_);
+if (!t4_.ok) {
+uint32_t x = t4_.v;
+return json_t2_stop_err(x);
+}
+e = t4_.v;
+}
+}
+json_t2_close_Sh(d, ((uint64_t)(e)));
+{
+uint32_t m5_ = json_t2_peek(src, starts, i);
+if ((m5_ == 0x2cu)) {
+i += 1u;
+if ((i >= stop)) {
+st = 2u;
+jmp_ = 1u;
+break;
+}
+continue;
+}
+else if ((m5_ == 0x7du)) {
+uint32_t s = ((uint32_t)(starts[i]));
+i += 1u;
+e = (s + 1u);
+json_t2_close_Sh(d, ((uint64_t)(e)));
+// The place the level's call returns to, by its depth (a level ends only inside its call).
+if ((depth == 0u)) {
+return json_t2_stop_err(json_t2_at(src, starts, i));
+}
+depth -= 1u;
+if ((depth < low)) {
+return json_t2_stop_read(i, e, depth, st);
+}
+st = ret[depth];
+jmp_ = 1u;
+break;
+}
+else {
+return json_t2_stop_err(json_t2_at(src, starts, i));
+}
+}
+}
+if (jmp_ != 0u) {
+if (jmp_ == 1u) {
+jmp_ = 0u;
+continue;
+}
+break;
+}
+}
+else if ((m0_ == 3u || m0_ == 6u || m0_ == 7u)) {
+while (true) {
+if ((i >= stop)) {
+return json_t2_stop_at(i, e, depth, st);
+}
+// Where a level returns: its caller's rest, by the place it pushed.
+{
+uint32_t m6_ = st;
+if ((m6_ == 3u)) {
+json_t2_close_Sh(d, ((uint64_t)(e)));
+{
+uint32_t m7_ = json_t2_peek(src, starts, i);
+if ((m7_ == 0x2cu)) {
+i += 1u;
+st = 2u;
+jmp_ = 1u;
+break;
+}
+else if ((m7_ == 0x7du)) {
+uint32_t s = ((uint32_t)(starts[i]));
+i += 1u;
+e = (s + 1u);
+json_t2_close_Sh(d, ((uint64_t)(e)));
+// The place the level's call returns to, by its depth (a level ends only inside its call).
+if ((depth == 0u)) {
+return json_t2_stop_err(json_t2_at(src, starts, i));
+}
+depth -= 1u;
+if ((depth < low)) {
+return json_t2_stop_read(i, e, depth, st);
+}
+st = ret[depth];
+continue;
+}
+else {
+return json_t2_stop_err(json_t2_at(src, starts, i));
+}
+}
+}
+else if ((m6_ == 6u)) {
+{
+uint32_t m8_ = json_t2_peek(src, starts, i);
+if ((m8_ == 0x2cu)) {
+i += 1u;
+st = 5u;
+jmp_ = 1u;
+break;
+}
+else if ((m8_ == 0x5du)) {
+uint32_t s = ((uint32_t)(starts[i]));
+i += 1u;
+e = (s + 1u);
+json_t2_close_Sh(d, ((uint64_t)(e)));
+// The place the level's call returns to, by its depth (a level ends only inside its call).
+if ((depth == 0u)) {
+return json_t2_stop_err(json_t2_at(src, starts, i));
+}
+depth -= 1u;
+if ((depth < low)) {
+return json_t2_stop_read(i, e, depth, st);
+}
+st = ret[depth];
+continue;
+}
+else {
+return json_t2_stop_err(json_t2_at(src, starts, i));
+}
+}
+}
+else if ((m6_ == 7u)) {
+json_t2_close_Sh(d, ((uint64_t)(len)));
+if ((i != count)) {
+return json_t2_stop_err(json_t2_at(src, starts, i));
+}
+return json_t2_stop_ok();
+}
+else {}
+}
+}
+if (jmp_ != 0u) {
+if (jmp_ == 1u) {
+jmp_ = 0u;
+continue;
+}
+break;
+}
+}
+else if ((m0_ == 4u || m0_ == 5u)) {
+if ((st == 4u)) {
+i += 1u;
+}
+// The list: its element, then its separator back to the element, or what follows it.
+while (true) {
+{
+uint32_t m9_ = json_t2_peek(src, starts, i);
+if ((m9_ == 0x7bu)) {
+if ((depth == json_t2_DEPTH)) {
+return json_t2_stop_err(json_t2_at(src, starts, i));
+}
+if ((json_t2_peek(src, starts, (i + 1u)) == 0x7du)) {
+// `object`, empty.
+uint32_t s = ((uint32_t)(starts[i]));
+e = (((uint32_t)(starts[(i + 1u)])) + 1u);
+i += 2u;
+json_t2_leaf_Sh(d, 15u, ((uint64_t)(s)), ((uint64_t)(e)));
+} else {
+json_t2_open_Sh(d, 15u, ((uint64_t)(json_t2_at(src, starts, i))));
+ret[depth] = 6u;
+depth += 1u;
+st = 1u;
+jmp_ = 1u;
+break;
+}
+}
+else if ((m9_ == 0x5bu)) {
+if ((depth == json_t2_DEPTH)) {
+return json_t2_stop_err(json_t2_at(src, starts, i));
+}
+if ((json_t2_peek(src, starts, (i + 1u)) == 0x5du)) {
+// `array`, empty.
+uint32_t s = ((uint32_t)(starts[i]));
+e = (((uint32_t)(starts[(i + 1u)])) + 1u);
+i += 2u;
+json_t2_leaf_Sh(d, 16u, ((uint64_t)(s)), ((uint64_t)(e)));
+} else {
+json_t2_open_Sh(d, 16u, ((uint64_t)(json_t2_at(src, starts, i))));
+ret[depth] = 6u;
+depth += 1u;
+st = 4u;
+jmp_ = 1u;
+break;
+}
+}
+else {
+uint32_t t7_[5] = {3u, 4u, 5u, 6u, 7u};
+json_t2_R t6_ = json_t2_value_primitive_Sh(src, starts, d, (&i), t7_);
+if (!t6_.ok) {
+uint32_t x = t6_.v;
+return json_t2_stop_err(x);
+}
+e = t6_.v;
+}
+}
+{
+uint32_t m10_ = json_t2_peek(src, starts, i);
+if ((m10_ == 0x2cu)) {
+i += 1u;
+if ((i >= stop)) {
+st = 5u;
+jmp_ = 1u;
+break;
+}
+continue;
+}
+else if ((m10_ == 0x5du)) {
+uint32_t s = ((uint32_t)(starts[i]));
+i += 1u;
+e = (s + 1u);
+json_t2_close_Sh(d, ((uint64_t)(e)));
+// The place the level's call returns to, by its depth (a level ends only inside its call).
+if ((depth == 0u)) {
+return json_t2_stop_err(json_t2_at(src, starts, i));
+}
+depth -= 1u;
+if ((depth < low)) {
+return json_t2_stop_read(i, e, depth, st);
+}
+st = ret[depth];
+jmp_ = 1u;
+break;
+}
+else {
+return json_t2_stop_err(json_t2_at(src, starts, i));
+}
+}
+}
+if (jmp_ != 0u) {
+if (jmp_ == 1u) {
+jmp_ = 0u;
+continue;
+}
+break;
+}
+}
+else {}
+}
+}
+return json_t2_stop_err(UKL_NONE);
+}
+
+#define json_t2_NCYCLES 2u
+UKL_INLINE uint32_t json_t2_cycles(uint32_t k) { return k == 0u ? 2u : 5u; }
+#define json_t2_NRETS 3u
+UKL_INLINE uint32_t json_t2_rets(uint32_t k) { return k == 0u ? 3u : k == 1u ? 6u : 7u; }
 typedef struct json_t2_TArgs {
     uint32_t n;
     uint32_t count;
@@ -986,4 +1652,195 @@ DEFINE_KERNEL2(tier2, json_t2_write,
     json_t2_Stop r = json_t2_run_range_Mid(src, lx, &d, en, ret, 0u, a[4]);
     out[c * 2u] = r.kind;
     out[c * 2u + 1u] = r.en.i;
+}
+
+// Pass 1's summaries: a chunk's at most `LANES` lanes, after its status (0 made; 1 more lanes than its room before
+// they fold, 2 its pool's room or `LANES` passed, 3 its frames' or levels' room passed) and their count, their offsets
+// in the pool.
+#define json_t2_LANES 16u
+#define json_t2_SUM (2u + json_t2_LANES)
+// The lanes a chunk's walks leave before they fold, at most.
+#define json_t2_RAW 64u
+
+typedef struct json_t2_LArgs {
+    uint32_t chunks;
+    uint32_t count;
+    uint32_t len;
+    uint32_t ntoks;
+} json_t2_LArgs;
+UKL_REFLECT_STRUCT(json_t2_LArgs, chunks, count, len, ntoks)
+
+// The lane of a walk that stopped at `r`, its levels' places `kc` (`path`'s, two words a level), its shadow `d`
+// (`Lane::of`): its offset in the pool, or `UKL_LANE_NONE` past the pool's room.
+UKL_INLINE uint32_t json_t2_lane_of(UklLanePool m, uint32_t st0, UKL_GLOBAL const uint32_t* path, uint32_t nkc, UKL_GLOBAL const uint8_t* ret, uint32_t low,
+                                json_t2_Stop r, UKL_PRIVATE const json_t2_Sh* d)
+{
+    bool end = r.kind >= 2u;
+    uint32_t np = r.kind == 0u ? r.en.depth - low : 0u;
+    uint32_t nt = d->closed + 1u;
+    uint32_t npf = end ? 0u : d->nown;
+    uint32_t at = ukl_lane_take(m, UKL_LANE_HEAD + nkc + np + 2u * nt + UKL_LANE_FRAME * npf);
+    if (at == UKL_LANE_NONE)
+        return at;
+    m[at + UKL_LANE_ST0] = st0;
+    m[at + UKL_LANE_NKC] = nkc;
+    m[at + UKL_LANE_NP] = np;
+    m[at + UKL_LANE_EXIT] = r.kind == 0u ? r.en.i : 0u;
+    m[at + UKL_LANE_EXIT + 1u] = r.kind == 0u ? r.en.e : 0u;
+    m[at + UKL_LANE_EXIT + 2u] = r.kind == 0u ? r.en.depth : 0u;
+    m[at + UKL_LANE_EXIT + 3u] = r.kind == 0u ? r.en.st : 0u;
+    m[at + UKL_LANE_NODES] = d->n;
+    m[at + UKL_LANE_END] = r.kind == 2u ? 1u : r.kind == 3u ? 2u : 0u;
+    m[at + UKL_LANE_ERR] = r.kind == 3u ? r.err : 0u;
+    m[at + UKL_LANE_FKC] = d->closed;
+    m[at + UKL_LANE_NTOUCH] = nt;
+    m[at + UKL_LANE_NPF] = npf;
+    m[at + UKL_LANE_LAST] = d->has_last ? (uint32_t)d->last_start : 0u;
+    m[at + UKL_LANE_LAST + 1u] = d->has_last ? (uint32_t)(d->last_start >> 32) : 0u;
+    m[at + UKL_LANE_HAS_LAST] = d->has_last ? 1u : 0u;
+    m[at + UKL_LANE_NREF] = 0u;
+    uint32_t w = at + UKL_LANE_HEAD;
+    for (uint32_t k = 0u; k < nkc; k++)
+        m[w++] = path[2u * k];
+    for (uint32_t k = 0u; k < np; k++)
+        m[w++] = ret[low + k];
+    for (uint32_t k = 0u; k < nt; k++) {
+        bool has = !end && k < d->ntouch;
+        m[w++] = has ? d->touch[2u * k] : 0u;
+        m[w++] = has ? d->touch[2u * k + 1u] : json_t2_NONE;
+    }
+    for (uint32_t k = 0u; k < UKL_LANE_FRAME * npf; k++)
+        m[w++] = d->own[k];
+    return at;
+}
+
+// Pass 1 (`lanes`): chunk `c`'s summary, its first record at depth `depths[c]`: from each place its first record can
+// be at, the walk, forked where it closes a level below its entry, once for each place a level returns to. A fork is
+// the walk again from the chunk's start with the levels' places chosen so far (`path`), each fork in the order the
+// Rust's work list takes them, so the lanes and their fold are its. The chunk's room: its levels' places in `rets`,
+// its frames (`2 * span + 2`) in `f` and what it writes into its entry's (`span + 1`) in `touch`, each placed by its
+// first record and its number, so no chunk's meets another's.
+DEFINE_KERNEL2(tier2, json_t2_lanes,
+               ARGS,     json_t2_LArgs, args,   ,
+               ROBUFFER, uint8_t,  src,    "[len + 64]",
+               ROBUFFER, uint32_t, starts, "[count + 3]",
+               ROBUFFER, uint32_t, toks,   "[ntoks * 5]",
+               ROBUFFER, uint32_t, chunks, "[chunks]",
+               ROBUFFER, uint32_t, depths, "[chunks]",
+               RWBUFFER, uint8_t,  rets,   "[chunks * json_t2_DEPTH]",
+               RWBUFFER, uint32_t, f,      "[(count + 1 + chunks) * 10]",
+               RWBUFFER, uint32_t, touch,  "[(count + 1 + chunks) * 2]",
+               RWBUFFER, uint32_t, path,   "[(count + 1 + chunks) * 2]",
+               RWBUFFER, uint32_t, raw,    "[chunks * RAW * 2]",
+               RWBUFFER, uint32_t, pool,   "[pool]",
+               RWBUFFER, uint32_t, sums,   "[chunks * SUM]",
+               GID0,     uint32_t, c,      )
+{
+    if (c >= args.chunks)
+        return;
+    UKL_GLOBAL uint32_t* s = sums + c * json_t2_SUM;
+    uint32_t start = chunks[c];
+    uint32_t stop = c + 1u < args.chunks ? chunks[c + 1u] : args.count + 1u;
+    uint32_t depth0 = depths[c];
+    uint32_t span = stop - start;
+    UKL_GLOBAL uint8_t* ret = rets + c * json_t2_DEPTH;
+    UKL_GLOBAL uint32_t* own = f + UKL_LANE_FRAME * 2u * (start + c);
+    UKL_GLOBAL uint32_t* tch = touch + 2u * (start + c);
+    UKL_GLOBAL uint32_t* pth = path + 2u * (start + c);
+    UKL_GLOBAL uint32_t* rw = raw + c * 2u * json_t2_RAW;
+    json_t2_Lx lx;
+    lx.starts = starts;
+    lx.count = args.count;
+    lx.len = args.len;
+    bool deeper = depth0 > json_t2_DEPTH;
+    uint32_t np = start == 0u ? 1u : json_t2_NCYCLES;
+    uint32_t nraw = 0u, status = 0u;
+    for (uint32_t q0 = 0u; q0 < np && status == 0u; q0++) {
+        // The Rust's work list takes the last place first; deeper than the walk goes, each place in order.
+        uint32_t q = deeper ? q0 : np - 1u - q0;
+        uint32_t st0 = start == 0u ? 0u : json_t2_cycles(q);
+        uint32_t nkc = 0u;
+        while (true) {
+            json_t2_Sh d;
+            d.toks = toks;
+            d.ntoks = args.ntoks;
+            d.n = 0u;
+            d.own = own;
+            d.nown = 0u;
+            d.most_own = 2u * span + 2u;
+            d.touch = tch;
+            d.ntouch = 0u;
+            d.most_touch = span + 1u;
+            d.closed = 0u;
+            d.last_start = 0u;
+            d.has_last = false;
+            d.full = false;
+            json_t2_Entry en;
+            en.i = start;
+            en.e = 0u;
+            en.depth = depth0;
+            en.st = st0;
+            uint32_t low = depth0, j = 0u;
+            bool extend = false;
+            json_t2_Stop r = json_t2_stop_err(starts[start]);
+            while (!deeper) {
+                r = json_t2_run_range_Sh(src, lx, &d, en, ret, low, stop);
+                if (r.kind != 1u || d.full)
+                    break;
+                if (j < nkc) {
+                    uint32_t k = pth[2u * j];
+                    ret[r.en.depth] = (uint8_t)k;
+                    low = r.en.depth;
+                    en = r.en;
+                    en.st = k;
+                    j++;
+                    continue;
+                }
+                extend = true;
+                break;
+            }
+            if (d.full) {
+                status = 3u;
+                break;
+            }
+            if (extend) {
+                if (nkc > span) {
+                    status = 3u;
+                    break;
+                }
+                pth[2u * nkc] = json_t2_rets(json_t2_NRETS - 1u);
+                pth[2u * nkc + 1u] = json_t2_NRETS - 1u;
+                nkc++;
+                continue;
+            }
+            if (nraw >= json_t2_RAW) {
+                status = 1u;
+                break;
+            }
+            uint32_t at = json_t2_lane_of(pool, st0, pth, nkc, ret, low, r, &d);
+            if (at == UKL_LANE_NONE) {
+                status = 2u;
+                break;
+            }
+            rw[nraw++] = at;
+            // The next fork: the last level with a place left, its next place.
+            while (nkc > 0u && pth[2u * (nkc - 1u) + 1u] == 0u)
+                nkc--;
+            if (nkc == 0u)
+                break;
+            uint32_t ci = pth[2u * (nkc - 1u) + 1u] - 1u;
+            pth[2u * (nkc - 1u) + 1u] = ci;
+            pth[2u * (nkc - 1u)] = json_t2_rets(ci);
+        }
+    }
+    uint32_t n = 0u;
+    if (status == 0u) {
+        n = ukl_lane_fold(pool, rw, nraw, rw + json_t2_RAW, s + 2u, json_t2_LANES);
+        if (n == UKL_LANE_NONE) {
+            status = 2u;
+            n = 0u;
+        }
+    }
+    s[0] = status;
+    s[1] = n;
 }

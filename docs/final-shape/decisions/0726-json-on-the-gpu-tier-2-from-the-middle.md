@@ -177,6 +177,15 @@ labelled loop's `continue` past the innermost loop sets a jump word and leaves e
 has no `goto`). Its kernel `json_t2_write` runs a chunk a thread from its state: its frames copied into the chunk's
 room, as `resume` writes them, its levels into its row of the levels' room.
 
+Pass 1 is printed with them (`json_t2_lanes`): the walk and its helpers again, for `Shadow` (`{p}Sh`, the writer's
+frames kept without writing, the token pass's answers read through its `known`), a thread a chunk. A fork is the walk
+again from the chunk's start with the levels' places chosen so far (a path of choices, each level's next place taken
+once its subtree's lanes are made), in the order the Rust's work list pops them, so the lanes are its, then folded by
+`<ukl/lanes_mid.h>`'s `ukl_lane_fold` as `fold` folds them. A lane is a record of words in a pool taken by an atomic
+bump (its layout in the header); a chunk's frames, its writes into its entry's frames and its path are placed by its
+first record and its number, so no chunk's room meets another's. A chunk past its room (more than 64 lanes before they
+fold, 16 after, its pool, frames or levels) says so in its status, and the run is made again with more.
+
 ### 7. Every chunk on its own, in any order
 
 The user (2026-11-27): "run the blocks in random order (including the prefix sum). This should allow us to validate the
@@ -196,7 +205,9 @@ scan round, each chunk a thread or a group.
 ### 8. Still to build (the design's stages)
 
 - S6's scan of the piece lengths and its tail as device phases (the pieces' count and write are built).
-- The UKL printer in `one_loop` (tier 2's passes and the token pass), the phases on the work queue, and Metal.
+- Pass 3 (the summaries' tree, `compose` and `apply` down it) on the device, on `<ukl/lanes_mid.h>`'s lanes; the
+  blocks made (`make_blocks`) and the tape ended (`end_middle`) there.
+- The phases as one program on the work queue, a fixed number of launches.
 
 ## Tests
 
@@ -212,7 +223,10 @@ records, every pass in order and in two random orders (270 tapes, 13,800 chunks)
 every refusal the serial one; the slot and length lists hold up to 991 entries a block there. The entries test also runs the token pass in a random order (16,684 tokens): its answers are the same in any order,
 and every chunk's summary from them is the summary of pass 1 reading each token itself. `typed_records_are_the_records_split_by_type`: 390 files in chunks of
 1, 2, 3 and 16 blocks (8,784 records), every pass in a random order, the records `lex`'s and each type's the records split by their first byte.
-`rerail-gpu`'s `lz4_blocks_encode_greedily`: 26 blocks (0 to 70,000 bytes: matches at every distance, short and long,
+`rerail-gpu`'s `json_tier2_lanes_are_its_rust`: pass 1 on the device, 9 files (the tier 1 cases and nests 60 deep,
+mixed, and closers that do not match) in chunks of 1, 3 and 16 records (12,381 chunks, 28,944 lanes, 3,749
+refusals): each chunk's lanes are `summaries`', lane for lane, on UKL's CPU backend and on Metal on the M3 Max and
+the M1 Max. `rerail-gpu`'s `lz4_blocks_encode_greedily`: 26 blocks (0 to 70,000 bytes: matches at every distance, short and long,
 runs, noise, and one byte repeated), each encoded by a group to the bytes of the serial parse (`lz4_greedy`), which
 LZ4's `LZ4_decompress_safe` decodes to the block; on UKL's CPU backend, compiled and on the vector path. The tape test also stores each tape from the middle (90, in order) as 16z by `z_of` and the greedy encoder (129,819
 bytes to 69,804): each loads as a 16z tape and decodes to its tape. `rerail-gpu`'s `z_pieces_encode_in_place`: JSON
