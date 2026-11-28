@@ -107,7 +107,7 @@ impl<'a> State<'a> {
     /// Each layer is checked once: reached, committed, of `arity` columns, where the layer above refers to it, and
     /// referred to by it (O§2: a reference is a block id and an offset, the layer's header); at most `MAX_LAYERS`.
     pub fn chain(reach: &'a dyn Reach, head: Option<Id>, arity: usize) -> Result<State<'a>, ChainError> {
-        let s = State { reach, head, arity: arity as u32, part: None, reads: None };
+        let s = State { reach, head, arity: arity as u32, part: None, reads: reach.reads() };
         let (mut at, mut depth) = (head.map(|h| (h, None)), 0usize);
         while let Some((id, off)) = at {
             depth += 1;
@@ -258,6 +258,7 @@ impl<'a> State<'a> {
     }
 
     pub fn get(&self, id: u32, c: usize) -> i64 {
+        self.touch(1);
         self.locate(id).unwrap_or_else(|| panic!("row {id} is not in the state")).get(id, c)
     }
 

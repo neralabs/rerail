@@ -50,6 +50,9 @@ pub use rerail_blocks::blob::{BlobId, Placed};
 /// a housing; a blob is found by a probe of its name at the trace's head.
 pub struct BlobRows {
     rows: Trace,
+    /// The residency's counts (slabs retired, dropped) when the dead blobs were last forgotten (`forget_dead`): a
+    /// blob's block goes only when the residency retires or drops its slab, so while they stay none died.
+    checked: Option<(u64, u64)>,
 }
 
 /// The blobs' rows: `(name's four words, block, at, len)`, in that order.
@@ -67,12 +70,12 @@ impl Default for BlobRows {
 impl BlobRows {
     /// No blob.
     pub fn new() -> BlobRows {
-        BlobRows { rows: Trace::new(&blobs_shape()).expect("a storable shape") }
+        BlobRows { rows: Trace::new(&blobs_shape()).expect("a storable shape"), checked: None }
     }
 
     /// The blobs' rows placed at `place` (`dir::PLACE_KEPT`: they last across processes), at `head`.
     pub fn resumed(self, place: u32, head: Option<BlockId>) -> BlobRows {
-        BlobRows { rows: self.rows.resumed(place, head) }
+        BlobRows { rows: self.rows.resumed(place, head), checked: None }
     }
 
     /// Their rows' trace.
@@ -100,6 +103,12 @@ impl BlobRows {
     /// Forgets the blobs whose block nothing holds: a slab the residency retired or dropped, or a new process's (a slab
     /// is the run's memory). Their bytes are in the store's objects, loaded again when asked.
     pub fn forget_dead(&mut self, ops: &Runner, dir: &mut Directory) -> Result<(), String> {
+        // None died since the last look: no slab retired or dropped (P1: a run's cost is its change's; an eviction's
+        // look reads every blob, the residency's event, not an edit's).
+        let now = dir.residency();
+        if self.checked == Some(now) {
+            return Ok(());
+        }
         let head = self.rows.head();
         // Its rows whose block nothing holds, read where they lie: counted, then each pushed as a kill.
         let is_dead = |dir: &Directory, s: &View<'_>, id: RowId| !dir.alive(BlockId(Read::get(s, id, ColumnIndex::new(4)) as u32));
@@ -114,6 +123,7 @@ impl BlobRows {
                 })?
             })?;
         }
+        self.checked = Some(now);
         Ok(())
     }
 
@@ -433,6 +443,9 @@ pub struct World {
     pub answers: Trace,
     pub places: Trace,
     pub asked: Asked,
+    /// The journal's cursors for the root as the last run began (`Observer::mark`), and as this one did: what the
+    /// journal names after the last run's is what changed since that run read the files (`changed`).
+    cursors: [Option<Vec<String>>; 2],
 }
 
 impl World {
@@ -449,6 +462,7 @@ impl World {
             answers: t(answers_shape(), heads[1])?,
             places: t(places_shape(), heads[2])?,
             asked: Asked::default(),
+            cursors: [None, None],
         })
     }
 
@@ -466,17 +480,33 @@ impl World {
 
     /// Starts a run (decision 0105): the observer asks the journal once what changed under the root since the run
     /// before, and trusts the rest with no `stat`.
-    pub fn begin(&self) {
+    pub fn begin(&mut self) {
         let root = self.root.clone();
-        observe::with(Some(&self.store.observer()), |o| {
+        self.cursors[1] = observe::with(Some(&self.store.observer()), |o| {
             o.begin();
-            o.watch(&[root]);
+            o.mark(&[root])
         });
     }
 
-    /// Ends a run: the observer's answers written, the journal's cursor kept.
-    pub fn end(&self) {
+    /// The files under the root the journal names as changed since the last run began, each relative to the root, in
+    /// a run (`begin`): P1's read of an edit is of these alone. `None` where it cannot say (a first run, a cursor the
+    /// journal no longer replays from): every file is then read, its `stat` checked.
+    pub fn changed(&self) -> Option<Vec<PathBuf>> {
+        let cursors = self.cursors[0].clone()?;
+        let root = self.root.clone();
+        let named = observe::with(Some(&self.store.observer()), |o| o.changed_since("", std::slice::from_ref(&root), &cursors))?;
+        let real = std::fs::canonicalize(&root).unwrap_or_else(|_| root.clone());
+        let mut rel: Vec<PathBuf> = named.iter().filter_map(|p| p.strip_prefix(&root).or_else(|_| p.strip_prefix(&real)).ok().map(Path::to_path_buf)).collect();
+        rel.sort();
+        rel.dedup();
+        Some(rel)
+    }
+
+    /// Ends a run: the observer's answers written, the journal's cursor kept, and this run's taken as the one the
+    /// next run's changes are named since.
+    pub fn end(&mut self) {
         observe::with(Some(&self.store.observer()), |o| o.flush());
+        self.cursors[0] = self.cursors[1].take();
     }
 
     /// The observer's counts (its stats, reuses, files read and hashed).

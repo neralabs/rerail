@@ -541,6 +541,11 @@ impl Registry {
         self.ops[op.0 as usize]
     }
 
+    /// The `i`-th operation declared, by its place (`None` past the last).
+    pub fn signature_at(&self, i: u32) -> Option<&'static Signature> {
+        self.ops.get(i as usize).copied()
+    }
+
     /// Whether a twin's phases are its version's shape's (the shape it runs the work as, `Version::shape`): the same
     /// names, in order; a phase that runs again has a bound on its turns.
     fn fits(sig: &Signature, v: &Version, twin: Twin) -> Result<(), String> {
@@ -1026,6 +1031,8 @@ fn execute(sig: &Signature, v: &Version, dir: &Directory, wide: &Wide<'_>, tilin
                 let mut launch = launch;
                 let ns = sig.slots.len();
                 let (pins, table) = launch.parts();
+                // The validation mode: every state the twin reads through the table counts its reads.
+                let table = if dir.validating() { table.counting(dir.state_reads()) } else { table };
                 let held: Vec<std::sync::Arc<rerail_blocks::block::Block>> = pins.iter().map(|p| std::sync::Arc::clone(p.block())).collect();
                 let blocks: Vec<&rerail_blocks::block::Block> = held.iter().map(|b| &**b).collect();
                 let mut out = Vec::with_capacity(run.len());
@@ -1204,12 +1211,17 @@ fn drive(sig: &Signature, v: &Version, tiling: Tiling, dir: &Directory, slots: &
             let tiles = n.div_ceil(t);
             let any_order = matches!(phase.across, Across::Nothing | Across::Combine | Across::Rounds);
             let order = if tiling.seed == 0 || !any_order { (0..tiles).collect() } else { shuffled(tiles, tiling.seed ^ turn as u64) };
+            let read0 = dir.state_reads().load(std::sync::atomic::Ordering::Relaxed);
             for k2 in order {
                 let lo = k2 * t;
                 r.run(k, Tile { lo: lo as u32, hi: (lo + t).min(n) as u32 })?;
                 if let Some(f) = r.meter().and_then(|m| m.fault.take()) {
                     return Err(format!("{}: phase {}: {f}", sig.name, phase.name));
                 }
+            }
+            if dir.validating() {
+                let reads = dir.state_reads().load(std::sync::atomic::Ordering::Relaxed) - read0;
+                dir.account(sig.name, phase.name, turn == 1 && grown == 0, n as u64, reads);
             }
             if let Some(m) = r.meter()
                 && !m.no_needs()

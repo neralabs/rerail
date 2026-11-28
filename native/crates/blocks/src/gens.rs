@@ -232,6 +232,8 @@ pub struct Table<'a> {
     rows: &'a [Desc],
     pins: &'a [BlockPin],
     written: &'a [u64],
+    /// Where the launch's state reads are counted (`Reach::reads`): the executor's validation mode's.
+    reads: Option<&'a core::sync::atomic::AtomicU64>,
 }
 
 impl<'a> Table<'a> {
@@ -248,7 +250,12 @@ impl<'a> Table<'a> {
                 d.id
             );
         }
-        Table { rows, pins, written }
+        Table { rows, pins, written, reads: None }
+    }
+
+    /// The same table, every state chained through it counting its reads into `reads`.
+    pub fn counting(self, reads: &'a core::sync::atomic::AtomicU64) -> Table<'a> {
+        Table { reads: Some(reads), ..self }
     }
 
     /// Whether block `id` is a slot of the launch pinned to write.
@@ -277,5 +284,8 @@ impl<'a> Table<'a> {
 impl Reach for Table<'_> {
     fn block(&self, id: Id) -> Option<&[u8]> {
         Table::block(self, id)
+    }
+    fn reads(&self) -> Option<&core::sync::atomic::AtomicU64> {
+        self.reads
     }
 }

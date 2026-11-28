@@ -427,3 +427,83 @@ fn a_toy_that_writes_past_its_want_fails_d1() {
     assert_eq!(b.law, "D1", "{b:?}");
     harness_under(&Toy(Flaw::Past), &chain(0), 2, None).unwrap();
 }
+
+/// L9 in the validation mode (`Instance::changed_within`): `out(p, v) :- in(p, v)` per partition `p`, and a flawed
+/// copy that also writes a row of partition 99 at each warm step, a partition its input's change never names.
+struct PerPart(bool);
+
+struct PerPartPorts;
+
+fn parted() -> Shape {
+    Shape::run(vec![ColType::I32, ColType::I32], vec![0, 1], Some(0))
+}
+
+impl PortSet for PerPartPorts {
+    const INS: usize = 1;
+    const GLOBALS: usize = 0;
+    const OUTS: usize = 1;
+    const PER_PARTITION: bool = true;
+
+    fn ports() -> Ports {
+        Ports { ins: vec![Port { name: "in", shape: parted() }], globals: Vec::new(), outs: vec![Port { name: "out", shape: parted() }] }
+    }
+}
+
+impl DeltaOp for PerPart {
+    type Ports = PerPartPorts;
+    type Cache = crate::cache::Orders;
+
+    fn delta(&self, cx: &mut Cx<'_>, ins: &In<'_, PerPartPorts>, _: Option<&Bistate<View<'_>>>, _: &mut CacheW<crate::cache::Orders>, out: &mut Out<PerPartPorts>, _: &mut Asks<PerPartPorts>) -> Result<Work, String> {
+        let x = ins.port(PortIn::new(0));
+        let w = out.writer(cx.dir, PortOut::new(0))?;
+        if let Some(b) = x.before() {
+            for id in x.gone() {
+                w.push(&[cell(b, id, 0), cell(b, id, 1)], -1);
+            }
+        }
+        for id in x.added() {
+            w.push(&[cell(x.after(), id, 0), cell(x.after(), id, 1)], 1);
+        }
+        if self.0 && x.before().is_some() {
+            w.push(&[99, Read::end(x.after()).get() as i64], 1);
+        }
+        Ok(Work::default())
+    }
+
+    fn run(&self, cx: &mut Cx<'_>, ins: &At<'_, PerPartPorts>, out: &mut Out<PerPartPorts>) -> Result<(), String> {
+        let x = ins.port(PortIn::new(0));
+        let w = out.writer(cx.dir, PortOut::new(0))?;
+        for id in live_ids(x) {
+            w.push(&[cell(x, id, 0), cell(x, id, 1)], 1);
+        }
+        Ok(())
+    }
+}
+
+/// The validation mode refuses a per-partition operator whose step changes a partition its inputs' change does not
+/// name (L9, checked as it runs), and passes the same operator without the flaw.
+#[test]
+fn a_per_partition_step_changing_another_partition_is_refused_in_the_validation_mode() {
+    for flawed in [false, true] {
+        let mut bench = Bench::new().unwrap();
+        bench.dir.validate(true);
+        let mut t = Trace::new(&parted()).unwrap().with_roll_up(RollUp::Never);
+        let op = PerPart(flawed);
+        let mut inst = Instance::new(&op, &mut bench.dir).unwrap();
+        t.write(&bench.ops, &mut bench.dir, &[(vec![1, 10], 1), (vec![2, 20], 1), (vec![3, 30], 1)]).unwrap();
+        Trace::commit_open(&bench.ops, &mut bench.dir, &mut [&mut t], Tiling::WHOLE).unwrap();
+        let h1 = t.head();
+        inst.step(&op, &mut bench.cx(), &[(&t, None, h1)], &[], None).unwrap();
+        t.write(&bench.ops, &mut bench.dir, &[(vec![2, 20], -1), (vec![2, 21], 1)]).unwrap();
+        Trace::commit_open(&bench.ops, &mut bench.dir, &mut [&mut t], Tiling::WHOLE).unwrap();
+        let ran = inst.step(&op, &mut bench.cx(), &[(&t, h1, t.head())], &[], None);
+        match flawed {
+            false => ran.unwrap(),
+            true => {
+                let e = ran.unwrap_err();
+                assert!(e.contains("L9") && e.contains("[99]") && e.contains("{2}"), "{e}");
+                continue;
+            }
+        };
+    }
+}

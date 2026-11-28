@@ -4,6 +4,7 @@
 
 use crate::boot::DocSet;
 use crate::contract::{Bench, GlobalIn, Instance, Work, apply, oracle_rows};
+use crate::dir::PhaseWork;
 use crate::files::{Store, World};
 use crate::kform::RELATIONS;
 use crate::l1::L1;
@@ -71,7 +72,7 @@ pub fn composition_and_cutoff(bench: &mut Bench, base: &Path, versions: &[&str])
 }
 
 /// What one edit among several documents did (L7, P1): L1's step over the set's change, alone.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone)]
 pub struct EditAmong {
     /// L1's work and launches for the step.
     pub work: Work,
@@ -79,6 +80,10 @@ pub struct EditAmong {
     /// The world's reads, loads and parses, and its launches, reading the set again (every document's stat).
     pub asked: crate::files::Asked,
     pub read_launches: u64,
+    /// The validation mode's ledgers of the edit's read and of its step: each operation's phases' launches, turns,
+    /// items and state reads.
+    pub read_ledger: Vec<PhaseWork>,
+    pub step_ledger: Vec<PhaseWork>,
 }
 
 /// The edited module's two versions, and the `i`-th unchanged module's text.
@@ -91,6 +96,59 @@ fn other(i: usize) -> String {
 /// read and stepped. Refused where L7 breaks: an output's changed partitions other than the edited module's, an
 /// unchanged module's rows moved, or L1's output not the plain function's on the set. What the edit's step cost.
 pub fn edit_among(bench: &mut Bench, base: &Path, others: usize) -> Result<EditAmong, String> {
+    edit_among_in(bench, base, others)
+}
+
+/// Equal where the runners must agree (CPU, device, mixed): the work, the launches and the asks. The ledgers are the
+/// CPU's validation mode's alone (a kernel counts no reads).
+impl PartialEq for EditAmong {
+    fn eq(&self, o: &EditAmong) -> bool {
+        (&self.work, self.launches, self.asked, self.read_launches) == (&o.work, o.launches, o.asked, o.read_launches)
+    }
+}
+
+impl Eq for EditAmong {}
+
+/// The merges' launches in a ledger (the geometric roll-up's, `work_grows`).
+pub fn merges(l: &[PhaseWork]) -> u64 {
+    l.iter().filter(|w| w.op == "merge" && w.phase == "sort").map(|w| w.launches).sum()
+}
+
+/// P1 operation by operation, from the validation mode's ledgers: one edit's work beside `2^doublings` times the
+/// data of the `base` run's, the edit the same. Every operation's phase runs as many launches and turns over as many
+/// items; its state reads grow by at most the base's once a doubling (a search reads a layer more each doubling: the
+/// geometric roll-up keeps O(log n) layers); and the roll-up's merges, which run as layers fill, take in no more rows
+/// than the edit's own δ pairs (`consolidate`'s rows in) once a doubling. Each breach named; none: O(change).
+pub fn work_grows(base: &[PhaseWork], at: &[PhaseWork], doublings: u64) -> Vec<String> {
+    let find = |l: &[PhaseWork], w: &PhaseWork| l.iter().find(|x| x.op == w.op && x.phase == w.phase).cloned();
+    let rows_in = |l: &[PhaseWork], op: &str| l.iter().filter(|w| w.op == op && w.phase == "rows in").map(|w| w.items).sum::<u64>();
+    let mut out = Vec::new();
+    for w in at.iter().filter(|w| w.op != "merge") {
+        match find(base, w) {
+            None => out.push(format!("{}.{}: runs beside the larger data, not beside the base", w.op, w.phase)),
+            Some(b) => {
+                if (w.launches, w.turns, w.items) != (b.launches, b.turns, b.items) {
+                    out.push(format!("{}.{}: launches, turns, items {:?}, at the base {:?}", w.op, w.phase, (w.launches, w.turns, w.items), (b.launches, b.turns, b.items)));
+                }
+                if w.reads > b.reads * (1 + doublings) {
+                    out.push(format!("{}.{}: {} state reads, at the base {} ({doublings} doublings)", w.op, w.phase, w.reads, b.reads));
+                }
+            }
+        }
+    }
+    for b in base.iter().filter(|w| w.op != "merge") {
+        if find(at, b).is_none() {
+            out.push(format!("{}.{}: runs beside the base, not beside the larger data", b.op, b.phase));
+        }
+    }
+    let (merged, change) = (rows_in(at, "merge"), rows_in(at, "consolidate"));
+    if merged > change * (1 + doublings) {
+        out.push(format!("the merges took in {merged} rows, the edit's change {change} ({doublings} doublings)"));
+    }
+    out
+}
+
+fn edit_among_in(bench: &mut Bench, base: &Path, others: usize) -> Result<EditAmong, String> {
     let root = base.join("root");
     std::fs::create_dir_all(&root).map_err(|e| e.to_string())?;
     let paths: Vec<(String, String)> = std::iter::once(("e.rerail".to_string(), "e".to_string())).chain((0..others).map(|i| (format!("m{i}.rerail"), format!("m{i}")))).collect();
@@ -107,8 +165,12 @@ pub fn edit_among(bench: &mut Bench, base: &Path, others: usize) -> Result<EditA
         // A run of the world (decision 0105): the journal asked once what changed under the root, the rest trusted.
         docs.world.begin();
         let mut leaves = docs.world.leaves_w(&mut bench.dir);
-        let named: Vec<(&str, &str)> = paths.iter().map(|(p, m)| (p.as_str(), m.as_str())).collect();
-        docs.read_all(bench, &mut leaves, atoms, &named)?;
+        // What the journal names changed since the last run, read alone; every document where it cannot say.
+        let module = |p: &str| p.trim_end_matches(".rerail").to_string();
+        if docs.read_changed(bench, &mut leaves, atoms, &module)?.is_none() {
+            let named: Vec<(&str, &str)> = paths.iter().map(|(p, m)| (p.as_str(), m.as_str())).collect();
+            docs.read_all(bench, &mut leaves, atoms, &named)?;
+        }
         docs.world.commit_leaves(&bench.ops, &mut bench.dir, leaves)?;
         docs.world.end();
         docs.resident(bench)
@@ -126,13 +188,18 @@ pub fn edit_among(bench: &mut Bench, base: &Path, others: usize) -> Result<EditA
     // The edit.
     write(&root.join("e.rerail"), EDITED[1], 300)?;
     let (asked0, launched) = (docs.world.asked, bench.ops.launches());
+    bench.dir.take_work();
+    bench.dir.validate(true);
     read_all(bench, &mut docs).map_err(|e| format!("the edit's read: {e}"))?;
+    let read_ledger = bench.dir.take_work();
     let a = docs.world.asked;
     let asked = crate::files::Asked { reads: a.reads - asked0.reads, loads: a.loads - asked0.loads, parses: a.parses - asked0.parses, interns: a.interns - asked0.interns };
     let read_launches = bench.ops.launches() - launched;
     let launched = bench.ops.launches();
     let work = step(bench, &docs, &mut inst, (h1, Some(c1))).map_err(|e| format!("the edit's step: {e}"))?;
     let launches = bench.ops.launches() - launched;
+    let step_ledger = bench.dir.take_work();
+    bench.dir.validate(false);
     // L7: only the edited module's partitions changed, in every output.
     let e = docs.key(&bench.dir, atoms, "e.rerail")?;
     for (k, (t, before)) in inst.outs.iter().zip(&o1).enumerate() {
@@ -156,7 +223,7 @@ pub fn edit_among(bench: &mut Bench, base: &Path, others: usize) -> Result<EditA
     if rows2 != apply(&L1, &mut bench.cx(), &[(&docs.tape, docs.tape.head())], &globals)? {
         return Err("L1: the output is not the plain function's on the set".into());
     }
-    Ok(EditAmong { work, launches, asked, read_launches })
+    Ok(EditAmong { work, launches, asked, read_launches, read_ledger, step_ledger })
 }
 
 /// What L8's driver saw.

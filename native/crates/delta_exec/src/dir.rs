@@ -120,6 +120,29 @@ pub struct Directory {
     residency: crate::residency::Residency,
     /// The `.rerail` language's table for `intern` (`intern::language`), made once.
     pub(crate) language: Option<BlockId>,
+    /// The validation mode's (`validate`): each operation's work, measured inside its launches.
+    work: Work,
+}
+
+/// One operation's phase's work over the launches since the ledger was last taken (`Directory::take_work`): its
+/// launches and turns, its items, and its state reads (each row, liveness word and kill a twin's reads of a trace's
+/// state touch, counted by the launch's table: `gens::Table::counting`).
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct PhaseWork {
+    pub op: &'static str,
+    pub phase: &'static str,
+    pub launches: u64,
+    pub turns: u64,
+    pub items: u64,
+    pub reads: u64,
+}
+
+/// The validation mode: whether it is on, the count its launches' state reads go into, and the ledger.
+#[derive(Default)]
+struct Work {
+    on: Cell<bool>,
+    reads: std::sync::atomic::AtomicU64,
+    ledger: RefCell<Vec<PhaseWork>>,
 }
 
 impl Directory {
@@ -206,6 +229,43 @@ impl Directory {
     /// The launches the open evaluation, or the last, has made.
     pub fn launches(&self) -> u32 {
         self.ledger.launches.get()
+    }
+
+    /// Turns the validation mode on or off: while on, every operation's launch on the CPU counts its items and its
+    /// state reads into the work ledger (`take_work`), phase by phase.
+    pub fn validate(&self, on: bool) {
+        self.work.on.set(on);
+    }
+
+    /// Whether the validation mode is on.
+    pub fn validating(&self) -> bool {
+        self.work.on.get()
+    }
+
+    /// The count a validating launch's state reads go into.
+    pub(crate) fn state_reads(&self) -> &std::sync::atomic::AtomicU64 {
+        &self.work.reads
+    }
+
+    /// One turn of `op`'s phase `phase` over `items` items, its state reads `reads`; `first`, its launch's first turn.
+    pub(crate) fn account(&self, op: &'static str, phase: &'static str, first: bool, items: u64, reads: u64) {
+        let mut l = self.work.ledger.borrow_mut();
+        let w = match l.iter().position(|w| w.op == op && w.phase == phase) {
+            Some(i) => &mut l[i],
+            None => {
+                l.push(PhaseWork { op, phase, ..PhaseWork::default() });
+                l.last_mut().expect("just pushed")
+            }
+        };
+        w.launches += u64::from(first);
+        w.turns += 1;
+        w.items += items;
+        w.reads += reads;
+    }
+
+    /// The work ledger since it was last taken, by operation and phase in the order first run; emptied.
+    pub fn take_work(&self) -> Vec<PhaseWork> {
+        std::mem::take(&mut *self.work.ledger.borrow_mut())
     }
 
     /// The directory with its kept blocks' files in `folder` (`Placement::KeptFile`): one a block, named by its id.

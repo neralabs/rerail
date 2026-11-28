@@ -615,7 +615,9 @@ fn a_restriction_reads_only_its_partitions_rows() {
     let pk: Vec<u64> = whole.layers().map(|(_, l)| l.part_kills(50).len() as u64).collect();
     let log = |n: u64| u64::from(u64::BITS - n.leading_zeros());
     let searches: u64 = (0..pk.len()).map(|k| (0..k).map(|j| log(pk[j]) + 1).sum::<u64>()).sum();
-    assert!(scan <= own + kills + searches, "a restricted scan read {scan} rows and kills, its partition's own rows being {own} (of {rows_total}), its kills {kills}, its searches {searches}");
+    // And the reads of the rows' values (`get`), each column of each row found.
+    let gets = 3 * want.len() as u64;
+    assert!(scan <= own + kills + searches + gets, "a restricted scan read {scan} rows, kills and values, its partition's own rows being {own} (of {rows_total}), its kills {kills}, its searches {searches}, its values {gets}");
     let cols: Vec<ColumnIndex> = ColumnIndex::all(3).collect();
     let x = want.iter().next().unwrap();
     assert_eq!(s.matching(&cols, x).count(), 1);

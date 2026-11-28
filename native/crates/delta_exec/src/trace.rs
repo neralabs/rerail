@@ -330,6 +330,10 @@ impl Trace {
             let wide: Vec<(&[BlockId], &[u8])> = slots.iter().zip(&params).map(|(s, p)| (&s[..], &p[..])).collect(); // copy: not block data (the launch's instances)
             ops.run_wide(dir, &CONSOLIDATE, &wide, tiling)
         });
+        // The validation mode: the δ pairs the commit took in, the change its merges are bounded by.
+        if dir.validating() {
+            dir.account("consolidate", "rows in", false, sizes.iter().sum::<usize>() as u64, 0);
+        }
         let mut codes = Vec::with_capacity(slots.len()); // copy: not block data (each launch's refusal and roll-up)
         for s in &slots {
             if run.is_ok() {
@@ -478,6 +482,10 @@ impl Trace {
         let mut params = [0u8; MergeP::SIZE];
         MergeP { head: head.0, count, below: below.unwrap_or(NONE), pad: 0 }.write(&mut params);
         let run = ops.run(dir, &MERGE, &[head, out, scratch], &params, tiling);
+        // The validation mode: the rows and kills the merge took in (its phases' items count segments, not rows).
+        if dir.validating() {
+            dir.account("merge", "rows in", false, rows as u64, 0);
+        }
         dir.release(scratch);
         if let Err(e) = run {
             dir.release(out);

@@ -652,6 +652,11 @@ impl Instance {
         let mut cap = vec![FIRST_RUNS; self.outs.len()];
         let mut ask_cap = vec![FIRST_RUNS; self.asks.len()];
         let mut again = 0;
+        // The validation mode, for an operator declared per partition (L9): the outputs' befores held as a reader
+        // holds a generation (the commit may roll them up), to read each output's change against its inputs' after.
+        let l9 = cx.dir.validating() && <O::Ports as PortSet>::PER_PARTITION;
+        let outs_before = self.heads();
+        let _held: Vec<_> = if l9 { outs_before.iter().flatten().filter_map(|&h| cx.dir.block(h)).collect() } else { Vec::new() }; // copy: not block data (handles held)
         loop {
             let runs: Vec<BlockId> = self.outs.iter().zip(&cap).map(|(t, &c)| t.open(cx.dir, c)).collect();
             let mut out = Out::<O::Ports> { runs, kept: self.heads(), of: PhantomData };
@@ -728,12 +733,63 @@ impl Instance {
             if cache.begun() {
                 self.cache.commit(cx.ops, cx.dir, to)?;
             }
+            if l9 {
+                self.changed_within(cx.dir, ins, want, &outs_before)?;
+            }
             let mut work = work;
             if again > 0 {
                 work.excess.push((OUTGROWN, again));
             }
             return Ok(work);
         }
+    }
+}
+
+impl Instance {
+    /// L9, checked in the validation mode: a per-partition operator's step changed, in every output, only partitions
+    /// its inputs' change or its demand's change names (the want's rows' keys, column 1). A cold input changes every
+    /// partition: nothing to check. Refused, naming the output and the partitions, where it breaks.
+    fn changed_within(&self, dir: &Directory, ins: &[InPort<'_>], want: WantIn, outs_before: &[Option<BlockId>]) -> Result<(), String> {
+        if ins.iter().any(|p| p.1.is_none()) {
+            return Ok(());
+        }
+        let mut parts = BTreeSet::new(); // copy: derived (the changed partitions, the check's answer)
+        {
+            let wanted = want.map_or(Vec::new(), |(b, a)| [b, a].into_iter().flatten().collect());
+            let heads: Vec<BlockId> = ins.iter().flat_map(|p| [p.1, p.2]).flatten().chain(wanted).collect();
+            let l = dir.read("L9's inputs", &heads)?;
+            let table = l.table();
+            for (t, b, a) in ins {
+                Bistate::new(t.state(&table, *b)?, t.state(&table, *a)?).changed_parts(&mut |p| {
+                    parts.insert(p);
+                });
+            }
+            if let Some((b, a)) = want {
+                let w = match b {
+                    None => Bistate::cold(self.want.state(&table, a)?),
+                    Some(_) => Bistate::new(self.want.state(&table, b)?, self.want.state(&table, a)?),
+                };
+                let key = ColumnIndex::new(1);
+                parts.extend(w.added().map(|id| Read::get(w.after(), id, key)));
+                if let Some(s) = w.before() {
+                    parts.extend(w.gone().map(|id| Read::get(s, id, key)));
+                }
+            }
+        }
+        for (k, (t, before)) in self.outs.iter().zip(outs_before).enumerate() {
+            let l = t.read(dir, &[*before, t.head()])?;
+            let table = l.table();
+            let mut beyond = Vec::new(); // copy: derived (the breach, named)
+            t.change(&table, *before, t.head())?.changed_parts(&mut |p| {
+                if !parts.contains(&p) {
+                    beyond.push(p);
+                }
+            });
+            if !beyond.is_empty() {
+                return Err(format!("L9: output {k} changed in partitions {beyond:?}, which neither its inputs' change nor its demand's names ({parts:?})"));
+            }
+        }
+        Ok(())
     }
 }
 

@@ -442,10 +442,21 @@ fn edits_coalesce_two_as_one_and_an_undo_as_the_identity() {
 /// Below 4 the set's geometric roll-up (O5) merges the edit's layer, as big as the set, in two launches more.
 #[test]
 fn the_work_of_one_edit_does_not_grow_with_the_rest() {
-    let sizes = [4, 8, 16];
-    let runs: Vec<crate::laws::EditAmong> = sizes.iter().map(|&n| crate::laws::edit_among(&mut Bench::new().unwrap(), &laws_base(&format!("p1-{n}")), n).unwrap_or_else(|e| panic!("{n}: {e}"))).collect();
-    assert_eq!(runs[0].read_launches, 6, "the edit's read: its load answer, its parse and intern, the set's replace and commit, its residency");
+    // P1, in the validation mode: each operation's launches, items and state reads, one edit among 4 to 64 unchanged
+    // modules (`laws::work_grows`).
+    let sizes = [4u64, 8, 16, 32, 64];
+    let runs: Vec<crate::laws::EditAmong> = sizes.iter().map(|&n| crate::laws::edit_among(&mut Bench::new().unwrap(), &laws_base(&format!("p1-{n}")), n as usize).unwrap_or_else(|e| panic!("{n}: {e}"))).collect();
+    let b = &runs[0];
+    let load = b.read_ledger.iter().find(|w| w.op == "answer_load").map(|w| w.items);
+    assert_eq!((load, b.asked.reads), (Some(1), 1), "the edit's read asks the load answer of the edited document alone (the journal names it): {:?}", b.asked);
+    assert_eq!(b.read_launches, 5, "the edit's read: its load answer, its parse and intern, the set's replace and commit");
     for (r, n) in runs.iter().zip(sizes) {
-        assert_eq!((&r.work, r.launches, r.asked, r.read_launches), (&runs[0].work, runs[0].launches, runs[0].asked, runs[0].read_launches), "{n} unchanged modules beside the edit");
+        let m = crate::laws::merges(&r.read_ledger) + crate::laws::merges(&r.step_ledger);
+        assert_eq!((&r.work, r.asked, r.launches + r.read_launches - m), (&b.work, b.asked, b.launches + b.read_launches), "{n} unchanged modules beside the edit");
+        let d = (n / sizes[0]).ilog2() as u64;
+        for (what, base, at) in [("read", &b.read_ledger, &r.read_ledger), ("step", &b.step_ledger, &r.step_ledger)] {
+            let grew = crate::laws::work_grows(base, at, d);
+            assert!(grew.is_empty(), "the edit's {what} beside {n} unchanged modules grew with them:\n{}", grew.join("\n"));
+        }
     }
 }

@@ -68,9 +68,10 @@ pub struct DocSet {
     /// The asks' head the set was last read against (`forget_unasked`; `None`: never): every document read since was
     /// asked there, so while the asks stay at it no document is unasked.
     covered: Option<Option<BlockId>>,
-    /// The set's head and the residency's counts (slabs retired, drops) when every document of it was last made
-    /// resident (`resident`): while both stay, no slab of it went and no document came, so it is resident still.
-    resident_at: Option<(BlockId, (u64, u64))>,
+    /// The residency's counts (slabs retired, drops) when every document of the set was last made resident
+    /// (`resident`): while they stay, no slab of it went, and a document come since was placed by its read, so the
+    /// set is resident still.
+    resident_at: Option<(u64, u64)>,
 }
 
 impl DocSet {
@@ -162,6 +163,23 @@ impl DocSet {
     /// Reads document `path` as module `module` (B§8's first line; the engine's load names both): `read_all` of it.
     pub fn read(&mut self, bench: &mut Bench, leaves: &mut LeavesW, atoms: Atoms, path: &str, module: &str) -> Result<Doc, String> {
         Ok(self.read_all(bench, leaves, atoms, &[(path, module)])?.pop().expect("one document read"))
+    }
+
+    /// The set's documents the journal names as changed since the last run (`World::changed`), read (P1: an edit's
+    /// read is of what changed, not of every document); `module` names a path's module, as the caller named it when
+    /// it first read it. A path the set holds no document of is not one of its documents: a new one is the caller's
+    /// to name (`read_all`). `None` where the journal cannot say: every document is then the caller's to read.
+    pub fn read_changed(&mut self, bench: &mut Bench, leaves: &mut LeavesW, atoms: Atoms, module: &dyn Fn(&str) -> String) -> Result<Option<Vec<Doc>>, String> {
+        let Some(named) = self.world.changed() else { return Ok(None) };
+        let mut held = Vec::new(); // copy: derived (the changed documents' paths and modules)
+        for p in named {
+            let Some(path) = p.to_str() else { continue };
+            if self.row_at(&bench.dir, atoms, path)?.is_some() {
+                held.push((path.to_string(), module(path)));
+            }
+        }
+        let docs: Vec<(&str, &str)> = held.iter().map(|(p, m)| (p.as_str(), m.as_str())).collect();
+        self.read_all(bench, leaves, atoms, &docs).map(Some)
     }
 
     /// Reads the documents `docs` names (each its path and its module; B§8's first line) through the three answerers
@@ -288,8 +306,10 @@ impl DocSet {
     /// directory holds by the blob store's `forget_dead`); the loads are the file layer's and the touches the residency's.
     pub fn resident(&mut self, bench: &mut Bench) -> Result<(), String> {
         let Some(h) = self.tape.head() else { return Ok(()) };
-        // Resident still: no slab retired or dropped since, and the same documents (L4: an identity run's are its checks).
-        let at = (h, bench.dir.residency());
+        // Resident still: no slab retired or dropped since, and each document come since placed by its read (L4: an
+        // identity run's are its checks; P1: an edit's, its change's). An eviction's look names every document's
+        // blocks, the residency's event, not an edit's.
+        let at = bench.dir.residency();
         if self.resident_at == Some(at) {
             return Ok(());
         }

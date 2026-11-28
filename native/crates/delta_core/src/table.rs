@@ -38,4 +38,9 @@ pub fn row(rows: &[Desc], id: Id) -> Option<&Desc> {
 /// from its rows' addresses. Shared by the tiles of a launch, so `Sync`.
 pub trait Reach: Sync {
     fn block(&self, id: Id) -> Option<&[u8]>;
+    /// The count a launch's state reads go into (the executor's validation mode: each state chained through this
+    /// table counts its reads, `trace::State::counted`); `None`, not counted.
+    fn reads(&self) -> Option<&core::sync::atomic::AtomicU64> {
+        None
+    }
 }
