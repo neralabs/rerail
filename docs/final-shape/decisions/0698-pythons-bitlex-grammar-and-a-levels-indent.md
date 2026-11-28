@@ -1223,3 +1223,26 @@ statements and blocks end.
     - **As measured** (3 passes, on the M1 Max at load 4 to 5, both builds there): the walk's summaries went from
       1380M to 1290M cycles at 16 blocks a chunk, and from 7239M to 6650M instructions. At 1 block a chunk, where
       every block is a chunk's first, they went from about 3417M to 3344M.
+121. **The walk's costs, profiled alone; one read of the entry a layout step** (as built: `LayoutLane::line` and
+    `in_brackets` return their reads, `lane_step` keeps one).
+    - **The profile:** Time Profiler on the M1 Max at 16 blocks a chunk, only the samples whose stack is in the
+      walk's functions (`walk_block`, `walk_more`, `walk_summary_masks`): 9469 of 19982. Each sample's innermost
+      frame in the lexer's own source, with the two it is inlined in:
+
+      | Part | Samples | Of the walk |
+      |---|---|---|
+      | The layout's lanes (`cond` in `line` and `in_brackets`, `line`, its `keep`) | about 2000 | 21% |
+      | The starts in code (`ks3`, `numbers_from`, `starts_in`, `classes`) | about 1400 | 15% |
+      | The walk's window (`win`'s reads, `walk_summary_masks`, the strata's `regions_b_in` again) | about 800 | 8% |
+      | The strings' classes (`sclasses`) | about 400 | 4% |
+
+    - **The layout's lanes:** their samples are over about 300 addresses, at most 17 on any one, so the cost is
+      the number of instructions, not a wait. `cond` ran 12 times a block: 2 steps, 3 lanes, and from both
+      `line` and `in_brackets`. An event is out of brackets or in them, so at most one of the two reads is on.
+      Where `line`'s is off it leaves the lane as it was, so `in_brackets` reads the same state. So each step
+      keeps one read, `cond` 6 times a block.
+    - **As tested:** the 30 tests pass on AArch64 and x86-64. From the middle is still the serial lexer's in
+      1644 of 1644 files. `walk_block`'s instances have 6704 to 9248 instructions on AArch64 (7120 to 9696
+      before) and 8284 to 10779 on x86-64. All have 0 conditional branches and 0 calls.
+    - **As measured** (3 passes, 16 blocks a chunk, on the M1 Max at load 5, two runs): the walk's summaries
+      1271M and 1246M cycles (1290M before), 6561M and 6325M instructions (6650M).

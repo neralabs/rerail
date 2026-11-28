@@ -1196,14 +1196,14 @@ impl LayoutLane {
     }
 
     /// Where `on`, a line's layout out of brackets (the walk's layout loop): the next line's width `w` and `m`, the
-    /// larger of it and the first comment's.
+    /// larger of it and the first comment's. Its read of the entry (`cond`'s), for its caller to keep.
     #[inline(always)]
-    fn line(&mut self, on: bool, w: i64, m: i64) {
+    fn line(&mut self, on: bool, w: i64, m: i64) -> (bool, i64, i64) {
         let has = self.len > 0;
         let below = !has | (self.top() < w);
         let push = on & self.header & below;
         let pop = on & !push;
-        self.cond(push & !has & (w <= self.t), w, self.t);
+        let read = (push & !has & (w <= self.t), w, self.t);
         self.bad |= why(push & (self.len == OWN), WHY_OWN);
         let at = self.len.min(OWN - 1);
         self.own[at] = pick(push, w as u32, self.own[at]);
@@ -1217,15 +1217,16 @@ impl LayoutLane {
         self.lay_since |= added > 0;
         self.open &= !on;
         self.header &= !on;
+        read
     }
 
     /// Where `on`, a line in brackets the walk checks for a dedent: refused where the top is above `m` (not known
-    /// here).
+    /// here). Its read of the entry (`cond`'s), for its caller to keep.
     #[inline(always)]
-    fn in_brackets(&mut self, on: bool, m: i64) {
+    fn in_brackets(&mut self, on: bool, m: i64) -> (bool, i64, i64) {
         let has = self.len > 0;
         self.bad |= why(on & has & (self.top() > m), WHY_BRACKETS);
-        self.cond(on & !has & (m < self.t), m + 1, self.t);
+        (on & !has & (m < self.t), m + 1, self.t)
     }
 
     /// The walk's `closer_may_follow` from the codes of the kinds of the last two tokens read.
@@ -1469,9 +1470,12 @@ struct Ev {
 #[inline(always)]
 fn lane_step(l: &mut LayoutLane, last: &LastToks, n: u32, e: Ev) {
     l.read(n, last.colon);
-    l.line(e.on & !e.brackets, e.w, e.m);
+    let (a, lo, hi) = l.line(e.on & !e.brackets, e.w, e.m);
     let check = e.on & e.brackets & !e.quote & !l.closer_may_follow(last.k[0], last.k[1]);
-    l.in_brackets(check, e.m);
+    // An event is out of brackets or in them, so at most one of the two reads is on; and where `line`'s is off it
+    // left the lane as it was, so `in_brackets` read it as before. One `cond` for the step.
+    let (b, lo2, hi2) = l.in_brackets(check, e.m);
+    l.cond(a | b, pick(a, lo, lo2), pick(a, hi, hi2));
 }
 
 /// The block's next event (the lowest of `rest`, where there is one): the tokens before it read, and each lane's step.
