@@ -114,8 +114,8 @@ describe("one session's runtime in the engine service", () => {
     expect(p.engine.openRuntimes()).toBe(1);
   }, 30_000);
 
-  // The same with the session's end second: it went to a runtime of its own, which did not hold the session, so the
-  // session stayed open and owned in the first one, and two runtimes stayed open.
+  // The same with the session's end second: it went to a runtime of its own, whose claim on the session was refused
+  // (`already owned by a live runtime`), so the end went unrecorded and the session stayed open and owned.
   it("ends a session whose start and end are routed together, the end under another model folder, in one runtime", async () => {
     const p = await service();
     const other = p.configured({ modelPath: p.otherModel });
