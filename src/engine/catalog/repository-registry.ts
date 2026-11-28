@@ -19,10 +19,12 @@ import {
   outsideGit,
   readCloneIdAt,
   readRemoteAnswer,
+  remoteAnswerKept,
   repositoryFolderName,
   repositoryIdentityLocation,
   resolveCloneId,
   WorktreeRegistryPass,
+  type RemoteAnswer,
   type RepositoryIdentityLocation,
 } from "./repository-identity.js";
 import { placementInputs } from "./checkouts/git-placement.js";
@@ -78,16 +80,17 @@ function remoteKeyOf(location: RepositoryIdentityLocation): RepositoryKey | unde
 }
 
 /**
- * {@link remoteKeyOf}, and whether Git answered every question it was asked for it ({@link readRemoteAnswer}): a folder
- * outside Git, for which no Git is asked, did; where no Git is found, none did.
+ * {@link remoteKeyOf}, whether Git answered every question it was asked for it, and whether a Git asked ran to its time
+ * limit ({@link readRemoteAnswer}): a folder outside Git, for which no Git is asked, answered; where no Git is found,
+ * none did.
  */
-function remoteKeyAnswer(location: RepositoryIdentityLocation): { readonly key: RepositoryKey | undefined; readonly answered: boolean } {
-  if (!location.git && outsideGit(location.workspaceRoot)) return { key: undefined, answered: true };
+function remoteKeyAnswer(location: RepositoryIdentityLocation): { readonly key: RepositoryKey | undefined } & Omit<RemoteAnswer, "remote"> {
+  if (!location.git && outsideGit(location.workspaceRoot)) return { key: undefined, answered: true, ranToLimit: false };
   try {
-    const { remote, answered } = readRemoteAnswer(location.workspaceRoot);
-    return { key: remote === undefined ? undefined : normalizeRemoteAddress(remote.url), answered };
+    const { remote, ...answer } = readRemoteAnswer(location.workspaceRoot);
+    return { key: remote === undefined ? undefined : normalizeRemoteAddress(remote.url), ...answer };
   } catch (error) {
-    if (error instanceof GitUnavailableError) return { key: undefined, answered: false };
+    if (error instanceof GitUnavailableError) return { key: undefined, answered: false, ranToLimit: false };
     throw error;
   }
 }
@@ -428,13 +431,15 @@ interface KeptRemote {
   readonly key: RepositoryKey | undefined;
   readonly files: readonly string[];
   readonly text: string;
+  /** False for a read whose Git ran to its time limit, kept with no key ({@link keptRemoteKey}). */
+  readonly answered: boolean;
 }
 
 /**
  * A location the resolver or a session's rule checks (`CheckoutCatalogs`) read for a workspace, with what was there then:
  * the clone id at its identity path, the identity of its top level's `.git` ({@link folderIdentity}; undefined where it
  * could not be read), the folders Git's search passed between the workspace and that top level (`below`), and the
- * checkout's remote once the resolver read it from Git's answer ({@link keptRemoteKey}); a location read afresh
+ * checkout's remote once the resolver read it ({@link keptRemoteKey}); a location read afresh
  * ({@link locationNow}) has none. Each workspace keeps its own, so a second folder of a checkout reads the remote at its
  * first read, which {@link readRemoteAnswer} answers from Git's kept answer while the clone's config files read the same.
  */
@@ -461,17 +466,31 @@ function remoteFilesOf(location: RepositoryIdentityLocation): readonly string[] 
  * `kept`'s remote key, kept while the config files it is read from hold what they held when it was read
  * ({@link configFilesText}: their text, or what the file system says of one whose text cannot be read), so no Git
  * runs; `git remote set-url` rewrites the common `config`, and the next lookup reads the remote again
- * ({@link remoteKeyOf}). A read a Git gave no answer to is kept by nothing, so the next lookup asks Git again.
+ * ({@link remoteKeyOf}). A read whose Git gave no answer otherwise (it could not start, was killed or failed) is kept by
+ * nothing, so the next lookup asks Git again. A read whose Git ran to its time limit is kept with no key, as that lookup
+ * answered, until a fact says Git answers for the clone again ({@link servingRemote}), so a Git that keeps running to
+ * its limit holds the daemon's thread once, not at every lookup.
  */
 function keptRemoteKey(kept: KeptLocation): RepositoryKey | undefined {
   const files = kept.remote?.files ?? remoteFilesOf(kept.location);
   // Read before Git is asked: a config written between the two reads as changed at the next lookup.
   const text = configFilesText(files);
-  if (kept.remote?.text === text) return kept.remote.key;
-  const { key, answered } = remoteKeyAnswer(kept.location);
-  if (answered) kept.remote = { key, files, text };
+  const serving = servingRemote(kept, text);
+  if (serving !== undefined) return serving.key;
+  const { key, answered, ranToLimit } = remoteKeyAnswer(kept.location);
+  if (answered || ranToLimit) kept.remote = { key, files, text, answered };
   else delete kept.remote;
   return key;
+}
+
+/**
+ * `kept`'s remote where it serves with no Git: read when the config files held `text`, what they hold now, and either
+ * answered by Git or, where its Git ran to its time limit, with no answer of Git's for the clone's remote kept since
+ * ({@link remoteAnswerKept}), as a session's open learns it off the thread or a recording reads it.
+ */
+function servingRemote(kept: KeptLocation, text: string): KeptRemote | undefined {
+  const { remote } = kept;
+  return remote?.text === text && (remote.answered || !remoteAnswerKept(kept.location.workspaceRoot)) ? remote : undefined;
 }
 
 /**
@@ -515,9 +534,9 @@ function locatedAfresh(located: Map<string, KeptLocation>, workspace: string): K
  * location is kept while the clone there is the one it was read with ({@link stillPlaces}), and read afresh, its remote
  * too, once another checkout takes its path or a folder between the workspace and its top level becomes a repository of
  * its own; a folder outside Git is located again each time, so a later `git init` is seen. A checkout's remote is kept
- * while its repository's config files read the same and Git answered its read ({@link keptRemoteKey}), so a remote
- * changed in place names its repository at the next lookup. The database is read on every call, so adoption and new
- * records show at once.
+ * while its repository's config files read the same and Git answered its read or ran to its time limit
+ * ({@link keptRemoteKey}), so a remote changed in place names its repository at the next lookup. The database is read
+ * on every call, so adoption and new records show at once.
  */
 export function createCheckoutResolver(db: FileReader): (workspace: string) => CheckoutContext | undefined {
   const located = new Map<string, KeptLocation>();

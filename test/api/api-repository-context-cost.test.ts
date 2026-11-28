@@ -55,9 +55,10 @@ vi.mock("../../src/engine/catalog/repository-identity.js", async () => {
 
 /**
  * While `remotes` is on, each Git asked for a checkout's remote (`ls-remote --get-url origin`, `remote`) is a process
- * that ends as a Git that could not start ends, with no answer (on Linux the loader's exit 127); `failed` counts them.
+ * that ends as a Git that could not start ends, with no answer (on Linux the loader's exit 127), or with `pastLimit` one
+ * ended at its time limit, as `spawnSync` ends a Git that runs past Rerail's; `failed` counts them.
  */
-const noAnswer = vi.hoisted(() => ({ remotes: false, failed: 0 }));
+const noAnswer = vi.hoisted(() => ({ remotes: false, pastLimit: false, failed: 0 }));
 vi.mock("../../src/engine/child-process.js", async () => {
   const original = await vi.importActual<typeof import("../../src/engine/child-process.js")>("../../src/engine/child-process.js");
   const remoteAsk = (args: unknown): boolean => {
@@ -72,6 +73,7 @@ vi.mock("../../src/engine/child-process.js", async () => {
     if (reads.counting) reads.starts += 1;
     if (!remoteAsk(parameters[1])) return original.spawnSync(...parameters);
     noAnswer.failed += 1;
+    if (noAnswer.pastLimit) return original.spawnSync(process.execPath, ["-e", "setTimeout(() => {}, 60_000)"], { encoding: "utf8", timeout: 200 });
     return original.spawnSync(process.execPath, ["-e", "process.exit(127)"], { encoding: "utf8" });
   }) as typeof original.spawnSync;
   return { ...original, spawn, spawnSync };
@@ -406,7 +408,7 @@ describe("a remote changed in place in a checkout not recorded, while the daemon
     const { root, stores, db, app } = await daemonStores();
     const first = recordCheckout(db, cloneAt(join(root, "app"), APP)).repositoryKey;
     const second = recordCheckout(db, cloneAt(join(root, "other"), OTHER)).repositoryKey;
-    return { root, api: app, first, second, resolveCheckout: stores.checkouts() };
+    return { root, db, api: app, first, second, resolveCheckout: stores.checkouts() };
   }
 
   /** One read of `checkout` through `resolveCheckout`: the repository it names, the remotes it read, the processes it started and the files it stamped. */
@@ -520,6 +522,25 @@ describe("a remote changed in place in a checkout not recorded, while the daemon
     expect(counted(resolveCheckout, checkout)).toEqual({ named: first, remotes: 1, starts: 1, stamps: 0 });
     expect(counted(resolveCheckout, checkout)).toEqual({ named: first, remotes: 0, starts: 0, stamps: 0 });
     expect(await namedRepositories(api, checkout)).toEqual(allNaming(first));
+  });
+
+  it("asks a Git that ran to its time limit once, and at no later read until Git's answer for the clone's remote is kept", async () => {
+    const { root, db, first, resolveCheckout } = await twoRepositories();
+    const checkout = cloneAt(join(root, "fresh"), APP);
+    Object.assign(noAnswer, { remotes: true, pastLimit: true, failed: 0 });
+    try {
+      expect(resolveCheckout(checkout)?.repositoryKey).toBeUndefined();
+      const later = [1, 2, 3].map(() => counted(resolveCheckout, checkout));
+      expect({ failed: noAnswer.failed, later }).toEqual({ failed: 1, later: Array(3).fill({ named: undefined, remotes: 0, starts: 0, stamps: 0 }) });
+    } finally {
+      Object.assign(noAnswer, { remotes: false, pastLimit: false });
+    }
+
+    // Git answers again, and another read keeps its answer for the clone's remote, as a session's open learns it.
+    expect(lookupCheckout(db, checkout)?.repositoryKey).toBe(first);
+
+    expect(counted(resolveCheckout, checkout)).toEqual({ named: first, remotes: 1, starts: 0, stamps: 0 });
+    expect(counted(resolveCheckout, checkout)).toEqual({ named: first, remotes: 0, starts: 0, stamps: 0 });
   });
 });
 

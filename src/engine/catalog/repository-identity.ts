@@ -950,16 +950,28 @@ export interface RemoteAnswer {
    * `remote` is then no answer of Git's, "no remote" included, and nothing keeps it.
    */
   readonly answered: boolean;
+  /** True where a Git asked ran to its time limit: the read asked nothing after it, which would wait as long again. */
+  readonly ranToLimit: boolean;
 }
 
 /** {@link readRemoteAddress}, saying whether Git answered ({@link RemoteAnswer}); a kept answer is one Git gave. */
 export function readRemoteAnswer(root: string): RemoteAnswer {
   const source = remoteSource(root);
   const kept = keptRemote(source);
-  if (kept !== undefined) return { remote: kept.remote, answered: true };
+  if (kept !== undefined) return { remote: kept.remote, answered: true, ranToLimit: false };
   const answers: GitResult[] = [];
-  for (let step = remoteStep(answers); "ask" in step; step = remoteStep(answers)) answers.push(runGit(root, step.ask));
+  for (let step = remoteStep(answers); "ask" in step && !answers.some(ranToLimit); step = remoteStep(answers)) answers.push(runGit(root, step.ask));
   return answeredRemote(source, answers);
+}
+
+/** Whether Git's answer for `root`'s remote is kept ({@link keptRemote}), so {@link readRemoteAnswer} starts no Git for it. */
+export function remoteAnswerKept(root: string): boolean {
+  return keptRemote(remoteSource(root)) !== undefined;
+}
+
+/** Whether `answer` is a Git that ran past its time limit, which {@link runGit} gives as `spawnSync` does, `ETIMEDOUT`. */
+function ranToLimit(answer: GitResult): boolean {
+  return (answer.error as NodeJS.ErrnoException | undefined)?.code === "ETIMEDOUT";
 }
 
 /** {@link readRemoteAddress} for `root` learnt without blocking the caller's thread, unless a kept answer stands. */
@@ -1012,7 +1024,7 @@ function answeredRemote(source: RemoteSource | undefined, answers: readonly GitR
   const remote = "remote" in step ? step.remote : undefined;
   const answered = answers.every(answer => answer.status === 0);
   if (source !== undefined && answered) keepRemote(source, remote);
-  return { remote, answered };
+  return { remote, answered, ranToLimit: answers.some(ranToLimit) };
 }
 const SCHEME = /^[A-Za-z][A-Za-z0-9+.-]*:\/\//;
 const SCP_FORM = /^(?:[^@/]+@)?([^:/]+):(.*)$/;
