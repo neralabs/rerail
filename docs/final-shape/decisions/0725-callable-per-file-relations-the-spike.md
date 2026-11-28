@@ -209,9 +209,14 @@ of the files). The library's router is `pt_tm_file` (python/points-to-solve): a 
 with `@pkg_up` to a module of `doc`'s, and a guest's term by the document its string holds (`pt_tm_guest_doc`); it
 routes `pt_vopen_l_8 b`. PostHog's 291 files, get-handler-writes: 2,260 requests to 163 files (3 holders entered), 0
 of no file, 1,193 answer rows; the cross part's `pt_vopen_l_8` is those 1,193 rows, against 79,319 made whole. The
-findings are the same 5, identical. CPU 29.4 s against 24.8 s (one run each, this Mac loaded): the request path's
-own time (requests answered inside the fixpoint 0.57 s, an input's frames 0.49 s, the cone 0.24 s, exports to the
-cross part 0.16 s), about 250 µs a request answered; joins 1.2 s more. Each file still makes the callee's memo entry
+findings are the same 5, identical. Measured again with `time -l` (instructions retired do not move with the
+Mac's load; CPU did, the same `pt_tm_same` steps over the same rows taking 1.44 times the CPU a row in a run more
+loaded): 799.7 G instructions against 780.4 G, +2.5%; process CPU 53.06 s against 50.77 s. The first figures here
+(CPU 29.4 s against 24.8 s, one run each) were the load's, not the call's. Peak memory 1,220.5 MB against 569.2 MB:
+with the call, points_to's cross part makes a request, so its cone holds the solve that makes the key (the
+66-relation component `pt_acls/pt_ainst/…`), and what the rest reads of the cone is handed on as rows
+(`held_rows`, then columns again for the cross part's bind): 640 MB allocated in 0.3 s at the cone's end and freed
+after; the cone 0.78 s CPU (473 MB allocated), the hand-on 0.54 s (715 MB). The calls themselves are 20 ms. Each file still makes the callee's memo entry
 (`pt_vopen_l_8_at`) whole. Tests: `callable_tests` (a routed call, under demand, and a router's table of the files
 exported).
 
