@@ -1,0 +1,377 @@
+<!doctype html><html><head><meta charset=utf8><meta name=viewport content="width=device-width,initial-scale=1,viewport-fit=cover"><style>:root{color-scheme:light;box-sizing:border-box;padding-top:env(safe-area-inset-top,0px);padding-bottom:env(safe-area-inset-bottom,0px)}html{scroll-padding-top:env(safe-area-inset-top,0px)}body{margin:0;padding:0;font:14px -apple-system,BlinkMacSystemFont,sans-serif;background:#fff;color:#000}img{max-width:100%}[hidden]:not([hidden=until-found i]){display:none!important}</style></head><body>
+<title>Cross-file offenders on main</title>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;600&family=IBM+Plex+Sans:wght@400;500;600;700&display=swap">
+<style>
+/* Layout: a report column; three bucket colours (port blue, known green, redesign red) carried through the tiles,
+   tables and headings. */
+:root {
+  --bg: #f7f8fa; --panel: #fff; --fg: #1b2230; --muted: #5a6478; --rule: #d9dee7;
+  --port: #1f6fb2; --port-soft: #e3effa; --known: #23784a; --known-soft: #e2f3e8; --red: #b3261e; --red-soft: #fbe5e3;
+  --code-bg: #f0f2f6;
+  --sans: "IBM Plex Sans", "Segoe UI", system-ui, sans-serif; --mono: "IBM Plex Mono", ui-monospace, Menlo, monospace;
+}
+@media (prefers-color-scheme: dark) { :root:not([data-theme="light"]) {
+  --bg: #12161d; --panel: #1a2029; --fg: #e4e8ef; --muted: #9aa4b6; --rule: #2c3442;
+  --port: #6fb3ee; --port-soft: #16283b; --known: #7fd3a0; --known-soft: #17301f; --red: #f08a80; --red-soft: #3a1d1b;
+  --code-bg: #0e1218; color-scheme: dark } }
+:root[data-theme="dark"] {
+  --bg: #12161d; --panel: #1a2029; --fg: #e4e8ef; --muted: #9aa4b6; --rule: #2c3442;
+  --port: #6fb3ee; --port-soft: #16283b; --known: #7fd3a0; --known-soft: #17301f; --red: #f08a80; --red-soft: #3a1d1b;
+  --code-bg: #0e1218; color-scheme: dark }
+* { box-sizing: border-box }
+body { background: var(--bg); color: var(--fg); font: 16px/1.6 var(--sans);
+  padding-left: max(16px, env(safe-area-inset-left, 0px)); padding-right: max(16px, env(safe-area-inset-right, 0px)); padding-block: 32px 80px }
+main { max-width: 1120px; margin: 0 auto }
+.prose { max-width: 72ch }
+h1, h2, h3 { text-wrap: balance; line-height: 1.2 }
+h1 { font-size: 2.1rem; margin: 4px 0 8px }
+h2 { font-size: 1.45rem; margin: 44px 0 8px; padding-top: 18px; border-top: 1px solid var(--rule) }
+h3 { font-size: 1.1rem; margin: 26px 0 6px }
+.eyebrow { font: 600 .74rem/1 var(--mono); letter-spacing: .08em; text-transform: uppercase; color: var(--muted) }
+code { font-family: var(--mono); font-size: .86em; background: var(--code-bg); padding: .05em .3em; border-radius: 3px }
+.tiles { display: grid; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); gap: 12px; margin: 18px 0 }
+.tile { background: var(--panel); border: 1px solid var(--rule); border-radius: 8px; padding: 14px 16px; min-width: 0 }
+.tile h3 { margin: 0 0 8px; font-size: 1rem }
+.tile.port h3 { color: var(--port) } .tile.known h3 { color: var(--known) } .tile.red h3 { color: var(--red) }
+.tile dl { display: grid; grid-template-columns: 1fr auto; gap: 2px 12px; margin: 0; font-size: .92rem }
+.tile dd { margin: 0; font-variant-numeric: tabular-nums; font-weight: 600; text-align: right }
+.bar { display: flex; height: 14px; border-radius: 7px; overflow: hidden; margin: 6px 0 2px }
+.bar span { display: block }
+.legend { font-size: .85rem; color: var(--muted) }
+.wrap { overflow-x: auto; margin: 10px 0 }
+table { border-collapse: collapse; width: 100%; font-size: .88rem; min-width: 820px }
+th, td { text-align: left; vertical-align: top; padding: 7px 9px; border-bottom: 1px solid var(--rule) }
+th { font: 600 .74rem/1.3 var(--mono); text-transform: uppercase; letter-spacing: .05em; color: var(--muted) }
+td.num { text-align: right; font-variant-numeric: tabular-nums; white-space: nowrap }
+details { margin: 8px 0 } summary { cursor: pointer; color: var(--port); font-weight: 500 }
+.pill { display: inline-block; font: 600 .72rem/1.5 var(--mono); padding: 0 7px; border-radius: 9px }
+.pill.port { background: var(--port-soft); color: var(--port) } .pill.known { background: var(--known-soft); color: var(--known) }
+.pill.red { background: var(--red-soft); color: var(--red) }
+.steps li { margin: .4em 0 }
+</style>
+<main>
+<div class="eyebrow">rerail · main at d54013c841 · measured 2026-11-25</div>
+<h1>Cross-file offenders on main</h1>
+
+<section class="prose">
+<h2 style="border:0;margin-top:12px;padding-top:0">Intro</h2>
+<p>The new checks on main list three kinds of offender in main's packs and data-layer policies. <strong>Undeclared
+crossings:</strong> a relation that spans files without a <code>cross_file</code> declaration. <strong>Node
+crossings:</strong> a relation of the cross-file part that holds a node id. <strong>Policies that do not
+run:</strong> they fail for an error of their own, so their programs go unchecked.</p>
+<p>Each entry is put in one of three buckets, by comparing it with the branch where the same rules were fixed:</p>
+<ul>
+<li><span class="pill port">port</span> <strong>Fixed on the branch</strong>: the branch no longer lists it.
+The fix is a rule rewrite, a split fix in the engine, or a new phase. It needs porting, not designing.</li>
+<li><span class="pill known">known</span> <strong>Fix known</strong>: still listed on the branch, and its fix is a
+documented pattern (key a value table by its node, resolve by symbol, add a producer).</li>
+<li><span class="pill red">redesign</span> <strong>Needs a redesign</strong>: a whole-program analysis that walks
+other files' nodes. Each needs its own symbol-keyed design before it can be rewritten.</li>
+</ul>
+<p>How the buckets were assigned: by the branch's final list of node crossings, its rule files and its decision
+record. "Fixed on the branch" is by relation name in the same pack. The fix that cleared it is named where the
+record names it; the rest cleared through rule edits and split fixes the record describes together. "Redesign" is
+a judgement from each rule's shape, and each such policy will be read again before it is changed.</p>
+</section>
+
+<div class="tiles">
+  <div class="tile port"><h3>Fixed on the branch: port</h3><dl>
+    <dt>Node crossings</dt><dd>3,338</dd>
+    <dt>Undeclared crossings</dt><dd>129</dd>
+    <dt>Policies not run</dt><dd>17</dd></dl></div>
+  <div class="tile known"><h3>Fix known</h3><dl>
+    <dt>Node crossings</dt><dd>115</dd>
+    <dt>Undeclared crossings</dt><dd>0</dd>
+    <dt>Policies not run</dt><dd>8</dd></dl></div>
+  <div class="tile red"><h3>Needs a redesign</h3><dl>
+    <dt>Node crossings</dt><dd>71</dd>
+    <dt>Undeclared crossings</dt><dd>0</dd>
+    <dt>Policies not run</dt><dd>0</dd></dl></div>
+</div>
+<div class="prose">
+<div class="bar" role="img" aria-label="Node crossings: 3,338 port, 115 known, 71 redesign, of 3,524">
+  <span style="width:94.72%;background:var(--port)"></span>
+  <span style="width:3.26%;background:var(--known)"></span>
+  <span style="width:2.01%;background:var(--red)"></span></div>
+<div class="legend">Node crossings, 3,524 entries: 94.7% fixed on the branch.</div>
+</div>
+
+<h2>React and Node: why they do not run</h2>
+<div class="prose">
+<p>Seventeen of the 25 policies that do not run are React's 9 and Node's 8. They fail because three repository
+inputs that their libraries read have no producer in the engine:</p>
+<ul>
+<li><strong><code>tsconfig_for</code></strong>, with <code>tsconfig</code> and <code>tsconfig_path</code>.
+<code>lib/core.rerail</code> declares them as core inputs. The repository reader makes <code>file</code>,
+<code>package</code>, <code>package_field</code> and <code>package_for</code>, but none of the tsconfig rows. A
+React policy reads them through <code>lib/tsx/names.rerail</code>, which follows tsconfig <code>paths</code>
+aliases to resolve where <code>React</code> was imported from. The branch added the producer; port it.</li>
+<li><strong><code>npm_ignored</code></strong> and <strong><code>spec_resolved</code></strong>. The Node libraries
+declare these themselves, marked "proposed core input", because they need native code: npm's publish rules, and
+Node's module resolution with node_modules. Nothing makes them, and the engine stops at an input it has no columns
+for. The branch binds them empty. That makes the policies run, but an empty <code>spec_resolved</code> means every
+import fails to resolve, so <code>n-no-missing-import</code> would report every import. The fix is two producers.
+<code>spec_resolved</code> comes from the engine's own resolver (<code>import_target</code>, already used by the
+JSON policies), and <code>npm_ignored</code> from a reader of package.json <code>files</code> and the ignore
+files.</li>
+</ul>
+</div>
+<div class="wrap"><table><thead><tr><th>Pack</th><th>Policies</th><th>Error</th><th>Bucket</th><th>Fix</th></tr></thead><tbody>
+<tr><td>react</td><td>9 policies (button-has-type, iframe-missing-sandbox, jsx-no-constructed-context-values, no-array-index-key, no-children-prop, no-direct-mutation-state, no-object-type-as-default-prop, no-unstable-nested-components, void-dom-elements-no-children)</td><td><code>tsconfig_for</code> is read, and nothing makes it</td><td><span class='pill port'>port</span></td><td>The repository reader makes <code>tsconfig</code>, <code>tsconfig_for</code>, <code>tsconfig_path</code> (JSONC, <code>extends</code>), sharing one configuration reader with the import resolver.</td></tr><tr><td>node</td><td>n-no-extraneous-require</td><td><code>tsconfig_for</code> is read, and nothing makes it</td><td><span class='pill port'>port</span></td><td>As React's.</td></tr><tr><td>node</td><td>n-hashbang, n-no-top-level-await, n-no-unpublished-bin, n-no-unpublished-import, n-no-unpublished-require</td><td>no columns for <code>npm_ignored</code></td><td><span class='pill known'>known</span></td><td>A producer: npm's publish rules (package.json <code>files</code>, else <code>.npmignore</code>, else <code>.gitignore</code>) read natively, as the package reader reads package.json. The branch binds it empty, so every file counts as published: these run, with that gap.</td></tr><tr><td>node</td><td>n-no-missing-import, n-no-missing-require</td><td>no columns for <code>spec_resolved</code></td><td><span class='pill known'>known</span></td><td>A producer from main's native resolver (<code>import_target</code>, the JSON policies' <code>importTarget</code>), one row per import node it resolves. Bound empty as on the branch, every import fails to resolve and each is reported: so the branch's stopgap is not enough here.</td></tr><tr><td>javascript</td><td>eslint-curly, eslint-no-object-constructor, eslint-no-template-curly-in-string</td><td>a message's literal braces read as a column</td><td><span class='pill port'>port</span></td><td>Escape them <code>{{ }}</code> (done for clippy-redundant-field-names in this PR).</td></tr><tr><td>javascript</td><td>eslint-one-var</td><td><code>ordered</code> on <code>.decl crowded</code> is not lowered</td><td><span class='pill port'>port</span></td><td>Rewritten on the branch.</td></tr><tr><td>python</td><td>ruff-perf403-manual-dict-comprehension</td><td><code>match</code> over a node no kind atom binds</td><td><span class='pill port'>port</span></td><td>Match the node's text: <code>text(e, z), match(…, z)</code>.</td></tr><tr><td>typescript</td><td>typescript-eslint-triple-slash-reference</td><td>a capture read as an integer</td><td><span class='pill port'>port</span></td><td>Captures over a node are spans, read as text.</td></tr><tr><td>vue</td><td>eslint-plugin-vue-no-child-content</td><td><code>match</code> over a node no kind atom binds</td><td><span class='pill port'>port</span></td><td>A kind atom binds the element.</td></tr><tr><td>next</td><td>next-no-page-custom-font</td><td><code>match_all</code> over a node no kind atom binds</td><td><span class='pill known'>known</span></td><td>As vue's: bind the node's kind (unchanged on the branch).</td></tr>
+</tbody></table></div>
+
+<h2>Python: in this change</h2>
+<div class="prose">
+<p>Python accounts for most of the list: python-main 2,473, python
+333, Django 250 node crossings. Two roots cover
+most of it, and both have branch fixes to port, in this order:</p>
+<ol class="steps">
+<li><strong><code>value_type</code> (248).</strong> The JSON-to-<code>.rerail</code> translator wrote a value's type
+test as <code>value(n, x), value_type(x, T)</code>: a table keyed by the value's text, shared by
+<code>"12"</code> and <code>12</code>. That is a join of every file's types, and it gives false findings. The
+translator now writes <code>value_type_of(n, T)</code>, the node's own type, and the generated python-main files
+are written again.</li>
+<li><strong><code>resolve_export</code> (2,387).</strong> Python's import resolution becomes an earlier phase,
+<code>py_names</code>, over symbols. It hands on <code>reads_at(p, m)</code>, <code>exports(m, x, q)</code>,
+<code>class</code>, <code>defined</code> and <code>public</code>. <code>python/names.rerail</code> splits into its
+per-file half (<code>scopes</code>) and a reader of the phase, so <code>sym_of</code> and everything that reads it
+stay per-file. The class hierarchy, Django's models and points-to follow the same shape on the branch
+(<code>ancestor</code>, a model's fields, Meta and hooks by symbol, the <code>points_to</code> phase), and are ported
+with it for Django's entries.</li>
+<li><strong>The engine faults that rewrite exposed on the branch</strong>, ported with it:
+<ul>
+<li>rules that can never hold, with <code>unset</code> at a location;</li>
+<li>a gated negation's ask that read an unbound variable;</li>
+<li>the factorizer keying a join on a node;</li>
+<li>a pushed join handing on its id-range bound;</li>
+<li>a row located by a name built from its path.</li>
+</ul></li>
+<li><strong>Main's phases and the memo.</strong> Main runs phases (<code>sources</code>, <code>types</code>,
+<code>values</code>) but has no per-path scoping of a phase's rows in a file's memo key. Without it a change to
+any module's exports would run every file again. The branch's scoping (<code>SETTINGS_BY_PATH</code>,
+<code>SETTINGS_BY_FOLDER</code>) is ported with <code>py_names</code>. Whether main's memo keys a file by the phase
+rows it reads at all is checked first, since that would be a correctness gap, not just a cost.</li>
+</ol>
+</div>
+
+<h2><span class="pill port">port</span> Fixed on the branch</h2>
+<h3>Node crossings, by root (3,338)</h3>
+<p class="prose">The root is the relation each entry is in the cross-file part because of; fixing the root takes its
+followers back into their files.</p>
+<div class="wrap"><table><thead><tr><th>Root</th><th>Entries</th><th>Packs</th><th>Relations</th><th>Fix on the branch</th></tr></thead><tbody>
+<tr><td><code>resolve_export</code></td><td class=num>2,382</td><td>python-main 2196, python 110, django 54, data-layer 11, data-layer:alone 11</td><td><code>AIR001</code>, <code>AIR002</code>, <code>AIR301_removed_method_get_conn_uri</code>, <code>AIR311_builtin_operator_sla</code>, <code>AIR311_dag_sla_miss_callback</code>, <code>AIR311_provider_operator_sla</code>, <code>AIR311_timetable_datasets</code>, <code>ANN201</code> and 2354 more</td><td>Python names as a phase over symbols (<code>py_names</code>)</td></tr>
+<tr><td><code>value_type</code></td><td class=num>246</td><td>python-main 246</td><td><code>AIR301_context_key_conf</code>, <code>ASYNC115</code>, <code>ASYNC116</code>, <code>B103</code>, <code>B615</code>, <code>LOG014</code>, <code>PT003</code>, <code>PTH210</code> and 238 more</td><td>the translator writes a node's own type (<code>value_type_of</code>)</td></tr>
+<tr><td>its own</td><td class=num>100</td><td>django 30, data-layer 17, data-layer:alone 17, python 13, typescript 7, javascript 5, python-main 5, sql 2, vue 2, php 1, rust 1</td><td><code>F402</code>, <code>FAST001</code>, <code>FAST003</code>, <code>GetOrCreateNeedsUnique</code>, <code>RUF018</code>, <code>SelectRelatedInLoop</code>, <code>TRY301</code>, <code>allowed_param</code> and 72 more</td><td>rule edits and split fixes (not attributed one by one)</td></tr>
+<tr><td><code>local_def_chain</code></td><td class=num>93</td><td>python 93</td><td><code>ASYNC100</code>, <code>FBT001</code>, <code>LOG002</code>, <code>PERF101</code>, <code>PERF401</code>, <code>PERF402</code>, <code>RUF012</code>, <code>RUF037</code> and 85 more</td><td>rule edits and split fixes (not attributed one by one)</td></tr>
+<tr><td><code>py_platform</code></td><td class=num>54</td><td>django 54</td><td><code>ahead</code>, <code>amem</code>, <code>aproto</code>, <code>aself</code>, <code>asplit</code>, <code>attr_open</code>, <code>bcall</code>, <code>bound_in</code> and 46 more</td><td>rule edits and split fixes (not attributed one by one)</td></tr>
+<tr><td><code>plp_anycand</code></td><td class=num>36</td><td>data-layer 18, data-layer:alone 18</td><td><code>plp_all_asg</code>, <code>plp_all_first</code>, <code>plp_an</code>, <code>plp_asg</code>, <code>plp_c_getattr</code>, <code>plp_colored</code>, <code>plp_fq</code>, <code>plp_gq</code> and 10 more</td><td>the data layer's purity call graph by key</td></tr>
+<tr><td><code>ruff_qual</code></td><td class=num>32</td><td>python 32</td><td><code>ANN001</code>, <code>ann_classmethod</code>, <code>ann_overload</code>, <code>ann_override</code>, <code>ann_param</code>, <code>ann_static</code>, <code>annt_bare</code>, <code>annt_in</code> and 24 more</td><td>rule edits and split fixes (not attributed one by one)</td></tr>
+<tr><td><code>jsx_source_runtime</code></td><td class=num>27</td><td>react 27</td><td><code>early_read</code>, <code>early_site</code>, <code>effect</code>, <code>effect_body</code>, <code>from_ref</code>, <code>frozen</code>, <code>holds_read</code>, <code>keyless</code> and 19 more</td><td>rule edits and split fixes (not attributed one by one)</td></tr>
+<tr><td><code>package_for</code></td><td class=num>24</td><td>javascript 13, typescript 10, node 1</td><td><code>checked</code>, <code>declared_around</code>, <code>fn_at</code>, <code>fn_mode</code>, <code>global_home</code>, <code>global_object_ref</code>, <code>global_ref_to</code>, <code>global_scope</code> and 14 more</td><td>rule edits and split fixes (not attributed one by one)</td></tr>
+<tr><td><code>pv</code></td><td class=num>21</td><td>django 21</td><td><code>alook</code>, <code>anc</code>, <code>blocks</code>, <code>cfn</code>, <code>chain_step</code>, <code>cret</code>, <code>fcall</code>, <code>fret</code> and 13 more</td><td>Python names as a phase over symbols (<code>py_names</code>)</td></tr>
+<tr><td><code>la_item</code></td><td class=num>20</td><td>data-layer 10, data-layer:alone 10</td><td><code>la_intr</code>, <code>la_item</code>, <code>la_t_async</code>, <code>la_t_dolt</code>, <code>la_t_eager</code>, <code>la_t_grammar</code>, <code>la_t_intent</code>, <code>la_t_io</code> and 2 more</td><td>rule edits and split fixes (not attributed one by one)</td></tr>
+<tr><td><code>item_parts</code></td><td class=num>14</td><td>javascript 9, typescript 5</td><td><code>builtin</code>, <code>comment_decl</code>, <code>descriptor</code>, <code>global_call</code>, <code>global_item</code>, <code>global_member</code>, <code>global_named</code>, <code>global_read</code> and 5 more</td><td>a <code>/* global */</code> comment's items split in their own rule</td></tr>
+<tr><td><code>public_name</code></td><td class=num>14</td><td>python-main 14</td><td><code>D101_raw</code>, <code>D102_raw</code>, <code>D103_raw</code>, <code>D105_raw</code>, <code>D106_raw</code>, <code>D107_raw</code>, <code>d105_alt_6</code>, <code>d105_up_1</code> and 6 more</td><td>Python names as a phase over symbols (<code>py_names</code>)</td></tr>
+<tr><td><code>s_dj_model_q</code></td><td class=num>14</td><td>django 14</td><td><code>goc_meta_opt</code>, <code>goc_mgr_def</code>, <code>goc_unknown</code>, <code>method</code>, <code>mio_checks_deferred</code>, <code>mio_star</code>, <code>s_dj_model</code>, <code>s_dj_model_method</code> and 6 more</td><td>Django models read by symbol</td></tr>
+<tr><td><code>subclass</code></td><td class=num>13</td><td>django 8, python 5</td><td><code>SLOT000</code>, <code>cfr_form</code>, <code>dispatched</code>, <code>mcs_calls_parent</code>, <code>mcs_clean</code>, <code>mcs_formset</code>, <code>mcs_model_form</code>, <code>naming_maybe_metaclass</code> and 5 more</td><td>class hierarchy by symbol (<code>py_names</code>' ancestry)</td></tr>
+<tr><td><code>unescape</code></td><td class=num>9</td><td>javascript 9</td><td><code>grouped</code>, <code>key_text</code>, <code>marks</code>, <code>module_name</code>, <code>name_of</code>, <code>pname</code>, <code>prev_mark</code>, <code>renamed_key</code> and 1 more</td><td>TSX text helpers keyed by the identifier</td></tr>
+<tr><td><code>identifier</code></td><td class=num>8</td><td>python 8</td><td><code>PIE804</code>, <code>UP013</code>, <code>UP014</code>, <code>bad_key</code>, <code>bad_pair</code>, <code>fields_ok</code>, <code>good_pair</code>, <code>kwarg_pair</code></td><td>rule edits and split fixes (not attributed one by one)</td></tr>
+<tr><td><code>sfu_atomic_def</code></td><td class=num>8</td><td>django 8</td><td><code>sfu_atomic_cm</code>, <code>sfu_atomic_wrapper</code>, <code>sfu_built_for_atomic</code>, <code>sfu_in_atomic</code>, <code>sfu_property</code>, <code>sfu_site</code>, <code>sfu_why</code>, <code>sora_new</code></td><td>points-to as a phase; the call graph by symbol</td></tr>
+<tr><td><code>logger_like</code></td><td class=num>7</td><td>python 7</td><td><code>G101</code>, <code>LOG007</code>, <code>exc_info_set</code>, <code>log_call</code>, <code>log_kw</code>, <code>log_msg</code>, <code>logger_expr</code></td><td>rule edits and split fixes (not attributed one by one)</td></tr>
+<tr><td><code>typing_name</code></td><td class=num>7</td><td>python 7</td><td><code>allows</code>, <code>ann_q</code>, <code>declared_cv</code>, <code>head_q</code>, <code>immutable_newtype</code>, <code>lit_none</code>, <code>shown</code></td><td>rule edits and split fixes (not attributed one by one)</td></tr>
+<tr><td><code>ca_split</code></td><td class=num>6</td><td>data-layer 3, data-layer:alone 3</td><td><code>ca_alias_at</code>, <code>ca_base</code>, <code>ca_resolved</code></td><td>rule edits and split fixes (not attributed one by one)</td></tr>
+<tr><td><code>capital</code></td><td class=num>6</td><td>javascript 4, typescript 2</td><td><code>bound_context</code>, <code>bound_this</code>, <code>global_this</code>, <code>proto</code></td><td>TSX text helpers keyed by the identifier</td></tr>
+<tr><td><code>chain_below</code></td><td class=num>6</td><td>python 5, data-layer:alone 1</td><td><code>RUF007</code>, <code>lcb_token</code>, <code>reversal_arg</code>, <code>slice_part</code>, <code>token</code>, <code>ytt_version_upto</code></td><td>rule edits and split fixes (not attributed one by one)</td></tr>
+<tr><td><code>fixed_ext</code></td><td class=num>6</td><td>node 6</td><td><code>both</code>, <code>cjs_ref</code>, <code>module_exports</code>, <code>node_obj_ask</code>, <code>path_source</code>, <code>top_assign</code></td><td>rule edits and split fixes (not attributed one by one)</td></tr>
+<tr><td><code>la_line_legacy</code></td><td class=num>6</td><td>data-layer 3, data-layer:alone 3</td><td><code>la_roots_lazy</code>, <code>la_roots_taint</code>, <code>la_skip</code></td><td>rule edits and split fixes (not attributed one by one)</td></tr>
+</tbody></table></div>
+<details><summary>79 more roots, 179 entries</summary>
+<div class="wrap"><table><thead><tr><th>Root</th><th>Entries</th><th>Packs</th><th>Relations</th><th>Fix on the branch</th></tr></thead><tbody>
+<tr><td><code>plp_ann_reach</code></td><td class=num>6</td><td>data-layer 3, data-layer:alone 3</td><td><code>plp_hcall</code>, <code>plp_hidden</code>, <code>plp_rhit</code></td><td>the data layer's purity call graph by key</td></tr>
+<tr><td><code>spelled</code></td><td class=num>6</td><td>typescript 6</td><td><code>access</code>, <code>hash_nearer</code>, <code>member</code>, <code>member_key</code>, <code>target_of</code>, <code>up</code></td><td>rule edits and split fixes</td></tr>
+<tr><td><code>canon_number</code></td><td class=num>5</td><td>python 5</td><td><code>atom_key</code>, <code>elem_key</code>, <code>literal_key</code>, <code>num_text</code>, <code>number</code></td><td>rule edits and split fixes</td></tr>
+<tr><td><code>msg_import_seen</code></td><td class=num>5</td><td>python 5</td><td><code>case_value_name</code>, <code>msg_gettext</code>, <code>npy_callee</code>, <code>npy_catches</code>, <code>npy_guarded</code></td><td>rule edits and split fixes</td></tr>
+<tr><td><code>blb_probe</code></td><td class=num>4</td><td>data-layer 2, data-layer:alone 2</td><td><code>blb</code>, <code>blb_named_probe</code></td><td>rule edits and split fixes</td></tr>
+<tr><td><code>er_legacy</code></td><td class=num>4</td><td>data-layer 2, data-layer:alone 2</td><td><code>er_alias</code>, <code>er_boundary_call</code></td><td>rule edits and split fixes</td></tr>
+<tr><td><code>er_phase</code></td><td class=num>4</td><td>data-layer 2, data-layer:alone 2</td><td><code>er_phase</code>, <code>er_site</code></td><td>rule edits and split fixes</td></tr>
+<tr><td><code>named</code></td><td class=num>4</td><td>typescript 4</td><td><code>all_rank</code>, <code>before</code>, <code>rank</code>, <code>ranked</code></td><td>rule edits and split fixes</td></tr>
+<tr><td><code>pc_tgt</code></td><td class=num>4</td><td>data-layer 2, data-layer:alone 2</td><td><code>plp_shared</code>, <code>plp_terminal</code></td><td>the data layer's purity call graph by key</td></tr>
+<tr><td><code>plp_imm_reach</code></td><td class=num>4</td><td>data-layer 2, data-layer:alone 2</td><td><code>plp_imm_part</code>, <code>plp_static_lookup</code></td><td>the data layer's purity call graph by key</td></tr>
+<tr><td><code>plp_xq</code></td><td class=num>4</td><td>data-layer 2, data-layer:alone 2</td><td><code>plp_xq</code>, <code>plp_xres</code></td><td>the data layer's purity call graph by key</td></tr>
+<tr><td><code>pv2_earlier_phase</code></td><td class=num>4</td><td>data-layer 2, data-layer:alone 2</td><td><code>pv2_phase</code>, <code>pv2_pipeline</code></td><td>rule edits and split fixes</td></tr>
+<tr><td><code>qopen</code></td><td class=num>4</td><td>django 4</td><td><code>async_open</code>, <code>base_open</code>, <code>calls_open</code>, <code>open_sync</code></td><td>rule edits and split fixes</td></tr>
+<tr><td><code>s_dj_plain_def</code></td><td class=num>4</td><td>django 4</td><td><code>s_dj_dispatch_in_failing_handler</code>, <code>s_dj_dispatch_result_used</code>, <code>s_dj_side_effect</code>, <code>s_dj_task_ref</code></td><td>Django models read by symbol</td></tr>
+<tr><td><code>s_dj_qs_model</code></td><td class=num>4</td><td>django 4</td><td><code>ReadModifyWrite</code>, <code>efe_django</code>, <code>fir_row</code>, <code>s_dj_fetch_call</code></td><td>Django models read by symbol</td></tr>
+<tr><td><code>vlower</code></td><td class=num>4</td><td>vue 4</td><td><code>vannotation_html</code>, <code>vcustom_any_ns</code>, <code>vhas_attr</code>, <code>vis_component</code></td><td>rule edits and split fixes</td></tr>
+<tr><td><code>vplain_stmt</code></td><td class=num>4</td><td>vue 4</td><td><code>lacks_return</code>, <code>vcompletes</code>, <code>vfalls_off</code>, <code>vtry_part_completes</code></td><td>rule edits and split fixes</td></tr>
+<tr><td><code>vprop_name</code></td><td class=num>4</td><td>vue 4</td><td><code>read_in</code>, <code>reads_props</code>, <code>script_name</code>, <code>top_binding</code></td><td>rule edits and split fixes</td></tr>
+<tr><td><code>dflt</code></td><td class=num>3</td><td>vue 3</td><td><code>fn_type</code>, <code>returns</code>, <code>vt_ask</code></td><td>rule edits and split fixes</td></tr>
+<tr><td><code>perf403_key_element</code></td><td class=num>3</td><td>python-main 3</td><td><code>PERF403</code>, <code>perf403_loop</code>, <code>perf403_target</code></td><td>rule edits and split fixes</td></tr>
+<tr><td><code>py_version</code></td><td class=num>3</td><td>django 3</td><td><code>adeclared</code>, <code>py_t</code>, <code>py_true</code></td><td>rule edits and split fixes</td></tr>
+<tr><td><code>upper_first</code></td><td class=num>3</td><td>typescript 2, javascript 1</td><td><code>fn_name_kind</code>, <code>uncounted</code></td><td>TSX text helpers keyed by the identifier</td></tr>
+<tr><td><code>FAST001</code></td><td class=num>2</td><td>python 2</td><td><code>fast_class_params</code>, <code>fast_dep_known</code></td><td>rule edits and split fixes</td></tr>
+<tr><td><code>bcgp_decorated</code></td><td class=num>2</td><td>data-layer 1, data-layer:alone 1</td><td><code>bcgp_decorated</code></td><td>rule edits and split fixes</td></tr>
+<tr><td><code>bcgp_line</code></td><td class=num>2</td><td>data-layer 1, data-layer:alone 1</td><td><code>bcgp_lead</code></td><td>rule edits and split fixes</td></tr>
+<tr><td><code>call_target</code></td><td class=num>2</td><td>django 2</td><td><code>qv</code>, <code>sora_edge</code></td><td>rule edits and split fixes</td></tr>
+<tr><td><code>checked</code></td><td class=num>2</td><td>typescript 2</td><td><code>fn_param</code>, <code>params_checked</code></td><td>rule edits and split fixes</td></tr>
+<tr><td><code>data_layer_module</code></td><td class=num>2</td><td>data-layer 1, data-layer:alone 1</td><td><code>invalid_mixed_lazy_execution_name</code></td><td>rule edits and split fixes</td></tr>
+<tr><td><code>decorated</code></td><td class=num>2</td><td>typescript 2</td><td><code>group</code>, <code>report_at</code></td><td>rule edits and split fixes</td></tr>
+<tr><td><code>er_last_def</code></td><td class=num>2</td><td>data-layer 1, data-layer:alone 1</td><td><code>er_last_def</code></td><td>rule edits and split fixes</td></tr>
+<tr><td><code>er_skip</code></td><td class=num>2</td><td>data-layer 1, data-layer:alone 1</td><td><code>er_dirty</code></td><td>rule edits and split fixes</td></tr>
+<tr><td><code>fast_dep_class</code></td><td class=num>2</td><td>python 2</td><td><code>fast_dep_class</code>, <code>fast_dep_unknown_at</code></td><td>rule edits and split fixes</td></tr>
+<tr><td><code>file_descriptor</code></td><td class=num>2</td><td>python 2</td><td><code>PTH101</code>, <code>fd_arg</code></td><td>rule edits and split fixes</td></tr>
+<tr><td><code>ghw_safe_action</code></td><td class=num>2</td><td>django 2</td><td><code>GetHandlerWrites</code>, <code>ghw_handler</code></td><td>rule edits and split fixes</td></tr>
+<tr><td><code>gis_source_param</code></td><td class=num>2</td><td>data-layer 1, data-layer:alone 1</td><td><code>gis_index_source</code></td><td>rule edits and split fixes</td></tr>
+<tr><td><code>goc_cond_group</code></td><td class=num>2</td><td>django 2</td><td><code>goc_group</code>, <code>goc_opaque</code></td><td>rule edits and split fixes</td></tr>
+<tr><td><code>gpo_auth</code></td><td class=num>2</td><td>data-layer 1, data-layer:alone 1</td><td><code>gpo_authority</code></td><td>rule edits and split fixes</td></tr>
+<tr><td><code>isqmod</code></td><td class=num>2</td><td>django 2</td><td><code>bopen</code>, <code>outside_dec</code></td><td>rule edits and split fixes</td></tr>
+<tr><td><code>la_line</code></td><td class=num>2</td><td>data-layer 1, data-layer:alone 1</td><td><code>la_at</code></td><td>rule edits and split fixes</td></tr>
+<tr><td><code>last_decorator</code></td><td class=num>2</td><td>typescript 2</td><td><code>member_head</code>, <code>return_head</code></td><td>rule edits and split fixes</td></tr>
+<tr><td><code>long_form</code></td><td class=num>2</td><td>typescript 2</td><td><code>shown_arg</code>, <code>simple_arg</code></td><td>rule edits and split fixes</td></tr>
+<tr><td><code>ma_bare</code></td><td class=num>2</td><td>data-layer 1, data-layer:alone 1</td><td><code>ma_unsafe</code></td><td>rule edits and split fixes</td></tr>
+<tr><td><code>ma_predicted</code></td><td class=num>2</td><td>data-layer 1, data-layer:alone 1</td><td><code>ma_counter_bad</code></td><td>rule edits and split fixes</td></tr>
+<tr><td><code>need_name</code></td><td class=num>2</td><td>django 2</td><td><code>ghcls</code>, <code>uann</code></td><td>rule edits and split fixes</td></tr>
+<tr><td><code>pc_fqlen</code></td><td class=num>2</td><td>data-layer 1, data-layer:alone 1</td><td><code>pc_res</code></td><td>rule edits and split fixes</td></tr>
+<tr><td><code>pc_modattr</code></td><td class=num>2</td><td>data-layer 1, data-layer:alone 1</td><td><code>pc_base_s</code></td><td>rule edits and split fixes</td></tr>
+<tr><td><code>pc_mq</code></td><td class=num>2</td><td>data-layer 1, data-layer:alone 1</td><td><code>pc_mans</code></td><td>rule edits and split fixes</td></tr>
+<tr><td><code>pc_shadowed</code></td><td class=num>2</td><td>data-layer 1, data-layer:alone 1</td><td><code>pc_dotcall</code></td><td>rule edits and split fixes</td></tr>
+<tr><td><code>pha_private</code></td><td class=num>2</td><td>data-layer 1, data-layer:alone 1</td><td><code>pha_attr_helper</code></td><td>rule edits and split fixes</td></tr>
+<tr><td><code>s_dj_deferring_task_class</code></td><td class=num>2</td><td>django 2</td><td><code>s_dj_app_defers</code>, <code>s_dj_task_waits_for_commit</code></td><td>rule edits and split fixes</td></tr>
+<tr><td><code>sap_param</code></td><td class=num>2</td><td>data-layer 1, data-layer:alone 1</td><td><code>sap_alias</code></td><td>rule edits and split fixes</td></tr>
+<tr><td><code>sbc_conn_type</code></td><td class=num>2</td><td>data-layer 1, data-layer:alone 1</td><td><code>sbc_conn_param</code></td><td>rule edits and split fixes</td></tr>
+<tr><td><code>sbc_txn_type</code></td><td class=num>2</td><td>data-layer 1, data-layer:alone 1</td><td><code>sbc_txn_param</code></td><td>rule edits and split fixes</td></tr>
+<tr><td><code>sig_param</code></td><td class=num>2</td><td>data-layer 1, data-layer:alone 1</td><td><code>gpo_annotation</code></td><td>rule edits and split fixes</td></tr>
+<tr><td><code>GetOrCreateNeedsUnique</code></td><td class=num>1</td><td>django 1</td><td><code>goc_unique</code></td><td>rule edits and split fixes</td></tr>
+<tr><td><code>PIE810</code></td><td class=num>1</td><td>python-main 1</td><td><code>PIE810</code></td><td>rule edits and split fixes</td></tr>
+<tr><td><code>PYI011</code></td><td class=num>1</td><td>python 1</td><td><code>PYI011</code></td><td>rule edits and split fixes</td></tr>
+<tr><td><code>PYI014</code></td><td class=num>1</td><td>python 1</td><td><code>PYI014</code></td><td>rule edits and split fixes</td></tr>
+<tr><td><code>SIM109</code></td><td class=num>1</td><td>python-main 1</td><td><code>SIM109</code></td><td>rule edits and split fixes</td></tr>
+<tr><td><code>SyncOrmReached</code></td><td class=num>1</td><td>django 1</td><td><code>SyncOrmReached</code></td><td>rule edits and split fixes</td></tr>
+<tr><td><code>auto_of</code></td><td class=num>1</td><td>python 1</td><td><code>exempt</code></td><td>rule edits and split fixes</td></tr>
+<tr><td><code>bare</code></td><td class=num>1</td><td>javascript 1</td><td><code>ignored</code></td><td>rule edits and split fixes</td></tr>
+<tr><td><code>child_for_uses</code></td><td class=num>1</td><td>vue 1</td><td><code>key_uses</code></td><td>rule edits and split fixes</td></tr>
+<tr><td><code>class_field</code></td><td class=num>1</td><td>python 1</td><td><code>callee_head</code></td><td>rule edits and split fixes</td></tr>
+<tr><td><code>dco_field_q</code></td><td class=num>1</td><td>django 1</td><td><code>DefaultCalledOnce</code></td><td>rule edits and split fixes</td></tr>
+<tr><td><code>dj_atomic_requests</code></td><td class=num>1</td><td>django 1</td><td><code>sfu_atomic_view</code></td><td>rule edits and split fixes</td></tr>
+<tr><td><code>excepted</code></td><td class=num>1</td><td>javascript 1</td><td><code>named</code></td><td>rule edits and split fixes</td></tr>
+<tr><td><code>fast_strip</code></td><td class=num>1</td><td>python 1</td><td><code>fast_param</code></td><td>rule edits and split fixes</td></tr>
+<tr><td><code>fdm_drf</code></td><td class=num>1</td><td>django 1</td><td><code>goc_mgr_class</code></td><td>rule edits and split fixes</td></tr>
+<tr><td><code>ghw_model_ref</code></td><td class=num>1</td><td>django 1</td><td><code>ghw_view_attr</code></td><td>rule edits and split fixes</td></tr>
+<tr><td><code>listed</code></td><td class=num>1</td><td>typescript 1</td><td><code>excused</code></td><td>rule edits and split fixes</td></tr>
+<tr><td><code>noqa_all_tail</code></td><td class=num>1</td><td>python 1</td><td><code>noqa_blanket</code></td><td>rule edits and split fixes</td></tr>
+<tr><td><code>noreferrer</code></td><td class=num>1</td><td>react 1</td><td><code>secure_rel</code></td><td>rule edits and split fixes</td></tr>
+<tr><td><code>py_line_sep</code></td><td class=num>1</td><td>data-layer 1</td><td><code>pyl_extra</code></td><td>rule edits and split fixes</td></tr>
+<tr><td><code>qknown</code></td><td class=num>1</td><td>django 1</td><td><code>meta_open</code></td><td>rule edits and split fixes</td></tr>
+<tr><td><code>raw_digits</code></td><td class=num>1</td><td>javascript 1</td><td><code>stored</code></td><td>rule edits and split fixes</td></tr>
+<tr><td><code>s_dj_instance_value</code></td><td class=num>1</td><td>django 1</td><td><code>s_dj_instance_class</code></td><td>rule edits and split fixes</td></tr>
+<tr><td><code>sora_model_instance</code></td><td class=num>1</td><td>django 1</td><td><code>sora_query</code></td><td>rule edits and split fixes</td></tr>
+<tr><td><code>sora_own_method</code></td><td class=num>1</td><td>django 1</td><td><code>sora_self_bound</code></td><td>rule edits and split fixes</td></tr>
+</tbody></table></div></details>
+
+<h3>Undeclared crossings (129)</h3>
+<p class="prose">The branch refuses every undeclared crossing outright, so every one of main's is handled there:</p>
+<div class="wrap"><table><thead><tr><th>How the branch handles it</th><th>Entries</th><th>Relations</th></tr></thead><tbody>
+<tr><td>rule rewritten on the branch</td><td class=num>48</td><td><code>bnl_model_is</code> (django), <code>call_target</code> (django), <code>callee_head</code> (python), <code>chain_below</code> (data-layer:alone), <code>chain_below</code> (python), <code>checked</code> (typescript), <code>child_for_uses</code> (vue), <code>cpl_ann</code> (data-layer), <code>cpl_ann</code> (data-layer:alone), <code>dar_true</code> (django), <code>decorated</code> (typescript), <code>dflt</code> (vue), <code>escape_piece</code> (javascript), <code>exempt</code> (python), <code>la_line</code> (data-layer), <code>la_line</code> (data-layer:alone), <code>la_line_legacy</code> (data-layer), <code>la_line_legacy</code> (data-layer:alone), <code>ma_param</code> (data-layer), <code>ma_param</code> (data-layer:alone), <code>ma_predicted</code> (data-layer), <code>ma_predicted</code> (data-layer:alone), <code>nat_part</code> (javascript), <code>nat_part</code> (typescript), <code>pc_modattr</code> (data-layer), <code>pc_modattr</code> (data-layer:alone), <code>pc_shadowed</code> (data-layer), <code>pc_shadowed</code> (data-layer:alone), <code>pe_elem</code> (data-layer), <code>pe_elem</code> (data-layer:alone), <code>pe_list</code> (data-layer), <code>pe_list</code> (data-layer:alone), <code>pe_num</code> (data-layer), <code>pe_num</code> (data-layer:alone), <code>pe_pair</code> (data-layer), <code>pe_pair</code> (data-layer:alone), <code>pe_str</code> (data-layer), <code>pe_str</code> (data-layer:alone), <code>plp_ann_reach</code> (data-layer), <code>plp_ann_reach</code> (data-layer:alone), <code>plp_imm_reach</code> (data-layer), <code>plp_imm_reach</code> (data-layer:alone), <code>replaced</code> (react), <code>ruff_qual</code> (python), <code>shown_arg</code> (typescript), <code>simple_arg</code> (typescript), <code>this_changes</code> (php), <code>vprop_name</code> (vue)</td></tr><tr><td>rule unchanged: a split fix on the branch places it</td><td class=num>38</td><td><code>allowed_param</code> (javascript), <code>b005_char</code> (python), <code>bcgp_lead</code> (data-layer), <code>bcgp_lead</code> (data-layer:alone), <code>caught_here</code> (python), <code>clash</code> (vue), <code>copy_only</code> (python), <code>era_bad</code> (python), <code>gis_index_source</code> (data-layer), <code>gis_index_source</code> (data-layer:alone), <code>gpo_annotation</code> (data-layer), <code>gpo_annotation</code> (data-layer:alone), <code>lao_ann_piece</code> (data-layer), <code>lao_ann_piece</code> (data-layer:alone), <code>lao_txn</code> (data-layer), <code>lao_txn</code> (data-layer:alone), <code>last_decorator</code> (typescript), <code>left_run</code> (rust), <code>local_def_chain</code> (python), <code>msg_import_seen</code> (python), <code>passes_on</code> (javascript), <code>passes_on</code> (typescript), <code>pv2_doc_code</code> (data-layer), <code>pv2_doc_code</code> (data-layer:alone), <code>pv2_earlier_phase</code> (data-layer), <code>pv2_earlier_phase</code> (data-layer:alone), <code>qualified_ref</code> (sql), <code>returns_own</code> (typescript), <code>same_arg</code> (javascript), <code>same_arg</code> (typescript), <code>same_type</code> (typescript), <code>sap_param</code> (data-layer), <code>sap_param</code> (data-layer:alone), <code>sbc_domain_sequence</code> (data-layer), <code>sbc_domain_sequence</code> (data-layer:alone), <code>types_apart</code> (javascript), <code>vmi_backed</code> (data-layer), <code>vmi_backed</code> (data-layer:alone)</td></tr><tr><td>declared <code>cross_file</code> on the branch</td><td class=num>21</td><td><code>annotations</code> (data-layer), <code>annotations</code> (data-layer:alone), <code>cpl_missing</code> (data-layer), <code>cpl_missing</code> (data-layer:alone), <code>cpl_msg</code> (data-layer), <code>cpl_msg</code> (data-layer:alone), <code>er_facade_site</code> (data-layer), <code>er_facade_site</code> (data-layer:alone), <code>fast003_alt_2</code> (python-main), <code>la_eager_delegate</code> (data-layer), <code>la_eager_delegate</code> (data-layer:alone), <code>ma_branch_aware</code> (data-layer), <code>ma_branch_aware</code> (data-layer:alone), <code>pos_allow_broken</code> (data-layer), <code>pos_allow_broken</code> (data-layer:alone), <code>pos_bypass</code> (data-layer), <code>pos_bypass</code> (data-layer:alone), <code>stale_entry</code> (data-layer), <code>stale_entry</code> (data-layer:alone), <code>static_tests</code> (data-layer), <code>static_tests</code> (data-layer:alone)</td></tr><tr><td>rewritten away on the branch</td><td class=num>19</td><td><code>CONN301</code> (data-layer), <code>CONN301</code> (data-layer:alone), <code>F402</code> (python), <code>MA037</code> (data-layer), <code>MA037</code> (data-layer:alone), <code>PERF401</code> (python), <code>PIE810</code> (python-main), <code>PT028</code> (python), <code>RUF018</code> (python-main), <code>SBC006</code> (data-layer), <code>SBC006</code> (data-layer:alone), <code>SIM109</code> (python-main), <code>TRY301</code> (python), <code>missing_source</code> (data-layer), <code>missing_source</code> (data-layer:alone), <code>no_useless_constructor</code> (javascript), <code>no_useless_constructor</code> (typescript), <code>rr_diagnostic_9e32c4c509fe6ad6</code> (python-main), <code>sfu_atomic_def</code> (django)</td></tr><tr><td>moved to another file on the branch</td><td class=num>3</td><td><code>violation</code> (data-layer), <code>violation</code> (data-layer:alone), <code>violation</code> (python-main)</td></tr>
+</tbody></table></div>
+
+<h2><span class="pill known">known</span> Fix known (115)</h2>
+<div class="prose">
+<p>Still listed on the branch. Most are the "table of values without its node" mistake (<code>zero_number</code>,
+<code>brace_arg</code>, <code>upper_name</code>): key the table by the node, or test the value in the reader. The
+rest read a family the branch fixed (Python names, Django models) through a relation of their own, and move with
+a small rewrite to the family's symbol-keyed reads.</p>
+</div>
+<div class="wrap"><table><thead><tr><th>Root</th><th>Entries</th><th>Packs</th><th>Relations</th><th>Files</th></tr></thead><tbody>
+<tr><td><code>fixed_ext</code></td><td class=num>7</td><td>node 7</td><td><code>api_use</code>, <code>env_global</code>, <code>loader</code>, <code>module_load</code>, <code>module_use</code>, <code>use</code>, <code>val</code></td><td>clippy-single-component-path-imports.rerail, n-no-deprecated-api.rerail, n-no-unsupported-features-node-builtins.rerail…</td></tr>
+<tr><td><code>subclass</code></td><td class=num>7</td><td>django 7</td><td><code>cfr_block</code>, <code>cfr_clean</code>, <code>cfr_helper</code>, <code>cfr_open</code>, <code>cfr_s_open</code>, <code>cfr_try_main_open</code>, <code>cfr_try_tail_open</code></td><td>django-practice-clean-field-returns-value.rerail</td></tr>
+<tr><td>its own</td><td class=num>6</td><td>django 3, python-main 2, vue 1</td><td><code>FAST003</code>, <code>dar_non_atomic_wrapped</code>, <code>fast003_alt_2</code>, <code>ghw_model_instance</code>, <code>tam_task_call</code>, <code>vprop_name</code></td><td>component.rerail, django-practice-dispatch-in-atomic-request.rerail, django-practice-get-handler-writes.rerail…</td></tr>
+<tr><td><code>local_def_chain</code></td><td class=num>6</td><td>python 6</td><td><code>air301_ctx</code>, <code>air301_from_key</code>, <code>air301_member_use</code>, <code>air303_lineage</code>, <code>air_guarded</code>, <code>async_one_arg</code></td><td>misc-airflow.rerail, misc2-async.rerail, ruff-air301-airflow3-removal.rerail…</td></tr>
+<tr><td><code>fast003_alt_2</code></td><td class=num>5</td><td>python-main 5</td><td><code>fast003_alt_10</code>, <code>fast003_alt_13</code>, <code>fast003_call_has</code>, <code>fast003_fn_has</code>, <code>fast003_init_has</code></td><td>ruff-fast003-fast-api-unused-path-parameter.rerail</td></tr>
+<tr><td><code>node_module</code></td><td class=num>5</td><td>node 5</td><td><code>concat</code>, <code>export_all</code>, <code>piece_slash</code>, <code>slash</code>, <code>spec_value</code></td><td>eslint-prefer-template.rerail, n-no-path-concat.rerail, node-resolve.rerail…</td></tr>
+<tr><td><code>resolve_export</code></td><td class=num>5</td><td>data-layer 2, data-layer:alone 2, python 1</td><td><code>hint</code>, <code>not_surface</code>, <code>open_call</code></td><td>public-api-triples.rerail, ruff-f524-string-dot-format-missing-arguments.rerail, ruff-up015-redundant-open-modes.rerail</td></tr>
+<tr><td><code>brace_arg</code></td><td class=num>4</td><td>python 4</td><td><code>fits</code>, <code>quoted</code>, <code>refers</code>, <code>split_field</code></td><td>ruff-pyi020-quoted-annotation-in-stub.rerail, ruff-up007-non-pep604-annotation-union.rerail, ruff-up032-f-string.rerail…</td></tr>
+<tr><td><code>ignored</code></td><td class=num>4</td><td>data-layer 2, data-layer:alone 2</td><td><code>ignored_at</code>, <code>swallowed</code></td><td>swallowed-exceptions.rerail</td></tr>
+<tr><td><code>dco_field_q</code></td><td class=num>3</td><td>django 3</td><td><code>dco_field</code>, <code>dco_value</code>, <code>dco_w161</code></td><td>django-practice-default-called-once.rerail</td></tr>
+<tr><td><code>php_key_of</code></td><td class=num>3</td><td>php 3</td><td><code>php_blocks</code>, <code>php_numbered</code>, <code>php_written_key</code></td><td>arrays.rerail</td></tr>
+<tr><td><code>smi_resolves</code></td><td class=num>3</td><td>django 3</td><td><code>smi_doc</code>, <code>smi_names</code>, <code>smi_reported_doc</code></td><td>django-practice-settings-module-import.rerail</td></tr>
+<tr><td><code>zero_number</code></td><td class=num>3</td><td>python 3</td><td><code>SIM113</code>, <code>same_parent</code>, <code>start</code></td><td>ruff-ruf007-zip-instead-of-pairwise.rerail, ruff-sim113-enumerate-for-loop.rerail</td></tr>
+<tr><td><code>air301_class</code></td><td class=num>2</td><td>python 2</td><td><code>AIR301_renamed</code>, <code>air301_trigger_rule</code></td><td>ruff-air301-airflow3-removal.rerail</td></tr>
+<tr><td><code>data_layer_module</code></td><td class=num>2</td><td>data-layer 1, data-layer:alone 1</td><td><code>root</code></td><td>eslint-plugin-vue-no-async-in-computed-properties.rerail, eslint-plugin-vue-no-mutating-props.rerail, public-api-triples.rerail</td></tr>
+<tr><td><code>dunder</code></td><td class=num>2</td><td>python 2</td><td><code>doc_missing</code>, <code>doc_public</code></td><td>docstrings.rerail</td></tr>
+<tr><td><code>finds</code></td><td class=num>2</td><td>typescript 2</td><td><code>exempt</code>, <code>ignored</code></td><td>eslint-capitalized-comments.rerail, eslint-no-inline-comments.rerail, eslint-no-magic-numbers.rerail…</td></tr>
+<tr><td><code>ghw_view_model</code></td><td class=num>2</td><td>django 2</td><td><code>ghw_fetch_call</code>, <code>ghw_instance_value</code></td><td>django-practice-get-handler-writes.rerail</td></tr>
+<tr><td><code>hint_part</code></td><td class=num>2</td><td>python 2</td><td><code>hint_arg</code>, <code>hint_bare</code></td><td>ruff-fbt001-boolean-type-hint-positional-argument.rerail</td></tr>
+<tr><td><code>level</code></td><td class=num>2</td><td>typescript 2</td><td><code>missing</code>, <code>unwanted</code></td><td>eslint-accessor-pairs.rerail, eslint-arrow-body-style.rerail, next-no-unwanted-polyfillio.rerail…</td></tr>
+<tr><td><code>pct_positional</code></td><td class=num>2</td><td>python 2</td><td><code>F507</code>, <code>positional_fmt</code></td><td>ruff-f507-percent-format-positional-count-mismatch.rerail</td></tr>
+<tr><td><code>php_falsy</code></td><td class=num>2</td><td>blade 1, php 1</td><td><code>php_truthy</code></td><td>values.rerail</td></tr>
+<tr><td><code>s_dj_has_field</code></td><td class=num>2</td><td>django 2</td><td><code>bnl_counter</code>, <code>bnl_number</code></td><td>django-practice-bulk-not-loop.rerail</td></tr>
+<tr><td><code>typing_root</code></td><td class=num>2</td><td>python 2</td><td><code>typing_only_ctx</code>, <code>typing_root</code></td><td>typing-context.rerail</td></tr>
+<tr><td><code>upper_name</code></td><td class=num>2</td><td>python 2</td><td><code>at_most</code>, <code>level</code></td><td>ruff-sim300-yoda-conditions.rerail, typescript-eslint-explicit-member-accessibility.rerail</td></tr>
+<tr><td><code>value_type</code></td><td class=num>2</td><td>javascript 2</td><td><code>code_string</code>, <code>string_call</code></td><td>eslint-no-implied-eval.rerail, rerail-no-message-classification.rerail</td></tr>
+<tr><td><code>vns_step</code></td><td class=num>2</td><td>vue 2</td><td><code>checked</code>, <code>vns</code></td><td>clippy-many-single-char-names.rerail, eslint-accessor-pairs.rerail, eslint-class-methods-use-this.rerail…</td></tr>
+<tr><td><code>allowed</code></td><td class=num>1</td><td>javascript 1</td><td><code>allowed</code></td><td>eslint-dot-notation.rerail, eslint-no-console.rerail, eslint-no-empty-function.rerail…</td></tr>
+<tr><td><code>arg_dummy</code></td><td class=num>1</td><td>python 1</td><td><code>arg_unused</code></td><td>misc2-args.rerail</td></tr>
+<tr><td><code>class_def</code></td><td class=num>1</td><td>django 1</td><td><code>mro_method</code></td><td>names.rerail</td></tr>
+<tr><td><code>column_ref</code></td><td class=num>1</td><td>sql 1</td><td><code>use</code></td><td>n-no-deprecated-api.rerail, n-no-unsupported-features-node-builtins.rerail, react-no-deprecated.rerail…</td></tr>
+<tr><td><code>deep</code></td><td class=num>1</td><td>typescript 1</td><td><code>circular</code></td><td>typescript-eslint-consistent-indexed-object-style.rerail</td></tr>
+<tr><td><code>deep_root</code></td><td class=num>1</td><td>typescript 1</td><td><code>reach</code></td><td>calls.rerail, typescript-eslint-consistent-indexed-object-style.rerail</td></tr>
+<tr><td><code>digit_group</code></td><td class=num>1</td><td>rust 1</td><td><code>lit_group</code></td><td>syntax-literals.rerail</td></tr>
+<tr><td><code>doc_code_kind</code></td><td class=num>1</td><td>blade 1</td><td><code>doc_code_kind</code></td><td>phpdoc.rerail</td></tr>
+<tr><td><code>ghw_model_instance</code></td><td class=num>1</td><td>django 1</td><td><code>ghw_write</code></td><td>django-practice-get-handler-writes.rerail</td></tr>
+<tr><td><code>hex_upper</code></td><td class=num>1</td><td>rust 1</td><td><code>dec_lit_repr</code></td><td>syntax-literals.rerail</td></tr>
+<tr><td><code>key</code></td><td class=num>1</td><td>javascript 1</td><td><code>unsorted</code></td><td>eslint-sort-imports.rerail, ruff-sorting.rerail, typescript-eslint-member-ordering.rerail</td></tr>
+<tr><td><code>node_global</code></td><td class=num>1</td><td>node 1</td><td><code>base</code></td><td>calls.rerail, eslint-no-empty-function.rerail, eslint-plugin-vue-no-setup-props-reactivity-loss.rerail…</td></tr>
+<tr><td><code>normal</code></td><td class=num>1</td><td>react 1</td><td><code>checked_prop</code></td><td>react-no-unknown-property.rerail</td></tr>
+<tr><td><code>note</code></td><td class=num>1</td><td>javascript 1</td><td><code>excused</code></td><td>eslint-default-case.rerail, eslint-eqeqeq.rerail, eslint-no-magic-numbers.rerail…</td></tr>
+<tr><td><code>pct_ok</code></td><td class=num>1</td><td>python 1</td><td><code>printf</code></td><td>ruff-up031-printf-string-formatting.rerail</td></tr>
+<tr><td><code>py_line_sep</code></td><td class=num>1</td><td>data-layer:alone 1</td><td><code>pyl_extra</code></td><td>pub-lines.rerail</td></tr>
+<tr><td><code>radix__key_slice0</code></td><td class=num>1</td><td>javascript 1</td><td><code>significant_bits</code></td><td>eslint-a-expressions.rerail</td></tr>
+<tr><td><code>s_dj_instance_value</code></td><td class=num>1</td><td>django 1</td><td><code>ghw_instance_class</code></td><td>django-practice-get-handler-writes.rerail</td></tr>
+<tr><td><code>s_dj_view_q</code></td><td class=num>1</td><td>django 1</td><td><code>fdm_case</code></td><td>django-practice-function-decorator-on-method.rerail</td></tr>
+<tr><td><code>s_rr_scope_drop</code></td><td class=num>1</td><td>data-layer 1</td><td><code>violation</code></td><td></td></tr>
+<tr><td><code>sort_key</code></td><td class=num>1</td><td>python 1</td><td><code>unsorted</code></td><td>eslint-sort-imports.rerail, ruff-sorting.rerail, typescript-eslint-member-ordering.rerail</td></tr>
+<tr><td><code>trap_param</code></td><td class=num>1</td><td>python 1</td><td><code>hint_part</code></td><td>ruff-fbt001-boolean-type-hint-positional-argument.rerail</td></tr>
+<tr><td><code>typing_only_ctx</code></td><td class=num>1</td><td>python 1</td><td><code>PYI055</code></td><td></td></tr>
+<tr><td><code>use</code></td><td class=num>1</td><td>sql 1</td><td><code>AL05</code></td><td></td></tr>
+<tr><td><code>vmi_report_path</code></td><td class=num>1</td><td>data-layer:alone 1</td><td><code>violation</code></td><td></td></tr>
+<tr><td><code>vprop_name</code></td><td class=num>1</td><td>vue 1</td><td><code>taken</code></td><td>eslint-plugin-vue-no-template-shadow.rerail</td></tr>
+</tbody></table></div>
+
+<h2><span class="pill red">redesign</span> Needs a redesign (71)</h2>
+<div class="prose">
+<p>These are the data layer's architecture policies: eager-resolve, plan-helpers-allowlist, cached-pure-lazy-allowlist,
+connection-service-architecture, the lazy-* policies, post-op-side-effects, conditional-architecture,
+connection-structural-boundaries and authentication-plan-purity. Each one evaluates values or follows calls through
+other modules' definitions, at their nodes. Examples: a constant's value read from where it is defined, an
+allowlist entry checked against a definition elsewhere. The fix has the shape of the branch's purity call graph,
+which was rewritten from nodes to keys: each file states its facts by key, the closure runs over keys, and each
+finding is placed in its own file. But each policy needs its own design of what it keys by, and none is designed
+yet. Each appears twice: the data layer batched, and each policy alone.</p>
+</div>
+<div class="wrap"><table><thead><tr><th>Root</th><th>Entries</th><th>Packs</th><th>Relations</th><th>Files</th></tr></thead><tbody>
+<tr><td><code>er_mentions</code></td><td class=num>14</td><td>data-layer 7, data-layer:alone 7</td><td><code>er_lazy_def</code>, <code>er_lazy_expr</code>, <code>er_lazy_val</code>, <code>er_ph</code>, <code>er_shape_exempt</code>, <code>er_tr</code>, <code>er_txn</code></td><td>eager-resolve.rerail</td></tr>
+<tr><td>its own</td><td class=num>8</td><td>data-layer:alone 4, data-layer 3, typescript 1</td><td><code>app_type</code>, <code>deep_root</code>, <code>lao_txn</code>, <code>pe_kind</code>, <code>pe_ord</code></td><td>authentication-plan-purity.rerail, cached-pure-lazy-allowlist.rerail, lazy-adapter-ownership.rerail…</td></tr>
+<tr><td><code>pha_private</code></td><td class=num>8</td><td>data-layer 4, data-layer:alone 4</td><td><code>pha_asked</code>, <code>pha_import</code>, <code>pha_own_private</code>, <code>pha_write</code></td><td>plan-helpers-allowlist.rerail</td></tr>
+<tr><td><code>csa_default_lazy</code></td><td class=num>4</td><td>data-layer 2, data-layer:alone 2</td><td><code>csa_counterpart</code>, <code>csa_lazy_name</code></td><td>connection-service-architecture.rerail</td></tr>
+<tr><td><code>pe_str</code></td><td class=num>4</td><td>data-layer 2, data-layer:alone 2</td><td><code>cpl_signed_text</code>, <code>pe_str</code></td><td>cached-pure-lazy-allowlist.rerail</td></tr>
+<tr><td><code>pha_forbidden</code></td><td class=num>3</td><td>data-layer:alone 2, data-layer 1</td><td><code>pha_finding</code>, <code>pha_frame</code></td><td>plan-helpers-allowlist.rerail</td></tr>
+<tr><td><code>app_semantic</code></td><td class=num>2</td><td>data-layer 1, data-layer:alone 1</td><td><code>app_assign</code></td><td>authentication-plan-purity.rerail</td></tr>
+<tr><td><code>ca_conditional</code></td><td class=num>2</td><td>data-layer 1, data-layer:alone 1</td><td><code>ca_valid</code></td><td>conditional-architecture.rerail</td></tr>
+<tr><td><code>csb_path</code></td><td class=num>2</td><td>data-layer 1, data-layer:alone 1</td><td><code>csb_owner</code></td><td>connection-structural-boundaries.rerail</td></tr>
+<tr><td><code>er_ann</code></td><td class=num>2</td><td>data-layer 1, data-layer:alone 1</td><td><code>er_ann_part</code></td><td>eager-resolve.rerail</td></tr>
+<tr><td><code>er_io_symbol</code></td><td class=num>2</td><td>data-layer 1, data-layer:alone 1</td><td><code>er_exempt</code></td><td>eager-resolve.rerail</td></tr>
+<tr><td><code>er_param</code></td><td class=num>2</td><td>data-layer 1, data-layer:alone 1</td><td><code>er_ann</code></td><td>eager-resolve.rerail</td></tr>
+<tr><td><code>item_last</code></td><td class=num>2</td><td>data-layer 1, data-layer:alone 1</td><td><code>item_last</code></td><td>cached-pure-lazy-allowlist.rerail</td></tr>
+<tr><td><code>la_deferred</code></td><td class=num>2</td><td>data-layer 1, data-layer:alone 1</td><td><code>la_eager_delegate</code></td><td>lazy-architecture.rerail</td></tr>
+<tr><td><code>la_eager_delegate</code></td><td class=num>2</td><td>data-layer 1, data-layer:alone 1</td><td><code>la_ffind</code></td><td>lazy-architecture.rerail</td></tr>
+<tr><td><code>lao_base</code></td><td class=num>2</td><td>data-layer 1, data-layer:alone 1</td><td><code>lao_target</code></td><td>lazy-adapter-ownership.rerail</td></tr>
+<tr><td><code>pe_list</code></td><td class=num>2</td><td>data-layer 1, data-layer:alone 1</td><td><code>pe_list</code></td><td>cached-pure-lazy-allowlist.rerail</td></tr>
+<tr><td><code>pe_num</code></td><td class=num>2</td><td>data-layer 1, data-layer:alone 1</td><td><code>pe_num</code></td><td>cached-pure-lazy-allowlist.rerail</td></tr>
+<tr><td><code>pos_allow_read</code></td><td class=num>2</td><td>data-layer 1, data-layer:alone 1</td><td><code>pos_allow_broken</code></td><td>post-op-side-effects.rerail</td></tr>
+<tr><td><code>py_repr</code></td><td class=num>2</td><td>data-layer 1, data-layer:alone 1</td><td><code>cpl_err</code></td><td>cached-pure-lazy-allowlist.rerail</td></tr>
+<tr><td><code>xd_pos_top_assign</code></td><td class=num>1</td><td>data-layer:alone 1</td><td><code>pos_bypass</code></td><td>post-op-side-effects.rerail</td></tr>
+<tr><td><code>xd_q5_pos_top_assign</code></td><td class=num>1</td><td>data-layer 1</td><td><code>pos_bypass</code></td><td>post-op-side-effects.rerail</td></tr>
+</tbody></table></div>
+</main>
+
+</body></html>

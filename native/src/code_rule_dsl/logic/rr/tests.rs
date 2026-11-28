@@ -653,7 +653,7 @@ fn violation_codes_suppressions_and_places_lower() {
         ".violation font(at: node, why: symbol) code \"@next/next/no-page-custom-font\"\n",
         "    \"{why} is discouraged.\"\n",
         "    suppress eslint \"@next/next/no-page-custom-font\"\n",
-        "    suppress phpcs \"A.B\", \"A.B.C\",\n        \"A.D\"\n",
+        "    suppress phpcs \"A.B.C\", \"A.B.C.D\",\n        \"A.D.E\"\n",
         "font(n, w) :- text(n, w).\n",
         ".violation SEC(at: span, c: symbol) code {c} in \"SEC\\d+\" \"{c}\"\n",
         "SEC(n, c) :- text(n, c).\n",
@@ -669,7 +669,7 @@ fn violation_codes_suppressions_and_places_lower() {
     assert!(p.rules.iter().any(|r| r.head.rel == "rr_place_missing" && r.head.args[1] == Term::Int(1)));
     let settings: Vec<String> = p.settings.iter().map(|(k, t)| format!("{k} {t}")).collect();
     assert!(settings.contains(&"suppress font eslint \"@next/next/no-page-custom-font\"".to_owned()), "{settings:?}");
-    assert!(settings.contains(&"suppress font phpcs \"A.B\", \"A.B.C\", \"A.D\"".to_owned()), "{settings:?}");
+    assert!(settings.contains(&"suppress font phpcs \"A.B.C\", \"A.B.C.D\", \"A.D.E\"".to_owned()), "{settings:?}");
     assert!(settings.contains(&"code_in SEC \"SEC\\\\d+\"".to_owned()), "{settings:?}");
     // The printed program reads back as itself.
     let printed = print(&p).unwrap();
@@ -677,6 +677,33 @@ fn violation_codes_suppressions_and_places_lower() {
     let sum = "len(n, k) :- node(_, n, _, _, _), k = sum strlen(x) - strlen(y) : { text(n, x), text(n, y) }.";
     let statements = syntax::Parser::new(sum).unwrap().statements().unwrap();
     assert!(format!("{statements:?}").contains("Agg { op: \"sum\", over: Some(Bin { op: \"-\""), "{statements:?}");
+}
+
+/// A `suppress` line names a linter whose comments the findings layer reads (`SUPPRESS_TOOLS`), and its `over` a
+/// column of its `.violation`: lowering refuses either, where the run would otherwise drop nothing.
+#[test]
+fn a_suppress_line_naming_no_linter_or_no_column_is_refused() {
+    let program = |line: &str| format!(".decl text(n: node, s: symbol)\n.input text\n.violation V(at: node, why: symbol) code \"X1\" \"{{why}}\"\n    {line}\nV(n, w) :- text(n, w).\n");
+    let unknown = parse(&program("suppress pylint \"X1\"")).expect_err("no linter is named pylint");
+    assert!(unknown.to_string().contains("suppress pylint: no linter of that name"), "{unknown}");
+    let column = parse(&program("suppress nosec \"B201\" over {call}")).expect_err("V has no column call");
+    assert!(column.to_string().contains(".violation V: no column call"), "{column}");
+    parse(&program("suppress nosec \"B201\" over {why}")).expect("a column V has");
+}
+
+/// A `suppress` line's names are names its linter's comments carry, as a JSON rule's `suppress` reads them
+/// (`suppress::parse`: Ruff's codes are uppercase letters, then digits), and its linter one whose comments the files of
+/// the policy's `.language` carry, as compiling a JSON rule checks: lowering refuses either, where the run would
+/// refuse the line or drop nothing.
+#[test]
+fn a_suppress_line_naming_a_bad_rule_or_a_linter_its_language_lacks_is_refused() {
+    let program = |language: &str, line: &str| format!(".policy \"t:suppress\" revision 1\n.language {language}\n.decl text(n: node, s: symbol)\n.input text\n.violation V(at: node, why: symbol) code \"X1\" \"{{why}}\"\n    {line}\nV(n, w) :- text(n, w).\n");
+    let lowercase = parse(&program("python", "suppress ruff \"t201\"")).expect_err("a noqa code is uppercase letters, then digits");
+    assert!(lowercase.to_string().contains(".violation V: suppress ruff: suppress/noqa/codes/0 must be a rule code"), "{lowercase}");
+    let foreign = parse(&program("python", "suppress eslint \"x\"")).expect_err("Python files carry no eslint-disable comments");
+    assert!(foreign.to_string().contains(".violation V: suppress eslint: eslint: eslint-disable comments are ESLint's; a python policy has none"), "{foreign}");
+    parse(&program("python", "suppress ruff \"T201\"")).expect("a Ruff code, in a Python policy");
+    parse(&program("typescript", "suppress eslint \"x\"")).expect("an ESLint rule, in a TypeScript policy");
 }
 
 /// Soufflé's built-ins run: `cat` of any arity, `max` and `min` of two, `to_number`, `%`, floats (`to_float`,
@@ -791,7 +818,7 @@ out_of_loop(c) :- callee(n, c), !inside(n, _, stop).
 fn_with_call(f) :- fname(a, f), has(a, n, stop), node(_, n, "block", _, _).
 .decl own(c: symbol, f: symbol)
 own(c, f) :- callee(n, c), fname(a, f), within_stop(n, a, stop).
-.decl lonely(c: symbol)
+.decl lonely(c: symbol) cross_file   // a name called in one file, defined in none (decision 0652)
 lonely(c) :- callee(_, c), !(callee(m, c), fname(f, c)), !(c = "h", callee(_, "f")).
 .output near, out_of_loop, fn_with_call, own, lonely
 "#;
@@ -933,7 +960,9 @@ fn rdl_programs_translate_to_the_same_program() {
         };
         let beside = path.with_extension("rerail");
         if beside.exists() && std::fs::read_to_string(&beside).unwrap() != rr {
-            failures.push(format!("{name}: {} is not its translation", beside.display()));
+            let had = std::fs::read_to_string(&beside).unwrap();
+            let first = had.lines().zip(rr.lines()).enumerate().find(|(_, (a, b))| a != b).map(|(i, (a, b))| format!("line {}: {a:?}, translated {b:?}", i + 1));
+            failures.push(format!("{name}: {} is not its translation ({})", beside.display(), first.unwrap_or_else(|| "a line added or dropped".to_owned())));
         }
         // The program's own statements: an `#include` passes through the translation as it is (checked above), and
         // what it names is read with the file (`parse_file`), not here.
@@ -1837,6 +1866,43 @@ NQ(m, c) :- hit(m, c).
     let _ = std::fs::remove_dir_all(&dir);
 }
 
+/// `match_all` over a text a derived relation binds (`piece(c, v)`), or a capture of one: the context of the texts it
+/// scans holds a node that places each (decision 0677), so it and the matches, a function of its texts, are derived in each file. Keyed
+/// by the text alone, they were a table of every file's texts, in the cross-file part (B005's strip arguments). The
+/// program prints back as itself, and each text is scanned as before.
+#[test]
+fn a_match_all_over_a_derived_text_is_placed_by_its_node() {
+    let src = r#"
+.decl piece(c: node, v: symbol)
+piece(c, v) :- kind(c, "string_content"), text(c, v).
+.decl chars(c: node, i: number, x: symbol)
+chars(c, i, x) :- piece(c, v), match_all("(?<x>(?s:.))", v, i, _, _).
+.decl twice(x: symbol)
+twice(x) :- chars(c, i, x), chars(c, j, x), i < j.
+.decl tail(x: symbol)
+tail(x) :- piece(c, v), match("a(?<w>[\\s\\S]*)", v), match_all("(?<x>(?s:.))", w, _, _, _).
+.output twice, tail
+"#;
+    let v = parse(src).unwrap();
+    let contexts: Vec<Vec<String>> =
+        v.decls.iter().filter(|(name, _)| name.starts_with("rr_ctx")).map(|(_, cols)| cols.iter().map(|(_, t)| t.to_string()).collect()).collect();
+    assert_eq!(contexts.len(), 2, "a context of the texts each scans: {contexts:?}");
+    assert!(contexts.iter().all(|c| c.get(1).map(String::as_str) == Some("node")), "each context places its texts by a node: {contexts:?}");
+    let printed = crate::code_rule_dsl::logic::rr::print(&v).and_then(|t| parse(&t)).unwrap();
+    assert_eq!(difference(&v, &printed), None);
+    let dir = crate::code_rule_dsl::fixtures::temp().with_extension("placedmatch");
+    std::fs::create_dir_all(&dir).unwrap();
+    std::fs::write(dir.join("a.py"), "s = \"aba\"\nt = \"xyz\"\n").unwrap();
+    let rule = dir.join("m.rerail");
+    std::fs::write(&rule, src).unwrap();
+    let program = crate::code_rule_dsl::logic::rr::print(&crate::code_rule_dsl::logic::rr::parse_file(&rule).unwrap()).unwrap();
+    let out = dir.join("out");
+    crate::code_rule_dsl::logic::plan::corpus::run(&program, &dir, None, &out, "program", crate::code_rule_dsl::typing::file_local::Binding::Cpu, 1 << 18).unwrap();
+    assert_eq!(crate::code_rule_dsl::logic::plan::output::shown(&out, "twice").unwrap(), [["a"]]);
+    assert_eq!(crate::code_rule_dsl::logic::plan::output::shown(&out, "tail").unwrap(), [["a"], ["b"]]);
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
 /// A text test of a capture in the body that captured it tests the capture's text: `match_all("(?<w>…)", t),
 /// match("…", w)` over a string's content (RUF001's words). It once tested the span's id as a text, and never held.
 #[test]
@@ -1942,7 +2008,7 @@ g(d)
 comma(l, c) :- kind(n, "argument_list"), match_all(",", n, m), line(m, l), col(m, c).
 .decl in_node(t: symbol, k: number)
 in_node(t, k) :- kind(n, "argument_list"), text(n, t), k = count : { match_all(",", n, _) }.
-.decl in_text(t: symbol, k: number)
+.decl in_text(t: symbol, k: number) cross_file   // texts and counts: values of the corpus (decision 0652)
 in_text(t, k) :- kind(n, "argument_list"), text(n, t), k = count : { match_all(",", t, _, _, _) }.
 .output comma, in_node, in_text
 "#).unwrap();
@@ -2376,7 +2442,7 @@ objects(x, l, c) :- guest(g, _, _, "sql"), node(g, n, "object_reference", _, _),
 unscoped(k) :- node(_, _, k, _, _).
 .decl qualified(x: symbol)
 qualified(x) :- kind(n, "sql:object_reference"), text(n, x).
-.decl counted(c: number)
+.decl counted(c: number) cross_file   // the corpus's count (decision 0652)
 counted(c) :- c = count : { kind(_, "sql:object_reference") }.
 .output sqlkinds, docs, objects, unscoped, qualified, counted
 "#;
@@ -2991,7 +3057,7 @@ def_at(f, s) :- kind(f, "function_definition"), field(f, "name", n), text(n, s).
         crate::code_rule_dsl::logic::rr::print(&crate::code_rule_dsl::logic::rr::parse_file(&rule).unwrap()).unwrap()
     };
     let a = policy("a", "a", ".violation Fn(at: node) \"a def\"\nFn(f) :- def_at(f, _).");
-    let b = policy("b", "b", ".violation Dup(at: node) \"two defs\"\nDup(f) :- def_at(f, s), def_at(g, s), f != g.");
+    let b = policy("b", "b", ".decl twice(s: symbol) cross_file\ntwice(s) :- def_at(f, s), def_at(g, s), f != g.\n.violation Dup(at: node) \"two defs\"\nDup(f) :- def_at(f, s), twice(s).");
     let run = |programs: &[&str], out: &str| -> Vec<String> {
         let out = dir.join(out);
         crate::code_rule_dsl::logic::plan::corpus::run_all(programs, &dir.join("src"), &out, "program", crate::code_rule_dsl::typing::file_local::Binding::Cpu, 1 << 18).unwrap();
@@ -3030,7 +3096,7 @@ fn a_library_held_once_is_read_by_each_policy_in_its_own_scope() {
     }
     let policy = |name: &str, scope: &str, body: &str| format!(".policy \"t:{name}\" revision 1\n.language python\n#include \"python/ast.rerail\"\n.scope dirs \"{scope}\"\n{body}\n");
     let a = policy("a", "a", ".violation Fn(at: node) \"a call\"\nFn(c) :- call_name(c, _).");
-    let b = policy("b", "b", ".violation Dup(at: node) \"two calls\"\nDup(c) :- call_name(c, s), call_name(d, s), c != d.");
+    let b = policy("b", "b", ".decl twice(s: symbol) cross_file\ntwice(s) :- call_name(c, s), call_name(d, s), c != d.\n.violation Dup(at: node) \"two calls\"\nDup(c) :- call_name(c, s), twice(s).");
     let run = |programs: &[&str], out: &str| -> Vec<String> {
         let out = dir.join(out);
         crate::code_rule_dsl::logic::plan::corpus::run_all(programs, &dir.join("src"), &out, "program", crate::code_rule_dsl::typing::file_local::Binding::Cpu, 1 << 18).unwrap();
@@ -3101,9 +3167,9 @@ fn ordering_nodes_follows_preorder_across_granules() {
 xs(n) :- node(_, n, "identifier", _, _), text(n, "x").
 .decl before(a: number, b: number)
 before(la, lb) :- xs(a), xs(b), a < b, line(a, la), line(b, lb).
-.decl last(l: number)
+.decl last(l: number) cross_file
 last(l) :- m = max k : { xs(k) }, line(m, l).
-.decl first(l: number)
+.decl first(l: number) cross_file
 first(l) :- m = min k : { xs(k) }, line(m, l).
 .output before, last, first
 "#;
@@ -3347,6 +3413,123 @@ fn run_tests_of(name: &str, text: &str) -> Vec<(String, Result<Vec<String>, Stri
     };
     let _ = std::fs::remove_dir_all(&dir);
     out
+}
+
+#[test]
+fn review_regressions_preserve_library_rule_results() {
+    let parameter_rule = std::fs::read_to_string(super::library().parent().unwrap().join("packs/typescript/typescript-eslint-parameter-properties.rerail")).unwrap();
+    let typed = format!("{parameter_rule}\n{}", r#"
+.decl hit(p: symbol)
+hit(p) :- parameter_properties(f, _), docof(f, d), doc(d, p, _).
+.test typed_fields
+    .given prefer_params
+    prefer_params().
+    .fixture "a.ts" `class A { member: string; constructor(member: string) { this.member = member; } }`
+    .fixture "b.ts" `class B { member: number; constructor(member: string) { this.member = member; } }`
+    .expect only hit("a.ts")
+.end
+"#);
+    let cases = [
+        ("review-typed-fields", typed),
+        ("review-module-terms", r#"
+#include "python/points-to-file.rerail"
+.decl terms(p: symbol, t: symbol)
+terms(p, t) :- kind(n, "module"), docof(n, d), doc(d, p, _), pt_tm(n, t).
+.decl defs(t: symbol)
+defs(t) :- kind(n, "function_definition"), pt_tm(n, t).
+.test distinct_domains
+    .fixture "pkg/__init__.py" `def cli(): pass`
+    .fixture "pkg/cli.py" `x = 1`
+    .expect only terms("pkg/__init__.py", "module:pkg")
+    .expect only terms("pkg/cli.py", "module:pkg.cli")
+    .expect only defs("pkg.cli")
+.end
+"#.to_owned()),
+        ("review-django-reexports", r#"
+#include "python/names.rerail"
+.decl dj_names__view_model(m: symbol, q: symbol, s: symbol) keyed
+.decl dj_names__deferred_task(m: symbol, f: symbol) keyed
+.decl models(q: symbol, s: symbol) cross_file
+models(q, s) :- dj_names__view_model(_, q, s).
+.decl tasks(f: symbol) cross_file
+tasks(f) :- dj_names__deferred_task(_, f).
+.test reexports
+    .fixture "models/__init__.py" `from .real import Order`
+    .fixture "models/real.py" `from django.db import models
+class Order(models.Model): pass`
+    .fixture "tasks/__init__.py" `from .base import Deferred`
+    .fixture "tasks/base.py" `from django.db import transaction
+class Deferred:
+    def delay(self):
+        transaction.on_commit(lambda: None)`
+    .fixture "views.py" `from models import Order
+from tasks import Deferred
+from celery import shared_task
+class View:
+    model = Order
+class QueryView:
+    queryset = Order.objects.all()
+@shared_task(base=Deferred)
+def job(): pass`
+    .expect only models("views.View", "models.real.Order")
+    .expect only models("views.QueryView", "models.real.Order")
+    .expect only tasks("views.job")
+.end
+"#.to_owned()),
+        ("review-stub-privacy", r#"
+#include "python/docstrings.rerail"
+.decl public(p: symbol)
+public(p) :- doc_public(f), kind(f, "function_definition"), docof(f, d), doc(d, p, _).
+.test stub_is_not_package_marker
+    .fixture "_stub/__init__.pyi" `x: int`
+    .fixture "_stub/m.py" `def f(): pass`
+    .fixture "_regular/__init__.py" `x = 1`
+    .fixture "_regular/m.py" `def f(): pass`
+    .expect only public("_stub/m.py")
+.end
+"#.to_owned()),
+        ("review-ts-modules", r#"
+.language typescript
+#include "tsx/names.rerail"
+.decl used(x: symbol, q: symbol)
+used(x, q) :- kind(n, "identifier"), text(n, x), sym_of(n, q), docof(n, d), doc(d, "main.ts", _).
+.decl module(p: symbol, m: symbol)
+module(p, m) :- doc(d, p, _), ts_module(d, m).
+.test a_package_is_told_by_its_specifier_not_its_name
+    .fixture "src/a.ts" `export const value = 1;`
+    .fixture "redis.ts" `export const local = 1;`
+    .fixture "main.ts" `import { value } from "./src/a"; import { createClient } from "redis"; value; createClient;`
+    .expect module("redis.ts", "redis")
+    .expect used("value", "src/a#value")
+    .expect used("createClient", "redis#createClient")
+.end
+"#.to_owned()),
+        ("review-js-modules", r#"
+.language javascript
+#include "tsx/names.rerail"
+.decl used(x: symbol, q: symbol)
+used(x, q) :- kind(n, "identifier"), text(n, x), sym_of(n, q), docof(n, d), doc(d, "main.js", _).
+.decl module(p: symbol, m: symbol)
+module(p, m) :- doc(d, p, _), ts_module(d, m).
+.test files_of_one_stem_are_modules_of_their_own
+    .fixture "lib/index.mjs" `export const value = 1;`
+    .fixture "lib/index.cjs" `export const other = 2;`
+    .fixture "main.js" `import { value, other } from "./lib/index.mjs"; value; other;`
+    .expect module("lib/index.mjs", "lib/index")
+    .expect module("lib/index.cjs", "lib/index.cjs")
+    .expect no module("lib/index.cjs", "lib/index")
+    .expect used("value", "lib/index#value")
+    .expect no used("other", "lib/index#other")
+.end
+"#.to_owned()),
+    ];
+    for (name, text) in cases {
+        let results = run_tests_of(name, &text);
+        assert!(!results.is_empty(), "{name}: no test was read");
+        for (case, result) in results {
+            assert_eq!(result, Ok(Vec::new()), "{name}/{case}");
+        }
+    }
 }
 
 /// A unit test (decision 0130): `.given r` drops r's rules, so r holds the test's facts alone, and the test reads
@@ -4105,7 +4288,7 @@ fn a_cone_is_taken_without_the_attributes_requests() {
 fn an_attribute_a_cross_file_reader_asks_for_is_eager() {
     let rule = r#"
 .policy "t:values" revision 1
-.decl pick(n: node)
+.decl pick(n: node) cross_file   // a node with its twin in another document (decision 0652)
 pick(n) :- kind(n, "integer"), kind(m, "integer"), docof(n, d), docof(m, e), d != e.
 .decl cv(v: symbol)
 cv(v) :- pick(n), value(n, v).
@@ -4126,48 +4309,61 @@ ends(l) :- kind(n, "expression_statement"), last_token(n, t), line(t, l).
 const SPLIT_MODULES: usize = 32;
 const SPLIT_REFERENCES: usize = 4;
 
-/// python/calls over `SPLIT_MODULES` modules of `SPLIT_REFERENCES` builtin references each: no demand split's rows grow
-/// as the references times the modules (`plan::demand::over::disconnected`). `builtin_ref`'s split with `docof` cut
-/// was every reference against every module (8,801 rows of work in its `pre_<i>` here, over the 4,096 of references
-/// times modules; 129.7M rows on edx-platform's 4,459 files). The profile is the process's, so the run is a child
-/// process of its own (`demand_split_child`), its rows read from its `heads.tsv`.
+/// python/calls over `SPLIT_MODULES` modules of `SPLIT_REFERENCES` builtin references each, and over half as many: no
+/// demand split's rows grow faster than the modules (`plan::demand::over::disconnected`). `builtin_ref`'s split with
+/// `docof` cut was every reference against every module (8,801 rows of work in its `pre_<i>` at 32 modules, four times
+/// its rows at 16; 129.7M rows on edx-platform's 4,459 files). A phase's splits do work per node of each file (py_names'
+/// `nameref`, every identifier), linear in the modules, which a bound on the references alone took for growth. The
+/// profile is the process's, so each run is a child process of its own (`demand_split_child`), its rows read from its
+/// `heads.tsv`.
 #[test]
 fn a_demand_split_stays_linear_in_the_modules() {
-    let directory = tempfile::tempdir().unwrap();
-    let root = directory.path().join("src");
-    std::fs::create_dir_all(&root).unwrap();
     // Plain nodes make the program's rarer kinds anchors (fewer than 1/32 of the nodes), so `docof` is a candidate.
     let filler = (1..=300).map(|i| i.to_string()).collect::<Vec<_>>().join(", ");
     let source = format!("x = len([1])\nprint(x)\ny = len(\"ab\")\nprint(y)\nDATA = [{filler}]\n");
     assert_eq!(source.matches("len(").count() + source.matches("print(").count(), SPLIT_REFERENCES);
-    for m in 0..SPLIT_MODULES {
-        std::fs::write(root.join(format!("m{m}.py")), &source).unwrap();
-    }
-    let rule = directory.path().join("calls.rerail");
-    std::fs::write(&rule, ".policy \"split-linear\" revision 1\n.language python\n.scope include \"**/*.py\"\n#include \"python/calls.rerail\"\n.violation P(at: node) \"c\"\nP(c) :- call_target(c, f), kind(f, \"nothing_has_this_kind\").\n").unwrap();
-    let profile = directory.path().join("profile");
-    let mut child = std::process::Command::new(std::env::current_exe().unwrap());
-    child
-        .args(["--exact", "code_rule_dsl::logic::rr::tests::demand_split_child", "--ignored", "--nocapture"])
-        .env("RERAIL_PROFILE", &profile)
-        .env("RERAIL_TAPE_CACHE", "off")
-        .env("DEMAND_SPLIT_RULE", &rule)
-        .env("DEMAND_SPLIT_ROOT", &root)
-        .env("DEMAND_SPLIT_OUT", directory.path().join("out"));
-    let status = crate::code_rule_dsl::logic::plan::corpus::switches::started(|| child.status()).unwrap();
-    assert!(status.success());
-    // part, head, cpu_s, work (rows into the head's steps), plans
-    let heads = std::fs::read_to_string(profile.join("heads.tsv")).unwrap();
-    let rows: Vec<(&str, &str, u64)> = heads.lines().skip(1).map(|l| {
-        let c: Vec<&str> = l.split('\t').collect();
-        (c[0], c[1], c[3].parse().unwrap())
-    }).collect();
-    assert!(rows.iter().any(|(part, _, _)| part.contains("typing programs")), "the typing program ran: {heads}");
-    let product = (SPLIT_MODULES * SPLIT_MODULES * SPLIT_REFERENCES) as u64;
-    for (part, head, work) in &rows {
-        if head.starts_with("pre_") || head.starts_with("demand_") {
-            assert!(*work < product / 4, "{head} ({part}): {work} rows, against {product} for every reference times every module");
+    // Per part, its largest split's rows into its steps and the split, of a run over `modules` modules.
+    let run = |modules: usize| -> std::collections::BTreeMap<String, (u64, String)> {
+        let directory = tempfile::tempdir().unwrap();
+        let root = directory.path().join("src");
+        std::fs::create_dir_all(&root).unwrap();
+        for m in 0..modules {
+            std::fs::write(root.join(format!("m{m}.py")), &source).unwrap();
         }
+        let rule = directory.path().join("calls.rerail");
+        std::fs::write(&rule, ".policy \"split-linear\" revision 1\n.language python\n.scope include \"**/*.py\"\n#include \"python/calls.rerail\"\n.violation P(at: node) \"c\"\nP(c) :- call_target(c, \"nothing.has.this.symbol\").\n").unwrap();
+        let profile = directory.path().join("profile");
+        let mut child = std::process::Command::new(std::env::current_exe().unwrap());
+        child
+            .args(["--exact", "code_rule_dsl::logic::rr::tests::demand_split_child", "--ignored", "--nocapture"])
+            .env("RERAIL_PROFILE", &profile)
+            .env("RERAIL_TAPE_CACHE", "off")
+            .env("DEMAND_SPLIT_RULE", &rule)
+            .env("DEMAND_SPLIT_ROOT", &root)
+            .env("DEMAND_SPLIT_OUT", directory.path().join("out"));
+        let status = crate::code_rule_dsl::logic::plan::corpus::switches::started(|| child.status()).unwrap();
+        assert!(status.success());
+        // part, head, cpu_s, work (rows into the head's steps), plans
+        let heads = std::fs::read_to_string(profile.join("heads.tsv")).unwrap();
+        // The typing program runs as the run's phases (decision 0083): the bridge's job of its own is gone.
+        assert!(heads.lines().any(|l| l.contains("phase types: run")), "the typing phases ran: {heads}");
+        let mut rows: std::collections::BTreeMap<String, (u64, String)> = std::collections::BTreeMap::new();
+        for l in heads.lines().skip(1) {
+            let c: Vec<&str> = l.split('\t').collect();
+            let work = c[3].parse::<u64>().unwrap();
+            if (c[1].starts_with("pre_") || c[1].starts_with("demand_")) && rows.get(c[0]).is_none_or(|(w, _)| work > *w) {
+                rows.insert(c[0].to_owned(), (work, c[1].to_owned()));
+            }
+        }
+        rows
+    };
+    let (half, whole) = (run(SPLIT_MODULES / 2), run(SPLIT_MODULES));
+    // Splits are numbered as each run's plan made them, so a part's largest is compared. Twice the modules, a linear
+    // split's rows about twice (a fixed cost besides: the slack); every reference against every module's, four times.
+    let product = (SPLIT_MODULES * SPLIT_MODULES * SPLIT_REFERENCES) as u64;
+    for (part, (work, head)) in &whole {
+        let (before, was) = half.get(part).cloned().unwrap_or((0, String::new()));
+        assert!(*work <= 5 * before / 2 + product / 16, "{head} ({part}): {work} rows over {SPLIT_MODULES} modules, against {was}'s {before} over {}", SPLIT_MODULES / 2);
     }
 }
 
@@ -4194,7 +4390,7 @@ fn a_run_on_two_threads_ends() {
         std::fs::write(root.join(format!("m{m}.py")), format!("def f{m}(x):\n    return len(x)\n\n\ndef g{m}():\n    print(f{m}([1]))\n")).unwrap();
     }
     let rule = directory.path().join("calls.rerail");
-    std::fs::write(&rule, ".policy \"two-threads\" revision 1\n.language python\n.scope include \"**/*.py\"\n#include \"python/calls.rerail\"\n.violation P(at: node) \"c\"\nP(c) :- call_target(c, f), kind(f, \"nothing_has_this_kind\").\n").unwrap();
+    std::fs::write(&rule, ".policy \"two-threads\" revision 1\n.language python\n.scope include \"**/*.py\"\n#include \"python/calls.rerail\"\n.violation P(at: node) \"c\"\nP(c) :- call_target(c, \"nothing.has.this.symbol\").\n").unwrap();
     let mut child = std::process::Command::new(std::env::current_exe().unwrap());
     child
         .args(["--exact", "code_rule_dsl::logic::rr::tests::demand_split_child", "--ignored", "--nocapture"])
@@ -4220,4 +4416,33 @@ fn ended_within(mut child: std::process::Child, limit: std::time::Duration) -> O
     child.kill().unwrap();
     child.wait().unwrap();
     None
+}
+
+/// Decision 0710: a setting's placement is declared on its `.decl` (`setting`, `keyed`, `by_path`, `by_path c`), the
+/// most specific word of every declaration wins, a column past the relation's is refused, and the words print back.
+#[test]
+fn a_settings_placement_is_declared_on_its_decl() {
+    use crate::code_rule_dsl::logic::front::ast::Setting;
+    let prog = super::parse(concat!(
+        ".decl env(key: symbol, value: symbol) setting\n.input env\n",
+        ".decl package(dir: symbol, name: symbol) keyed\n.input package\n",
+        ".decl package_for(path: symbol, dir: symbol) by_path 1\n.input package_for\n",
+        ".decl ignored(path: symbol) by_path\n.input ignored\n",
+        ".decl plain(path: symbol)\n.input plain\n",
+        ".decl out(k: symbol)\nout(k) :- env(k, _), package(_, k), package_for(k, _), ignored(k), plain(k).\n.output out\n",
+    ))
+    .unwrap();
+    let of = |rel: &str| Setting::of(prog.qualifiers.get(rel).into_iter().flatten().map(String::as_str));
+    assert_eq!(of("env"), Some(Setting::Whole));
+    assert_eq!(of("package"), Some(Setting::Keyed));
+    assert_eq!(of("package_for"), Some(Setting::ByPath(Some(1))));
+    assert_eq!(of("ignored"), Some(Setting::ByPath(None)));
+    assert_eq!(of("plain"), None);
+    assert_eq!(Setting::of(["setting", "by_path 1", "keyed"]), Some(Setting::ByPath(Some(1))), "the most specific word wins");
+    let printed = super::print(&prog).unwrap();
+    for line in [".decl env(key: symbol, value: symbol) setting", ".decl package(dir: symbol, name: symbol) keyed", ".decl package_for(path: symbol, dir: symbol) by_path 1", ".decl ignored(path: symbol) by_path"] {
+        assert!(printed.lines().any(|l| l.trim() == line), "{line} in:\n{printed}");
+    }
+    let refused = super::parse(".decl r(path: symbol) by_path 3\n.input r\n").expect_err("column 3 of a relation of one");
+    assert!(refused.to_string().contains("names no column"), "{refused}");
 }

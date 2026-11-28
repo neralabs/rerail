@@ -342,23 +342,30 @@ er_indirect(f, e, t) :- er_body(f, e), er_cattr(e, "__getattribute__", s), text(
     er_strarg(e, 0, x), er_cls(f, cs), docof(e, d), er_method(d, cs, x, t).
 er_indirect(f, e, t) :- er_body(f, e), kind(e, "subscript"), field(e, "value", g), er_cid(g, "globals"),
     field(e, "subscript", k), str_const(k, x), docof(e, d), er_top(d, x, t).
-// er_alias(f, x, t): `x = name`, `x = self.m` or `x = getattr(self, "m")` in f, naming boundary t.
+// er_alias(f, x, t): `x = name`, `x = self.m` or `x = getattr(self, "m")` in f, naming def t (a boundary where
+// er_legacy(t): er_boundary_call tests it, by symbol).
 .decl er_alias(f: node, x: symbol, t: symbol)
 er_alias(f, x, t) :- er_assign(f, w, x, v), !er_multi_target(w), kind(v, "identifier"), text(v, y), docof(v, d),
-    er_top(d, y, t), er_legacy(t).
+    er_top(d, y, t).
 er_alias(f, x, t) :- er_assign(f, w, x, v), !er_multi_target(w), kind(v, "attribute"), field(v, "object", s),
-    text(s, "self"), field(v, "attribute", n), text(n, y), er_cls(f, cs), docof(v, d), er_method(d, cs, y, t),
-    er_legacy(t).
-er_alias(f, x, t) :- er_assign(f, w, x, v), !er_multi_target(w), er_indirect(f, v, t), er_legacy(t).
+    text(s, "self"), field(v, "attribute", n), text(n, y), er_cls(f, cs), docof(v, d), er_method(d, cs, y, t).
+er_alias(f, x, t) :- er_assign(f, w, x, v), !er_multi_target(w), er_indirect(f, v, t).
 // Only a plain `x = …` (one target, no annotation) is an alias.
 .decl er_multi_target(w: node)
 er_multi_target(w) :- assign_target(w, a), assign_target(w, b), a != b.
 er_multi_target(w) :- assign_ann(w, _).
-// er_boundary_call(f, t): f calls boundary t (not itself), directly, through a local alias or by name.
-.decl er_boundary_call(f: node, t: symbol)
-er_boundary_call(f, t) :- er_call(f, _, t), er_legacy(t), !er_sym(f, t).
-er_boundary_call(f, t) :- er_body(f, c), er_cid(c, x), er_alias(f, x, t), !er_sym(f, t).
-er_boundary_call(f, t) :- er_body(f, c), field(c, "function", e), er_indirect(f, e, t), er_legacy(t), !er_sym(f, t).
+// er_named_call(f, t): f calls def t (not itself), directly, through a local alias or by name.
+.decl er_named_call(f: node, t: symbol)
+er_named_call(f, t) :- er_call(f, _, t), !er_sym(f, t).
+er_named_call(f, t) :- er_body(f, c), er_cid(c, x), er_alias(f, x, t), !er_sym(f, t).
+er_named_call(f, t) :- er_body(f, c), field(c, "function", e), er_indirect(f, e, t), !er_sym(f, t).
+// er_calls(p, s, t): in file p, the def of symbol s calls def t: the file's own rows, keyed by its path.
+.decl er_calls(p: symbol, s: symbol, t: symbol)
+er_calls(p, s, t) :- er_named_call(f, t), er_sym(f, s), docof(f, d), doc(d, p, _).
+// er_boundary_call(s, t): the def of symbol s calls boundary t. A boundary is any file's def (er_legacy), so the test
+// reads symbols and paths alone, no def node, across files (decision 0677).
+.decl er_boundary_call(s: symbol, t: symbol)
+er_boundary_call(s, t) :- er_calls(_, s, t), er_legacy(t).
 
 // er_wrapper(f): the canonical legacy wrapper `return _resolve_legacy_result_sync(self, "op", lambda: self.op_lazy(…))`
 // (awaited, and _async, in an async def). Its own call of that helper is not a pattern.
@@ -423,9 +430,13 @@ er_resolved(f, "resolved") :- sig_param(f, _, nm, i, "pos", _, _), text(nm, "res
 er_phase(s, p) :- er_sym(f, s), def_name(f, p), (p = "preprocess" ; p = "lower" ; p = "compile").
 er_phase(t, p) :- er_phase(s, p), er_edge(s, t).
 er_site(d, l, cat(p, ":", k), s) :- er_phase(s, p), er_last_def(s, f), er_ph(f, n, k), line(n, l), docof(n, d).
-// er_last_def(s, f): the last def with symbol s, the one the linter's map by symbol keeps.
+// er_last_def(s, f): the last def with symbol s, the one the linter's map by symbol keeps. Two files can build one
+// symbol (er_doc's module), so the last line is the run's, by symbol (`er_last_line`, no node), and each file finds
+// its def at it.
+.decl er_last_line(s: symbol, l: number)
+er_last_line(s, l) :- er_sym(_, s), l = max a : { er_sym(g, s), line(g, a) }.
 .decl er_last_def(s: symbol, f: node)
-er_last_def(s, f) :- er_sym(f, s), line(f, l), l = max a : { er_sym(g, s), line(g, a) }.
+er_last_def(s, f) :- er_sym(f, s), line(f, l), er_last_line(s, l).
 
 // transitive: each def's own patterns, less its exemptions, plus its calls into boundaries; then every caller's.
 // Defs in l2050_transaction.legacy_wrappers and server_ref's deleted_planning_value_helper take no part.
@@ -434,7 +445,7 @@ er_skip(s) :- er_sym(_, s), (prefix("l2050_transaction.legacy_wrappers.", s) ;
     s = "l2070_batching.server_ref.deleted_planning_value_helper").
 .decl er_dirty(s: symbol, c: symbol)
 er_dirty(s, c) :- er_tr(f, k), c = cat("transitive:", k), er_sym(f, s), !er_skip(s), !er_exempt(f, s, c).
-er_dirty(s, cat("transitive:legacy-boundary-call:", x, "()")) :- er_boundary_call(f, t), er_sym(f, s), !er_skip(s),
+er_dirty(s, cat("transitive:legacy-boundary-call:", x, "()")) :- er_boundary_call(s, t), !er_skip(s),
     match(".*\\.(?<x>[^.]*)", t).
 er_dirty(s, c) :- er_dirty(t, c), er_edge(s, t), !er_skip(s).
 // er_exempt(f, s, c): a pattern f's own symbol is exempt from: resolve() in the non-lazy modules, result() in the

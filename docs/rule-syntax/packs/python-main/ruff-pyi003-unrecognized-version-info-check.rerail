@@ -53,18 +53,18 @@ pyi003_version_ref(n) :- kind(n, "parenthesized_expression"), child(n, c1, _),
 
 // int_literal(n): the JSON util `int-literal`, used where the JSON says `matches: "int-literal"`
 .decl pyi003_int_literal(n: node)
-pyi003_int_literal(n) :- kind(n, "integer"), value(n, v1), value_type(v1, "int").
+pyi003_int_literal(n) :- kind(n, "integer"), value(n, v1), value_type_of(n, "int").
 pyi003_int_literal(n) :- kind(n, "parenthesized_expression"), child(n, c2, _),
     pyi003_int_literal(c2).
 
 // zero_literal(n): the JSON util `zero-literal`, used where the JSON says `matches: "zero-literal"`
 .decl pyi003_zero_literal(n: node)
-pyi003_zero_literal(n) :- pyi003_int_literal(n), value(n, v1), value_type(v1, "int"), v1 = 0.
+pyi003_zero_literal(n) :- pyi003_int_literal(n), value(n, v1), value_type_of(n, "int"), v1 = 0.
 
 // small_literal(n): the JSON util `small-literal`, used where the JSON says `matches: "small-literal"`
 .decl pyi003_small_literal(n: node)
-pyi003_small_literal(n) :- pyi003_int_literal(n), value(n, v1), value_type(v1, "int"),
-    (value_type(v1, "int") ; value_type(v1, "float")), to_number(v1) >= 1,
+pyi003_small_literal(n) :- pyi003_int_literal(n), value(n, v1), value_type_of(n, "int"),
+    (value_type_of(n, "int") ; value_type_of(n, "float")), to_number(v1) >= 1,
     to_number(v1) <= 2.
 
 // sole_index(n): the JSON util `sole-index`, used where the JSON says `matches: "sole-index"`

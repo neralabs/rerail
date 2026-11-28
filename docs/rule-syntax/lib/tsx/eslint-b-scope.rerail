@@ -104,16 +104,16 @@ key_site(k, s) :- kind(k, "object_assignment_pattern"), field(k, "left", s).
 // parseStringConfig does. The list is read an item at a time from the left, counting the line breaks passed (a
 // break inside `a:⏎ off` is not counted).
 .decl global_item(c: node, x: symbol, v: symbol, l: number)
-global_item(c, x, v, l + k) :- gitem(c, i, k), item_parts(i, x, v), line(c, l).
+// An item is split in its comment's file, by its own text: "b:readonly" is b, "readonly"; "a" is a, "". (A table of
+// every file's items, keyed by the text, made each comment's items a join in the cross-file part, decision 0677.)
+global_item(c, N, V, l + k) :- gitem(c, i, k), match("(?<N>[^:]*):(?<V>[\\s\\S]*)", i), line(c, l).
+global_item(c, i, "", l + k) :- gitem(c, i, k), !contains(":", i), line(c, l).
 .decl glist(c: node, s: symbol, k: number)  // s is what is left of c's list, k line breaks after c's start
 glist(c, @replace_all(B, "\\s*:\\s*", ":"), @count_matches("\n", P)) :- js_comment(c, "Block", v),
     match("(?<P>\\s*globals?)(?<B>\\s[\\s\\S]*)", v).
 glist(c, T, k + @count_matches("\n", W)) :- glist(c, s, k), match("(?<W>[\\s,]*)[^\\s,]+(?<T>[\\s\\S]*)", s).
 .decl gitem(c: node, i: symbol, k: number)  // the item i that starts what is left, and its line offset
 gitem(c, I, k + @count_matches("\n", W)) :- glist(c, s, k), match("(?<W>[\\s,]*)(?<I>[^\\s,]+)[\\s\\S]*", s).
-.decl item_parts(i: symbol, x: symbol, v: symbol)  // "b:readonly" is b, "readonly"; "a" is a, ""
-item_parts(i, N, V) :- gitem(_, i, _), match("(?<N>[^:]*):(?<V>[\\s\\S]*)", i).
-item_parts(i, i, "") :- gitem(_, i, _), !contains(":", i).
 
 // ---- variables as eslint-scope groups them -------------------------------------------------------------------------
 // var_site(s, x, id): identifier id declares the variable x of scope s with var, a function declaration or a

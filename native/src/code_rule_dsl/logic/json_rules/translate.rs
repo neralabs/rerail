@@ -578,6 +578,32 @@ pub fn translate(px: &Patterns, doc: &Value, reserved: &Set) -> R<(String, usize
         }
     }
 
+    {
+        let mut rules: Vec<(&mut String, &mut Vec<String>)> = Vec::new();
+        let arena: BTreeSet<usize> = body.iter().filter_map(|i| if let Item::Rule(e) = i { Some(*e) } else { None }).collect();
+        for (i, en) in prog.arena.iter_mut().enumerate() {
+            if arena.contains(&i) {
+                rules.push((&mut en.head, &mut en.lits));
+            }
+        }
+        for (_, (_, _, lib)) in prog.lib.iter_mut() {
+            for (h, l) in lib.iter_mut() {
+                rules.push((h, l));
+            }
+        }
+        for r in helper_rules.iter_mut() {
+            if let HR::Rule(h, l) = r {
+                rules.push((h, l));
+            }
+        }
+        let keyed = key_captures_by_text(&prog.host_reads, &mut rules);
+        for (rel, at) in keyed {
+            let decl = prog.decls.get_mut(&rel).or_else(|| prog.lib.get_mut(&rel).map(|e| &mut e.0));
+            if let Some(decl) = decl {
+                *decl = symbol_column(decl, at);
+            }
+        }
+    }
     let mut out: Vec<String> = head;
     out.push("// Generated from main's JSON rule by the engine's translator (`rerail-engine translate-json`).".to_owned());
     out.push(String::new());
@@ -591,7 +617,35 @@ pub fn translate(px: &Patterns, doc: &Value, reserved: &Set) -> R<(String, usize
         out.extend(prog.uses.iter().map(|u| format!("#include \"{u}.rerail\"")));
         out.push(String::new());
     }
-    let mut em = Emit { px, prog: &prog, inputs: &shared.inputs, declared: Set::new(), out };
+    // A relation of the rule's own (a lowercase helper) whose rule reads a guest capture by text (`host_reads`) and
+    // binds it by nothing else (`node(_, K, …)`: any node) joins any file's node of that text with its own: cross-file
+    // by what it says, declared so (decision 0652). A capture the rule binds in its own document (`K = c`) is not.
+    let cross: Set = if prog.host_reads.is_empty() {
+        Set::new()
+    } else {
+        let free = |lits: &[String]| {
+            let body = lits.join(", ");
+            prog.host_reads.iter().any(|k| {
+                let k = fancy_regex::escape(k).into_owned();
+                let by_text = re(&format!(r"(?<![\w$@])(?:text|value)\({k}\b"));
+                let any = re(&format!(r"(?<![\w$@])(?<!node\(_, )(?<!text\()(?<!value\(){k}\b"));
+                search(&by_text, &body) && !search(&any, &body)
+            })
+        };
+        let mut heads: Vec<(&str, &[String])> = Vec::new();
+        for item in &body {
+            if let Item::Rule(e) = item {
+                heads.push((&prog.arena[*e].head, &prog.arena[*e].lits));
+            }
+        }
+        for r in &helper_rules {
+            if let HR::Rule(h, lits) = r {
+                heads.push((h, lits));
+            }
+        }
+        heads.into_iter().filter(|(h, lits)| name_of(h).starts_with(char::is_lowercase) && free(lits)).map(|(h, _)| name_of(h).to_owned()).collect()
+    };
+    let mut em = Emit { px, prog: &prog, inputs: &shared.inputs, declared: Set::new(), out, cross };
     for item in &body {
         match item {
             Item::Rule(e) => {
@@ -667,12 +721,200 @@ pub fn translate(px: &Patterns, doc: &Value, reserved: &Set) -> R<(String, usize
     Ok((format!("{}\n", out.join("\n").trim_end()), prog.untranslated))
 }
 
+/// The calls of `rel` in `text`: each call's span and its arguments' spans, at the top level of its parentheses.
+fn calls_of(text: &str, rel: &str) -> Vec<(usize, Vec<(usize, usize)>)> {
+    let b = text.as_bytes();
+    let word = |c: u8| c.is_ascii_alphanumeric() || c == b'_' || c == b'$' || c == b'@';
+    let mut out = Vec::new();
+    let mut from = 0;
+    while let Some(off) = text[from..].find(&format!("{rel}(")) {
+        let at = from + off;
+        from = at + rel.len() + 1;
+        if at == 0 || !word(b[at - 1]) {
+            out.push((at, args_of(b, from)));
+        }
+    }
+    out
+}
+
+/// The spans of a call's arguments, its text from `from` (after its `(`) on: split at its top level's commas, to its
+/// closing `)`, a string's brackets and commas left alone.
+fn args_of(b: &[u8], from: usize) -> Vec<(usize, usize)> {
+    let (mut depth, mut quoted, mut escaped, mut args, mut start) = (0usize, false, false, Vec::new(), from);
+    for (i, &c) in b.iter().enumerate().skip(from) {
+        if quoted {
+            (quoted, escaped) = match (escaped, c) {
+                (true, _) => (true, false),
+                (_, b'\\') => (true, true),
+                (_, b'"') => (false, false),
+                _ => (true, false),
+            };
+            continue;
+        }
+        match (c, depth) {
+            (b'"', _) => quoted = true,
+            (b'(' | b'{' | b'[', _) => depth += 1,
+            (b')' | b'}' | b']', 1..) => depth -= 1,
+            (b')', 0) => {
+                args.push((start, i));
+                break;
+            }
+            (b',', 0) => {
+                args.push((start, i));
+                start = i + 1;
+            }
+            _ => {}
+        }
+    }
+    args
+}
+
+/// A guest capture the rules read by text (`host_reads`, a route's `{K}`) is passed to the relations that read it by
+/// its text, not as the guest's node. Such a relation's rule that reads K only by text (`text(K, t)`, beside
+/// `node(_, K, …)`: any node of that text) joined any file's guest node of that text with its own nodes: a table of
+/// every file's, read in the cross-file part (decisions 0652, 0677; FAST003's `alt_2`). Keyed by the text, it is a
+/// relation of the file's own nodes and a symbol, and a rule that binds K (the clause, a demand) joins `text(K, Kt)`
+/// and passes Kt. Returns the relations rekeyed, with the column now a symbol.
+pub fn key_captures_by_text(host_reads: &BTreeSet<String>, rules: &mut [(&mut String, &mut Vec<String>)]) -> Vec<(String, usize)> {
+    let mut keyed = Vec::new();
+    for k in host_reads {
+        let chain = chain_of(k, rules);
+        if chain.is_empty() {
+            continue;
+        }
+        let capture = Capture::of(k);
+        let mut changed = false;
+        for (h, lits) in rules.iter_mut() {
+            changed |= capture.rekey(&chain, h, lits);
+        }
+        if changed {
+            keyed.extend(chain);
+        }
+    }
+    keyed
+}
+
+/// The relations whose head has capture `k` at one column in every rule, with that column.
+fn chain_of(k: &str, rules: &[(&mut String, &mut Vec<String>)]) -> BTreeMap<String, usize> {
+    let mut pos: BTreeMap<String, Option<usize>> = BTreeMap::new();
+    for (h, _) in rules.iter().filter(|(h, _)| name_of(h).starts_with(char::is_lowercase)) {
+        let rel = name_of(h).to_owned();
+        let at = calls_of(h, &rel).first().and_then(|(_, args)| args.iter().position(|&(a, b)| h[a..b].trim() == k));
+        let slot = pos.entry(rel).or_insert(at);
+        if *slot != at {
+            *slot = None;
+        }
+    }
+    pos.into_iter().filter_map(|(r, at)| at.map(|a| (r, a))).collect()
+}
+
+/// A capture K's forms in a rule's text: K as a word, `node(_, K, …)`, `text(K, t)`, and the name of its text.
+struct Capture<'k> {
+    k: &'k str,
+    word: fancy_regex::Regex,
+    any_node: String,
+    by_text: fancy_regex::Regex,
+    kt: String,
+}
+
+impl<'k> Capture<'k> {
+    fn of(k: &'k str) -> Self {
+        Capture {
+            k,
+            word: re(&format!(r"(?<![\w$@]){}(?![\w])", fancy_regex::escape(k))),
+            any_node: format!("node(_, {k}, _, _, _)"),
+            by_text: re(&format!(r"(?<![\w$@])text\({}, (\w+)\)", fancy_regex::escape(k))),
+            kt: format!("{k}_text"),
+        }
+    }
+
+    /// Rule `h :- lits` rewritten to pass K's text to the chain's relations: whether it changed.
+    fn rekey(&self, chain: &BTreeMap<String, usize>, h: &mut String, lits: &mut Vec<String>) -> bool {
+        let rel = name_of(h).to_owned();
+        let passed = self.passed(chain, lits);
+        if chain.contains_key(&rel) && self.only_text(&passed, lits) {
+            // Reads K by text alone: K is the text now.
+            lits.retain(|l| *l != self.any_node);
+            for l in lits.iter_mut() {
+                *l = sub(&self.by_text, l, |c| format!("{} = {}", g(c, 1), self.k));
+            }
+            return true;
+        }
+        if passed.is_empty() && !chain.contains_key(&rel) {
+            return false;
+        }
+        self.pass_text(&passed, lits);
+        if let Some(&at) = chain.get(&rel) {
+            self.head_takes_text(at, &rel, h, lits);
+        }
+        true
+    }
+
+    /// The rule's calls that pass K to a relation of the chain, by literal and span: (literal, start, end, call),
+    /// sorted, so a rewrite from the last keeps each span.
+    fn passed(&self, chain: &BTreeMap<String, usize>, lits: &[String]) -> Vec<(usize, usize, usize, usize)> {
+        let mut passed = Vec::new();
+        for (li, l) in lits.iter().enumerate() {
+            for (r, &at) in chain {
+                let here = calls_of(l, r).into_iter().filter_map(|(call, args)| args.get(at).filter(|&&(a, b)| l[a..b].trim() == self.k).map(|&(a, b)| (li, a, b, call)));
+                passed.extend(here);
+            }
+        }
+        passed.sort_unstable();
+        passed
+    }
+
+    /// Whether the rule reads K by its text alone, once the calls passing it on are set aside.
+    fn only_text(&self, passed: &[(usize, usize, usize, usize)], lits: &[String]) -> bool {
+        let mut rest: Vec<String> = lits.to_vec();
+        for &(li, a, b, _) in passed.iter().rev() {
+            rest[li].replace_range(a..b, "_");
+        }
+        rest.iter().filter(|l| **l != self.any_node).all(|l| !search(&self.word, &sub(&self.by_text, l, |_| String::new())))
+    }
+
+    /// Binds K: passes its text. Each call joins K's text where it is (`text(K, K_text1), h(n, K_text1)`, or before
+    /// its `!`), so a call inside an aggregate binds it there: an aggregate's context carries K, a node, and not a
+    /// symbol bound outside it.
+    fn pass_text(&self, passed: &[(usize, usize, usize, usize)], lits: &mut [String]) {
+        for (nth, &(li, a, b, call)) in passed.iter().rev().enumerate() {
+            let t = format!("{}{}", self.kt, nth + 1);
+            let lead = if lits[li][a..b].starts_with(' ') { " " } else { "" };
+            lits[li].replace_range(a..b, &format!("{lead}{t}"));
+            let start = if lits[li][..call].ends_with('!') { call - 1 } else { call };
+            lits[li].insert_str(start, &format!("text({}, {t}), ", self.k));
+        }
+    }
+
+    /// A head that passes K on (at column `at`) takes its text, joined right after the literal that first names K.
+    fn head_takes_text(&self, at: usize, rel: &str, h: &mut String, lits: &mut Vec<String>) {
+        let Some(&(a, b)) = calls_of(h, rel).into_iter().next().and_then(|(_, args)| args.get(at).copied()).as_ref() else {
+            return;
+        };
+        let lead = if h[a..b].starts_with(' ') { " " } else { "" };
+        h.replace_range(a..b, &format!("{lead}{}", self.kt));
+        let first = lits.iter().position(|l| search(&self.word, l)).map_or(lits.len(), |i| i + 1);
+        lits.insert(first, format!("text({}, {})", self.k, self.kt));
+    }
+}
+
+/// `decl` with its column `at` typed `symbol`.
+fn symbol_column(decl: &str, at: usize) -> String {
+    let Some((_, args)) = calls_of(decl, name_of(decl.trim_start_matches(".decl ")).trim()).into_iter().next() else { return decl.to_owned() };
+    let Some(&(a, b)) = args.get(at) else { return decl.to_owned() };
+    let col = &decl[a..b];
+    let Some((name, _)) = col.split_once(':') else { return decl.to_owned() };
+    format!("{}{name}: symbol{}", &decl[..a], &decl[b..])
+}
+
 struct Emit<'a> {
     px: &'a Patterns,
     prog: &'a Program,
     inputs: &'a BTreeMap<String, Set>,
     declared: Set,
     out: Vec<String>,
+    /// The relations declared `cross_file`: a rule of each reads a guest capture by text.
+    cross: Set,
 }
 
 /// The metavariables the utils `lits` call outside a negation or an aggregate bind, through the utils they call so
@@ -710,7 +952,14 @@ impl Emit<'_> {
                 self.out.push(String::new());
             }
             self.out.extend(self.prog.notes.get(name).cloned().unwrap_or_default());
-            self.out.push(self.prog.decls[name].clone());
+            let mut decl = self.prog.decls[name].clone();
+            if self.cross.contains(name)
+                && let Some(end) = decl.find(')')
+            {
+                self.out.push("// Cross-file: it reads a guest capture by text, any file's (decision 0652).".to_owned());
+                decl.insert_str(end + 1, " cross_file");
+            }
+            self.out.push(decl);
             self.declared.insert(name.to_owned());
         }
     }
@@ -815,6 +1064,14 @@ impl Emit<'_> {
                 if !done {
                     rest.push(x.clone());
                 }
+            }
+            // A capture no literal binds (a pattern's `$$$X`) asks nothing of a negated read: `!util(n, X)` is "no
+            // util row at n", whatever it would bind X to, not "none with X empty" (RUF016's fallback, where no
+            // span of the index is found).
+            for x in &rest {
+                let negated = re(&format!(r"![a-z_]\w*\([^()]*(?<![\w$]){x}\b[^()]*\)"));
+                let arg = re(&format!(r"(?<![\w$]){x}\b"));
+                lits = lits.iter().map(|l| sub(&negated, l, |m| sub(&arg, g(m, 0), |_| "_".to_owned()))).collect();
             }
             lits.extend(rest.iter().map(|x| format!("unset({x})")));
             text = wrap(h, &lits, edits);

@@ -67,7 +67,7 @@ pub const GROUPS: &str = "matchgroup_";
 
 /// The relations a text test's string can come from, and their text columns: the batch interns these strings, so a
 /// test over them is answered from the batch's vocabulary (`facts::vtab::syntax`).
-pub const TEXT_COLUMNS: [(&str, &[usize]); 33] = [
+pub const TEXT_COLUMNS: [(&str, &[usize]); 34] = [
     ("text", &[1]),
     ("name", &[1]),
     ("str", &[1]),
@@ -86,6 +86,7 @@ pub const TEXT_COLUMNS: [(&str, &[usize]); 33] = [
     ("static_value", &[1]),
     ("rr_value_lit", &[1]),
     ("value_type_of", &[1]),
+    ("static_value_type_of", &[1]),
     ("value_type", &[0, 1]),
     ("comment", &[1]),
     ("str_part", &[2]),
@@ -600,6 +601,13 @@ pub fn node_subject_tests(prog: &mut Program) {
     }
 }
 
+/// Whether a rule of `head` with `width` literals, one of them `atom` and a holding test of `atom`'s string, is a
+/// native test's definition: its head the atom's own distinct variables, in order, and nothing else in its body.
+fn definition(head: &Atom, atom: &Atom, width: usize, holds: bool) -> bool {
+    let vars: HashSet<&str> = head.args.iter().filter_map(|t| if let Term::Var(v) = t { Some(v.as_str()) } else { None }).collect();
+    holds && width == 2 && !head.neg && head.args == atom.args && vars.len() == head.args.len()
+}
+
 /// Turns each text test whose string a text relation of the same rule gives (`TEXT_COLUMNS`) into an atom over
 /// the input relation `strtest_<k>(s)`, negated where the test is: rules then join on symbols, and the run fills
 /// each relation from the vocabulary (decision 0037). Equal tests share one relation. The others stay per row.
@@ -612,13 +620,6 @@ pub fn node_subject_tests(prog: &mut Program) {
 ///
 /// And collects the markers of `fstring_template(n, "marker", v)` (W's `interpolation`): a constant, since the
 /// batches parse each host once per marker (`facts::vtab::syntax::fstring`).
-/// Whether a rule of `head` with `width` literals, one of them `atom` and a holding test of `atom`'s string, is a
-/// native test's definition: its head the atom's own distinct variables, in order, and nothing else in its body.
-fn definition(head: &Atom, atom: &Atom, width: usize, holds: bool) -> bool {
-    let vars: HashSet<&str> = head.args.iter().filter_map(|t| if let Term::Var(v) = t { Some(v.as_str()) } else { None }).collect();
-    holds && width == 2 && !head.neg && head.args == atom.args && vars.len() == head.args.len()
-}
-
 pub fn as_relations(prog: &mut Program) -> Result<Vocabulary, String> {
     if prog.decls.contains_key("text") {
         node_subject_tests(prog);
@@ -639,7 +640,7 @@ pub fn as_relations(prog: &mut Program) -> Result<Vocabulary, String> {
     }
     let alone: HashSet<String> = heads
         .into_iter()
-        .filter(|(h, n)| *n == 1 && !prog.outputs.contains(h) && !prog.inputs.contains(h) && !prog.facts.contains_key(h) && !prog.natives.get(h).is_some_and(|n| !matches!(n, super::front::Native::TextTest { .. })))
+        .filter(|(h, n)| *n == 1 && !prog.outputs.contains(h) && !prog.inputs.contains(h) && !prog.facts.contains_key(h) && prog.natives.get(h).is_none_or(|n| matches!(n, super::front::Native::TextTest { .. })))
         .map(|(h, _)| h)
         .collect();
     for rule in &mut prog.rules {

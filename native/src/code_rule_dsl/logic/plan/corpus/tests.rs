@@ -290,7 +290,7 @@ fn the_cross_file_part_is_maintained_from_its_frames_in_a_new_process() {
     std::fs::write(
         &rule,
         ".policy \"test-import-cycle\" revision 1\n.description \"An import that closes a cycle of imports.\"\n.language python\n.mode steer\n\
-         .scope include \"**/*.py\"\n#include \"python/names.rerail\"\n.decl dep(a: number, b: number)\ndep(a, b) :- impmod(i, m), docof(i, a), doc(b, _, m).\n\
+         .scope include \"**/*.py\"\n#include \"python/names.rerail\"\n.decl dep(a: number, b: number) cross_file\ndep(a, b) :- impmod(i, m), docof(i, a), doc(b, _, m).\n\
          .decl reach(a: number, b: number) no_reach\nreach(a, b) :- dep(a, b).\nreach(a, c) :- reach(a, b), dep(b, c).\n\
          .violation CYC(at: node) code \"CYC\" \"This import closes a cycle of imports.\"\nCYC(i) :- impmod(i, m), docof(i, a), doc(b, _, m), reach(b, a).\n",
     )
@@ -315,7 +315,7 @@ pub(super) const REACH_RULE: &str = r#".policy "test-reach-index" revision 1
 .mode steer
 .scope include "**/*.py"
 #include "python/names.rerail"
-.decl dep(a: number, b: number)
+.decl dep(a: number, b: number) cross_file
 dep(a, b) :- impmod(i, m), docof(i, a), doc(b, _, m).
 .decl own(a: number)
 own(a) :- doc(a, _, _).
@@ -454,7 +454,7 @@ fn cross_file_strata_are_kept_across_runs_in_the_tape_cache() {
 def(n, @dot(m, x)) :- kind(n, "function_definition"), field(n, "name", c), text(c, x), docof(n, d), doc(d, _, m).
 .decl imp(n: node, q: symbol)
 imp(n, @dot(m, x)) :- kind(n, "import_from_statement"), field(n, "module_name", mn), text(mn, m), field(n, "name", xn), text(xn, x).
-.decl uses(n: node, f: node)
+.decl uses(n: node, f: node) cross_file
 uses(n, f) :- imp(n, q), def(f, q).
 .decl used(f: node)
 used(f) :- uses(_, f).
@@ -624,7 +624,7 @@ fn a_new_process_maintains_the_cross_file_part_from_the_kept_rows() {
 def(n, @dot(m, x)) :- kind(n, "function_definition"), field(n, "name", c), text(c, x), docof(n, d), doc(d, _, m).
 .decl imp(n: node, q: symbol)
 imp(n, @dot(m, x)) :- kind(n, "import_from_statement"), field(n, "module_name", mn), text(mn, m), field(n, "name", xn), text(xn, x).
-.decl uses(n: node, f: node)
+.decl uses(n: node, f: node) cross_file
 uses(n, f) :- imp(n, q), def(f, q).
 .decl used(f: node)
 used(f) :- uses(_, f).
@@ -674,7 +674,7 @@ fn a_maintained_run_decodes_and_copies_no_tree() {
 def(n, @dot(m, x)) :- kind(n, "function_definition"), field(n, "name", c), text(c, x), docof(n, d), doc(d, _, m).
 .decl imp(n: node, q: symbol)
 imp(n, @dot(m, x)) :- kind(n, "import_from_statement"), field(n, "module_name", mn), text(mn, m), field(n, "name", xn), text(xn, x).
-.decl uses(n: node, f: node)
+.decl uses(n: node, f: node) cross_file
 uses(n, f) :- imp(n, q), def(f, q).
 .decl used(f: node)
 used(f) :- uses(_, f).
@@ -722,7 +722,7 @@ fn a_maintained_strata_pieces_run_as_one_component() {
 def(n, @dot(m, x)) :- kind(n, "function_definition"), field(n, "name", c), text(c, x), docof(n, d), doc(d, _, m).
 .decl imp(n: node, q: symbol)
 imp(n, @dot(m, x)) :- kind(n, "import_from_statement"), field(n, "module_name", mn), text(mn, m), field(n, "name", xn), text(xn, x).
-.decl uses(n: node, f: node)
+.decl uses(n: node, f: node) cross_file
 uses(n, f) :- imp(n, q), def(f, q).
 .decl used(f: node)
 used(f) :- uses(_, f).
@@ -791,7 +791,7 @@ fn a_cycle_closed_by_an_empty_relation_still_keeps_levels() {
 def(n, @dot(m, x)) :- kind(n, "function_definition"), field(n, "name", c), text(c, x), docof(n, d), doc(d, _, m).
 .decl imp(n: node, q: symbol)
 imp(n, @dot(m, x)) :- kind(n, "import_from_statement"), field(n, "module_name", mn), text(mn, m), field(n, "name", xn), text(xn, x).
-.decl uses(n: node, f: node)
+.decl uses(n: node, f: node) cross_file
 uses(n, f) :- imp(n, q), def(f, q).
 .decl never(n: node)
 never(n) :- kind(n, "no_such_kind").
@@ -839,7 +839,7 @@ fn a_relation_two_programs_share_is_kept_once_and_a_rule_edit_reaches_only_its_r
 def(n, @dot(m, x)) :- kind(n, "function_definition"), field(n, "name", c), text(c, x), docof(n, d), doc(d, _, m).
 .decl imp(n: node, q: symbol)
 imp(n, @dot(m, x)) :- kind(n, "import_from_statement"), field(n, "module_name", mn), text(mn, m), field(n, "name", xn), text(xn, x).
-.decl uses(n: node, f: node)
+.decl uses(n: node, f: node) cross_file
 uses(n, f) :- imp(n, q), def(f, q).
 .output uses
 "#;
@@ -943,6 +943,10 @@ fn a_programs_facts_of_a_library_relation_ask_of_the_library() {
     assert!(!read.iter().any(|r| r == "dec_lit_repr"), "p0_hit reads the library's dec_lit_repr: {read:?}");
     let threshold = copy.replace("_dec_lit_repr", "_lit_repr_threshold");
     assert_eq!(prog.facts.get(&threshold).map(Vec::len), Some(1), "{threshold}: {:?}", prog.facts.keys().filter(|k| k.contains("threshold")).collect::<Vec<_>>());
+    // The library's own `lit_repr_threshold`, which its own rules still read, is stated empty: a run constant, not a
+    // relation of no location that would take every reader through it to the cross-file part (decision 0677,
+    // node-trace's `module_global`).
+    assert_eq!(prog.facts.get("lit_repr_threshold").map(Vec::len), Some(0), "the shared one stated empty: {:?}", prog.facts.keys().filter(|k| k.contains("threshold")).collect::<Vec<_>>());
 }
 
 /// A library's kind set that a program reads by `nearest` (ruff-n807's `nearest(f, s, scope)` over python/names.rerail's
@@ -1531,7 +1535,7 @@ fn a_cross_file_text_test_is_maintained_as_a_filter() {
 def(n, @dot(m, x)) :- kind(n, "function_definition"), field(n, "name", c), text(c, x), docof(n, d), doc(d, _, m).
 .decl imp(n: node, q: symbol)
 imp(n, @dot(m, x)) :- kind(n, "import_from_statement"), field(n, "module_name", mn), text(mn, m), field(n, "name", xn), text(xn, x).
-.decl uses(n: node, f: node)
+.decl uses(n: node, f: node) cross_file
 uses(n, f) :- imp(n, q), def(f, q).
 .decl passes(f: node)
 passes(f) :- uses(_, f), node_text(f, t), contains("pass", t).
@@ -1582,7 +1586,7 @@ fn a_cross_file_reader_finds_the_text_of_another_files_node() {
 def(n, @dot(m, x)) :- kind(n, "function_definition"), field(n, "name", c), text(c, x), docof(n, d), doc(d, _, m).
 .decl imp(n: node, q: symbol)
 imp(n, @dot(m, x)) :- kind(n, "import_from_statement"), field(n, "module_name", mn), text(mn, m), field(n, "name", xn), text(xn, x).
-.decl uses(n: node, f: node)
+.decl uses(n: node, f: node) cross_file
 uses(n, f) :- imp(n, q), def(f, q).
 .decl passes(f: node)
 passes(f) :- uses(_, f), node_text(f, t), contains("pass", t).
@@ -1603,7 +1607,7 @@ passes(f) :- uses(_, f), node_text(f, t), contains("pass", t).
 /// one value be reused under another, or make a session's next run cold.
 #[test]
 fn every_switch_lowering_reads_is_classified() {
-    /// The switches combining, lowering and preparation read that change no prepared program: checks, dumps, traces
+    /// The switches combining, lowering and preparation read that change no prepared program: dumps, traces
     /// and profiles, the store's and the cost model's paths, the session's binding.
     const NOT_PREPARING: &[&str] = &[
         "RERAIL_BLESS_CENSUS",
@@ -1612,6 +1616,12 @@ fn every_switch_lowering_reads_is_classified() {
         "RERAIL_MERGE_WHY",
         "RERAIL_SPLIT_CHECK",
         "RERAIL_SPLIT_DUMP",
+        // Reporting switches do not refuse programs; strict refusals are in PREPARING.
+        "RERAIL_CROSSINGS",
+        "RERAIL_NODE_CROSSINGS",
+        "RERAIL_POSITIONS",
+        "RERAIL_SHOW_CROSSINGS",
+        "RERAIL_SHOW_POSITIONS",
         "RERAIL_DEMAND_DUMP",
         "RERAIL_PREPARED_TRACE",
         // A measurement aid (`version_trace`): each program made from another written to a directory; the programs
@@ -1723,7 +1733,7 @@ fn every_switch_lowering_reads_is_classified() {
     // `RERAIL_OBSERVED_STEPS`).
     let mut preparing = sources(&[
         "logic/simplify.rs", "logic/strings.rs", "logic/reach_form.rs", "logic/magic.rs", "logic/magic", "logic/plan/lower.rs",
-        "logic/plan/corpus/cross_memo.rs", "logic/plan/corpus/hiding.rs", "logic/plan/corpus/memo.rs", "logic/plan/corpus/prepared.rs",
+        "logic/plan/corpus/cross_memo.rs", "logic/plan/corpus/hiding.rs", "logic/plan/corpus/memo.rs", "logic/plan/corpus/preparation.rs", "logic/plan/corpus/prepared.rs",
         "logic/plan/corpus/session.rs", "logic/profile.rs", "logic/costs.rs", "typing/file_local.rs", "typing/file_local",
     ]);
     preparing.push(("corpus.rs, run_observed's preparation".to_owned(), region("\nfn run_observed(", "Arc::new(Prepared {")));
@@ -1750,4 +1760,1139 @@ fn every_switch_lowering_reads_is_classified() {
     }
     let unread: Vec<&str> = super::COMBINING.iter().chain(super::PREPARING).copied().filter(|s| !seen.contains(*s)).collect();
     assert!(unread.is_empty(), "switches listed as combining or preparing that nothing there reads: {unread:?}");
+}
+
+/// A program prepared without a strict switch is not reused under it: the refusal runs on the warm store too.
+#[test]
+fn strict_crossing_checks_do_not_reuse_a_non_strict_preparation() {
+    let dir = crate::code_rule_dsl::fixtures::temp().with_extension("strict-preparation");
+    let _ = std::fs::remove_dir_all(&dir);
+    let root = dir.join("root");
+    std::fs::create_dir_all(&root).unwrap();
+    std::fs::write(root.join("a.py"), "def a(): pass\na()\n").unwrap();
+    std::fs::write(root.join("b.py"), "def b(): pass\nb()\n").unwrap();
+    super::TEST_TAPE_CACHE.with(|p| *p.borrow_mut() = Some(dir.join("store.sqlite")));
+    let body = ".decl pair(a: symbol, b: symbol)\npair(a, b) :- doc(d, a, _), doc(e, b, _), d != e.\n.decl result(a: symbol)\nresult(a) :- pair(a, _).\n.output result\n";
+    let rule = dir.join("rule.rerail");
+    std::fs::write(&rule, format!("#include \"core.rerail\"\n{body}")).unwrap();
+    let text = crate::code_rule_dsl::logic::rr::print(&crate::code_rule_dsl::logic::rr::parse_file(&rule).unwrap()).unwrap();
+    let out = dir.join("out");
+    let run = || super::run(&text, &root, None, &out, "program", crate::code_rule_dsl::typing::file_local::Binding::Cpu, 1 << 18);
+    {
+        let _off = super::switches::set(&[("RERAIL_STRICT_CROSSINGS", "0")]);
+        run().unwrap();
+    }
+    let _strict = super::switches::set(&[("RERAIL_STRICT_CROSSINGS", "1")]);
+    let error = run().err().map(|e| e.to_string()).unwrap_or_default();
+    assert!(error.contains("pair"), "a warm strict run refuses the crossing: {error}");
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// The tape cache keeps a file's own tape alone: a Vue file's matchers' tree, made from a cached tape, still holds its
+/// `<script>`'s guest, whose comments its ESLint directives are (`suppress::vue::script_directives`). Both the miss
+/// (queued) and the hit (read back) give the guest.
+#[test]
+fn a_cached_tape_kept_for_the_matchers_holds_its_guests() {
+    let dir = crate::code_rule_dsl::fixtures::temp().with_extension("kept-guests");
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).unwrap();
+    let store = crate::content_store::ContentStore::open(&dir.join("store.sqlite")).unwrap();
+    let file = crate::code_rule_dsl::facts::core::Source { language: "vue".into(), source: std::sync::Arc::new("<script>\n// eslint-disable-next-line no-x\nx();\n</script>\n".into()) };
+    for round in ["miss", "hit"] {
+        let (_, doc) = crate::code_rule_dsl::facts::core::build_in_wave_with_tape(&file, &store, None, None, false, true).unwrap();
+        let guests = doc.expect("a kept tape").guests().expect("its guests");
+        assert_eq!(guests.len(), 1, "{round}: the script's program");
+    }
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// A program whose per-file rule reads the project's settings (decision 0665): a function of a file under a package
+/// of `"type": "module"`.
+const SETTINGS_READ: &str = r#"
+.decl typed(n: node)
+typed(n) :- kind(n, "function_definition"), docof(n, d), doc(d, p, _), package_for(p, dir), package_field(dir, "type", "module").
+.output typed
+.decl shown(p: symbol, x: symbol)
+shown(p, x) :- typed(n), field(n, "name", i), text(i, x), docof(n, d), doc(d, p, _).
+.output shown
+"#;
+
+/// A run of `SETTINGS_READ` over `ws` in the store and output of `dir`: its report and `shown`'s rows.
+fn settings_read_run(dir: &std::path::Path) -> (super::Report, Vec<Vec<String>>) {
+    crate::install_store_functions();
+    let rule = dir.join("program.rerail");
+    std::fs::write(&rule, SETTINGS_READ).unwrap();
+    let program = crate::code_rule_dsl::logic::rr::print(&crate::code_rule_dsl::logic::rr::parse_file(&rule).unwrap()).unwrap();
+    super::TEST_TAPE_CACHE.with(|p| *p.borrow_mut() = Some(dir.join("store.sqlite")));
+    let report = super::run(&program, &dir.join("ws"), None, &dir.join("out"), "program", crate::code_rule_dsl::typing::file_local::Binding::Cpu, 1 << 18).unwrap();
+    let mut rows = super::super::output::Outputs::open(&dir.join("out")).unwrap().get("shown").map(|r| r.shown()).unwrap_or_default();
+    rows.sort();
+    (report, rows)
+}
+
+/// Decision 0665: a file's memo entry is kept under its own package's settings. Two packages, `a` (a module, two
+/// files) and `b` (one file). A source file's edit leaves the settings as they were, and the other files are read
+/// from the memo; an edit of `b/package.json` misses `b`'s files alone; and after each edit the rows are a fresh
+/// run's.
+#[test]
+fn a_files_entry_is_kept_under_its_own_packages_settings() {
+    let files = [
+        ("a/package.json", "{\"name\": \"a\", \"type\": \"module\"}\n"),
+        ("a/x.py", "def f():\n    pass\n"),
+        ("a/y.py", "def g():\n    pass\n"),
+        ("b/package.json", "{\"name\": \"b\"}\n"),
+        ("b/z.py", "def h():\n    pass\n"),
+    ];
+    let make = |name: &str, edits: &[(&str, &str)]| {
+        let dir = crate::code_rule_dsl::fixtures::temp().with_extension(name);
+        let _ = std::fs::remove_dir_all(&dir);
+        for (path, text) in files.iter().chain(edits) {
+            let to = dir.join("ws").join(path);
+            std::fs::create_dir_all(to.parent().unwrap()).unwrap();
+            std::fs::write(to, text).unwrap();
+        }
+        dir
+    };
+    let fresh = |name: &str, edits: &[(&str, &str)]| {
+        let dir = make(name, edits);
+        let (_, rows) = settings_read_run(&dir);
+        let _ = std::fs::remove_dir_all(&dir);
+        rows
+    };
+    let row = |p: &str, x: &str| vec![p.to_owned(), x.to_owned()];
+    let dir = make("settings-memo", &[]);
+    let (first, rows) = settings_read_run(&dir);
+    assert_eq!(rows, [row("a/x.py", "f"), row("a/y.py", "g")], "a full run's rows");
+    assert!(first.settings.is_some(), "the file-local part reads the settings");
+    // The documents under `b`: `z.py`, and `package.json` where the run reads JSON as documents.
+    let under_b = first.files - 2;
+    // A source file's edit: the settings are as they were, and every other file is read from the memo.
+    let source_edit = [("b/z.py", "# an edit\ndef h():\n    pass\n")];
+    std::fs::write(dir.join("ws/b/z.py"), source_edit[0].1).unwrap();
+    let (edited, rows) = settings_read_run(&dir);
+    assert_eq!(edited.settings, first.settings, "a source file's edit changes no setting");
+    assert_eq!(edited.memo.0, edited.files - 1, "every other file is read from the memo: {:?} of {}", edited.memo, edited.files);
+    assert_eq!(rows, fresh("settings-memo-fresh-1", &source_edit), "the rows are a fresh run's");
+    // `b` becomes a module: its files miss, `a`'s are read from the memo.
+    let package_edit = [("b/package.json", "{\"name\": \"b\", \"type\": \"module\"}\n")];
+    std::fs::write(dir.join("ws/b/package.json"), package_edit[0].1).unwrap();
+    let (edited, rows) = settings_read_run(&dir);
+    assert_ne!(edited.settings, first.settings, "an edit of a package.json changes the settings");
+    assert_eq!(edited.memo.0, edited.files - under_b, "the files under b alone miss: {:?} of {}", edited.memo, edited.files);
+    assert_eq!(rows, [row("a/x.py", "f"), row("a/y.py", "g"), row("b/z.py", "h")]);
+    assert_eq!(rows, fresh("settings-memo-fresh-2", &[source_edit[0], package_edit[0]]), "the rows are a fresh run's");
+    // `a` is no module: `a`'s files miss, `b`'s are read from the memo.
+    std::fs::write(dir.join("ws/a/package.json"), "{\"name\": \"a\"}\n").unwrap();
+    let (edited, rows) = settings_read_run(&dir);
+    assert_eq!(edited.memo.0, under_b, "the files under a alone miss: {:?} of {}", edited.memo, edited.files);
+    assert_eq!(rows, [row("b/z.py", "h")]);
+    assert_eq!(rows, fresh("settings-memo-fresh-3", &[source_edit[0], package_edit[0], ("a/package.json", "{\"name\": \"a\"}\n")]), "the rows are a fresh run's");
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// Decision 0665: module resolution handed on by the phase `tsx_names` keys a file's memo entry by its own rows. `a.ts`
+/// imports `g` from `./b`, `c.ts` imports `h` from `./d`. Adding `g` to `b.ts`'s exports misses `b.ts` (edited) and
+/// `a.ts` (its target's exports changed) alone: `c.ts` and `d.ts` are read from the memo, and the rows are a fresh
+/// run's. Under the whole export's digest (0083 §2.3) every file missed.
+#[test]
+fn a_files_entry_is_kept_under_its_own_imports_resolution() {
+    const PROGRAM: &str = ".language typescript\n#include \"tsx/names.rerail\"\n.decl used(n: node, p: symbol, q: symbol)\nused(n, p, q) :- sym_of(n, q), docof(n, d), doc(d, p, _).\n.output used\n";
+    let files = [
+        ("a.ts", "import { g } from \"./b\";\ng();\n"),
+        ("b.ts", "export function f() {}\n"),
+        ("c.ts", "import { h } from \"./d\";\nh();\n"),
+        ("d.ts", "export function h() {}\n"),
+    ];
+    let edit = ("b.ts", "export function f() {}\nexport function g() {}\n");
+    let make = |name: &str, edits: &[(&str, &str)]| {
+        let dir = crate::code_rule_dsl::fixtures::temp().with_extension(name);
+        let _ = std::fs::remove_dir_all(&dir);
+        for (path, text) in files.iter().chain(edits) {
+            let to = dir.join("ws").join(path);
+            std::fs::create_dir_all(to.parent().unwrap()).unwrap();
+            std::fs::write(to, text).unwrap();
+        }
+        dir
+    };
+    let run = |dir: &std::path::Path| -> (super::Report, Vec<Vec<String>>) {
+        crate::install_store_functions();
+        let rule = dir.join("program.rerail");
+        std::fs::write(&rule, PROGRAM).unwrap();
+        let program = crate::code_rule_dsl::logic::rr::print(&crate::code_rule_dsl::logic::rr::parse_file(&rule).unwrap()).unwrap();
+        super::TEST_TAPE_CACHE.with(|p| *p.borrow_mut() = Some(dir.join("store.sqlite")));
+        let report = super::run(&program, &dir.join("ws"), None, &dir.join("out"), "program", crate::code_rule_dsl::typing::file_local::Binding::Cpu, 1 << 18).unwrap();
+        // Each row's file and symbol (the node is the row's location, kept so a file's rows are memoised).
+        let mut rows: Vec<Vec<String>> = super::super::output::Outputs::open(&dir.join("out")).unwrap().get("used").map(|r| r.shown()).unwrap_or_default().into_iter().map(|r| r[1..].to_vec()).collect();
+        rows.sort();
+        (report, rows)
+    };
+    let dir = make("tsx-names-memo", &[]);
+    let (_, rows) = run(&dir);
+    let row = |p: &str, q: &str| vec![p.to_owned(), q.to_owned()];
+    assert_eq!(rows, [row("c.ts", "d#h")], "only h resolves, through the phase's exports, to d's own module: {rows:?}");
+    std::fs::write(dir.join("ws").join(edit.0), edit.1).unwrap();
+    let (edited, rows) = run(&dir);
+    assert_eq!(rows, [row("a.ts", "b#g"), row("c.ts", "d#h")], "g resolves now: {rows:?}");
+    assert_eq!(edited.memo.0, edited.files - 2, "b.ts and its importer a.ts alone miss: {:?} of {}", edited.memo, edited.files);
+    let fresh = make("tsx-names-memo-fresh", &[edit]);
+    assert_eq!(rows, run(&fresh).1, "the rows are a fresh run's");
+    let _ = std::fs::remove_dir_all(&fresh);
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// Decision 0677, fix 2: Python's names through the phase `py_names`. `sym_of` and `site_exported` read the phase's
+/// rows at their own file's path (or by a module those name), so they are file-local, and they find what the cross-file
+/// rules found before: those rules are written out here (`old_sym`, `old_public`) and run beside them. The workspace
+/// has a package re-exporting a class from a submodule, a chain of two re-exports, a star import under `__all__` and
+/// one without, a class's nested class and method read as its attributes, and a module outside the workspace.
+const PY_NAMES_FILES: [(&str, &str); 6] = [
+    ("pkg/__init__.py", "from .core import App\nfrom .more import *\nfrom .nall import *\n"),
+    ("pkg/core.py", "class App:\n    class Meta:\n        pass\n\n    def run(self):\n        pass\n"),
+    ("pkg/more.py", "__all__ = [\"helper\"]\n\n\ndef helper():\n    pass\n\n\ndef hidden():\n    pass\n"),
+    ("pkg/nall.py", "def visible():\n    pass\n\n\ndef _private():\n    pass\n"),
+    ("pkg/chain.py", "from pkg import App as Root\n"),
+    ("use.py", "import os\nfrom pkg import App, helper, visible\nfrom pkg.chain import Root\nApp.Meta\nApp.run\nRoot\nhelper\nvisible\nos.path.join\n"),
+];
+
+const PY_NAMES_PROGRAM: &str = r#".language python
+#include "python/names.rerail"
+.decl at(n: node, p: symbol, l: number)
+at(n, p, l) :- kind(e, "expression_statement"), child(e, n, 0), line(n, l), docof(n, d), doc(d, p, _).
+.decl used(p: symbol, l: number, q: symbol)
+used(p, l, q) :- at(n, p, l), sym_of(n, q).
+.output used
+.decl exported_at(p: symbol, x: symbol)
+exported_at(p, x) :- site_exported(site), binding(s, x, site, _), docof(s, d), doc(d, p, _).
+.output exported_at
+"#;
+
+/// The rules `py_names` replaced (python/names' `sym_of` rules 1 and 3, and `site_exported`, before 0677 fix 2): they
+/// read every file's rows.
+const PY_NAMES_OLD: &str = r#"
+.decl old_sym(n: node, q: symbol) cross_file
+old_sym(n, q) :- qn(n, q0), resolve_export(q0, q).
+export_query(q) :- qn(_, q).
+old_sym(n, q) :- look(n, x, s), defn(s, x, f), qualname(f, q).
+old_sym(n, q) :- attr_of(n, o, a), old_sym(o, c), class_def(_, c), q = @dot(c, a), qualname(_, q).
+old_sym(n, q) :- builtin_ref(n, x), q = @dot("builtins", x).
+.decl old_used(p: symbol, l: number, q: symbol)
+old_used(p, l, q) :- at(n, p, l), old_sym(n, q).
+.output old_used
+.decl old_exported_at(p: symbol, x: symbol)
+old_exported_at(p, x) :- binding(s, x, site, _), kind(s, "module"), module_of(s, m), public_name(m, x), docof(s, d), doc(d, p, _).
+.output old_exported_at
+"#;
+
+/// The workspace `files` (with `edits` written over them) in a fresh directory named for `name`.
+fn py_names_workspace(name: &str, edits: &[(&str, &str)]) -> std::path::PathBuf {
+    let dir = crate::code_rule_dsl::fixtures::temp().with_extension(name);
+    let _ = std::fs::remove_dir_all(&dir);
+    for (path, text) in PY_NAMES_FILES.iter().chain(edits) {
+        let to = dir.join("ws").join(path);
+        std::fs::create_dir_all(to.parent().unwrap()).unwrap();
+        std::fs::write(to, text).unwrap();
+    }
+    dir
+}
+
+/// `program` run over `dir`'s workspace: the report, and each output's rows, shown, by name.
+fn py_names_run(dir: &std::path::Path, program: &str) -> (super::Report, std::collections::BTreeMap<String, Vec<Vec<String>>>) {
+    crate::install_store_functions();
+    let rule = dir.join("program.rerail");
+    std::fs::write(&rule, program).unwrap();
+    let program = crate::code_rule_dsl::logic::rr::print(&crate::code_rule_dsl::logic::rr::parse_file(&rule).unwrap()).unwrap();
+    super::TEST_TAPE_CACHE.with(|p| *p.borrow_mut() = Some(dir.join("store.sqlite")));
+    let report = super::run(&program, &dir.join("ws"), None, &dir.join("out"), "program", crate::code_rule_dsl::typing::file_local::Binding::Cpu, 1 << 18).unwrap();
+    let outputs = super::super::output::Outputs::open(&dir.join("out")).unwrap();
+    let rows = ["used", "exported_at", "old_used", "old_exported_at"]
+        .into_iter()
+        .filter_map(|name| {
+            let mut rows: Vec<Vec<String>> = outputs.get(name).map(|r| r.shown())?;
+            rows.sort();
+            Some((name.to_owned(), rows))
+        })
+        .collect();
+    (report, rows)
+}
+
+#[test]
+fn python_names_through_the_phase_are_the_cross_file_rules_answers() {
+    let dir = py_names_workspace("py-names", &[]);
+    let (_, rows) = py_names_run(&dir, &format!("{PY_NAMES_PROGRAM}{PY_NAMES_OLD}"));
+    let row = |p: &str, l: i64, q: &str| vec![p.to_owned(), l.to_string(), q.to_owned()];
+    assert_eq!(
+        rows["used"],
+        [
+            row("use.py", 4, "pkg.App.Meta"),
+            row("use.py", 4, "pkg.core.App.Meta"),
+            row("use.py", 5, "pkg.App.run"),
+            row("use.py", 5, "pkg.core.App.run"),
+            row("use.py", 6, "pkg.core.App"),
+            row("use.py", 7, "pkg.more.helper"),
+            row("use.py", 8, "pkg.nall.visible"),
+            row("use.py", 9, "os.path.join"),
+        ],
+        "each name, re-exports and star imports followed, and each member of a class read as its attribute: {rows:?}"
+    );
+    assert_eq!(rows["used"], rows["old_used"], "sym_of finds what the cross-file rules found");
+    assert_eq!(rows["exported_at"], rows["old_exported_at"], "site_exported finds what the cross-file rule found");
+    let exported = |p: &str, x: &str| rows["exported_at"].contains(&vec![p.to_owned(), x.to_owned()]);
+    assert!(exported("pkg/more.py", "helper") && !exported("pkg/more.py", "hidden"), "__all__ names helper alone: {:?}", rows["exported_at"]);
+    assert!(exported("pkg/nall.py", "visible") && !exported("pkg/nall.py", "_private"), "without __all__, no leading _: {:?}", rows["exported_at"]);
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// Decision 0677, fix 2: an edit misses the files whose `py_names` rows changed. A body edit in pkg/core.py misses that
+/// file alone. A method added to `App` adds a row to pkg.core's `defined`: the files that read pkg.core (core.py,
+/// pkg/__init__.py and chain.py, which re-export App, and use.py, which reads it) miss, and more.py and nall.py are
+/// read from the memo. The rows are a fresh run's.
+#[test]
+fn a_python_files_entry_is_kept_under_its_own_names_resolution() {
+    let body = ("pkg/core.py", "class App:\n    class Meta:\n        pass\n\n    def run(self):\n        return 1\n");
+    let method = ("pkg/core.py", "class App:\n    class Meta:\n        pass\n\n    def run(self):\n        return 1\n\n    def stop(self):\n        pass\n");
+    let dir = py_names_workspace("py-names-memo", &[]);
+    let (_, before) = py_names_run(&dir, PY_NAMES_PROGRAM);
+    std::fs::write(dir.join("ws").join(body.0), body.1).unwrap();
+    let (edited, rows) = py_names_run(&dir, PY_NAMES_PROGRAM);
+    assert_eq!(rows, before, "a body edit changes no name");
+    assert_eq!(edited.memo.0, edited.files - 1, "a body edit misses its own file alone: {:?} of {}", edited.memo, edited.files);
+    std::fs::write(dir.join("ws").join(method.0), method.1).unwrap();
+    let (edited, rows) = py_names_run(&dir, PY_NAMES_PROGRAM);
+    assert_eq!(edited.memo.0, edited.files - 4, "pkg.core's readers alone miss: {:?} of {}", edited.memo, edited.files);
+    let fresh = py_names_workspace("py-names-memo-fresh", &[method]);
+    assert_eq!(rows, py_names_run(&fresh, PY_NAMES_PROGRAM).1, "the rows are a fresh run's");
+    let _ = std::fs::remove_dir_all(&fresh);
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// 0677 fix 3a: a class's ancestors through the phase `py_names` (`ancestor`, keyed by the class's module): a chain
+/// across three modules through a package's re-export, a library base through a module alias, an `enum` base, a
+/// builtin, and a base of the class's own module.
+const PY_CLASSES_FILES: [(&str, &str); 5] = [
+    ("models_base.py", "from django.db import models\n\n\nclass Base(models.Model):\n    pass\n"),
+    ("app/__init__.py", "from .base import Mid\n"),
+    ("app/base.py", "from models_base import Base\n\n\nclass Mid(Base):\n    pass\n"),
+    ("other.py", "import os\n\n\nclass Other(Exception):\n    pass\n"),
+    ("use.py", "import enum\nfrom app import Mid\n\n\nclass Leaf(Mid):\n    pass\n\n\nclass Color(enum.Enum):\n    pass\n\n\nclass Plain:\n    pass\n\n\nclass Local(Plain):\n    pass\n"),
+];
+
+const PY_CLASSES_PROGRAM: &str = r#".language python
+#include "python/names.rerail"
+.decl anc(p: symbol, q: symbol, b: symbol)
+anc(p, q, b) :- class_anc(c, b), class_def(c, q), docof(c, d), doc(d, p, _).
+.output anc
+.decl lib(p: symbol, q: symbol, b: symbol)
+lib(p, q, b) :- class_lib_anc(c, b), class_def(c, q), docof(c, d), doc(d, p, _).
+.output lib
+"#;
+
+/// The rule `class_anc` replaced for a class's own ancestry (python/scopes' `subclass`, a closure over every file's
+/// classes).
+const PY_CLASSES_OLD: &str = r#"
+.decl old_anc(p: symbol, q: symbol, b: symbol) cross_file
+old_anc(p, q, b) :- class_def(c, q), subclass(q, b), docof(c, d), doc(d, p, _).
+.output old_anc
+.decl old_lib(p: symbol, q: symbol, b: symbol) cross_file
+old_lib(p, q, b) :- class_def(c, q), subclass(q, b), !class_def(_, b), docof(c, d), doc(d, p, _).
+.output old_lib
+"#;
+
+/// The workspace `PY_CLASSES_FILES` (with `edits` written over them) in a fresh directory named for `name`.
+fn py_classes_workspace(name: &str, edits: &[(&str, &str)]) -> std::path::PathBuf {
+    let dir = crate::code_rule_dsl::fixtures::temp().with_extension(name);
+    let _ = std::fs::remove_dir_all(&dir);
+    for (path, text) in PY_CLASSES_FILES.iter().chain(edits) {
+        let to = dir.join("ws").join(path);
+        std::fs::create_dir_all(to.parent().unwrap()).unwrap();
+        std::fs::write(to, text).unwrap();
+    }
+    dir
+}
+
+/// `anc` and `old_anc`'s rows of a run of `program` over `dir`'s workspace.
+fn py_classes_run(dir: &std::path::Path, program: &str) -> (super::Report, std::collections::BTreeMap<String, Vec<Vec<String>>>) {
+    crate::install_store_functions();
+    let rule = dir.join("program.rerail");
+    std::fs::write(&rule, program).unwrap();
+    // Django's library is the pack's (`packs/django/rules/lib`), included as its rules do: beside the program.
+    if program.contains("#include \"lib/django.rerail\"") {
+        let lib = std::path::PathBuf::from(std::env::var_os("CARGO_MANIFEST_DIR").expect("CARGO_MANIFEST_DIR")).join("../packs/django/rules/lib/django.rerail");
+        std::fs::create_dir_all(dir.join("lib")).unwrap();
+        std::fs::copy(lib, dir.join("lib/django.rerail")).unwrap();
+    }
+    let program = crate::code_rule_dsl::logic::rr::print(&crate::code_rule_dsl::logic::rr::parse_file(&rule).unwrap()).unwrap();
+    super::TEST_TAPE_CACHE.with(|p| *p.borrow_mut() = Some(dir.join("store.sqlite")));
+    let report = super::run(&program, &dir.join("ws"), None, &dir.join("out"), "program", crate::code_rule_dsl::typing::file_local::Binding::Cpu, 1 << 18).unwrap();
+    let outputs = super::super::output::Outputs::open(&dir.join("out")).unwrap();
+    let rows = ["anc", "old_anc", "lib", "old_lib", "call", "kw", "ref", "meth", "dq", "df", "dk", "dm", "mg", "mc", "mu", "mo", "da", "mm", "hk", "rd"]
+        .into_iter()
+        .filter_map(|name| {
+            let mut rows: Vec<Vec<String>> = outputs.get(name).map(|r| r.shown())?;
+            rows.sort();
+            Some((name.to_owned(), rows))
+        })
+        .collect();
+    (report, rows)
+}
+
+#[test]
+fn python_class_ancestry_through_the_phase_is_the_cross_file_closures() {
+    let dir = py_classes_workspace("py-classes", &[]);
+    let (_, rows) = py_classes_run(&dir, &format!("{PY_CLASSES_PROGRAM}{PY_CLASSES_OLD}"));
+    let row = |p: &str, q: &str, b: &str| vec![p.to_owned(), q.to_owned(), b.to_owned()];
+    assert_eq!(
+        rows["anc"],
+        [
+            row("app/base.py", "app.base.Mid", "django.db.models.Model"),
+            row("app/base.py", "app.base.Mid", "models_base.Base"),
+            row("models_base.py", "models_base.Base", "django.db.models.Model"),
+            row("other.py", "other.Other", "builtins.Exception"),
+            row("use.py", "use.Color", "enum.Enum"),
+            row("use.py", "use.Leaf", "app.base.Mid"),
+            row("use.py", "use.Leaf", "django.db.models.Model"),
+            row("use.py", "use.Leaf", "models_base.Base"),
+            row("use.py", "use.Local", "use.Plain"),
+        ],
+        "each class's ancestors, re-exports followed, a library's base by its name: {rows:?}"
+    );
+    assert_eq!(rows["anc"], rows["old_anc"], "class_anc finds what the cross-file closure found");
+    assert_eq!(
+        rows["lib"],
+        [
+            row("app/base.py", "app.base.Mid", "django.db.models.Model"),
+            row("models_base.py", "models_base.Base", "django.db.models.Model"),
+            row("other.py", "other.Other", "builtins.Exception"),
+            row("use.py", "use.Color", "enum.Enum"),
+            row("use.py", "use.Leaf", "django.db.models.Model"),
+        ],
+        "each class's library ancestors: {rows:?}"
+    );
+    assert_eq!(rows["lib"], rows["old_lib"], "class_lib_anc finds what the cross-file rule found");
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// What a class's ancestors of the run assign and define, by symbol (decision 0677 fix 3b: python/names' class_anc_call,
+/// class_anc_kw, class_anc_ref, class_anc_method): an ancestor's in a module the class's file never imports
+/// (models_base, for use.py's Leaf) included, a callee resolved through its file's imports, and a class's own members
+/// not among them.
+#[test]
+fn python_class_members_reach_each_subclass_through_the_phase() {
+    let edits = [
+        (
+            "models_base.py",
+            "from django.db import models\n\n\nclass Base(models.Model):\n    name = models.CharField(max_length=10, unique=True)\n\n    def label(self):\n        return self.name\n",
+        ),
+        ("app/base.py", "from django.db import models\nfrom models_base import Base\n\n\nclass Mid(Base):\n    objects = models.Manager()\n"),
+    ];
+    let dir = py_classes_workspace("py-members", &edits);
+    let program = r#".language python
+#include "python/names.rerail"
+.decl call(q: symbol, x: symbol, f: symbol)
+call(q, x, f) :- class_anc_call(c, x, f), class_def(c, q).
+.output call
+.decl kw(q: symbol, x: symbol, k: symbol, v: symbol)
+kw(q, x, k, v) :- class_anc_kw(c, x, k, v), class_def(c, q).
+.output kw
+.decl ref(q: symbol, x: symbol, s: symbol)
+ref(q, x, s) :- class_anc_ref(c, x, s), class_def(c, q), s = "django.db.models.Manager".
+.output ref
+.decl meth(q: symbol, x: symbol)
+meth(q, x) :- class_anc_method(c, x), class_def(c, q).
+.output meth
+"#;
+    let (_, rows) = py_classes_run(&dir, program);
+    let r = |xs: &[&str]| xs.iter().map(|x| (*x).to_owned()).collect::<Vec<_>>();
+    assert_eq!(
+        rows["call"],
+        [
+            r(&["app.base.Mid", "name", "django.db.models.CharField"]),
+            r(&["use.Leaf", "name", "django.db.models.CharField"]),
+            r(&["use.Leaf", "objects", "django.db.models.Manager"]),
+        ],
+        "each class's ancestors' calls, its own not among them: {rows:?}"
+    );
+    assert_eq!(
+        rows["kw"],
+        [
+            r(&["app.base.Mid", "name", "max_length", "10"]),
+            r(&["app.base.Mid", "name", "unique", "True"]),
+            r(&["use.Leaf", "name", "max_length", "10"]),
+            r(&["use.Leaf", "name", "unique", "True"]),
+        ],
+        "{rows:?}"
+    );
+    assert_eq!(rows["ref"], [r(&["use.Leaf", "objects", "django.db.models.Manager"])], "{rows:?}");
+    assert_eq!(rows["meth"], [r(&["app.base.Mid", "label"]), r(&["use.Leaf", "label"])], "{rows:?}");
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// A model class read by its symbol in another file (decision 0677 fix 3b: python/django's dj_model_named,
+/// dj_model_field, dj_model_field_kw, dj_model_has_method): a queryset in views.py starts at `Book`, defined in
+/// shop/models.py, and reads Book's own fields and method and those it inherits from `Base`, in a module views.py
+/// never imports, each at the queryset's own root.
+#[test]
+fn a_django_model_is_read_by_its_symbol_in_another_file() {
+    let edits = [
+        (
+            "models_base.py",
+            "from django.db import models\n\n\nclass Base(models.Model):\n    name = models.CharField(max_length=10, unique=True)\n",
+        ),
+        ("shop/__init__.py", ""),
+        (
+            "shop/models.py",
+            "from django.db import models\nfrom models_base import Base\n\n\nclass Book(Base):\n    pages = models.IntegerField()\n    author = models.ForeignKey(\"Author\", to_field=\"code\")\n\n    def label(self):\n        return self.pages\n",
+        ),
+        ("views.py", "from shop.models import Book\n\n\ndef count():\n    return Book.objects.filter(pages=1).count()\n"),
+    ];
+    let dir = py_classes_workspace("dj-models", &edits);
+    let program = r#".language python
+#include "lib/django.rerail"
+.decl dq(p: symbol, mq: symbol)
+dq(p, mq) :- dj_qs_class(q, mq), docof(q, d), doc(d, p, _).
+.output dq
+.decl df(p: symbol, x: symbol, t: symbol)
+df(p, x, t) :- dj_qs_model(q, r), dj_model_field(r, x, t), docof(q, d), doc(d, p, _).
+.output df
+.decl dk(p: symbol, x: symbol, k: symbol, v: symbol)
+dk(p, x, k, v) :- dj_qs_model(q, r), dj_model_field_kw(r, x, k, v), docof(q, d), doc(d, p, _).
+.output dk
+.decl dm(p: symbol, x: symbol)
+dm(p, x) :- dj_qs_model(q, r), dj_model_has_method(r, x), docof(q, d), doc(d, p, _).
+.output dm
+"#;
+    let (_, rows) = py_classes_run(&dir, program);
+    let r = |xs: &[&str]| xs.iter().map(|x| (*x).to_owned()).collect::<Vec<_>>();
+    assert_eq!(rows["dq"], [r(&["views.py", "shop.models.Book"])], "{rows:?}");
+    assert_eq!(
+        rows["df"],
+        [
+            r(&["views.py", "author", "ForeignKey"]),
+            r(&["views.py", "name", "CharField"]),
+            r(&["views.py", "pages", "IntegerField"]),
+        ],
+        "Book's own fields and Base's: {rows:?}"
+    );
+    assert_eq!(
+        rows["dk"],
+        [
+            r(&["views.py", "author", "to_field", "\"code\""]),
+            r(&["views.py", "name", "max_length", "10"]),
+            r(&["views.py", "name", "unique", "True"]),
+        ],
+        "{rows:?}"
+    );
+    assert_eq!(rows["dm"], [r(&["views.py", "label"])], "{rows:?}");
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// A model's Meta options and managers read by its symbol in another file (decision 0677 fix 3c: the phase dj_names,
+/// python/django's dj_model_group and the rest). views.py imports shop.models alone; the Meta options
+/// and the manager's methods come from models_base and shop.managers, which it never imports, each by Django's
+/// inheritance: Plank's Meta subclasses its abstract base's (`class Meta(Named.Meta)`), Board declares a Meta of its
+/// own and takes none of Named's, Part takes its concrete base's constraints, and Part's manager builds a queryset
+/// class that defines get_or_create.
+#[test]
+fn a_django_models_meta_and_managers_are_read_by_their_symbol_in_another_file() {
+    let edits = [
+        (
+            "models_base.py",
+            "from django.db import models\n\n\nclass Named(models.Model):\n    name = models.CharField(max_length=50)\n    owner = models.ForeignKey(\"auth.User\", on_delete=models.CASCADE)\n\n    class Meta:\n        abstract = True\n        unique_together = (\"name\", \"owner\")\n\n\nclass Coded(models.Model):\n    code = models.CharField(max_length=10)\n    kind = models.CharField(max_length=10)\n\n    class Meta:\n        constraints = [\n            models.UniqueConstraint(fields=[\"code\"], name=\"c\"),\n            models.UniqueConstraint(fields=[\"code\", \"kind\"], condition=models.Q(kind=\"a\"), name=\"d\"),\n        ]\n",
+        ),
+        ("shop/__init__.py", ""),
+        (
+            "shop/managers.py",
+            "from django.db import models\n\n\nclass SlugQuerySet(models.QuerySet):\n    def get_or_create(self, **kw):\n        return super().get_or_create(**kw)\n\n\nclass SlugManager(models.Manager):\n    def get_queryset(self):\n        return SlugQuerySet(self.model, using=self._db)\n",
+        ),
+        (
+            "shop/models.py",
+            "from django.db import models\nfrom django.db.models.functions import Lower\nfrom models_base import Coded, Named\nfrom shop.managers import SlugManager\n\n\nclass Plank(Named):\n    class Meta(Named.Meta):\n        ordering = [\"name\"]\n\n\nclass Board(Named):\n    class Meta:\n        managed = False\n\n\nclass Part(Coded):\n    objects = SlugManager()\n\n\nclass Tag(models.Model):\n    label = models.CharField(max_length=10)\n\n    class Meta:\n        constraints = [models.UniqueConstraint(Lower(\"label\"), name=\"l\")]\n",
+        ),
+        ("views.py", "from shop.models import Board, Part, Plank, Tag\n\n\ndef make():\n    Plank.objects.get_or_create(name=\"n\")\n    Board.objects.get_or_create(name=\"n\")\n    Part.objects.get_or_create(code=\"c\")\n    Tag.objects.get_or_create(label=\"l\")\n"),
+    ];
+    let dir = py_classes_workspace("dj-meta", &edits);
+    let program = r#".language python
+#include "lib/django.rerail"
+.decl at_view(e: node, mq: symbol)
+at_view(e, mq) :- dj_qs_root(_, e), dj_model_named(e, mq), docof(e, d), doc(d, "views.py", _).
+.decl mg(mq: symbol, g: symbol, x: symbol)
+mg(mq, g, x) :- at_view(e, mq), dj_model_group(e, g, x).
+.output mg
+.decl mc(mq: symbol, g: symbol, x: symbol)
+mc(mq, g, x) :- at_view(e, mq), dj_model_cond_group(e, g, x).
+.output mc
+.decl mu(mq: symbol)
+mu(mq) :- at_view(e, mq), dj_model_unmanaged(e).
+.output mu
+.decl mo(mq: symbol)
+mo(mq) :- at_view(e, mq), dj_model_opaque(e).
+.output mo
+.decl da(p: symbol, mq: symbol)
+da(p, mq) :- dj_model_abstract(e), dj_model_named(e, mq), docof(e, d), doc(d, p, _).
+.output da
+.decl mm(mq: symbol, a: symbol, x: symbol)
+mm(mq, a, x) :- at_view(e, mq), dj_model_manager_method(e, a, x).
+.output mm
+"#;
+    let (_, rows) = py_classes_run(&dir, program);
+    let r = |xs: &[&str]| xs.iter().map(|x| (*x).to_owned()).collect::<Vec<_>>();
+    assert_eq!(
+        rows["mg"],
+        [
+            r(&["shop.models.Part", "models_base.Coded#constraints.0", "code"]),
+            r(&["shop.models.Plank", "models_base.Named#unique_together", "name"]),
+            r(&["shop.models.Plank", "models_base.Named#unique_together", "owner"]),
+        ],
+        "Plank takes its abstract base's Meta, Board does not, Part its concrete base's: {rows:?}"
+    );
+    assert_eq!(
+        rows["mc"],
+        [r(&["shop.models.Part", "models_base.Coded#constraints.1", "code"]), r(&["shop.models.Part", "models_base.Coded#constraints.1", "kind"])],
+        "{rows:?}"
+    );
+    assert_eq!(rows["mu"], [r(&["shop.models.Board"])], "{rows:?}");
+    assert_eq!(rows["mo"], [r(&["shop.models.Tag"])], "an expression constraint: {rows:?}");
+    assert_eq!(rows["da"], [r(&["models_base.py", "models_base.Named"]), r(&["shop/models.py", "models_base.Named"])], "{rows:?}");
+    assert_eq!(rows["mm"], [r(&["shop.models.Part", "objects", "get_or_create"])], "{rows:?}");
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// A model's hooks read by its symbol in another file (decision 0677 fix 3d: the phase dj_names,
+/// python/django's dj_model_hook and dj_receiver_def). views.py imports shop.models alone. Book's save() is
+/// inherited from Stamped, in models_base, which views.py never imports; Book's receivers are connected in
+/// shop/signals.py, which nothing imports: a decorated def, and a def connected with `.connect`, both for sender Book.
+/// Note's save() only calls the base class's, so it is no hook. signals.py's own defs know they are receivers.
+#[test]
+fn a_django_models_hooks_are_read_by_their_symbol_in_another_file() {
+    let edits = [
+        (
+            "models_base.py",
+            "from django.db import models\n\n\nclass Stamped(models.Model):\n    class Meta:\n        abstract = True\n\n    def save(self, *args, **kwargs):\n        self.updated = None\n        super().save(*args, **kwargs)\n",
+        ),
+        ("shop/__init__.py", ""),
+        (
+            "shop/models.py",
+            "from django.db import models\nfrom models_base import Stamped\n\n\nclass Book(Stamped):\n    title = models.CharField(max_length=10)\n\n\nclass Note(models.Model):\n    def save(self, *args, **kwargs):\n        \"\"\"Just super.\"\"\"\n        return super().save(*args, **kwargs)\n",
+        ),
+        (
+            "shop/signals.py",
+            "from django.db.models.signals import post_save, pre_save\nfrom django.dispatch import receiver\n\nfrom .models import Book\n\n\n@receiver([pre_save, post_save], sender=Book)\ndef book_saved(sender, instance, **kwargs):\n    pass\n\n\ndef book_checked(sender, instance, **kwargs):\n    pass\n\n\npre_save.connect(book_checked, sender=Book)\n",
+        ),
+        ("views.py", "from shop.models import Book, Note\n\n\ndef bulk():\n    Book.objects.update(title=\"t\")\n    Note.objects.update(title=\"t\")\n"),
+    ];
+    let dir = py_classes_workspace("dj-hooks", &edits);
+    let program = r#".language python
+#include "lib/django.rerail"
+.decl hk(mq: symbol, k: symbol, h: symbol)
+hk(mq, k, h) :- dj_qs_root(_, e), dj_model_named(e, mq), docof(e, d), doc(d, "views.py", _), dj_model_hook(e, k, h).
+.output hk
+.decl rd(p: symbol, f: symbol, mq: symbol)
+rd(p, x, mq) :- dj_receiver_def(f, mq), def_name(f, x), docof(f, d), doc(d, p, _).
+.output rd
+"#;
+    let (_, rows) = py_classes_run(&dir, program);
+    let r = |xs: &[&str]| xs.iter().map(|x| (*x).to_owned()).collect::<Vec<_>>();
+    assert_eq!(
+        rows["hk"],
+        [
+            r(&["shop.models.Book", "save", "Stamped.save() (models_base.py:8)"]),
+            r(&["shop.models.Book", "save", "post_save/pre_save receiver `book_saved` (shop/signals.py:7)"]),
+            r(&["shop.models.Book", "save", "pre_save receiver `book_checked` (shop/signals.py:16)"]),
+        ],
+        "Book's inherited save() and its receivers; Note's bare save() is none: {rows:?}"
+    );
+    assert_eq!(
+        rows["rd"],
+        [r(&["shop/signals.py", "book_checked", "shop.models.Book"]), r(&["shop/signals.py", "book_saved", "shop.models.Book"])],
+        "{rows:?}"
+    );
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// A body edit misses its own file alone; a changed base misses the files that read the modules whose ancestry rows
+/// change (decision 0665's keys: a file's own module's rows, and those of the modules its imports reach), not a file
+/// that reaches none of them.
+#[test]
+fn a_python_files_entry_is_kept_under_its_own_classes_ancestry() {
+    let body = ("app/base.py", "from models_base import Base\n\n\nclass Mid(Base):\n    x = 1\n");
+    let rebased = ("models_base.py", "from django.db import models\n\n\nclass Base(Exception):\n    pass\n");
+    let dir = py_classes_workspace("py-classes-memo", &[]);
+    let (_, before) = py_classes_run(&dir, PY_CLASSES_PROGRAM);
+    std::fs::write(dir.join("ws").join(body.0), body.1).unwrap();
+    let (edited, rows) = py_classes_run(&dir, PY_CLASSES_PROGRAM);
+    assert_eq!(rows, before, "a body edit changes no ancestry");
+    assert_eq!(edited.memo.0, edited.files - 1, "a body edit misses its own file alone: {:?} of {}", edited.memo, edited.files);
+    std::fs::write(dir.join("ws").join(rebased.0), rebased.1).unwrap();
+    let (edited, rows) = py_classes_run(&dir, PY_CLASSES_PROGRAM);
+    assert_eq!(edited.memo.0, 1, "only other.py, which reaches no module of the hierarchy, hits: {:?} of {}", edited.memo, edited.files);
+    let fresh = py_classes_workspace("py-classes-memo-fresh", &[body, rebased]);
+    assert_eq!(rows, py_classes_run(&fresh, PY_CLASSES_PROGRAM).1, "the rows are a fresh run's");
+    let _ = std::fs::remove_dir_all(&fresh);
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// Decision 0665: a rule over another file's rows, read through an option (`doc_ignored`: a decorator the
+/// `pydocstyle.ignore-decorators` option lists, resolved across files), and a constant of the run's settings
+/// (`py_version`: `env`, else a file read, else a default). The option's name reaches `option_item` from its
+/// reader, as `naming.rerail`'s `method_dec_named(e, o)` from `method_dec_named(e, "pep8-naming.…")`. And an option
+/// named by a computed name, as pytest's
+/// `option(cat(c, "-require-match-for"), p)`: `option` stays an input, `option_item` is stated still.
+const OPTION_READ: &str = r#"
+.decl def(n: node, x: symbol)
+def(n, x) :- kind(n, "function_definition"), field(n, "name", i), text(i, x).
+.decl dec_named(n: node, o: symbol) cross_file
+dec_named(n, o) :- def(n, _), option_item(o, _, q), def(_, q).
+.decl ignored(n: node) cross_file
+ignored(n) :- dec_named(n, "ignore").
+.decl ver(v: symbol)
+ver(v) :- env("demo.version", v).
+ver(v) :- !env("demo.version", _), env("demo.venv", e), f = cat(e, "/demo.cfg"), file_line(f, _, v).
+ver("3.13") :- !env("demo.version", _), !env("demo.venv", _).
+.decl shown(p: symbol, x: symbol)
+shown(p, x) :- def(n, x), !ignored(n), ver("3.13"), docof(n, d), doc(d, p, _).
+.output shown
+.decl flagged(n: node)
+flagged(n) :- def(n, x), option(cat(x, "-on"), _).
+.output flagged
+"#;
+
+/// A run of `OPTION_READ` with `options` over `ws` in the store and output of `dir`: its report and `shown`'s rows.
+fn option_read_run(dir: &std::path::Path, options: &serde_json::Value) -> (super::Report, Vec<Vec<String>>) {
+    crate::install_store_functions();
+    let rule = dir.join("program.rerail");
+    std::fs::write(&rule, OPTION_READ).unwrap();
+    let program = crate::code_rule_dsl::logic::rr::print(&crate::code_rule_dsl::logic::rr::parse_file(&rule).unwrap()).unwrap();
+    super::TEST_TAPE_CACHE.with(|p| *p.borrow_mut() = Some(dir.join("store.sqlite")));
+    let report = super::run_with_options(&[&program], &dir.join("ws"), None, &dir.join("out"), "program", crate::code_rule_dsl::typing::file_local::Binding::Cpu, 1 << 18, &Default::default(), options).unwrap();
+    let mut rows = super::super::output::Outputs::open(&dir.join("out")).unwrap().get("shown").map(|r| r.shown()).unwrap_or_default();
+    rows.sort();
+    (report, rows)
+}
+
+/// Decision 0665: the run's options and settings are decided before the run. With no `ignore` option, the rule that
+/// reads every file's definitions through it cannot hold and goes, and with no `env` the version is the default,
+/// folded first: `shown` is per-file, and an edit of one file reads the others from the memo. With the option set,
+/// the rule holds and reads across files. Each run's rows are a fresh run's.
+#[test]
+fn an_option_the_run_does_not_set_is_decided_before_the_run() {
+    let make = |name: &str| {
+        let dir = crate::code_rule_dsl::fixtures::temp().with_extension(name);
+        let _ = std::fs::remove_dir_all(&dir);
+        for (path, text) in [("x.py", "def f():\n    pass\n"), ("y.py", "def g():\n    pass\n"), ("z.py", "def h():\n    pass\n")] {
+            let to = dir.join("ws").join(path);
+            std::fs::create_dir_all(to.parent().unwrap()).unwrap();
+            std::fs::write(to, text).unwrap();
+        }
+        dir
+    };
+    let row = |p: &str, x: &str| vec![p.to_owned(), x.to_owned()];
+    let none = serde_json::Value::Null;
+    let dir = make("option-decided");
+    let (first, rows) = option_read_run(&dir, &none);
+    assert_eq!(rows, [row("x.py", "f"), row("y.py", "g"), row("z.py", "h")], "no option: nothing ignored, the default version");
+    std::fs::write(dir.join("ws/z.py"), "# an edit\ndef h():\n    pass\n").unwrap();
+    let (edited, rows) = option_read_run(&dir, &none);
+    assert_eq!(edited.memo.0, edited.files - 1, "shown is per-file: every other file is read from the memo: {:?} of {} (first {:?})", edited.memo, edited.files, first.memo);
+    assert_eq!(rows, [row("x.py", "f"), row("y.py", "g"), row("z.py", "h")]);
+    let _ = std::fs::remove_dir_all(&dir);
+    // The option set: any file defining `h` ignores every definition.
+    let set = serde_json::json!({"ignore": ["h"]});
+    let dir = make("option-set");
+    let (_, rows) = option_read_run(&dir, &set);
+    assert_eq!(rows, Vec::<Vec<String>>::new(), "the option set: every definition ignored");
+    let _ = std::fs::remove_dir_all(&dir);
+    let set = serde_json::json!({"ignore": ["k"]});
+    let dir = make("option-set-unmatched");
+    let (_, rows) = option_read_run(&dir, &set);
+    assert_eq!(rows, [row("x.py", "f"), row("y.py", "g"), row("z.py", "h")], "an option naming no definition ignores none");
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// Decision 0665: which settings a memoised relation's rows can read. A read keyed by the file's own path, or by a
+/// folder or target its own path's row names (directly, through a relation keyed by it, or carried by a relation
+/// derived from its own rows), is the file's own; one through another key (a constant folder, any file's row) is
+/// every file's.
+#[test]
+fn a_relation_reads_its_own_files_settings_only_through_its_own_path() {
+    use crate::code_rule_dsl::logic::plan::corpus::memo::{SettingsScope, settings_scopes};
+    let dir = crate::code_rule_dsl::fixtures::temp().with_extension("settings-scopes");
+    std::fs::create_dir_all(&dir).unwrap();
+    let rule = dir.join("program.rerail");
+    std::fs::write(&rule, r#"
+.decl dep(dir: symbol, m: symbol)
+dep(dir, m) :- package_field(dir, "dependencies/react", m).
+.decl own(n: node)
+own(n) :- kind(n, "function_definition"), docof(n, d), doc(d, p, _), package_for(p, dir), dep(dir, _).
+.output own
+.decl any(n: node)
+any(n) :- kind(n, "function_definition"), package_for(_, dir), dep(dir, _).
+.output any
+.decl root(n: node)
+root(n) :- kind(n, "function_definition"), package_field(".", "type", "module").
+.output root
+.decl none(n: node)
+none(n) :- kind(n, "function_definition").
+.output none
+.decl tsx_names__target_at(p: symbol, s: symbol, t: symbol) by_path 2
+.decl tsx_names__exports(m: symbol, x: symbol, q: symbol) keyed
+.decl tgt(d: number, s: symbol, t: symbol)
+tgt(d, s, t) :- doc(d, p, _), tsx_names__target_at(p, s, t).
+.decl resolved(n: node, q: symbol)
+resolved(n, q) :- kind(n, "identifier"), text(n, x), docof(n, d), tgt(d, s, t), tsx_names__exports(t, x, q).
+.output resolved
+.decl other(n: node, q: symbol)
+other(n, q) :- kind(n, "identifier"), text(n, x), tsx_names__exports(_, x, q).
+.output other
+.decl mixed_tgt(d: number, s: symbol, t: symbol)
+mixed_tgt(d, s, t) :- doc(d, p, _), tsx_names__target_at(p, s, t).
+mixed_tgt(d, s, t) :- kind(n, "string"), text(n, s), docof(n, d), t = s.
+.decl mixed(n: node, q: symbol)
+mixed(n, q) :- kind(n, "identifier"), text(n, x), docof(n, d), mixed_tgt(d, s, t), tsx_names__exports(t, x, q).
+.output mixed
+"#).unwrap();
+    let v = crate::code_rule_dsl::logic::program_image::Builder::of_program(&crate::code_rule_dsl::logic::rr::parse_file(&rule).unwrap()).unwrap().finish().unwrap().0;
+    let placed = crate::code_rule_dsl::logic::plan::body::Placed::whole(v);
+    let rels = ["own", "any", "root", "none", "resolved", "other", "mixed"].map(str::to_owned).into_iter().collect();
+    let scopes = settings_scopes(&placed, &rels);
+    assert_eq!(scopes.get("own"), Some(&SettingsScope::OwnFile), "{scopes:?}");
+    assert_eq!(scopes.get("any"), Some(&SettingsScope::All), "{scopes:?}");
+    assert_eq!(scopes.get("root"), Some(&SettingsScope::All), "{scopes:?}");
+    assert_eq!(scopes.get("none"), None, "{scopes:?}");
+    // A target its own path's row names, carried by a derived relation (`tgt`), keys its exports' read as its own.
+    assert_eq!(scopes.get("resolved"), Some(&SettingsScope::OwnFile), "{scopes:?}");
+    assert_eq!(scopes.get("other"), Some(&SettingsScope::All), "{scopes:?}");
+    // A column one rule fills from the file's own row and another from its text (any string, another file's target
+    // too) is not the file's own key: its readers read every file's exports (review F3).
+    assert_eq!(scopes.get("mixed"), Some(&SettingsScope::All), "{scopes:?}");
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+
+/// Decision 0710: Python's module privacy (D1xx's `doc_public`, Ruff's `is_private_module`) walks the package's folders
+/// over `file`, a setting, at the file's own path: no engine table. A segment starting with `_` and no dunder makes a
+/// module private; a file outside every regular package (`__init__.py` or `__init__.pyi`) is named by its stem alone.
+#[test]
+fn a_python_modules_privacy_is_read_over_the_files_at_its_own_path() {
+    crate::install_store_functions();
+    let dir = crate::code_rule_dsl::fixtures::temp().with_extension("py-privacy");
+    let _ = std::fs::remove_dir_all(&dir);
+    for path in [
+        "top.py",
+        "_top.py",
+        "__main__.py",
+        "pkg/__init__.py",
+        "pkg/_m.py",
+        "pkg/m.py",
+        "pkg/_impl/__init__.py",
+        "pkg/_impl/m.py",
+        "_loose/m.py",
+        "stubs/__init__.pyi",
+        "stubs/_s.pyi",
+    ] {
+        let to = dir.join("ws").join(path);
+        std::fs::create_dir_all(to.parent().unwrap()).unwrap();
+        std::fs::write(to, "x = 1\n").unwrap();
+    }
+    let rule = dir.join("program.rerail");
+    std::fs::write(
+        &rule,
+        ".language python\n#include \"python/docstrings.rerail\"\n.decl public_module(p: symbol)\npublic_module(p) :- kind(m, \"module\"), doc_public(m), docof(m, d), doc(d, p, _).\n.output public_module\n",
+    )
+    .unwrap();
+    let program = crate::code_rule_dsl::logic::rr::print(&crate::code_rule_dsl::logic::rr::parse_file(&rule).unwrap()).unwrap();
+    super::TEST_TAPE_CACHE.with(|p| *p.borrow_mut() = Some(dir.join("store.sqlite")));
+    super::run(&program, &dir.join("ws"), None, &dir.join("out"), "program", crate::code_rule_dsl::typing::file_local::Binding::Cpu, 1 << 18).unwrap();
+    let outputs = super::super::output::Outputs::open(&dir.join("out")).unwrap();
+    let mut rows: Vec<String> = outputs.get("public_module").map(|r| r.shown()).unwrap_or_default().into_iter().flatten().collect();
+    rows.sort();
+    // `_loose/m.py` is in no package: its module is `m`, public. `pkg/_impl/m.py` is `pkg._impl.m` and
+    // `pkg/_impl/__init__.py` is `pkg._impl`, both private.
+    assert_eq!(rows, ["__main__.py", "_loose/m.py", "pkg/__init__.py", "pkg/m.py", "stubs/__init__.pyi", "top.py"].map(str::to_owned));
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// Decision 0710: an input nothing gives rows is an error naming it, not an empty relation a rule reads nothing from.
+/// An `extensible` relation nothing states is an extension with no members: stated empty, and the run goes on.
+#[test]
+fn an_input_nothing_produces_is_an_error_and_an_unstated_extension_is_empty() {
+    crate::install_store_functions();
+    let dir = crate::code_rule_dsl::fixtures::temp().with_extension("unproduced");
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(dir.join("ws")).unwrap();
+    std::fs::write(dir.join("ws/a.py"), "x = 1\n").unwrap();
+    let run = |text: &str, out: &str| {
+        let rule = dir.join(format!("{out}.rerail"));
+        std::fs::write(&rule, text).unwrap();
+        let program = crate::code_rule_dsl::logic::rr::print(&crate::code_rule_dsl::logic::rr::parse_file(&rule).unwrap()).unwrap();
+        super::TEST_TAPE_CACHE.with(|p| *p.borrow_mut() = Some(dir.join("store.sqlite")));
+        super::run(&program, &dir.join("ws"), None, &dir.join(out), "program", crate::code_rule_dsl::typing::file_local::Binding::Cpu, 1 << 18)
+    };
+    let missing = run(
+        ".language python\n.decl nobody_makes(path: symbol)\n.input nobody_makes\n.decl hit(p: symbol)\nhit(p) :- doc(_, p, _), nobody_makes(p).\n.output hit\n",
+        "missing",
+    );
+    let err = missing.err().expect("an input nothing produces fails the run").to_string();
+    assert!(err.contains("nobody_makes") && err.contains("nothing gives it rows"), "{err}");
+    let extension = run(
+        ".language python\n.decl members(path: symbol) extensible\n.decl hit(p: symbol)\nhit(p) :- doc(_, p, _), !members(p).\n.output hit\n",
+        "extension",
+    );
+    extension.expect("an unstated extension is empty");
+    let outputs = super::super::output::Outputs::open(&dir.join("extension")).unwrap();
+    let rows: Vec<String> = outputs.get("hit").map(|r| r.shown()).unwrap_or_default().into_iter().flatten().collect();
+    assert_eq!(rows, ["a.py"]);
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// `npm_ignored`, the repository input (`facts::repository`), as `package_manifest` reads a package: its `files` list
+/// decides where it has one (package.json always published); else its `.npmignore`; and a file under no package.json
+/// has no row. Read at each file's own path, it is a per-file setting (`by_path`, decision 0710).
+#[test]
+fn a_files_npm_leaves_out_are_npm_ignored() {
+    crate::install_store_functions();
+    let dir = crate::code_rule_dsl::fixtures::temp().with_extension("npm-ignored");
+    let _ = std::fs::remove_dir_all(&dir);
+    for (path, text) in [
+        ("lib/package.json", r#"{"name": "lib", "files": ["dist"]}"#),
+        ("lib/dist/a.js", "export const a = 1;\n"),
+        ("lib/test/a.test.js", "export const t = 1;\n"),
+        ("cli/package.json", r#"{"name": "cli"}"#),
+        ("cli/.npmignore", "scripts/\n"),
+        ("cli/index.js", "export const c = 1;\n"),
+        ("cli/scripts/build.js", "export const b = 1;\n"),
+        ("tools/x.js", "export const x = 1;\n"),
+    ] {
+        let to = dir.join("ws").join(path);
+        std::fs::create_dir_all(to.parent().unwrap()).unwrap();
+        std::fs::write(to, text).unwrap();
+    }
+    let rule = dir.join("program.rerail");
+    std::fs::write(&rule, ".language javascript\n.decl npm_ignored(path: symbol)\n.input npm_ignored\n.decl left_out(p: symbol)\nleft_out(p) :- doc(_, p, _), npm_ignored(p).\n.output left_out\n").unwrap();
+    let program = crate::code_rule_dsl::logic::rr::print(&crate::code_rule_dsl::logic::rr::parse_file(&rule).unwrap()).unwrap();
+    super::TEST_TAPE_CACHE.with(|p| *p.borrow_mut() = Some(dir.join("store.sqlite")));
+    super::run(&program, &dir.join("ws"), None, &dir.join("out"), "program", crate::code_rule_dsl::typing::file_local::Binding::Cpu, 1 << 18).unwrap();
+    let outputs = super::super::output::Outputs::open(&dir.join("out")).unwrap();
+    let mut rows: Vec<Vec<String>> = outputs.get("left_out").map(|r| r.shown()).unwrap_or_default();
+    rows.sort();
+    assert_eq!(rows, [vec!["cli/scripts/build.js".to_owned()], vec!["lib/test/a.test.js".to_owned()]]);
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// Decision 0691: `spec_resolved` comes from the phase `node_resolve`, which resolves each file's specifiers natively
+/// (`module_target`, main's `import_target`) and hands the files on by path. A relative file, an installed package (its
+/// `main`, in node_modules, which the repository walk skips), a builtin and a dynamic import resolve; a missing file
+/// does not, and is the one `spec_failed`. Adding the file resolves it on the next run.
+#[test]
+fn node_specifiers_resolve_through_the_phase() {
+    crate::install_store_functions();
+    let dir = crate::code_rule_dsl::fixtures::temp().with_extension("node-resolve");
+    let _ = std::fs::remove_dir_all(&dir);
+    let ws = dir.join("ws");
+    for (path, text) in [
+        ("package.json", r#"{"name": "app", "dependencies": {"lodash": "1"}}"#),
+        ("src/a.js", "const b = require(\"./b\");\nconst n = require(\"./nope\");\nconst l = require(\"lodash\");\nconst fs = require(\"fs\");\nimport(\"./c.mjs\");\n"),
+        ("src/b.js", "module.exports = 1;\n"),
+        ("src/c.mjs", "export const c = 1;\n"),
+        ("node_modules/lodash/package.json", r#"{"name": "lodash", "main": "main.js"}"#),
+        ("node_modules/lodash/main.js", "module.exports = {};\n"),
+    ] {
+        let to = ws.join(path);
+        std::fs::create_dir_all(to.parent().unwrap()).unwrap();
+        std::fs::write(to, text).unwrap();
+    }
+    let rule = dir.join("program.rerail");
+    std::fs::write(&rule, r#".language javascript
+#include "tsx/node-resolve.rerail"
+.decl resolved(p: symbol, x: symbol, f: symbol)
+resolved(p, x, f) :- spec_resolved(n, f), node_target(n, x, _), docof(n, d), doc(d, p, _).
+.output resolved
+.decl failed(p: symbol, x: symbol)
+failed(p, x) :- spec_failed(n), node_target(n, x, _), docof(n, d), doc(d, p, _).
+.output failed
+"#).unwrap();
+    let program = crate::code_rule_dsl::logic::rr::print(&crate::code_rule_dsl::logic::rr::parse_file(&rule).unwrap()).unwrap();
+    super::TEST_TAPE_CACHE.with(|p| *p.borrow_mut() = Some(dir.join("store.sqlite")));
+    let run = |out: &str| {
+        super::run(&program, &ws, None, &dir.join(out), "program", crate::code_rule_dsl::typing::file_local::Binding::Cpu, 1 << 18).unwrap();
+        let outputs = super::super::output::Outputs::open(&dir.join(out)).unwrap();
+        let rows = |name: &str| {
+            let mut rows: Vec<Vec<String>> = outputs.get(name).map(|r| r.shown()).unwrap_or_default();
+            rows.sort();
+            rows
+        };
+        (rows("resolved"), rows("failed"))
+    };
+    let row = |cols: &[&str]| cols.iter().map(|c| (*c).to_owned()).collect::<Vec<_>>();
+    let (resolved, failed) = run("out1");
+    assert_eq!(
+        resolved,
+        [
+            row(&["src/a.js", "./b", "src/b.js"]),
+            row(&["src/a.js", "./c.mjs", "src/c.mjs"]),
+            row(&["src/a.js", "fs", "fs"]),
+            row(&["src/a.js", "lodash", "node_modules/lodash/main.js"]),
+        ]
+    );
+    assert_eq!(failed, [row(&["src/a.js", "./nope"])]);
+    std::fs::write(ws.join("src/nope.js"), "module.exports = 2;\n").unwrap();
+    let (resolved, failed) = run("out2");
+    assert!(resolved.contains(&row(&["src/a.js", "./nope", "src/nope.js"])), "{resolved:?}");
+    assert!(failed.is_empty(), "{failed:?}");
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// A tsconfig `paths` alias resolves against the effective `baseUrl`, inherited through `extends` from the folder of
+/// the configuration that sets it (`tsconfig(dir, base)`, from the root): `web/tsconfig.json` extends
+/// `base/tsconfig.base.json`, whose `"baseUrl": "src"` is `base/src`, so `@/model` is `base/src/model.ts`.
+#[test]
+fn a_paths_alias_resolves_against_an_inherited_base_url() {
+    crate::install_store_functions();
+    let dir = crate::code_rule_dsl::fixtures::temp().with_extension("tsconfig-base");
+    let _ = std::fs::remove_dir_all(&dir);
+    let ws = dir.join("ws");
+    for (path, text) in [
+        ("base/tsconfig.base.json", r#"{"compilerOptions": {"baseUrl": "src"}}"#),
+        ("web/tsconfig.json", r#"{"extends": "../base/tsconfig.base.json", "compilerOptions": {"paths": {"@/*": ["*"]}}}"#),
+        ("base/src/model.ts", "export const value = 1;\n"),
+        ("web/main.ts", "import { value as imported } from \"@/model\";\nimported;\n"),
+    ] {
+        let to = ws.join(path);
+        std::fs::create_dir_all(to.parent().unwrap()).unwrap();
+        std::fs::write(to, text).unwrap();
+    }
+    let rule = dir.join("program.rerail");
+    std::fs::write(&rule, ".language typescript\n#include \"tsx/names.rerail\"\n.decl resolved(q: symbol)\nresolved(q) :- kind(n, \"identifier\"), text(n, \"imported\"), sym_of(n, q).\n.output resolved\n").unwrap();
+    let program = crate::code_rule_dsl::logic::rr::print(&crate::code_rule_dsl::logic::rr::parse_file(&rule).unwrap()).unwrap();
+    super::TEST_TAPE_CACHE.with(|p| *p.borrow_mut() = Some(dir.join("store.sqlite")));
+    super::run(&program, &ws, None, &dir.join("out"), "program", crate::code_rule_dsl::typing::file_local::Binding::Cpu, 1 << 18).unwrap();
+    let outputs = super::super::output::Outputs::open(&dir.join("out")).unwrap();
+    let resolved: Vec<Vec<String>> = outputs.get("resolved").map(|r| r.shown()).unwrap_or_default();
+    assert!(resolved.contains(&vec!["base/src/model#value".to_owned()]), "{resolved:?}");
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// A per-file relation reading a setting that is one value for the run (`file`, decision 0710) is memoised under that
+/// setting's rows: a file added or removed elsewhere changes what an unedited file finds (review B70). `under(d)`
+/// holds of a file with a `__init__.py` beside it, as Python's module privacy reads it.
+#[test]
+fn a_file_added_beside_an_unedited_file_changes_what_it_finds() {
+    use crate::code_rule_dsl::typing::file_local::Binding;
+    let dir = crate::code_rule_dsl::fixtures::temp().with_extension("file-setting");
+    let _ = std::fs::remove_dir_all(&dir);
+    let src = dir.join("src");
+    std::fs::create_dir_all(src.join("pkg")).unwrap();
+    std::fs::write(src.join("pkg/m.py"), "def f():\n    return 1\n").unwrap();
+    std::fs::write(src.join("other.py"), "def g():\n    return 2\n").unwrap();
+    let out = dir.join("out");
+    crate::code_rule_dsl::logic::plan::corpus::TEST_TAPE_CACHE.with(|p| *p.borrow_mut() = Some(dir.join("store.sqlite")));
+    let text = crate::code_rule_dsl::logic::rr::print(
+        &crate::code_rule_dsl::logic::rr::parse(
+            "#include \"core.rerail\"\n.decl under(p: symbol)\nunder(p) :- doc(_, p, _), contains(\"/\", p), d = @replace_all(p, \"/[^/]*$\", \"\"), file(cat(d, \"/__init__.py\")).\n.output under\n",
+        )
+        .unwrap(),
+    )
+    .unwrap();
+    let run = || crate::code_rule_dsl::logic::plan::corpus::run_with_options(&[&text], &src, None, &out, "program", Binding::Cpu, 1 << 18, &Default::default(), &serde_json::Value::Null).unwrap();
+    let under = || crate::code_rule_dsl::logic::plan::output::shown(&out, "under").unwrap();
+    run();
+    assert_eq!(under(), Vec::<Vec<String>>::new(), "no __init__.py: nothing");
+    std::fs::write(src.join("pkg/__init__.py"), "").unwrap();
+    run();
+    assert!(under().contains(&vec!["pkg/m.py".to_owned()]), "pkg/m.py is unedited, and its folder now has a __init__.py: {:?}", under());
+    std::fs::remove_file(src.join("pkg/__init__.py")).unwrap();
+    run();
+    assert_eq!(under(), Vec::<Vec<String>>::new(), "the __init__.py removed again: nothing");
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// Two package roots of one name (a monorepo's `s1/app/` and `s2/app/`, each with an `__init__.py`) make two files
+/// one module, `app.m`: a call at one place in each is still its own file's, and runs its own file's definition
+/// only (review F7). A file outside every package is named by its folders too (`tests/conftest.py` is
+/// `tests.conftest`), so two stems alone do not collide.
+#[test]
+fn two_modules_of_one_name_keep_their_own_call_targets() {
+    use crate::code_rule_dsl::typing::file_local::Binding;
+    crate::install_store_functions();
+    let dir = crate::code_rule_dsl::fixtures::temp().with_extension("same-stem");
+    let _ = std::fs::remove_dir_all(&dir);
+    let src = dir.join("src");
+    std::fs::create_dir_all(src.join("tests")).unwrap();
+    std::fs::write(src.join("conftest.py"), "def a():\n    pass\n\ndef go():\n    a()\n").unwrap();
+    std::fs::write(src.join("tests/conftest.py"), "def b():\n    pass\n\ndef go():\n    b()\n").unwrap();
+    for (root, def) in [("s1", "c"), ("s2", "e")] {
+        std::fs::create_dir_all(src.join(root).join("app")).unwrap();
+        std::fs::write(src.join(root).join("app/__init__.py"), "").unwrap();
+        std::fs::write(src.join(root).join("app/m.py"), format!("def {def}():\n    pass\n\ndef go():\n    {def}()\n")).unwrap();
+    }
+    let out = dir.join("out");
+    crate::code_rule_dsl::logic::plan::corpus::TEST_TAPE_CACHE.with(|p| *p.borrow_mut() = Some(dir.join("store.sqlite")));
+    let text = crate::code_rule_dsl::logic::rr::print(
+        &crate::code_rule_dsl::logic::rr::parse(
+            "#include \"core.rerail\"\n#include \"python/points-to.rerail\"\n.decl tgt(p: symbol, f: symbol)\ntgt(p, f) :- call_target(c, f), docof(c, d), doc(d, p, _).\n.output tgt\n",
+        )
+        .unwrap(),
+    )
+    .unwrap();
+    crate::code_rule_dsl::logic::plan::corpus::run_with_options(&[&text], &src, None, &out, "program", Binding::Cpu, 1 << 18, &Default::default(), &serde_json::Value::Null).unwrap();
+    let mut tgt = crate::code_rule_dsl::logic::plan::output::shown(&out, "tgt").unwrap();
+    tgt.sort();
+    let row = |p: &str, f: &str| vec![p.to_owned(), f.to_owned()];
+    assert_eq!(tgt, vec![row("conftest.py", "conftest.a"), row("s1/app/m.py", "app.m.c"), row("s2/app/m.py", "app.m.e"), row("tests/conftest.py", "tests.conftest.b")]);
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// A relation the negation split demands (decision 0048) whose demand would close a cycle through a reach index
+/// (decision 0119) is computed in full: the reach stays native, each start's whole closure. T201 over a type string
+/// beside a larger file: `in_ann_tree`'s demand came from the reader's `pre_<i>`, which reads `guest_file`, which reads
+/// the reach `ann_host_up`, whose seeds read `in_ann_tree`. In that component the reach's one rule, which only orders
+/// it, ran as rows: a seed's one step over `host_node`, so only the call in a string nested in a type string (two hosts
+/// deep) was found. The large file makes `kind(c, "call")` and `host_node` anchors, so the split cuts both reads; the
+/// rows equal those of the closure held as rows (`RERAIL_REACH_INDEX=off`).
+#[test]
+fn a_demand_that_would_close_a_cycle_through_a_reach_index_leaves_the_closure_whole() {
+    let dir = crate::code_rule_dsl::fixtures::temp().with_extension("demand-reach");
+    let _ = std::fs::remove_dir_all(&dir);
+    let src = dir.join("src");
+    std::fs::create_dir_all(&src).unwrap();
+    std::fs::write(
+        src.join("a.py"),
+        "x: \"print(1)\" = 1\ny: \"Tuple[print(2), print(3)]\" = 1\ndef f(a: \"print(5)\") -> \"print(7)\":\n    pass\nv: \"List[Literal['print(10)']]\" = []\n",
+    )
+    .unwrap();
+    std::fs::write(src.join("b.py"), (0..3000).map(|i| format!("a{i} = {i}\n")).collect::<String>()).unwrap();
+    let text = crate::code_rule_dsl::logic::rr::print(
+        &crate::code_rule_dsl::logic::rr::parse(
+            r#"#include "core.rerail"
+.decl ann_tree(r: node)
+ann_tree(r) :- string_annotation(s), parsed(s, "annotation", r).
+.decl in_ann_tree(e: node) magic
+in_ann_tree(e) :- ann_tree(e).
+in_ann_tree(e) :- ann_tree(t), within(e, t).
+.decl ann_host_up(e: node, h: node)
+ann_host_up(e, h) :- in_ann_tree(e), host_node(e, h).
+ann_host_up(e, h) :- ann_host_up(e, m), host_node(m, h).
+.decl guest_file(e: node)
+guest_file(e) :- ann_host_up(e, h), !host_node(h, _), docof(h, _).
+.decl found(l: number)
+found(l) :- in_ann_tree(c), kind(c, "call"), guest_file(c), line(c, l).
+.output found
+"#,
+        )
+        .unwrap(),
+    )
+    .unwrap();
+    let run = |store: &str| {
+        let out = dir.join(store).with_extension("out");
+        super::TEST_TAPE_CACHE.with(|p| *p.borrow_mut() = Some(dir.join(store)));
+        super::run(&text, &src, None, &out, "program", crate::code_rule_dsl::typing::file_local::Binding::Cpu, 1 << 18).unwrap();
+        crate::code_rule_dsl::logic::plan::output::shown(&out, "found").unwrap()
+    };
+    let native = run("native.sqlite");
+    let rows = {
+        let _switched = super::switches::set(&[("RERAIL_REACH_INDEX", "off")]);
+        run("rows.sqlite")
+    };
+    let lines = |ls: &[&str]| ls.iter().map(|l| vec![(*l).to_owned()]).collect::<Vec<_>>();
+    assert_eq!(native, lines(&["1", "2", "3", "5"]), "every call in a type string, by the reach's whole closure");
+    assert_eq!(native, rows);
+    let _ = std::fs::remove_dir_all(&dir);
 }

@@ -7,7 +7,7 @@ use super::json::Json;
 use super::path;
 
 /// An object's entries, in order.
-type Entries = Vec<(String, Json)>;
+pub(crate) type Entries = Vec<(String, Json)>;
 
 /// How many `extends` a configuration chain follows.
 const MAX_EXTENDS_DEPTH: usize = 8;
@@ -75,6 +75,17 @@ fn merge(mut base: Entries, own: Entries) -> Entries {
 /// The merged `compilerOptions` of the configuration at `file`: those of each configuration it
 /// `extends` (later ones over earlier ones), its own over them. `None` where it cannot be read.
 fn read(view: &View, file: &str, depth: usize) -> Option<Entries> {
+    read_based(view, file, depth, false)
+}
+
+/// The merged `compilerOptions` of the configuration at `file` (absolute), each configuration's `baseUrl` resolved
+/// against its own folder, as TypeScript resolves one an extended configuration sets (`project`'s rows).
+pub(crate) fn options_of(view: &View, file: &str) -> Option<Entries> {
+    read_based(view, file, 0, true)
+}
+
+/// `read`, with `based` each configuration's `baseUrl` made absolute from its own folder before the merge.
+fn read_based(view: &View, file: &str, depth: usize, based: bool) -> Option<Entries> {
     let text = view.text(file)?;
     let config = Json::parse_jsonc(&text)?;
     config.entries()?;
@@ -83,6 +94,13 @@ fn read(view: &View, file: &str, depth: usize) -> Option<Entries> {
         .and_then(Json::entries)
         .map(<[_]>::to_vec)
         .unwrap_or_default();
+    if based {
+        for (key, value) in &mut options {
+            if let (true, Json::String(url)) = (key == "baseUrl", &*value) {
+                *value = Json::String(path::resolve(path::dirname(file), url));
+            }
+        }
+    }
     if depth >= MAX_EXTENDS_DEPTH {
         return Some(options);
     }
@@ -93,8 +111,8 @@ fn read(view: &View, file: &str, depth: usize) -> Option<Entries> {
     };
     let directory = path::dirname(file);
     for base in extends.into_iter().rev() {
-        let Some(base) =
-            extends_path(view, base, directory).and_then(|base| read(view, &base, depth + 1))
+        let Some(base) = extends_path(view, base, directory)
+            .and_then(|base| read_based(view, &base, depth + 1, based))
         else {
             continue;
         };

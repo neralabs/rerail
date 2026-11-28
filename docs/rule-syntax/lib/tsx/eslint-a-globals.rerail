@@ -114,7 +114,7 @@ default_this(f) :- kind(f, k), function_kind(k), k != "arrow_function", !bound_t
 bound_this(f) :- field(f, "parameters", ps), child(ps, p, _), field(p, "pattern", t), kind(t, "this").
 bound_this(f) :- (kind(f, "function_declaration") ; kind(f, "function_expression") ;
     kind(f, "generator_function") ; kind(f, "generator_function_declaration")),
-    field(f, "name", n), text(n, x), capital(x).
+    field(f, "name", n), capital_id(n).
 bound_this(f) :- this_tag(f).
 bound_this(f) :- reaches(f, n), bound_context(f, n).
 
@@ -160,8 +160,6 @@ this_arg_method("findLast"). this_arg_method("findLastIndex"). this_arg_method("
 this_arg_method("forEach"). this_arg_method("map"). this_arg_method("some").
 .decl anonymous(f: node)
 anonymous(f) :- kind(f, k), function_kind(k), !field(f, "name", _).
-.decl capital_id(n: node)
-capital_id(n) :- kind(n, "identifier"), text(n, x), capital(x).
 // null_or_undefined(a): `null`, `undefined` or `void x`, as ESLint's isNullOrUndefined.
 .decl null_or_undefined(a: node)
 null_or_undefined(a) :- deparen(a, l), (kind(l, "null") ; kind(l, "undefined") ; kind(l, "unary_expression"), op(l, "void")).

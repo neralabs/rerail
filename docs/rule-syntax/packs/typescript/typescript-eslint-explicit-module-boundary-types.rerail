@@ -34,9 +34,9 @@ checked(d) :- kind(e, "export_statement"), !field(e, "source", _), (field(e, "de
 // `export = v` (modules.rerail's export_assign).
 checked(d) :- export_assign(e), child(e, v, _), !kind(v, "comment"), deparen(v, d).
 checked(d) :- kind(e, "export_statement"), !field(e, "source", _), child(e, c, _), kind(c, "export_clause"),
-    child(c, s, _), field(s, "name", n), text(n, x), followed(x, d).
+    child(c, s, _), field(s, "name", n), text(n, x), docof(n, m), followed(m, x, d).
 checked(d) :- checked(i), (kind(i, "identifier") ; kind(i, "shorthand_property_identifier")), !in_function(i),
-    text(i, x), followed(x, d).
+    text(i, x), docof(i, m), followed(m, x, d).
 checked(d) :- checked(a), kind(a, "array"), child(a, e, _), deparen(e, d).
 checked(d) :- checked(o), kind(o, "object"), child(o, p, _), kind(p, "pair"), field(p, "value", v), deparen(v, d).
 checked(m) :- checked(o), kind(o, "object"), child(o, m, _), (kind(m, "method_definition") ; kind(m, "shorthand_property_identifier")).
@@ -58,10 +58,11 @@ returned_by(f, g) :- fn_value(f), estree_parent(f, g), kind(g, "arrow_function")
 // declarations there (names.rerail's decl_site; a `var` in a top-level block is one), and what is assigned to that
 // variable wherever a reference reaches it (names.rerail's ref_site), not to a local of the same name. Imports,
 // parameters and catch bindings are not followed. A name used inside a function (a class field's value) sits in
-// another scope and is not followed either.
-.decl followed(x: symbol, d: node)
-followed(x, d) :- module_site(x, s), site_node(s, d).
-followed(x, d) :- module_site(x, s), kind(a, "assignment_expression"), field(a, "left", l), deparen(l, i),
+// another scope and is not followed either. m is the module's document: a name is followed in its own file only
+// (decision 0652: keyed by the name alone, every file's exports met every file's declarations of that name).
+.decl followed(m: number, x: symbol, d: node)
+followed(m, x, d) :- module_site(x, s), docof(s, m), site_node(s, d).
+followed(m, x, d) :- module_site(x, s), docof(s, m), kind(a, "assignment_expression"), field(a, "left", l), deparen(l, i),
     kind(i, "identifier"), ref_site(i, s), field(a, "right", r), deparen(r, d).
 .decl module_site(x: symbol, s: node)
 module_site(x, s) :- kind(p, "program"), decl_site(p, x, s, f, "value"), f != "import", f != "param", f != "catch".

@@ -322,7 +322,7 @@ fn base_relations_read_are_inputs() {
 hit(p) :- doc(d, p, _), syntax_error(d), source(d, sp), text(sp, s), contains("ServerPlan", s).
 .decl plain(p: symbol)
 plain(p) :- doc(d, p, _), !syntax_error(d), source(d, sp), text(sp, s), contains("x = 1", s).
-.decl same(p: symbol, q: symbol)
+.decl same(p: symbol, q: symbol) cross_file
 same(p, q) :- doc(d, p, _), source(d, sp), text(sp, s), doc(e, q, _), source(e, sq), text(sq, s).
 .output hit, plain, same
 "#;
@@ -1511,8 +1511,8 @@ fn string_annotations_are_ruffs_with_their_trees() {
 annotated(t) :- string_annotation(n), node_text(n, t).
 .decl names(t: symbol, x: symbol)
 names(t, x) :- string_annotation(n), parsed(n, "annotation", r), node_text(n, t), within(m, r), node(_, m, "identifier", _, _), text(m, x).
-.decl roots(t: symbol, k: symbol, s: number, e: number)
-roots(t, k, s, e) :- string_annotation(n), parsed(n, "annotation", r), node_text(n, t), node(_, r, k, s, e).
+.decl roots(t: symbol, k: symbol, s: number, e: number, h: symbol)
+roots(t, k, s, e, h) :- string_annotation(n), parsed(n, "annotation", r), node_text(n, t), node(_, r, k, s, e), host_node(r, x), node_text(x, h).
 .decl files(p: symbol)
 files(p) :- doc(_, p, _).
 .output annotated, names, roots, files
@@ -1539,21 +1539,21 @@ files(p) :- doc(_, p, _).
             &["\"not valid ((\"", "valid"],
         ])
     );
-    // Each root is its guest's module, over the string's value in `( … )`.
-    assert_eq!(
-        set(&got[2]),
-        want(&[
-            &["\"List[int]\"", "module", "0", "11"],
-            &["\"Optional[Foo]\"", "module", "0", "15"],
-            &["'typing.Dict[str, \"Bar\"]'", "module", "0", "25"],
-            &["\"Bar\"", "module", "0", "5"],
-            &["\"Baz\"", "module", "0", "5"],
-            &["\"not valid ((\"", "module", "0", "14"],
-        ])
-    );
+    // Each root is its guest's module, over the string's value in `(` … `\n)`: from 0 to past the value and the
+    // wrapper's three bytes. In the host it stands over the whole string, quotes included.
+    let annotations = ["\"List[int]\"", "\"Optional[Foo]\"", "'typing.Dict[str, \"Bar\"]'", "\"Bar\"", "\"Baz\"", "\"not valid ((\""];
+    let roots = annotations.iter().map(|t| r![t, "module", 0, t[1..t.len() - 1].len() + 3, t]).collect::<BTreeSet<_>>();
+    assert_eq!(set(&got[2]), roots);
     // The trees are no files.
     assert_eq!(got[3], [["a.py"]]);
     let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// The guest parse memo keeps a parse for what it holds, its tree and tape too, not its text alone
+/// (`guests::test_kept_parse_budget`): run here, where the languages are registered.
+#[test]
+fn guest_parses_are_kept_for_what_they_hold() {
+    super::guests::test_kept_parse_budget();
 }
 
 /// `literal_json(n, v)` is W's pythonAst `literal_json`: CPython's `json.dumps(ast.literal_eval(node), sort_keys=True,

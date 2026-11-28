@@ -57,15 +57,15 @@ other_jsx(d) :- !import_source_names(d, _), !factory_import(d), !jsx_pragma_reac
     package_for(p, dir), deps_on(dir, "other"), !deps_on(dir, "react").
 // import_source_names(d, r): d's first @jsxImportSource comment names a library of runtime r.
 .decl import_source_names(d: number, r: symbol)
-import_source_names(d, r) :- jsx_source(d, src), jsx_source_runtime(src, r).
+// The library table is joined in the file's own rule: a table of its sources over every file's would read them all
+// (decision 0652).
+import_source_names(d, r) :- jsx_source(d, src), jsx_library(p, r), (src = p ; prefix(cat(p, "/"), src)).
 .decl jsx_source(d: number, src: symbol)  // the first comment's @jsxImportSource
 jsx_source(d, src) :- first_source_comment(d, c), comment(c, t), match(".*@jsxImportSource\\s+(?<x>\\S+).*", t),
     src = x.
 .decl first_source_comment(d: number, c: node)
 first_source_comment(d, c) :- docof(c, d), i = min j : { kind(n, "comment"), docof(n, d), comment(n, t),
     contains("@jsxImportSource", t), visit_index(n, j) }, kind(c, "comment"), visit_index(c, i), docof(c, d).
-.decl jsx_source_runtime(src: symbol, r: symbol)
-jsx_source_runtime(src, r) :- jsx_library(p, r), (src = p ; prefix(cat(p, "/"), src)), jsx_source(_, src).
 .decl jsx_library(p: symbol, r: symbol)  // @jsxImportSource packages, by runtime
 jsx_library("react", "react"). jsx_library("@emotion/react", "react"). jsx_library("theme-ui", "react").
 jsx_library("@theme-ui/core", "react").

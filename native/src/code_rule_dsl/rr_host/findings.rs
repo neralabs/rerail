@@ -47,7 +47,7 @@ impl Located<'_> {
 
 /// The dialect a policy of `language` parses the file at `path` in: the file's own, where the language has it (or
 /// the policy names none); `None` where the run reads the file as text.
-fn parsed_as(language: Option<&str>, path: &str) -> Option<&'static str> {
+pub(super) fn parsed_as(language: Option<&str>, path: &str) -> Option<&'static str> {
     let own = label_of_path(path)?;
     match language.map(dialect_labels) {
         Some(labels) if !labels.contains(&own) => None,

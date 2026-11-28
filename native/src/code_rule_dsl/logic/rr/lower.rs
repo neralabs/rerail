@@ -139,6 +139,17 @@ enum Members {
     Derived,
 }
 
+/// `by_path`'s word as a relation keeps it, with the column naming the key its file reads (`by_path 1`), which must be
+/// one of the relation's `width`.
+fn by_path_word(name: &str, width: usize, column: Option<&String>) -> Result<String, Error> {
+    use crate::code_rule_dsl::logic::front::ast::BY_PATH;
+    match column.and_then(|k| k.parse::<usize>().ok()) {
+        Some(c) if c >= width => Err(Error::Syntax(format!(".decl {name}: `by_path {c}` names no column"))),
+        Some(c) => Ok(format!("{BY_PATH} {c}")),
+        None => Ok(BY_PATH.to_owned()),
+    }
+}
+
 /// A column type in the engine's names.
 fn ty(t: &str) -> String {
     match t {
@@ -1398,58 +1409,79 @@ impl Lowerer {
     }
 
     fn decl(&mut self, name: String, cols: Vec<(String, String)>, tail: &[String]) -> Result<(), Error> {
-        let mut widen = None;
-        let mut words = tail.iter();
-        while let Some(w) = words.next() {
-            match w.as_str() {
-                // `must, may`: three-valued (`three_valued`).
-                "must" | "may" | "," => {
-                    self.three.insert(name.clone());
-                }
-                // Open to the rules and facts of the files that include its own (decision 0263): checked on reading.
-                "extensible" => {}
-                "widen" => widen = Some(words.next().and_then(|k| k.parse::<u32>().ok()).ok_or_else(|| Error::Syntax(format!("{name}: `widen` needs a count")))?),
-                // What the relation keeps (decision 0099): an override of the planner's choice.
-                q if crate::code_rule_dsl::logic::front::QUALIFIERS.contains(&q) => {
-                    let own = self.prog.qualifiers.entry(name.clone()).or_default();
-                    own.insert(q.to_owned());
-                    for (a, b) in [("inline", "no_inline"), ("magic", "no_magic"), ("inline", "magic"), ("reach", "no_reach")] {
-                        if own.contains(a) && own.contains(b) {
-                            return Err(Error::Syntax(format!(".decl {name}: `{a}` and `{b}` together")));
-                        }
-                    }
-                }
-                other => return not_yet(format!("`{other}` on .decl {name}")),
-            }
-        }
+        let widen = self.decl_words(&name, &cols, tail)?;
         if name == "docof" {
             self.docof_of_locs = cols.first().is_some_and(|(_, t)| t == "loc");
         }
-        let mut out = Vec::new();
-        for (i, (c, t)) in cols.iter().enumerate() {
-            if t == "tape" {
-                self.prog.tapes.entry(name.clone()).or_default().insert(i);
-            }
-            let Some(lattice) = t.strip_suffix("<>") else {
-                out.push((c.clone(), ty(t)));
-                continue;
-            };
-            if i + 1 != cols.len() {
-                return Err(Error::Syntax(format!("{name}: the lattice column {c} must be the last")));
-            }
-            let (column, merge) = match self.lattices.get(lattice) {
-                Some((base, lub)) => (base.clone(), Some(lub.clone())),
-                None if matches!(lattice, "flat" | "min" | "max") => (lattice.to_owned(), None),
-                None => return Err(Error::Syntax(format!("{name}: no .lattice {lattice}"))),
-            };
-            self.prog.lattice.insert(name.clone(), LatticeDecl { keys: i, ty: column.clone(), merge, widen });
-            out.push((c.clone(), column));
-        }
+        let out = cols.iter().enumerate().map(|(i, (c, t))| self.decl_column(&name, i, cols.len(), c, t, widen)).collect::<Result<Vec<_>, _>>()?;
         if widen.is_some() && !self.prog.lattice.contains_key(&name) {
             return Err(Error::Syntax(format!("{name}: `widen` on a relation with no lattice column")));
         }
         self.prog.decls.insert(name.into(), out.iter().map(|(c, t)| (c.into(), t.into())).collect());
         Ok(())
+    }
+
+    /// A `.decl`'s words after its columns, kept where they are the relation's: its `widen` count, if any.
+    fn decl_words(&mut self, name: &str, cols: &[(String, String)], tail: &[String]) -> Result<Option<u32>, Error> {
+        use crate::code_rule_dsl::logic::front::ast::{BY_PATH, KEYED, SETTING};
+        let mut widen = None;
+        let mut words = tail.iter().peekable();
+        while let Some(w) = words.next() {
+            match w.as_str() {
+                // `must, may`: three-valued (`three_valued`).
+                "must" | "may" | "," => {
+                    self.three.insert(name.to_owned());
+                }
+                // Open to the rules and facts of the files that include its own (decision 0263): checked on reading.
+                // A library's (not core's, whose `env`, `option` and `load` the engine gives) is kept as a word of the
+                // relation's, as the qualifiers are: where the whole program is known (`plan::corpus::combine_read`),
+                // one that nothing states is stated empty (decision 0677).
+                "extensible" if self::core::is_core(name) => {}
+                // Where the relation's rows are placed (decision 0710): the project's settings, by key or by a file's
+                // path, the latter with the column naming the key its file reads (`by_path 1`).
+                w @ ("extensible" | SETTING | KEYED) => {
+                    self.prog.qualifiers.entry(name.to_owned()).or_default().insert(w.to_owned());
+                }
+                BY_PATH => {
+                    let word = by_path_word(name, cols.len(), words.next_if(|k| k.parse::<usize>().is_ok()))?;
+                    self.prog.qualifiers.entry(name.to_owned()).or_default().insert(word);
+                }
+                "widen" => widen = Some(words.next().and_then(|k| k.parse::<u32>().ok()).ok_or_else(|| Error::Syntax(format!("{name}: `widen` needs a count")))?),
+                // What the relation keeps (decision 0099): an override of the planner's choice.
+                q if crate::code_rule_dsl::logic::front::QUALIFIERS.contains(&q) => self.keep_qualifier(name, q)?,
+                other => return not_yet(format!("`{other}` on .decl {name}")),
+            }
+        }
+        Ok(widen)
+    }
+
+    /// Planner qualifier `q` on relation `name`, refused beside its opposite.
+    fn keep_qualifier(&mut self, name: &str, q: &str) -> Result<(), Error> {
+        let own = self.prog.qualifiers.entry(name.to_owned()).or_default();
+        own.insert(q.to_owned());
+        match [("inline", "no_inline"), ("magic", "no_magic"), ("inline", "magic"), ("reach", "no_reach")].into_iter().find(|(a, b)| own.contains(*a) && own.contains(*b)) {
+            Some((a, b)) => Err(Error::Syntax(format!(".decl {name}: `{a}` and `{b}` together"))),
+            None => Ok(()),
+        }
+    }
+
+    /// Column `i` (`c`, of type `t`) of `.decl name`'s `width`: its type, a tape column noted, a lattice column (the
+    /// last only) declared with its merge.
+    fn decl_column(&mut self, name: &str, i: usize, width: usize, c: &str, t: &str, widen: Option<u32>) -> Result<(String, String), Error> {
+        if t == "tape" {
+            self.prog.tapes.entry(name.to_owned()).or_default().insert(i);
+        }
+        let Some(lattice) = t.strip_suffix("<>") else { return Ok((c.to_owned(), ty(t))) };
+        if i + 1 != width {
+            return Err(Error::Syntax(format!("{name}: the lattice column {c} must be the last")));
+        }
+        let (column, merge) = match self.lattices.get(lattice) {
+            Some((base, lub)) => (base.clone(), Some(lub.clone())),
+            None if matches!(lattice, "flat" | "min" | "max") => (lattice.to_owned(), None),
+            None => return Err(Error::Syntax(format!("{name}: no .lattice {lattice}"))),
+        };
+        self.prog.lattice.insert(name.to_owned(), LatticeDecl { keys: i, ty: column.clone(), merge, widen });
+        Ok((c.to_owned(), column))
     }
 
     /// `.decl r(…) must, may` (core.rerail 3): r is computed twice. Its may side, which keeps the name, holds what is
@@ -1552,7 +1584,7 @@ impl Lowerer {
             Some(Code::Column(c)) => FindingCode::Column(column(&c)?),
             Some(Code::Constant(c)) => FindingCode::Constant(c),
         };
-        self.finding_settings(&name, suppress, fixes, code_in);
+        self.finding_settings(&name, &cols, suppress, fixes, code_in)?;
         self.violations.push(Violation { name: name.clone(), arity: cols.len(), code, node, places: false, columns: cols.clone(), message, tag });
         self.decl(name.clone(), cols, &[])?;
         self.prog.outputs.push(name);
@@ -1560,9 +1592,10 @@ impl Lowerer {
     }
 
     /// A `.violation`'s `suppress` and `fix` lines and `code {c} in "re"`, as the findings layer's settings
-    /// (`violation`).
-    fn finding_settings(&mut self, name: &str, suppress: Vec<Suppress>, fixes: Vec<Fix>, code_in: Option<String>) {
+    /// (`violation`). Each `suppress` line is checked first (`check_suppress`).
+    fn finding_settings(&mut self, name: &str, cols: &[(String, String)], suppress: Vec<Suppress>, fixes: Vec<Fix>, code_in: Option<String>) -> Result<(), Error> {
         for s in suppress {
+            self.check_suppress(name, cols, &s)?;
             let rules = s.rules.iter().map(|r| quote(r)).collect::<Vec<_>>().join(", ");
             let over = s.over.map(|c| format!(" over {{{c}}}")).unwrap_or_default();
             self.prog.settings.push(("suppress".to_owned(), format!("{name} {} {rules}{over}", s.tool)));
@@ -1573,6 +1606,44 @@ impl Lowerer {
         if let Some(re) = code_in {
             self.prog.settings.push(("code_in".to_owned(), format!("{name} {}", quote(&re))));
         }
+        Ok(())
+    }
+
+    /// A `suppress` line names a linter of `SUPPRESS_TOOLS`, names it reads as the JSON rule's `suppress` does
+    /// (`suppress_spec`), a linter the family of the policy's `.language` (stated before it) honours, as compiling a
+    /// JSON rule checks, and its `over` a column of `cols`: lowering refuses another, which the run would refuse or
+    /// drop nothing by.
+    fn check_suppress(&self, name: &str, cols: &[(String, String)], s: &Suppress) -> Result<(), Error> {
+        let names: Vec<&str> = s.rules.iter().map(String::as_str).collect();
+        let Some(spec) = suppress_spec(&s.tool, &names) else {
+            let tools = SUPPRESS_TOOLS.iter().map(|(tool, _, _)| *tool).collect::<Vec<_>>().join(", ");
+            return Err(Error::Syntax(format!(".violation {name}: suppress {}: no linter of that name (one of {tools})", s.tool)));
+        };
+        let spec = spec.map_err(|e| Error::Syntax(format!(".violation {name}: suppress {}: {e}", s.tool)))?;
+        if let Some((language, family)) = self.policy_family()
+            && let Some(linter) = spec.requested().find(|&linter| !family.honours(linter))
+        {
+            return Err(Error::Syntax(format!(".violation {name}: suppress {}: {}; a {language} policy has none", s.tool, linter.detail())));
+        }
+        if let Some(c) = &s.over
+            && !cols.iter().any(|(n, _)| n == c)
+        {
+            return Err(Error::Syntax(format!(".violation {name}: no column {c}")));
+        }
+        Ok(())
+    }
+
+    /// The policy's `.language`, as the run reads it (the first `language` setting), and the family whose files it
+    /// reads: a code-rule language's, else a dialect label's (`tsx`). `None` for no `.language` or a name that is
+    /// neither.
+    fn policy_family(&self) -> Option<(&str, crate::code_rule_dsl::language::Family)> {
+        use crate::code_rule_dsl::language::{CodeRuleLanguage, Family, dialect_by_label};
+        let language = self.prog.settings.iter().find(|(key, _)| key == "language").map(|(_, text)| text.trim().trim_matches('"'))?;
+        let family = match CodeRuleLanguage::parse(language) {
+            Some(code_rule) => code_rule.family(),
+            None => Family::of(dialect_by_label(language)?),
+        };
+        Some((language, family))
     }
 
     /// The findings of the `.violation`s: `violation(policy, V, code, path, line)` for each row of V, at its first
@@ -2636,14 +2707,17 @@ impl Lowerer {
     /// `name(s, g_…)`: the matches of `re` over the texts of `input` (a unary relation), each named group a column
     /// (and the match's ordinal, start and end with `positions`), made natively (`front::Native::MatchAll`). Its one
     /// rule orders it after its input; the evaluator makes its rows.
-    fn match_all_native(&mut self, name: &str, input: &str, re: &str, gs: &[String], positions: bool) {
+    /// With `places`, the input's other columns place each text in its file (a node or span, `text_matches`): read,
+    /// not kept, as the native reads the texts alone (column 0).
+    fn match_all_native(&mut self, name: &str, input: &str, re: &str, gs: &[String], positions: bool, places: usize) {
         let mut cols: Vec<_> = std::iter::once("s".to_owned()).chain(gs.iter().map(|g| format!("g_{g}"))).map(|c| (c, "sym".to_owned())).collect();
         if positions {
             cols.extend(["ordinal", "start", "end"].map(|c| (c.to_owned(), "int".to_owned())));
         }
         self.prog.decls.insert(name.to_owned().into(), cols.iter().map(|(c, t)| (c.into(), t.into())).collect());
         let x = |n: &str| Term::Var(n.to_owned().into());
-        let mut body = vec![Literal::Atom(Atom { rel: input.to_owned().into(), args: [x("s")].into(), neg: false, gated: false })];
+        let read: Vec<Term> = std::iter::once(x("s")).chain(std::iter::repeat_n(Term::Wild, places)).collect();
+        let mut body = vec![Literal::Atom(Atom { rel: input.to_owned().into(), args: read.into(), neg: false, gated: false })];
         body.extend(gs.iter().map(|g| Literal::Cmp { l: x(&format!("g_{g}")), op: "=", r: x("s") }));
         let mut head_args: Vec<_> = std::iter::once(x("s")).chain(gs.iter().map(|g| x(&format!("g_{g}")))).collect();
         if positions {
@@ -2664,7 +2738,10 @@ impl Lowerer {
             return true;
         }
         let ([h], [Lit::Atom { rel: input, args: of, neg: false }, Lit::Atom { rel: m, args, neg: false }]) = (heads, body) else { return false };
-        let ([STerm::Var(s)], Some(STerm::Str(re)), Some(STerm::Var(scanned))) = (of.as_slice(), args.first(), args.get(1)) else { return false };
+        let ([STerm::Var(s), places @ ..], Some(STerm::Str(re)), Some(STerm::Var(scanned))) = (of.as_slice(), args.first(), args.get(1)) else { return false };
+        if !places.iter().all(|a| matches!(a, STerm::Wild)) {
+            return false;
+        }
         if m != "match_all" || scanned != s || h.modal.is_some() || self.prog.natives.contains_key(&h.rel) {
             return false;
         }
@@ -2677,18 +2754,18 @@ impl Lowerer {
         if h.args != want {
             return false;
         }
-        // Over texts, as print writes it: a relation of one text column read, and the head declared (if it is) with
-        // the native's columns. Over a node or span (`piece(t: loc)`) the matches are spans placed in the file,
-        // which `text_matches` makes.
+        // Over texts, as print writes it: a relation of a text column read (and the nodes that place each text, left
+        // unread), and the head declared (if it is) with the native's columns. Over a node or span (`piece(t: loc)`)
+        // the matches are spans placed in the file, which `text_matches` makes.
         let types = |rel: &str| self.prog.decls.get(rel).map(|cols| cols.iter().map(|(_, t)| t.as_str()).collect::<Vec<_>>());
-        if types(input).as_deref() != Some(&["sym"][..]) {
+        if !types(input).is_some_and(|t| t.len() == 1 + places.len() && t[0] == "sym" && t[1..].iter().all(|t| matches!(*t, "node" | "loc"))) {
             return false;
         }
         let made: Vec<&str> = std::iter::repeat_n("sym", 1 + gs.len()).chain(std::iter::repeat_n("int", coordinates.len())).collect();
         if types(&h.rel).is_some_and(|t| t != made) {
             return false;
         }
-        self.match_all_native(&h.rel, input, re, &gs, !coordinates.is_empty());
+        self.match_all_native(&h.rel, input, re, &gs, !coordinates.is_empty(), places.len());
         true
     }
 
@@ -2762,13 +2839,42 @@ impl Lowerer {
         let reads_capture = |l: &Lit| body_vars(std::slice::from_ref(l)).iter().any(|x| produced.contains(x));
         self.siblings.retain(|l| !reads_capture(l) && !matches!(l, Lit::Atom { rel, .. } if rel == "match_all"));
         // The text a pattern scans keeps the derived atoms that say which nodes or spans it is (decision 0081).
+        // The context also holds a node that places each text in its file: the nearest the text's literals reach
+        // through shared variables (`strip_arg(c, v)`'s c; era_line(n, l)'s n, for a capture of l). Keyed by the
+        // text alone, the context was a table of every file's texts, cross-file wherever its text came from
+        // (decision 0677); placed, it and the matches (a function of its texts) are derived in each file. The native
+        // reads the texts, column 0, once each. With no node reached, the context is the text's alone, as it was.
+        let place = {
+            let mut reach: BTreeSet<String> = BTreeSet::from([v.clone()]);
+            loop {
+                let mut new: Vec<String> = Vec::new();
+                for l in &self.siblings {
+                    let lv = body_vars(std::slice::from_ref(l));
+                    if !lv.is_disjoint(&reach) {
+                        for x in lv {
+                            if !reach.contains(&x) && !new.contains(&x) {
+                                new.push(x);
+                            }
+                        }
+                    }
+                }
+                if new.is_empty() {
+                    break None;
+                }
+                if let Some(x) = new.iter().find(|x| self.siblings.iter().any(|l| self.node_in(l, x))) {
+                    break Some(x.clone());
+                }
+                reach.extend(new);
+            }
+        };
+        let asked: Vec<String> = std::iter::once(v.clone()).chain(place).collect();
         self.span_context = true;
-        let ctx = self.context(std::slice::from_ref(v));
+        let ctx = self.context(&asked);
         self.span_context = false;
         self.siblings = saved;
         let ctx = ctx?;
         let name = self.fresh("mall");
-        self.match_all_native(&name, &ctx.rel, re, &gs, !positions.is_empty());
+        self.match_all_native(&name, &ctx.rel, re, &gs, !positions.is_empty(), asked.len() - 1);
         let args = std::iter::once(Term::Var(v.clone().into())).chain(gs.iter().map(|g| Term::Var(g.clone().into())))
             .map(Ok).chain(positions.iter().map(|p| self.term(p))).collect::<Result<Vec<_>, Error>>()?;
         Ok(vec![vec![Literal::Atom(Atom { rel: name.into(), args: args.into(), neg: false, gated: false })]])
@@ -2883,8 +2989,8 @@ impl Lowerer {
                 ("kind", [Term::Var(y), Term::Str(k)]) if y == x => Some([SpanIn::Kind(k.to_string())].into()),
                 ("rx_span", [Term::Str(p), _, _, Term::Str(g), Term::Var(y)]) if y == x => Some([SpanIn::Capture(p.to_string(), g.to_string())].into()),
                 // A child of a node whose kinds the body gives (a `kind` atom, or a column of nodes of known kinds):
-                // the children of nodes of those kinds.
-                ("child", [Term::Var(par), Term::Var(y), _]) if y == x && par != x => {
+                // the children of nodes of those kinds. A field's node is such a child (`field(e, "value", v)`).
+                ("child", [Term::Var(par), Term::Var(y), _]) | ("field", [Term::Var(par), _, Term::Var(y)]) if y == x && par != x => {
                     let atoms: BTreeSet<SpanIn> = body.iter().filter_map(Literal::atom).filter(|a| !a.neg && a.rel == "kind").filter_map(|a| match a.args.as_slice() {
                         [Term::Var(z), Term::Str(k)] if z == par => Some(SpanIn::ChildOf(k.to_string())),
                         _ => None,
@@ -2892,7 +2998,7 @@ impl Lowerer {
                     if !atoms.is_empty() {
                         return Some(atoms);
                     }
-                    body.iter().filter_map(Literal::atom).filter(|a| !a.neg && a.rel != "child").find_map(|a| {
+                    body.iter().filter_map(Literal::atom).filter(|a| !a.neg && a.rel != "child" && a.rel != "field").find_map(|a| {
                         a.args.iter().enumerate().find_map(|(i, t)| matches!(t, Term::Var(z) if z == par).then(|| columns.get(of(&a.rel), i)).flatten())
                     }).and_then(|set| set.iter().map(|s| match s { SpanIn::Kind(k) => Some(SpanIn::ChildOf(k.to_string())), _ => None }).collect::<Option<BTreeSet<_>>>())
                 }
@@ -3685,11 +3791,15 @@ impl Lowerer {
                 vs
             })
             .collect();
+        // A test (`a != b`, `a < b`) ties nothing: it filters rows the other literals join. Kept where they reach all
+        // its variables; reached through it, a context was the cross product of two groups (SIM109's `SECOND != FIRST`
+        // paired every comparison of the corpus with every node, decision 0652).
+        let test = |l: &Lit| matches!(l, Lit::Cmp { op, .. } if *op != "=");
         let mut keep = vec![false; context.len()];
         loop {
             let mut grew = false;
             for (k, vs) in of.iter().enumerate() {
-                if !keep[k] && !vs.is_disjoint(&reach) {
+                if !keep[k] && !test(&context[k]) && !vs.is_disjoint(&reach) {
                     keep[k] = true;
                     reach.extend(vs.iter().cloned());
                     grew = true;
@@ -3697,6 +3807,11 @@ impl Lowerer {
             }
             if !grew {
                 break;
+            }
+        }
+        for (k, vs) in of.iter().enumerate() {
+            if test(&context[k]) && vs.is_subset(&reach) {
+                keep[k] = true;
             }
         }
         context.into_iter().zip(keep).filter(|(_, k)| *k).map(|(l, _)| l).collect()
@@ -4507,7 +4622,7 @@ pub(super) fn float_key(f: f64) -> i64 {
 /// The empty value `unset(x)` binds (`core.rerail`): the id -1, which no node has, so no tree relation holds of it.
 /// Each `unset(x)` is taken out and `x` replaced by it in the rule; `!unset(x)` is `x != -1`. Its text is "":
 /// `text(x, t)` of it is `t = ""` (O77). (A `@place` with no valid line is `unset` too: `PLACE`.)
-pub(super) const UNSET: i64 = -1;
+pub const UNSET: i64 = -1;
 
 fn unset(mut head: Vec<Term>, body: Vec<Literal>) -> Result<(Vec<Term>, Vec<Literal>), Error> {
     let mut vars = BTreeSet::new();
@@ -5327,7 +5442,33 @@ fn rename_literal(l: &Literal, name: &dyn Fn(&str) -> String) -> Literal {
     }
 }
 
-pub const WORLD: [(&str, &str); 3] = [("dir_entry", "rr_dir_req"), ("file_line", "rr_file_req"), ("file_digest", "rr_digest_req")];
+/// The linters a `.violation`'s `suppress TOOL "rule", …` line may name: each tool, the key of the JSON rule's
+/// `suppress` that reads the same comments (`suppress::kinds`), and the key of the names it lists there. Ruff's and
+/// flake8's `# noqa` are one kind, Ruff's.
+pub const SUPPRESS_TOOLS: [(&str, &str, &str); 12] = [
+    ("ruff", "noqa", "codes"),
+    ("flake8", "noqa", "codes"),
+    ("noqa", "noqa", "codes"),
+    ("nosec", "nosec", "codes"),
+    ("eslint", "eslint", "rules"),
+    ("oxlint", "oxlint", "rules"),
+    ("biome", "biome", "rules"),
+    ("sqlfluff", "sqlfluff", "rules"),
+    ("clippy", "clippy", "lints"),
+    ("phpcs", "phpcs", "sniffs"),
+    ("phpstan", "phpstan", "identifiers"),
+    ("psalm", "psalm", "issues"),
+];
+
+/// The JSON rule's `suppress` a `suppress TOOL "rule", …` line stands for: the tool's kind of `SUPPRESS_TOOLS`,
+/// listing `names`, as `suppress::parse` reads it (the reason it refuses them); `None` for a tool not there.
+pub fn suppress_spec(tool: &str, names: &[&str]) -> Option<Result<crate::code_rule_dsl::suppress::Suppress, String>> {
+    let (_, kind, list) = SUPPRESS_TOOLS.iter().find(|(name, _, _)| *name == tool)?;
+    let spec = serde_json::json!({ *kind: { *list: names } });
+    Some(crate::code_rule_dsl::suppress::parse(&spec, "suppress").map_err(|e| e.reason))
+}
+
+pub const WORLD: [(&str, &str); 4] = [("dir_entry", "rr_dir_req"), ("file_line", "rr_file_req"), ("file_digest", "rr_digest_req"), ("module_target", "rr_module_req")];
 
 fn world_demand(rel: &str) -> Option<&'static str> {
     WORLD.iter().find(|(r, _)| *r == rel).map(|(_, d)| *d)
@@ -5560,7 +5701,7 @@ fn printf_pieces(format: &str, args: &[Term]) -> Option<Term> {
 }
 
 /// `prog` reading the base relation `rel` (`child`, `node`): declared as the engine declares it, and an input unless a
-/// rule makes it. For rules added to a program already read (`corpus::bridge`), as lowering adds them for its own.
+/// rule makes it. For rules added to a program already read, as lowering adds them for its own.
 pub fn base_relation(prog: &mut Program, rel: &str) {
     let cols: &[(&str, &str)] = match rel {
         "child" => &[("p", "node"), ("c", "node"), ("i", "int")],

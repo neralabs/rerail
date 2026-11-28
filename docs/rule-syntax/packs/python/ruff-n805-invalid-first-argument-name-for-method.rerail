@@ -18,4 +18,4 @@
 .violation N805(at: node, x: symbol) code "N805"
     "Name the first parameter `self` instead of `{x}` and update its uses; if it should receive the class, add `@classmethod` and name it `cls`."
     suppress ruff "N805"
-N805(nm, x) :- naming_method_kind(f, "method"), naming_first_param(f, nm, x), x != "self", !naming_ignored(x).
+N805(nm, x) :- naming_method_kind(f, "method"), naming_first_param(f, nm, x), x != "self", !naming_ignored(nm, x).

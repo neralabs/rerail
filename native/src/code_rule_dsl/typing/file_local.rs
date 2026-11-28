@@ -188,7 +188,9 @@ mod shape;
 mod on_version;
 pub use on_version::FileLocal;
 mod passes;
-pub use passes::{FactorizeExports, Locate, MoveCrossFile, PushLocalJoins};
+pub mod node_crossings;
+pub use node_crossings::NodeCrossing;
+pub use passes::{FactorizeExports, Locate, MoveCrossFile, PushLocalJoins, locate_all};
 pub mod export_demand;
 pub use export_demand::{DemandExports, demand_exports};
 pub use split_memo::forget as forget_splits;
@@ -212,10 +214,31 @@ pub(crate) fn option_input(rel: &str) -> bool {
     matches!(rel, "option" | "option_item")
 }
 
-/// An input with one value for the whole run, as a fact has: the run's options (`option_input`), or an earlier
-/// phase's export (`corpus::phases`), bound once its rows are known. A rule reading one joins no document by it.
+pub use crate::code_rule_dsl::logic::front::ast::{BY_PATH, KEYED, SETTING, Setting};
+
+/// The setting `rel`'s `.decl` declares in `prog` (decision 0710).
+pub fn setting_of(prog: &crate::code_rule_dsl::logic::front::Program, rel: &str) -> Option<Setting> {
+    Setting::of(prog.qualifiers.get(rel).into_iter().flatten().map(String::as_str))
+}
+
+/// Whether `rel` is one of the project's settings in `prog` (`Setting`).
+pub fn setting_input(prog: &crate::code_rule_dsl::logic::front::Program, rel: &str) -> bool {
+    setting_of(prog, rel).is_some()
+}
+
+/// The column of a base relation that holds a file's path (decision 0665): `doc`'s. A path names one document (a guest
+/// shares its host's, and its chunk), and a chunk holds its own documents' `doc` rows alone, so a variable bound there
+/// places the rule's document as the document's id does, and a join by it stays in one file. It is no location: a
+/// row's document is read off a location's value (a node id, a document key), not off a path, so the split's published
+/// locations leave it out (`FileLocal::path_keys` holds it).
+pub fn path_key_column(rel: &str) -> Option<usize> {
+    (rel == "doc").then_some(1)
+}
+
+/// An input with one value for the whole run, as a fact has: the run's options (`option_input`), its settings
+/// (`setting_input`, decision 0665), or an earlier phase's export (`corpus::phases`), bound once its rows are known. A rule reading one joins no document by it.
 pub(crate) fn run_constant(prog: &crate::code_rule_dsl::logic::front::Program, rel: &str) -> bool {
-    option_input(rel) || (crate::code_rule_dsl::logic::plan::corpus::phases::is_phased(rel) && prog.inputs.iter().any(|i| i == rel))
+    option_input(rel) || setting_input(prog, rel) || (crate::code_rule_dsl::logic::plan::corpus::phases::is_phased(rel) && prog.inputs.iter().any(|i| i == rel))
 }
 
 /// Whether no rule of `prog` reads a document: every relation a rule reads is derived, a fact, or an input with one
@@ -833,15 +856,20 @@ fn split_in(
             !(constants.contains(t) || prog.facts.contains_key(t) && !prog.inputs.contains(t))),
         _ => true,
     });
-    // A relation `locate` moved (`CROSS_FILE`): its rows name no document, so it is derived once over every file.
-    let moved = |r: &str| prog.qualified(r, CROSS_FILE);
+    // A relation `locate` moved (`CROSS_FILE`), its rows naming no document, or one declared `cross_file` (decision
+    // 0652): derived once over every file.
+    let moved = |r: &str| prog.qualified(r, CROSS_FILE) || prog.qualified(r, READ_LOCATED);
     // The file-local relations by number, and each cross-file one's cause.
     let mut local_now: Vec<bool> = (0..n).map(|r| match was(r) { Some(p) => p.local.contains(rels.names[r]), None => !cross_native(rels.names[r]) && !moved(rels.names[r]) }).collect();
     let mut causes: BTreeMap<String, String> = (0..n)
         .filter_map(|r| match was(r) {
             Some(p) => p.causes.get(rels.names[r]).map(|c| (rels.names[r].to_owned(), c.clone())),
             None if cross_native(rels.names[r]) => Some((rels.names[r].to_owned(), "made natively".to_owned())),
-            None => moved(rels.names[r]).then(|| (rels.names[r].to_owned(), "its rows name no document (moved by `locate`)".to_owned())),
+            None if prog.qualified(rels.names[r], MOVED_CROSS_FILE) => Some((rels.names[r].to_owned(), "its rows name no document (moved by `locate`)".to_owned())),
+            None if prog.qualified(rels.names[r], READ_LOCATED) && !prog.qualified(rels.names[r], CROSS_FILE) => {
+                Some((rels.names[r].to_owned(), "read back from its located form (`locate`)".to_owned()))
+            }
+            None => moved(rels.names[r]).then(|| (rels.names[r].to_owned(), "declared `cross_file`".to_owned())),
         })
         .collect();
     let base_locations = |rel: &str| base_locations(prog, rel);
@@ -989,6 +1017,16 @@ pub struct Programs {
     /// Why each derived relation is cross-file (`cross_causes`), as the split found it; empty for a split read from
     /// the store (`assemble` of what a prepared program kept), which keeps no causes.
     pub causes: std::collections::BTreeMap<String, String>,
+    /// The program's version the parts are views of: what the checks of the split read (`crossings_checked`).
+    pub program: std::sync::Arc<crate::code_rule_dsl::logic::program_image::Version>,
+    /// The cross part's position reads (decision 0649): `(rule's head, position relation)`, outside the rules that
+    /// place a finding.
+    pub positions: Vec<(String, String)>,
+    /// The split's undeclared crossings (`FileLocal::crossings`, decision 0652); empty for a split read from the store.
+    pub crossings: std::collections::BTreeMap<String, String>,
+    /// The cross part's relations that hold or read a node id (decision 0677, `node_crossings`); empty for a split read
+    /// from the store, which was reported when it was prepared.
+    pub nodes: Vec<NodeCrossing>,
 }
 
 /// The versions of a split's parts (`Programs::versions`): the file-local and the cross-file part.
@@ -1014,30 +1052,17 @@ pub fn programs_of(version: std::sync::Arc<crate::code_rule_dsl::logic::program_
     let (local, constants) = split.found();
     let mut programs = assemble(version, local, constants, split.locations.clone(), split.same_doc.clone())?;
     programs.causes = split.causes.clone();
-    Ok(programs)
-}
-
-/// `programs_of` the version of the tree `prog` (the prepared program's, made once: decision 0281's path, step 4).
-/// While the preparation passes split the tree too, a debug build checks the version's split is the tree's.
-pub fn programs_over(prog: &crate::code_rule_dsl::logic::front::Program, version: std::sync::Arc<crate::code_rule_dsl::logic::program_image::Version>) -> Result<Programs, String> {
-    #[cfg(debug_assertions)]
+    programs.crossings = split.crossings.clone();
+    // The checks that report (decisions 0649, 0677): once per program version, as its split is made once.
+    positions_checked(&programs, strict_positions())?;
     {
-        let split = crate::code_rule_dsl::logic::program_image::manager::analysis::<FileLocal>(&version)?;
-        let (local, constants, locations, same_doc, causes) = found(prog);
-        let (v_local, v_constants) = split.found();
-        assert_eq!(v_local, local, "the version's file-local relations are the tree's");
-        assert_eq!(v_constants, constants, "the version's constant relations are the tree's");
-        assert_eq!(split.locations, locations, "the version's location columns are the tree's");
-        assert_eq!(split.same_doc, same_doc, "the version's same-document columns are the tree's");
-        // Which relations have a cause, not its words: a cause is the first failure a split found, and the tree's
-        // split, made from the last split kept (`split_memo`), finds a relation read already cross-file where a whole
-        // split finds the same rule failing first on its location ("reads cross-file r" against "reads r with no
-        // location"). Both are causes; the run reads them only in its diagnostics.
-        assert_eq!(split.causes.keys().collect::<Vec<_>>(), causes.keys().collect::<Vec<_>>(), "the version's split gives causes for the relations the tree's does");
+        let placed = crate::code_rule_dsl::logic::plan::body::Placed::whole(programs.program.clone());
+        let f = placed.fields().map_err(|e| e.to_string())?;
+        programs.nodes = node_crossings::node_crossings(&programs.program, &f, &programs.versions.cross, &programs.file_local);
+        node_crossings::crossings_under(&programs.program, &mut programs.nodes, &programs.causes);
     }
-    #[cfg(not(debug_assertions))]
-    let _ = prog;
-    programs_of(version)
+    node_crossings::nodes_checked(&programs.nodes, node_crossings::strict_nodes())?;
+    Ok(programs)
 }
 
 /// What `programs` splits `prog` by: its file-local relations, its relations of constants (derived in both parts),
@@ -1151,7 +1176,343 @@ pub fn assemble(
             assert_eq!(part.constants.contains(r.as_str()), constants.contains(r.as_str()), "the split's constants and the file-local part's disagree on {r}");
         }
     }
-    Ok(Programs { exports, base, locations, same_doc, file_local: local, constants, versions, causes: Default::default() })
+    let outputs: std::collections::BTreeSet<&str> = f.outputs().collect();
+    let columns = position_columns(&version);
+    let positions = position_reads(&versions.cross, &Places::of(&version, &outputs, &columns), &columns);
+    Ok(Programs {
+        exports,
+        base,
+        locations,
+        same_doc,
+        file_local: local,
+        constants,
+        versions,
+        program: version,
+        causes: Default::default(),
+        positions,
+        crossings: Default::default(),
+        nodes: Vec::new(),
+    })
+}
+
+/// The relations a node's place in its document is (decision 0649): an edit moves them for every node after it, so a
+/// cross-file rule reading one reads the whole edited file's rows again.
+pub const POSITIONS: &[&str] = &["visit_index", "node_order", "line", "col", "end_line", "ast_depth"];
+
+/// `RERAIL_STRICT_POSITIONS=1`: a program whose cross part reads a position is refused (decision 0649). Read where a
+/// split is made, once per program version (no process-global state, decision 0442).
+fn strict_positions() -> bool {
+    std::env::var("RERAIL_STRICT_POSITIONS").is_ok_and(|v| !matches!(v.as_str(), "" | "0"))
+}
+
+/// Which columns of each relation hold a position.
+type Columns = std::collections::HashMap<String, Vec<bool>>;
+
+/// Whether column `c` of `rel` holds a position: one of `POSITIONS`' value columns (every column but the node's), or
+/// one `position_columns` found.
+fn is_position(columns: &Columns, rel: &str, c: usize) -> bool {
+    (POSITIONS.contains(&rel) && c > 0) || columns.get(rel).is_some_and(|cols| cols.get(c).copied().unwrap_or(false))
+}
+
+/// Whether term `t` holds a position: a slot of `slots`, or a function of one.
+fn holds_position(t: crate::code_rule_dsl::logic::program_image::TermRef<'_>, slots: &[bool]) -> bool {
+    use crate::code_rule_dsl::logic::program_image::TermRef;
+    match t {
+        TermRef::Var(s) => slots.get(s.index()).copied().unwrap_or(false),
+        TermRef::Call(_, mut args) => args.any(|a| holds_position(a, slots)),
+        _ => false,
+    }
+}
+
+/// The slots of rule `r` holding a position: each bound at a position column of a positive atom, each a function of one
+/// (`p = cat(path, ":", to_string(l))`), and each a `min`, `max` or `sum` over one.
+fn position_slots(v: &crate::code_rule_dsl::logic::program_image::Version, r: crate::code_rule_dsl::logic::program_image::RuleRef<'_>, columns: &Columns) -> Vec<bool> {
+    use crate::code_rule_dsl::logic::program_image::{Lit as L, TermRef};
+    let mut slots = vec![false; r.var_count()];
+    for l in r.body() {
+        if let L::Atom(a) = l.view()
+            && !a.neg()
+        {
+            let rel = v.rel_name(a.rel());
+            for (c, t) in a.args().enumerate() {
+                if let TermRef::Var(s) = t
+                    && is_position(columns, rel, c)
+                {
+                    slots[s.index()] = true;
+                }
+            }
+        }
+    }
+    while carry_positions(v, r, columns, &mut slots) {}
+    slots
+}
+
+/// One round of `position_slots`' carrying, through equations and aggregates: whether it marked a slot.
+fn carry_positions(v: &crate::code_rule_dsl::logic::program_image::Version, r: crate::code_rule_dsl::logic::program_image::RuleRef<'_>, columns: &Columns, slots: &mut [bool]) -> bool {
+    use crate::code_rule_dsl::logic::program_image::{AggRef, CmpOp, Lit as L};
+    let mut carried = false;
+    for l in r.body() {
+        match l.view() {
+            L::Cmp { l, op: CmpOp::Eq, r } => carried |= carry_equal(l, r, slots) | carry_equal(r, l, slots),
+            L::Agg { var, op, over, atom } if !matches!(op, AggRef::Count) && !slots[var.index()] => {
+                let rel = v.rel_name(atom.rel());
+                if over.is_some_and(|o| atom.args().enumerate().any(|(c, t)| t.var() == Some(o) && is_position(columns, rel, c))) {
+                    slots[var.index()] = true;
+                    carried = true;
+                }
+            }
+            _ => {}
+        }
+    }
+    carried
+}
+
+/// Marks `to`, a slot, where `from` holds a position: whether it marked it.
+fn carry_equal(from: crate::code_rule_dsl::logic::program_image::TermRef<'_>, to: crate::code_rule_dsl::logic::program_image::TermRef<'_>, slots: &mut [bool]) -> bool {
+    match to.var() {
+        Some(s) if !slots[s.index()] && holds_position(from, slots) => {
+            slots[s.index()] = true;
+            true
+        }
+        _ => false,
+    }
+}
+
+/// Which columns of each relation hold a position (`POSITIONS`' value columns, every column but the node's), and each
+/// column a rule fills from one (`position_slots`), to a fixpoint over the whole program: a per-file relation that
+/// hands on a node's line (`pos(n, l) :- line(n, l)`) carries it into the cross part as the position itself does.
+fn position_columns(v: &crate::code_rule_dsl::logic::program_image::Version) -> Columns {
+    let mut columns = Columns::new();
+    while v.rules().fold(false, |changed, r| head_positions(v, r, &mut columns) || changed) {}
+    columns
+}
+
+/// Marks the columns of rule `r`'s head it fills from a position (`position_slots`): whether it marked one.
+fn head_positions(v: &crate::code_rule_dsl::logic::program_image::Version, r: crate::code_rule_dsl::logic::program_image::RuleRef<'_>, columns: &mut Columns) -> bool {
+    let slots = position_slots(v, r, columns);
+    let head = r.head();
+    let rel = v.rel_name(head.rel());
+    let mut changed = false;
+    for (c, t) in head.args().enumerate() {
+        if holds_position(t, &slots) && !is_position(columns, rel, c) {
+            columns.entry(rel.to_owned()).or_insert_with(|| vec![false; head.arity()])[c] = true;
+            changed = true;
+        }
+    }
+    changed
+}
+
+/// Whether rule `r` only carries the positions it reads to its head, as a finding naming another file's line needs
+/// (the explainer's recipe 5, "src/a.py:12"): each read once, by a positive atom at a position column, and used by
+/// nothing else but an equation making a new value of it (`p = cat(path, ":", to_string(l))`). A comparison, a join,
+/// a negation or an aggregate reasons on it.
+fn carries(v: &crate::code_rule_dsl::logic::program_image::Version, r: crate::code_rule_dsl::logic::program_image::RuleRef<'_>, columns: &Columns) -> bool {
+    let slots = position_slots(v, r, columns);
+    let mut atom_bound = vec![false; slots.len()];
+    for a in r.body().filter_map(|l| l.atom()) {
+        for s in a.args().filter_map(|t| t.var()) {
+            atom_bound[s.index()] = true;
+        }
+    }
+    let mut seen = vec![false; slots.len()];
+    r.body().all(|l| literal_carries(v, l.view(), columns, &slots, &atom_bound, &mut seen))
+}
+
+/// `carries` of one body literal: `atom_bound` the slots an atom binds, `seen` the position slots read so far.
+fn literal_carries(v: &crate::code_rule_dsl::logic::program_image::Version, l: crate::code_rule_dsl::logic::program_image::Lit<'_>, columns: &Columns, slots: &[bool], atom_bound: &[bool], seen: &mut [bool]) -> bool {
+    use crate::code_rule_dsl::logic::program_image::{CmpOp, Lit as L};
+    match l {
+        L::Atom(a) => atom_carries(v, a, columns, slots, seen),
+        L::Cmp { l, op: CmpOp::Eq, r } => equation_carries(l, r, slots, atom_bound),
+        L::Cmp { l, r, .. } => !holds_position(l, slots) && !holds_position(r, slots),
+        L::Agg { var, over, atom, .. } => !slots[var.index()] && !over.is_some_and(|o| slots[o.index()]) && atom.args().all(|t| !holds_position(t, slots)),
+        L::Nearest { n, a, .. } => !slots[n.index()] && !slots[a.index()],
+        L::Ast { .. } => true,
+    }
+}
+
+/// `carries` of an equation `l = r`: it holds no position, or it makes a new value of one, a slot no atom binds
+/// (`atom_bound`) on one side; one atom's position equated with another's joins them.
+fn equation_carries(l: crate::code_rule_dsl::logic::program_image::TermRef<'_>, r: crate::code_rule_dsl::logic::program_image::TermRef<'_>, slots: &[bool], atom_bound: &[bool]) -> bool {
+    let defines = |to: crate::code_rule_dsl::logic::program_image::TermRef<'_>| to.var().is_some_and(|s| !atom_bound[s.index()]);
+    let (pl, pr) = (holds_position(l, slots), holds_position(r, slots));
+    !(pl || pr) || (defines(l) && pr) || (defines(r) && pl)
+}
+
+/// `carries` of a body atom: each position slot it holds read here, at a position column of a positive atom, and
+/// nowhere before (`seen`).
+fn atom_carries(v: &crate::code_rule_dsl::logic::program_image::Version, a: crate::code_rule_dsl::logic::program_image::AtomRef<'_>, columns: &Columns, slots: &[bool], seen: &mut [bool]) -> bool {
+    let rel = v.rel_name(a.rel());
+    for (c, t) in a.args().enumerate() {
+        match t.var() {
+            Some(s) if slots[s.index()] => {
+                if a.neg() || seen[s.index()] || !is_position(columns, rel, c) {
+                    return false;
+                }
+                seen[s.index()] = true;
+            }
+            _ if holds_position(t, slots) => return false,
+            _ => {}
+        }
+    }
+    true
+}
+
+/// What may read a position in the cross part (decision 0649): what places a finding, written once where it is
+/// (`findings`), and the relations whose positions only reach one (`only`), the explainer's recipe 5.
+struct Places<'v> {
+    findings: std::collections::BTreeSet<&'v str>,
+    only: std::collections::BTreeSet<&'v str>,
+}
+
+impl<'v> Places<'v> {
+    /// The places of program `v`, of `outputs` and its positions' `columns` (`position_columns`).
+    fn of(v: &'v crate::code_rule_dsl::logic::program_image::Version, outputs: &std::collections::BTreeSet<&str>, columns: &Columns) -> Places<'v> {
+        let findings = finding_relations(v, outputs);
+        let only = place_only(v, &findings, columns);
+        Places { findings, only }
+    }
+    /// Whether a rule of `head` may read a position: it places a finding, or it only carries the position (`carries`,
+    /// asked only then) to a relation whose positions only reach one.
+    fn exempt(&self, head: &str, carries: impl FnOnce() -> bool) -> bool {
+        self.findings.contains(head) || (self.only.contains(head) && carries())
+    }
+}
+
+/// What places a finding: an output, and the helpers the lowering and the split made of one (its located form `r_at`,
+/// a pushed join `fl…`).
+fn finding_relations<'v>(v: &'v crate::code_rule_dsl::logic::program_image::Version, outputs: &std::collections::BTreeSet<&str>) -> std::collections::BTreeSet<&'v str> {
+    let mut readers: std::collections::HashMap<&str, Vec<String>> = std::collections::HashMap::new();
+    for r in v.rules() {
+        let head = v.rel_name(r.head().rel());
+        for rel in r.body().filter_map(|l| l.atom()).map(|a| v.rel_name(a.rel())) {
+            readers.entry(rel).or_default().push(head.to_owned());
+        }
+    }
+    let read_by = |rel: &str| readers.get(rel).cloned().unwrap_or_default();
+    v.rules()
+        .map(|r| v.rel_name(r.head().rel()))
+        .filter(|h| outputs.contains(h) || lowering_source_in(v, h, &read_by).is_some_and(|s| outputs.contains(s.as_str())))
+        .collect()
+}
+
+/// The relations whose positions reach only findings: each has a rule reading one of its position columns, and each
+/// such rule places a finding, or only carries the position (`carries`) to another such relation. A position nothing
+/// reads on is no finding's place. The greatest such set: a recursive relation carrying its positions on to a finding
+/// is one.
+fn place_only<'v>(v: &'v crate::code_rule_dsl::logic::program_image::Version, findings: &std::collections::BTreeSet<&'v str>, columns: &Columns) -> std::collections::BTreeSet<&'v str> {
+    let readers = position_readers(v, columns);
+    let mut only: std::collections::BTreeSet<&str> = v.rules().map(|r| v.rel_name(r.head().rel())).collect();
+    loop {
+        let fails = |rel: &&str| readers.get(rel).is_none_or(|rs| rs.iter().any(|&(h, carried)| !findings.contains(h) && !(carried && only.contains(h))));
+        let failing: Vec<&str> = only.iter().copied().filter(fails).collect();
+        if failing.is_empty() {
+            return only;
+        }
+        for rel in failing {
+            only.remove(rel);
+        }
+    }
+}
+
+/// Each relation's readers of one of its position columns: each reading rule's head, and whether the rule only carries
+/// the positions it reads (`carries`).
+fn position_readers<'v>(v: &'v crate::code_rule_dsl::logic::program_image::Version, columns: &Columns) -> std::collections::HashMap<&'v str, Vec<(&'v str, bool)>> {
+    use crate::code_rule_dsl::logic::program_image::Lit as L;
+    let mut readers: std::collections::HashMap<&str, Vec<(&str, bool)>> = std::collections::HashMap::new();
+    for r in v.rules() {
+        let read: std::collections::BTreeSet<&str> = r
+            .body()
+            .filter_map(|l| match l.view() {
+                L::Atom(a) | L::Agg { atom: a, .. } => Some(a),
+                _ => None,
+            })
+            .filter(|a| binds_position(v, *a, columns))
+            .map(|a| v.rel_name(a.rel()))
+            .collect();
+        if read.is_empty() {
+            continue;
+        }
+        let entry = (v.rel_name(r.head().rel()), carries(v, r, columns));
+        for rel in read {
+            readers.entry(rel).or_default().push(entry);
+        }
+    }
+    readers
+}
+
+/// Whether atom `a` binds a variable at one of its relation's position columns.
+fn binds_position(v: &crate::code_rule_dsl::logic::program_image::Version, a: crate::code_rule_dsl::logic::program_image::AtomRef<'_>, columns: &Columns) -> bool {
+    let rel = v.rel_name(a.rel());
+    a.args().enumerate().any(|(c, t)| t.var().is_some() && is_position(columns, rel, c))
+}
+
+/// The cross part's rules that read a position, but for those `places` exempts: a read of `POSITIONS`, or of a position
+/// column (`position_columns`) of a relation the cross part does not derive (a per-file relation, an export, a pushed
+/// join's `fl…` helper). A cross-file relation's own position column is that relation's rule's report.
+fn position_reads(cross: &crate::code_rule_dsl::logic::program_image::Version, places: &Places<'_>, columns: &Columns) -> Vec<(String, String)> {
+    let derived: std::collections::BTreeSet<&str> = cross.rules().map(|r| cross.rel_name(r.head().rel())).collect();
+    let mut out: std::collections::BTreeSet<(String, String)> = std::collections::BTreeSet::new();
+    for r in cross.rules() {
+        let head = cross.rel_name(r.head().rel());
+        let reads = rule_position_reads(cross, r, &derived, columns);
+        if !reads.is_empty() && !places.exempt(head, || carries(cross, r, columns)) {
+            out.extend(reads.into_iter().map(|read| (head.to_owned(), read)));
+        }
+    }
+    out.into_iter().collect()
+}
+
+/// What rule `r` of the cross part reads of a position: a `POSITIONS` relation, or a position column of a relation the
+/// part does not derive (`derived`).
+fn rule_position_reads(cross: &crate::code_rule_dsl::logic::program_image::Version, r: crate::code_rule_dsl::logic::program_image::RuleRef<'_>, derived: &std::collections::BTreeSet<&str>, columns: &Columns) -> Vec<String> {
+    use crate::code_rule_dsl::logic::program_image::Lit as L;
+    let mut reads = Vec::new();
+    for l in r.body() {
+        let (L::Atom(a) | L::Agg { atom: a, .. }) = l.view() else { continue };
+        let rel = cross.rel_name(a.rel());
+        if POSITIONS.contains(&rel) {
+            reads.push(rel.to_owned());
+        } else if !derived.contains(rel) {
+            let held = columns.get(rel).into_iter().flat_map(|cols| a.args().enumerate().filter(|(c, t)| t.var().is_some() && cols.get(*c).copied().unwrap_or(false)));
+            reads.extend(held.map(|(c, _)| format!("{rel}'s column {c}, a position")));
+        }
+    }
+    reads
+}
+
+/// The cross part's position reads (`Programs::positions`, `position_reads`) refused under `strict`, else printed
+/// under `RERAIL_SHOW_POSITIONS`, once per program version, as its split is made once (an analysis of the version; no
+/// process-global record, decision 0442). `RERAIL_POSITIONS=FILE` appends each reader's name (a helper by its source
+/// relation) and what it reads, a line each, for the pack test's list of offenders.
+pub fn positions_checked(p: &Programs, strict: bool) -> Result<(), String> {
+    let positions = &p.positions;
+    if positions.is_empty() {
+        return Ok(());
+    }
+    // A test's own list (`test_store::Sinks`), else the process's.
+    #[cfg(any(test, feature = "test-hooks"))]
+    let own = crate::code_rule_dsl::logic::plan::corpus::test_store::sinks().map(|s| s.positions.into_os_string());
+    #[cfg(not(any(test, feature = "test-hooks")))]
+    let own = None;
+    if let Some(path) = own.or_else(|| std::env::var_os("RERAIL_POSITIONS")) {
+        use std::io::Write as _;
+        let v = &p.program;
+        let named = |rel: &String| node_crossings::unprefixed(&lowering_source(v, rel).unwrap_or_else(|| rel.clone())).to_owned();
+        let lines: String = positions.iter().map(|(h, read)| format!("{} {read}\n", named(h))).collect();
+        if let Ok(mut file) = std::fs::OpenOptions::new().create(true).append(true).open(path) {
+            // One write of every line: the runs of a batch append to one file at once.
+            let _ = file.write_all(lines.as_bytes());
+        }
+    }
+    let line = positions.iter().map(|(h, p)| format!("{h} reads {p}")).collect::<Vec<_>>().join(", ");
+    if strict {
+        return Err(format!("RERAIL_STRICT_POSITIONS: the cross-file part reads positions, which every edit moves (decision 0649): {line}"));
+    }
+    if std::env::var_os("RERAIL_SHOW_POSITIONS").is_some() {
+        eprintln!("rerail: the cross-file part reads positions, which every edit moves (decision 0649): {line}");
+    }
+    Ok(())
 }
 
 /// Pushes the file-local part of each cross-file rule into the chunks: the rule's positive reads of base relations
@@ -2015,27 +2376,190 @@ pub fn locate(prog: &mut crate::code_rule_dsl::logic::front::Program) -> Result<
                 // Each round moves a relation the split held file-local; a moved one is cross-file and no target again.
                 let fresh: Vec<String> = blocked.into_iter().filter(|r| !prog.qualified(r, CROSS_FILE)).collect();
                 if fresh.is_empty() {
-                    return Err(prog.qualifiers.iter().filter(|(_, w)| w.contains(CROSS_FILE)).map(|(r, _)| r.clone()).collect());
+                    return Err(moved(prog).into_iter().map(str::to_owned).collect());
                 }
                 for rel in fresh {
-                    prog.qualifiers.entry(rel).or_default().insert(CROSS_FILE.to_owned());
+                    let words = prog.qualifiers.entry(rel).or_default();
+                    words.insert(CROSS_FILE.to_owned());
+                    words.insert(MOVED_CROSS_FILE.to_owned());
                 }
             }
         }
     }
 }
 
-/// The qualifier `locate` gives a relation whose rows name no document: the split holds it cross-file (decision 0290).
-pub const CROSS_FILE: &str = "cross_file";
+/// The qualifier of a cross-file relation, declared or moved (`front::ast::CROSS_FILE`).
+pub const CROSS_FILE: &str = crate::code_rule_dsl::logic::front::ast::CROSS_FILE;
 
-/// The relations `locate` moved to the cross-file part (`CROSS_FILE`), of the tree the preparation edits.
+/// The qualifier `locate` gives a relation it moved (`front::ast::MOVED_CROSS_FILE`).
+pub const MOVED_CROSS_FILE: &str = crate::code_rule_dsl::logic::front::ast::MOVED_CROSS_FILE;
+
+/// The qualifier `locate` gives a relation the cross-file part reads back from its located form (`r(…) :- r_at(_,
+/// …)`, decision 0665): a union of the chunks' rows, cross-file by what it is for, though a path it keeps (a column
+/// `FileLocal::path_keys` names) would place it in one file. Neither a declaration nor a move (0652).
+pub const READ_LOCATED: &str = "read_located";
+
+/// The relations `locate` moved to the cross-file part (`MOVED_CROSS_FILE`), of the tree the preparation edits.
 pub fn moved(prog: &crate::code_rule_dsl::logic::front::Program) -> Vec<&str> {
-    prog.qualifiers.iter().filter(|(_, w)| w.contains(CROSS_FILE)).map(|(r, _)| r.as_str()).collect()
+    prog.qualifiers.iter().filter(|(_, w)| w.contains(MOVED_CROSS_FILE)).map(|(r, _)| r.as_str()).collect()
 }
 
-/// The relations `locate` moved to the cross-file part (`CROSS_FILE`), read from the program's version.
+/// The relations `locate` moved to the cross-file part (`MOVED_CROSS_FILE`), read from the program's version.
 pub fn moved_in<'v>(f: &crate::code_rule_dsl::logic::plan::fields::Fields<'v>) -> Vec<&'v str> {
-    f.decls_by_name().into_iter().map(|(r, _)| r).filter(|r| f.qualified(r, CROSS_FILE)).collect()
+    f.decls_by_name().into_iter().map(|(r, _)| r).filter(|r| f.qualified(r, MOVED_CROSS_FILE)).collect()
+}
+
+/// `RERAIL_STRICT_CROSSINGS=1`: a program with an undeclared crossing is refused (decision 0652). Read where a split is
+/// checked, once per program version (no process-global state, decision 0442).
+pub fn strict_crossings() -> bool {
+    std::env::var("RERAIL_STRICT_CROSSINGS").is_ok_and(|v| !matches!(v.as_str(), "" | "0"))
+}
+
+/// The split's crossings not meant (decision 0652), each `(relation, shown)`: the split's undeclared crossings
+/// (`FileLocal::crossings`), and the relations `locate` moved whose rows are read on (not only written, as a finding
+/// placed by `@place` is). A helper the lowering made shares its source relation's declaration.
+pub fn undeclared_crossings(p: &Programs) -> Result<Vec<(String, String)>, String> {
+    let v = &p.program;
+    let placed = crate::code_rule_dsl::logic::plan::body::Placed::whole(v.clone());
+    let f = placed.fields().map_err(|e| e.to_string())?;
+    // A pooled negation's set (`rr_not…`), a guest's copy (`rr_in_<label>_`), a factor (`fz…_`): their source's
+    // declaration. A `@place` finding's relation (`rr_place_…`, a path and a line) is about the corpus by what `@place`
+    // says, as 0290 moves it.
+    let declared = |rel: &str| f.qualified(rel, CROSS_FILE) && !f.qualified(rel, MOVED_CROSS_FILE);
+    let meant = |rel: &str| (place_finding(rel) && placement_only(v, &f, rel)) || declared(rel) || lowering_source(v, rel).is_some_and(|s| declared(&s));
+    let mut refused: Vec<(String, String)> = p.crossings.iter().filter(|(rel, _)| !meant(rel)).map(|(rel, why)| (rel.clone(), crossing_shown(v, rel, why))).collect();
+    for rel in moved_in(&f) {
+        // A function of strings (`match_all`) moved for a cross-file reader joins no documents.
+        let functional = f.native(rel).is_some_and(|nat| matches!(nat.spec, crate::code_rule_dsl::logic::program_image::NativeSpec::MatchAll { .. }));
+        if !functional && !placement_only(v, &f, rel) && !meant(rel) {
+            refused.push((rel.to_owned(), crossing_shown(v, rel, "its rows name no document (moved by `locate`), and are read on")));
+        }
+    }
+    Ok(refused)
+}
+
+/// The run's split checked (decision 0652): its undeclared crossings (`undeclared_crossings`) refused under `strict`,
+/// else shown under `RERAIL_SHOW_CROSSINGS`. `RERAIL_CROSSINGS=FILE` appends each one's name, a line each, for the pack
+/// test's list of offenders (`node_crossings::nodes_checked`'s `RERAIL_NODE_CROSSINGS`, for 0652).
+pub fn crossings_checked(p: &Programs, strict: bool) -> Result<(), String> {
+    let refused = undeclared_crossings(p)?;
+    if refused.is_empty() {
+        return Ok(());
+    }
+    // A test's own list (`test_store::Sinks`), else the process's.
+    #[cfg(any(test, feature = "test-hooks"))]
+    let own = crate::code_rule_dsl::logic::plan::corpus::test_store::sinks().map(|s| s.crossings.into_os_string());
+    #[cfg(not(any(test, feature = "test-hooks")))]
+    let own = None;
+    if let Some(path) = own.or_else(|| std::env::var_os("RERAIL_CROSSINGS")) {
+        use std::io::Write as _;
+        let v = &p.program;
+        let lines: String = refused.iter().map(|(rel, _)| format!("{}\n", node_crossings::unprefixed(&lowering_source(v, rel).unwrap_or_else(|| rel.clone())))).collect();
+        if let Ok(mut file) = std::fs::OpenOptions::new().create(true).append(true).open(path) {
+            // One write of every line: the runs of a batch append to one file at once.
+            let _ = file.write_all(lines.as_bytes());
+        }
+    }
+    let shown = || refused.iter().map(|(_, s)| s.as_str()).collect::<Vec<_>>().join("\n");
+    if strict {
+        return Err(format!(
+            "the split: {} relation(s) are cross-file without a declaration (decision 0652). Join each rule's reads through a location \
+             (a node, `docof`, `earlier`), or declare the relation `cross_file` if it is meant to span files:\n{}",
+            refused.len(),
+            shown()
+        ));
+    }
+    if std::env::var_os("RERAIL_SHOW_CROSSINGS").is_some() {
+        eprintln!("rerail: {} relation(s) are cross-file without a declaration (decision 0652):\n{}", refused.len(), shown());
+    }
+    Ok(())
+}
+
+/// Whether `rel`'s rows are only written: an output, or read by outputs' rules alone.
+fn placement_only(v: &crate::code_rule_dsl::logic::program_image::Version, f: &crate::code_rule_dsl::logic::plan::fields::Fields<'_>, rel: &str) -> bool {
+    f.is_output(rel) || v.rules().filter(|r| r.body().filter_map(|l| l.atom()).any(|a| v.rel_name(a.rel()) == rel)).all(|r| f.is_output(v.rel_name(r.head().rel())))
+}
+
+/// One refused relation: its name, the relation of the source that reads it when the lowering made it (`rr_…`), and
+/// why, with its rule.
+fn crossing_shown(v: &crate::code_rule_dsl::logic::program_image::Version, rel: &str, why: &str) -> String {
+    crossing_shown_with(lowering_source(v, rel).as_deref(), rel, why)
+}
+
+/// A refused relation shown (`crossing_shown`), its lowering's source relation `source` found.
+fn crossing_shown_with(source: Option<&str>, rel: &str, why: &str) -> String {
+    let of = match source {
+        Some(s) => format!(" (made by the lowering of {s})"),
+        None => String::new(),
+    };
+    format!("  {rel}{of}: {why}")
+}
+
+/// For a relation the lowering made (`rr_…`, under a program's prefix), the first relation, reader by reader, that it
+/// did not make; `None` for a relation of the source.
+fn lowering_source(v: &crate::code_rule_dsl::logic::program_image::Version, rel: &str) -> Option<String> {
+    lowering_source_in(v, rel, &|r: &str| v.rules().filter(|x| x.body().filter_map(|l| l.atom()).any(|a| v.rel_name(a.rel()) == r)).map(|x| v.rel_name(x.head().rel()).to_owned()).collect())
+}
+
+/// `lowering_source`, each relation's readers' heads given by `readers` (an index made once, for many relations).
+fn lowering_source_in(v: &crate::code_rule_dsl::logic::program_image::Version, rel: &str, readers: &dyn Fn(&str) -> Vec<String>) -> Option<String> {
+    // A relation of the source names itself: no reader is read for it.
+    if !lowering_made(rel) {
+        return None;
+    }
+    copied_from(v, rel).or_else(|| helper_for(v, rel)).or_else(|| first_source_reader(rel, readers))
+}
+
+/// A helper by a pass's hashed prefix (`helper_name`): a factor `fz…_`, its key `fzk…_`, a pushed join's `fl…_`.
+fn hashed_helper(r: &str) -> bool {
+    ["fzk", "fz", "fl"].iter().any(|p| r.strip_prefix(p).and_then(|x| x.split_once('_')).is_some_and(|(h, _)| !h.is_empty() && h.bytes().all(|b| b.is_ascii_digit())))
+}
+
+/// Whether the lowering made `r`: `rr_…` under a program's prefix (`p3_rr_…`), and the passes' helpers by their
+/// hashed prefixes, an export's (`xd_`) too.
+fn lowering_made(r: &str) -> bool {
+    let r = r.strip_prefix("xd_").unwrap_or(r);
+    r.starts_with("rr_") || hashed_helper(r) || r.split_once('_').is_some_and(|(p, rest)| program_prefix(p) && (rest.starts_with("rr_") || hashed_helper(rest)))
+}
+
+/// A batched program's prefix of its relations: `p3`, `q12`.
+fn program_prefix(p: &str) -> bool {
+    p.len() > 1 && p.starts_with(['p', 'q']) && p[1..].bytes().all(|b| b.is_ascii_digit())
+}
+
+/// A `@place` finding's relation, `rr_place_…`, under a program's prefix too (`p3_rr_place_…`).
+fn place_finding(r: &str) -> bool {
+    r.starts_with("rr_place_") || r.split_once('_').is_some_and(|(p, rest)| program_prefix(p) && rest.starts_with("rr_place_"))
+}
+
+/// A guest's copy of a relation (`rr_in_<label>_<rel>`, `hide.rs`), copies of copies too: that relation, its rows
+/// over the guest's documents.
+fn copied_from(v: &crate::code_rule_dsl::logic::program_image::Version, rel: &str) -> Option<String> {
+    let (_, rest) = rel.split_once("rr_in_")?;
+    rest.match_indices('_').map(|(i, _)| &rest[i + 1..]).find(|r| v.rel(r).is_some() && !lowering_made(r)).map(str::to_owned)
+}
+
+/// A pass's helper is named for the relation it was made for (`helper_name`: `fzk<hash>_<rel>`, `fl<hash>_<rel>`,
+/// under an export's `xd_`): that relation, where it is one of the source's.
+fn helper_for(v: &crate::code_rule_dsl::logic::program_image::Version, rel: &str) -> Option<String> {
+    let named = rel.strip_prefix("xd_").unwrap_or(rel);
+    let (_, r) = named.split_once('_').filter(|_| hashed_helper(named))?;
+    (v.rel(r).is_some() && !lowering_made(r)).then(|| r.to_owned())
+}
+
+/// The first relation, reader by reader, that the lowering did not make (the least by name of the first round that
+/// has one, whichever order the readers are found in).
+fn first_source_reader(rel: &str, readers: &dyn Fn(&str) -> Vec<String>) -> Option<String> {
+    let mut seen: std::collections::BTreeSet<String> = std::collections::BTreeSet::from([rel.to_owned()]);
+    let mut round = vec![rel.to_owned()];
+    while !round.is_empty() {
+        let (source, made): (Vec<String>, Vec<String>) = round.iter().flat_map(|r| readers(r)).partition(|h| !lowering_made(h));
+        if let Some(s) = source.into_iter().min() {
+            return Some(s);
+        }
+        round = made.into_iter().filter(|h| seen.insert(h.clone())).collect();
+    }
+    None
 }
 
 /// One round of `locate`: the relations located, and in the `Err` those left beside them.
@@ -2162,6 +2686,8 @@ fn locate_once(prog: &mut crate::code_rule_dsl::logic::front::Program) -> Result
             *readers.entry(a).or_default() += 1;
         }
         rules.push(read_at);
+        // What the cross part reads back from a located form stays there (decision 0665), as `passes::Locate` says.
+        prog.qualifiers.entry(rel.clone()).or_default().insert(READ_LOCATED.to_owned());
         located.push(rel.clone());
     }
     prog.rules = rules;

@@ -16,11 +16,13 @@
 .violation B005(at: node) code "B005"
     "List each character once in this strip argument, or use `removeprefix()`/`removesuffix()` to remove a substring."
     suppress ruff "B005"
-B005(c) :- strip_arg(c, v), b005_char(v, i, x), b005_char(v, j, x), i < j.
+B005(c) :- b005_char(c, i, x), b005_char(c, j, x), i < j.
 .decl strip_arg(c: node, v: symbol)
 strip_arg(c, v) :- kind(c, "call"), field(c, "function", f), attr_of(f, _, m),
     (m = "strip" ; m = "lstrip" ; m = "rstrip"), call_nargs(c, 1), call_nkwargs(c, 0), bb_pos(c, 0, a), plain_str(a, v).
-// b005_char(v, i, x): x is the i-th character of v (code points, not bytes), for strip arguments only.
-.decl b005_char(v: symbol, i: number, x: symbol)
+// b005_char(c, i, x): x is the i-th character of call c's strip argument (code points, not bytes). Keyed by the
+// call, in its own file: keyed by the argument's value, it was a table of every file's arguments, joined by value in
+// the cross-file part (decision 0677).
+.decl b005_char(c: node, i: number, x: symbol)
 // Each character once, numbered by match_all's ordinal: one step, no recursion that makes values.
-b005_char(v, i, x) :- strip_arg(_, v), match_all("(?<x>(?s:.))", v, i, _, _).
+b005_char(c, i, x) :- strip_arg(c, v), match_all("(?<x>(?s:.))", v, i, _, _).

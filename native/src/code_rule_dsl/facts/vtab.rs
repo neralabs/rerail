@@ -699,32 +699,49 @@ fn quote(s: &str) -> String {
     format!("\"{}\"", s.replace('"', "\"\""))
 }
 fn register(db: &Connection, name: &str, binding: Binding, restored:bool) -> Result<()> {
-    if name.is_empty() || name.len() > 120 || !name.bytes().all(|b| b.is_ascii_alphanumeric() || b == b'_') {
-        return Err(failure("invalid native table name"));
-    }
+    check_table_name(name)?;
     let module = CString::new(name).map_err(|_| failure("invalid module name"))?;
     const MODULE: Module<Table> = Module::eponymous_only_module();
     const WRITABLE: Module<Table> = Module::update_module();
     let writable=binding.current().writable();
     db.create_module(module.as_c_str(), if writable { &WRITABLE } else { &MODULE }, Some(binding))?;
-    // Mutable execution state is temporary. An eponymous table in main would make
-    // SQLite classify volatile writes as durable store writes (including its atom guard).
-    let result=(|| {
-    if writable {
-        let exists=restored&&db.query_row("SELECT EXISTS(SELECT 1 FROM temp.sqlite_schema WHERE name=?1)",[name],|r|r.get::<_,bool>(0))?;
-        if !exists {db.execute_batch(&format!("CREATE VIRTUAL TABLE temp.{} USING {}",quote(name),quote(name)))?;}
-    }
-    // xConnect is resolved before an authored-query authorizer is installed (`resolve_tables`), not here: a run whose
-    // readers are native prepares no statement over its tables.
-    UNRESOLVED.lock().entry(connection_scope(db)).or_default().insert(name.to_owned());
-    Ok(())
-    })();
+    let result=declare_table(db, name, writable, restored);
     if result.is_err() {
         // Registration precedes schema preparation. A budget interruption can fail the
         // latter before the owner records this module, so release its auxiliary source here.
         unsafe {rusqlite::ffi::sqlite3_create_module_v2(db.handle(),module.as_ptr(),std::ptr::null(),std::ptr::null_mut(),None);}
     }
     result
+}
+
+/// A native table's name: 1 to 120 ASCII letters, digits and underscores.
+fn check_table_name(name: &str) -> Result<()> {
+    let word = name.bytes().all(|b| b.is_ascii_alphanumeric() || b == b'_');
+    if name.is_empty() || name.len() > 120 || !word {
+        return Err(failure(&format!("invalid native table name: {name:?}")));
+    }
+    Ok(())
+}
+
+/// Table `name`'s module registered: its writable table made in `temp` (unless a restored connection has it), and
+/// the table noted unresolved for this connection.
+fn declare_table(db: &Connection, name: &str, writable: bool, restored: bool) -> Result<()> {
+    // Mutable execution state is temporary. An eponymous table in main would make
+    // SQLite classify volatile writes as durable store writes (including its atom guard).
+    if writable {
+        create_temp_table(db, name, restored)?;
+    }
+    // xConnect is resolved before an authored-query authorizer is installed (`resolve_tables`), not here: a run whose
+    // readers are native prepares no statement over its tables.
+    UNRESOLVED.lock().entry(connection_scope(db)).or_default().insert(name.to_owned());
+    Ok(())
+}
+
+/// `CREATE VIRTUAL TABLE temp.<name>`, where a restored connection does not have it already.
+fn create_temp_table(db: &Connection, name: &str, restored: bool) -> Result<()> {
+    let exists=restored&&db.query_row("SELECT EXISTS(SELECT 1 FROM temp.sqlite_schema WHERE name=?1)",[name],|r|r.get::<_,bool>(0))?;
+    if !exists {db.execute_batch(&format!("CREATE VIRTUAL TABLE temp.{} USING {}",quote(name),quote(name)))?;}
+    Ok(())
 }
 
 /// A constant's integer under the column's INTEGER affinity, if it has one: only such constants can

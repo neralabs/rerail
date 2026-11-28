@@ -272,14 +272,20 @@ pub fn run_rr(
 /// The findings of the run whose outputs are in `dir`, as the CLI reports them: every finding relation's rows
 /// (`rr::lower::findings`), each as its JSON object.
 pub fn diagnostics(dir: &std::path::Path) -> Result<Vec<serde_json::Value>, String> {
+    reported(dir, std::path::Path::new(""), &super::rr_host::suppressions::Suppressions::default()).map(|(kept, _)| kept)
+}
+
+/// [`diagnostics`], split in those the linters' comments their `suppress` lines name keep and those they drop (the
+/// findings layer's stage, `rr_host::suppressions`), over the files under `root`.
+fn reported(dir: &std::path::Path, root: &std::path::Path, suppressions: &super::rr_host::suppressions::Suppressions) -> Result<(Vec<serde_json::Value>, Vec<serde_json::Value>), String> {
     let outputs = crate::code_rule_dsl::logic::plan::output::Outputs::open(dir).map_err(|e| e.to_string())?;
-    let mut all = Vec::new();
-    for rel in outputs.names().into_iter().filter(|r| super::logic::rr::is_diagnostic(r)) {
-        for row in outputs.rows(rel) {
-            all.push(diagnostic(&row)?);
-        }
+    let rows: Vec<_> = outputs.names().into_iter().filter(|r| super::logic::rr::is_diagnostic(r)).flat_map(|rel| outputs.rows(rel)).collect();
+    let (mut kept, mut dropped) = (Vec::new(), Vec::new());
+    for (row, suppressed) in rows.iter().zip(suppressions.suppressed(root, &rows)) {
+        let into = if suppressed { &mut dropped } else { &mut kept };
+        into.push(diagnostic(row)?);
     }
-    Ok(all)
+    Ok((kept, dropped))
 }
 
 /// A finding's row as its JSON object: `policy`, `clause`, `code`, `path`, `line`, `at`, `tag` (`null` for none),
@@ -316,7 +322,8 @@ fn diagnostic(row: &crate::code_rule_dsl::logic::plan::output::Row<'_>) -> Resul
     Ok(serde_json::Value::Object(finding))
 }
 
-/// `run_rr` of a program already read: a file's, or a test's (decision 0130, `rr::testing`).
+/// `run_rr` of a program already read: a file's, or a test's (decision 0130, `rr::testing`). Its findings are those
+/// its `.violation`s' `suppress` lines keep (`rr_host::suppressions`).
 pub fn run_program(
     program: super::logic::front::Program,
     files: &[super::logic::rr::LibraryFile],
@@ -324,38 +331,15 @@ pub fn run_program(
     out: &std::path::Path,
     options: &serde_json::Value,
 ) -> Result<serde_json::Value, String> {
-    use super::{
-        logic::{plan::corpus, rr},
-        typing::file_local::Binding,
-    };
-    let metadata = rr::metadata(&program).map_err(|e| e.to_string())?;
-    // A language of several dialects (`.language typescript` over `.ts`, `.tsx` and `.js` files) is a run per dialect
-    // with files in scope: the first into `out`, each other into `out/<dialect>`, their findings together. A language
-    // of one dialect, or none with files, runs as written. Each run holds the program read, its language the
-    // dialect's (the `dialect` option, `corpus::added`): never printed and read again (decision 0249).
-    let dialects = corpus::run_dialects(root, &program, &with_reuse(options)).map_err(|e| e.to_string())?;
-    // One dialect with files may be another than the one named: a `.js`-scoped TypeScript pack reads JavaScript.
-    let runs: Vec<(Option<&str>, std::path::PathBuf)> = if dialects.is_empty() {
-        vec![(None, out.to_path_buf())]
-    } else {
-        dialects.iter().enumerate().map(|(i, label)| (Some(*label), if i == 0 { out.to_path_buf() } else { out.join(label) })).collect()
-    };
-    let (mut rows, mut files_read, mut nodes, mut phases) = (Vec::new(), 0, 0, Vec::new());
-    // The device as `logic --metal` places it: `RERAIL_DEVICE=metal` (by price) or `always` (wherever it can).
-    let binding = if std::env::var("RERAIL_DEVICE").is_ok_and(|v| v == "metal" || v == "always") { Binding::Metal } else { Binding::Cpu };
-    for (dialect, dir) in &runs {
-        let mut options = with_reuse(options);
-        if let Some(dialect) = dialect {
-            options["dialect"] = serde_json::json!(dialect);
-        }
-        let report = corpus::run_read(&program, root, dir, "program", binding, 1 << 18, &Default::default(), &options).map_err(|e| e.to_string())?;
-        rows.extend(diagnostics(dir)?);
-        files_read += report.files;
-        nodes += report.nodes;
-        phases.extend(report.phases);
-    }
+    let metadata = super::logic::rr::metadata(&program).map_err(|e| e.to_string())?;
+    let mut suppressions = super::rr_host::suppressions::Suppressions::default();
+    suppressions.add(program.settings.iter().map(|(key, text)| (key.as_str(), text.as_str())))?;
+    let (rows, reports) = program_runs(&program, root, out, options, &suppressions)?;
+    let phases: Vec<_> = reports.iter().flat_map(|report| &report.phases).collect();
     Ok(
-        serde_json::json!({"diagnostics": rows, "files": files_read, "nodes": nodes,
+        serde_json::json!({"diagnostics": rows,
+                         "files": reports.iter().map(|report| report.files).sum::<usize>(),
+                         "nodes": reports.iter().map(|report| report.nodes).sum::<usize>(),
                          "metadata": metadata,
                          "programInputs": files.iter().map(|file| serde_json::json!({
                              "path": file.path,
@@ -366,6 +350,40 @@ pub fn run_program(
                              "peakRssMB": rss, "submittedStatements": statements
                          })).collect::<Vec<_>>()}),
     )
+}
+
+/// `program`'s runs (`run_program`): its findings, less those `suppressions` drop, and each run's report.
+fn program_runs(
+    program: &super::logic::front::Program,
+    root: &std::path::Path,
+    out: &std::path::Path,
+    options: &serde_json::Value,
+    suppressions: &super::rr_host::suppressions::Suppressions,
+) -> Result<(Vec<serde_json::Value>, Vec<super::logic::plan::corpus::Report>), String> {
+    use super::{logic::plan::corpus, typing::file_local::Binding};
+    // A language of several dialects (`.language typescript` over `.ts`, `.tsx` and `.js` files) is a run per dialect
+    // with files in scope: the first into `out`, each other into `out/<dialect>`, their findings together. A language
+    // of one dialect, or none with files, runs as written. Each run holds the program read, its language the
+    // dialect's (the `dialect` option, `corpus::added`): never printed and read again (decision 0249).
+    let dialects = corpus::run_dialects(root, program, &with_reuse(options)).map_err(|e| e.to_string())?;
+    // One dialect with files may be another than the one named: a `.js`-scoped TypeScript pack reads JavaScript.
+    let runs: Vec<(Option<&str>, std::path::PathBuf)> = if dialects.is_empty() {
+        vec![(None, out.to_path_buf())]
+    } else {
+        dialects.iter().enumerate().map(|(i, label)| (Some(*label), if i == 0 { out.to_path_buf() } else { out.join(label) })).collect()
+    };
+    let (mut rows, mut reports) = (Vec::new(), Vec::new());
+    // The device as `logic --metal` places it: `RERAIL_DEVICE=metal` (by price) or `always` (wherever it can).
+    let binding = if std::env::var("RERAIL_DEVICE").is_ok_and(|v| v == "metal" || v == "always") { Binding::Metal } else { Binding::Cpu };
+    for (dialect, dir) in &runs {
+        let mut options = with_reuse(options);
+        if let Some(dialect) = dialect {
+            options["dialect"] = serde_json::json!(dialect);
+        }
+        reports.push(corpus::run_read(program, root, dir, "program", binding, 1 << 18, &Default::default(), &options).map_err(|e| e.to_string())?);
+        rows.extend(reported(dir, root, suppressions)?.0);
+    }
+    Ok((rows, reports))
 }
 
 /// Several `.rerail` policies over one repository (O105): each runs over the documents of the language it names
@@ -390,20 +408,7 @@ pub fn run_policies(
     }
     // What the batch's runs share is kept while it runs (phase 1's runs, by their inputs), and nothing past it.
     let _batch = super::logic::plan::corpus::phases::Batch::enter();
-    // The policies of one language run as one pack (decision 0168): libraries read, lowered, hidden and evaluated once
-    // (decisions 0051, 0089), each policy's findings split back by its id. The rest run alone.
-    // `RERAIL_BATCH_PACK=off` runs each policy alone, as before, to compare (a measurement's switch).
-    let packed = std::env::var("RERAIL_BATCH_PACK").map_or(true, |v| v != "off");
-    let texts = if packed { program_texts(&paths.iter().map(|p| p.as_path()).collect::<Vec<_>>()).ok() } else { None };
-    let groups = texts.as_deref().map(|texts| policy_groups(texts, root, options)).unwrap_or_default();
-    let mut done: Vec<Option<(Vec<serde_json::Value>, serde_json::Value)>> = paths.iter().map(|_| None).collect();
-    for group in groups.iter().filter(|g| g.members.len() > 1) {
-        if let Some(each) = run_pack(paths, texts.as_deref().unwrap_or_default(), group, root, out, options)? {
-            for (&k, found) in group.members.iter().zip(each) {
-                done[k] = Some(found);
-            }
-        }
-    }
+    let mut done = packed(paths, root, out, options)?;
     for (k, path) in paths.iter().enumerate() {
         let (found, run) = match done[k].take() {
             Some(found) => found,
@@ -417,6 +422,68 @@ pub fn run_policies(
         runs.push(run);
     }
     Ok(serde_json::json!({"diagnostics": diagnostics, "runs": runs}))
+}
+
+/// The batch's policies of one language run as one pack (decision 0168): libraries read, lowered, hidden and evaluated
+/// once (decisions 0051, 0089), each policy's findings split back by its id, less those its `suppress` lines drop
+/// (`pack_suppressed`). Each member's findings and run's record, by its index in `paths`; `None` for a policy that
+/// runs alone. `RERAIL_BATCH_PACK=off` runs each policy alone, as before, to compare (a measurement's switch).
+fn packed(paths: &[std::path::PathBuf], root: &std::path::Path, out: &std::path::Path, options: &serde_json::Value) -> Result<Vec<Option<KeyedRow>>, String> {
+    #[cfg(test)]
+    let alone = pack_split_tests::ALONE.with(std::cell::Cell::get);
+    #[cfg(not(test))]
+    let alone = false;
+    let packed = !alone && std::env::var("RERAIL_BATCH_PACK").map_or(true, |v| v != "off");
+    let texts = if packed { program_texts(&paths.iter().map(|p| p.as_path()).collect::<Vec<_>>()).ok() } else { None };
+    let groups = texts.as_deref().map(|texts| policy_groups(texts, root, options)).unwrap_or_default();
+    let mut done: Vec<Option<KeyedRow>> = paths.iter().map(|_| None).collect();
+    for group in groups.iter().filter(|g| g.members.len() > 1) {
+        let Some(each) = run_pack(paths, texts.as_deref().unwrap_or_default(), group, root, out, options)? else { continue };
+        let Some(mut dropped) = pack_suppressed(group, root, out)? else { continue };
+        for (&k, (found, run)) in group.members.iter().zip(each) {
+            done[k] = Some((kept(found, &mut dropped), run));
+        }
+    }
+    Ok(done)
+}
+
+/// The findings of `group`'s pack that the linters' comments its members' `suppress` lines name drop
+/// (`rr_host::suppressions`), read from the pack's runs where `run_pack` places them: the first dialect's in
+/// `out/pack-<first member>`, each other's in its label's folder below it. `None` where a member's line does not
+/// read: the group's policies then run alone, and that one meets its error there.
+fn pack_suppressed(group: &PolicyGroup, root: &std::path::Path, out: &std::path::Path) -> Result<Option<Vec<serde_json::Value>>, String> {
+    let mut suppressions = super::rr_host::suppressions::Suppressions::default();
+    for metadata in &group.metadata {
+        // A member's settings as its record holds them (`rr::metadata`): `[key, text]` pairs.
+        let settings: Vec<(&str, &str)> = metadata["settings"].as_array().into_iter().flatten().filter_map(|pair| Some((pair[0].as_str()?, pair[1].as_str()?))).collect();
+        if suppressions.add(settings.iter().copied()).is_err() {
+            return Ok(None);
+        }
+    }
+    if suppressions.is_empty() {
+        return Ok(Some(Vec::new()));
+    }
+    let dir = out.join(format!("pack-{}", group.members[0]));
+    let mut dropped = Vec::new();
+    for run in group.dialects.iter().skip(1).map(|label| dir.join(label)).chain([dir.clone()]) {
+        dropped.extend(reported(&run, root, &suppressions)?.1);
+    }
+    Ok(Some(dropped))
+}
+
+/// A member's findings (`run_pack`'s, in their order) less those of `dropped`, each taken from `dropped` as it is met.
+/// A finding names its policy, so one member's never drops another's.
+fn kept(found: Vec<serde_json::Value>, dropped: &mut Vec<serde_json::Value>) -> Vec<serde_json::Value> {
+    found
+        .into_iter()
+        .filter(|finding| match dropped.iter().position(|d| d == finding) {
+            Some(at) => {
+                dropped.swap_remove(at);
+                false
+            }
+            None => true,
+        })
+        .collect()
 }
 
 /// Policies of a batch that run as one pack: one language, the same dialects with files in scope, the same guest
@@ -776,8 +843,8 @@ pub fn logic(programs: &[String], root: &std::path::Path, t_facts: Option<&std::
             text += &format!("    {phase:<6} {:.2} G instructions\n", *n as f64 / 1e9);
         }
     }
-    for (name, _) in &report.typing_runs {
-        text += &format!("  typing program {name} run first, for the relations it gives\n");
+    for run in &report.phase_runs {
+        text += &format!("  phase {} run first, for the exports it gives\n", run.name);
     }
     for (rel, rows) in &report.rows {
         text += &format!("  {rel}: {rows} rows\n");
@@ -1590,6 +1657,142 @@ mod settings_tests {
         assert!(!not.facts.contains_key("env"));
     }
 
+    /// `parsed(r, "compiled-view", p)` reaches a Blade template's compiled program, and `nearest` reads PHP's kinds
+    /// over it: the closure's return is found, the template's own is not. The run found nothing: no embedder builds
+    /// that program (the template's parse derives it), and its `parsed` rows named its grammar, `php`, alone.
+    /// bladestan-if-always-true, bladestan-identical-always-true and complexity-cyclomatic-blade read it so.
+    #[test]
+    fn run_policies_finds_nearest_over_a_blade_templates_compiled_program() {
+        let dir = tempfile::tempdir().unwrap();
+        let at = |name: &str| dir.path().join(name).display().to_string();
+        std::fs::create_dir_all(at("root")).unwrap();
+        std::fs::write(at("root/a.blade.php"), "@php $f = function ($v) { return $v; }; @endphp\n@php return 1; @endphp\n").unwrap();
+        std::fs::write(
+            at("p.rerail"),
+            ".policy \"t:blade-nearest\" revision 1\n.language blade\n.decl fn_kind(k: symbol)\nfn_kind(\"anonymous_function\"). fn_kind(\"program\").\n\
+             .violation Ret(at: node) code \"ret\" \"a return in a closure\"\n\
+             Ret(n) :- kind(r, \"document\"), parsed(r, \"compiled-view\", p), within(n, p), kind(n, \"return_statement\"), nearest(n, f, fn_kind), kind(f, \"anonymous_function\").\n",
+        )
+        .unwrap();
+        let args = ["run-policies", &at("root"), &at("out"), &at("p.rerail")].map(str::to_owned);
+        let out = super::cli_in(&args, &mut Default::default()).unwrap_or_else(|e| panic!("the policy runs: {e}"));
+        let report: serde_json::Value = serde_json::from_str(&out).unwrap();
+        assert_eq!(report["runs"][0]["files"], 1, "{report:#}");
+        assert_eq!(report["diagnostics"].as_array().map(Vec::len), Some(1), "{report:#}");
+    }
+
+    fn guest_policy(source: &str, file: &str, policy: &str) -> serde_json::Value {
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path().join("root");
+        std::fs::create_dir_all(&root).unwrap();
+        std::fs::write(root.join(file), source).unwrap();
+        let rule = dir.path().join("policy.rerail");
+        std::fs::write(&rule, policy).unwrap();
+        let args = ["run-policies".to_owned(), root.display().to_string(), dir.path().join("out").display().to_string(), rule.display().to_string()];
+        serde_json::from_str(&super::cli_in(&args, &mut Default::default()).unwrap()).unwrap()
+    }
+
+    #[test]
+    fn parsed_annotations_keep_their_literal_values() {
+        let report = guest_policy(
+            r#"x: "'foo'.encode('utf-8')""#,
+            "a.py",
+            ".policy \"annotation-values\" revision 1\n.language python\n\
+             .violation Str(at: node, v: symbol) code \"str\" \"{v}\"\n\
+             Str(s, v) :- kind(s, \"string\"), parsed(s, \"annotation\", r), within(n, r), kind(n, \"string\"), value(n, v).\n",
+        );
+        let mut values: Vec<_> = report["diagnostics"].as_array().unwrap().iter().map(|d| d["message"].as_str().unwrap()).collect();
+        values.sort_unstable();
+        assert_eq!(values, ["foo", "utf-8"], "{report:#}");
+    }
+
+    #[test]
+    fn a_trailing_comment_does_not_hide_the_annotation_wrapper() {
+        let report = guest_policy(
+            "x: \"\"\"\n    list[int] # Comment\"\"\"",
+            "a.pyi",
+            ".policy \"annotation-comment\" revision 1\n.language python\n\
+             .violation Parsed(at: node) code \"parsed\" \"parsed\"\n\
+             Parsed(s) :- kind(s, \"string\"), parsed(s, \"annotation\", r), kind(r, \"subscript\").\n",
+        );
+        assert_eq!(report["diagnostics"].as_array().unwrap().len(), 1, "{report:#}");
+    }
+
+    #[test]
+    fn a_kind_bound_through_a_field_matches_in_parsed_annotations() {
+        // `kind(c, "call"), field(c, "arguments", a), kind(a, "argument_list")` runs as one `ast` matcher
+        // (`corpus::matchers::absorb`): it matches the annotations' trees as `kind` and `field` hold them, each of two
+        // guests of one text (which share their facts) at its own line, and the file's call alone where no rule names
+        // the annotations.
+        let report = guest_policy(
+            "x: 'f(1)'\ny: 'f(1)'\nz = g(2)\n",
+            "a.py",
+            ".policy \"annotation-args\" revision 1\n.language python\n\
+             .violation Arg(at: node) code \"arg\" \"arg\"\n\
+             Arg(c) :- kind(s, \"string\"), parsed(s, \"annotation\", c), kind(c, \"call\"), field(c, \"arguments\", a), kind(a, \"argument_list\").\n\
+             .violation Host(at: node) code \"host\" \"host\"\n\
+             Host(c) :- kind(c, \"call\"), field(c, \"arguments\", a), kind(a, \"argument_list\").\n",
+        );
+        let mut found: Vec<_> = report["diagnostics"].as_array().unwrap().iter().map(|d| (d["code"].as_str().unwrap().to_owned(), d["line"].as_u64().unwrap())).collect();
+        found.sort_unstable();
+        let want: Vec<(String, u64)> = vec![("arg".into(), 1), ("arg".into(), 2), ("host".into(), 3)];
+        assert_eq!(found, want, "{report:#}");
+    }
+
+    #[test]
+    fn python_ast_rules_only_report_python_files_in_a_mixed_folder() {
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path().join("root");
+        std::fs::create_dir_all(&root).unwrap();
+        std::fs::write(root.join("a.py"), "f(1)\n").unwrap();
+        std::fs::write(root.join("b.js"), "f(1);\n").unwrap();
+        let rule = dir.path().join("policy.rerail");
+        std::fs::write(
+            &rule,
+            ".policy \"matcher-grammars\" revision 1\n.language python\n.scope \"**/*.py\", \"**/*.js\"\n\
+             .violation Seen(at: node) code \"seen\" \"seen\"\n\
+             Seen(n) :- (kind(n, \"module\") ; kind(n, \"program\")).\n\
+             .violation Call(at: node) code \"call\" \"call\"\n\
+             Call(c) :- kind(c, \"call\"), field(c, \"arguments\", a), kind(a, \"argument_list\").\n",
+        )
+        .unwrap();
+        let args = ["run-policies".to_owned(), root.display().to_string(), dir.path().join("out").display().to_string(), rule.display().to_string()];
+        let report: serde_json::Value = serde_json::from_str(&super::cli_in(&args, &mut Default::default()).unwrap()).unwrap();
+        assert_eq!(report["runs"][0]["files"], 1, "language routing excludes JavaScript before matching: {report:#}");
+        let mut found: Vec<_> = report["diagnostics"].as_array().unwrap().iter().map(|d| (d["path"].as_str().unwrap().to_owned(), d["code"].as_str().unwrap().to_owned())).collect();
+        found.sort_unstable();
+        assert_eq!(found, [("a.py".into(), "call".into()), ("a.py".into(), "seen".into())], "{report:#}");
+    }
+
+    #[test]
+    fn python_parse_functor_rejects_prose_and_accepts_statements() {
+        let report = guest_policy(
+            "",
+            "a.py",
+            ".policy \"comment-parser\" revision 1\n.language python\n\
+             .decl sample(s: symbol)\n\
+             sample(\"SIM103 (but not fixable)\"). sample(\"(See: http://example.test/revision)\"). sample(\"x = 1\").\n\
+             .violation Code(at: node, s: symbol) code \"code\" \"{s}\"\n\
+             Code(n, s) :- kind(n, \"module\"), sample(s), @py_parses(s) = 1.\n",
+        );
+        let code: Vec<_> = report["diagnostics"].as_array().unwrap().iter().map(|d| d["message"].as_str().unwrap()).collect();
+        assert_eq!(code, ["x = 1"], "{report:#}");
+    }
+
+    #[test]
+    fn blade_library_values_do_not_need_a_redundant_reader() {
+        let report = guest_policy(
+            "@if (1 === 1) x @endif",
+            "a.blade.php",
+            ".policy \"blade-values\" revision 1\n.language blade\n\
+             #include \"blade/values.rerail\"\n\
+             .violation I(at: node, v: symbol) code \"I\" \"{v}\"\n\
+             I(n, v) :- php_value(n, \"int\", v), blade_code(n).\n",
+        );
+        let values: Vec<_> = report["diagnostics"].as_array().unwrap().iter().map(|d| d["message"].as_str().unwrap()).collect();
+        assert_eq!(values, ["1", "1"], "{report:#}");
+    }
+
     #[test]
     fn the_command_lines_runs_keep_their_outputs_with_or_without_options() {
         use serde_json::json;
@@ -1623,5 +1826,307 @@ mod settings_tests {
             let usage = run(&args).unwrap_err();
             assert!(usage.starts_with("usage: rerail-engine run-policies [--tool-calls <calls.json>]"), "{args:?}: {usage}");
         }
+    }
+}
+
+/// Every pack and the data layer's policies split as a run splits them, checked for what crosses into the cross-file
+/// part: undeclared crossings (decision 0652) and node ids (0677). Each pack runs as `run-policies` runs it, as one
+/// program per language (a pack that does not run as one runs policy by policy), over a file of each language, its
+/// `.scope` paths dropped so the file is in every policy's scope. Any run error fails the test, every one shown.
+///
+/// What main's rules still carry is listed (`split_crossings.txt`, `node_crossings.txt`): a list only shrinks. A rule
+/// that adds a crossing fails its pack's test; a relation fixed leaves its list in the same commit.
+#[cfg(test)]
+mod pack_split_tests {
+    /// Every policy of `dir` (from the repository's root).
+    fn pack_runs(dir: &str) {
+        pack_shard_runs(dir, None)
+    }
+
+    /// Every policy of `dir`, or with `shard` (k, n) those whose place in the sorted list is k modulo n: python-main's
+    /// 537 policies take minutes of CPU at once.
+    fn pack_shard_runs(dir: &str, shard: Option<(usize, usize)>) {
+        pack_runs_as(dir, shard, "on")
+    }
+
+    /// Every policy of `dir` run alone (`RERAIL_BATCH_PACK=off`), as a run of one policy is: a policy batched with
+    /// others is split as part of their pack, which can hold file-local a relation the policy alone does not.
+    fn pack_alone_runs(dir: &str) {
+        pack_runs_as(dir, None, "off")
+    }
+
+    /// The relations still cross-file without a declaration (decision 0652), by pack: `<pack> <relation>`, a line each,
+    /// a helper by its source relation.
+    const SPLIT_CROSSINGS: &str = include_str!("split_crossings.txt");
+
+    /// The relations of the cross-file part that still hold a node id (decision 0677), by pack: `<pack> <relation>`, a
+    /// line each, as `NodeCrossing::named` names them.
+    const NODE_CROSSINGS: &str = include_str!("node_crossings.txt");
+
+    /// The relations of the cross-file part that still read a position (decision 0649), by pack: `<pack> <relation>`,
+    /// a line each, a helper by its source relation (`positions_checked`).
+    const POSITION_READS: &str = include_str!("position_reads.txt");
+
+    /// The policies that do not run on the test's files, for an error of their own (a relation no producer makes, a
+    /// form the lowering does not take): `<pack> <policy file>`, a line each. Their programs go unchecked, so the
+    /// list only shrinks.
+    const POLICIES_NOT_RUN: &str = include_str!("policies_not_run.txt");
+
+    /// The pack's name in the lists: its directory's last name but `rules` (`packs/django/rules`: `django`).
+    fn pack_name(dir: &str) -> &str {
+        dir.trim_end_matches("/rules").rsplit('/').next().unwrap_or(dir)
+    }
+
+    thread_local! {
+        /// This test's runs take each policy alone (`RERAIL_BATCH_PACK=off`, for this thread's test only).
+        pub(super) static ALONE: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+    }
+
+    fn pack_runs_as(dir: &str, shard: Option<(usize, usize)>, batch: &str) {
+        // Every setting is this test's own, never the process's environment: the tests of one process (`cargo test`)
+        // run at once, and each would take the others' store and lists.
+        ALONE.with(|a| a.set(batch == "off"));
+        let from = crate::source_tree::native().join("..").join(dir);
+        let tmp = tempfile::tempdir().unwrap();
+        let (crossings, nodes, positions) = (tmp.path().join("crossings"), tmp.path().join("node-crossings"), tmp.path().join("positions"));
+        // A store of the test's own: a prepared program read back from a store was checked when it was prepared, and
+        // its split keeps no crossings (`prepared_of`), so every program is prepared here.
+        crate::code_rule_dsl::logic::plan::corpus::TEST_TAPE_CACHE.with(|p| *p.borrow_mut() = Some(tmp.path().join("store.sqlite")));
+        let _sinks = crate::code_rule_dsl::logic::plan::corpus::test_store::with_sinks(crate::code_rule_dsl::logic::plan::corpus::test_store::Sinks { crossings: crossings.clone(), nodes: nodes.clone(), positions: positions.clone() });
+        let rules = tmp.path().join("rules").join(dir);
+        let mut policies = copy_unscoped(&from, &rules);
+        policies.sort();
+        assert!(!policies.is_empty(), "{dir}: no policies");
+        if let Some((k, n)) = shard {
+            policies = policies.into_iter().enumerate().filter(|(i, _)| i % n == k).map(|(_, p)| p).collect();
+        }
+        let root = tmp.path().join("root");
+        write_corpus(&root);
+        let pack = list_name(dir, shard, batch);
+        let not_run = run_setting_aside(dir, &mut policies, &rules, &root, &tmp.path().join("out"));
+        check_not_run(dir, &pack, &not_run);
+        let failures: Vec<String> = [
+            ("cross-file without a declaration (decision 0652)", &crossings, SPLIT_CROSSINGS, "split_crossings.txt"),
+            ("holding a node id in the cross-file part (decision 0677)", &nodes, NODE_CROSSINGS, "node_crossings.txt"),
+            ("reading a position in the cross-file part (decision 0649)", &positions, POSITION_READS, "position_reads.txt"),
+        ]
+        .into_iter()
+        .flat_map(|(what, path, list, file)| list_failures(&pack, what, &read_found(path), list, file))
+        .collect();
+        assert!(failures.is_empty(), "{}", failures.join("\n\n"));
+    }
+
+    /// Each `.rerail` under `from` copied to the same place under `rules`, its scope's paths dropped: the policies
+    /// among them.
+    fn copy_unscoped(from: &std::path::Path, rules: &std::path::Path) -> Vec<std::path::PathBuf> {
+        let mut policies = Vec::new();
+        let mut walk = vec![from.to_path_buf()];
+        while let Some(d) = walk.pop() {
+            for path in std::fs::read_dir(&d).unwrap().map(|e| e.unwrap().path()) {
+                if path.is_dir() {
+                    walk.push(path);
+                } else if path.extension().is_some_and(|x| x == "rerail") {
+                    let text = std::fs::read_to_string(&path).unwrap();
+                    let to = rules.join(path.strip_prefix(from).unwrap());
+                    std::fs::create_dir_all(to.parent().unwrap()).unwrap();
+                    std::fs::write(&to, unscoped(&text)).unwrap();
+                    if text.lines().any(|l| l.starts_with(".policy")) {
+                        policies.push(to);
+                    }
+                }
+            }
+        }
+        policies
+    }
+
+    /// `text` with its scope's paths dropped (`include`, `exclude`, `dirs`), with the lines a list of them goes on to
+    /// (an indented line after one ending in a comma): every policy runs over the corpus. What a policy reads (`.scope
+    /// tool_calls`) stays.
+    fn unscoped(text: &str) -> String {
+        let paths = |l: &str| l.strip_prefix(".scope").is_some_and(|r| ["include", "exclude", "dirs"].iter().any(|w| r.trim_start().starts_with(w)));
+        let code = |l: &str| l.split("//").next().unwrap_or("").trim_end().to_owned();
+        let mut dropping = false;
+        text.lines()
+            .filter(|l| {
+                let drop = paths(l) || (dropping && l.starts_with(char::is_whitespace));
+                dropping = drop && code(l).ends_with(',');
+                !drop
+            })
+            .map(|l| format!("{l}\n"))
+            .collect()
+    }
+
+    /// A file of each language under `root`.
+    fn write_corpus(root: &std::path::Path) {
+        std::fs::create_dir_all(root).unwrap();
+        for (name, text) in [
+            ("a.py", "import os\n\ndef f(x):\n    return os.path.join(x, 'a')\n"),
+            ("a.js", "export function f(x) { return x + 1; }\n"),
+            ("a.ts", "export function f(x: number): number { return x + 1; }\n"),
+            ("a.tsx", "export function A() { return <div>a</div>; }\n"),
+            ("a.php", "<?php\nfunction f($x) { return $x + 1; }\n"),
+            ("a.blade.php", "<div>{{ $x }}</div>\n"),
+            ("a.rs", "fn f(x: i32) -> i32 { x + 1 }\n"),
+            ("a.sql", "select a from t where b = 1;\n"),
+            ("a.vue", "<template><div>{{ x }}</div></template>\n<script>export default {}</script>\n"),
+        ] {
+            std::fs::write(root.join(name), text).unwrap();
+        }
+    }
+
+    /// The run's name in the lists. A run of each policy alone splits each policy's program alone, which can place a
+    /// relation the pack's does not: its lists are its own. So are a shard's (`python-main/3`): it runs its own policies
+    /// only, so every list it reads is complete for it, and a relation fixed leaves the lists in every run (review F4).
+    fn list_name(dir: &str, shard: Option<(usize, usize)>, batch: &str) -> String {
+        match (batch, shard) {
+            ("off", _) => format!("{}:alone", pack_name(dir)),
+            (_, Some((k, _))) => format!("{}/{k}", pack_name(dir)),
+            _ => pack_name(dir).to_owned(),
+        }
+    }
+
+    /// `policies` run over `root`. A policy that does not run (an error of its own, whatever the split) is set aside,
+    /// with its error, and the rest run: the batch stops at the first such error. The ones set aside, by name.
+    fn run_setting_aside(dir: &str, policies: &mut Vec<std::path::PathBuf>, rules: &std::path::Path, root: &std::path::Path, out: &std::path::Path) -> std::collections::BTreeMap<String, String> {
+        let name = |p: &std::path::Path| p.strip_prefix(rules).unwrap().display().to_string();
+        let mut not_run = std::collections::BTreeMap::new();
+        let report = loop {
+            match super::run_policies(policies, root, out, &serde_json::Value::Null) {
+                Ok(report) => break report,
+                Err(e) => {
+                    let at = policies.iter().position(|p| e.starts_with(&p.display().to_string())).unwrap_or_else(|| panic!("{dir}: a run error naming no policy: {e}"));
+                    not_run.insert(name(&policies.remove(at)), e);
+                }
+            }
+        };
+        for (run, path) in report["runs"].as_array().unwrap().iter().zip(policies.iter()) {
+            if let Some(e) = run["error"].as_str() {
+                not_run.insert(name(path), e.to_owned());
+            }
+        }
+        not_run
+    }
+
+    /// The entries of `list` (`<pack> <entry>` lines) for run `pack`.
+    fn listed(list: &str, pack: &str) -> std::collections::BTreeSet<String> {
+        list.lines().filter(|l| !l.starts_with('#')).filter_map(|l| l.split_once(' ')).filter(|(d, _)| *d == pack).map(|(_, r)| r.trim().to_owned()).collect()
+    }
+
+    /// The policies that did not run are policies_not_run.txt's for `pack`, both ways.
+    fn check_not_run(dir: &str, pack: &str, not_run: &std::collections::BTreeMap<String, String>) {
+        let known = listed(POLICIES_NOT_RUN, pack);
+        if std::env::var_os("RERAIL_SHOW_CROSSINGS").is_some() {
+            for (p, e) in not_run {
+                println!("policies_not_run.txt: {pack} {p} because {}", e.lines().next().unwrap_or(""));
+            }
+        }
+        let new: Vec<String> = not_run.iter().filter(|(p, _)| !known.contains(*p)).map(|(p, e)| format!("{pack} {p}: {e}")).collect();
+        assert!(new.is_empty(), "{dir}: {} policies do not run, not in policies_not_run.txt:\n{}", new.len(), new.join("\n\n"));
+        let ran: Vec<&String> = known.iter().filter(|p| !not_run.contains_key(*p)).collect();
+        assert!(ran.is_empty(), "{dir}: these run now; take them out of policies_not_run.txt:\n{}", ran.iter().map(|p| format!("{pack} {p}")).collect::<Vec<_>>().join("\n"));
+    }
+
+    /// The relations a sink found, each with the relation it was found under (`-`: none).
+    fn read_found(path: &std::path::Path) -> std::collections::BTreeMap<String, String> {
+        std::fs::read_to_string(path)
+            .unwrap_or_default()
+            .lines()
+            .map(|l| match l.split_once(' ') {
+                Some((r, u)) => (r.to_owned(), u.to_owned()),
+                None => (l.to_owned(), "-".to_owned()),
+            })
+            .collect()
+    }
+
+    /// How the relations found `under` differ from list `file`'s entries for `pack`: those it lacks, and those no
+    /// longer found.
+    fn list_failures(pack: &str, what: &str, under: &std::collections::BTreeMap<String, String>, list: &str, file: &str) -> Vec<String> {
+        // `RERAIL_SHOW_CROSSINGS=1`: each relation found, for the fixes' work and the lists (`--no-capture`).
+        if std::env::var_os("RERAIL_SHOW_CROSSINGS").is_some() {
+            for (r, u) in under {
+                println!("{file}: {pack} {r} under {u}");
+            }
+        }
+        let found: std::collections::BTreeSet<String> = under.keys().cloned().collect();
+        let listed = listed(list, pack);
+        let mut failures = Vec::new();
+        let new: Vec<&String> = found.difference(&listed).collect();
+        if !new.is_empty() {
+            failures.push(format!(
+                "{pack}: {} relation(s) {what}, not in {file}, the list of those still to fix, which only shrinks. Join the \
+                 rule's reads through a location or keep it per file; key a node by a symbol, a path or a value; declare a \
+                 relation meant to span files `cross_file` (RERAIL_STRICT_CROSSINGS=1, RERAIL_STRICT_NODES=1 show each rule):\n{}",
+                new.len(),
+                new.iter().map(|r| format!("{pack} {r}  under {}", under[*r])).collect::<Vec<_>>().join("\n")
+            ));
+        }
+        let fixed: Vec<&String> = listed.difference(&found).collect();
+        if !fixed.is_empty() {
+            failures.push(format!("{pack}: no longer {what}; take them out of {file}:\n{}", fixed.iter().map(|r| format!("{pack} {r}")).collect::<Vec<_>>().join("\n")));
+        }
+        failures
+    }
+
+    macro_rules! packs {
+        ($($name:ident: $dir:expr),* $(,)?) => {
+            $(#[test] fn $name() { pack_runs($dir) })*
+        };
+    }
+
+    packs! {
+        the_data_layer_is_split_with_its_crossings_declared: "docs/rule-syntax/data-layer",
+        the_blade_pack_is_split_with_its_crossings_declared: "docs/rule-syntax/packs/blade",
+        the_complexity_pack_is_split_with_its_crossings_declared: "docs/rule-syntax/packs/complexity",
+        the_django_pack_is_split_with_its_crossings_declared: "packs/django/rules",
+        the_next_pack_is_split_with_its_crossings_declared: "docs/rule-syntax/packs/next",
+        the_node_pack_is_split_with_its_crossings_declared: "docs/rule-syntax/packs/node",
+        the_php_pack_is_split_with_its_crossings_declared: "docs/rule-syntax/packs/php",
+        the_react_pack_is_split_with_its_crossings_declared: "docs/rule-syntax/packs/react",
+        the_rerail_pack_is_split_with_its_crossings_declared: "docs/rule-syntax/packs/rerail",
+        the_rr_pack_is_split_with_its_crossings_declared: "docs/rule-syntax/packs/rr",
+        the_rust_pack_is_split_with_its_crossings_declared: "docs/rule-syntax/packs/rust",
+        the_sql_pack_is_split_with_its_crossings_declared: "docs/rule-syntax/packs/sql",
+        the_typescript_pack_is_split_with_its_crossings_declared: "docs/rule-syntax/packs/typescript",
+        the_vue_pack_is_split_with_its_crossings_declared: "docs/rule-syntax/packs/vue",
+    }
+
+    #[test]
+    fn the_data_layer_is_split_with_its_crossings_declared_policy_by_policy() {
+        pack_alone_runs("docs/rule-syntax/data-layer")
+    }
+
+    macro_rules! shards {
+        ($dir:expr, $n:expr, $($name:ident: $k:expr),* $(,)?) => {
+            $(#[test] fn $name() { pack_shard_runs($dir, Some(($k, $n))) })*
+        };
+    }
+
+    shards! {
+        "docs/rule-syntax/packs/python-main", 12,
+        the_python_main_pack_is_split_with_its_crossings_declared_0: 0,
+        the_python_main_pack_is_split_with_its_crossings_declared_1: 1,
+        the_python_main_pack_is_split_with_its_crossings_declared_2: 2,
+        the_python_main_pack_is_split_with_its_crossings_declared_3: 3,
+        the_python_main_pack_is_split_with_its_crossings_declared_4: 4,
+        the_python_main_pack_is_split_with_its_crossings_declared_5: 5,
+        the_python_main_pack_is_split_with_its_crossings_declared_6: 6,
+        the_python_main_pack_is_split_with_its_crossings_declared_7: 7,
+        the_python_main_pack_is_split_with_its_crossings_declared_8: 8,
+        the_python_main_pack_is_split_with_its_crossings_declared_9: 9,
+        the_python_main_pack_is_split_with_its_crossings_declared_10: 10,
+        the_python_main_pack_is_split_with_its_crossings_declared_11: 11,
+    }
+
+    shards! {
+        "docs/rule-syntax/packs/python", 2,
+        the_python_pack_is_split_with_its_crossings_declared_0: 0,
+        the_python_pack_is_split_with_its_crossings_declared_1: 1,
+    }
+
+    shards! {
+        "docs/rule-syntax/packs/javascript", 3,
+        the_javascript_pack_is_split_with_its_crossings_declared_0: 0,
+        the_javascript_pack_is_split_with_its_crossings_declared_1: 1,
+        the_javascript_pack_is_split_with_its_crossings_declared_2: 2,
     }
 }

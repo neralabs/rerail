@@ -9,8 +9,11 @@
 //!   `.git`, `node_modules`, `target`, …) skipped.
 //! - `package(dir, name)`, `package_field(dir, key, v)`: each `package.json`'s name and string-valued members, keys
 //!   as paths from the root (`engines/node`); `package_for(path, dir)`: a document's nearest `package.json`.
+//! - A language's project files (decision 0710): the relations of each `ProjectReader` a language registers at load
+//!   (`install_project_reader`), over the same walk (`Tree`). The core names none of them: ECMAScript's adapter reads
+//!   `tsconfig.json` and npm's publication (`import_target::project`).
 //!
-//! `tsconfig*`, `git_*` and `signed_list` are not read yet (open item O80). `input_error`'s `missing` rows are made
+//! `git_*` and `signed_list` are not read yet (open item O80). `input_error`'s `missing` rows are made
 //! where the `.input` files are (`logic::plan::corpus::external_inputs`).
 
 use super::vtab::Relation;
@@ -31,6 +34,50 @@ pub struct Rows {
     pub(crate) package: Vec<(String, String)>,
     pub(crate) package_field: Vec<(String, String, String)>,
     pub(crate) package_for: Vec<(String, String)>,
+    /// Each registered reader's relations the program reads: (name, columns, rows).
+    pub(crate) project: Vec<ProjectRelation>,
+}
+
+/// A relation a project reader makes: its name, its columns and its rows.
+pub type ProjectRelation = (&'static str, &'static [&'static str], Vec<Vec<String>>);
+
+/// What a project reader reads (decision 0710): the scanned root, every file listed (from the root, sorted), the
+/// documents', and each `package.json` by its folder (`None` where it does not parse).
+pub struct Tree<'a> {
+    pub root: &'a Path,
+    pub files: &'a [String],
+    pub docs: &'a [String],
+    pub packages: &'a BTreeMap<String, Option<Value>>,
+}
+
+/// A language's project files read as relations (decision 0710), registered by its adapter at load: the relations it
+/// makes, each with its columns, and their rows over a `Tree`. Each relation is declared, with its placement, in the
+/// language's library.
+#[derive(Clone, Copy)]
+pub struct ProjectReader {
+    pub relations: &'static [(&'static str, &'static [&'static str])],
+    pub rows: fn(&Tree<'_>) -> Vec<(&'static str, Vec<Vec<String>>)>,
+}
+
+static READERS: std::sync::RwLock<Vec<ProjectReader>> = std::sync::RwLock::new(Vec::new());
+
+/// Registers a language's project reader (at load; again, it is kept once).
+pub fn install_project_reader(reader: ProjectReader) {
+    let mut readers = READERS.write().unwrap_or_else(|e| e.into_inner());
+    if !readers.iter().any(|r| std::ptr::eq(r.relations, reader.relations)) {
+        readers.push(reader);
+    }
+}
+
+/// The columns of a relation a registered reader makes (`core::input_columns`' fallback).
+pub fn project_columns(rel: &str) -> Option<&'static [&'static str]> {
+    let readers = READERS.read().unwrap_or_else(|e| e.into_inner());
+    readers.iter().flat_map(|r| r.relations.iter()).find(|(n, _)| *n == rel).map(|(_, c)| *c)
+}
+
+/// Whether a registered reader makes `rel`.
+pub fn project_relation(rel: &str) -> bool {
+    project_columns(rel).is_some()
 }
 
 fn scalar(v: &Value) -> String {
@@ -120,9 +167,9 @@ fn strings(prefix: &str, v: &Value, out: &mut Vec<(String, String)>) {
     }
 }
 
-/// `file`, `package`, `package_field` and `package_for` of the tree under `root`, for documents `docs` (paths
-/// relative to it).
-pub(crate) fn tree(root: &Path, docs: &[String], rows: &mut Rows) {
+/// `file`, `package`, `package_field` and `package_for` rows of the tree under `root`, for documents `docs` (paths
+/// relative to it). A language's own project files are its registered reader's (`project_rows`, decision 0710).
+pub(crate) fn tree(root: &Path, docs: &[String], rows: &mut Rows) -> BTreeMap<String, Option<Value>> {
     let mut packages: BTreeMap<String, Option<Value>> = BTreeMap::new();
     let mut stack = vec![root.to_path_buf()];
     while let Some(dir) = stack.pop() {
@@ -133,6 +180,20 @@ pub(crate) fn tree(root: &Path, docs: &[String], rows: &mut Rows) {
     rows.file.sort();
     package_rows(&packages, rows);
     package_for_rows(docs, &packages, rows);
+    packages
+}
+
+/// The rows of each registered reader that makes a relation the program reads (`reads`), over the walked tree.
+fn project_rows(tree: &Tree<'_>, reads: &dyn Fn(&str) -> bool, rows: &mut Rows) {
+    let readers: Vec<ProjectReader> = READERS.read().unwrap_or_else(|e| e.into_inner()).clone();
+    for reader in readers.iter().filter(|r| r.relations.iter().any(|(n, _)| reads(n))) {
+        let mut made = (reader.rows)(tree);
+        for (name, columns) in reader.relations {
+            let got = made.iter_mut().find(|(n, _)| n == name).map(|(_, r)| std::mem::take(r)).unwrap_or_default();
+            debug_assert!(got.iter().all(|row| row.len() == columns.len()), "{name}: a row of {} columns", columns.len());
+            rows.project.push((name, columns, got));
+        }
+    }
 }
 
 /// A folder's entries in name order; none where it cannot be read.
@@ -199,8 +260,14 @@ pub fn relations(store: &ContentStore, root: &Path, docs: &[String], opts: &Valu
     if reads("option") || reads("option_item") {
         options(opts, &mut rows);
     }
-    if ["file", "package", "package_field", "package_for"].iter().any(|r| reads(r)) {
-        tree(root, docs, &mut rows);
+    let projects = READERS.read().unwrap_or_else(|e| e.into_inner()).iter().flat_map(|r| r.relations.iter()).any(|(n, _)| reads(n));
+    if projects || ["file", "package", "package_field", "package_for"].iter().any(|r| reads(r)) {
+        let packages = tree(root, docs, &mut rows);
+        if projects {
+            let files = std::mem::take(&mut rows.file);
+            project_rows(&Tree { root, files: &files, docs, packages: &packages }, reads, &mut rows);
+            rows.file = files;
+        }
     }
     let mut texts: Vec<&str> = Vec::new();
     rows.option.iter().for_each(|(a, b)| texts.extend([a.as_str(), b.as_str()]));
@@ -209,6 +276,7 @@ pub fn relations(store: &ContentStore, root: &Path, docs: &[String], opts: &Valu
     rows.package.iter().for_each(|(a, b)| texts.extend([a.as_str(), b.as_str()]));
     rows.package_field.iter().for_each(|(a, b, c)| texts.extend([a.as_str(), b.as_str(), c.as_str()]));
     rows.package_for.iter().for_each(|(a, b)| texts.extend([a.as_str(), b.as_str()]));
+    rows.project.iter().flat_map(|(_, _, r)| r.iter().flatten()).for_each(|x| texts.push(x.as_str()));
     let atoms = store.intern_atoms(&texts)?;
     let mut next = atoms.iter().map(|&a| i64::from(a));
     let mut sym = || next.next().expect("an atom per string");
@@ -234,6 +302,10 @@ pub fn relations(store: &ContentStore, root: &Path, docs: &[String], opts: &Valu
     make("package_field", &["dir", "key", "v"], field);
     let pfor: Vec<Vec<i64>> = rows.package_for.iter().map(|_| vec![sym(), sym()]).collect();
     make("package_for", &["path", "dir"], pfor);
+    for (name, columns, made) in &rows.project {
+        let interned: Vec<Vec<i64>> = made.iter().map(|row| row.iter().map(|_| sym()).collect()).collect();
+        make(name, columns, interned);
+    }
     Ok(out)
 }
 
@@ -267,6 +339,35 @@ pub mod tests {
         assert!(rows.package_field.contains(&("web".to_owned(), "engines/node".to_owned(), ">=18".to_owned())));
         assert!(!rows.package_field.iter().any(|(_, k, _)| k == "n"));
         assert_eq!(rows.package_for, [("web/src/a.ts".to_owned(), "web".to_owned())]);
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    /// Decision 0710: a registered project reader's relations are made over the walked tree when the program reads
+    /// one of them, with the columns the reader states, and not otherwise.
+    #[test]
+    fn a_registered_project_reader_makes_its_relations_over_the_tree() {
+        const RELATIONS: &[(&str, &[&str])] = &[("test_reader_file", &["path", "folder"])];
+        install_project_reader(ProjectReader {
+            relations: RELATIONS,
+            rows: |tree| vec![("test_reader_file", tree.files.iter().map(|f| vec![f.clone(), f.rsplit_once('/').map_or("", |(d, _)| d).to_owned()]).collect())],
+        });
+        assert_eq!(project_columns("test_reader_file"), Some(&["path", "folder"][..]));
+        let root = std::env::temp_dir().join(format!("rerail-reader-{}-{:?}", std::process::id(), std::thread::current().id()));
+        let _ = std::fs::remove_dir_all(&root);
+        for p in ["a/x.ts", "b.ts"] {
+            let p = root.join(p);
+            std::fs::create_dir_all(p.parent().unwrap()).unwrap();
+            std::fs::write(p, "").unwrap();
+        }
+        let mut rows = Rows::default();
+        let packages = tree(&root, &[], &mut rows);
+        let files = rows.file.clone();
+        project_rows(&Tree { root: &root, files: &files, docs: &[], packages: &packages }, &|r| r == "file", &mut rows);
+        assert!(rows.project.is_empty(), "not read, not made");
+        project_rows(&Tree { root: &root, files: &files, docs: &[], packages: &packages }, &|r| r == "test_reader_file", &mut rows);
+        let made: Vec<&ProjectRelation> = rows.project.iter().collect();
+        assert_eq!(made.len(), 1);
+        assert_eq!(made[0].2, [vec!["a/x.ts".to_owned(), "a".to_owned()], vec!["b.ts".to_owned(), String::new()]]);
         let _ = std::fs::remove_dir_all(&root);
     }
 }

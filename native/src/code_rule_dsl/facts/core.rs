@@ -156,13 +156,19 @@ fn read_off(doc: Option<&TapeDoc>, file: &dyn SourceFile, grammar: &Arc<crate::c
 }
 
 /// The tape the facts were read off, restored from `primary` only when `keep` (a program's matchers run over it,
-/// decision 0106).
+/// decision 0106). The tape cache keeps a file's own tape alone, and a dialect that embeds others derives its guests
+/// from its parse (Blade's compiled view from the Forte tree), so such a file is parsed again: its matchers' tree
+/// holds its guests, whose comments a suppression reads (a Vue `<script>`'s `eslint-disable`).
 fn kept_tape(keep: bool, file: &dyn SourceFile, grammar: &Arc<crate::code_rule_dsl::tape::Grammar>, primary: &crate::code_rule_dsl::tape::TapeImage, lines: &Arc<LineTable>) -> Result<Option<TapeDoc>, String> {
     if !keep {
         return Ok(None);
     }
     let _restore = crate::code_rule_dsl::logic::profile::span(|| "tape restore for the matchers".into());
-    let image = crate::code_rule_dsl::tape::FileImage { primary: primary.clone(), derived: Vec::new() };
+    let image = match grammar.lang.embeds().is_empty() {
+        true => None,
+        false => crate::code_rule_dsl::tape::TapeImage::parse(grammar, file.source(), &|| false).transpose()?,
+    };
+    let image = image.unwrap_or_else(|| crate::code_rule_dsl::tape::FileImage { primary: primary.clone(), derived: Vec::new() });
     TapeDoc::restore_with_lines(Arc::clone(file.source()), Arc::clone(grammar), &image, Arc::clone(lines), &|| false).map(Some)
 }
 
@@ -176,7 +182,12 @@ pub fn build_with_tape(file: &dyn SourceFile, keep: bool) -> Result<(Built, Opti
     let image = image?;
     drop(parse);
     let lines = Arc::new(LineTable::new(file.source(), Terminators::of(language)));
-    let doc = kept_tape(keep, file, &grammar, &image.primary, &lines)?;
+    // Suppression readers also traverse embedded scripts; restoring only the primary tape loses their comments.
+    let doc = if keep {
+        Some(TapeDoc::restore_with_lines(Arc::clone(file.source()), Arc::clone(&grammar), &image, Arc::clone(&lines), &|| false)?)
+    } else {
+        None
+    };
     let _facts = crate::code_rule_dsl::logic::profile::span(|| "facts from tape".into());
     let facts = read_off(doc.as_ref(), file, &grammar, image.primary, lines)?;
     crate::code_rule_dsl::logic::profile::work(crate::code_rule_dsl::logic::profile::Unit::Node, facts.len() as u64);
@@ -715,7 +726,7 @@ pub fn input_columns(rel: &str) -> Option<&'static [&'static str]> {
         "text" | "name" | "str" | "strprefix" | "node_text" | "comment" | "structural_before" | "structural_after" => &["n", "s"],
         // W's values (`facts::vtab::syntax::Extra`).
         "value" | "static_value" | "rr_value_lit" => &["n", "v"],
-        "value_type_of" => &["n", "t"],
+        "value_type_of" | "static_value_type_of" => &["n", "t"],
         "value_type" => &["v", "t"],
         // W's f-string trees (`facts::vtab::syntax::fstring`).
         "fstring_piece" => &["n", "i", "kind", "v"],
@@ -799,7 +810,8 @@ pub fn input_columns(rel: &str) -> Option<&'static [&'static str]> {
         rel if rel.starts_with(crate::code_rule_dsl::logic::strings::GROUPS) => &["sp", "m", "g", "gsp"],
         // A registered family's lazy relations (`facts::vtab::syntax::Families`: Python's `py.*`).
         rel if rel.starts_with("py_") => crate::code_rule_dsl::facts::vtab::syntax::family_columns(rel)?,
-        _ => return None,
+        // A language's project relations (decision 0710), with the columns its reader states.
+        rel => return super::repository::project_columns(rel),
     })
 }
 

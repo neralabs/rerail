@@ -106,7 +106,8 @@ pub struct Projection {
     pub verdict: bool,
     /// The relations the program's rules derive: the batch binds none of them, made or viewed (T's programs derive
     /// `docof` from `node`, `rr::lower::projections`; a program may name an output as a base relation is named). A
-    /// bound table of that name would be the planner's to drop.
+    /// bound table of that name would be the planner's to drop. VALUE_REQ also records a native value reader's
+    /// backing-data demand when specialization renamed the relation that requests its rows.
     pub derived: BTreeSet<String>,
     /// `rx_spans` compiled, once for the run's projection, not again for every batch it binds.
     pub compiled_rx: CompiledSpans,
@@ -198,7 +199,12 @@ impl Projection {
             _ => None,
         });
         let verdict = shape == Shape::T && program.decls.get("syntax_error").is_some_and(|cols| cols.len() == 3);
-        let derived: BTreeSet<String> = program.rules.iter().map(|r| r.head.rel.to_string()).collect();
+        let mut derived: BTreeSet<String> = program.rules.iter().map(|r| r.head.rel.to_string()).collect();
+        // A specialized request may no longer have VALUE_REQ's original name. The native reader still demands
+        // its backing value tapes: preserve that canonical request marker in the projection, not an alias spelling.
+        if !derived.contains(VALUE_REQ) && calls_value(program) {
+            derived.insert(VALUE_REQ.to_owned());
+        }
         let reads = reads.into_iter().filter(|r| !derived.contains(r)).collect();
         Projection { shape, reads: Some(reads), rx_spans: program.rx_spans.iter().cloned().collect(), ast_patterns: program.ast_patterns.iter().cloned().collect(), text_spans: Some(spans), token_text, node_anchors: None, long_text: BTreeSet::new(), long_text_any: false, text_nodes: None, partial: partial.collect(), verdict, derived, compiled_rx: CompiledSpans::default() }
     }
@@ -248,6 +254,21 @@ impl Projection {
             |spans| spans.contains(&within),
         )
     }
+}
+
+/// Lazy value reads survive request relation renaming, guest specialization and relation simplification.
+fn calls_value(program: &crate::code_rule_dsl::logic::front::ast::Program) -> bool {
+    use crate::code_rule_dsl::logic::front::{Literal, Term};
+    fn term(t: &Term) -> bool {
+        matches!(t, Term::Call(name, args) if name == "rr_node_value" || args.iter().any(term))
+    }
+    program.rules.iter().any(|r| {
+        r.head.args.iter().any(term) || r.body.iter().any(|l| match l {
+            Literal::Atom(a) | Literal::Agg { atom: a, .. } => a.args.iter().any(term),
+            Literal::Cmp { l, r, .. } => term(l) || term(r),
+            _ => false,
+        })
+    })
 }
 
 /// The nodes whose text a rule reads: those of `kinds`, those in a field of `fields` of their parent, the children of a
@@ -587,7 +608,7 @@ pub fn node_anchors(program: &crate::code_rule_dsl::logic::front::ast::Program, 
     let node_col = |rel: &str, c: usize| rel.starts_with(ast) || program.decls.get(rel).and_then(|ts| ts.get(c)).is_some_and(|(_, t)| is_node(t));
     // What a node holds itself; `child` and `field` go down from their first column. `rr_long_text_node(n)` is a
     // long-text twin's (`long_text_twins`): that `n`'s text is past the inline bound, made from the projected nodes.
-    const LOCAL: &[&str] = &["kind", "node", "text", "name", "str", "strprefix", "value", "static_value", "docof", "line", "col", "end_line", "intval", "op", "op_at", "comment", "rr_long_text_node"];
+    const LOCAL: &[&str] = &["kind", "node", "text", "name", "str", "strprefix", "value", "static_value", "static_value_type_of", "docof", "line", "col", "end_line", "intval", "op", "op_at", "comment", "rr_long_text_node"];
     let down = |rel: &str| match rel { "child" => Some(1), "field" => Some(2), _ => None };
     let tree = |rel: &str| LOCAL.contains(&rel) || down(rel).is_some();
     let bare = |k: &str| k.rsplit(':').next().unwrap_or(k).to_owned();
@@ -827,6 +848,10 @@ pub struct Guest {
     /// `at`: the host's node or span (`host << 32 | local`).
     pub at: i64,
     pub grammar: String,
+    /// The embedding a program was built through (Blade's `compiled-view`, Vue's `script-block`), when it was: a rule
+    /// asks for the program by it (`parsed(r, "compiled-view", p)`), so its `parsed` and `sub_tape` rows name it as
+    /// well as `grammar` (once, where the two are the same name).
+    pub embedding: Option<&'static str>,
     /// "program" or "fragment" (`doc_role`).
     pub role: String,
     /// The core id of the guest's root: a fragment's expression inside its wrapper, else the tree's root. The
@@ -1001,8 +1026,8 @@ pub struct Document {
     pub digest: [u8; 32],
     pub facts: Arc<Facts>,
     /// The tape the facts were read off and the file it parsed, which W's values, f-string trees and string annotations
-    /// read (`taped`), and the program's matchers run over (decision 0106); kept only for a file of a program that
-    /// reads one of them or runs matchers, else `None` (a guest's is `None`).
+    /// read (`taped`), and the program's matchers run over (decision 0106); kept for a file of a program that reads
+    /// one of them or runs matchers, and for every guest (`corpus::guests::parse`), else `None`.
     pub tape: Option<(crate::code_rule_dsl::tape::TapeDoc, Arc<dyn crate::code_rule_dsl::facts::core::SourceFile>)>,
     /// A guest's place in its host (decision 0055); `None` for a file's own tree. A guest's `path` is its host's.
     pub guest: Option<Arc<Guest>>,
@@ -1013,7 +1038,7 @@ pub struct Document {
 
 /// W's values (`Extra`) and the AST patterns' matches (`ast_match`, matched over the tape), which a batch reads off
 /// its documents' tapes.
-const VALUES_TAPED: [&str; 6] = ["value", "static_value", "value_type_of", "value_type", "ast_match", VALUE_REQ];
+const VALUES_TAPED: [&str; 7] = ["value", "static_value", "static_value_type_of", "value_type_of", "value_type", "ast_match", VALUE_REQ];
 
 /// Whether `rel` is read off a document's tape, for which a batch's documents keep their tapes (`Document::tape`):
 /// W's values (`Extra`), the AST patterns' matches, and a registered producer's (`Producer::taped`: Python's f-string trees and string
@@ -2021,7 +2046,8 @@ pub enum Place {
 /// `value(n, v)` is W's value of expression node `n` as a string (`matcher::file_values`: a clause's `value` in its
 /// per-file context; Python's `str(v)` of a str, int, float, bool, None or Ellipsis), read off the document's tape
 /// (`Document::tape`), no row where W does not know it or it is no scalar; `static_value(n, v)` the same with names
-/// followed through their file-local bindings (W's `value.follow`). `value_type_of(n, t)` names the type of W's value
+/// followed through their file-local bindings (W's `value.follow`), and `static_value_type_of(n, t)` the followed
+/// value's type, as `value_type_of` names it. `value_type_of(n, t)` names the type of W's value
 /// of `n` as W's `value.type` does (containers and bytes included, a JavaScript RegExp also `object`), and
 /// `value_type(v, t)` pairs `value`'s strings with those types: one row per string and type some node of the batch has
 /// (the str `"12"` and the int `12` both give `12`). `comment(c, s)` is each comment's text without its marker
@@ -2067,6 +2093,7 @@ struct Extra {
     /// (decision 0174): kept eager, as they are few.
     value_lit: bool,
     static_value: bool,
+    static_value_type_of: bool,
     value_type_of: bool,
     value_type: bool,
     comment: bool,
@@ -2083,6 +2110,7 @@ struct Extra {
     values: Vec<[i64; 2]>,
     value_lits: Vec<[i64; 2]>,
     static_values: Vec<[i64; 2]>,
+    static_value_types_of: Vec<[i64; 2]>,
     value_types_of: Vec<[i64; 2]>,
     value_types: BTreeSet<[i64; 2]>,
     comments: Vec<[i64; 2]>,
@@ -2132,6 +2160,7 @@ impl Extra {
             value: read("value"),
             value_lit: read("rr_value_lit"),
             static_value: read("static_value"),
+            static_value_type_of: read("static_value_type_of"),
             value_type_of: read("value_type_of"),
             value_type: read("value_type"),
             comment: shape == Shape::T && read("comment"),
@@ -2266,7 +2295,8 @@ impl Extra {
     }
 
     /// `core_rr`'s literal values (n, v, v's type), of documents W reads no values of (`Dialect::values`), in the
-    /// value relations made here: `value` and `static_value` (no names to follow), and `value_type`.
+    /// value relations made here: `value` and `static_value` (no names to follow), `value_type_of`,
+    /// `static_value_type_of` and `value_type`.
     fn literal_values(&mut self, rows: impl Iterator<Item = [i64; 3]>) {
         for [n, v, t] in rows {
             if self.value {
@@ -2277,6 +2307,12 @@ impl Extra {
             }
             if self.static_value {
                 self.static_values.push([n, v]);
+            }
+            if self.static_value_type_of {
+                self.static_value_types_of.push([n, t]);
+            }
+            if self.value_type_of {
+                self.value_types_of.push([n, t]);
             }
             if self.value_type {
                 self.value_types.insert([v, t]);
@@ -2291,7 +2327,8 @@ impl Extra {
         let plain = self.value || self.value_type_of || self.value_type;
         // A text-only document has no node, so no value; a document of a family W reads no values of has none of W's
         // (`literal_values`).
-        if (plain || self.static_value) && dialect.is_some_and(|d| d.values) {
+        let follow = self.static_value || self.static_value_type_of;
+        if (plain || follow) && dialect.is_some_and(|d| d.values) {
             let Some((tape, file)) = &d.tape else {
                 return Err(StoreError::Invalid(format!("{}: W's values need the document's tape", d.path)));
             };
@@ -2299,20 +2336,25 @@ impl Extra {
                 return Err(StoreError::Invalid(format!("{}: the tape is not the one the facts were read off", d.path)));
             }
             let (value, value_type_of, value_type) = (self.value, self.value_type_of, self.value_type);
+            let (static_value, static_value_type_of) = (self.static_value, self.static_value_type_of);
             let (values, static_values, types_of, types) = (&mut self.values, &mut self.static_values, &mut self.value_types_of, &mut self.value_types);
+            let static_types_of = &mut self.static_value_types_of;
             let Some(reader) = crate::code_rule_dsl::facts::core::value_reader() else {
                 return Err(StoreError::Invalid(format!("{}: no reader of W's values is registered", d.path)));
             };
-            reader.values(tape, file.as_ref(), plain, self.static_value, &mut |followed, ordinal, v, names| {
+            reader.values(tape, file.as_ref(), plain, follow, &mut |followed, ordinal, v, names| {
                 let local = p.local[ordinal as usize];
                 if local == NONE {
                     return;
                 }
                 // A value's text is interned only for a relation that holds it.
-                let v = v.filter(|_| followed || value || value_type).map(|v| string(&v) as i64);
+                let v = v.filter(|_| (followed && static_value) || (!followed && (value || value_type))).map(|v| string(&v) as i64);
                 let n = p.global(local);
                 if followed {
                     static_values.extend(v.map(|v| [n, v]));
+                    if static_value_type_of {
+                        static_types_of.extend(names.iter().map(|name| [n, string(name) as i64]));
+                    }
                     return;
                 }
                 if value && let Some(v) = v {
@@ -2620,6 +2662,9 @@ impl Extra {
         if self.static_value {
             out.push(("static_value", relation(&["n", "v"], &mut self.static_values.iter().map(|&[n, v]| vec![n, atom(v)]))));
         }
+        if self.static_value_type_of {
+            out.push(("static_value_type_of", relation(&["n", "t"], &mut self.static_value_types_of.iter().map(|&[n, t]| vec![n, atom(t)]))));
+        }
         if self.value_type_of {
             out.push(("value_type_of", relation(&["n", "t"], &mut self.value_types_of.iter().map(|&[n, t]| vec![n, atom(t)]))));
         }
@@ -2782,7 +2827,7 @@ impl Batch {
         // `core.rerail`'s (decision 0046).
         let mut c = core_rr::CoreRows::default();
         // Node identity/ancestry and line views do not require scalar rows or text interning.
-        let scalar_nodes=!core || ["text","name","str","strprefix","value","value_type","static_value","comment","spread","op","op_at","op_t","intval","next_sibling","str_part","str_part_start","str_part_word"]
+        let scalar_nodes=!core || ["text","name","str","strprefix","value","value_type","value_type_of","static_value","static_value_type_of","comment","spread","op","op_at","op_t","intval","next_sibling","str_part","str_part_start","str_part_word"]
             .into_iter().any(|r|projection.wants(r));
         let wants_any = |rels: &[&str]| rels.iter().any(|r| projection.wants(r));
         c.skip = core_rr::Skip {
@@ -2791,10 +2836,10 @@ impl Batch {
             comment: !projection.wants("comment"),
             spread: !projection.wants("spread"),
             name: !projection.wants("name"),
-            literal: !wants_any(&["str", "strprefix", "value", "static_value", "value_type", "rr_value_lit", "text"]),
+            literal: !wants_any(&["str", "strprefix", "value", "static_value", "value_type_of", "static_value_type_of", "value_type", "rr_value_lit", "text"]),
             str: !projection.wants("str"),
-            literal_value: !wants_any(&["value", "static_value", "value_type", "rr_value_lit"]),
-            literal_rows: !wants_any(&["str", "strprefix", "value", "static_value", "value_type", "rr_value_lit"]),
+            literal_value: !wants_any(&["value", "static_value", "value_type_of", "static_value_type_of", "value_type", "rr_value_lit"]),
+            literal_rows: !wants_any(&["str", "strprefix", "value", "static_value", "value_type_of", "static_value_type_of", "value_type", "rr_value_lit"]),
             structural: !wants_any(&["structural_before", "structural_after"]),
         };
         let core_nodes = core && (scalar_nodes || !c.skip.structural);
@@ -3610,18 +3655,23 @@ pub fn with_nearest(
     with_matchers(store, documents, sets, &Matchers::default(), tests, binding, projection)
 }
 
+/// A tape a program's matchers run over: its document's key, facts, tape and path. Keyed by document, not by facts:
+/// guests of one text share their facts (`corpus::guests::parse`).
+pub type WaveTape = (u32, Arc<Facts>, crate::code_rule_dsl::tape::TapeDoc, String);
+
 /// A program's `ast` matchers (decision 0106) as one wave over a batch's tapes (decision 0107), which the engine
 /// compiles from the matchers' text (`AstCompiler`): facts runs the wave where `with_matchers` binds, and keeps no
 /// matcher of its own.
 pub trait AstWave: Send + Sync {
     /// How many matchers the wave runs.
     fn len(&self) -> usize;
-    /// Each matcher's relation over `tapes` (each a batch document's facts, tape and path): its matched nodes, and
-    /// the captures it binds.
+    /// Whether any compiled matcher reads this tape grammar, for files and guests alike.
+    fn accepts(&self, tag: u8) -> bool;
+    /// Each matcher's relation over `tapes` (each a batch document's): its matched nodes, and the captures it binds.
     fn matched(
         &self,
         batch: &Batch,
-        tapes: &[(Arc<Facts>, crate::code_rule_dsl::tape::TapeDoc, String)],
+        tapes: &[WaveTape],
         binding: crate::code_rule_dsl::facts::nearest::Binding,
         atoms: &crate::content_store::atoms::Atoms,
     ) -> StoreResult<Vec<(String, Arc<dyn Source>)>>;
@@ -3640,6 +3690,16 @@ impl Matchers {
     }
     pub fn is_empty(&self) -> bool {
         self.len() == 0
+    }
+    fn accepts(&self, tag: u8) -> bool {
+        self.0.as_ref().is_some_and(|wave| wave.accepts(tag))
+    }
+    /// Each matcher's relation over `tapes` ([`AstWave::matched`]); none without a matcher.
+    fn relations(&self, batch: &Batch, tapes: &[WaveTape], binding: crate::code_rule_dsl::facts::nearest::Binding, atoms: &crate::content_store::atoms::Atoms) -> StoreResult<Vec<(String, Arc<dyn Source>)>> {
+        match &self.0 {
+            Some(wave) if wave.len() > 0 => wave.matched(batch, tapes, binding, atoms),
+            _ => Ok(Vec::new()),
+        }
     }
 }
 
@@ -3679,11 +3739,7 @@ pub fn with_matchers(
 ) -> StoreResult<Vec<(String, Arc<dyn Source>)>> {
     let built = crate::code_rule_dsl::logic::profile::span(|| "project and intern".into());
     let metal = matches!(binding, crate::code_rule_dsl::facts::nearest::Binding::Metal);
-    let tapes: Vec<(Arc<Facts>, crate::code_rule_dsl::tape::TapeDoc, String)> = if matchers.is_empty() {
-        Vec::new()
-    } else {
-        documents.iter().filter(|d| d.guest.is_none()).filter_map(|d| Some((Arc::clone(&d.facts), d.tape.as_ref()?.0.clone(), d.path.clone()))).collect()
-    };
+    let tapes = matcher_tapes(&documents, matchers);
     let (batch, relations, match_all, (strings, symbols)) = Batch::build(store, documents, projection, &tests.matches, &tests.markers, metal)?;
     crate::code_rule_dsl::logic::profile::work(crate::code_rule_dsl::logic::profile::Unit::Node, batch.nodes.last().copied().unwrap_or(0) as u64);
     drop(built);
@@ -3692,55 +3748,78 @@ pub fn with_matchers(
         relations.into_iter().filter(|(name, _)| !projection.derived.contains(*name)).map(|(name, r)| (name.to_owned(), as_source(name, r, &batch))).collect();
     // The `match_all` relations (`logic::strings::as_relations`): each regex's matches in the batch's spans.
     out.extend(match_all.into_iter().map(|(name, r)| (name, Arc::new(r) as Arc<dyn Source>)));
-    if !matchers.is_empty()
-        && let Some(wave) = &matchers.0 {
-            out.extend(wave.matched(&batch, &tapes, binding, &store.atoms_handle())?);
-        }
+    out.extend(matchers.relations(&batch, &tapes, binding, &store.atoms_handle())?);
     let rows_named: BTreeSet<String> = out.iter().map(|(n, _)| n.clone()).collect();
     // The text tests' relations (decision 0037): the batch's strings that pass each, each string tested once a run.
     let text = crate::code_rule_dsl::logic::profile::span(|| "text tests".into());
     crate::code_rule_dsl::logic::profile::work(crate::code_rule_dsl::logic::profile::Unit::Value, strings.len() as u64);
-    for ((name, _), rows) in tests.tests.iter().zip(tests.rows(&strings, &symbols)) {
-        let mut r = Relation::new(&["s"]);
-        rows.into_iter().for_each(|s| r.push(&[s]));
-        out.push((name.clone(), Arc::new(r)));
-    }
+    push_text_tests(&mut out, tests, &strings, &symbols);
     drop(text);
     let viewing = crate::code_rule_dsl::logic::profile::span(|| "views".into());
     out.extend(views(&batch).into_iter().filter(|(name, _)| !projection.derived.contains(*name)).map(|(name, source)| (name.to_owned(), source)));
     drop(viewing);
     // The kind-set axes, made per looked-up node like containment (decision 0050): a set no join reads, and the nodes
     // no join binds, cost nothing. Their statistics come from the tree.
-    let _nearest = crate::code_rule_dsl::logic::profile::span(|| "nearest".into());
-    use crate::code_rule_dsl::logic::front::ast::{AXIS, DESCENDANTS};
-    for (name, members) in sets {
-        let axis = if name.starts_with(DESCENDANTS) {
-            within::Axis::Has
-        } else if name.starts_with(AXIS) {
-            within::Axis::Inside
-        } else {
-            within::Axis::Nearest
-        };
-        out.push((name.clone(), Arc::new(within::Within::axis(Arc::clone(&batch), axis, members, binding))));
-    }
-    // The stored-projection spike (measurement only): the relations the program reads, but the per-node axes.
+    let nearest = crate::code_rule_dsl::logic::profile::span(|| "nearest".into());
+    push_axes(&mut out, &batch, sets, binding);
     if let Some(db) = std::env::var_os("RERAIL_SPIKE_PROJECTION") {
-        let viewed: BTreeSet<&str> = views(&batch).iter().map(|(n, _)| *n).collect();
-        let read: Vec<(String, Arc<dyn Source>, stored_spike::Kind)> = out
-            .iter()
-            .filter(|(n, _)| projection.wants(n))
-            .filter_map(|(n, s)| {
-                let kind = if rows_named.contains(n) { stored_spike::Kind::Rows } else if viewed.contains(n.as_str()) { stored_spike::Kind::View } else { return None };
-                Some((n.clone(), Arc::clone(s), kind))
-            })
-            .collect();
-        let keys: Vec<u32> = batch.docs.iter().map(|p| p.key).collect();
-        drop(_nearest);
-        stored_spike::run(&db, &read, &keys);
-        return Ok(out_with_within(out, &batch));
+        spike_projection(&db, &out, &rows_named, &batch, projection, nearest);
     }
     // Containment (decision 0050): made per looked-up node, so a program that never reads it pays nothing.
     Ok(out_with_within(out, &batch))
+}
+
+/// The text tests' relations (decision 0037): each test's passing strings of the batch, `s`.
+fn push_text_tests(out: &mut Vec<(String, Arc<dyn Source>)>, tests: &crate::code_rule_dsl::logic::strings::Vocabulary, strings: &[String], symbols: &[u32]) {
+    for ((name, _), rows) in tests.tests.iter().zip(tests.rows(strings, symbols)) {
+        let mut r = Relation::new(&["s"]);
+        rows.into_iter().for_each(|s| r.push(&[s]));
+        out.push((name.clone(), Arc::new(r)));
+    }
+}
+
+/// Each kind set's axis over the batch (decision 0036): `rr_has_…`, `rr_inside_…` or `rr_nearest_…` by its name.
+fn push_axes(out: &mut Vec<(String, Arc<dyn Source>)>, batch: &Arc<Batch>, sets: &[(String, Vec<i64>)], binding: crate::code_rule_dsl::facts::nearest::Binding) {
+    for (name, members) in sets {
+        out.push((name.clone(), Arc::new(within::Within::axis(Arc::clone(batch), set_axis(name), members, binding))));
+    }
+}
+
+/// The axis a kind set's relation `name` reads.
+fn set_axis(name: &str) -> within::Axis {
+    use crate::code_rule_dsl::logic::front::ast::{AXIS, DESCENDANTS};
+    if name.starts_with(DESCENDANTS) {
+        within::Axis::Has
+    } else if name.starts_with(AXIS) {
+        within::Axis::Inside
+    } else {
+        within::Axis::Nearest
+    }
+}
+
+/// The stored-projection spike (`RERAIL_SPIKE_PROJECTION`, measurement only): the relations the program reads, but
+/// the per-node axes, stored in `db`. `nearest`, the axes' span, closes before the store.
+fn spike_projection(db: &std::ffi::OsStr, out: &[(String, Arc<dyn Source>)], rows_named: &BTreeSet<String>, batch: &Arc<Batch>, projection: &Projection, nearest: crate::code_rule_dsl::logic::profile::Span) {
+    let viewed: BTreeSet<&str> = views(batch).iter().map(|(n, _)| *n).collect();
+    let kind = |n: &String| if rows_named.contains(n) { Some(stored_spike::Kind::Rows) } else { viewed.contains(n.as_str()).then_some(stored_spike::Kind::View) };
+    let read: Vec<(String, Arc<dyn Source>, stored_spike::Kind)> =
+        out.iter().filter(|(n, _)| projection.wants(n)).filter_map(|(n, s)| Some((n.clone(), Arc::clone(s), kind(n)?))).collect();
+    let keys: Vec<u32> = batch.docs.iter().map(|p| p.key).collect();
+    drop(nearest);
+    stored_spike::run(db, &read, &keys);
+}
+
+/// The tapes `matchers` read: every file or guest with a tape in a grammar the compiled matchers accept.
+/// Grammar admission belongs to the matchers, not the fact layer; hosts and guests use the same check.
+fn matcher_tapes(documents: &[Document], matchers: &Matchers) -> Vec<WaveTape> {
+    if matchers.is_empty() {
+        return Vec::new();
+    }
+    documents
+        .iter()
+        .filter(|d| matchers.accepts(crate::code_rule_dsl::facts::core::facts_tag(&d.facts)))
+        .filter_map(|d| Some((d.key, Arc::clone(&d.facts), d.tape.as_ref()?.0.clone(), d.path.clone())))
+        .collect()
 }
 
 /// `out` with containment's two relations (decision 0050).

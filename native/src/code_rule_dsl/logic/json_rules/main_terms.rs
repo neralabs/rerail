@@ -239,23 +239,33 @@ pub fn arguments(prog: &mut Program, spec: &Obj, v: &str, vs: &mut Vars) -> Resu
 
 pub const VALUE_OPS: [&str; 9] = ["truthy", "bitsAny", "constant", "type", "startsWith", "gt", "ge", "lt", "le"];
 
-fn numeric(x: &str) -> String {
-    format!("(value_type({x}, \"int\") ; value_type({x}, \"float\"))")
+/// Value types are keyed by the expression, including values followed through bindings. Text alone cannot
+/// distinguish a string from a number with the same spelling elsewhere in the run.
+fn typed(node: &str, followed: bool, t: &str) -> String {
+    let reader = if followed { "static_value_type_of" } else { "value_type_of" };
+    format!("{reader}({node}, {t})")
+}
+
+fn numeric(node: &str, followed: bool) -> String {
+    format!("({} ; {})", typed(node, followed, "\"int\""), typed(node, followed, "\"float\""))
 }
 
 fn truthy_rel(prog: &mut Program) -> String {
     let zero = "(x = \"0\" ; x = \"0.0\" ; x = \"-0.0\")";
     let nonzero = "x != \"0\", x != \"0.0\", x != \"-0.0\"";
-    let num = numeric("x");
-    let text = "(value_type(x, \"str\") ; value_type(x, \"bytes\"))";
+    let num = numeric("n", false);
+    let none = typed("n", false, "\"NoneType\"");
+    let boolean = typed("n", false, "\"boolean\"");
+    let text = format!("({} ; {})", typed("n", false, "\"str\""), typed("n", false, "\"bytes\""));
+    let text = text.as_str();
     lib(
         prog,
         "truthy_value",
         "(n: node, b: symbol)",
         &["b is \"true\" when n's value is truthy (Python's bool(v)), \"false\" when it is falsy"],
         vec![
-            r("truthy_value(n, \"false\")", &["value(n, x)", "value_type(x, \"NoneType\")"]),
-            r("truthy_value(n, b)", &["value(n, x)", "value_type(x, \"boolean\")", "b = x"]),
+            r("truthy_value(n, \"false\")", &["value(n, x)", &none]),
+            r("truthy_value(n, b)", &["value(n, x)", &boolean, "b = x"]),
             r("truthy_value(n, \"false\")", &["value(n, x)", &num, zero]),
             r("truthy_value(n, \"true\")", &["value(n, x)", &num, nonzero]),
             r("truthy_value(n, \"false\")", &["value(n, x)", text, "x = \"\""]),
@@ -291,6 +301,7 @@ pub fn value(px: &Patterns, prog: &mut Program, val: &Obj, v: &str, vs: &mut Var
         return Ok(vec![format!("!{reader}({v}, _)")]);
     }
     let x = vs.fresh("v");
+    let followed = reader == "static_value";
     let mut lits = vec![format!("{reader}({v}, {x})")];
     for (op, arg) in ops.iter() {
         match op {
@@ -308,13 +319,13 @@ pub fn value(px: &Patterns, prog: &mut Program, val: &Obj, v: &str, vs: &mut Var
                     .iter()
                     .map(|t| {
                         let t2 = if prog.lang == "python" && t.as_str() == Some("bool") { Value::Str("boolean".into()) } else { t.clone() };
-                        format!("value_type({x}, {})", super::value::q_val(&t2))
+                        typed(v, followed, &super::value::q_val(&t2))
                     })
                     .collect();
                 lits.push(if alts.len() == 1 { alts[0].clone() } else { format!("({})", alts.join(" ; ")) });
             }
             "gt" | "ge" | "lt" | "le" if matches!(arg, Value::Int(_) | Value::Float(_)) => {
-                lits.push(numeric(&x));
+                lits.push(numeric(v, followed));
                 lits.push(format!("to_number({x}) {} {}", cmp_sym(op), py_str(arg)));
             }
             "gt" | "ge" | "lt" | "le" => {
@@ -327,7 +338,7 @@ pub fn value(px: &Patterns, prog: &mut Program, val: &Obj, v: &str, vs: &mut Var
                 lits.push(if alts.len() == 1 { alts[0].clone() } else { format!("({})", alts.join(" ; ")) });
             }
             "bitsAny" if arg.is_int() => {
-                lits.push(format!("value_type({x}, \"int\")"));
+                lits.push(typed(v, followed, "\"int\""));
                 lits.push(bits(&x, arg.int().expect("an int")));
             }
             "truthy" if matches!(arg, Value::Bool(_)) => {
@@ -690,6 +701,8 @@ pub fn layout(prog: &mut Program, spec: &Obj, v: &str, vs: &mut Vars) -> Option<
                     format!("node(_, {v}, _, {s1}, {e1})"),
                     format!("node(_, {c}, _, {s2}, {e2})"),
                     if side == "before" { format!("{e2} <= {s1}") } else { format!("{s2} >= {e1}") },
+                    // Offsets compare within a file: the capture is in v's (decision 0652).
+                    format!("@doc({v}) = @doc({c})"),
                 ];
             }
             _ => return None,

@@ -72,6 +72,7 @@ pub(super) const SCALARS: &[&str] = &[
     "value",
     "value_type",
     "static_value",
+    "static_value_type_of",
     "comment",
     "spread",
     "op",

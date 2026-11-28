@@ -1,0 +1,662 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<title>Per-file and cross-file rules</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&family=IBM+Plex+Sans:ital,wght@0,400;0,500;0,600;0,700;1,400&display=swap">
+<style>
+/* Layout: one reading column with wide figures; blue marks the per-file part, amber the cross-file part,
+   red a violation, throughout text, code and diagrams. */
+:root {
+  --bg: #f7f8fa; --panel: #ffffff; --fg: #1b2230; --muted: #5a6478; --rule: #d9dee7;
+  --file: #1f6fb2; --file-soft: #e3effa; --cross: #b26a00; --cross-soft: #fbefdc;
+  --bad: #b3261e; --bad-soft: #fbe5e3; --good: #23784a; --good-soft: #e2f3e8;
+  --code-bg: #f0f2f6; --code-fg: #1b2230; --comment: #6b7487;
+  --sans: "IBM Plex Sans", "Segoe UI", system-ui, sans-serif;
+  --mono: "IBM Plex Mono", ui-monospace, "SF Mono", Menlo, monospace;
+}
+@media (prefers-color-scheme: dark) { :root:not([data-theme="light"]) {
+  --bg: #12161d; --panel: #1a2029; --fg: #e4e8ef; --muted: #9aa4b6; --rule: #2c3442;
+  --file: #6fb3ee; --file-soft: #16283b; --cross: #f0b25a; --cross-soft: #33260f;
+  --bad: #f08a80; --bad-soft: #3a1d1b; --good: #7fd3a0; --good-soft: #17301f;
+  --code-bg: #0e1218; --code-fg: #dfe5ee; --comment: #8a95a8; color-scheme: dark } }
+:root[data-theme="dark"] {
+  --bg: #12161d; --panel: #1a2029; --fg: #e4e8ef; --muted: #9aa4b6; --rule: #2c3442;
+  --file: #6fb3ee; --file-soft: #16283b; --cross: #f0b25a; --cross-soft: #33260f;
+  --bad: #f08a80; --bad-soft: #3a1d1b; --good: #7fd3a0; --good-soft: #17301f;
+  --code-bg: #0e1218; --code-fg: #dfe5ee; --comment: #8a95a8; color-scheme: dark }
+* { box-sizing: border-box }
+body { background: var(--bg); color: var(--fg); font-family: var(--sans); font-size: 16px; line-height: 1.6;
+  padding-left: max(16px, env(safe-area-inset-left, 0px)); padding-right: max(16px, env(safe-area-inset-right, 0px));
+  padding-block: 32px 80px }
+main { max-width: 1040px; margin: 0 auto; display: grid; gap: 8px }
+.prose { max-width: 70ch }
+h1, h2, h3 { text-wrap: balance; line-height: 1.2; margin: 0 }
+h1 { font-size: 2.3rem; font-weight: 700; letter-spacing: -0.01em }
+h2 { font-size: 1.55rem; font-weight: 700; margin-top: 48px; padding-top: 20px; border-top: 1px solid var(--rule) }
+h3 { font-size: 1.15rem; font-weight: 600; margin-top: 28px }
+p, li { margin: 0.55em 0 }
+.eyebrow { font: 600 0.74rem/1 var(--mono); letter-spacing: 0.08em; text-transform: uppercase; color: var(--muted) }
+.lede { font-size: 1.15rem; color: var(--muted); max-width: 70ch }
+code { font-family: var(--mono); font-size: 0.88em; background: var(--code-bg); padding: 0.08em 0.3em; border-radius: 3px }
+pre { font: 0.84rem/1.55 var(--mono); background: var(--code-bg); color: var(--code-fg); padding: 14px 16px; margin: 10px 0;
+  border-radius: 6px; overflow-x: auto; white-space: pre }
+pre code { background: none; padding: 0; font-size: inherit }
+.c { color: var(--comment) }
+.f { color: var(--file); font-weight: 600 }
+.x { color: var(--cross); font-weight: 600 }
+.b { color: var(--bad); font-weight: 600 }
+.g { color: var(--good); font-weight: 600 }
+.tag { display: inline-block; font: 600 0.72rem/1.4 var(--mono); padding: 1px 7px; border-radius: 10px; vertical-align: 1px }
+.tag.f { background: var(--file-soft); color: var(--file) }
+.tag.x { background: var(--cross-soft); color: var(--cross) }
+.tag.b { background: var(--bad-soft); color: var(--bad) }
+.tag.g { background: var(--good-soft); color: var(--good) }
+nav.toc { display: flex; flex-wrap: wrap; gap: 6px 16px; font-size: 0.92rem; margin-top: 8px }
+nav.toc a { color: var(--file); text-decoration: none } nav.toc a:hover { text-decoration: underline }
+a { color: var(--file) } a:focus-visible { outline: 2px solid var(--file); outline-offset: 2px }
+figure { margin: 18px 0; overflow-x: auto }
+figcaption { font-size: 0.88rem; color: var(--muted); max-width: 80ch; margin-top: 6px }
+svg text { font-family: var(--sans) }
+.pair { display: grid; grid-template-columns: repeat(auto-fit, minmax(300px, 1fr)); gap: 14px; margin: 12px 0 }
+.pair > div { min-width: 0 }
+.pair .label { font: 600 0.78rem/1 var(--mono); letter-spacing: 0.04em; margin-bottom: 4px }
+.case { background: var(--panel); border: 1px solid var(--rule); border-radius: 8px; padding: 18px 20px; margin: 18px 0 }
+.case h3 { margin-top: 0 }
+.case .why { color: var(--muted); font-size: 0.95rem }
+.msg { font: 0.84rem/1.5 var(--mono); border-left: 3px solid var(--bad); background: var(--bad-soft); padding: 8px 12px;
+  border-radius: 0 4px 4px 0; overflow-x: auto; white-space: pre-wrap }
+.tablewrap { overflow-x: auto; margin: 12px 0 }
+table { border-collapse: collapse; width: 100%; font-size: 0.9rem; min-width: 760px }
+th, td { text-align: left; vertical-align: top; padding: 9px 10px; border-bottom: 1px solid var(--rule) }
+th { font: 600 0.76rem/1.3 var(--mono); text-transform: uppercase; letter-spacing: 0.05em; color: var(--muted) }
+td code { font-size: 0.82em }
+.rules { display: grid; grid-template-columns: repeat(auto-fit, minmax(260px, 1fr)); gap: 14px; margin: 14px 0 }
+.rule { background: var(--panel); border: 1px solid var(--rule); border-top: 4px solid var(--file); border-radius: 6px;
+  padding: 14px 16px; min-width: 0 }
+.rule.r2 { border-top-color: var(--cross) } .rule.r3 { border-top-color: var(--bad) }
+.rule h3 { margin: 0 0 6px; font-size: 1.05rem }
+.rule p { font-size: 0.94rem }
+.checklist { background: var(--panel); border: 1px solid var(--rule); border-radius: 8px; padding: 6px 20px 14px }
+.checklist ol { padding-left: 1.3em }
+.status { display: grid; grid-template-columns: auto 1fr; gap: 4px 14px; font-size: 0.94rem; margin: 10px 0 }
+.status dt { font-weight: 600 } .status dd { margin: 0; color: var(--muted) }
+@media (max-width: 520px) { h1 { font-size: 1.8rem } .status { grid-template-columns: 1fr } }
+@media (prefers-reduced-motion: reduce) { * { scroll-behavior: auto } }
+</style>
+</head>
+<body>
+<main>
+<header>
+  <div class="eyebrow">Rerail rule authors · libraries and packs</div>
+  <h1>Per-file and cross-file rules</h1>
+  <p class="lede">Which facts may leave a file, how to say that a relation spans files, how rules break that by
+  accident, and how to fix each kind of break. For people writing <code>.rerail</code> libraries and packs, and for
+  the models that write them.</p>
+  <nav class="toc" aria-label="Sections">
+    <a href="#intro">Intro</a><a href="#two-parts">The two parts</a><a href="#placement">Where a relation runs</a>
+    <a href="#rules">The three rules</a><a href="#syntax">Declaring cross_file</a><a href="#cases">How violations happen</a>
+    <a href="#taxonomy">Taxonomy</a><a href="#fixes">Fix recipes</a><a href="#checking">Checking</a>
+    <a href="#llm">Checklist for models</a>
+  </nav>
+</header>
+
+<section id="intro" class="prose">
+  <h2>Intro</h2>
+  <p><strong>The problem.</strong> Rerail keeps its findings current as files change. It can only do that cheaply
+  when most of the work belongs to one file: edit <code>a.py</code> and only <code>a.py</code>'s rules run again.
+  Work that combines files is kept up to date over the whole repository, so everything that flows into it is paid
+  for at every edit of every file it came from.</p>
+  <p>The worst thing that can flow there is a <em>node id</em>, the engine's name for one syntax node. A node id
+  belongs to its file and to its place in that file. Add a line at the top of a file and every node below it gets a
+  new id. Any cross-file fact that held one of those ids changes, for every reader, though nothing changed in
+  meaning.</p>
+  <p><strong>What changes.</strong> Three rules now say what may cross from the per-file work to the cross-file work,
+  and the engine checks them on every program it prepares:</p>
+  <ul>
+    <li>no relation spans files unless it is declared <code>cross_file</code>;</li>
+    <li>no node id, and no value computed from one, crosses;</li>
+    <li>no cross-file rule reads a node's position (its line, column, order).</li>
+  </ul>
+  <p><strong>One example.</strong> JavaScript's capitalised-name check was a table of every identifier's text that
+  starts with a capital letter. The table kept the text and dropped the node, so it held every file's texts in one
+  place. Each rule that asked "is <em>this</em> identifier's name capitalised?" then had to join its node to that
+  table across files, and the engine moved it, node and all, into the cross-file work. Keyed by the identifier node,
+  the same test stays in its file:</p>
+  <div class="pair">
+    <div><div class="label b">Before: crosses files</div>
+<pre><code><span class="c">// every identifier text in the run,
+// without the node it came from</span>
+.decl capital(x: symbol)
+capital(x) :- kind(n, "identifier"),
+    text(n, x),
+    c = @slice(x, 0, 1), c != @lower(c).</code></pre></div>
+    <div><div class="label g">After: stays in its file</div>
+<pre><code><span class="c">// the identifier node itself:
+// each row is one file's</span>
+.decl capital_id(n: node)
+capital_id(n) :- kind(n, "identifier"),
+    text(n, x),
+    c = @slice(x, 0, 1), c != @lower(c).</code></pre></div>
+  </div>
+  <p><strong>Status.</strong> The checks run on every program; they print what they find, or refuse the program,
+  when asked (<a href="#checking">Checking</a>). Every pack's offenders are listed in the repository, and each list can only
+  shrink: a new rule that adds an offender fails its pack's test.</p>
+  <p><strong>How to read this.</strong> <a href="#two-parts">The two parts</a> and
+  <a href="#placement">Where a relation runs</a> explain the model. <a href="#rules">The three rules</a> and
+  <a href="#syntax">Declaring cross_file</a> are the reference. <a href="#cases">How violations happen</a> walks
+  through each way rules break them, the non-obvious ones included. <a href="#taxonomy">Taxonomy</a> and
+  <a href="#fixes">Fix recipes</a> are for fixing a reported offender. <a href="#llm">Checklist for models</a> is a
+  block to paste into a model's instructions.</p>
+</section>
+
+<section id="two-parts">
+  <h2>The two parts of a program</h2>
+  <div class="prose">
+  <p>The engine splits every program in two. The <span class="f">per-file part</span> runs over one file at a time.
+  Its results for a file are kept, keyed by that file's content, and reused until the file changes. The
+  <span class="x">cross-file part</span> runs over the whole repository and is maintained from changes: when a file's
+  per-file results change, the cross-file part takes in the difference.</p>
+  <p>What passes from one to the other is a set of <em>handed-on</em> relations. Each of their rows names the
+  document it came from, so the engine can replace exactly one file's rows when that file changes.</p>
+  </div>
+  <figure>
+    <svg viewBox="0 0 980 330" width="980" role="img" aria-labelledby="fig1t">
+      <title id="fig1t">Files a.py, b.py and c.py each run the per-file part; their handed-on rows flow into one cross-file part, which writes findings.</title>
+      <defs><marker id="ar" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M0,0 L10,5 L0,10 z" style="fill:var(--muted)"/></marker></defs>
+      <g>
+        <rect x="10" y="20" width="520" height="290" rx="10" style="fill:var(--file-soft);stroke:var(--file)"/>
+        <text x="30" y="48" style="fill:var(--file);font-weight:700;font-size:16px">Per-file part</text>
+        <text x="30" y="68" style="fill:var(--muted);font-size:13px">runs once per file; kept until that file changes</text>
+        <g>
+          <rect x="30" y="90" width="150" height="190" rx="6" style="fill:var(--panel);stroke:var(--file)"/>
+          <text x="105" y="114" text-anchor="middle" style="fill:var(--fg);font-weight:600;font-size:14px">a.py</text>
+          <text x="105" y="140" text-anchor="middle" style="fill:var(--muted);font-size:12px;font-family:var(--mono)">kind, text, field</text>
+          <text x="105" y="160" text-anchor="middle" style="fill:var(--muted);font-size:12px;font-family:var(--mono)">your per-file rules</text>
+          <text x="105" y="196" text-anchor="middle" style="fill:var(--file);font-size:12px;font-family:var(--mono)">nodes live here</text>
+          <text x="105" y="254" text-anchor="middle" style="fill:var(--fg);font-size:12px">rows of a.py</text>
+        </g>
+        <g>
+          <rect x="195" y="90" width="150" height="190" rx="6" style="fill:var(--panel);stroke:var(--file)"/>
+          <text x="270" y="114" text-anchor="middle" style="fill:var(--fg);font-weight:600;font-size:14px">b.py</text>
+          <text x="270" y="140" text-anchor="middle" style="fill:var(--muted);font-size:12px;font-family:var(--mono)">kind, text, field</text>
+          <text x="270" y="160" text-anchor="middle" style="fill:var(--muted);font-size:12px;font-family:var(--mono)">your per-file rules</text>
+          <text x="270" y="196" text-anchor="middle" style="fill:var(--file);font-size:12px;font-family:var(--mono)">nodes live here</text>
+          <text x="270" y="254" text-anchor="middle" style="fill:var(--fg);font-size:12px">rows of b.py</text>
+        </g>
+        <g>
+          <rect x="360" y="90" width="150" height="190" rx="6" style="fill:var(--panel);stroke:var(--file)"/>
+          <text x="435" y="114" text-anchor="middle" style="fill:var(--fg);font-weight:600;font-size:14px">c.py</text>
+          <text x="435" y="140" text-anchor="middle" style="fill:var(--muted);font-size:12px;font-family:var(--mono)">kind, text, field</text>
+          <text x="435" y="160" text-anchor="middle" style="fill:var(--muted);font-size:12px;font-family:var(--mono)">your per-file rules</text>
+          <text x="435" y="196" text-anchor="middle" style="fill:var(--file);font-size:12px;font-family:var(--mono)">nodes live here</text>
+          <text x="435" y="254" text-anchor="middle" style="fill:var(--fg);font-size:12px">rows of c.py</text>
+        </g>
+      </g>
+      <path d="M512,185 L618,185" style="stroke:var(--muted);stroke-width:2;fill:none" marker-end="url(#ar)"/>
+      <text x="565" y="170" text-anchor="middle" style="fill:var(--muted);font-size:12px">handed on,</text>
+      <text x="565" y="206" text-anchor="middle" style="fill:var(--muted);font-size:12px">each row names</text>
+      <text x="565" y="222" text-anchor="middle" style="fill:var(--muted);font-size:12px">its document</text>
+      <g>
+        <rect x="620" y="20" width="350" height="290" rx="10" style="fill:var(--cross-soft);stroke:var(--cross)"/>
+        <text x="640" y="48" style="fill:var(--cross);font-weight:700;font-size:16px">Cross-file part</text>
+        <text x="640" y="68" style="fill:var(--muted);font-size:13px">runs over every file; kept up to date by changes</text>
+        <text x="640" y="110" style="fill:var(--fg);font-size:13px">symbols: <tspan style="font-family:var(--mono)">pkg.mod.Class</tspan></text>
+        <text x="640" y="132" style="fill:var(--fg);font-size:13px">paths: <tspan style="font-family:var(--mono)">src/a.py</tspan></text>
+        <text x="640" y="154" style="fill:var(--fg);font-size:13px">document keys, values, counts</text>
+        <line x1="640" y1="176" x2="950" y2="176" style="stroke:var(--rule)"/>
+        <text x="640" y="202" style="fill:var(--bad);font-size:13px;font-weight:600">not: node ids, or values made from them</text>
+        <text x="640" y="224" style="fill:var(--bad);font-size:13px;font-weight:600">not: lines, columns, node order</text>
+        <line x1="640" y1="246" x2="950" y2="246" style="stroke:var(--rule)"/>
+        <text x="640" y="274" style="fill:var(--fg);font-size:13px">findings: each placed at its own node</text>
+      </g>
+    </svg>
+    <figcaption>Every file runs the same per-file rules on its own. Their handed-on rows feed one cross-file part.
+    An edit of b.py runs b.py's per-file rules again and gives the cross-file part b.py's changed rows; a.py and c.py
+    are not touched. That stays true only while the cross-file part holds nothing that changes when b.py's lines
+    move.</figcaption>
+  </figure>
+</section>
+
+<section id="placement">
+  <h2>Where a relation runs</h2>
+  <div class="prose">
+  <p>You do not say where a relation runs. The engine decides, from its rules, and the decision spreads through the
+  program. A relation is <span class="f">per-file</span> when every rule for it reads <em>one document's</em>
+  rows: every relation it reads has a location (a node, or a document) and the rule ties all those locations
+  together, through shared variables, <code>docof(n, d)</code>, or a node relation that holds both.</p>
+  <p>A relation is <span class="x">cross-file</span> when any of these holds:</p>
+  <ol>
+    <li><strong>It is declared so:</strong> <code>.decl r(...) cross_file</code>.</li>
+    <li><strong>One of its rules joins two documents.</strong> Two reads whose locations nothing ties together:
+    the split's message is <code>joins 2 documents: {c} {f}</code>, one group of variables per document.</li>
+    <li><strong>One of its rules reads a document's rows with no location:</strong> a table that kept a value but
+    not where it came from. The message is <code>reads X with no location</code>.</li>
+    <li><strong>One of its rules reads a cross-file relation.</strong> It <em>follows</em> that relation:
+    <code>reads cross-file X</code>. This is how placement spreads.</li>
+    <li><strong>The engine moved it.</strong> A relation whose rows name no document, read by a later cross-file
+    rule, is moved there with its per-file readers (<code>moved by locate</code>).</li>
+  </ol>
+  <p>Some reads place nothing, so they never make a rule cross-file on their own: facts written in the program, the
+  run's options, settings handed on by an earlier phase, and text tests.</p>
+  </div>
+  <figure>
+    <svg viewBox="0 0 980 300" width="980" role="img" aria-labelledby="fig2t">
+      <title id="fig2t">A chain of relations: per-file relations feed one that joins two documents; it becomes cross-file, and every relation that reads it follows.</title>
+      <defs><marker id="ar2" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M0,0 L10,5 L0,10 z" style="fill:var(--muted)"/></marker></defs>
+      <g style="font-size:13px">
+        <rect x="20" y="40" width="170" height="56" rx="6" style="fill:var(--file-soft);stroke:var(--file)"/>
+        <text x="105" y="64" text-anchor="middle" style="fill:var(--file);font-family:var(--mono);font-weight:600">kind, text</text>
+        <text x="105" y="83" text-anchor="middle" style="fill:var(--muted);font-size:12px">core, one file each</text>
+        <rect x="20" y="180" width="170" height="56" rx="6" style="fill:var(--file-soft);stroke:var(--file)"/>
+        <text x="105" y="204" text-anchor="middle" style="fill:var(--file);font-family:var(--mono);font-weight:600">def_name(n, x)</text>
+        <text x="105" y="223" text-anchor="middle" style="fill:var(--muted);font-size:12px">per-file</text>
+        <rect x="270" y="110" width="210" height="66" rx="6" style="fill:var(--cross-soft);stroke:var(--bad);stroke-width:2"/>
+        <text x="375" y="136" text-anchor="middle" style="fill:var(--cross);font-family:var(--mono);font-weight:600">same_name(a, b)</text>
+        <text x="375" y="156" text-anchor="middle" style="fill:var(--bad);font-size:12px;font-weight:600">joins 2 documents: the root</text>
+        <rect x="560" y="40" width="190" height="56" rx="6" style="fill:var(--cross-soft);stroke:var(--cross)"/>
+        <text x="655" y="64" text-anchor="middle" style="fill:var(--cross);font-family:var(--mono);font-weight:600">dup(a)</text>
+        <text x="655" y="83" text-anchor="middle" style="fill:var(--muted);font-size:12px">reads cross-file same_name</text>
+        <rect x="560" y="180" width="190" height="56" rx="6" style="fill:var(--cross-soft);stroke:var(--cross)"/>
+        <text x="655" y="204" text-anchor="middle" style="fill:var(--cross);font-family:var(--mono);font-weight:600">dup_count(k)</text>
+        <text x="655" y="223" text-anchor="middle" style="fill:var(--muted);font-size:12px">reads cross-file same_name</text>
+        <rect x="800" y="110" width="160" height="66" rx="6" style="fill:var(--panel);stroke:var(--rule)"/>
+        <text x="880" y="136" text-anchor="middle" style="fill:var(--fg);font-family:var(--mono);font-weight:600">Finding(a)</text>
+        <text x="880" y="156" text-anchor="middle" style="fill:var(--muted);font-size:12px">output: placed at a</text>
+      </g>
+      <g style="stroke:var(--muted);stroke-width:1.6;fill:none">
+        <path d="M190,68 C230,68 240,130 268,136" marker-end="url(#ar2)"/>
+        <path d="M190,208 C230,208 240,150 268,150" marker-end="url(#ar2)"/>
+        <path d="M480,136 C520,130 530,72 558,70" marker-end="url(#ar2)"/>
+        <path d="M480,150 C520,156 530,206 558,206" marker-end="url(#ar2)"/>
+        <path d="M750,68 C780,70 780,130 798,138" marker-end="url(#ar2)"/>
+      </g>
+      <text x="20" y="280" style="fill:var(--muted);font-size:13px">The checker names the root (<tspan style="fill:var(--bad);font-weight:600">same_name</tspan>), not its followers: fix the root and the followers go back into their files with it.</text>
+    </svg>
+  </figure>
+  <div class="prose">
+  <p>This is why one small table can pull thousands of relations across. On main, a single symbol table of Python's
+  import resolution is the root of about two thirds of every node crossing: each rule that looks up a name's
+  definition reads it, follows it into the cross-file part, and takes its own nodes along.</p>
+  </div>
+</section>
+
+<section id="rules">
+  <h2>The three rules</h2>
+  <div class="rules">
+    <div class="rule r2">
+      <h3>1. Declared, or per-file</h3>
+      <p>Every relation is per-file unless it is declared <code>cross_file</code>. A relation that is cross-file for
+      a reason of its own (a join of two documents, a read with no location) and is not declared is a violation.</p>
+      <p>Followers need no declaration: they are cross-file because a declared relation is. Helpers the engine makes
+      for a relation share its declaration.</p>
+    </div>
+    <div class="rule r3">
+      <h3>2. No node ids across</h3>
+      <p>No relation of the cross-file part holds a node id: no column typed <code>node</code> or <code>loc</code>,
+      and no value computed from a node (<code>@to_string(n)</code>, <code>n + 1</code>, a <code>min</code> over
+      nodes).</p>
+      <p>Cross-file facts are keyed by symbols, paths, document keys and values. A node's document, text and digest
+      are values, so they may cross. Findings keep their node: it is where the finding is written.</p>
+    </div>
+    <div class="rule">
+      <h3>3. No positions across</h3>
+      <p>No cross-file rule reads <code>line</code>, <code>col</code>, <code>end_line</code>,
+      <code>node_order</code>, <code>visit_index</code> or <code>ast_depth</code>, unless its head is an output.
+      An edit above a node moves all of them.</p>
+      <p>Compare positions in the file's own rules, and hand on the answer.</p>
+    </div>
+  </div>
+</section>
+
+<section id="syntax">
+  <h2>Declaring a cross-file relation</h2>
+  <div class="prose">
+  <p>Declare a relation <code>cross_file</code> when spanning files is its job: a module's exports, a class
+  hierarchy over the repository, a call graph. The word goes after the columns, as the other declaration words
+  do:</p>
+  </div>
+<pre><code><span class="c">// exports(m, x, q): module m exposes name x, which denotes q.
+// Keyed by symbols only: no node, no position.</span>
+.decl exports(m: symbol, x: symbol, q: symbol) <span class="x">cross_file</span>
+
+<span class="c">// A file's own rule reads the answer back at its own node:
+// sym_of is per-file, because n and the import both belong to this file.</span>
+.decl sym_of(n: node, q: symbol)
+sym_of(n, q) :- import_name(n, m, x), exports(m, x, q).</code></pre>
+  <div class="prose">
+  <p>What the declaration does and does not do:</p>
+  <ul>
+    <li>It <strong>allows</strong> the relation to span files, and places it in the cross-file part.</li>
+    <li>It does <strong>not</strong> allow node ids. A declared relation with a <code>node</code> column is still
+    reported by rule 2. Declare only relations keyed by symbols, paths and values.</li>
+    <li>It is <strong>kept</strong> when a program is printed and read again.</li>
+    <li>A relation the engine moved itself is not declared. Its rows are checked as undeclared once something
+    reads them on.</li>
+  </ul>
+  <p>Declare as little as you can. Each declared relation is maintained over the whole repository. A declaration
+  that only silences the checker hides a join that the next reader pays for.</p>
+  </div>
+</section>
+
+<section id="cases">
+  <h2>How violations happen</h2>
+  <p class="prose">Each case below shows a rule as someone wrote it, what the engine sees, what the checker
+  reports, and the fix. The first three are the common ones. The fourth is the one people miss.</p>
+
+  <div class="case">
+    <h3><span class="tag b">join</span> Two documents joined by a value</h3>
+    <p class="why">Two reads share a value (a name, a kind) but nothing says they are in the same file. The rule
+    then pairs every file's rows with every other file's.</p>
+<pre><code><span class="c">// Intended: a call to a function defined in the same module.
+// Written: a call to ANY function of that name, in any file.</span>
+.decl local_call(c: node, f: node)
+local_call(c, f) :- call_name(c, x), def_name(f, x).</code></pre>
+    <div class="msg">local_call: joins 2 documents: {c} {f}
+local_call: holds a node in local_call.c, local_call.f</div>
+    <div class="pair">
+      <div><div class="label g">Fix, if same-file was meant</div>
+<pre><code>local_call(c, f) :- call_name(c, x),
+    def_name(f, x),
+    docof(c, d), docof(f, d). <span class="c">// one file</span></code></pre></div>
+      <div><div class="label g">Fix, if other files were meant</div>
+<pre><code><span class="c">// resolve by symbol, then read back per file
+// (recipe: a phase over symbols)</span>
+calls_sym(c, q) :- call_name(c, x),
+    resolved(x, q).</code></pre></div>
+    </div>
+  </div>
+
+  <div class="case">
+    <h3><span class="tag b">table</span> A table of values that dropped its node</h3>
+    <p class="why">The most common break, and the easiest to miss. A helper computes a fact about some node's text
+    and keeps only the text. The table now holds every file's texts, with no location. Every rule that asks the table
+    about its own node joins across files, and moves into the cross-file part with its node.</p>
+<pre><code><span class="c">// the text of every zero literal, from every file</span>
+.decl zero_number(t: symbol)
+zero_number(t) :- kind(n, "integer"), text(n, t), t = "0".
+
+<span class="c">// a per-file rule asks about its own node: now cross-file</span>
+start_zero(s) :- assignment_value(s, v), text(v, t), zero_number(t).</code></pre>
+    <div class="msg">start_zero: holds a node in start_zero.s (in the cross-file part under zero_number)</div>
+    <p class="why">Rule 1 lets the table itself through: it is a union of each file's values. The reader is caught by
+    rule 2, because it takes its node across, and the report names the table as the crossing it is under.</p>
+    <div class="pair">
+      <div><div class="label g">Fix: key the table by the node</div>
+<pre><code>.decl zero_lit(n: node)
+zero_lit(n) :- kind(n, "integer"),
+    text(n, "0").
+start_zero(s) :- assignment_value(s, v),
+    zero_lit(v).</code></pre></div>
+      <div><div class="label g">Or test the value where it is read</div>
+<pre><code><span class="c">// a pure function of the text: no table</span>
+start_zero(s) :- assignment_value(s, v),
+    text(v, t), t = "0".</code></pre></div>
+    </div>
+    <p class="why">A table that is a pure function of its value (case, prefix, a regex split) never needs to be a
+    table. Write the test in the reading rule. A table that also gives wrong answers this way is common: "is this
+    name capitalised" became "does any file have a capitalised identifier with this text".</p>
+  </div>
+
+  <div class="case">
+    <h3><span class="tag b">no location</span> Reading every file's rows at once</h3>
+    <p class="why">A count, a <code>min</code>, a negation or an existence test over a per-file relation, with no
+    variable that names the file, reads all files.</p>
+<pre><code><span class="c">// "this module is the only one that defines main": every file's defs</span>
+lone_main(f) :- def_name(f, "main"),
+    k = count : { def_name(_, "main") }, k = 1.</code></pre>
+    <div class="msg">lone_main: reads def_name with no location</div>
+    <p class="why">If the answer really is about the repository, compute it as a declared <code>cross_file</code>
+    relation over symbols or paths (<code>main_modules(p)</code>), and test it in the file's rule. If it is about the
+    file, add its location: <code>docof(f, d)</code> and the same <code>d</code> inside the aggregate.</p>
+  </div>
+
+  <div class="case">
+    <h3><span class="tag x">same file</span> Same-document joins the engine cannot see</h3>
+    <p class="why">The non-obvious case. You know two nodes are in one file, but the rule does not say so in a form
+    the split reads. The split trusts only what ties locations together: one variable shared by two node columns,
+    <code>docof(a, d), docof(b, d)</code>, <code>@doc(a) = @doc(b)</code>, a tree relation that holds both nodes
+    (<code>child</code>, <code>field</code>, <code>within</code>), or <code>nearest</code>.</p>
+<pre><code><span class="c">// You mean "a and b are in the same file". The split sees two documents.</span>
+
+<span class="c">// 1. Linked only by a comparison: a test filters, it does not join</span>
+pair(a, b) :- kind(a, "class"), kind(b, "def"), a &lt; b.
+
+<span class="c">// 2. Same file "by convention": a name both sides share</span>
+pair(a, b) :- class_name(a, x), def_owner(b, x).</code></pre>
+    <div class="msg">pair: joins 2 documents: {a} {b}</div>
+<pre><code><span class="c">// The forms the split reads as one document:</span>
+pair(a, b) :- kind(a, "class"), kind(b, "def"), docof(a, d), docof(b, d).
+pair(a, b) :- kind(a, "class"), kind(b, "def"), @doc(a) = @doc(b).
+pair(a, b) :- kind(a, "class"), within(b, a).        <span class="c">// b inside a</span>
+<span class="c">// A document's own path names it alone; a path built from it (cat, replace) does not.</span>
+pair(a, b) :- kind(a, "class"), kind(b, "def"), docof(a, d), doc(d, p, _), docof(b, e), doc(e, p, _).
+pair(a, b) :- field(a, "body", s), child(s, b, _).   <span class="c">// a tree relation</span></code></pre>
+    <p class="why">Comparisons do not tie anything: <code>a != b</code> and <code>a &lt; b</code> only filter rows
+    that the other reads already joined. A rule whose only link between two groups of reads is a comparison is a
+    cross product of every file with every file, even when you only meant positions in one file. Add the
+    <code>docof</code> pair and the comparison becomes a filter inside one file.</p>
+  </div>
+
+  <div class="case">
+    <h3><span class="tag b">follower</span> A per-file rule that reads a cross-file answer at its node</h3>
+    <p class="why">The rule itself is fine. But it reads a cross-file relation, so it follows it into the
+    cross-file part, and its own node goes with it. One cross-file table read this way by a library helper that
+    every rule includes moves thousands of relations.</p>
+<pre><code><span class="c">// resolve_export(q0, q) is cross-file: it follows imports across modules.
+// sym_of is a per-file question ("what does THIS name refer to?")
+// but it now runs over every file, holding every file's nodes.</span>
+sym_of(n, q) :- qn(n, q0), resolve_export(q0, q).</code></pre>
+    <div class="msg">sym_of: holds a node in sym_of.n (in the cross-file part under resolve_export)
+… and about 2,400 more relations under resolve_export</div>
+    <p class="why">Fix it at the root, by moving the cross-file answer into an <em>earlier phase</em> over symbols.
+    The phase runs first, over every file, and hands on its answers keyed by module or path. The main program reads
+    them as settings, which place nothing, so <code>sym_of</code> stays in its file
+    (<a href="#fixes">recipe 4</a>).</p>
+  </div>
+
+  <div class="case">
+    <h3><span class="tag b">node value</span> A value made from a node</h3>
+    <p class="why">A node id turned into a number or a string is still a node id. The checker follows values through
+    arithmetic, <code>@cat</code>, <code>@to_string</code>, and <code>min</code>, <code>max</code> or
+    <code>sum</code> over nodes.</p>
+<pre><code><span class="c">// a "key" for the definition: still its node id, as a string</span>
+def_key(k, x) :- def_name(f, x), k = @to_string(f).
+
+<span class="c">// "the first def": a min over node ids orders them by file and slot</span>
+first_def(x, m) :- m = min f : { def_name(f, x) }.</code></pre>
+    <div class="msg">def_key: holds a node in def_key.k</div>
+    <p class="why">Use a key that means something outside the file: the path and qualified name
+    (<code>@cat(p, "::", q)</code>), or the place as text (<code>"src/a.py:12"</code>) when a finding must name
+    another file's line. These are allowed: <code>@doc(n)</code>, <code>text</code>, <code>@tree_digest</code>,
+    <code>@unparse</code>, <code>@place</code>.</p>
+  </div>
+
+  <div class="case">
+    <h3><span class="tag b">position</span> Positions in the cross-file part</h3>
+<pre><code><span class="c">// cross-file because it reads exports; and it compares lines</span>
+late_import(i) :- import_of(i, m), exports(m, _, _), line(i, l), l > 10.</code></pre>
+    <div class="msg">the cross-file part reads positions, which every edit moves: late_import reads line</div>
+    <p class="why">Compute the position test in the file's own rule (<code>late(i) :- line(i, l), l &gt; 10</code>)
+    and read <code>late(i)</code> in the cross-file one. Outputs may read positions: a finding is written once, at
+    its place.</p>
+  </div>
+
+  <div class="case">
+    <h3><span class="tag g">fine</span> Things that look like violations and are not</h3>
+    <ul>
+      <li><strong>One plain read of a per-file relation</strong> in a cross-file rule:
+      <code>all_defs(f) :- def_name(f, _)</code>. Each row is one file's, so the relation is a union of the files'
+      rows. It still must not carry a node if it is read on.</li>
+      <li><strong>Reading a declared cross-file relation.</strong> The reader follows it and is not named.</li>
+      <li><strong>Facts, options and settings</strong> (<code>option("max", m)</code>, an earlier phase's
+      exports): one value for the run, no location.</li>
+      <li><strong>An output holding a node</strong>: that node is where the finding is shown.</li>
+      <li><strong>Text tests</strong> (<code>match</code>, <code>prefix</code>) over a value: they filter.</li>
+    </ul>
+  </div>
+</section>
+
+<section id="taxonomy">
+  <h2>Taxonomy of violations</h2>
+  <p class="prose">Read the checker's message, find the row, apply the fix. "Under X" means the relation is only a
+  follower: fix X, the root.</p>
+  <div class="tablewrap">
+  <table>
+    <thead><tr><th>Kind</th><th>The checker says</th><th>What happened</th><th>Fix</th></tr></thead>
+    <tbody>
+      <tr><td><span class="tag b">value table</span></td><td><code>holds a node in r.c (… under T)</code>, T a
+      table with no node column</td><td>A helper table keeps a value of a node (text, name, number) but not the node.</td>
+      <td>Key it by the node, or test the value in the reader (recipe 1).</td></tr>
+      <tr><td><span class="tag b">accidental join</span></td><td><code>joins 2 documents: {a, b}</code></td>
+      <td>Two reads share a value but no location.</td><td>Join through <code>docof</code> or a tree relation
+      (recipe 2); if other files are meant, resolve by symbol (recipe 4).</td></tr>
+      <tr><td><span class="tag x">unseen same file</span></td><td><code>joins 2 documents: {a d} {b e}</code></td>
+      <td>The same file is meant, but said with a path value, a comparison alone, or a naming convention.</td>
+      <td>Say it with <code>docof(a, d), docof(b, d)</code>, <code>@doc(a) = @doc(b)</code> or a tree relation
+      (recipe 2).</td></tr>
+      <tr><td><span class="tag b">global read</span></td><td><code>reads R with no location</code> in an aggregate
+      or negation</td><td>A count, min or negation over every file's rows.</td><td>Bind the file inside the aggregate;
+      or a declared, node-free repository fact (recipe 3).</td></tr>
+      <tr><td><span class="tag b">follower with nodes</span></td><td><code>holds a node in r.c … under X</code></td>
+      <td>A per-file question reads a cross-file answer at its node.</td><td>Move X to an earlier phase over symbols;
+      read it back per file (recipe 4).</td></tr>
+      <tr><td><span class="tag b">meant crossing, with nodes</span></td><td><code>holds a node in r.c</code> on a
+      declared relation</td><td>A real repository fact keyed by node ids (a call graph between defs, a class
+      hierarchy by class node).</td><td>Re-key by symbol or by path and qualified name (recipe 5).</td></tr>
+      <tr><td><span class="tag b">node value</span></td><td><code>computes a value from a node</code>,
+      <code>aggregates a node</code></td><td><code>@to_string(n)</code>, <code>n + 1</code>, <code>min</code> over
+      nodes.</td><td>Use a path and qualified name, or a place string (recipe 5).</td></tr>
+      <tr><td><span class="tag b">position</span></td><td><code>reads line</code> (or col, node_order …)</td>
+      <td>A cross-file rule compares positions.</td><td>Compare in the file; hand on the answer (recipe 6).</td></tr>
+      <tr><td><span class="tag x">undeclared meant crossing</span></td><td><code>cross-file without a
+      declaration</code>, no node</td><td>The relation does span files, on purpose, keyed by symbols.</td>
+      <td>Declare it <code>cross_file</code>, with a comment saying why (recipe 7).</td></tr>
+      <tr><td><span class="tag x">engine gap</span></td><td>a crossing whose rule does tie its locations</td>
+      <td>The split does not yet read a form you used.</td><td>Report it with the rule; rewrite in a form from
+      "Same-document joins" meanwhile.</td></tr>
+    </tbody>
+  </table>
+  </div>
+</section>
+
+<section id="fixes">
+  <h2>Fix recipes</h2>
+  <div class="prose">
+  <h3>1. Key the table by the node, or drop the table</h3>
+  <p>If a helper's answer is a function of one node, its first column is that node. If it is a pure function of a
+  value, it is not a table: inline the test where the value is read.</p>
+
+  <h3>2. Say "same file" in a form the split reads</h3>
+  <p>Share the node variable, or use <code>docof(a, d), docof(b, d)</code> or <code>@doc(a) = @doc(b)</code>, or a
+  tree relation (<code>child</code>, <code>field</code>, <code>within</code>, <code>nearest</code>). A shared path
+  text, a shared name and a comparison tie nothing.</p>
+
+  <h3>3. Repository facts without nodes</h3>
+  <p>When a rule needs a fact about the whole repository (a package's dependencies, which modules define
+  <code>main</code>), compute it keyed by paths or symbols, declare it <code>cross_file</code>, and test it in the
+  file's rule. Only the small fact crosses.</p>
+
+  <h3>4. Cross-file resolution as an earlier phase over symbols</h3>
+  <p>This is the shape for names, imports, types and class hierarchies. Split the work in three:</p>
+  <ol>
+    <li><strong>Each file states its own facts by symbol.</strong> Which module it is, what it defines (by qualified
+    name), what it imports. Its nodes stay with it.</li>
+    <li><strong>A phase resolves symbols against symbols.</strong> It runs first, over every file, to a fixed point,
+    and holds no node. It hands on answers keyed by module or by path: <code>exports(m, x, q)</code>,
+    <code>reads_at(p, m)</code>, <code>ancestor(m, c, b)</code>.</li>
+    <li><strong>Each file reads the answers back at its own nodes.</strong> In the main program the phase's exports
+    are settings: they place nothing, so the reader stays per-file. Read them by the file's own path, or by a module
+    the file's own rows name, so that an edit misses only the files whose answers changed.</li>
+  </ol>
+<pre><code><span class="c">// per-file: this name node, its dotted name, and this file's path</span>
+export_at(n, q) :- qn(n, q0), split_dot(q0, m, x), docof(n, d), doc(d, p, _),
+    py_names__reads_at(p, m),        <span class="c">// the phase: p can see module m</span>
+    py_names__exports(m, x, q).      <span class="c">// the phase: m exposes x as q</span></code></pre>
+
+  <h3>5. Re-key a meant crossing by symbol</h3>
+  <p>A call graph, an inheritance chain or a "first definition" across files: replace each node with its symbol
+  (a qualified name), or with <code>@cat(path, "::", qualname)</code> when two files may define the same name. Run
+  the closure over the keys, and let each file's rule find its own node by its own key. When a finding must point
+  into another file, name the place as text (<code>"src/a.py:12"</code>), read in that file.</p>
+
+  <h3>6. Compare positions where the nodes are</h3>
+  <p>Decide "earlier", "on the same line" or "after line 10" in the file's own rule, and hand on the yes/no answer.</p>
+
+  <h3>7. Declare it, with a reason</h3>
+  <p>When a relation spans files on purpose and holds no node, declare it, and say in a comment what it is and why
+  it is keyed as it is. A reviewer should be able to check the claim from the comment.</p>
+  </div>
+</section>
+
+<section id="checking">
+  <h2>Checking your rules</h2>
+  <div class="prose">
+  <p>Every program the engine prepares is checked. By default the checks report nothing unless asked, and refuse
+  nothing. These switches change that:</p>
+  </div>
+  <div class="tablewrap">
+  <table>
+    <thead><tr><th>Switch</th><th>Effect</th></tr></thead>
+    <tbody>
+      <tr><td><code>RERAIL_SHOW_CROSSINGS=1</code></td><td>Print each undeclared crossing with its rule, and each node
+      crossing by the root it is under.</td></tr>
+      <tr><td><code>RERAIL_STRICT_CROSSINGS=1</code></td><td>Refuse a program with an undeclared crossing, naming
+      each relation, why, and its rule.</td></tr>
+      <tr><td><code>RERAIL_STRICT_NODES=1</code></td><td>Refuse a program whose cross-file part holds a node id.</td></tr>
+      <tr><td><code>RERAIL_STRICT_POSITIONS=1</code></td><td>Refuse a program whose cross-file part reads a
+      position.</td></tr>
+    </tbody>
+  </table>
+  </div>
+  <div class="prose">
+  <p>The pack tests run every pack's policies, split as a real run splits them, and compare what they find with
+  three lists in the engine's sources: <code>split_crossings.txt</code>, <code>node_crossings.txt</code> and
+  <code>policies_not_run.txt</code>. A relation new to a list fails the pack's test. A relation you fixed must
+  leave the list in the same change; the test fails until it does.</p>
+<pre><code><span class="c"># from native/: one pack, printing what it finds</span>
+RERAIL_SHOW_CROSSINGS=1 cargo nextest run --lib --no-capture \
+  --ignore-default-filter -E 'test(/pack_split_tests::the_react_pack/)'</code></pre>
+  <p>Reading a report: fix the root first. A line ending <code>under X</code> is a follower of X. Lines ending
+  <code>under -</code> are roots of their own. A run of one policy alone can place relations differently from a
+  run of its whole pack, so both are checked for the data layer.</p>
+  </div>
+</section>
+
+<section id="llm">
+  <h2>Checklist for models writing rules</h2>
+  <p class="prose">Paste this into the instructions of a model that writes or edits <code>.rerail</code> rules.</p>
+  <div class="checklist">
+<pre><code>Before writing or changing a .rerail rule:
+
+1. Every helper relation about a node takes that node as a column.
+   Never keep a node's text or name without the node, unless the table
+   is declared cross_file on purpose.
+2. A pure function of a value (case, prefix, split, regex) is written
+   inline in the reading rule, not as a table.
+3. Two reads in one rule are tied by a shared node variable,
+   docof(a, d), docof(b, d), @doc(a) = @doc(b), or a tree relation
+   (child, field, within, nearest). Equal names, equal path texts and
+   comparisons do not tie them.
+4. A count, min, max or negation over a per-file relation binds the
+   file inside it.
+5. No relation that spans files has a node or loc column, or a value
+   made from a node (@to_string(n), n + 1, min over nodes). Key it by
+   qualified name, path, or @cat(path, "::", qualname).
+6. Cross-file questions about names, imports, types or classes are
+   answered by symbol, and read back per file at the file's own node.
+7. Positions (line, col, end_line, node_order, visit_index, ast_depth)
+   are compared in the file's own rules.
+8. Declare a relation cross_file only when it spans files on purpose
+   and holds no node; add a comment saying why.
+9. Run the pack's split test with RERAIL_SHOW_CROSSINGS=1. It must add
+   nothing to split_crossings.txt or node_crossings.txt; remove any
+   entry the change fixed.</code></pre>
+  </div>
+</section>
+</main>
+
+</body>
+</html>

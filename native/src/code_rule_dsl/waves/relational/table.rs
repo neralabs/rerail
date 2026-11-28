@@ -125,7 +125,7 @@ fn register_inner(db: &Connection, name: &str, binding: Binding) -> Result<Arc<C
         || name.len() > 120
         || !name.bytes().all(|b| b.is_ascii_alphanumeric() || b == b'_')
     {
-        return Err(failure("invalid native table name"));
+        return Err(failure(&format!("invalid native table name: {name:?}")));
     }
     let stats = Arc::new(Counters::default());
     let module = CString::new(name).map_err(|_| failure("invalid module name"))?;

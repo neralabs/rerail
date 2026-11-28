@@ -255,6 +255,42 @@ pub(in crate::code_rule_dsl) fn carried(c: &mut crate::code_rule_dsl::logic::run
         .or_else(handed)
         .or_else(|| (named && !super::names_its_store()).then(|| OWN.with(|own| own.get_or_init(copy).path.clone())));
     c.part(&["OWN", "HANDED"], crate::code_rule_dsl::logic::run_state::Shared(mine, hand));
+    c.part(&["SINKS"], crate::code_rule_dsl::logic::run_state::Shared(sinks(), hand_sinks));
+}
+
+/// The files a test's runs append their split's crossings to (`crossings_checked`, `nodes_checked`,
+/// `positions_checked`), in place of `RERAIL_CROSSINGS`, `RERAIL_NODE_CROSSINGS` and `RERAIL_POSITIONS`: the
+/// environment is the process's, and the tests of one process (`cargo test`) run at once, each its own lists.
+#[derive(Clone, Debug)]
+pub struct Sinks {
+    pub crossings: PathBuf,
+    pub nodes: PathBuf,
+    pub positions: PathBuf,
+}
+
+thread_local! {
+    /// This thread's test's sinks (`with_sinks`), or those of the test a job on it works for (`carried`).
+    static SINKS: std::cell::RefCell<Option<Sinks>> = const { std::cell::RefCell::new(None) };
+}
+
+/// The sinks of the test whose run this thread works for, if it named any.
+pub fn sinks() -> Option<Sinks> {
+    SINKS.with(|s| s.borrow().clone())
+}
+
+/// While the guard lives, this thread's runs (and the jobs they start) append their crossings to `sinks`.
+pub fn with_sinks(sinks: Sinks) -> impl Drop {
+    hand_sinks(Some(sinks))
+}
+
+fn hand_sinks(sinks: Option<Sinks>) -> impl Drop {
+    struct Handed(Option<Sinks>);
+    impl Drop for Handed {
+        fn drop(&mut self) {
+            SINKS.with(|s| s.replace(self.0.take()));
+        }
+    }
+    Handed(SINKS.with(|s| s.replace(sinks)))
 }
 
 /// The store this thread was handed (`carried`), if any.
