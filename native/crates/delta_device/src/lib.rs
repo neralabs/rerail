@@ -2,11 +2,13 @@
 //! backend (`rerail_gpu::shared`: Metal, CUDA, HIP, OpenCL, or the CPU's, on its vector path with
 //! `RERAIL_CPU_EXEC=vec`). The executor pins a launch and drives its version's phases; this crate makes the launch's
 //! device descriptor table (E2), hands it to the launch's fence (E1), compiles the version's UKL once a program and
-//! launches each kernel on a tile of items.
+//! runs the launch's phases as one command (`OnDevice::program`): each phase's count kernel sizes its dispatch, which
+//! is indirect, with no wait for the host between phases.
 //!
 //! A version's kernels take the same arguments, by name: `t`, the device table (read with `gens::DESC_READS`);
-//! `slots`, the slots' block ids; `p`, the params' bytes; `tile`, the items `lo..hi` (`TileP`), thread `i` item
-//! `lo + i`; and `res`, one word a count or a round's kernel writes. `PRELUDE` comes before the version's source.
+//! `slots`, the slots' block ids; `p`, the params' bytes; `ph`, the phase (`PhaseP`); `ctl`, the launch's control
+//! words; and `meter`, its slots' capacities, needs and fronts (`<ukl/delta/op.h>`). `PRELUDE` comes before the
+//! version's source.
 //!
 //! `Gpu::host` runs in the host's memory domain (each block read in place: unified memory, the CPU's); `Gpu::discrete`
 //! in a device domain of its own (1 and up), each block a replica there (`region::DeviceCopy`, placed by
@@ -24,47 +26,27 @@ use std::collections::HashMap;
 use std::sync::Arc;
 
 /// What every version's source starts with, after the backend and the descriptor table's reads: a kernel's phase
-/// argument, and the grid kernel each phase's dispatch is sized by (`<ukl/delta/op.h>`'s control words: each phase's
-/// count, whether it runs, its grid).
+/// argument (its index, and whether an item is a threadgroup's: `<ukl/delta/op.h>`'s count kernels size the dispatch).
 pub const PRELUDE: &str = r#"
-typedef struct PhaseP { uint32_t k; uint32_t pad; } PhaseP;
-UKL_REFLECT_STRUCT(PhaseP, k, pad)
-typedef struct GridP { uint32_t k; uint32_t group; uint32_t threads; uint32_t pad; } GridP;
-UKL_REFLECT_STRUCT(GridP, k, group, threads, pad)
-DEFINE_KERNEL2(delta_exec, delta_grid, ARGS, GridP, gp, , RWBUFFER, uint32_t, ctl, "[ctl]", RWBUFFER, uint32_t, meter, "[meter]", GID0, uint32_t, i, )
-{
-    if (i != 0u) return;
-    uint32_t n = ctl[gp.k], go = ctl[32u + gp.k], over = meter[3u * 30u] | meter[3u * 30u + 1u];
-    uint32_t groups = go == 0u || over != 0u ? 0u : gp.group != 0u ? n : (n + gp.threads - 1u) / gp.threads;
-    ctl[64u + 3u * gp.k] = groups;
-    ctl[65u + 3u * gp.k] = 1u;
-    ctl[66u + 3u * gp.k] = 1u;
-}
+typedef struct PhaseP { uint32_t k; uint32_t group; } PhaseP;
+UKL_REFLECT_STRUCT(PhaseP, k, group)
 "#;
 
 #[repr(C)]
 #[derive(Clone, Copy)]
 struct PhaseP {
     k: u32,
-    pad: u32,
-}
-
-#[repr(C)]
-#[derive(Clone, Copy)]
-struct GridP {
-    k: u32,
     group: u32,
-    threads: u32,
-    pad: u32,
 }
 
 // SAFETY: u32s, no padding.
 unsafe impl rerail_gpu::Pod for PhaseP {}
-unsafe impl rerail_gpu::Pod for GridP {}
 
-/// The phases a launch runs at most, and the control words (`<ukl/delta/op.h>`: `DELTA_PHASES`, `DELTA_CTL_WORDS`).
+/// The phases a launch runs at most, and the control words (`<ukl/delta/op.h>`: `DELTA_PHASES`, `DELTA_CTL_WORDS`:
+/// each phase's count, whether it runs, its grid, its turns run).
 const PHASES: usize = 32;
-const CTL_WORDS: usize = 5 * PHASES;
+const CTL_WORDS: usize = 6 * PHASES;
+const TURNS_AT: usize = 5 * PHASES;
 /// The meter's words: each slot's capacity, need and front, the refusal and whether it overflowed; then the control
 /// words, after it in the launch's one state buffer.
 const METER_WORDS: usize = 3 * MAX_SLOTS + 2;
@@ -183,7 +165,6 @@ impl OnDevice for GpuBound {
                 p
             }
         };
-        let grid = program.function("delta_grid")?;
         // The meter: capacities (a block past 4 GiB held to 4 GiB), no need yet, the fronts, no refusal; every phase
         // set to run.
         let mut state = [0u32; STATE_WORDS];
@@ -196,6 +177,7 @@ impl OnDevice for GpuBound {
         for go in &mut state[CTL_AT + PHASES..CTL_AT + 2 * PHASES] {
             *go = 1;
         }
+        let began = std::time::Instant::now();
         let mut q = ComputeQueue::new(&self.shared.queue);
         q.enqueue_copy_from_host(&self.state, 0, as_bytes(&state));
         q.enqueue_copy_from_host(&self.slots, 0, as_bytes(&self.args.0));
@@ -203,37 +185,46 @@ impl OnDevice for GpuBound {
             q.enqueue_copy_from_host(&self.params, 0, &self.args.1);
         }
         let (meter_at, ctl_at) = (0u64, 4 * CTL_AT as u64);
-        let kernel = |name: &str, k: usize| -> Result<_, String> {
-            let mut run = launch(&q, program.function(name)?)
-                .buffer_at("t", &self.table, self.at)
-                .buffer("slots", &self.slots)
-                .buffer("p", &self.params)
-                .value("ph", &PhaseP { k: k as u32, pad: 0 })
-                .buffer_at("ctl", &self.state, ctl_at)
-                .buffer_at("meter", &self.state, meter_at);
-            for r in &self.reached {
-                run = run.uses(r);
-            }
-            Ok(run)
-        };
+        // Each phase: its count kernel (which sizes its dispatch), then each turn's dispatch, a round phase's each
+        // followed by its `again` kernel (which sizes the next turn's, or none).
+        // A measurement: each phase its own command, waited for, its time printed (the same work, in order).
+        let split = std::env::var_os("RERAIL_DELTA_SPLIT").is_some();
         for (k, ph) in phases.iter().enumerate() {
             let name = format!("{entry}_{}", ph.name);
             let threads = if ph.group { u64::from(DELTA_TG) } else { GROUP };
-            for _ in 0..ph.turns {
-                kernel(&format!("{name}_items"), k)?.run(&[1], &[1]).map_err(|e| format!("{name}_items: {e}"))?;
-                launch(&q, grid)
-                    .value("gp", &GridP { k: k as u32, group: u32::from(ph.group), threads: threads as u32, pad: 0 })
-                    .buffer_at("ctl", &self.state, ctl_at)
-                    .buffer_at("meter", &self.state, meter_at)
-                    .run(&[1], &[1])
-                    .map_err(|e| format!("{name}: its grid: {e}"))?;
-                kernel(&name, k)?.run_indirect(&self.state, ctl_at + 4 * (2 * PHASES + 3 * k) as u64, &[MAX_GROUPS], &[threads]).map_err(|e| format!("{name}: {e}"))?;
-                if ph.rounds {
-                    kernel(&format!("{name}_again"), k)?.run(&[1], &[1]).map_err(|e| format!("{name}_again: {e}"))?;
+            let at = std::time::Instant::now();
+            {
+                let kernel = |name: &str, k: usize, group: bool| -> Result<_, String> {
+                    let mut run = launch(&q, program.function(name)?)
+                        .buffer_at("t", &self.table, self.at)
+                        .buffer("slots", &self.slots)
+                        .buffer("p", &self.params)
+                        .value("ph", &PhaseP { k: k as u32, group: u32::from(group) })
+                        .buffer_at("ctl", &self.state, ctl_at)
+                        .buffer_at("meter", &self.state, meter_at);
+                    for r in &self.reached {
+                        run = run.uses(r);
+                    }
+                    Ok(run)
+                };
+                kernel(&format!("{name}_items"), k, ph.group)?.run(&[1], &[1]).map_err(|e| format!("{name}_items: {e}"))?;
+                for _ in 0..ph.turns {
+                    kernel(&name, k, ph.group)?.run_indirect(&self.state, ctl_at + 4 * (2 * PHASES + 3 * k) as u64, &[MAX_GROUPS], &[threads]).map_err(|e| format!("{name}: {e}"))?;
+                    if ph.rounds {
+                        kernel(&format!("{name}_again"), k, ph.group)?.run(&[1], &[1]).map_err(|e| format!("{name}_again: {e}"))?;
+                    }
                 }
             }
+            if split {
+                q.flush().await_().map_err(|e| format!("{name}: {e}"))?;
+                eprintln!("delta-phase {name} {} us", at.elapsed().as_micros());
+            }
         }
+        let encoded = began.elapsed();
         q.flush().await_().map_err(|e| format!("{entry}: {e}"))?;
+        if std::env::var_os("RERAIL_KERNEL_TIMES").is_some() {
+            eprintln!("delta-launch {entry} {} us (encoded in {} us, {} buffers reached)", began.elapsed().as_micros(), encoded.as_micros(), self.reached.len());
+        }
         let words = transfer_to_host_sync::<u64>(&self.state, STATE_WORDS.div_ceil(2));
         let word = |k: usize| (words[k / 2] >> (32 * (k % 2)) & 0xFFFF_FFFF) as u32;
         for (k, n) in meter.needs.iter_mut().enumerate() {
@@ -246,13 +237,13 @@ impl OnDevice for GpuBound {
             return Err(format!("{entry}: the kernel refused the launch (why {}): one its kernels do not do", word(3 * MAX_SLOTS)));
         }
         let overflowed = word(3 * MAX_SLOTS + 1) != 0;
-        // Each phase's turns: a round phase's until its `again` said no more; one still going ran past its bound.
+        // Each phase's turns run (its count kernel's); a round phase still going after its bound ran past it.
         let mut turns = Vec::with_capacity(phases.len()); // copy: not block data (the turns each phase ran)
         for (k, ph) in phases.iter().enumerate() {
             if ph.rounds && word(CTL_AT + PHASES + k) != 0 && !overflowed {
                 return Err(format!("{entry}: phase {} ran past its bound of {} turns", ph.name, ph.turns));
             }
-            turns.push(ph.turns);
+            turns.push(word(CTL_AT + TURNS_AT + k));
         }
         Ok(turns)
     }

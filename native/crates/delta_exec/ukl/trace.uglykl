@@ -4,16 +4,18 @@
 // below, its partitions' change and its kills by partition, each frozen with its ranges and row index, each column's
 // sketch of the state it ends, the header last.
 //
-// Five phases: `sort` (one item) sorts the source in the trace's canonical order and sums each row's diffs into the
-// rows out; `kills` (a row out an item) finds each gone row's live row below; `layer` (one item) writes the layer's
-// relations and freezes them; `sketch` (a column an item) its statistics; `seal` (one item) the header and control.
-// They write the Open encoding of a trace of no levels whose declared indexes are `Hash` ones (`layer::Shape::run`'s,
-// every executor trace's); a launch of another shape is refused (`FAULT`).
+// They run as the twins' phases do (`TRACE_UKL`), each across its items: the source sorted (each chunk's items ranked,
+// then merge passes), each run of equal rows summed, the rows out counted, scanned and placed by chunk, each one's
+// kill searched for in the state below; the partitions started, numbered and their digests summed by scans, the kills
+// sorted by partition; each column's range reduced by chunk; each hashed index's rows hashed, sorted by bucket and
+// placed, their buckets found and their marks set; then the freeze, each column's sketch, the header last. They write
+// the Open encoding of a trace of no levels whose declared indexes are `Hash` ones (`layer::Shape::run`'s, every
+// executor trace's); a launch of another shape is refused (`FAULT`).
 #include <ukl/delta/trace.h>
 #include <ukl/delta/runs.h>
 #include <ukl/delta/relw.h>
 #include <ukl/delta/sketch.h>
-#include <ukl/delta/sort.h>
+#include <ukl/delta/par.h>
 
 #define T_OUT 1u
 #define T_CTL 2u
@@ -103,7 +105,6 @@ UKL_INLINE bool src_less(Src s, uint32_t i, uint32_t j) {
     int32_t o = src_cmp(s, i, j);
     return o < 0 || (o == 0 && i < j);
 }
-DELTA_SORT(sort_items, Src, src_less)
 
 // Declared index `x` of the shape: its kind, and its key's columns.
 UKL_INLINE uint32_t shape_ix_kind(CBlk shape, uint32_t x) { return U32(shape, SHAPE_INDEXES_AT + x * SHAPE_INDEX_BYTES); }
@@ -146,64 +147,198 @@ UKL_INLINE Keys keys_of(Src s) {
     return k;
 }
 
-// ---- the work, past the header in the new block's body --------------------------------------------------------------
+// ---- the work: past the header in the new block's body, and past the working sketches in the scratch slot ----------
 
-// Its words, then its arrays of `n` (the source's items): their order, each row out's item, sign and kill, and the
-// rows added before each row out.
+// The new block's: its words, then its arrays of `n` (the source's items) and of its `ch` chunks: the sorted order
+// (two arrays, merged from one into the other; the kills' order after them), each place's segment sum, each chunk's
+// rows out and rows added before it, each row out's item, sign, kill and rows added before it, its partition start,
+// each partition's first row out, and each row out's partition (in `seg`, once the rows are placed).
 #define W_NOUT 0u
 #define W_NADD 4u
 #define W_REFUSED 8u
-#define W_ROWS 16u
+#define W_SORT 12u
+#define W_NPART 20u
+#define W_KSORT 24u
+#define W_XSORT 32u
+#define W_DIGEST 40u
+#define W_ROWS 64u
+
+UKL_INLINE uint32_t r64(uint32_t x) { return (x + 63u) & ~63u; }
 
 typedef struct Work {
     Blk b;
-    uint32_t perm, net, sgn, kid, before;
+    uint32_t n, ch, pa, pb, seg, cc, ac, net, sgn, kid, ab, st, ps;
 } Work;
 
 UKL_INLINE Work work_of(Blk out, uint32_t n) {
     Work w;
-    w.b = out + ((BODY_AT + LAYER_BODY + 63u) & ~63u);
-    w.perm = W_ROWS;
-    w.net = w.perm + 4u * n;
-    w.sgn = w.net + 4u * n;
-    w.kid = w.sgn + 4u * n;
-    w.before = w.kid + 4u * n;
+    w.b = out + r64(BODY_AT + LAYER_BODY);
+    w.n = n;
+    w.ch = (n + DELTA_CHUNK - 1u) / DELTA_CHUNK;
+    uint32_t at = W_ROWS;
+    w.pa = at; at = r64(at + 4u * n);
+    w.pb = at; at = r64(at + 4u * n);
+    w.seg = at; at = r64(at + 4u * n);
+    w.cc = at; at = r64(at + 4u * (w.ch + 1u));
+    w.ac = at; at = r64(at + 4u * (w.ch + 1u));
+    w.net = at; at = r64(at + 4u * n);
+    w.sgn = at; at = r64(at + 4u * n);
+    w.kid = at; at = r64(at + 4u * n);
+    w.ab = at; at = r64(at + 4u * (n + 1u));
+    w.st = at; at = r64(at + 4u * n);
+    w.ps = at;
     return w;
 }
 #define W(w, f, i) U32((w).b, (w).f + 4u * (i))
+UKL_INLINE bool refused(Work w) { return U32(w.b, W_REFUSED) != 0u; }
+UKL_INLINE uint32_t n_out(Work w) { return U32(w.b, W_NOUT); }
+UKL_INLINE uint32_t n_add(Work w) { return U32(w.b, W_NADD); }
 
 // The first refusal (`trace::REFUSED_*`) kept.
 UKL_INLINE void refuse(Work w, uint32_t why) { ukl_atomic_cas((UKL_GLOBAL uint32_t*)(w.b + W_REFUSED), 0u, why); }
 
-// ---- the phases -----------------------------------------------------------------------------------------------------
+// The scratch slot's, past its working sketches: each row out's digest's sum over its chunk's rows out before it, and
+// each chunk's sum before it (its total last); each column range's part over a chunk of `STAT_ROWS` rows; and the
+// hashed indexes' elements (an index's rows, index by index): each one's hash, and their order (two arrays).
+#define STAT_ROWS 1024u
+UKL_INLINE uint32_t stat_max(uint32_t n) { return (MAX_COLS + 8u) * (n / STAT_ROWS + 1u); }
 
-// `sort`: the items sorted, each run of equal rows summed (a sum past ±1 refused, a zero dropped), and the rows out
-// listed: each one's item, sign, and the rows added before it.
-UKL_INLINE void phase_sort(Src s, Work w, UKL_GLOBAL uint32_t* meter) {
-    if (!src_written(s)) { FAULT(1u); return; }
-    U32(w.b, W_REFUSED) = 0u;
-    for (uint32_t i = 0u; i < s.n; i++) W(w, perm, i) = i;
-    sort_items(s, (CLIF_BLOCK_SPACE uint32_t*)(w.b + w.perm), s.n);
-    uint32_t o = 0u, added = 0u;
-    for (uint32_t i = 0u; i < s.n;) {
-        int32_t sum = 0;
-        uint32_t j = i;
-        for (; j < s.n && src_cmp(s, W(w, perm, j), W(w, perm, i)) == 0; j++) sum += src_diff(s, W(w, perm, j));
-        if (sum < -1 || sum > 1) refuse(w, TRACE_REFUSED_SUM);
-        if (sum != 0) {
-            W(w, net, o) = W(w, perm, i);
-            W(w, sgn, o) = sum > 0 ? 1u : 0xFFFFFFFFu;
-            W(w, before, o) = added;
-            added += sum > 0 ? 1u : 0u;
-            o++;
-        }
-        i = j;
-    }
-    W(w, before, o) = added;
-    U32(w.b, W_NOUT) = o;
-    U32(w.b, W_NADD) = added;
+typedef struct Sw {
+    Blk b;
+    uint32_t dg, ds, sp, xh, xa, xb, end;
+} Sw;
+
+UKL_INLINE Sw sw_of(Blk scratch, uint32_t n, uint32_t nx) {
+    Sw x;
+    x.b = scratch;
+    uint32_t at = r64(BODY_AT) + (4u << 20), ch = (n + DELTA_CHUNK - 1u) / DELTA_CHUNK;
+    x.dg = at; at = r64(at + 8u * n);
+    x.ds = at; at = r64(at + 8u * (ch + 1u));
+    x.sp = at; at = r64(at + 16u * stat_max(n));
+    x.xh = at; at = r64(at + 8u * nx);
+    x.xa = at; at = r64(at + 4u * nx);
+    x.xb = at; at = r64(at + 4u * nx);
+    x.end = at;
+    return x;
 }
 
+// ---- the sorts' orders --------------------------------------------------------------------------------------------
+
+// The source's items in the canonical order, ties by item.
+DELTA_CHUNK_RANK(src_rank, Src, src_less)
+DELTA_MERGE_PLACE(src_place, Src, src_less)
+
+// The rows out by partition, then kill (an added row's NONE last), then row out.
+typedef struct KCtx {
+    Blk b;
+    uint32_t pn, kid;
+} KCtx;
+UKL_INLINE KCtx kctx(Work w) {
+    KCtx c;
+    c.b = w.b;
+    c.pn = w.seg;
+    c.kid = w.kid;
+    return c;
+}
+UKL_INLINE bool kill_less(KCtx c, uint32_t x, uint32_t y) {
+    uint32_t px = U32(c.b, c.pn + 4u * x), py = U32(c.b, c.pn + 4u * y);
+    if (px != py) return px < py;
+    uint32_t kx = U32(c.b, c.kid + 4u * x), ky = U32(c.b, c.kid + 4u * y);
+    if (kx != ky) return kx < ky;
+    return x < y;
+}
+DELTA_CHUNK_RANK(kill_rank, KCtx, kill_less)
+DELTA_MERGE_PLACE(kill_place, KCtx, kill_less)
+
+// An index's elements (`e`: index `e / live`, row `e % live`) by index, then bucket (its hash under the mask), then row.
+typedef struct XCtx {
+    Blk b;
+    uint32_t xh, live, mask;
+} XCtx;
+UKL_INLINE bool ix_less(XCtx c, uint32_t x, uint32_t y) {
+    uint32_t ix = x / c.live, iy = y / c.live;
+    if (ix != iy) return ix < iy;
+    uint32_t bx = (uint32_t)U64(c.b, c.xh + 8u * x) & c.mask, by = (uint32_t)U64(c.b, c.xh + 8u * y) & c.mask;
+    if (bx != by) return bx < by;
+    return x < y;
+}
+DELTA_CHUNK_RANK(ix_rank, XCtx, ix_less)
+DELTA_MERGE_PLACE(ix_place, XCtx, ix_less)
+
+// ---- the phases -----------------------------------------------------------------------------------------------------
+//
+// Each one over its items, a lane or a threadgroup an item (`TRACE_UKL`): the work's words a phase reads were written
+// by the phases before it, so a phase's items are counted after them (and none, once refused).
+
+// `sort`: the source checked (a shape the kernels write), the work's words set; each item placed in its chunk.
+UKL_INLINE uint32_t sort_items(Src s, Work w, UKL_GLOBAL uint32_t* meter) {
+    if (!src_written(s)) { FAULT(1u); return 0u; }
+    U32(w.b, W_REFUSED) = 0u;
+    delta_sort_start(w.b, W_SORT);
+    delta_sort_start(w.b, W_KSORT);
+    delta_sort_start(w.b, W_XSORT);
+    return s.n;
+}
+
+// `segments`: at each place that starts a run of equal rows, the run's diffs summed (past ±1 refused, a zero dropped).
+UKL_INLINE void phase_segments(Src s, Work w, uint32_t i) {
+    uint32_t perm = delta_sort_from(w.b, W_SORT, w.pa, w.pb);
+#define P_(j) U32(w.b, perm + 4u * (j))
+    if (i > 0u && src_cmp(s, P_(i - 1u), P_(i)) == 0) { I32(w.b, w.seg + 4u * i) = 0; return; }
+    int32_t sum = 0;
+    for (uint32_t j = i; j < s.n && (j == i || src_cmp(s, P_(j), P_(i)) == 0); j++) sum += src_diff(s, P_(j));
+#undef P_
+    if (sum < -1 || sum > 1) refuse(w, TRACE_REFUSED_SUM);
+    I32(w.b, w.seg + 4u * i) = sum < -1 ? -1 : sum > 1 ? 1 : sum;
+}
+
+// `open`: the layer's three relations made in its block (its rows continuing the layer below), the freeze's
+// directories laid out, its rows added and its kills claimed, the header laid out, open; the scratch the later phases
+// work in reached.
+UKL_INLINE void phase_open(Src s, Work w, Blk out, Sw x, uint32_t scratch_k, UKL_GLOBAL uint32_t* meter) {
+    uint32_t a = src_arity(s), no = n_out(w), na = n_add(w), ng = no - na;
+    uint32_t widths[MAX_COLS];
+    for (uint32_t c = 0u; c < a; c++) widths[c] = s.shape[SHAPE_TYPES_AT + c] == 1u ? 8u : ROWS_I32;
+    const uint32_t pw[6] = {ROWS_I32, 8u, 4u, 4u, 4u, 4u}, gw[2] = {ROWS_I32, 4u};
+    uint32_t rows = rel_create(out, meter, T_OUT, widths, a, s.shape[SHAPE_ORDER_AT], na);
+    uint32_t parts = rel_create(out, meter, T_OUT, pw, 6u, 0u, no);
+    uint32_t gone = rel_create(out, meter, T_OUT, gw, 2u, 0u, ng);
+    if (rows == NONE || parts == NONE || gone == NONE) return;
+    if (s.below != NONE) {
+        Layer lb = layer_of(s.t, s.below);
+        rel_continue_far(out, rows, s.below, (uint32_t)U64(blk(s.t, s.below), LAYER_ROWS_AT), lb.end);
+    }
+    if (!rel_open(out, meter, T_OUT, rows, keys_of(s).n, true) || !rel_open(out, meter, T_OUT, parts, 0u, false) || !rel_open(out, meter, T_OUT, gone, 0u, false)) return;
+    if (!rel_claim_rows(out, meter, T_OUT, rows, na) || !rel_claim_rows(out, meter, T_OUT, gone, ng)) return;
+    U64(out, LAYER_LEN_AT) = LAYER_BODY;
+    U32(out, LAYER_MAGIC_AT) = LAYER_MAGIC;
+    U32(out, LAYER_STATE_AT) = LAYER_OPEN;
+    U64(out, LAYER_ROWS_AT) = rows;
+    U64(out, LAYER_PARTS_AT) = parts;
+    U64(out, LAYER_GONE_AT) = gone;
+    for (uint32_t q = LAYER_ADDED_AT; q < LAYER_SHAPE_AT; q += 4u) U32(out, q) = 0u;
+    for (uint32_t q = 0u; q < SHAPE_BYTES; q += 4u) U32(out, LAYER_SHAPE_AT + q) = U32(s.shape, q);
+    REACH(scratch_k, x.end);
+}
+UKL_INLINE uint32_t rows_rel(CBlk out) { return (uint32_t)U64(out, LAYER_ROWS_AT); }
+UKL_INLINE uint32_t parts_rel(CBlk out) { return (uint32_t)U64(out, LAYER_PARTS_AT); }
+UKL_INLINE uint32_t gone_rel(CBlk out) { return (uint32_t)U64(out, LAYER_GONE_AT); }
+
+// `place`, a chunk a threadgroup: each row out's item, sign and rows added before it, at its place (the chunk's rows
+// out before it and the group's scan); each row added's values at its own.
+UKL_INLINE void phase_place(Src s, Work w, Blk out, uint32_t k, uint32_t lid, uint32_t lsz, UKL_LOCAL uint32_t* scratch __UKL_PARAMS) {
+    uint32_t i = k * DELTA_CHUNK + lid;
+    int32_t v = i < s.n ? I32(w.b, w.seg + 4u * i) : 0;
+    UklScan o = ukl_tg_exclusive_sum(v != 0 ? 1u : 0u, lid, lsz, scratch __UKL_ARGS);
+    UklScan a = ukl_tg_exclusive_sum(v > 0 ? 1u : 0u, lid, lsz, scratch __UKL_ARGS);
+    if (v == 0) return;
+    uint32_t at = W(w, cc, k) + o.exclusive, added = W(w, ac, k) + a.exclusive, item = U32(w.b, delta_sort_from(w.b, W_SORT, w.pa, w.pb) + 4u * i);
+    W(w, net, at) = item;
+    W(w, sgn, at) = v > 0 ? 1u : 0xFFFFFFFFu;
+    W(w, ab, at) = added;
+    if (v > 0)
+        for (uint32_t c = 0u, n = src_arity(s); c < n; c++) rel_put(out, rows_rel(out), added, c, src_get(s, item, c));
+}
 // Whether layer `l`'s row `id` is item `i`, in every column.
 UKL_INLINE bool row_is(Src s, Layer l, uint32_t id, uint32_t i) {
     for (uint32_t c = 0u, a = src_arity(s); c < a; c++)
@@ -266,14 +401,7 @@ UKL_INLINE void phase_kill(Src s, Work w, uint32_t o) {
     W(w, kid, o) = gone ? live : NONE;
 }
 
-// Row out `o`'s partition: its item's value in the partition column (0 without one).
-UKL_INLINE int64_t part_of(Src s, Work w, uint32_t o) {
-    uint32_t pc = U32(s.shape, SHAPE_PARTITION_AT);
-    return pc == NONE ? 0 : src_get(s, W(w, net, o), pc);
-}
 
-UKL_INLINE bool u32_less(uint32_t c, uint32_t x, uint32_t y) { return x < y; }
-DELTA_SORT(sort_u32, uint32_t, u32_less)
 
 // One row's hash in a set's digest (`hash::row_digest`).
 UKL_INLINE uint64_t item_digest(Src s, uint32_t i) {
@@ -282,68 +410,266 @@ UKL_INLINE uint64_t item_digest(Src s, uint32_t i) {
     return clif_rel_key_mix((CLIF_BLOCK_SPACE const uint8_t*)0, 0u, h, 0x5eedu);
 }
 
-// `layer`: the layer's three relations made in its block (its rows continuing the layer below), its rows added
-// written, each partition's change and its kills ascending, each column's range, its hashed indexes, each frozen; the
-// header laid out, open. Its room claimed from the block's front.
-UKL_INLINE void phase_layer(Src s, Work w, Blk out, UKL_GLOBAL uint32_t* meter) {
-    if (U32(w.b, W_REFUSED) != 0u) return;
-    uint32_t a = src_arity(s), n_out = U32(w.b, W_NOUT), n_add = U32(w.b, W_NADD), n_gone = n_out - n_add;
-    uint32_t widths[MAX_COLS];
-    for (uint32_t c = 0u; c < a; c++) widths[c] = s.shape[SHAPE_TYPES_AT + c] == 1u ? 8u : ROWS_I32;
-    const uint32_t pw[6] = {ROWS_I32, 8u, 4u, 4u, 4u, 4u}, gw[2] = {ROWS_I32, 4u};
-    uint32_t rows = rel_create(out, meter, T_OUT, widths, a, s.shape[SHAPE_ORDER_AT], n_add);
-    uint32_t parts = rel_create(out, meter, T_OUT, pw, 6u, 0u, n_out);
-    uint32_t gone = rel_create(out, meter, T_OUT, gw, 2u, 0u, n_gone);
-    if (rows == NONE || parts == NONE || gone == NONE) return;
-    if (s.below != NONE) {
-        Layer lb = layer_of(s.t, s.below);
-        rel_continue_far(out, rows, s.below, (uint32_t)U64(blk(s.t, s.below), LAYER_ROWS_AT), lb.end);
-    }
-    if (!rel_open(out, meter, T_OUT, rows, keys_of(s).n, true) || !rel_open(out, meter, T_OUT, parts, 0u, false) || !rel_open(out, meter, T_OUT, gone, 0u, false)) return;
-    if (!rel_claim_rows(out, meter, T_OUT, rows, n_add) || !rel_claim_rows(out, meter, T_OUT, gone, n_gone)) return;
-    for (uint32_t o = 0u; o < n_out; o++)
-        if (W(w, sgn, o) == 1u)
-            for (uint32_t c = 0u; c < a; c++) rel_put(out, rows, W(w, before, o), c, src_get(s, W(w, net, o), c));
-    // The partitions: the rows out lie in the canonical order, the partition first, so each is a range of them.
-    uint32_t np = 0u;
-    for (uint32_t o = 0u; o < n_out; o++) np += o == 0u || part_of(s, w, o) != part_of(s, w, o - 1u) ? 1u : 0u;
-    if (!rel_claim_rows(out, meter, T_OUT, parts, np)) return;
-    for (uint32_t e = 0u, k = 0u; e < n_out; k++) {
-        uint32_t st = e;
-        int64_t part = part_of(s, w, st);
-        uint64_t digest = 0u;
-        for (; e < n_out && part_of(s, w, e) == part; e++) {
-            uint64_t d = item_digest(s, W(w, net, e));
-            digest = W(w, sgn, e) == 1u ? digest + d : digest - d;
+
+
+// Row out `o`'s partition: its item's value in the partition column (0 without one).
+UKL_INLINE int64_t part_of(Src s, Work w, uint32_t o) {
+    uint32_t pc = U32(s.shape, SHAPE_PARTITION_AT);
+    return pc == NONE ? 0 : src_get(s, W(w, net, o), pc);
+}
+
+// `pstarts`: whether row out `o` starts a partition (the rows out lie in the canonical order, the partition first).
+UKL_INLINE void phase_pstarts(Src s, Work w, uint32_t o) { W(w, st, o) = o == 0u || part_of(s, w, o) != part_of(s, w, o - 1u) ? 1u : 0u; }
+
+// `pscan` (one threadgroup): the starts numbered, each partition's first row out (the end after the last), each row
+// out's partition (into `seg`); a row of `parts` claimed a partition.
+UKL_INLINE void phase_pscan(Work w, Blk out, uint32_t lid, uint32_t lsz, UKL_LOCAL uint32_t* scratch, UKL_GLOBAL uint32_t* meter __UKL_PARAMS) {
+    uint32_t n = n_out(w), run = 0u;
+    for (uint32_t base = 0u; base < n; base += lsz) {
+        uint32_t o = base + lid, f = o < n ? W(w, st, o) : 0u;
+        UklScan r = ukl_tg_exclusive_sum(f, lid, lsz, scratch __UKL_ARGS);
+        if (o < n) {
+            if (f != 0u) W(w, ps, run + r.exclusive) = o;
+            W(w, seg, o) = run + r.exclusive + f - 1u;
         }
-        uint32_t first = W(w, before, st), add = W(w, before, e) - first, kills = (e - st) - add, kills_at = st - first;
-        const int64_t row[6] = {part, (int64_t)digest, add, kills, first, kills_at};
-        for (uint32_t c = 0u; c < 6u; c++) rel_put(out, parts, k, c, row[c]);
-        // Its kills ascending (an added row's NONE last).
-        sort_u32(0u, (CLIF_BLOCK_SPACE uint32_t*)(w.b + w.kid + 4u * st), e - st);
-        for (uint32_t j = 0u; j < kills; j++) {
-            rel_put(out, gone, kills_at + j, 0u, part);
-            rel_put(out, gone, kills_at + j, 1u, W(w, kid, st + j));
-        }
+        run += r.total;
     }
-    for (uint32_t c = 0u; c < a; c++) rel_stat(out, rows, c);
-    for (uint32_t c = 0u; c < 6u; c++) rel_stat(out, parts, c);
-    for (uint32_t c = 0u; c < 2u; c++) rel_stat(out, gone, c);
-    Keys keys = keys_of(s);
-    for (uint32_t x = 0u; x < keys.n; x++)
-        if (!rel_index(out, meter, T_OUT, rows, x, keys.cols[x], keys.len[x])) return;
-    rel_seal(out, rows, s.shape[SHAPE_ORDER_AT], keys.n);
-    rel_seal(out, parts, 0u, 0u);
-    rel_seal(out, gone, 0u, 0u);
-    // The header, open: its relations, its shape.
-    U64(out, LAYER_LEN_AT) = LAYER_BODY;
-    U32(out, LAYER_MAGIC_AT) = LAYER_MAGIC;
-    U32(out, LAYER_STATE_AT) = LAYER_OPEN;
-    U64(out, LAYER_ROWS_AT) = rows;
-    U64(out, LAYER_PARTS_AT) = parts;
-    U64(out, LAYER_GONE_AT) = gone;
-    for (uint32_t x = LAYER_ADDED_AT; x < LAYER_SHAPE_AT; x += 4u) U32(out, x) = 0u;
-    for (uint32_t x = 0u; x < SHAPE_BYTES; x += 4u) U32(out, LAYER_SHAPE_AT + x) = U32(s.shape, x);
+    if (lid != 0u) return;
+    W(w, ps, run) = n;
+    U32(w.b, W_NPART) = run;
+    rel_claim_rows(out, meter, T_OUT, parts_rel(out), run);
+}
+
+// `digests`, a chunk of rows out a threadgroup: each row out's digest (taken for a row gone), summed over the rows out
+// of its chunk before it; the chunk's sum.
+UKL_INLINE void phase_digests(Src s, Work w, Sw x, uint32_t k, uint32_t lid, uint32_t lsz, UKL_LOCAL uint32_t* sh __UKL_PARAMS) {
+    uint32_t o = k * DELTA_CHUNK + lid, n = n_out(w);
+    uint64_t d = 0u;
+    if (o < n) {
+        d = item_digest(s, W(w, net, o));
+        d = W(w, sgn, o) == 1u ? d : 0u - d;
+    }
+    UklScan64 r = ukl_tg_exclusive_sum_u64(d, lid, lsz, sh __UKL_ARGS);
+    if (o < n) U64(x.b, x.dg + 8u * o) = r.exclusive;
+    if (lid == 0u) U64(x.b, x.ds + 8u * k) = r.total;
+}
+
+// `dscan` (one threadgroup): the chunks' sums scanned, the total after them and into the work.
+UKL_INLINE void phase_dscan(Work w, Sw x, uint32_t lid, uint32_t lsz, UKL_LOCAL uint32_t* sh __UKL_PARAMS) {
+    uint32_t n = (n_out(w) + DELTA_CHUNK - 1u) / DELTA_CHUNK;
+    uint64_t run = 0u;
+    for (uint32_t base = 0u; base < n; base += lsz) {
+        uint32_t k = base + lid;
+        uint64_t v = k < n ? U64(x.b, x.ds + 8u * k) : 0u;
+        UklScan64 r = ukl_tg_exclusive_sum_u64(v, lid, lsz, sh __UKL_ARGS);
+        if (k < n) U64(x.b, x.ds + 8u * k) = run + r.exclusive;
+        run += r.total;
+    }
+    if (lid != 0u) return;
+    U64(x.b, x.ds + 8u * n) = run;
+    U64(w.b, W_DIGEST) = run;
+}
+
+// The digests of rows out `0..o` summed.
+UKL_INLINE uint64_t digest_before(Work w, Sw x, uint32_t o) {
+    uint32_t n = n_out(w);
+    if (o == n) return U64(x.b, x.ds + 8u * ((n + DELTA_CHUNK - 1u) / DELTA_CHUNK));
+    return U64(x.b, x.ds + 8u * (o / DELTA_CHUNK)) + U64(x.b, x.dg + 8u * o);
+}
+
+// Partition `q`'s rows out `[s, e)`: its first row added, rows added, kills, and where its kills start.
+typedef struct Part {
+    uint32_t s, e, first, added, kills, kills_at;
+} Part;
+UKL_INLINE Part part_at(Work w, uint32_t q) {
+    Part r;
+    r.s = W(w, ps, q);
+    r.e = W(w, ps, q + 1u);
+    r.first = W(w, ab, r.s);
+    r.added = W(w, ab, r.e) - r.first;
+    r.kills = (r.e - r.s) - r.added;
+    r.kills_at = r.s - r.first;
+    return r;
+}
+
+// `parts`, a partition an item: its change (P§11.2's partition index), `parts(part, digest, added, gone, first,
+// kills_at)`.
+UKL_INLINE void phase_parts(Src s, Work w, Sw x, Blk out, uint32_t q) {
+    Part r = part_at(w, q);
+    const int64_t row[6] = {part_of(s, w, r.s), (int64_t)(digest_before(w, x, r.e) - digest_before(w, x, r.s)), r.added, r.kills, r.first, r.kills_at};
+    for (uint32_t c = 0u; c < 6u; c++) rel_put(out, parts_rel(out), q, c, row[c]);
+}
+
+// `gone`, a place of the rows out in the kills' order an item: a partition's kills, ascending, at its `kills_at` of
+// `gone(part, id)` (an added row's NONE sorted after them).
+UKL_INLINE void phase_gone(Src s, Work w, Blk out, uint32_t q) {
+    uint32_t o = U32(w.b, delta_sort_from(w.b, W_KSORT, w.pa, w.pb) + 4u * q);
+    Part r = part_at(w, W(w, seg, o));
+    uint32_t j = q - r.s;
+    if (j >= r.kills) return;
+    rel_put(out, gone_rel(out), r.kills_at + j, 0u, part_of(s, w, r.s));
+    rel_put(out, gone_rel(out), r.kills_at + j, 1u, W(w, kid, o));
+}
+
+// ---- the ranges: a column's chunk of rows a threadgroup, then a column a lane -------------------------------------
+
+// The relations whose columns' ranges are taken: the layer's rows, `parts`, `gone`; each one's columns, and chunks of
+// `STAT_ROWS` rows.
+typedef struct Stats {
+    uint32_t rel[3], cols[3], chunks[3];
+} Stats;
+UKL_INLINE Stats stats_of(CBlk out, uint32_t a) {
+    Stats r;
+    r.rel[0] = rows_rel(out);
+    r.rel[1] = parts_rel(out);
+    r.rel[2] = gone_rel(out);
+    r.cols[0] = a;
+    r.cols[1] = 6u;
+    r.cols[2] = 2u;
+    for (uint32_t q = 0u; q < 3u; q++) r.chunks[q] = (rel_own_len(out, r.rel[q]) + STAT_ROWS - 1u) / STAT_ROWS;
+    return r;
+}
+UKL_INLINE uint32_t stat_items(Stats r) { return r.cols[0] * r.chunks[0] + r.cols[1] * r.chunks[1] + r.cols[2] * r.chunks[2]; }
+
+// `stats`, item `k` (a relation's column's chunk, in that order): the chunk's least and greatest values.
+UKL_INLINE void phase_stats(Blk out, Sw x, Stats r, uint32_t k, uint32_t lid, uint32_t lsz, UKL_LOCAL uint32_t* sh __UKL_PARAMS) {
+    uint32_t q = 0u, item = k;
+    while (item >= r.cols[q] * r.chunks[q]) {
+        item -= r.cols[q] * r.chunks[q];
+        q++;
+    }
+    uint32_t c = item / r.chunks[q], chunk = item % r.chunks[q], n = rel_own_len(out, r.rel[q]);
+    uint32_t hi_row = (chunk + 1u) * STAT_ROWS < n ? (chunk + 1u) * STAT_ROWS : n;
+    int64_t lo = 0x7FFFFFFFFFFFFFFFll, hi = -0x7FFFFFFFFFFFFFFFll - 1;
+    for (uint32_t j = chunk * STAT_ROWS + lid; j < hi_row; j += lsz) {
+        int64_t v = rel_own(out, r.rel[q], j, c);
+        lo = v < lo ? v : lo;
+        hi = v > hi ? v : hi;
+    }
+    lo = (int64_t)ukl_tg_reduce64(UKL_MIN_I64, (uint64_t)lo, lid, lsz, sh __UKL_ARGS);
+    hi = (int64_t)ukl_tg_reduce64(UKL_MAX_I64, (uint64_t)hi, lid, lsz, sh __UKL_ARGS);
+    if (lid != 0u) return;
+    I64(x.b, x.sp + 16u * k) = lo;
+    I64(x.b, x.sp + 16u * k + 8u) = hi;
+}
+
+// `ranges`, a column an item (the rows', then `parts`', then `gone`'s): its chunks' ranges into its statistics.
+UKL_INLINE void phase_ranges(Blk out, Sw x, Stats r, uint32_t k) {
+    uint32_t q = 0u, c = k, base = 0u;
+    while (c >= r.cols[q]) {
+        base += r.cols[q] * r.chunks[q];
+        c -= r.cols[q];
+        q++;
+    }
+    base += c * r.chunks[q];
+    int64_t lo = 0x7FFFFFFFFFFFFFFFll, hi = -0x7FFFFFFFFFFFFFFFll - 1;
+    for (uint32_t j = 0u; j < r.chunks[q]; j++) {
+        int64_t l = I64(x.b, x.sp + 16u * (base + j)), h = I64(x.b, x.sp + 16u * (base + j) + 8u);
+        lo = l < lo ? l : lo;
+        hi = h > hi ? h : hi;
+    }
+    uint32_t sp = span_at(out, r.rel[q] + REL_STATS_AT, 8u);
+    I64(out, sp + 16u * c) = lo;
+    I64(out, sp + 16u * c + 8u) = hi;
+}
+
+// ---- the hashed indexes (`rel_index`'s, made by phases): elements hashed, sorted by bucket, placed, marked ----------
+
+// The rows' indexes: their keys, the rows (`live`, ids from `br`), the buckets (a power of two at least `live`).
+typedef struct Ix {
+    Keys keys;
+    uint32_t rows, live, br, cap;
+} Ix;
+UKL_INLINE Ix ix_of(Src s, CBlk out) {
+    Ix r;
+    r.keys = keys_of(s);
+    r.rows = rows_rel(out);
+    r.live = rel_own_len(out, r.rows);
+    r.br = U32(out, r.rows + REL_BASE_ROWS_AT);
+    r.cap = 1u;
+    while (r.cap < r.live) r.cap *= 2u;
+    return r;
+}
+// Index `k`'s directory entry, and whether it is an ordered one (no buckets).
+UKL_INLINE uint32_t ix_entry(CBlk out, Ix r, uint32_t k) { return span_at(out, r.rows + REL_INDEXES_AT, 8u) + k * INDEX_BYTES; }
+UKL_INLINE bool ix_ordered(CBlk out, Ix r, uint32_t k) { return U32(out, ix_entry(out, r, k) + INDEX_ORDERED_AT) != 0u; }
+UKL_INLINE XCtx xctx(Sw x, Ix r) {
+    XCtx c;
+    c.b = x.b;
+    c.xh = x.xh;
+    c.live = r.live;
+    c.mask = r.cap - 1u;
+    return c;
+}
+
+// `ixopen` (one item): each index's entry: its key; an ordered entry for a key of the one sort column, else its
+// buckets' starts and its rows and marks claimed.
+UKL_INLINE void phase_ixopen(Blk out, Ix r, UKL_GLOBAL uint32_t* meter) {
+    for (uint32_t k = 0u; k < r.keys.n; k++) {
+        uint32_t ix = ix_entry(out, r, k), nk = r.keys.len[k];
+        U32(out, ix + INDEX_NCOLS_AT) = nk;
+        for (uint32_t q = 0u; q < nk; q++) *(CLIF_BLOCK_SPACE uint16_t*)(out + ix + INDEX_KEY_AT + 2u * q) = (uint16_t)r.keys.cols[k][q];
+        if (nk == 1u && U32(out, r.rows + REL_NOKEY_AT) == 1u && *(CLIF_BLOCK_SPACE uint16_t*)(out + r.rows + REL_OKEY_AT) == r.keys.cols[k][0]) {
+            U32(out, ix + INDEX_ORDERED_AT) = 1u;
+            continue;
+        }
+        uint32_t offs = claim(meter, T_OUT, 4u * (r.cap + 1u), 8u), rows = claim(meter, T_OUT, 8u * (r.live > 1u ? r.live : 1u), 8u);
+        if (offs == NONE || rows == NONE) return;
+        U64(out, ix + INDEX_MASK_AT) = (uint64_t)(r.cap - 1u);
+        span_set(out, ix + INDEX_OFFS_AT, offs, r.cap + 1u, 4u);
+        span_set(out, ix + INDEX_ROWS_AT, rows, r.live, 4u);
+        span_set(out, ix + INDEX_MARKS_AT, rows + 4u * r.live, r.live, 4u);
+    }
+}
+
+// `ixhash`, an element an item: its row's hash on its index's key.
+UKL_INLINE void phase_ixhash(Blk out, Sw x, Ix r, uint32_t e) {
+    uint32_t k = e / r.live;
+    U64(x.b, x.xh + 8u * e) = ix_ordered(out, r, k) ? 0u : own_hash(out, r.rows, e % r.live, r.keys.cols[k], r.keys.len[k]);
+}
+
+// `ixplace`, a place of the elements in their order an item: its index's row and mark there.
+UKL_INLINE void phase_ixplace(Blk out, Sw x, Ix r, uint32_t sorted, uint32_t q) {
+    uint32_t k = q / r.live, at = q % r.live, ix = ix_entry(out, r, k);
+    if (ix_ordered(out, r, k)) return;
+    uint32_t e = U32(x.b, sorted + 4u * q);
+    U32(out, span_at(out, ix + INDEX_ROWS_AT, 4u) + 4u * at) = r.br + e % r.live;
+    U32(out, span_at(out, ix + INDEX_MARKS_AT, 4u) + 4u * at) = (uint32_t)(U64(x.b, x.xh + 8u * e) >> 32) & ~INDEX_MARK_SAME;
+}
+
+// `ixoffs`, an index's bucket an item (`cap + 1` an index): where its rows start among its index's places.
+UKL_INLINE void phase_ixoffs(Blk out, Sw x, Ix r, uint32_t sorted, uint32_t item) {
+    uint32_t k = item / (r.cap + 1u), bucket = item % (r.cap + 1u), ix = ix_entry(out, r, k);
+    if (ix_ordered(out, r, k)) return;
+    uint32_t lo = 0u, hi = r.live;
+    while (lo < hi) {
+        uint32_t m = (lo + hi) / 2u, e = U32(x.b, sorted + 4u * (k * r.live + m));
+        if (((uint32_t)U64(x.b, x.xh + 8u * e) & (r.cap - 1u)) < bucket) lo = m + 1u; else hi = m;
+    }
+    U32(out, span_at(out, ix + INDEX_OFFS_AT, 4u) + 4u * bucket) = lo;
+}
+
+// `ixmarks`, a place an item: whether its bucket's previous place of its tag, among the `MARK_REACH` before it, holds
+// its key (decision 0671).
+UKL_INLINE void phase_ixmarks(Blk out, Sw x, Ix r, uint32_t sorted, uint32_t q) {
+    uint32_t k = q / r.live, at = q % r.live, ix = ix_entry(out, r, k);
+    if (ix_ordered(out, r, k)) return;
+    uint32_t e = U32(x.b, sorted + 4u * q);
+    uint64_t h = U64(x.b, x.xh + 8u * e);
+    uint32_t lo = U32(out, span_at(out, ix + INDEX_OFFS_AT, 4u) + 4u * ((uint32_t)h & (r.cap - 1u))), tag = (uint32_t)(h >> 32) & ~INDEX_MARK_SAME;
+    for (uint32_t u = at; u > lo && u + INDEX_MARK_REACH > at; u--) {
+        uint32_t f = U32(x.b, sorted + 4u * (k * r.live + u - 1u));
+        if (((uint32_t)(U64(x.b, x.xh + 8u * f) >> 32) & ~INDEX_MARK_SAME) != tag) continue;
+        if (own_same(out, r.rows, f % r.live, e % r.live, r.keys.cols[k], r.keys.len[k])) U32(out, span_at(out, ix + INDEX_MARKS_AT, 4u) + 4u * at) |= INDEX_MARK_SAME;
+        break;
+    }
+}
+
+// `freeze` (one item): the rows, `parts` and `gone` sealed.
+UKL_INLINE void phase_freeze(Src s, Blk out) {
+    rel_seal(out, rows_rel(out), s.shape[SHAPE_ORDER_AT], keys_of(s).n);
+    rel_seal(out, parts_rel(out), 0u, 0u);
+    rel_seal(out, gone_rel(out), 0u, 0u);
 }
 
 // `sketch`: column `c`'s sketch of the state the layer ends: the layer below's, its rows added and its kills taken,
@@ -383,44 +709,132 @@ UKL_INLINE uint64_t due_to_merge(CBlk t, uint32_t below, uint64_t size) {
     return k;
 }
 
-// `seal`: the header committed, its counts and digest from its relations (unless refused); consolidate's control.
+// `scan` (one threadgroup): the chunks' counts scanned, the totals after them: rows out, rows added.
+UKL_INLINE void phase_scan(Work w, uint32_t lid, uint32_t lsz, UKL_LOCAL uint32_t* scratch __UKL_PARAMS) {
+    uint32_t out = delta_group_scan(w.b, w.cc, w.ch, lid, lsz, scratch __UKL_ARGS);
+    uint32_t add = delta_group_scan(w.b, w.ac, w.ch, lid, lsz, scratch __UKL_ARGS);
+    if (lid != 0u) return;
+    W(w, cc, w.ch) = out;
+    W(w, ac, w.ch) = add;
+    U32(w.b, W_NOUT) = out;
+    U32(w.b, W_NADD) = add;
+    W(w, ab, out) = add;
+}
+
+// `seal` (one item): the header committed, its counts and digest (the partitions' summed, `dscan`'s) unless refused;
+// consolidate's control.
 UKL_INLINE void phase_seal(Src s, Work w, Blk out, Blk ctl) {
-    uint32_t refused = U32(w.b, W_REFUSED), added = 0u, gone = 0u;
-    if (refused == 0u) {
-        uint32_t parts = (uint32_t)U64(out, LAYER_PARTS_AT), g = (uint32_t)U64(out, LAYER_GONE_AT);
-        added = rel_own_len(out, (uint32_t)U64(out, LAYER_ROWS_AT));
-        gone = rel_own_len(out, g);
-        uint64_t digest = 0u;
-        for (uint32_t k = 0u, n = rel_own_len(out, parts); k < n; k++) digest += (uint64_t)rel_own(out, parts, k, 1u);
+    uint32_t why = U32(w.b, W_REFUSED), added = 0u, gone = 0u;
+    if (why == 0u) {
+        added = rel_own_len(out, rows_rel(out));
+        gone = rel_own_len(out, gone_rel(out));
         U32(out, LAYER_ADDED_AT) = added;
         U32(out, LAYER_NGONE_AT) = gone;
-        U32(out, LAYER_NPARTS_AT) = rel_own_len(out, parts);
-        U64(out, LAYER_DIGEST_AT) = digest;
+        U32(out, LAYER_NPARTS_AT) = rel_own_len(out, parts_rel(out));
+        U64(out, LAYER_DIGEST_AT) = U64(w.b, W_DIGEST);
         U32(out, LAYER_STATE_AT) = LAYER_COMMITTED;
     }
     if (ctl == 0) return;
     U64(ctl, BODY_AT) = TRACE_CONTROL_BYTES;
-    U64(ctl, BODY_AT + 8u) = refused;
-    U64(ctl, BODY_AT + 16u) = U32(w.b, W_NOUT);
+    U64(ctl, BODY_AT + 8u) = why;
+    U64(ctl, BODY_AT + 16u) = n_out(w);
     U64(ctl, BODY_AT + 24u) = added;
     U64(ctl, BODY_AT + 32u) = gone;
-    U64(ctl, BODY_AT + 40u) = refused == 0u ? due_to_merge(s.t, s.below, (uint64_t)added + gone) : 0u;
+    U64(ctl, BODY_AT + 40u) = why == 0u ? due_to_merge(s.t, s.below, (uint64_t)added + gone) : 0u;
 }
 
 // ---- the kernels, of each operation ---------------------------------------------------------------------------------
+//
+// A phase's count kernel reads the work its earlier phases wrote (none once the launch is over: what it reads may be
+// unwritten); its items' kernels, the same.
 
-#define SRC src_of(t, slots, p, CONS)
-#define OUT SLOT(T_OUT)
-#define WORK work_of(SLOT(T_OUT), SRC.n)
+#define TR                                                                                                          \
+    Src s = src_of(t, slots, p, CONS);                                                                              \
+    Work w = work_of(SLOT(T_OUT), s.n);                                                                             \
+    Blk out = SLOT(T_OUT)
+#define TRX                                                                                                         \
+    TR;                                                                                                             \
+    Sw x = sw_of(SLOT(SCRATCH), s.n, keys_of(s).n * n_add(w))
+#define ITEMS(name) DELTA_COUNT(name##_items) {
+#define GATE(n) (refused(w) ? 0u : (n))
+#define KC(w) kctx(w)
 
 #define TRACE_KERNELS(op)                                                                                           \
-    DELTA_ONE(op##_sort) { if (i == 0u) phase_sort(SRC, WORK, meter); }                                             \
-    DELTA_COUNT(op##_kills_items) { COUNT(U32(WORK.b, W_NOUT)); }                                   \
-    DELTA_LANES(op##_kills) { DELTA_ITEM(o); phase_kill(SRC, WORK, o); }                                           \
-    DELTA_ONE(op##_layer) { if (i == 0u) phase_layer(SRC, WORK, OUT, meter); }                                      \
-    DELTA_COUNT(op##_sketch_items) { COUNT(src_arity(SRC)); }                                       \
-    DELTA_LANES(op##_sketch) { DELTA_ITEM(c); phase_sketch(SRC, WORK, OUT, SLOT(SCRATCH), c, meter); }             \
-    DELTA_ONE(op##_seal) { if (i == 0u) phase_seal(SRC, WORK, OUT, CONTROL); }
+    ITEMS(op##_sort) TR; return sort_items(s, w, meter); }                                                          \
+    DELTA_LANES(op##_sort) { DELTA_ITEM(k); TR; W(w, pa, src_rank(s, s.n, k)) = k; }                                 \
+    ITEMS(op##_passes) TR; return delta_sort_items(w.b, W_SORT, s.n); }                                             \
+    DELTA_LANES(op##_passes) { DELTA_ITEM(k); TR; src_place_pass(s, w.b, W_SORT, w.b, w.pa, w.pb, s.n, k); }         \
+    DELTA_AGAIN(op##_passes) { TR; return delta_sort_again(w.b, W_SORT, s.n); }                                     \
+    ITEMS(op##_segments) TR; return s.n; }                                                                          \
+    DELTA_LANES(op##_segments) { DELTA_ITEM(k); TR; phase_segments(s, w, k); }                                       \
+    ITEMS(op##_count) TR; return w.ch; }                                                                            \
+    DELTA_GROUPS(op##_count) {                                                                                      \
+        DELTA_GROUP_ITEM(k);                                                                                        \
+        TR;                                                                                                         \
+        uint32_t j = k * DELTA_CHUNK + lid;                                                                         \
+        int32_t v = j < s.n ? I32(w.b, w.seg + 4u * j) : 0;                                                         \
+        uint32_t nz = ukl_tg_sum(v != 0 ? 1u : 0u, lid, lsz, scratch __UKL_ARGS);                                   \
+        uint32_t pos = ukl_tg_sum(v > 0 ? 1u : 0u, lid, lsz, scratch __UKL_ARGS);                                   \
+        if (lid == 0u) { W(w, cc, k) = nz; W(w, ac, k) = pos; }                                                     \
+    }                                                                                                               \
+    ITEMS(op##_scan) return 1u; }                                                                                   \
+    DELTA_GROUPS(op##_scan) { DELTA_GROUP_ITEM(k); TR; phase_scan(w, lid, lsz, scratch __UKL_ARGS); }               \
+    ITEMS(op##_open) TR; return GATE(1u); }                                                                         \
+    DELTA_LANES(op##_open) { DELTA_ITEM(k); TRX; phase_open(s, w, out, x, SCRATCH, meter); }                         \
+    ITEMS(op##_place) TR; return GATE(w.ch); }                                                                      \
+    DELTA_GROUPS(op##_place) { DELTA_GROUP_ITEM(k); TR; phase_place(s, w, out, k, lid, lsz, scratch __UKL_ARGS); }  \
+    ITEMS(op##_kills) TR; return GATE(n_out(w)); }                                                                  \
+    DELTA_LANES(op##_kills) { DELTA_ITEM(o); TR; phase_kill(s, w, o); }                                              \
+    ITEMS(op##_pstarts) TR; return GATE(n_out(w)); }                                                                \
+    DELTA_LANES(op##_pstarts) { DELTA_ITEM(o); TR; phase_pstarts(s, w, o); }                                         \
+    ITEMS(op##_pscan) TR; return GATE(1u); }                                                                        \
+    DELTA_GROUPS(op##_pscan) { DELTA_GROUP_ITEM(k); TR; phase_pscan(w, out, lid, lsz, scratch, meter __UKL_ARGS); } \
+    ITEMS(op##_digests) TR; return GATE((n_out(w) + DELTA_CHUNK - 1u) / DELTA_CHUNK); }                             \
+    DELTA_GROUPS(op##_digests) { DELTA_GROUP_ITEM(k); TRX; phase_digests(s, w, x, k, lid, lsz, sh __UKL_ARGS); }    \
+    ITEMS(op##_dscan) TR; return GATE(1u); }                                                                        \
+    DELTA_GROUPS(op##_dscan) { DELTA_GROUP_ITEM(k); TRX; phase_dscan(w, x, lid, lsz, sh __UKL_ARGS); }              \
+    ITEMS(op##_parts) TR; return GATE(U32(w.b, W_NPART)); }                                                         \
+    DELTA_LANES(op##_parts) { DELTA_ITEM(q); TRX; phase_parts(s, w, x, out, q); }                                    \
+    ITEMS(op##_ksort) TR; return GATE(n_out(w)); }                                                                  \
+    DELTA_LANES(op##_ksort) { DELTA_ITEM(o); TR; W(w, pa, kill_rank(KC(w), n_out(w), o)) = o; }                      \
+    ITEMS(op##_kpasses) TR; return GATE(delta_sort_items(w.b, W_KSORT, n_out(w))); }                                \
+    DELTA_LANES(op##_kpasses) { DELTA_ITEM(o); TR; kill_place_pass(KC(w), w.b, W_KSORT, w.b, w.pa, w.pb, n_out(w), o); } \
+    DELTA_AGAIN(op##_kpasses) { TR; return !refused(w) && delta_sort_again(w.b, W_KSORT, n_out(w)); }              \
+    ITEMS(op##_gone) TR; return GATE(n_out(w)); }                                                                   \
+    DELTA_LANES(op##_gone) { DELTA_ITEM(q); TR; phase_gone(s, w, out, q); }                                          \
+    ITEMS(op##_stats) TR; return GATE(stat_items(stats_of(out, src_arity(s)))); }                                  \
+    DELTA_GROUPS(op##_stats) { DELTA_GROUP_ITEM(k); TRX; phase_stats(out, x, stats_of(out, src_arity(s)), k, lid, lsz, sh __UKL_ARGS); } \
+    ITEMS(op##_ranges) TR; return GATE(src_arity(s) + 8u); }                                                        \
+    DELTA_LANES(op##_ranges) { DELTA_ITEM(c); TRX; phase_ranges(out, x, stats_of(out, src_arity(s)), c); }           \
+    ITEMS(op##_ixopen) TR; return GATE(1u); }                                                                       \
+    DELTA_LANES(op##_ixopen) { DELTA_ITEM(k); TR; phase_ixopen(out, ix_of(s, out), meter); }                         \
+    ITEMS(op##_ixhash) TR; return GATE(keys_of(s).n * n_add(w)); }                                                  \
+    DELTA_LANES(op##_ixhash) { DELTA_ITEM(e); TRX; phase_ixhash(out, x, ix_of(s, out), e); }                         \
+    ITEMS(op##_ixsort) TR; return GATE(keys_of(s).n * n_add(w)); }                                                  \
+    DELTA_LANES(op##_ixsort) {                                                                                      \
+        DELTA_ITEM(e);                                                                                              \
+        TRX;                                                                                                        \
+        U32(x.b, x.xa + 4u * ix_rank(xctx(x, ix_of(s, out)), keys_of(s).n * n_add(w), e)) = e;                      \
+    }                                                                                                               \
+    ITEMS(op##_ixpasses) TR; return GATE(delta_sort_items(w.b, W_XSORT, keys_of(s).n * n_add(w))); }                \
+    DELTA_LANES(op##_ixpasses) {                                                                                    \
+        DELTA_ITEM(e);                                                                                              \
+        TRX;                                                                                                        \
+        ix_place_pass(xctx(x, ix_of(s, out)), w.b, W_XSORT, x.b, x.xa, x.xb, keys_of(s).n * n_add(w), e);           \
+    }                                                                                                               \
+    DELTA_AGAIN(op##_ixpasses) { TR; return !refused(w) && delta_sort_again(w.b, W_XSORT, keys_of(s).n * n_add(w)); } \
+    ITEMS(op##_ixplace) TR; return GATE(keys_of(s).n * n_add(w)); }                                                 \
+    DELTA_LANES(op##_ixplace) { DELTA_ITEM(q); TRX; phase_ixplace(out, x, ix_of(s, out), delta_sort_from(w.b, W_XSORT, x.xa, x.xb), q); } \
+    ITEMS(op##_ixoffs) TR; return GATE(keys_of(s).n * (ix_of(s, out).cap + 1u)); }                                 \
+    DELTA_LANES(op##_ixoffs) { DELTA_ITEM(q); TRX; phase_ixoffs(out, x, ix_of(s, out), delta_sort_from(w.b, W_XSORT, x.xa, x.xb), q); } \
+    ITEMS(op##_ixmarks) TR; return GATE(keys_of(s).n * n_add(w)); }                                                 \
+    DELTA_LANES(op##_ixmarks) { DELTA_ITEM(q); TRX; phase_ixmarks(out, x, ix_of(s, out), delta_sort_from(w.b, W_XSORT, x.xa, x.xb), q); } \
+    ITEMS(op##_freeze) TR; return GATE(1u); }                                                                       \
+    DELTA_LANES(op##_freeze) { DELTA_ITEM(k); TR; phase_freeze(s, out); }                                            \
+    ITEMS(op##_sketch) TR; return GATE(src_arity(s)); }                                                             \
+    DELTA_LANES(op##_sketch) { DELTA_ITEM(c); TR; phase_sketch(s, w, out, SLOT(SCRATCH), c, meter); }                \
+    ITEMS(op##_seal) return 1u; }                                                                                   \
+    DELTA_LANES(op##_seal) { DELTA_ITEM(k); TR; phase_seal(s, w, out, CONTROL); }
 
 #define CONS true
 #define SCRATCH 3u

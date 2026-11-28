@@ -72,8 +72,8 @@ const VERSIONS: &[Ukl] = &[
     Ukl { sig: &NAMED_BLOCKS, module: "k0", cases: &[named_blocks_case], shape: None },
     Ukl { sig: &INTERN, module: "intern", cases: &[intern_case], shape: None },
     Ukl { sig: &K0_PASS, module: "k0", cases: &[k0_pass_case, k0_refused_case], shape: None },
-    Ukl { sig: &CONSOLIDATE, module: "trace", cases: &[consolidate_first_case, consolidate_case, consolidate_one_col_case, consolidate_wide_case], shape: Some(&crate::trace::TRACE_UKL) },
-    Ukl { sig: &MERGE, module: "trace", cases: &[merge_case], shape: Some(&crate::trace::TRACE_UKL) },
+    Ukl { sig: &CONSOLIDATE, module: "trace", cases: &[consolidate_first_case, consolidate_case, consolidate_one_col_case, consolidate_wide_case, consolidate_large_case], shape: Some(&crate::trace::TRACE_UKL) },
+    Ukl { sig: &MERGE, module: "trace", cases: &[merge_case, merge_large_case], shape: Some(&crate::trace::TRACE_UKL) },
 ];
 
 /// Each operation's UKL version checked on `device` against its twin, at `TILINGS`, and registered as the device's
@@ -426,6 +426,20 @@ fn consolidate_case(dir: &mut Directory) -> Case {
     consolidate_launch(dir, &t, &pairs)
 }
 
+/// A layer of thousands of rows over a layer below, the run's pairs in no order: its sorts take more than one merge
+/// pass, its ranges more than one chunk of rows, its kills (half the rows below, in three partitions) a sort of
+/// their own.
+fn consolidate_large_case(dir: &mut Directory) -> Case {
+    let first: Vec<(Vec<i64>, i32)> = (0..3000).map(|i| (vec![i % 3, i * 11], 1)).collect();
+    let t = trace_of(dir, two_cols(), &[first]);
+    let n = 3500i64;
+    // Pair `k` of the run, scrambled: kills of every other row below, then rows added (some pushed and taken again).
+    let pair = |k: i64| -> (Vec<i64>, i32) { if k < 1500 { (vec![(2 * k) % 3, 2 * k * 11], -1) } else { (vec![k % 3, 100_000 + k * 7], 1) } };
+    let mut pairs: Vec<(Vec<i64>, i32)> = (0..n).map(|i| pair(i * 1_201 % n)).collect();
+    pairs.extend((0..40).map(|i| (vec![1, 9_000_000 + i], 1)).chain((0..40).map(|i| (vec![1, 9_000_000 + i], -1))));
+    consolidate_launch(dir, &t, &pairs)
+}
+
 /// A trace of one column, no partition: its row index is its sorted column.
 fn consolidate_one_col_case(dir: &mut Directory) -> Case {
     let shape = Shape::run(vec![ColType::I64], vec![0], None);
@@ -454,7 +468,21 @@ fn merge_case(dir: &mut Directory) -> Case {
     let first: Vec<(Vec<i64>, i32)> = (0..60).map(|i| (vec![i % 3, i], 1)).collect();
     let second: Vec<(Vec<i64>, i32)> = (0..10).map(|i| (vec![i % 3, i], -1)).chain((100..130).map(|i| (vec![i % 3, i], 1))).collect();
     let third: Vec<(Vec<i64>, i32)> = (100..110).map(|i| (vec![i % 3, i], -1)).chain((10..15).map(|i| (vec![i % 3, i], -1))).chain((200..205).map(|i| (vec![i % 3, i], 1))).collect();
-    let t = trace_of(dir, two_cols(), &[first, second, third]);
+    merge_launch(dir, &[first, second, third])
+}
+
+/// The newest two layers of three merged, thousands of rows and kills among them: its sorts take more than one merge
+/// pass.
+fn merge_large_case(dir: &mut Directory) -> Case {
+    let first: Vec<(Vec<i64>, i32)> = (0..2000).map(|i| (vec![i % 3, i], 1)).collect();
+    let second: Vec<(Vec<i64>, i32)> = (0..2000).filter(|i| i % 4 == 1).map(|i| (vec![i % 3, i], -1)).chain((5000..7000).map(|i| (vec![i % 3, i], 1))).collect();
+    let third: Vec<(Vec<i64>, i32)> = (5000..7000).filter(|i| i % 3 == 0).map(|i| (vec![i % 3, i], -1)).chain((0..2000).filter(|i| i % 4 == 2).map(|i| (vec![i % 3, i], -1))).chain((9000..10500).map(|i| (vec![i % 3, i], 1))).collect();
+    merge_launch(dir, &[first, second, third])
+}
+
+/// The newest two of `layers` merged over the first.
+fn merge_launch(dir: &mut Directory, layers: &[Vec<(Vec<i64>, i32)>]) -> Case {
+    let t = trace_of(dir, two_cols(), layers);
     let head = t.head().expect("a head");
     let (rows, below) = {
         let l = dir.read("the merged layers", &[head]).expect("a read");

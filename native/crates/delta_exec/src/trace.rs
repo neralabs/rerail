@@ -69,20 +69,49 @@ static PIPELINE: [Phase; 19] = {
     ]
 };
 
-/// The UKL version's shape (`ukl/trace.uglykl`): the source sorted and summed (one group), each row out's kill found
-/// (a lane each), the layer written and frozen in its block (one group, its room claimed from the block's front), each
-/// column's statistics (a lane each, claimed so too), the header last.
-pub(crate) static TRACE_UKL: [Phase; 5] = {
+/// The UKL version's shape (`ukl/trace.uglykl`), the twins' phases across their items: the source sorted (each
+/// chunk's items ranked, a lane an item, then merge passes of 16 runs, rounds bounded at 6 turns: 2^30 items),
+/// each run's diffs summed, the rows out counted (a chunk a group), scanned (one group), the layer opened (one item, its
+/// room claimed from the block's front) and the rows placed (a chunk a group); each row out's kill (a lane); the
+/// partitions started, numbered (one group) and their digests summed (a chunk a group, then one), each partition's
+/// change (a lane); the kills sorted by partition and placed; each column's range (a chunk of rows a group, then a
+/// column a lane); each hashed index's rows hashed, sorted by bucket, placed, their buckets found and marked (a lane
+/// each); the freeze, each column's sketch (a lane, claimed so too), the header last.
+pub(crate) static TRACE_UKL: [Phase; 28] = {
     use Found::*;
     use Output::*;
     use Unit::*;
     const CLAIMS: &[Bound] = &[Bound::Capacity(Over::Grow)];
+    const PASSES: &[Bound] = &[Bound::Turns(6)];
     [
-        ph("sort", Fixed, Threadgroup, Inside::Nothing, Across::Nothing, ByIndex, &[]),
+        ph("sort", Fixed, Lane, Inside::Nothing, Across::Nothing, ByIndex, &[]),
+        ph("passes", Indirect, Lane, Inside::Nothing, Across::Rounds, ByIndex, PASSES),
+        ph("segments", Fixed, Lane, Inside::Nothing, Across::Nothing, ByIndex, &[]),
+        ph("count", Fixed, Threadgroup, Inside::GroupMemory, Across::Nothing, ByIndex, &[]),
+        ph("scan", Fixed, Threadgroup, Inside::GroupMemory, Across::Nothing, ByScan, &[]),
+        ph("open", Fixed, Lane, Inside::Nothing, Across::Nothing, InPlace, CLAIMS),
+        ph("place", Fixed, Threadgroup, Inside::GroupMemory, Across::Nothing, ByScan, &[]),
         ph("kills", Indirect, Lane, Inside::Nothing, Across::Nothing, ByIndex, &[]),
-        ph("layer", Fixed, Threadgroup, Inside::Nothing, Across::Nothing, InPlace, CLAIMS),
+        ph("pstarts", Indirect, Lane, Inside::Nothing, Across::Nothing, ByIndex, &[]),
+        ph("pscan", Indirect, Threadgroup, Inside::GroupMemory, Across::Nothing, ByScan, CLAIMS),
+        ph("digests", Indirect, Threadgroup, Inside::GroupMemory, Across::Nothing, ByScan, &[]),
+        ph("dscan", Indirect, Threadgroup, Inside::GroupMemory, Across::Nothing, ByScan, &[]),
+        ph("parts", Indirect, Lane, Inside::Nothing, Across::Nothing, ByIndex, &[]),
+        ph("ksort", Indirect, Lane, Inside::Nothing, Across::Nothing, ByIndex, &[]),
+        ph("kpasses", Indirect, Lane, Inside::Nothing, Across::Rounds, ByIndex, PASSES),
+        ph("gone", Indirect, Lane, Inside::Nothing, Across::Nothing, ByIndex, &[]),
+        ph("stats", Indirect, Threadgroup, Inside::GroupMemory, Across::Nothing, ByIndex, &[]),
+        ph("ranges", Fixed, Lane, Inside::Nothing, Across::Nothing, ByIndex, &[]),
+        ph("ixopen", Fixed, Lane, Inside::Nothing, Across::Nothing, InPlace, CLAIMS),
+        ph("ixhash", Indirect, Lane, Inside::Nothing, Across::Nothing, ByIndex, &[]),
+        ph("ixsort", Indirect, Lane, Inside::Nothing, Across::Nothing, ByIndex, &[]),
+        ph("ixpasses", Indirect, Lane, Inside::Nothing, Across::Rounds, ByIndex, PASSES),
+        ph("ixplace", Indirect, Lane, Inside::Nothing, Across::Nothing, ByIndex, &[]),
+        ph("ixoffs", Indirect, Lane, Inside::Nothing, Across::Nothing, ByIndex, &[]),
+        ph("ixmarks", Indirect, Lane, Inside::Nothing, Across::Nothing, ByIndex, &[]),
+        ph("freeze", Fixed, Lane, Inside::Nothing, Across::Nothing, InPlace, &[]),
         ph("sketch", Fixed, Lane, Inside::Nothing, Across::Nothing, Sketch, CLAIMS),
-        ph("seal", Fixed, Threadgroup, Inside::Nothing, Across::Nothing, InPlace, &[]),
+        ph("seal", Fixed, Lane, Inside::Nothing, Across::Nothing, InPlace, &[]),
     ]
 };
 

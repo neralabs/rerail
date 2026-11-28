@@ -100,3 +100,89 @@ UKL_INLINE UklScan ukl_tg_exclusive_sum(uint32_t v, uint32_t lid, uint32_t lsz, 
     ukl_tg_barrier();
     return r;
 }
+
+// --- 64-bit reductions -----------------------------------------------------------------------------------------
+
+// A 64-bit value through a SIMD group's butterfly shuffle, as its two halves.
+UKL_INLINE uint64_t ukl_sg_shuffle_xor_u64(uint64_t v, uint32_t m __UKL_PARAMS)
+{
+    uint32_t lo = ukl_sg_shuffle_xor((uint32_t)v, m __UKL_ARGS), hi = ukl_sg_shuffle_xor((uint32_t)(v >> 32), m __UKL_ARGS);
+    return ((uint64_t)hi << 32) | lo;
+}
+
+// The reductions of 64-bit values: a wrapping sum, a signed minimum, a signed maximum.
+#define UKL_SUM_U64 0u
+#define UKL_MIN_I64 1u
+#define UKL_MAX_I64 2u
+
+UKL_INLINE uint64_t ukl_reduce64(uint32_t op, uint64_t a, uint64_t b)
+{
+    if (op == UKL_SUM_U64)
+        return a + b;
+    bool less = (int64_t)a < (int64_t)b;
+    return op == UKL_MIN_I64 ? (less ? a : b) : (less ? b : a);
+}
+
+// The group's reduction `op` of `v`, in every thread: a butterfly in each SIMD group, then the SIMD groups' partials.
+// A thread with no value passes the identity (0 for a sum, `INT64_MAX` for a minimum, `INT64_MIN` for a maximum).
+// `scratch`: `2 * UKL_TG_SCRATCH` words.
+UKL_INLINE uint64_t ukl_tg_reduce64(uint32_t op, uint64_t v, uint32_t lid, uint32_t lsz, UKL_LOCAL uint32_t* scratch __UKL_PARAMS)
+{
+    uint32_t lane = lid % UKL_SIMD_WIDTH, sg = lid / UKL_SIMD_WIDTH, groups = lsz / UKL_SIMD_WIDTH;
+    for (uint32_t m = 1u; m < UKL_SIMD_WIDTH; m <<= 1u)
+        v = ukl_reduce64(op, v, ukl_sg_shuffle_xor_u64(v, m __UKL_ARGS));
+    if (groups <= 1u)
+        return v;
+    if (lane == 0u) {
+        scratch[2u * sg] = (uint32_t)v;
+        scratch[2u * sg + 1u] = (uint32_t)(v >> 32);
+    }
+    ukl_tg_barrier();
+    uint64_t acc = ((uint64_t)scratch[1] << 32) | scratch[0];
+    for (uint32_t i = 1u; i < groups; i++)
+        acc = ukl_reduce64(op, acc, ((uint64_t)scratch[2u * i + 1u] << 32) | scratch[2u * i]);
+    ukl_tg_barrier();
+    return acc;
+}
+
+// A 64-bit value shuffled up `d` lanes, as its two halves.
+UKL_INLINE uint64_t ukl_sg_shuffle_up_u64(uint64_t v, uint32_t d __UKL_PARAMS)
+{
+    uint32_t lo = ukl_sg_shuffle_up((uint32_t)v, d __UKL_ARGS), hi = ukl_sg_shuffle_up((uint32_t)(v >> 32), d __UKL_ARGS);
+    return ((uint64_t)hi << 32) | lo;
+}
+
+// A thread's part of a 64-bit scan: the (wrapping) sum of the threads before it, and of the whole group.
+typedef struct UklScan64 {
+    uint64_t exclusive;
+    uint64_t total;
+} UklScan64;
+
+// The exclusive scan of 64-bit `v` over the group's threads in order, and the group's total: each SIMD group's by its
+// shuffles, then the SIMD groups' partials. `scratch`: `2 * UKL_TG_SCRATCH` words.
+UKL_INLINE UklScan64 ukl_tg_exclusive_sum_u64(uint64_t v, uint32_t lid, uint32_t lsz, UKL_LOCAL uint32_t* scratch __UKL_PARAMS)
+{
+    uint32_t lane = lid % UKL_SIMD_WIDTH, sg = lid / UKL_SIMD_WIDTH, groups = lsz / UKL_SIMD_WIDTH;
+    uint64_t inc = v;
+    for (uint32_t d = 1u; d < UKL_SIMD_WIDTH; d <<= 1u) {
+        uint64_t u = ukl_sg_shuffle_up_u64(inc, d __UKL_ARGS);
+        if (lane >= d)
+            inc += u;
+    }
+    if (lane == UKL_SIMD_WIDTH - 1u) {
+        scratch[2u * sg] = (uint32_t)inc;
+        scratch[2u * sg + 1u] = (uint32_t)(inc >> 32);
+    }
+    ukl_tg_barrier();
+    uint64_t before = 0u, total = 0u;
+    for (uint32_t k = 0u; k < groups; k++) {
+        uint64_t x = ((uint64_t)scratch[2u * k + 1u] << 32) | scratch[2u * k];
+        before += k < sg ? x : 0u;
+        total += x;
+    }
+    ukl_tg_barrier();
+    UklScan64 r;
+    r.exclusive = before + inc - v;
+    r.total = total;
+    return r;
+}
