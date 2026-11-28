@@ -3736,11 +3736,87 @@ impl Model {
         cx: &mut joins::SearchCx,
     ) -> Result<(Plan, Option<super::super::profile::RulePlan>)> {
         let (mut plan, explained) = self.plan_inner_searched(pf, b, first, fixed, explain, cx)?;
-        if !tests_ordered(b, &mut plan.0) {
+        let ordered = tests_ordered(b, &mut plan.0);
+        let lifted = fixed.is_none() && self.joins_lifted(pf, b, first, &mut plan);
+        if !ordered && !lifted {
             return Ok((plan, explained));
         }
         let explained = if explain { self.explain_order(pf, b, first, &plan.0) } else { explained };
         Ok((plan, explained))
+    }
+
+    /// The search places each filter as soon as it is ready, so a `let` (a split, a computed value) runs before every
+    /// join after it, though a join may need none of what it makes: `rf_via_member`'s `split_dot(q, m, x)` split 22
+    /// names and its `!rf_bare_imported(m, x)` tested them before `rf_member_import(q, t)`, which keeps none of them,
+    /// read them. A join is lifted over the filters before it, back to where what it reads is bound, where those
+    /// filters hold a `let`, none binds what the join reads and none reads what it binds; the order is kept where it is
+    /// priced (as a fixed order is, `plan_inner`) as less work than the one before. Whether it changed.
+    fn joins_lifted(&self, pf: Fields<'_>, b: &Body<'_>, first: Option<usize>, plan: &mut Plan) -> bool {
+        let lets = |order: &[Step]| {
+            let mut bound = VarSet::new();
+            order.iter().any(|st| {
+                let is_let = matches!(b.view(st.at), Lit::Cmp { .. }) && !b.vars(st.at).is_subset(&bound);
+                bound.extend(b.vars(st.at));
+                is_let
+            })
+        };
+        if !lets(&plan.0) {
+            return false;
+        }
+        // A fixed order's price, in every run (an explained one's is profiled runs' only).
+        let price = |order: &[Step]| self.plan_inner(pf, b, first, Some(order), false).ok().map(|(p, _)| (p.1, p.2));
+        let Some(mut best) = price(&plan.0) else { return false };
+        let mut changed = false;
+        let mut j = 1;
+        while j < plan.0.len() {
+            let order = &plan.0;
+            // What is bound before each step.
+            let mut before: Vec<VarSet> = Vec::with_capacity(order.len());
+            let mut bound = VarSet::new();
+            for st in order {
+                before.push(bound.clone());
+                bound.extend(b.vars(st.at));
+            }
+            let at = order[j].at;
+            if !b.is_join(at) {
+                j += 1;
+                continue;
+            }
+            let vars = b.vars(at);
+            let reads = vars.minus(&vars.minus(&before[j]));
+            let binds = vars.minus(&reads);
+            let (mut p, mut over_let) = (j, false);
+            // The first step stays first.
+            while p > 1 {
+                let k = p - 1;
+                let kv = b.vars(order[k].at);
+                let made = kv.minus(&before[k]);
+                if b.is_join(order[k].at) || !made.is_disjoint(&reads) || !kv.is_disjoint(&binds) {
+                    break;
+                }
+                over_let |= matches!(b.view(order[k].at), Lit::Cmp { .. }) && !made.is_empty();
+                p = k;
+            }
+            if over_let && p < j {
+                let mut cand = order.clone();
+                let st = cand.remove(j);
+                cand.insert(p, st);
+                // As a fixed order is priced: its runs of tests ordered.
+                tests_ordered(b, &mut cand);
+                if let Some(x) = price(&cand)
+                    && x.0 < best.0
+                {
+                    best = x;
+                    plan.0 = cand;
+                    changed = true;
+                }
+            }
+            j += 1;
+        }
+        if changed {
+            (plan.1, plan.2) = best;
+        }
+        changed
     }
 
     /// The search `plan_inner_in` makes, its order as the search placed each filter: as soon as it is ready.

@@ -122,6 +122,27 @@
     /// The rows after each step of a plan, as calibration reads them (`keeps::calibrated_rows_at`), are the EXPLAIN
     /// record's, and the plan is the same: made without the record's strings, bases and passed-over joins, each of
     /// which priced every unplaced join again (15% of `keeps::choose`).
+    /// A join that needs none of what a split makes, and keeps few of its rows, runs before the split and the tests
+    /// of its parts (`joins_lifted`, `rf_via_member`'s shape); one that keeps most stays after them.
+    #[test]
+    fn a_join_that_needs_no_split_runs_before_it_where_cheaper() {
+        let prog = crate::code_rule_dsl::logic::rr::parse_version(
+            ".decl w(q: symbol)\n.decl k(m: symbol, x: symbol)\n.decl j(q: symbol, t: symbol)\n.input w\n.input k\n.input j\n\
+             .decl o(q: symbol, t: symbol)\no(q, t) :- w(q), q = @cat(m, x), !k(m, x), j(q, t).\n.output o\n",
+        )
+        .unwrap();
+        let placed = body::Placed::whole(prog.clone());
+        let b = body::nth(&prog, 0);
+        let order = |model: &Model| model.plan_rule_explained(placed.fields().unwrap(), &b, Some(0)).unwrap().0.0.iter().map(|s| s.at).collect::<Vec<_>>();
+        // Driven by `w`'s rows (a delta of them, as `rf_want`'s drives `rf_via_member`). `j` holds 5 of its 10,000 names:
+        // lifted.
+        let few = model_with(&placed, &[("w", 10_000.0, &[10_000.0]), ("k", 1_000.0, &[1_000.0, 1_000.0]), ("j", 5.0, &[5.0, 5.0])]);
+        assert_eq!(order(&few), [0, 3, 1, 2]);
+        // `j` holds every name, twice: the split and its test first, as the search placed them.
+        let all = model_with(&placed, &[("w", 10_000.0, &[10_000.0]), ("k", 1_000.0, &[1_000.0, 1_000.0]), ("j", 20_000.0, &[10_000.0, 20_000.0])]);
+        assert_eq!(order(&all), [0, 1, 2, 3]);
+    }
+
     #[test]
     fn a_plans_step_rows_are_its_explain_records() {
         let prog = crate::code_rule_dsl::logic::rr::parse_version(
