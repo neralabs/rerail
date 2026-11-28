@@ -12538,3 +12538,18 @@ signatures are.
 
 Checked under Relax: check of rerail-reads, rerail-setfix, tests-lang, tests-logic; rerail-reads (2), rerail-setfix
 (150), tests-lang syntax (115), tests-logic plan (114, one thread). No Metal, farm or clippy runs.
+
+### Q605. Roll-up 177 (django-bugs b54a2a5a65 onto Pulling-it-all-together): what the merge chose
+
+django-bugs' index-aware step 1 (decision 0707): a seed over a bound source (a view of the tape, an axis) has its
+indexes built ahead of its stratum, a view filtered by its constants and read in place among them; an axis its
+stage walks on the tape is skipped before the build ahead asks where its rows lie. Test hooks count the indexes
+built ahead and by strata.
+
+No conflicts. One red, fixed in the next roll-up: a_seed_over_a_view_has_its_indexes_built_ahead runs bound to the
+CPU and expects the join program's build ahead, which django runs by default. The hub's default is the scalar joins
+(roll-up 172, the user's choice), so `indexes_first` does not run there (0 built ahead). The test asks for the join
+program by `placement::set_host_joins`, which final-rerail-shape brings (roll-up 178).
+
+Checked under Relax: check of the device crate and rerail-planner; rerail-planner (9); tests-corpus base_tests (55,
+the one above red). The device tests run on Metal and were not run. No farm or clippy runs.

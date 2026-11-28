@@ -1789,9 +1789,43 @@ fn index_counted(rel: &Arc<InRel>, ix: &mj::DevIndex, rep: &mut Report) {
     }, ix, rep);
 }
 
+/// Indexes built: ahead of the strata that probe them (`build_indexes`, decision 0707), and by a stratum's own batch.
+static INDEX_BUILDS: [std::sync::atomic::AtomicU64; 2] = [std::sync::atomic::AtomicU64::new(0), std::sync::atomic::AtomicU64::new(0)];
+
+thread_local! {
+    /// Whether this thread builds indexes ahead (`build_indexes`).
+    static BUILDING_AHEAD: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+}
+
+/// Test hook: each index a stratum's own batch built, by what and by `stratum` (the profile's path: none where profiling
+/// is off).
+#[cfg(feature = "test-hooks")]
+static STRATUM_BUILDS: std::sync::Mutex<Vec<(String, String)>> = std::sync::Mutex::new(Vec::new());
+
+/// Test hook: `STRATUM_BUILDS` so far.
+#[cfg(feature = "test-hooks")]
+pub(in crate::code_rule_dsl) fn stratum_builds() -> Vec<(String, String)> {
+    STRATUM_BUILDS.lock().unwrap_or_else(|e| e.into_inner()).clone()
+}
+
+/// Test hook: the indexes built so far, ahead and by strata (`INDEX_BUILDS`).
+pub(in crate::code_rule_dsl) fn index_builds() -> [u64; 2] {
+    INDEX_BUILDS.each_ref().map(|a| a.load(std::sync::atomic::Ordering::Relaxed))
+}
+
 /// `index_counted` of an index named by `what`.
 fn index_counted_as(what: impl FnOnce() -> String, ix: &mj::DevIndex, rep: &mut Report) {
     if ix.built { rep.sorts += 1 } else { rep.sort_hits += 1 }
+    if ix.built {
+        INDEX_BUILDS[usize::from(!BUILDING_AHEAD.get())].fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+    }
+    #[cfg(feature = "test-hooks")]
+    if ix.built && !BUILDING_AHEAD.get() {
+        let p = crate::code_rule_dsl::logic::profile::current_path();
+        let at = p.split('/').rev().find_map(|c| c.strip_prefix("stratum ")).unwrap_or("").to_owned();
+        STRATUM_BUILDS.lock().unwrap_or_else(|e| e.into_inner()).push((format!("{} by {:?}", what(), ix.cols), at));
+        return;
+    }
     if crate::code_rule_dsl::logic::profile::on() {
         let what: String = what().chars().take(80).collect();
         // Where: the planner's build ahead (decision 0707) or the stratum whose batch asked.
@@ -1803,13 +1837,19 @@ fn index_counted_as(what: impl FnOnce() -> String, ix: &mj::DevIndex, rep: &mut 
     }
 }
 
+/// Whether a stage probing `rel` by `cols` would walk it on the tape (`resident`'s first branch), where its source has
+/// a walk (`Source::has_walk`).
+fn walked_by(rel: &Arc<InRel>, cols: &[usize]) -> bool {
+    rel.ndead == 0 && matches!(cols.iter().map(|&c| owner_col(rel, c)).collect::<Vec<_>>()[..], [0] | [1] | [0, 1] | [1, 0])
+}
+
 fn resident(rel: &Arc<InRel>, need: &[usize], cols: &[usize], mode: u32, batch: &mut mj::Batch, rep: &mut Report) -> Result<(Rc<mj::DevRel>, Option<Rc<mj::DevIndex>>, Vector<u32>, Consts), String> {
     // A `has` axis probed by its columns is read off the tape (decision 0353 step 5): a stage walks each binding's
     // rows there (`mj::Batch::by_has`), nothing made, uploaded or indexed. First: where its pairs were solved into a
     // block (`placed`), an index of them is not built either. Scanned whole, its rows are read where they lie.
     // Containment (`within`) is `has` of every kind, and `inside` and `nearest` the same walks; probed by both
     // columns, the node's climb.
-    let walked = rel.ndead == 0 && matches!(cols.iter().map(|&c| owner_col(rel, c)).collect::<Vec<_>>()[..], [0] | [1] | [0, 1] | [1, 0]);
+    let walked = walked_by(rel, cols);
     // A measurement aid: why a containment or axis view probed here is not walked.
     if crate::code_rule_dsl::logic::profile::on()
         && let Some(v) = rel.view.as_ref()
@@ -2431,21 +2471,35 @@ fn on_lane<R>(form: &'static str, rules: usize, f: impl FnOnce() -> Result<R, St
 pub(in crate::code_rule_dsl) fn build_indexes(plans: &[&Plan]) -> Result<usize, String> {
     on_lane("index builds", plans.len(), || {
         let _in = in_device();
+        BUILDING_AHEAD.set(true);
+        struct Ahead;
+        impl Drop for Ahead {
+            fn drop(&mut self) {
+                BUILDING_AHEAD.set(false);
+            }
+        }
+        let _ahead = Ahead;
         let _tag = rerail_ukl_rust::stage_prof::on().then(|| StageTag(rerail_ukl_rust::stage_prof::set_tag(rerail_ukl_rust::stage_prof::intern("(build ahead)"))));
         let mut batch = direct_batch(None)?;
         let mut rep = Report::default();
         let mut held = Vec::new();
         for s in plans.iter().flat_map(|p| &p.stages) {
             let Kind::Atom { rel, cols } = &s.kind else { continue };
-            if crate::code_rule_dsl::logic::profile::on() && !cols.is_empty() {
+            // An axis its stage walks on the tape has no index to build; asking where its rows lie (`read_in_place`)
+            // would solve the whole axis on the host, ahead of the level (`Within::in_block`): 2,000 samples of the
+            // build ahead on `all` (2026-11-27).
+            if cols.is_empty() || walked_by(rel, cols) && rel.view.as_ref().is_some_and(|v| v.src.has_walk().is_some()) {
+                continue;
+            }
+            if crate::code_rule_dsl::logic::profile::on() {
                 let what = match &rel.view {
                     Some(view) => format!("{} ({})", view.of().unwrap_or("view"), view.src.columns().join(",")),
                     None => rel.table_name().unwrap_or("?").to_owned(),
                 };
-                let ok = read_in_place(rel);
+                let ok = read_in_place(rel) || filtered_in_place(rel, cols);
                 crate::code_rule_dsl::prof::count_named_args(format_args!("device.ahead {}: {what} by {cols:?}", if ok { "offered" } else { "not in place" }), 1);
             }
-            if cols.is_empty() || !read_in_place(rel) {
+            if cols.is_empty() || !(read_in_place(rel) || filtered_in_place(rel, cols)) {
                 continue;
             }
             // One its stratum cannot read either is refused there, with why.
@@ -2457,6 +2511,13 @@ pub(in crate::code_rule_dsl) fn build_indexes(plans: &[&Plan]) -> Result<usize, 
         drop(held);
         Ok(rep.sorts as usize)
     })
+}
+
+/// Whether a stage probing `rel` by `cols` reads it as a view filtered by its constants, in place (`resident`'s first
+/// branch: the constants keys of its index beside `cols`). Left to its stratum, `field(a, "left", n)` was not built
+/// ahead: 11,669 of the stages the build ahead was offered on `all` (2026-11-27).
+fn filtered_in_place(rel: &Arc<InRel>, cols: &[usize]) -> bool {
+    rel.view.as_ref().is_some_and(|v| rel.ndead == 0 && !v.whole() && !v.eqs().is_empty() && v.arity() == rel.k && cols.len() + v.eqs().len() <= mj::MAX_KEYS && v.src.device_view().is_some())
 }
 
 /// Whether a stage reads `rel` where it lies (`resident`): in its block, or a whole view its directory reads.
@@ -3595,12 +3656,12 @@ impl Own {
         // derived nothing from it.
         if let Some(ix) = self.sorts.get(&key).cloned() {
             let ix = batch.again(&dev, &ix).map_err(|e| format!("{e:?}: an index of {} rows found again", dev.rows))?;
-            index_counted_as(|| "a recursive stratum's own relation (its rounds)".into(), &ix, rep);
+            index_counted_as(|| "a recursive stratum's own relation (its room, not rows built)".into(), &ix, rep);
             self.sorts.insert(key, ix.clone());
             return Ok(Some((dev, Some(ix))));
         }
         let ix = Rc::new(batch.index(&dev, cols).map_err(|e| format!("{e:?}: an index of {} rows", dev.rows))?);
-        index_counted_as(|| "a recursive stratum's own relation (its rounds)".into(), &ix, rep);
+        index_counted_as(|| "a recursive stratum's own relation (its room, not rows built)".into(), &ix, rep);
         self.sorts.insert(key, ix.clone());
         Ok(Some((dev, Some(ix))))
     }
@@ -3733,6 +3794,12 @@ pub(in crate::code_rule_dsl) fn fixpoint(seeds: &[(&Plan, &JoinRule, usize)], de
 }
 
 fn fixpoint_(seeds: &[(&Plan, &JoinRule, usize)], deltas: &[(&Plan, &JoinRule, usize)], heads: &[usize], store: &Store, names: &Interner, fresh: &mut [Fresh]) -> Result<(Vector<u64>, bool), String> {
+    // A measurement aid (`RERAIL_STAGE_PROF`): the rounds' items counted by their stratum, as a stratum's joins' are.
+    let _tag = rerail_ukl_rust::stage_prof::on().then(|| {
+        let p = crate::code_rule_dsl::logic::profile::current_path();
+        let name = p.split('/').rev().find_map(|c| c.strip_prefix("stratum ")).map_or(p.as_str(), |c| c.trim_end_matches(" (in a job)"));
+        StageTag(rerail_ukl_rust::stage_prof::set_tag(rerail_ukl_rust::stage_prof::intern(&format!("{name} (rounds)"))))
+    });
     on_lane("stratum rounds", seeds.len() + deltas.len(), || fixpoint_here(seeds, deltas, heads, store, names, fresh))
 }
 
