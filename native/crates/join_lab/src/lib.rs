@@ -70,6 +70,8 @@ pub struct Wave {
     /// The views' directories' homes of the binary's codes' directory (decision 0697): each its region, the home's
     /// offset there, and the directory's digest, bound to the lab's own (`rerail_tape_format::codes_dir`).
     pub codes: Vec<(String, usize, u64)>,
+    /// The atoms directories its capture bound (`atoms` lines): each its region and its root's offset.
+    pub atoms: Vec<(String, usize)>,
 }
 
 fn bad(what: String) -> io::Error {
@@ -79,9 +81,9 @@ fn bad(what: String) -> io::Error {
 impl Wave {
     /// The launch captured in `dir` (`<capture>/w/<launch>`).
     pub fn read(dir: &Path) -> io::Result<Wave> {
-        let text = std::fs::read_to_string(dir.join("wave.txt"))?;
+        let text = read_named(&dir.join("wave.txt")).and_then(|b| String::from_utf8(b).map_err(|e| bad(format!("wave.txt: {e}"))))?;
         let root = dir.parent().and_then(Path::parent).ok_or_else(|| bad(format!("{}: not in a capture's w/", dir.display())))?.to_path_buf();
-        let mut w = Wave { dir: dir.to_path_buf(), root, format: 0, args: [0; 4], offsets: Vec::new(), binds: Vec::new(), labels: Vec::new(), regions: Vec::new(), after: Vec::new(), unresolved: 0, unbound: 0, done: false, codes: Vec::new() };
+        let mut w = Wave { dir: dir.to_path_buf(), root, format: 0, args: [0; 4], offsets: Vec::new(), binds: Vec::new(), labels: Vec::new(), regions: Vec::new(), after: Vec::new(), unresolved: 0, unbound: 0, done: false, codes: Vec::new(), atoms: Vec::new() };
         let num = |s: &str| s.parse::<u64>().map_err(|e| bad(format!("{}: {s}: {e}", dir.display())));
         for line in text.lines() {
             let (key, rest) = line.split_once(' ').unwrap_or((line, ""));
@@ -121,6 +123,12 @@ impl Wave {
                     let [region, at, digest] = f[..] else { return Err(bad(format!("codes: {line}"))) };
                     w.codes.push((region.to_owned(), num(at)? as usize, u64::from_str_radix(digest, 16).map_err(|e| bad(format!("codes: {line}: {e}")))?));
                 }
+                // The atoms directories bound (`atoms <region> <root offset> <runs>`): what it found, for `list`.
+                "atoms" => {
+                    let f: Vec<&str> = rest.split(' ').collect();
+                    let [region, at, _] = f[..] else { return Err(bad(format!("atoms: {line}"))) };
+                    w.atoms.push((region.to_owned(), num(at)? as usize));
+                }
                 _ => return Err(bad(format!("{}: an unknown line: {line}", dir.display()))),
             }
         }
@@ -151,7 +159,7 @@ impl Wave {
             return Err(bad(format!("{}: its capture did not finish (no after-images): the engine's launch never completed", self.dir.display())));
         }
         let written: std::collections::HashSet<&str> = self.after.iter().map(|(n, _)| n.as_str()).collect();
-        let relocs = zstd::stream::decode_all(std::fs::File::open(self.dir.join("relocs.zst"))?)?;
+        let relocs = zstd::stream::decode_all(open_named(&self.dir.join("relocs.zst"))?)?;
         // The regions the lab writes into: those the launch writes, and those holding a word bound again.
         let mut bound_in: std::collections::HashSet<usize> = relocs.chunks_exact(32).map(|q| u64::from_le_bytes(q[..8].try_into().expect("8 bytes")) as usize).collect();
         bound_in.extend(self.codes.iter().filter_map(|c| self.regions.iter().position(|r| r.name == c.0)));
@@ -169,7 +177,7 @@ impl Wave {
             } else {
                 // One it writes: its bytes read into memory of the lab's (its file is the capture's).
                 let m = Mem::reserve(r.len);
-                let mut f = std::fs::File::open(&path)?;
+                let mut f = open_named(&path)?;
                 let mut at = 0;
                 let mut buf = vec![0u8; 1 << 20];
                 while at < r.len {
@@ -212,8 +220,18 @@ impl Wave {
             let i = self.regions.iter().position(|r| r.role == *role).ok_or_else(|| bad(format!("no region for the bind {role}")))?;
             binds[k] = mems[i].base() as u64;
         }
-        Ok(Loaded { wave: self.clone(), mems, binds, relocations: bound })
+        Ok(Loaded { wave: self.clone(), mems, binds, relocations: bound, reverse: false })
     }
+}
+
+/// The file at `path`, its error naming it.
+fn open_named(path: &Path) -> io::Result<std::fs::File> {
+    std::fs::File::open(path).map_err(|e| io::Error::new(e.kind(), format!("{}: {e}", path.display())))
+}
+
+/// The bytes of the file at `path`, its error naming it.
+fn read_named(path: &Path) -> io::Result<Vec<u8>> {
+    std::fs::read(path).map_err(|e| io::Error::new(e.kind(), format!("{}: {e}", path.display())))
 }
 
 /// `relocs.zst`'s host bit on a target (`join_capture::HOST`).
@@ -232,7 +250,7 @@ fn capture_digest(bytes: &[u8]) -> u64 {
 /// A region's runs (`join_capture`'s `<name>.zst`: each its offset and length, u64s, then its bytes), each given to
 /// `put`.
 fn read_runs(path: &Path, mut put: impl FnMut(usize, &[u8])) -> io::Result<()> {
-    let mut z = zstd::stream::read::Decoder::new(std::fs::File::open(path)?)?;
+    let mut z = zstd::stream::read::Decoder::new(open_named(path)?)?;
     let mut head = [0u8; 16];
     let mut buf = Vec::new();
     loop {
@@ -306,6 +324,8 @@ pub struct Loaded {
     binds: [u64; 9],
     /// The addresses bound again (`relocs.zst`'s entries).
     pub relocations: usize,
+    /// Each dispatch's groups run last first (`join-lab run --reverse`).
+    pub reverse: bool,
 }
 
 /// What a replay ran: its dispatches (those whose groups were not none), its groups, its wall time.
@@ -325,6 +345,8 @@ pub struct Diff {
     pub first: Option<usize>,
     /// The first words that differ: their offsets, the replay's and the engine's.
     pub words: Vec<(usize, u64, u64)>,
+    /// The first of them before the launch (`replay`'s).
+    pub before: Option<u64>,
 }
 
 /// The join program's group size (`join_stages`' `JOIN_TG`, `join_run`'s).
@@ -352,7 +374,9 @@ impl Loaded {
             ran.dispatches += 1;
             let groups = grid.iter().map(|&g| u64::from(g)).product::<u64>();
             ran.groups += groups;
-            for i in 0..groups {
+            for k in 0..groups {
+                // Its groups in order, or last first (`reverse`: whether what the launch leaves hangs on their order).
+                let i = if self.reverse { groups - 1 - k } else { k };
                 let (x, rest) = ((i % u64::from(grid[0])) as u32, i / u64::from(grid[0]));
                 let (y, z) = ((rest % u64::from(grid[1])) as u32, (rest / u64::from(grid[1])) as u32);
                 let l = rerail_ukl_rust::Launch { group: [x, y, z], block: [TG, 1, 1], groups: grid };
@@ -375,7 +399,7 @@ impl Loaded {
             let (r, m) = (&self.wave.regions[i], &self.mems[i]);
             // The words bound again hold the lab's addresses, the after-image the engine's: not compared.
             let skip: std::collections::HashSet<usize> = relocated.iter().filter(|q| q.0 == i).map(|q| q.1).collect();
-            let mut d = Diff { region: name.clone(), compared: 0, differ: 0, first: None, words: Vec::new() };
+            let mut d = Diff { region: name.clone(), compared: 0, differ: 0, first: None, words: Vec::new(), before: None };
             let mut hold = |at: usize, want: &[u8]| {
                 let got = m.bytes(at, want.len());
                 for (k, (a, b)) in got.iter().zip(want).enumerate() {
@@ -399,7 +423,7 @@ impl Loaded {
             if r.sparse() {
                 read_runs(&path, &mut hold)?;
             } else {
-                let want = std::fs::read(&path)?;
+                let want = read_named(&path)?;
                 hold(0, &want[..want.len().min(r.len)]);
             }
             out.push(d);
@@ -485,7 +509,7 @@ impl Loaded {
     /// Its relocations (`relocs.zst`), each its word's region and offset, its target's region (the host bit's
     /// `host`), its offset there, and the word as bound (`join-lab words`).
     pub fn relocations(&self) -> io::Result<Vec<String>> {
-        let relocs = zstd::stream::decode_all(std::fs::File::open(self.wave.dir.join("relocs.zst"))?)?;
+        let relocs = zstd::stream::decode_all(open_named(&self.wave.dir.join("relocs.zst"))?)?;
         Ok(relocs.chunks_exact(32).map(|q| {
             let v = |i: usize| u64::from_le_bytes(q[8 * i..8 * i + 8].try_into().expect("8 bytes"));
             let (i, o, t, off) = (v(0) as usize, v(1) as usize, v(2), v(3));
@@ -495,13 +519,43 @@ impl Loaded {
         }).collect())
     }
 
+    /// The atoms directories it bound, each read as the program reads it (`join_program::reads`): each run's first,
+    /// middle and last atom's string found, inside a region the lab placed. Each directory's runs, or what is wrong.
+    pub fn atoms(&self) -> Vec<String> {
+        use rerail_ukl_rust::join_program::reads::{atoms_len, atoms_str};
+        let inside = |a: usize, n: usize| self.mems.iter().any(|m| m.base() <= a && a + n <= m.base() + m.len());
+        let mut out = Vec::new();
+        for (region, at) in &self.wave.atoms {
+            let Some(i) = self.wave.regions.iter().position(|r| &r.name == region) else { continue };
+            let dir = (self.mems[i].base() + at) as *const u8;
+            let n = u64::from_ne_bytes(self.mems[i].bytes(*at, 8).try_into().expect("8 bytes"));
+            let eo = (*at as i64 + 8 + i64::from_ne_bytes(self.mems[i].bytes(at + 8, 8).try_into().expect("8 bytes"))) as usize;
+            let mut found = Vec::new();
+            for k in 0..n as usize {
+                let e = self.mems[i].bytes(eo + 64 * k, 8);
+                let (first, end) = (u32::from_ne_bytes(e[..4].try_into().expect("4")), u32::from_ne_bytes(e[4..8].try_into().expect("4")));
+                for id in [first.max(1), first.max(1) / 2 + end / 2, end.saturating_sub(1)].into_iter().filter(|&id| id >= first && id < end) {
+                    // SAFETY: the directory as bound; its reads stay in its runs (checked below, after each).
+                    let (len, at) = unsafe { (atoms_len(dir, id), atoms_str(dir, id) as usize) };
+                    let ok = len != u32::MAX && inside(at, len as usize);
+                    if !ok || found.len() < 2 {
+                        found.push(format!("id {id}: {} at {at:#x}{}", if len == u32::MAX { "none".into() } else { format!("{len} bytes") }, if ok { "" } else { " IN NO REGION" }));
+                    }
+                }
+                found.push(format!("run {k}: {first}..{end}"));
+            }
+            out.push(format!("atoms at {region} {at}: {n} runs: {}", found.join(", ")));
+        }
+        out
+    }
+
     /// Each region where the lab placed it: its name, the lab's address and its length (`join-lab words`).
     pub fn placed(&self) -> Vec<(String, usize, usize)> {
         self.wave.regions.iter().zip(&self.mems).map(|(r, m)| (r.name.clone(), m.base(), m.len())).collect()
     }
 
     pub fn relocated(&self) -> io::Result<Vec<(usize, usize)>> {
-        let relocs = zstd::stream::decode_all(std::fs::File::open(self.wave.dir.join("relocs.zst"))?)?;
+        let relocs = zstd::stream::decode_all(open_named(&self.wave.dir.join("relocs.zst"))?)?;
         Ok(relocs.chunks_exact(32).map(|q| (u64::from_le_bytes(q[..8].try_into().expect("8")) as usize, u64::from_le_bytes(q[8..16].try_into().expect("8")) as usize)).collect())
     }
 }
@@ -558,7 +612,7 @@ impl Replay {
     /// Its differing regions, the first word of each.
     pub fn differing(&self) -> String {
         self.diffs.iter().filter(|d| d.differ > 0).map(|d| match d.words.first() {
-            Some((o, got, want)) => format!("{}: {} bytes, first word at {o}: {got:#x}, the engine's {want:#x}", d.region, d.differ),
+            Some((o, got, want)) => format!("{}: {} bytes, first word at {o}: {got:#x}, the engine's {want:#x}{}", d.region, d.differ, d.before.map_or(String::new(), |b| format!(", before {b:#x}"))),
             None => format!("{}: {} bytes", d.region, d.differ),
         }).collect::<Vec<_>>().join("; ")
     }
@@ -566,11 +620,29 @@ impl Replay {
 
 /// `w` replayed once on `e`, held to what the engine's launch left.
 pub fn replay(w: &Wave, e: Engine) -> io::Result<Replay> {
+    replay_in(w, e, false)
+}
+
+/// `replay`, each dispatch's groups last first where `reverse`.
+pub fn replay_in(w: &Wave, e: Engine, reverse: bool) -> io::Result<Replay> {
     let mut l = w.load()?;
+    l.reverse = reverse;
     let ran = match e {
         Engine::Program => l.run(),
     };
-    Ok(Replay { diffs: l.compare()?, ran })
+    let mut diffs = l.compare()?;
+    drop(l);
+    // Each differing word as it was before the launch: where the replay's is the before's, the replay never wrote
+    // it and the engine's came from its launch or another writer of the region.
+    if diffs.iter().any(|d| d.differ > 0) {
+        let fresh = w.load()?;
+        for d in diffs.iter_mut().filter(|d| d.differ > 0) {
+            if let (Some(i), Some(&(o, ..))) = (w.regions.iter().position(|r| r.name == d.region), d.words.first()) {
+                d.before = Some(u64::from_ne_bytes(fresh.mems[i].bytes(o, 8).try_into().expect("8 bytes")));
+            }
+        }
+    }
+    Ok(Replay { diffs, ran })
 }
 
 /// The CPU time this thread has used, in seconds (`CLOCK_THREAD_CPUTIME_ID`).

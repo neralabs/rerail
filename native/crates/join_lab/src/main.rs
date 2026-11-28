@@ -54,7 +54,7 @@ fn main() {
                 for e in engines(&args) {
                     // Its name first: a replay that faults names its launch.
                     eprintln!("join-lab: {} on {}", w.name(), e.name());
-                    match rerail_join_lab::replay(&w, e) {
+                    match rerail_join_lab::replay_in(&w, e, args.iter().any(|a| a == "--reverse")) {
                         Ok(r) if r.same() => println!("{:<16} {:<8} same   {:>4} dispatches {:>9} groups {:>9.3} ms", w.name(), e.name(), r.ran.dispatches, r.ran.groups, r.ran.seconds * 1e3),
                         Ok(r) => {
                             failed += 1;
@@ -104,6 +104,9 @@ fn main() {
                                     println!("{name} reloc {r}");
                                 }
                             }
+                        }
+                        for a in l.atoms() {
+                            println!("{name} {a}");
                         }
                         match l.views() {
                             Ok(v) => {

@@ -146,7 +146,40 @@ pub fn resident(p: usize, len: usize) -> usize {
     }
 }
 
-/// The runs of written pages (`resident`'s) in `len` bytes at `p`, as (offset from `p`, bytes), clipped to the range:
+/// Whether each page of `start..end` (whole pages) holds bytes: one the process touched, in memory or not. On macOS
+/// a page resident, modified or paged out (`mincore`: a page the compressor took reads paged out, and once brought
+/// back its modified bit may be clear); on Linux a page present or swapped (`/proc/self/pagemap`), else resident
+/// (`mincore`). A page only read is the zero page: held, its bytes zeros. A range not mapped holds none.
+#[cfg(unix)]
+fn held_pages(start: usize, end: usize, page: usize) -> Vec<bool> {
+    let n = (end - start) / page;
+    #[cfg(target_os = "linux")]
+    {
+        use std::os::unix::fs::FileExt;
+        if let Ok(f) = std::fs::File::open("/proc/self/pagemap") {
+            let mut e = vec![0u8; 8 * n];
+            if f.read_exact_at(&mut e, (start / page * 8) as u64).is_ok() {
+                // Bit 63: present; bit 62: swapped.
+                return e.chunks_exact(8).map(|w| u64::from_ne_bytes(w.try_into().expect("8 bytes")) >> 62 != 0).collect();
+            }
+        }
+    }
+    let mut v = vec![0u8; n];
+    // SAFETY: `v` has a byte for each page of the range; an unmapped range is an error, read as none.
+    if unsafe { libc::mincore(start as *mut libc::c_void, end - start, v.as_mut_ptr().cast()) } != 0 {
+        return vec![false; n];
+    }
+    // `<sys/mman.h>`'s `MINCORE_PAGED_OUT`, which the libc crate does not name.
+    #[cfg(target_vendor = "apple")]
+    const MINCORE_PAGED_OUT: i32 = 0x20;
+    #[cfg(target_vendor = "apple")]
+    let bits = libc::MINCORE_INCORE | libc::MINCORE_MODIFIED | MINCORE_PAGED_OUT;
+    #[cfg(not(target_vendor = "apple"))]
+    let bits = 1;
+    v.iter().map(|&b| i32::from(b) & bits != 0).collect()
+}
+
+/// The runs of written pages (`held_pages`') in `len` bytes at `p`, as (offset from `p`, bytes), clipped to the range:
 /// what a join capture keeps of a reservation mostly never touched (an arena of 4 GB, a room of 16). A range not
 /// mapped holds none; off Unix, the whole range is one run.
 pub fn written_runs(p: usize, len: usize) -> Vec<(usize, usize)> {
@@ -158,18 +191,10 @@ pub fn written_runs(p: usize, len: usize) -> Vec<(usize, usize)> {
         if len == 0 || p == 0 || end <= start {
             return Vec::new();
         }
-        let mut v = vec![0u8; (end - start) / page];
-        // SAFETY: `v` has a byte for each page of the range; an unmapped range is an error, read as none.
-        if unsafe { libc::mincore(start as *mut libc::c_void, end - start, v.as_mut_ptr().cast()) } != 0 {
-            return Vec::new();
-        }
-        #[cfg(target_vendor = "apple")]
-        let bit = libc::MINCORE_MODIFIED;
-        #[cfg(not(target_vendor = "apple"))]
-        let bit = 1;
+        let held = held_pages(start, end, page);
         let mut runs: Vec<(usize, usize)> = Vec::new();
-        for (i, b) in v.iter().enumerate() {
-            if i32::from(*b) & bit == 0 {
+        for (i, b) in held.iter().enumerate() {
+            if !*b {
                 continue;
             }
             let (a, z) = ((start + i * page).max(p), (start + (i + 1) * page).min(p + len));

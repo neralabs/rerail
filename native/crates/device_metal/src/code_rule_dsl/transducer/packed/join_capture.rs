@@ -258,8 +258,9 @@ fn place(cfg: &Config, p: &rerail_blocks::ledger::Placed, dev: usize, w: bool, n
             }
             // SAFETY: the block's used bytes, before the launch.
             let bytes = unsafe { std::slice::from_raw_parts(p.start as *const u8, len) };
-            *written += write_block(cfg, bytes)?;
-            format!("blocks/{:016x}.blk", digest(bytes))
+            let (source, n) = write_block(cfg, bytes)?;
+            *written += n;
+            source
         }
     };
     Ok(Region { name, role: "block", base: p.start, dev, len, kind: p.kind, source, written: w })
@@ -394,6 +395,8 @@ fn write_before(cfg: &Config, id: u64, labels: &[Label], reach: &Reached<'_>) ->
     // bound again as relative words; the spans within the directory's block move with it.
     let mut relative: Vec<(usize, usize, usize, usize)> = Vec::new();
     let mut roots = std::collections::HashSet::new();
+    // Each directory found: its region, its root's offset, its runs.
+    let mut atoms_dirs: Vec<(usize, usize, u64)> = Vec::new();
     for a in refs.iter().map(|&(i, o)| word(&regions[i], o)).collect::<Vec<_>>() {
         let Some(i) = at_dev(&regions, a).filter(|&i| regions[i].role == "block" && regions[i].kind == rerail_blocks::block::kind::ATOMS) else { continue };
         let ro = a - regions[i].dev;
@@ -411,6 +414,7 @@ fn write_before(cfg: &Config, id: u64, labels: &[Label], reach: &Reached<'_>) ->
         if (0..n).any(|k| u32_at(eo + k * DIR_ENTRY) > u32_at(eo + k * DIR_ENTRY + 4)) {
             continue;
         }
+        atoms_dirs.push((i, ro, n as u64));
         for k in 0..n {
             for (at, size) in DIR_SPANS {
                 let so = eo + k * DIR_ENTRY + at;
@@ -503,6 +507,9 @@ fn write_before(cfg: &Config, id: u64, labels: &[Label], reach: &Reached<'_>) ->
     writeln!(w, "unresolved {unresolved}")?;
     writeln!(w, "unbound {unbound}")?;
     let cd = rerail_tape_format::codes_dir::bytes();
+    for &(t, o, n) in &atoms_dirs {
+        writeln!(w, "atoms {} {o} {n}", regions[t].name)?;
+    }
     for (t, o) in &codes {
         writeln!(w, "codes {} {o} {:016x}", regions[*t].name, digest(cd))?;
     }
@@ -522,22 +529,26 @@ fn write_before(cfg: &Config, id: u64, labels: &[Label], reach: &Reached<'_>) ->
 }
 
 /// A block's used bytes as a block file (`blocks/<digest>.blk`), its header frozen at its length
-/// (`rerail_blocks::block::freeze_copy`), once a directory: the bytes written (0 where it was there).
-fn write_block(cfg: &Config, bytes: &[u8]) -> std::io::Result<u64> {
-    let d = digest(bytes);
-    if !chosen().0.lock().unwrap_or_else(|e| e.into_inner()).blocks.insert(d) {
-        return Ok(0);
-    }
-    let path = cfg.dir.join("blocks").join(format!("{d:016x}.blk"));
-    if path.exists() {
-        return Ok(0);
-    }
+/// (`rerail_blocks::block::freeze_copy`), once a directory: its source (`blocks/<digest>.blk`) and the bytes written
+/// (0 where it was there). The bytes are read once, the digest the copy's: a block another thread writes meanwhile
+/// is named by what was written.
+fn write_block(cfg: &Config, bytes: &[u8]) -> std::io::Result<(String, u64)> {
+    // copy: not block data (a capture's frozen image of a block, for the lab alone)
     let mut copy = bytes.to_vec();
+    let d = digest(&copy);
+    let source = format!("blocks/{d:016x}.blk");
+    if !chosen().0.lock().unwrap_or_else(|e| e.into_inner()).blocks.insert(d) {
+        return Ok((source, 0));
+    }
+    let path = cfg.dir.join(&source);
+    if path.exists() {
+        return Ok((source, 0));
+    }
     rerail_blocks::block::freeze_copy(&mut copy);
     let tmp = path.with_extension(format!("{}.tmp", std::process::id()));
     std::fs::write(&tmp, &copy)?;
     std::fs::rename(&tmp, &path)?;
-    Ok(copy.len() as u64)
+    Ok((source, copy.len() as u64))
 }
 
 impl Pending {
@@ -562,8 +573,7 @@ impl Pending {
             } else {
                 // SAFETY: the block's used bytes, its launch done.
                 let bytes = unsafe { std::slice::from_raw_parts(r.base as *const u8, r.len) };
-                write_block(&cfg, bytes)?;
-                format!("blocks/{:016x}.blk", digest(bytes))
+                write_block(&cfg, bytes)?.0
             };
             writeln!(w, "after {} {}", r.name, source)?;
         }
