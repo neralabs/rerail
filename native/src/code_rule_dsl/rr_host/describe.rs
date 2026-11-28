@@ -2,7 +2,7 @@
 //! tests and the files it read), once it reads and checks as a run would (`tools::check_rr`).
 
 use crate::code_rule_dsl::logic::front::{OPTION_GLOB, Program};
-use crate::code_rule_dsl::logic::front::ast::{Atom, Term};
+use crate::code_rule_dsl::logic::front::ast::{Atom, Literal, Rule, Term, Value as FactValue};
 use crate::code_rule_dsl::logic::rr;
 use rerail_rr_syntax::syntax::{Item, Tok, tokens};
 use serde_json::{Value, json};
@@ -18,16 +18,137 @@ fn described(path: &Path) -> Result<Value, String> {
     checked(path)?;
     let (program, files) = rr::read_file(path).map_err(|e| format!("{}: {e}", path.display()))?;
     let header = Header::of(&program.settings).map_err(|e| format!("{}: {e}", path.display()))?;
+    let options = Options::of(&program).map_err(|e| format!("{}: {e}", path.display()))?;
     Ok(json!({
         "path": path, "ok": true, "id": header.id, "revision": header.revision, "description": header.description,
         "mode": header.mode, "language": header.language,
         "scope": scope(&program, &header),
         "codes": codes(&program, &header.id).map_err(|e| format!("{}: {e}", path.display()))?,
         "tests": tests(path)?,
-        "suppresses": program.settings.iter().any(|(key, _)| key == "suppress"),
-        "fixes": program.settings.iter().any(|(key, _)| key == "fix"),
+        "violations": violations(&program, &header.id),
+        "options": options.names, "anyOption": options.any, "runSettings": super::run::RUN_SETTINGS,
         "files": read_files(path, &files)?,
     }))
+}
+
+/// The policy's `.violation`s, each once in the order its `violation` rules come (`finding_of`), with the `suppress`
+/// and `fix` lines lowering kept as settings of the findings layer (`suppress V tool "rule", … [over {c}]`,
+/// `fix V [safe] F "title"`): `{name, suppress: [{tool, rules}], fixes: [F]}`.
+fn violations(program: &Program, policy: &str) -> Vec<Value> {
+    let mut names: Vec<&str> = Vec::new();
+    let clauses = program.rules.iter().map(|rule| &rule.head).filter(|head| finding_of(head, policy)).filter_map(|head| match head.args.get(1) {
+        Some(Term::Str(clause)) => Some(clause.as_str()),
+        _ => None,
+    });
+    for clause in clauses {
+        if !names.contains(&clause) {
+            names.push(clause);
+        }
+    }
+    let lines = |key: &'static str| program.settings.iter().filter(move |(k, _)| k == key).filter_map(|(_, text)| tokens(text).ok());
+    names
+        .into_iter()
+        .map(|name| {
+            let suppress: Vec<Value> = lines("suppress").filter_map(|line| suppress_line(name, &line)).collect();
+            let fixes: Vec<Value> = lines("fix").filter_map(|line| fix_line(name, &line)).collect();
+            json!({"name": name, "suppress": suppress, "fixes": fixes})
+        })
+        .collect()
+}
+
+/// A `suppress V tool "rule", … [over {c}]` setting's tool and rules, where it is violation `name`'s.
+fn suppress_line(name: &str, line: &[(Tok<'_>, usize, usize)]) -> Option<Value> {
+    let [(Tok::Id(v), ..), (Tok::Id(tool), ..), rest @ ..] = line else { return None };
+    let texts = rest.iter().take_while(|(tok, ..)| !matches!(tok, Tok::Id("over")));
+    let rules: Vec<String> = texts
+        .filter_map(|(tok, ..)| match tok {
+            Tok::Str(rule) => Some(rule.to_string()),
+            _ => None,
+        })
+        .collect();
+    (*v == name).then(|| json!({"tool": tool, "rules": rules}))
+}
+
+/// A `fix V [safe] F "title"` setting's fix relation F, where it is violation `name`'s.
+fn fix_line(name: &str, line: &[(Tok<'_>, usize, usize)]) -> Option<Value> {
+    let [(Tok::Id(v), ..), rest @ ..] = line else { return None };
+    let fix = rest.iter().rev().find_map(|(tok, ..)| match tok {
+        Tok::Id(f) => Some(*f),
+        _ => None,
+    })?;
+    (*v == name).then(|| json!(fix))
+}
+
+/// The options the policy takes: the names its rules, and those of the files it includes, read `option` or
+/// `option_item` by, sorted, each once. Nothing declares them: a rule says what an option left unset means
+/// (`!option("max", _)`). `any`: some read's name is a variable the rule's own facts do not give (`names_of`), so the
+/// names cannot be listed, and the policy may read any.
+struct Options {
+    names: Vec<String>,
+    any: bool,
+}
+
+impl Options {
+    /// The policy's options. An error for a policy that carries the converter's `.options {…}` declaration, which a
+    /// rule does not state, or that reads an option named as a run's own setting (`run::RUN_SETTINGS`): the two share
+    /// the object a run's option values come in.
+    fn of(program: &Program) -> Result<Options, String> {
+        if program.settings.iter().any(|(key, _)| key == "options") {
+            return Err("it carries an `.options {…}` declaration; a rule declares no options: its rules say what an option left unset means".to_owned());
+        }
+        let (mut names, mut any) = (std::collections::BTreeSet::new(), false);
+        for rule in &program.rules {
+            for atom in rule.body.iter().filter_map(Literal::atom).filter(|atom| reads_option(atom)) {
+                match names_of(program, rule, atom) {
+                    Some(read) => names.extend(read),
+                    None => any = true,
+                }
+            }
+        }
+        if let Some(name) = names.iter().find(|name| super::run::RUN_SETTINGS.contains(&name.as_str())) {
+            return Err(format!("it reads an option named {name}, the name of a run's own setting; give the option another name"));
+        }
+        Ok(Options { names: names.into_iter().collect(), any })
+    }
+}
+
+/// Whether `atom` reads a policy's options.
+fn reads_option(atom: &Atom) -> bool {
+    matches!(atom.rel.as_str(), "option" | "option_item")
+}
+
+/// The names `atom`, a read of `option` or `option_item` in `rule`, reads: the text it is written with, or, for a
+/// variable, the texts the rule's facts give it (`limit(o, k) :- limit_rule(o, d), option(o, v)` beside
+/// `limit_rule("max", 3).`). `None` where they cannot be listed.
+fn names_of(program: &Program, rule: &Rule, atom: &Atom) -> Option<Vec<String>> {
+    match atom.args.first()? {
+        Term::Str(name) => Some(vec![name.as_str().to_owned()]),
+        Term::Var(variable) => {
+            // The rule's own positive atoms alone: an aggregate's atom binds nothing outside it.
+            let mut beside = rule.body.iter().filter_map(|literal| match literal {
+                Literal::Atom(other) if !other.neg && !reads_option(other) => Some(other),
+                _ => None,
+            });
+            beside.find_map(|other| fact_texts(program, other, variable.as_str()))
+        }
+        _ => None,
+    }
+}
+
+/// The texts `variable` holds where `atom` reads it: its column's values, where the atom's relation is facts alone
+/// (no rule derives it and no run gives it; none, for a library's relation this policy states no fact of) and each
+/// is a text. `None` where the atom does not read the variable, or reads it otherwise.
+fn fact_texts(program: &Program, atom: &Atom, variable: &str) -> Option<Vec<String>> {
+    let column = atom.args.iter().position(|term| matches!(term, Term::Var(name) if name.as_str() == variable))?;
+    let rel = atom.rel.as_str();
+    if program.inputs.iter().any(|input| input == rel) || program.rules.iter().any(|rule| rule.head.rel.as_str() == rel) {
+        return None;
+    }
+    let texts = program.facts.get(rel).into_iter().flatten().map(|row| match row.get(column) {
+        Some(FactValue::Str(text)) => Some(text.as_str().to_owned()),
+        _ => None,
+    });
+    texts.collect()
 }
 
 /// The file read and checked as `check-rr` checks it (its reader, then its types): the error otherwise, naming the

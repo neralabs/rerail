@@ -131,8 +131,10 @@ describe("describeRerailPolicies", () => {
       scope: { include: ["**/*.py"], exclude: ["vendor/**"], text: [], toolCalls: false },
       codes: ["Shout"],
       tests: 1,
-      suppresses: true,
-      fixes: false,
+      violations: [{ name: "Shout", suppress: [{ tool: "ruff", rules: ["T201"] }], fixes: [] }],
+      options: [],
+      anyOption: false,
+      runSettings: expect.arrayContaining(["inputFiles", "dialect"]),
       // The rule file first, then what it reads, as the engine read it: `core.rerail`, then its own library file.
       files: [
         { path: rule, sha256: sha256(SHOUT) },

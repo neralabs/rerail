@@ -322,6 +322,25 @@ export function rerailRules(packJson) {
 }
 
 /**
+ * The first core release that runs what a pack's `.rerail` rule states beyond its findings (decision 0720): the fixes
+ * its `fix` lines offer and the suppression comments its `suppress` lines name. An older core refuses such a rule (a
+ * fix), or runs it without them, so a pack whose rules use them states this release or a later one as the core it
+ * needs (`statedCore`); the pack validation's check 5 holds it to that.
+ */
+export const RERAIL_RULE_FEATURES_SINCE = "0.2.3";
+
+/**
+ * The core release a parsed pack `package.json` states its rules need, `rerail.core`, or undefined: what a pack whose
+ * `.rerail` rules read engine work newer than RERAIL_DOCUMENTS_SINCE (a library relation, a feature) says, so the
+ * Release pull request raises its range once core is at that release, as for the releases the maps here know.
+ */
+export function statedCore(packageJson) {
+  const core = packageJson?.rerail?.core;
+  // Any other value is the pack validation's check 5 failure, and states nothing here.
+  return typeof core === "string" && /^\d+\.\d+\.\d+$/u.test(core) ? core : undefined;
+}
+
+/**
  * Every language the rule documents under `<directory>/rules` name (a query's, a define's or a transform's
  * `language`), sorted. A document that is not JSON names none: the pack validation's check 1 reports it.
  */
@@ -383,14 +402,16 @@ export function shippedRuleKeys(directory) {
 
 /**
  * The oldest core release that loads a pack holding the rules `heldOff` off, shipping rules in `languages` whose ast
- * rules use `ruleKeys`, shipping the rules `rerail` written in `.rerail`, and giving the rules `dimensioned`
- * dimensions: the newest of the releases that first read each. Undefined when every core loads it.
+ * rules use `ruleKeys`, shipping the rules `rerail` written in `.rerail`, giving the rules `dimensioned` dimensions
+ * and stating the core `stated` (`statedCore`): the newest of the releases that first read each. Undefined when every
+ * core loads it.
  */
-export function coreFloor(heldOff, languages, ruleKeys, rerail, dimensioned) {
+export function coreFloor(heldOff, languages, ruleKeys, rerail, dimensioned, stated) {
   const since = [
     ...(heldOff.length > 0 ? [HELD_OFF_SINCE] : []),
     ...(rerail.length > 0 ? [RERAIL_DOCUMENTS_SINCE] : []),
     ...(dimensioned.length > 0 ? [DIMENSIONS_SINCE] : []),
+    ...(stated === undefined ? [] : [stated]),
     ...languages.flatMap((language) => LANGUAGE_SINCE.get(language) ?? []),
     ...ruleKeys.flatMap((key) => RULE_KEY_SINCE.get(key) ?? []),
   ];

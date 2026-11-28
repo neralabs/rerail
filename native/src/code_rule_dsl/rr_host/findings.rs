@@ -1,6 +1,7 @@
-//! A run's findings as `runRr` hands them: each of `run_policies`' diagnostics, with its span (`spans`) and its
-//! parameters as texts.
+//! A run's findings as `runRr` hands them: each of `run_policies`' diagnostics, with its span (`spans`), its
+//! parameters as texts and its fix (`fixes`).
 
+use super::fixes::{self, Edits};
 use super::spans::FileSpans;
 use crate::code_rule_dsl::language::{CodeRuleLanguage, label, label_named, label_of_path};
 use crate::code_rule_dsl::logic::plan::output::{self, Node, Outputs};
@@ -11,15 +12,17 @@ use std::path::{Path, PathBuf};
 
 /// The findings of the run whose report is `report` and whose outputs are under `out`, over the corpus at `root`.
 pub fn of(root: &Path, out: &Path, report: &Value) -> Result<Vec<Value>, String> {
-    let mut located = Located { root, nodes: file_nodes(out)?, languages: languages(report), files: HashMap::new() };
+    let dirs = output_dirs(out);
+    let mut located = Located { root, nodes: file_nodes(&dirs)?, edits: Edits::read(&dirs)?, languages: languages(report), files: HashMap::new() };
     Ok(report["diagnostics"].as_array().into_iter().flatten().map(|diagnostic| located.finding(diagnostic)).collect())
 }
 
-/// What a finding's span is read from: the nodes of the run's files its findings name, each policy's language, and
-/// each file read so far.
+/// What a finding's span and fix are read from: the nodes of the run's files its findings name, its fixes' edits,
+/// each policy's language, and each file read so far.
 struct Located<'r> {
     root: &'r Path,
     nodes: HashSet<(String, i64)>,
+    edits: Edits,
     languages: HashMap<String, Option<String>>,
     files: HashMap<(String, Option<&'static str>), Option<FileSpans>>,
 }
@@ -29,19 +32,37 @@ impl Located<'_> {
         json!({
             "policy": d["policy"], "clause": d["clause"], "code": d["code"], "message": d["message"], "path": d["path"],
             "line": d["line"], "span": self.span(d), "tag": d["tag"], "parameters": parameters(&d["parameters"]),
+            "fix": self.fix(d),
         })
+    }
+
+    /// The key of finding `d`'s file as its policy's run parses it (its path and dialect), read into `files` once;
+    /// `None` for a finding in no file (a tool call's).
+    fn file_key(&mut self, d: &Value) -> Option<(String, Option<&'static str>)> {
+        let path = d["path"].as_str().filter(|path| !path.is_empty())?;
+        let language = d["policy"].as_str().and_then(|policy| self.languages.get(policy)).cloned().flatten();
+        let key = (path.to_owned(), parsed_as(language.as_deref(), path));
+        let root = self.root;
+        self.files.entry(key.clone()).or_insert_with(|| FileSpans::read(root, path, key.1));
+        Some(key)
     }
 
     /// The finding's span; `null` for a finding in no file (a tool call's), or in a file that no longer reads.
     fn span(&mut self, d: &Value) -> Value {
-        let Some(path) = d["path"].as_str().filter(|path| !path.is_empty()) else { return Value::Null };
-        let language = d["policy"].as_str().and_then(|policy| self.languages.get(policy)).cloned().flatten();
-        let label = parsed_as(language.as_deref(), path);
-        let node = d["at"].as_i64().filter(|&at| self.nodes.contains(&(path.to_owned(), at)));
-        let root = self.root;
-        let file = self.files.entry((path.to_owned(), label)).or_insert_with(|| FileSpans::read(root, path, label));
-        let span = file.as_ref().and_then(|file| file.span(node, d["line"].as_i64().unwrap_or(0)));
+        let Some(key) = self.file_key(d) else { return Value::Null };
+        let node = d["at"].as_i64().filter(|&at| self.nodes.contains(&(key.0.clone(), at)));
+        let span = self.files.get(&key).and_then(Option::as_ref).and_then(|file| file.span(node, d["line"].as_i64().unwrap_or(0)));
         span.map_or(Value::Null, |span| json!(span))
+    }
+
+    /// The finding's first fix whose edits all apply, as one replacement (`fixes`); `null` for none.
+    fn fix(&mut self, d: &Value) -> Value {
+        if self.edits.of(d).is_empty() {
+            return Value::Null;
+        }
+        let Some(key) = self.file_key(d) else { return Value::Null };
+        let Some(file) = self.files.get(&key).and_then(Option::as_ref) else { return Value::Null };
+        self.edits.of(d).iter().find_map(|edits| fixes::compose(file, &key.0, edits)).unwrap_or(Value::Null)
     }
 }
 
@@ -74,13 +95,13 @@ fn setting<'v>(settings: &'v [Value], key: &str) -> Option<&'v str> {
     settings.iter().find(|pair| pair[0] == key).and_then(|pair| pair[1].as_str())
 }
 
-/// The `at` of every finding of the outputs under `out` that is a node of a file of the run (not a guest's, not a
+/// The `at` of every finding of the outputs in `dirs` that is a node of a file of the run (not a guest's, not a
 /// place), with its file's path: those whose span is read off the file's tree.
-fn file_nodes(out: &Path) -> Result<HashSet<(String, i64)>, String> {
+fn file_nodes(dirs: &[PathBuf]) -> Result<HashSet<(String, i64)>, String> {
     let at = rr::DIAGNOSTIC_HEAD.iter().position(|column| *column == "at").ok_or("a finding has no `at` column")?;
     let mut nodes = HashSet::new();
-    for dir in output_dirs(out) {
-        let outputs = Outputs::open(&dir).map_err(|e| format!("{}: {e}", dir.display()))?;
+    for dir in dirs {
+        let outputs = Outputs::open(dir).map_err(|e| format!("{}: {e}", dir.display()))?;
         for rel in outputs.names().into_iter().filter(|rel| rr::is_diagnostic(rel)) {
             nodes.extend(outputs.rows(rel).iter().filter_map(|row| file_node(row.get(at))));
         }

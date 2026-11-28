@@ -27,6 +27,7 @@ import {
   type CodeRulePlacement,
   type CodeRulePlacementEntry,
   type RepositoryStatus,
+  type RuleConfig,
 } from "../catalog/repository-model.js";
 import { WorktreeRegistryPass } from "../catalog/repository-identity.js";
 import {
@@ -340,6 +341,8 @@ export interface RerailRuleEntry {
    * them first, since the runner reads the files from disk.
    */
   readonly files: readonly { readonly path: string; readonly sha256: string }[];
+  /** The repository's values for the options it reads (a rule setting's `config`); null: none is set. */
+  readonly config: RuleConfig | null;
   readonly placement: CodeRulePlacement;
   readonly provenance: RepositoryAuditRuleProvenance;
 }
@@ -661,7 +664,7 @@ interface BuiltRerailRule {
   readonly versioned: unknown;
 }
 
-/** A placed rule written in `.rerail`, kept with its placement; its line of the version digests its content. */
+/** A placed rule written in `.rerail`, kept with its placement and options; its line of the version digests its content and options. */
 function rerailBuilt(
   ruleSet: CheckoutRuleSet,
   { id, rule, decisions, placement }: { readonly id: string; readonly rule: EffectiveRule; readonly decisions: RulePlacementDecision[]; readonly placement: CodeRulePlacement },
@@ -672,9 +675,10 @@ function rerailBuilt(
     rerail: {
       id, path: document.path, scope: document.scope, language: document.language, placement,
       files: [{ path: document.path, sha256: document.sha256 }, ...document.includes],
+      config: rule.config,
       provenance: { ruleId: id, revision: rule.revision, payloadHash: rule.payloadHash, source: { ...rule.source }, repositoryKey, checkoutPath, placement: decisions },
     },
-    versioned: { id, kind: "rerail", sourceDigest: rule.payloadHash, placement, source: rule.source },
+    versioned: { id, kind: "rerail", sourceDigest: rule.payloadHash, placement, source: rule.source, config: stableJsonText(rule.config) ?? "" },
   };
 }
 

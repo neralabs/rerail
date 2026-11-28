@@ -30,7 +30,7 @@ const isOptionValue = (value: unknown): value is CodeRuleDslValue =>
 
 /** Sets option `name` to `value` in `config`, or says why it cannot. */
 function setOption(declared: Declared, config: Record<string, CodeRuleDslValue>, name: string, value: unknown): string | undefined {
-  if (!Object.hasOwn(declared, name)) return `${name} is not an option the port declares`;
+  if (!Object.hasOwn(declared, name)) return `${name} is not an option the port takes`;
   if (!isOptionValue(value)) return `${name}: ${JSON.stringify(value)} is not a value Rerail maps`;
   if (Object.hasOwn(config, name)) return `${name} is set twice`;
   config[name] = value;

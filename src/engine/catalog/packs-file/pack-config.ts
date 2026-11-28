@@ -26,10 +26,7 @@ export interface DeclaredRuleConfig {
 export function declaredPackRuleConfigs(catalog: RuleCatalog, pack: DeclaredPack, packId: string, label: string): DeclaredRuleConfig[] {
   if (pack.config === undefined) return [];
   const name = declaredPackLabel(pack);
-  const rules = (catalog.packs.get(packId)?.rules ?? []).map(rule => {
-    const source = catalog.sources.get(rule.id);
-    return { id: rule.id, declared: source === undefined ? new Set<string>() : codeRuleDeclaredOptions(source) };
-  });
+  const rules = (catalog.packs.get(packId)?.rules ?? []).map(rule => ({ id: rule.id, declared: declaredOptions(catalog, rule.id) }));
   const configs = new Map<string, Record<string, CodeRuleDslValue>>();
   for (const [option, value] of Object.entries(pack.config)) {
     const declaring = rules.filter(rule => rule.declared.has(option));
@@ -56,4 +53,12 @@ function undeclaredOption(rules: ReadonlyArray<{ declared: ReadonlySet<string> }
   const known = [...new Set(rules.flatMap(rule => [...rule.declared]))].sort();
   const declared = known.length === 0 ? "its rules declare no option" : `its rules declare ${known.join(", ")}`;
   return new PacksFileError(`${label} sets config.${option} for ${name}, which no rule of that pack declares (${declared})`);
+}
+
+/** The names of the options rule `id` takes: those a `.rerail` rule reads, those a JSON document's defines declare. */
+function declaredOptions(catalog: RuleCatalog, id: string): ReadonlySet<string> {
+  const document = catalog.documents.get(id);
+  if (document?.kind === "rerail") return new Set(document.rule.options);
+  const source = catalog.sources.get(id);
+  return source === undefined ? new Set<string>() : codeRuleDeclaredOptions(source);
 }

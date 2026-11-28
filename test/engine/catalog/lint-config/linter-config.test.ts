@@ -235,6 +235,7 @@ describe("portsOf", () => {
     packs: new Map([
       ["one", { rules: [rule("all-kinds"), rule("conversation"), rule("no-document"), rule("plain", false, "its steer did harm")] }],
       ["two", { rules: [rule("plain", false, "its steer did harm"), rule("define-only")] }],
+      ["three", { rules: [rule("rerail-port"), rule("rerail-anywhere")] }],
     ]),
     documents: new Map<string, unknown>([
       ["all-kinds", code([
@@ -255,6 +256,19 @@ describe("portsOf", () => {
       ["conversation", { kind: "conversation", rule: {} }],
       ["plain", { kind: "code", rule: { clauses: [{ violation: { suppress: {} } }], scope: { include: ["**/*.py"], exclude: ["tests/**"] } } }],
       ["define-only", code([{ define: { options: { c: { type: "string" } } } }])],
+      // Rules written in .rerail, as the catalog reads them: their violations' suppress lines, the options they read.
+      ["rerail-port", {
+        kind: "rerail",
+        rule: {
+          options: ["option"], anyOption: false, runSettings: [],
+          scope: { include: ["**/*.ts"], exclude: ["dist/**"], text: [] },
+          violations: [
+            { name: "A", suppress: [{ tool: "eslint", rules: ["curly"] }, { tool: "ruff", rules: ["E1"] }, { tool: "flake8", rules: ["E1", "E2"] }, { tool: "unknown", rules: ["x"] }], fixes: [] },
+            { name: "B", suppress: [{ tool: "oxlint", rules: ["curly"] }], fixes: ["f"] },
+          ],
+        },
+      }],
+      ["rerail-anywhere", { kind: "rerail", rule: { options: [], anyOption: false, runSettings: [], scope: { include: [], exclude: [], text: [] }, violations: [{ name: "C", suppress: [], fixes: [] }] } }],
     ]),
   } as unknown as RuleCatalog;
 
@@ -271,6 +285,20 @@ describe("portsOf", () => {
       },
       { ruleId: "plain", suppress: NO_NAMES, declared: {}, startsOn: false, heldOff: "its steer did harm", scope: { include: ["**/*.py"], exclude: ["tests/**"] } },
       { ruleId: "define-only", suppress: NO_NAMES, declared: { c: { type: "string" } }, startsOn: true },
+    ]);
+  });
+
+  it("ports a rule written in .rerail with the names of its suppress lines, by the tool each names, and the options it reads", () => {
+    expect(portsOf(catalog, ["three"])).toEqual([
+      {
+        ruleId: "rerail-port",
+        suppress: { ...NO_NAMES, eslint: ["curly"], noqa: ["E1", "E2"], oxlint: ["curly"] },
+        declared: { option: null },
+        startsOn: true,
+        scope: { include: ["**/*.ts"], exclude: ["dist/**"] },
+      },
+      // A scope with no include takes any file.
+      { ruleId: "rerail-anywhere", suppress: NO_NAMES, declared: {}, startsOn: true, scope: { include: ["**/*"], exclude: [] } },
     ]);
   });
 

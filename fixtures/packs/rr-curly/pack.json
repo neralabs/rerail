@@ -1,0 +1,36 @@
+{
+  "format": "rerail.rule-pack/v1",
+  "id": "rr-curly",
+  "name": "Curly braces in .rerail",
+  "category": "language",
+  "covers": "A fixture pack whose one rule, written in .rerail, ports ESLint's curly with its options, fixes and suppression comments.",
+  "reason": "matches TypeScript",
+  "match": {
+    "any": [
+      {
+        "files": [
+          "**/*.ts"
+        ],
+        "label": "*.ts files"
+      }
+    ]
+  },
+  "rules": [
+    {
+      "id": "eslint-curly",
+      "document": "rules/eslint-curly.rerail",
+      "title": "ESLint curly: Enforce consistent brace style for all control statements",
+      "group": "ESLint",
+      "examples": {
+        "caught": {
+          "path": "src/a.ts",
+          "text": "if (ready) start();\n"
+        },
+        "passes": {
+          "path": "src/a.ts",
+          "text": "if (ready) {\n  start();\n}\n"
+        }
+      }
+    }
+  ]
+}

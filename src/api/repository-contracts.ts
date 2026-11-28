@@ -129,13 +129,14 @@ export const rerailRuleBodySchema = z.object({
   language: z.string().nullable(),
   scope: z.object({ include: z.array(z.string()), exclude: z.array(z.string()) }).strict(),
   codes: z.array(z.string()).describe("The violation codes the rule reports."),
+  options: z.array(z.string()).describe("The options the rule reads, by name: a setting's config gives them values."),
   source: z.string().describe("The text of the rule's .rerail file."),
-}).strict().describe("A rule written in .rerail, which a rule pack ships. It takes no options, and only its pack holds it.");
+}).strict().describe("A rule written in .rerail, which a rule pack ships. Only its pack holds it.");
 
 /** `rule` as the API returns it: everything but where the file and its includes are on this computer. */
 function rerailRuleBody(rule: RerailRule): z.infer<typeof rerailRuleBodySchema> {
-  const { id, revision, mode, description, language, scope, codes, source } = rule;
-  return { id, revision, mode, description, language, scope: { include: [...scope.include], exclude: [...scope.exclude] }, codes: [...codes], source };
+  const { id, revision, mode, description, language, scope, codes, options, source } = rule;
+  return { id, revision, mode, description, language, scope: { include: [...scope.include], exclude: [...scope.exclude] }, codes: [...codes], options: [...options], source };
 }
 
 /**

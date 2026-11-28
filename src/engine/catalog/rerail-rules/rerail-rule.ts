@@ -1,8 +1,9 @@
 /**
  * A pack rule written in `.rerail` (docs/pack-format.md, "Rules written in .rerail"): the file is the rule. The engine
  * reads it with every file it includes and states what it says (`describeRerailRules`): its id and revision, mode,
- * description, language, scope and violation codes, none of which `pack.json` restates. Such a rule runs through the
- * `.rerail` runner (`src/engine/rr/`), never through the JSON engine, and takes no options.
+ * description, language, scope, violation codes, the options its rules read and each violation's `suppress` and `fix`
+ * lines, none of which `pack.json` restates. Such a rule runs through the `.rerail` runner (`src/engine/rr/`), never
+ * through the JSON engine; a repository's values for its options reach the run as `option` facts (decision 0720).
  */
 import { describeRerailPoliciesSync, type RrDescription } from "../../rr/rr-runner.js";
 import type { RuleMode } from "../rule-mode.js";
@@ -27,6 +28,24 @@ export interface RerailScope {
   readonly text: readonly string[];
 }
 
+/** One `.violation` of a `.rerail` rule: its name, the linters' comments that silence it, and the fixes it offers. */
+export interface RerailViolation {
+  readonly name: string;
+  /** Each `suppress TOOL "rule", …` line: the tool (`eslint`, `ruff`, `nosec`, …) and its rule names. */
+  readonly suppress: readonly { readonly tool: string; readonly rules: readonly string[] }[];
+  /** The fix relations its `fix` lines name, in order. */
+  readonly fixes: readonly string[];
+}
+
+/**
+ * The JSON rule's `violation.suppress` key each tool a `.rerail` `suppress` line may name stands for: Ruff's and
+ * flake8's comments are `# noqa`. Set-up reads a port's linters by these, and check 2 its tool's comments.
+ */
+export const RERAIL_SUPPRESS_KEYS: Readonly<Record<string, "eslint" | "noqa" | "nosec" | "oxlint" | "biome" | "phpstan" | "psalm" | "phpcs" | "clippy" | "sqlfluff">> = {
+  ruff: "noqa", flake8: "noqa", noqa: "noqa", nosec: "nosec", eslint: "eslint", oxlint: "oxlint", biome: "biome",
+  phpstan: "phpstan", psalm: "psalm", phpcs: "phpcs", clippy: "clippy", sqlfluff: "sqlfluff",
+};
+
 export interface RerailRule {
   /** The file's `.policy` id, which is also its file name in the pack. */
   readonly id: string;
@@ -38,6 +57,17 @@ export interface RerailRule {
   readonly scope: RerailScope;
   /** The violation codes the file's own `.violation`s report. */
   readonly codes: readonly string[];
+  /**
+   * The options the rule takes: the names its rules, and those of the files it includes, read `option` and
+   * `option_item` by. Nothing declares them; the rule says what an option left unset means.
+   */
+  readonly options: readonly string[];
+  /** Whether it reads an option by a name the engine cannot list (a variable no fact of its own gives): it takes any name. */
+  readonly anyOption: boolean;
+  /** The names of a run's own settings (`inputFiles`, `dialect`, …), which no option takes, as the engine names them. */
+  readonly runSettings: readonly string[];
+  /** The file's `.violation`s and those of the files it includes. */
+  readonly violations: readonly RerailViolation[];
   /** The file's text. */
   readonly source: string;
   /** The absolute path of the installed file. */
@@ -64,7 +94,6 @@ export const describeRerailRules: RerailDescriber = paths => (paths.length === 0
 export function unsupportedRerailRule(described: RerailDescription, entryMode: RuleMode | undefined): string | undefined {
   if (described.mode === "block" || entryMode === "block") return "block mode is not supported yet for a .rerail rule; use steer or log";
   if (described.scope.toolCalls) return "a .rerail rule that reads tool calls (.scope tool_calls) is not supported yet in a pack";
-  if (described.fixes) return "a .rerail rule whose findings carry a fix is not supported yet";
   return undefined;
 }
 
@@ -78,6 +107,10 @@ export function rerailRuleOf(described: RerailDescription, source: string): Rera
     language: described.language,
     scope: { include: described.scope.include, exclude: described.scope.exclude, text: described.scope.text },
     codes: described.codes,
+    options: described.options,
+    anyOption: described.anyOption,
+    runSettings: described.runSettings,
+    violations: described.violations,
     source,
     path: described.path,
     // The engine lists the rule file first, then every file it included.

@@ -180,7 +180,7 @@ describe("the engine's readings kept between processes", () => {
   /** A reading of `path` as the engine gives one, with the rule file and the library file it includes. */
   const reading = (directory: string, path: string): RerailDescription => ({
     path, ok: true, id: "rr-sample-print-call", revision: 1, description: null, mode: "steer", language: "python",
-    scope: { include: ["**/*.py"], exclude: [], text: [], toolCalls: false }, codes: ["P001"], tests: 1, suppresses: false, fixes: false,
+    scope: { include: ["**/*.py"], exclude: [], text: [], toolCalls: false }, codes: ["P001"], tests: 1, violations: [{ name: "P001", suppress: [], fixes: [] }], options: [], anyOption: false, runSettings: ["inputFiles"],
     files: [path, join(directory, LIBRARY)].map(file => ({ path: file, sha256: sha256(file) })),
   });
 
@@ -214,7 +214,7 @@ describe("the engine's readings kept between processes", () => {
 });
 
 describe("the checkout catalog's .rerail rules", { timeout: CHILD_TIMEOUT }, () => {
-  it("places each active .rerail rule per folder for the .rerail runner, and refuses options for one", () => {
+  it("places each active .rerail rule per folder for the .rerail runner, and refuses an option its rules do not read", () => {
     const root = realpathSync(mkdtempSync(join(tmpdir(), "rerail-rr-checkout-")));
     temporary.push(root);
     execFileSync("git", ["init", "--quiet"], { cwd: root });
@@ -247,7 +247,7 @@ describe("the checkout catalog's .rerail rules", { timeout: CHILD_TIMEOUT }, () 
       ]);
       expect(catalog.quarantined()).toEqual([expect.objectContaining({
         ruleId: "rr-sample-print-call",
-        reason: "The repository's config for this rule does not apply: config: rr-sample-print-call is written in .rerail, and options for a rule written in .rerail are not supported yet",
+        reason: "The repository's config for this rule does not apply: config.ceiling: `ceiling` is not an option this rule reads",
       })]);
     } finally {
       catalogs.close();

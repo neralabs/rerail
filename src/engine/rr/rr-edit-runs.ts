@@ -17,7 +17,7 @@ import type { RerailRuleEntry } from "../code-rule/code-rule-dsl-catalog.js";
 import { editViolations, reportsWholeFile, type ReportBase } from "../code-rule/edit-findings/generated-lines.js";
 import { deliverSteer, steerSourceOf, type SteerTarget } from "../code-rule/edit-findings/steer-publication.js";
 import type { RrClaim, RrRunOwner, RrRunQueue, RrRunTiming } from "./rr-run-queue.js";
-import type { RrRunOutcome } from "./rr-runner.js";
+import { rrRunOptions, type RrRunOutcome } from "./rr-runner.js";
 import { leftRun, type RrRunEnd } from "./rr-run-slots.js";
 import { insideAny, takes } from "./rr-rule-scope.js";
 import { unchangedRules } from "./rr-rule-files.js";
@@ -195,7 +195,7 @@ export class RerailEditRuns implements RrRunOwner {
       return undefined;
     }
     this.#flight = flight;
-    return { policies: rules.map(rule => rule.path), settle: outcome => this.#settle(flight, outcome) };
+    return { policies: rules.map(rule => rule.path), options: rrRunOptions(rules), settle: outcome => this.#settle(flight, outcome) };
   }
 
   /** The checkout's rules now that take one of `files`. */

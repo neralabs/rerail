@@ -78,7 +78,8 @@ fn describe_reads_what_a_rule_states_and_names_why_a_file_is_refused() {
     assert_eq!(row["ok"], true, "{row:#}");
     assert_eq!([&row["id"], &row["revision"], &row["description"], &row["mode"], &row["language"]], [&json!("rr-host-shout"), &json!(2), &json!("Calls of shout()."), &json!("log"), &json!("python")]);
     assert_eq!(row["scope"], json!({"include": ["**/*.py"], "exclude": ["vendor/**"], "text": [], "toolCalls": false}));
-    assert_eq!([&row["codes"], &row["tests"], &row["suppresses"], &row["fixes"]], [&json!(["Shout"]), &json!(1), &json!(true), &json!(false)]);
+    let violations = json!([{"name": "Shout", "suppress": [{"tool": "ruff", "rules": ["T201"]}], "fixes": []}]);
+    assert_eq!([&row["codes"], &row["tests"], &row["violations"], &row["options"]], [&json!(["Shout"]), &json!(1), &violations, &json!([])]);
     let files: Vec<&str> = row["files"].as_array().unwrap().iter().map(|file| file["path"].as_str().unwrap()).collect();
     assert!(files[0].ends_with("shout.rerail") && files.iter().any(|file| file.ends_with("lib/calls.rerail")), "{files:?}");
     let bad = rows[1]["error"].as_str().unwrap();
@@ -144,4 +145,159 @@ fn a_finding_at_a_line_spans_its_text_and_one_at_the_file_its_start() {
     let whole = file.span(None, 0).unwrap();
     assert_eq!((whole.start_byte, whole.end_byte, whole.start_line, whole.end_line), (0, 0, 0, 0));
     assert!(file.span(None, 3).is_none());
+}
+
+/// Calls of shout(), named as the `loud` option says (unset: quietly), with two fixes: one whose rule never holds, and
+/// one of two edits, the call's function and its arguments.
+const QUIETEN: &str = ".policy \"rr-host-quieten\" revision 1
+.language python
+.mode log
+.scope include \"**/*.py\"
+
+#include \"lib/calls.rerail\"
+
+.violation Shout(at: node, name: symbol) \"{name}() is called here\"
+    fix never \"Never offered\"
+    fix quiet \"Call a quiet function instead\"
+Shout(c, \"shout\") :- shout_call(c), !option(\"loud\", \"true\").
+Shout(c, \"SHOUT\") :- shout_call(c), option(\"loud\", \"true\").
+never(c, _) :- text(c, \"never\") => replace(c, `never()`).
+quiet(c, n) :- field(c, \"function\", f), field(c, \"arguments\", a) => replace(f, `quiet_$n`), replace(a, `($a, loud=False)`).
+";
+
+/// `run::run` of the policies over `root` with `options` (by policy), its outputs under `root/../<root>.out`.
+fn run_with(root: &Path, policies: &[PathBuf], options: Value) -> Value {
+    let out = root.with_extension("out");
+    let _ = std::fs::remove_dir_all(&out);
+    std::fs::create_dir_all(&out).unwrap();
+    let request = json!({"root": root, "policies": policies, "out": out, "options": options});
+    let result = run::run(&request.to_string()).unwrap();
+    let _ = std::fs::remove_dir_all(&out);
+    serde_json::from_str(&result).unwrap()
+}
+
+/// Decision 0720: a policy's option values are its own in a run of several (each set of values a run of its own), the
+/// options it takes are the names it reads, and a finding carries the first of its fixes whose every edit applies, as
+/// one replacement with each placeholder filled.
+#[test]
+fn a_policy_runs_with_its_own_options_and_its_findings_carry_their_fixes() {
+    let text = "x = 1\nshout(1)\n";
+    let root = folder("rr-host-fixes", &[("a.py", text)]);
+    // The same rule under another id, given no value in either run: it reads the option unset beside one given a value.
+    let unset = QUIETEN.replace("rr-host-quieten", "rr-host-unset");
+    let rules = folder("rr-host-fixes-rules", &[("lib/calls.rerail", CALLS), ("quieten.rerail", QUIETEN), ("unset.rerail", &unset), ("shout.rerail", SHOUT)]);
+    let policies = [rules.join("quieten.rerail"), rules.join("unset.rerail"), rules.join("shout.rerail")];
+    let quiet = run_with(&root, &policies, json!({}));
+    let mut values = serde_json::Map::new();
+    values.insert(rules.join("quieten.rerail").display().to_string(), json!({"loud": true}));
+    let loud = run_with(&root, &policies, Value::Object(values));
+    let describe = describe::describe(&[rules.join("quieten.rerail")]);
+    let _ = (std::fs::remove_dir_all(&root), std::fs::remove_dir_all(&rules));
+    let finding = |result: &Value, policy: &str| result["findings"].as_array().unwrap().iter().find(|finding| finding["policy"] == policy).cloned().unwrap_or_else(|| panic!("no {policy} finding: {result:#}"));
+    let at = byte_offset(text, "shout(");
+    let span = json!({"startByte": at, "endByte": at + "shout(1)".len(), "startLine": 1, "startColumn": 0, "endLine": 1, "endColumn": "shout(1)".len()});
+    assert_eq!(finding(&quiet, "rr-host-quieten")["fix"], json!({"span": span, "text": "quiet_shout((1), loud=False)"}), "{quiet:#}");
+    assert_eq!(finding(&loud, "rr-host-unset")["message"], "shout() is called here", "{loud:#}");
+    assert_eq!(finding(&loud, "rr-host-quieten")["message"], "SHOUT() is called here", "{loud:#}");
+    assert_eq!(finding(&loud, "rr-host-quieten")["fix"]["text"], "quiet_SHOUT((1), loud=False)", "{loud:#}");
+    // The other policy, run beside it with no values of its own, offers no fix and finds as it did.
+    assert_eq!(finding(&loud, "rr-host-shout")["fix"], Value::Null);
+    let fixes = json!([{"name": "Shout", "suppress": [], "fixes": ["never", "quiet"]}]);
+    assert_eq!([&describe[0]["violations"], &describe[0]["options"]], [&fixes, &json!(["loud"])]);
+}
+
+/// Calls of shout() with three fixes, the first two not offered: two edits that overlap (the call, and its function
+/// inside it), and a deletion, which is not run. The third renames the function.
+const UNFIXABLE: &str = ".policy \"rr-host-unfixable\" revision 1
+.language python
+.mode log
+.scope include \"**/*.py\"
+
+#include \"lib/calls.rerail\"
+
+.violation Shout(at: node) \"shout() is called here\"
+    fix overlapping \"Overlapping edits\"
+    fix removal \"Remove the call\"
+    fix rename \"Call whisper() instead\"
+Shout(c) :- shout_call(c).
+overlapping(c) :- field(c, \"function\", f) => replace(c, `quiet()`), replace(f, `quiet`).
+removal(c) => delete(c).
+rename(c) :- field(c, \"function\", f) => replace(f, `whisper`).
+";
+
+/// Decision 0720: a finding carries its first fix whose edits all apply: not one whose edits overlap, nor one with an
+/// edit that is not run.
+#[test]
+fn a_finding_offers_no_fix_whose_edits_overlap_or_are_not_run() {
+    let root = folder("rr-host-unfixable", &[("a.py", "shout(1)\n")]);
+    let rules = folder("rr-host-unfixable-rules", &[("lib/calls.rerail", CALLS), ("unfixable.rerail", UNFIXABLE)]);
+    let result = run_over(&root, &[rules.join("unfixable.rerail")]);
+    let _ = (std::fs::remove_dir_all(&root), std::fs::remove_dir_all(&rules));
+    let findings = result["findings"].as_array().unwrap();
+    assert_eq!(findings.len(), 1, "{result:#}");
+    let span = json!({"startByte": 0, "endByte": 5, "startLine": 0, "startColumn": 0, "endLine": 0, "endColumn": 5});
+    assert_eq!((&findings[0]["code"], &findings[0]["fix"]), (&json!("Shout"), &json!({"span": span, "text": "whisper"})), "{result:#}");
+}
+
+/// An option takes no name the run's own settings have: the run reads its values from the same object.
+#[test]
+fn describe_refuses_an_option_named_as_a_run_setting() {
+    let rule = QUIETEN.replace("\"loud\"", "\"dialect\"");
+    let root = folder("rr-host-describe-options", &[("lib/calls.rerail", CALLS), ("q.rerail", &rule)]);
+    let rows = describe::describe(&[root.join("q.rerail")]);
+    let _ = std::fs::remove_dir_all(&root);
+    assert!(rows[0]["error"].as_str().is_some_and(|error| error.contains("it reads an option named dialect, the name of a run's own setting")), "{:#}", rows[0]);
+}
+
+/// A library's rule that reads an option by a variable, as the translations' `limit` does: the names are those the
+/// policy's facts give the variable.
+const LIMITS: &str = ".decl limit_rule(o: symbol, d: number)
+.decl limit(o: symbol, k: number)
+limit(o, k) :- limit_rule(o, d), option(o, v), k = to_number(v).
+limit(o, d) :- limit_rule(o, d), !option(o, _).
+";
+
+/// Decision 0720: the options a policy takes are the names its rules read, a variable's being those the policy's own
+/// facts give it (none, where it states no fact of the library's relation); a name no fact gives, or one only an
+/// aggregate's atom reads beside it, cannot be listed, and the policy then takes any; a policy that carries the
+/// converter's `.options` declaration is refused.
+#[test]
+fn describe_lists_the_options_a_rule_reads_by_text_or_by_its_facts() {
+    let rule = |body: &str| format!(".policy \"rr-host-limits\" revision 1\n.language python\n.mode log\n{body}\n.violation Long(at: node) \"too long\"\n");
+    let limited = "Long(c) :- kind(c, \"call\"), limit(_, k), k < 1";
+    let by_facts = rule(&format!("#include \"lib/limits.rerail\"\nlimit_rule(\"max\", 3). limit_rule(\"maximum\", 3).\n{limited}, !option(\"strict\", \"false\")."));
+    let no_facts = rule(&format!("#include \"lib/limits.rerail\"\n{limited}."));
+    let by_a_rule = rule(".decl named(o: symbol)\nnamed(o) :- kind(c, \"identifier\"), text(c, o).\nLong(c) :- kind(c, \"call\"), named(o), option(o, \"true\").");
+    let in_a_count = rule(".decl limit_rule(o: symbol, d: number)\nlimit_rule(\"max\", 3).\n.decl counted(o: symbol, n: number)\ncounted(o, n) :- option(o, _), n = count : { limit_rule(o, _) }.\nLong(c) :- kind(c, \"call\"), counted(_, n), n > 0.");
+    let declared = rule(".options {\"max\": {\"type\": \"integer\", \"default\": 3}}\nLong(c) :- kind(c, \"call\"), option(\"max\", \"3\").");
+    let files = [("facts.rerail", &by_facts), ("none.rerail", &no_facts), ("rule.rerail", &by_a_rule), ("count.rerail", &in_a_count), ("declared.rerail", &declared)];
+    let mut written: Vec<(&str, &str)> = files.iter().map(|(name, text)| (*name, text.as_str())).collect();
+    written.push(("lib/limits.rerail", LIMITS));
+    let root = folder("rr-host-describe-read", &written);
+    let rows = describe::describe(&files.map(|(name, _)| root.join(name)));
+    let _ = std::fs::remove_dir_all(&root);
+    let read = |k: usize| (rows[k]["options"].clone(), rows[k]["anyOption"].clone());
+    assert_eq!(read(0), (json!(["max", "maximum", "strict"]), json!(false)), "{:#}", rows[0]);
+    assert_eq!(read(1), (json!([]), json!(false)), "{:#}", rows[1]);
+    assert_eq!(read(2), (json!([]), json!(true)), "{:#}", rows[2]);
+    assert_eq!(read(3), (json!([]), json!(true)), "{:#}", rows[3]);
+    assert!(rows[4]["error"].as_str().is_some_and(|error| error.contains("it carries an `.options {…}` declaration")), "{:#}", rows[4]);
+    assert!(rows[0]["runSettings"].as_array().is_some_and(|names| names.contains(&json!("inputFiles")) && names.contains(&json!("phase_dir"))), "{:#}", rows[0]);
+}
+
+/// A policy given a value under a run setting's name does not run, and the others run without it: the value would be
+/// the run's own setting.
+#[test]
+fn a_policy_given_a_run_settings_name_as_an_option_does_not_run() {
+    let root = folder("rr-host-reserved", &[("a.py", "shout(1)\n")]);
+    let rules = folder("rr-host-reserved-rules", &[("lib/calls.rerail", CALLS), ("quieten.rerail", QUIETEN), ("shout.rerail", SHOUT)]);
+    let mut values = serde_json::Map::new();
+    values.insert(rules.join("quieten.rerail").display().to_string(), json!({"phase_dir": "elsewhere"}));
+    let result = run_with(&root, &[rules.join("quieten.rerail"), rules.join("shout.rerail")], Value::Object(values));
+    let _ = (std::fs::remove_dir_all(&root), std::fs::remove_dir_all(&rules));
+    let failures = result["failures"].as_array().unwrap();
+    assert_eq!(failures.len(), 1, "{result:#}");
+    assert!(failures[0]["policy"].as_str().unwrap().ends_with("quieten.rerail") && failures[0]["message"].as_str().unwrap().contains("a value for phase_dir, a run's own setting"), "{failures:?}");
+    let policies: Vec<&Value> = result["findings"].as_array().unwrap().iter().map(|finding| &finding["policy"]).collect();
+    assert_eq!(policies, [&json!("rr-host-shout")], "{result:#}");
 }

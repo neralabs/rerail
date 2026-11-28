@@ -288,7 +288,7 @@ Core reads each installed pack's `pack.json` and listed documents into memory, r
 
 ## Format
 
-A pack is `packs/<id>/pack.json`, in the `rerail.rule-pack/v1` format, beside the rule documents it lists in `packs/<id>/rules/`. A rule document is a JSON document or a `.rerail` file ([Rules written in .rerail](pack-format.md#rules-written-in-rerail)), which takes no options and runs through the `.rerail` runner.
+A pack is `packs/<id>/pack.json`, in the `rerail.rule-pack/v1` format, beside the rule documents it lists in `packs/<id>/rules/`. A rule document is a JSON document or a `.rerail` file ([Rules written in .rerail](pack-format.md#rules-written-in-rerail)), which runs through the `.rerail` runner: it takes the options its rules read, which settings give values as they do a JSON rule's, offers fixes with `fix` lines, and, as a port, names its tool's suppression comments with `suppress` lines.
 
 Every `pack.json` field, with an example, is in [pack-format.md, "pack.json"](pack-format.md#packjson); what every pack must prove is its [validation contract](pack-format.md#the-validation-contract).
 

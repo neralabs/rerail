@@ -40,7 +40,7 @@ class Owner implements RrRunOwner {
     if (this.#written.length === 0) return undefined;
     this.claimed.push(this.#written);
     this.#written = [];
-    return { policies: [this.#policy], settle: outcome => this.outcomes.push(outcome) };
+    return { policies: [this.#policy], options: {}, settle: outcome => this.outcomes.push(outcome) };
   }
 }
 
@@ -180,7 +180,7 @@ describe("a checkout's queue when an owner fails", () => {
   it("settles every other owner's claim when one owner's settle throws, and leaves no rejection unhandled", async () => {
     const runner = heldRunner();
     const queue = new RrRunQueue("/repo", { deadlineMs: 60_000, quietMs: QUIET_MS }, runner.slots);
-    const failing: RrRunOwner = { claim: () => ({ policies: ["/rules/a.rerail"], settle: () => { throw new Error("the audit store is closed"); } }) };
+    const failing: RrRunOwner = { claim: () => ({ policies: ["/rules/a.rerail"], options: {}, settle: () => { throw new Error("the audit store is closed"); } }) };
     const other = new Owner("/rules/b.rerail");
     const unhandled = vi.fn();
     process.on("unhandledRejection", unhandled);

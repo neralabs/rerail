@@ -1,16 +1,19 @@
 /**
  * A repository's option values for a code rule by Rerail (a rule setting's `config`). A bundled document is stored
  * resolved, every `$option` reference already replaced by its option's value, so `config` is applied to the
- * document as written (`RuleCatalog.sources`) and that is resolved again, as the engine resolves options.
+ * document as written (`RuleCatalog.sources`) and that is resolved again, as the engine resolves options. A rule
+ * written in `.rerail` declares no options: `config` may name those its rules read, and the run hands the values to
+ * the engine as `option` facts (decision 0720).
  */
 import { ZodError } from "zod";
 import { CodeRuleCompileError, EngineUnavailableError, storableCodeRule } from "../code-rule/code-rule-compile.js";
 import { applyCodeRuleConfig, CodeRuleOptionError } from "../code-rule/code-rule-options.js";
 import { codeRuleSchema, type CodeRule } from "../code-rule/code-rule-schema.js";
 import { stableJsonText } from "../stable-json.js";
+import type { RerailRule } from "./rerail-rules/rerail-rule.js";
 import type { RuleCatalog, RuleConfig } from "./repository-model.js";
 
-export type ConfiguredCodeRule = { readonly ok: true; readonly rule: CodeRule } | { readonly ok: false; readonly reason: string };
+export type ConfiguredCodeRule = { readonly ok: true; readonly rule: CodeRule | RerailRule } | { readonly ok: false; readonly reason: string };
 
 /** Per rule catalog, `<rule id>\0<config as stable JSON>` → the outcome; a repository's config changes rarely. */
 const configured = new WeakMap<RuleCatalog, Map<string, ConfiguredCodeRule>>();
@@ -64,11 +67,36 @@ export function configureBundledCodeRule(ruleCatalog: RuleCatalog, ruleId: strin
   return outcome;
 }
 
-/** {@link configureBundledCodeRule}, worked out: a rule written in `.rerail` takes no options yet. */
+/** Whether `value` is one an `option` fact holds: text, a number JavaScript holds exactly, true, false or null. */
+function isFactValue(value: unknown): boolean {
+  if (typeof value === "number") return Number.isFinite(value) && (!Number.isInteger(value) || Number.isSafeInteger(value));
+  return value === null || typeof value === "string" || typeof value === "boolean";
+}
+
+/**
+ * Why `value` cannot be option `name` of `rule`, or undefined: the name is no run setting's, the rule reads the option
+ * (any name, where the engine cannot list those it reads), and the value is one fact or a list of them.
+ */
+function rerailOptionProblem(rule: RerailRule, name: string, value: unknown): string | undefined {
+  if (rule.runSettings.includes(name)) return `config.${name}: \`${name}\` is the name of a run's own setting, which no option takes`;
+  if (!rule.anyOption && !rule.options.includes(name)) return `config.${name}: \`${name}\` is not an option this rule reads`;
+  const values = Array.isArray(value) ? value : [value];
+  return values.every(isFactValue) ? undefined : `config.${name}: must be text, a number, true, false or null, or a list of them`;
+}
+
+/**
+ * `rule` with `config`: each name an option the rule reads, each value one an `option` fact holds. The rule states no
+ * type or allowed values, so none is checked: it decides what a value it does not expect means. The rule is unchanged.
+ */
+function configuredRerail(rule: RerailRule, config: RuleConfig): ConfiguredCodeRule {
+  const problem = Object.entries(config).map(([name, value]) => rerailOptionProblem(rule, name, value)).find(found => found !== undefined);
+  return problem === undefined ? { ok: true, rule } : { ok: false, reason: problem };
+}
+
+/** {@link configureBundledCodeRule}, worked out. */
 function configuredOutcome(ruleCatalog: RuleCatalog, ruleId: string, config: RuleConfig): ConfiguredCodeRule {
-  if (ruleCatalog.documents.get(ruleId)?.kind === "rerail") {
-    return { ok: false, reason: `config: ${ruleId} is written in .rerail, and options for a rule written in .rerail are not supported yet` };
-  }
+  const document = ruleCatalog.documents.get(ruleId);
+  if (document?.kind === "rerail") return configuredRerail(document.rule, config);
   const source = ruleCatalog.sources.get(ruleId);
   if (source === undefined) return { ok: false, reason: `config applies to code rules by Rerail; ${ruleId} is not one` };
   try {

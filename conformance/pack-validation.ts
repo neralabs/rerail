@@ -29,6 +29,7 @@ import {
   type RegexIssue,
   parseConversationRule,
   RERAIL_DOCUMENT_EXTENSION,
+  RERAIL_SUPPRESS_KEYS,
   type RerailDescription,
   type RrDescription,
 } from "../src/engine/index.js";
@@ -38,8 +39,8 @@ import { CONFORMANCE_FILE, documentPath, loadPack, packSchema, RERAIL_ROOT, type
 import { reportFailures, runPack } from "./languages/runner.js";
 import { decidingPattern, inToolSubdirectory, licenceAllowed, licenceAlternatives, packFixtureAbsence, pathGlob, PUBLISH_DIRECTORY, readUpstreamSources } from "../scripts/s3/pack-fixtures.mjs";
 import { isPrivatePack } from "../scripts/release/packs.mjs";
-import { admitsRefusingCore, DIMENSIONS_SINCE, dimensionedRules, HELD_OFF_SINCE, heldOffRules, LANGUAGE_SINCE, raisedCoreRange, RERAIL_DOCUMENTS_SINCE, rerailRules, RULE_KEY_SINCE, shippedLanguages, shippedRuleKeys } from "../scripts/release/core.mjs";
-import { describeListed, includedPackFiles, rerailExamplePairFailures, rerailListed, rerailProofFailures, rerailTestFailures } from "./rerail-pack-rules.js";
+import { admitsRefusingCore, DIMENSIONS_SINCE, dimensionedRules, HELD_OFF_SINCE, heldOffRules, LANGUAGE_SINCE, raisedCoreRange, RERAIL_DOCUMENTS_SINCE, RERAIL_RULE_FEATURES_SINCE, rerailRules, RULE_KEY_SINCE, shippedLanguages, shippedRuleKeys, statedCore } from "../scripts/release/core.mjs";
+import { describeListed, includedPackFiles, rerailExamplePairFailures, rerailListed, rerailProofFailures, rerailTestFailures, type RerailPort } from "./rerail-pack-rules.js";
 import { capabilitiesJson } from "./engine.js";
 import { BIOME_SAME_SOURCES } from "./biome-same-sources.generated.js";
 
@@ -93,7 +94,8 @@ export interface ValidatePackOptions {
   fixtures?: boolean;
   /**
    * The core version check 5 holds the pack's core range to (`heldOff`, a language core first reads after 0.1.0, an
-   * ast rule key core first reads after 0.1.5, rules written in `.rerail`, and `dimensions`).
+   * ast rule key core first reads after 0.1.5, rules written in `.rerail`, `dimensions`, and the core its package.json
+   * states, `rerail.core`).
    * Default: the repository's package.json version.
    */
   coreVersion?: string;
@@ -372,22 +374,15 @@ function listed(suppression: Record<string, unknown> | undefined, list: string):
   return Array.isArray(names) ? names.filter((name): name is string => typeof name === "string") : [];
 }
 
-/**
- * In a port's document, the ids of the clauses whose violation does not name the upstream `rule` under `suppression`
- * (`unsuppressed`); once any violation carries `suppress.oxlint`, of those that carry only one of `suppress.eslint`
- * and `suppress.oxlint` (`oxlintApart`): Oxlint reads `eslint-disable` comments too, so a port of a rule Oxlint
- * implements honours both on the same violations; of those whose `suppress.eslint` names a rule Biome has a rule the
- * same as, without that Biome rule under `suppress.biome` (`biomeMissing`, with the missing rules), and of those that
- * carry `suppress.biome` without `suppress.eslint` (`biomeAlone`). A query of a language whose registry entry does not
- * honour Biome's comments (Vue's) needs no `suppress.biome`. `undefined` when the document cannot be read (check
- * 1 reports that). A PHP_CodeSniffer port names its sniff's message codes, `<sniff>.<code>`, as `phpcs:ignore` does.
- */
-function suppressionGaps(
-  text: string,
-  suppression: Suppression,
-  tool: string,
-  rule: string,
-): { unsuppressed: string[]; oxlintApart: string[]; biomeMissing: { clauses: string[]; rules: string[] }; biomeAlone: string[] } | undefined {
+/** A port's violation as the suppression checks read it: its clause's id (a `.violation`'s name), its query's language, and its `suppress` by key. */
+interface SuppressingViolation {
+  id: string;
+  language: string | undefined;
+  suppress: Record<string, Record<string, unknown>>;
+}
+
+/** The violations of a JSON rule document's clauses; `undefined` when the text is no such document (check 1 reports that). */
+function jsonSuppressingViolations(text: string): SuppressingViolation[] | undefined {
   let document: unknown;
   try {
     document = JSON.parse(text);
@@ -396,29 +391,70 @@ function suppressionGaps(
   }
   const parsed = suppressingDocumentSchema.safeParse(document);
   if (!parsed.success) return undefined;
-  const violations = parsed.data.clauses.flatMap(clause =>
+  return parsed.data.clauses.flatMap(clause =>
     clause.violation === undefined ? [] : [{ id: clause.id, language: clause.forbid?.ast?.language, suppress: clause.violation.suppress ?? {} }],
   );
-  const unsuppressed = violations
+}
+
+/** The list a `violation.suppress` key names its upstream rules in (code-rule DSL reference, `suppress`); `rules` for the others. */
+const SUPPRESS_LISTS: Readonly<Record<string, string>> = { noqa: "codes", nosec: "codes", phpstan: "identifiers", psalm: "issues", phpcs: "sniffs", clippy: "lints" };
+
+/** The `.violation`s of a `.rerail` rule, each `suppress` line under the JSON key its tool stands for (`RERAIL_SUPPRESS_KEYS`). */
+function rerailSuppressingViolations(described: RerailDescription): SuppressingViolation[] {
+  return described.violations.map(violation => {
+    const suppress: Record<string, Record<string, string[]>> = {};
+    for (const line of violation.suppress) {
+      const key = RERAIL_SUPPRESS_KEYS[line.tool] ?? line.tool;
+      const list = SUPPRESS_LISTS[key] ?? "rules";
+      suppress[key] = { [list]: [...(suppress[key]?.[list] ?? []), ...line.rules] };
+    }
+    return { id: violation.name, language: described.language ?? undefined, suppress };
+  });
+}
+
+/** The ids of `violations` that do not name the upstream `rule` under `suppression` (a PHP_CodeSniffer port names `<sniff>.<code>`). */
+function unsuppressedOf(violations: readonly SuppressingViolation[], suppression: Suppression, tool: string, rule: string): string[] {
+  const honours = (name: unknown): boolean => name === rule || (tool === "phpcs" && typeof name === "string" && name.startsWith(`${rule}.`));
+  return violations
     .filter(({ suppress }) => {
-      const names = suppress[suppression.key]?.[suppression.list];
-      return !(Array.isArray(names) && names.some(name => name === rule || (tool === "phpcs" && typeof name === "string" && name.startsWith(`${rule}.`))));
+      const listedNames = suppress[suppression.key]?.[suppression.list];
+      return !(Array.isArray(listedNames) && listedNames.some(honours));
     })
     .map(violation => violation.id);
-  const eslintFamily = suppression.key === "eslint";
-  const oxlint = eslintFamily && violations.some(({ suppress }) => suppress.oxlint !== undefined);
-  const oxlintApart = oxlint ? violations.filter(({ suppress }) => (suppress.eslint === undefined) !== (suppress.oxlint === undefined)).map(violation => violation.id) : [];
+}
+
+/** Of `violations` whose query reads a language that honours Biome's comments, those whose `suppress.eslint` names a rule Biome has the same as without it under `suppress.biome`. */
+function biomeMissingOf(violations: readonly SuppressingViolation[]): { clauses: string[]; rules: string[] } {
   const biomeMissing = { clauses: [] as string[], rules: [] as string[] };
   // Only a query of a language that honours Biome's comments may carry suppress.biome (Vue's does not).
-  for (const { id, language, suppress } of eslintFamily ? violations.filter(({ language }) => language === undefined || BIOME_LANGUAGES.has(language)) : []) {
+  for (const { id, suppress } of violations.filter(({ language }) => language === undefined || BIOME_LANGUAGES.has(language))) {
     const carried = new Set(listed(suppress.biome, "rules"));
     const missing = listed(suppress.eslint, "rules").flatMap(name => BIOME_SAME_SOURCES[name] ?? []).filter(name => !carried.has(name));
     if (missing.length === 0) continue;
     biomeMissing.clauses.push(id);
     for (const name of missing) if (!biomeMissing.rules.includes(name)) biomeMissing.rules.push(name);
   }
-  const biomeAlone = violations.filter(({ suppress }) => suppress.biome !== undefined && suppress.eslint === undefined).map(violation => violation.id);
-  return { unsuppressed, oxlintApart, biomeMissing, biomeAlone };
+  return biomeMissing;
+}
+
+/**
+ * In a port's violations, the ids of those that do not name the upstream `rule` under `suppression` (`unsuppressed`);
+ * once any violation carries `suppress.oxlint`, of those that carry only one of `suppress.eslint` and `suppress.oxlint`
+ * (`oxlintApart`): Oxlint reads `eslint-disable` comments too, so a port of a rule Oxlint implements honours both on
+ * the same violations; of those whose `suppress.eslint` names a rule Biome has a rule the same as, without that Biome
+ * rule under `suppress.biome` (`biomeMissing`, with the missing rules), and of those that carry `suppress.biome`
+ * without `suppress.eslint` (`biomeAlone`). A query of a language whose registry entry does not honour Biome's
+ * comments (Vue's) needs no `suppress.biome`.
+ */
+function suppressionGaps(violations: readonly SuppressingViolation[], suppression: Suppression, tool: string, rule: string): SuppressionGaps {
+  const eslintFamily = suppression.key === "eslint";
+  const oxlint = eslintFamily && violations.some(({ suppress }) => suppress.oxlint !== undefined);
+  return {
+    unsuppressed: unsuppressedOf(violations, suppression, tool, rule),
+    oxlintApart: oxlint ? violations.filter(({ suppress }) => (suppress.eslint === undefined) !== (suppress.oxlint === undefined)).map(violation => violation.id) : [],
+    biomeMissing: eslintFamily ? biomeMissingOf(violations) : { clauses: [], rules: [] },
+    biomeAlone: violations.filter(({ suppress }) => suppress.biome !== undefined && suppress.eslint === undefined).map(violation => violation.id),
+  };
 }
 
 /** The ids of a rule document's clauses whose violation sets `suppress`; none when the text is no such document (check 1 reports that). */
@@ -850,7 +886,14 @@ interface ReadPack {
 type ListedRule = RulePackFile["rules"][number];
 type Port = LoadedPack["pack"]["rules"][number];
 type PackPackage = z.infer<typeof rulePackPackageSchema>;
-type SuppressionGaps = NonNullable<ReturnType<typeof suppressionGaps>>;
+
+/** What `suppressionGaps` finds in a port's violations. */
+interface SuppressionGaps {
+  unsuppressed: string[];
+  oxlintApart: string[];
+  biomeMissing: { clauses: string[]; rules: string[] };
+  biomeAlone: string[];
+}
 
 /** pack.json, parsed and then checked against the schema; check 1 fails one that is missing or does not pass. */
 function readPackJson({ directory, fail }: Validation): Pick<ReadPack, "pack" | "packJson"> {
@@ -1032,15 +1075,21 @@ function checkExamples(validation: Validation, { pack, compiled }: ReadPack, loa
   for (const port of loaded?.pack.rules ?? []) checkPortExamples(validation, port);
 }
 
+/** The upstream tool and rule of the port whose policy is `document` (pack-relative), or undefined: the rule ports none. */
+function portOfDocument(loaded: LoadedPack | undefined, document: string): RerailPort | undefined {
+  return loaded?.pack.rules.find(port => port.policy.replace(/^\.\//u, "") === document)?.upstream;
+}
+
 /**
- * Checks 2 and 3 on the rules written in `.rerail`: a pack's own rule sets no `suppress` and carries a `.test` block;
- * its examples, run through the `.rerail` runner, catch and pass as they say; and its `.test` blocks pass.
+ * Checks 2 and 3 on the rules written in `.rerail`: it sets `suppress` lines only as a port of the tool whose comments
+ * they are, and carries a `.test` block; its examples, run through the `.rerail` runner, catch and pass as they say;
+ * and its `.test` blocks pass.
  */
-async function checkRerailRules({ directory, fail }: Validation, { pack, compiled }: ReadPack): Promise<void> {
+async function checkRerailRules({ directory, fail }: Validation, { pack, compiled }: ReadPack, loaded: LoadedPack | undefined): Promise<void> {
   for (const rule of pack?.rules ?? []) {
     const result = compiled.get(rule.id);
     if (result?.kind !== "rerail") continue;
-    for (const failure of rerailProofFailures(rule.id, result.described)) fail("proof", failure, rule.id);
+    for (const failure of rerailProofFailures(rule.id, result.described, portOfDocument(loaded, rule.document))) fail("proof", failure, rule.id);
     const examples = rule.examples === undefined ? [] : await rerailExamplePairFailures(rule.id, result.described, rule.examples);
     for (const failure of [...examples, ...rerailTestFailures(rule.id, join(directory, rule.document))]) fail("examples", failure, rule.id);
   }
@@ -1130,19 +1179,42 @@ function checkLinterSuppressions({ fail }: Validation, { port, document, gaps, o
     fail("ports", `${port.id}: ${document} carries suppress.biome without suppress.eslint (clause ${gaps.biomeAlone.join(", ")}); a port names the Biome rules the same as the ESLint rule it names`, owner);
 }
 
-/** Check 4 on one port's suppression comments, when its document exists and reads as a rule document. */
-function checkPortSuppression(validation: Validation, port: Port, exempt: boolean, owner: string | undefined): void {
-  const { directory } = validation;
-  const path = join(directory, port.policy);
-  if (!existsSync(path)) return;
-  const { tool, rule } = port.upstream;
+/** No gap: a port of a tool whose comments no port must honour. */
+const NO_GAPS: SuppressionGaps = { unsuppressed: [], oxlintApart: [], biomeMissing: { clauses: [], rules: [] }, biomeAlone: [] };
+
+/**
+ * The suppression gaps (`suppressionGaps`) of a `.rerail` port of `tool`'s `rule`, from the engine's reading of its
+ * file (`described`): each violation's `suppress` lines read as a JSON port's `violation.suppress`, under the key
+ * each line's tool stands for.
+ */
+export function rerailSuppressionGaps(described: RerailDescription, tool: string, rule: string): SuppressionGaps {
   const suppression = suppressionOf(tool);
-  const gaps =
-    suppression === undefined
-      ? { unsuppressed: [], oxlintApart: [], biomeMissing: { clauses: [], rules: [] }, biomeAlone: [] }
-      : suppressionGaps(readFileSync(path, "utf8"), suppression, tool, rule);
+  return suppression === undefined ? NO_GAPS : suppressionGaps(rerailSuppressingViolations(described), suppression, tool, rule);
+}
+
+/**
+ * A port's suppression gaps: a `.rerail` rule's, as the engine read it (`described`), else those of its JSON document
+ * at `path`; undefined for a document that does not read as one (check 1 reports it).
+ */
+function portGaps(path: string, port: Port, described: RerailDescription | undefined): SuppressionGaps | undefined {
+  const { tool, rule } = port.upstream;
+  if (described !== undefined) return rerailSuppressionGaps(described, tool, rule);
+  const suppression = suppressionOf(tool);
+  if (suppression === undefined) return NO_GAPS;
+  const violations = jsonSuppressingViolations(readFileSync(path, "utf8"));
+  return violations === undefined ? undefined : suppressionGaps(violations, suppression, tool, rule);
+}
+
+/**
+ * Check 4 on one port's suppression comments, when its document exists and reads as a rule document. `described` is
+ * the engine's reading of the rule that ships it, when that is written in `.rerail`.
+ */
+function checkPortSuppression(validation: Validation, port: Port, exempt: boolean, owner: string | undefined, described: RerailDescription | undefined): void {
+  const path = join(validation.directory, port.policy);
+  if (!existsSync(path)) return;
+  const gaps = portGaps(path, port, described);
   if (gaps === undefined) return;
-  const found: PortSuppression = { port, document: documentPath(port.policy), suppression, gaps, owner };
+  const found: PortSuppression = { port, document: documentPath(port.policy), suppression: suppressionOf(port.upstream.tool), gaps, owner };
   checkSuppressionExemption(validation, found, exempt);
   checkLinterSuppressions(validation, found);
 }
@@ -1160,7 +1232,11 @@ async function checkPorts(validation: Validation, read: ReadPack, loaded: Loaded
   // port that also honours Oxlint's comments does so on the same violations as ESLint's, and one whose ESLint rule
   // Biome has a rule the same as names that rule under suppress.biome where it names the ESLint rule.
   const exempt = new Set(loaded.pack.suppressionExemptions.map(exemption => exemption.rule));
-  for (const port of loaded.pack.rules) checkPortSuppression(validation, port, exempt.has(port.id), ports.ruleOfPort.get(port.id));
+  for (const port of loaded.pack.rules) {
+    const owner = ports.ruleOfPort.get(port.id);
+    const shipped = owner === undefined ? undefined : read.compiled.get(owner);
+    checkPortSuppression(validation, port, exempt.has(port.id), owner, shipped?.kind === "rerail" ? shipped.described : undefined);
+  }
 }
 
 /** package.json as JSON, or undefined (check 5's failure) when it does not read or parse. */
@@ -1216,16 +1292,61 @@ function checkPublishedFiles({ directory, fail }: Validation, manifest: PackPack
   }
 }
 
-/** Check 5 on the core range (`peerDependencies["@neralabs/rerail"]`): it admits no core that refuses the pack. */
-function checkCoreRange({ directory, options, fail }: Validation, manifest: PackPackage, pack: RulePackFile | undefined): void {
+/**
+ * Why a pack's core range `range` admits a core older than the one its package.json states its rules need
+ * (`rerail.core`, `stated`), or undefined: as for `heldOff`, once core is at that release (`coreVersion`).
+ */
+export function statedCoreRangeFailure(range: string, stated: string | undefined, coreVersion: string): string | undefined {
+  if (stated === undefined || !admitsRefusingCore(range, stated, coreVersion)) return undefined;
+  return `package.json: the core range ${range} admits Rerail older than ${stated}, which rerail.core says its rules need; raise it to ${raisedCoreRange(stated)}`;
+}
+
+/**
+ * Why a pack's package.json states too old a core (`stated`, its `rerail.core`) for its rules written in `.rerail`
+ * (`described`, by rule id), or undefined: a rule that offers a fix or names a linter's comments needs
+ * `RERAIL_RULE_FEATURES_SINCE`, the release that first runs them. A rule that reads options needs none: an older core
+ * runs it with no option set, as it did.
+ */
+export function rerailFeaturesCoreFailure(stated: string | undefined, described: ReadonlyMap<string, RerailDescription>): string | undefined {
+  const uses = (rule: RerailDescription): boolean => rule.violations.some(violation => violation.suppress.length > 0 || violation.fixes.length > 0);
+  const using = [...described].filter(([, rule]) => uses(rule)).map(([id]) => id);
+  if (using.length === 0 || (stated !== undefined && semver.gte(stated, RERAIL_RULE_FEATURES_SINCE))) return undefined;
+  return `package.json: rerail.core is ${stated ?? "not set to a release version"}, and Rerail runs the fixes and linters' comments of ${using.join(", ")} from ${RERAIL_RULE_FEATURES_SINCE}; set rerail.core to ${RERAIL_RULE_FEATURES_SINCE} or later`;
+}
+
+/** package.json's `rerail`, which core never reads: the core the pack's `.rerail` rules need, a release version. */
+const rerailFieldSchema = z.strictObject({ core: z.string().regex(/^\d+\.\d+\.\d+$/u, "must be a release version, <major>.<minor>.<patch>") });
+
+/** Why package.json's `rerail` is malformed (`rerailFieldSchema`), or undefined; a pack without one is not. */
+function rerailFieldFailure(manifest: PackPackage): string | undefined {
+  const field: unknown = manifest["rerail"];
+  const parsed = field === undefined ? undefined : rerailFieldSchema.safeParse(field);
+  return parsed === undefined || parsed.success ? undefined : `package.json: rerail: ${z.prettifyError(parsed.error)}`;
+}
+
+/** The engine's reading of each rule of the pack written in `.rerail`, by its id. */
+function rerailDescriptions(compiled: ReadonlyMap<string, Compiled>): ReadonlyMap<string, RerailDescription> {
+  return new Map([...compiled].flatMap(([id, result]) => (result.kind === "rerail" ? [[id, result.described] as const] : [])));
+}
+
+/**
+ * Check 5 on the core range (`peerDependencies["@neralabs/rerail"]`): it admits no core that refuses the pack, nor
+ * one older than its `rerail.core`, which states at least the core its `.rerail` rules' fixes and suppression
+ * comments need.
+ */
+function checkCoreRange({ directory, options, fail }: Validation, manifest: PackPackage, { pack, compiled }: ReadPack): void {
   const range = manifest.peerDependencies["@neralabs/rerail"];
   const coreVersion = options.coreVersion ?? rootPackage().version;
+  const stated = statedCore(manifest);
   const failures = [
     heldOffRangeFailure(range, heldOffRules(pack), coreVersion),
     languageRangeFailure(range, shippedLanguages(directory), coreVersion),
     ruleKeyRangeFailure(range, shippedRuleKeys(directory), coreVersion),
     rerailRangeFailure(range, rerailRules(pack), coreVersion),
     dimensionsRangeFailure(range, dimensionedRules(pack), coreVersion),
+    statedCoreRangeFailure(range, stated, coreVersion),
+    rerailFeaturesCoreFailure(stated, rerailDescriptions(compiled)),
+    rerailFieldFailure(manifest),
   ];
   for (const failure of failures) if (failure !== undefined) fail("package", failure);
 }
@@ -1252,7 +1373,7 @@ function checkRuleDetails({ directory, fail }: Validation, pack: RulePackFile): 
  * published), no dependencies, no validation material published, licence agreeing with what licenses/ records, and a
  * README whose rule details describe only the rules pack.json lists.
  */
-function checkPackage(validation: Validation, pack: RulePackFile | undefined, sources: Sources): void {
+function checkPackage(validation: Validation, read: ReadPack, sources: Sources): void {
   const { fail } = validation;
   const manifest = readPackageManifest(validation);
   if (manifest !== undefined) {
@@ -1260,9 +1381,9 @@ function checkPackage(validation: Validation, pack: RulePackFile | undefined, so
     checkPublishedFiles(validation, manifest);
     const failure = packageLicenceFailure(manifest.license, sources.recorded);
     if (failure !== undefined) fail("package", failure);
-    checkCoreRange(validation, manifest, pack);
+    checkCoreRange(validation, manifest, read);
   }
-  if (pack !== undefined) checkRuleDetails(validation, pack);
+  if (read.pack !== undefined) checkRuleDetails(validation, read.pack);
 }
 
 /** Check 6 on each licence licenses/ records: an SPDX expression some choice of whose alternatives is on the allowlist. */
@@ -1351,10 +1472,10 @@ export async function validatePack(directory: string, options: ValidatePackOptio
   // failure, so check 3 records its failures first.
   checkExamples(validation, read, loaded);
   checkProof(validation, read.pack, loaded);
-  await checkRerailRules(validation, read);
+  await checkRerailRules(validation, read, loaded);
   await checkPorts(validation, read, loaded);
   const sources = readSources(directory);
-  checkPackage(validation, read.pack, sources);
+  checkPackage(validation, read, sources);
   checkLicences(validation, sources);
   checkManifest(validation, read.packJson);
   checkText(validation, read);

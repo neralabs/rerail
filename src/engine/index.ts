@@ -77,6 +77,7 @@ export { type JsonRuleDocument, type RuleDocument, SqliteRuleStore } from "./cat
 export {
   describeRerailRules,
   RERAIL_DOCUMENT_EXTENSION,
+  RERAIL_SUPPRESS_KEYS,
   unsupportedRerailRule,
   type RerailDescription,
   type RerailRule,
