@@ -133,8 +133,10 @@ pub fn freeze_copy(bytes: &mut [u8]) {
     }
     let n = bytes.len() as u64;
     let len = std::mem::offset_of!(Header, length);
+    // copy: derived (the copy's header field, written once here)
     bytes[len..len + 8].copy_from_slice(&n.to_ne_bytes());
     let state = std::mem::offset_of!(Header, state);
+    // copy: derived (the copy's header field, written once here)
     bytes[state..state + 4].copy_from_slice(&FROZEN.to_ne_bytes());
 }
 
