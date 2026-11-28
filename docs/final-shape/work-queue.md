@@ -12553,3 +12553,23 @@ program by `placement::set_host_joins`, which final-rerail-shape brings (roll-up
 
 Checked under Relax: check of the device crate and rerail-planner; rerail-planner (9); tests-corpus base_tests (55,
 the one above red). The device tests run on Metal and were not run. No farm or clippy runs.
+
+### Q606. Roll-up 178 (final-rerail-shape 0f7547a259 onto Pulling-it-all-together): what the merge chose
+
+final-rerail-shape's two: the CPU binding runs the scalar joins by default, the join program on the host with
+RERAIL_CPU_JOINS=program or a caller's `placement::set_host_joins` (the user's decision, as roll-up 172 has it);
+and the Python reference graph is W's Rust's by default again, the rules' with RERAIL_REFERENCES=rules
+(`rr::set_references_rules` in the tests that name the rules).
+
+Conflicts, resolved by invariant:
+- placement's `host_joins`: the feeder's, the same default as the hub's plus the caller's choice over the
+  environment.
+- reference_tests' bare graph: the hub's outputs (with `reference_def`) and the feeder's guard naming the rules.
+
+Fix for roll-up 177's red: a_seed_over_a_view_has_its_indexes_built_ahead binds the join program
+(`set_host_joins(true)`), whose strata the build ahead serves; bound to the CPU by default the scalar joins build no
+index ahead.
+
+Checked under Relax: tests-corpus base_tests (56), plan-base placement (1), boot reference (3 pass; 1 red as on the
+hub before: the_reference_graphs_joins_are_bounded_a_name_read, one of cost_shape's 15, 119 units against 118). No
+Metal, farm or clippy runs.

@@ -1942,6 +1942,9 @@ targets(p, l) :- assigned(a), field(a, "left", n), docof(n, d), doc(d, p, _), li
 .output targets
 "#;
     use rerail_device_metal::code_rule_dsl::device_metal::{index_builds_for_tests, stratum_index_builds_for_tests};
+    // The join program on the host, whose strata the build ahead serves (bound to the CPU, the scalar joins run by
+    // default and build no index ahead).
+    let _program = crate::code_rule_dsl::logic::plan::placement::set_host_joins(true);
     // Profiled, so each build is named by its stratum (the profile's path).
     crate::code_rule_dsl::logic::profile::set(true);
     let (before, had) = (index_builds_for_tests(), stratum_index_builds_for_tests().len());

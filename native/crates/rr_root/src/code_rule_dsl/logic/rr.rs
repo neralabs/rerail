@@ -2106,13 +2106,31 @@ pub const DERIVED_BY: [(&str, &str); 6] = [
 /// The library file whose `reference_edge` and `reference_open` are W's Rust graph (`corpus::w_references`).
 pub const REFERENCES_W: &str = "python/references_w.rerail";
 
-/// An include's name as the run reads it: `python/references.rerail` is `REFERENCES_W` where `RERAIL_REFERENCES=rust`
-/// (the reference graph made by W's Rust, not the rules; for comparing the two on one program), else itself.
+/// An include's name as the run reads it: `python/references.rerail` is `REFERENCES_W`, the reference graph made by
+/// W's Rust (user decision, 2026-11-27: on by default again while the rules' graph is made faster), unless
+/// `RERAIL_REFERENCES=rules` or a caller's `set_references_rules` asks for the rules' (decision 0483); else itself.
 pub(in crate::code_rule_dsl) fn include_switched(name: &str) -> String {
-    if name == "python/references.rerail" && std::env::var("RERAIL_REFERENCES").is_ok_and(|v| v == "rust") {
+    if name == "python/references.rerail" && !references_by_rules() {
         return REFERENCES_W.to_owned();
     }
     name.to_owned()
+}
+
+/// Whether the run's reference graph is the rules' (`python/references.rerail`), not W's Rust's.
+pub fn references_by_rules() -> bool {
+    match rerail_prof::code_rule_dsl::logic::profile::bound::<ReferencesByRules>().0 {
+        Some(rules) => rules,
+        None => std::env::var("RERAIL_REFERENCES").is_ok_and(|v| v == "rules"),
+    }
+}
+
+/// A caller's choice of the reference graph (a test's of the rules), over the environment's.
+#[derive(Clone, Copy, Default)]
+struct ReferencesByRules(Option<bool>);
+
+/// The reference graph by the rules (`python/references.rerail` as written), until the guard drops.
+pub fn set_references_rules() -> rerail_prof::code_rule_dsl::logic::profile::Bound {
+    rerail_prof::code_rule_dsl::logic::profile::bind(ReferencesByRules(Some(true)))
 }
 /// The library's programs the engine adds to a run itself (decision 0076's import components).
 const ENGINE_FILES: [&str; 1] = ["components.rerail"];
