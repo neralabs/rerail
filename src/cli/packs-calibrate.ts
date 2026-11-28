@@ -15,7 +15,7 @@ import { repositoryIdentityLocation, repositoryName } from "../engine/catalog/re
 import { folderContains, normalizeFolder, type CheckoutContext, type RepositoryKey, type RuleConfig, type RuleSetting } from "../engine/catalog/repository-model.js";
 import { checkoutStatus, lookupCheckout } from "../engine/catalog/repository-registry.js";
 import { loadRuleCatalog } from "../engine/catalog/rule-catalog.js";
-import { readSettings, setRuleSetting } from "../engine/catalog/rule-configuration.js";
+import { readSettings, setRuleSetting, type ReadSetting } from "../engine/catalog/rule-configuration.js";
 import { stderrRowLog } from "../engine/catalog/rule-quarantine.js";
 import { openRerailDatabase, RERAIL_DATABASE_FILE, type RerailDatabase } from "../engine/storage/database.js";
 import { defaultRerailHome } from "../engine/storage/rerail-home.js";
@@ -64,16 +64,17 @@ export interface CalibrateOptions {
   readonly dryRun?: boolean;
 }
 
-type SettingRow = typeof ruleSettings.$inferSelect;
+/** A setting as read: options whose stored text does not read are none, and `unread` says why. */
+type SettingRow = ReadSetting;
 
 const settingKey = (folder: string, ruleId: string): string => `${folder}\0${ruleId}`;
 
 /** `config` as compared: no options and empty options alike. */
 const configText = (config: RuleConfig | null): string | undefined => stableJsonText(config === null || Object.keys(config).length === 0 ? null : config);
 
-/** Whether `row` already holds what `proposal` sets, and nothing else. */
+/** Whether `row` already holds what `proposal` sets, and nothing else: options that did not read hold nothing. */
 function holds(row: SettingRow, proposal: LintConfigSetting): boolean {
-  return row.on === proposal.on && row.mode === null && row.suppressions === null && configText(row.config) === configText(proposal.config);
+  return row.unread === null && row.on === proposal.on && row.mode === null && row.suppressions === null && configText(row.config) === configText(proposal.config);
 }
 
 /**
@@ -163,7 +164,7 @@ function packIdsOf(database: RerailDatabase, repositoryKey: RepositoryKey): stri
 
 /**
  * The repository's own rule settings, every folder, by rule and folder. A setting whose stored options do not read has
- * none here (`readSettings`), so one the lint config gave is written again where the lint config gives the rule options, and
+ * none here (`readSettings`), so one the lint config gave is written again, with the options it gives or none (`holds`), and
  * a person's is kept as any of theirs is; it is named on the command's error output.
  */
 function repositoryRuleRows(database: RerailDatabase, repositoryKey: RepositoryKey): SettingRow[] {

@@ -331,6 +331,25 @@ describe("rerail packs calibrate", () => {
     expect(rows(where.databasePath, [NO_EXPLICIT_ANY])[NO_EXPLICIT_ANY]).toEqual({ on: null, mode: null, config: { ignoreRestArgs: true }, origin: "lint-config" });
   });
 
+  it("writes again a setting the lint config gave whose stored options are no JSON where the lint config gives the rule none", async () => {
+    const where = await repository({ [ARRAY_TYPE]: { on: true, origin: "lint-config" } });
+    eslintrc(where.repo, RULES);
+    const database = openRerailDatabase(where.databasePath);
+    try {
+      // Options with their closing brace gone, as a damaged file or a hand edit leaves them.
+      database.$client.prepare("UPDATE rule_settings SET config_json = ? WHERE target_id = ? AND folder = ''").run('{"default":"generic"', ARRAY_TYPE);
+    } finally {
+      database.$client.close();
+    }
+    const log = vi.spyOn(process.stderr, "write").mockReturnValue(true);
+    try {
+      expect(kinds(calibrated(where))[ARRAY_TYPE]).toBe("turned-on");
+    } finally {
+      log.mockRestore();
+    }
+    expect(rows(where.databasePath, [ARRAY_TYPE])[ARRAY_TYPE]).toEqual({ on: true, mode: null, config: null, origin: "lint-config" });
+  });
+
   it("refuses a repository that is recorded but not set up, and an unknown option", async () => {
     const where = await repository({}, false);
     eslintrc(where.repo, { "@typescript-eslint/ban-ts-comment": "off" });
