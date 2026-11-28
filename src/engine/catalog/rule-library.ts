@@ -37,7 +37,7 @@ type Queries = Pick<RerailDatabase, "select" | "insert" | "update" | "delete">;
  */
 const STORED_COLUMNS = {
   ...getTableColumns(libraryRules),
-  document: sql<string>`${libraryRules.document}`.mapWith(storedObject),
+  document: sql<Record<string, unknown> | string>`${libraryRules.document}`.mapWith(storedObject),
 };
 /** A `library_rules` row as read: its document the JSON object the database holds, or, as a string, why it holds none. */
 export type StoredLibraryRow = Omit<LibraryRow, "document"> & { readonly document: Record<string, unknown> | string };
