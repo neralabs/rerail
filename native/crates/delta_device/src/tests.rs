@@ -57,27 +57,19 @@ fn square() -> &'static Signature {
 fn square_ukl(power: u32) -> &'static str {
     let (n_at, vals_at) = (BODY_AT + 8, BODY_AT + 16);
     let v = if power == 3 { "v * v * v" } else { "v * v" };
-    let args = r#"ROBUFFER, uint8_t, t, "[table]", ROBUFFER, uint32_t, slots, "[table]", ROBUFFER, uint8_t, p, "[table]", ARGS, TileP, tile, , RWBUFFER, uint64_t, res, "[1]", GID0, uint32_t, i, "#;
     Box::leak(
         format!(
             r#"
-DEFINE_KERNEL2(delta_square, square_map_items, {args})
+#include <ukl/delta/op.h>
+DELTA_COUNT(square_map_items) {{ return (uint32_t)U64(SLOT(0), {n_at}u); }}
+DELTA_LANES(square_map)
 {{
-    if (i != 0u) return;
-    CLIF_BLOCK_SPACE const DescRow* src = desc_row(t, slots[0]);
-    res[0] = *(CLIF_BLOCK_SPACE const uint64_t*)(src->addr + {n_at}u);
-}}
-DEFINE_KERNEL2(delta_square, square_map, {args})
-{{
-    uint32_t k = tile.lo + i;
-    if (k >= tile.hi) return;
-    CLIF_BLOCK_SPACE const DescRow* src = desc_row(t, slots[0]);
-    CLIF_BLOCK_SPACE const DescRow* dst = desc_row(t, slots[1]);
-    uint64_t n = *(CLIF_BLOCK_SPACE const uint64_t*)(src->addr + {n_at}u);
-    CLIF_BLOCK_SPACE uint8_t* o = (CLIF_BLOCK_SPACE uint8_t*)dst->addr;
-    *(CLIF_BLOCK_SPACE uint64_t*)(o + {BODY_AT}u) = 16u + 8u * n;
-    *(CLIF_BLOCK_SPACE uint64_t*)(o + {n_at}u) = n;
-    int64_t v = ((CLIF_BLOCK_SPACE const int64_t*)(src->addr + {vals_at}u))[k];
+    DELTA_ITEM(k);
+    Blk src = SLOT(0), o = SLOT(1);
+    uint64_t n = U64(src, {n_at}u);
+    U64(o, {BODY_AT}u) = 16u + 8u * n;
+    U64(o, {n_at}u) = n;
+    int64_t v = ((CLIF_BLOCK_SPACE const int64_t*)(src + {vals_at}u))[k];
     ((CLIF_BLOCK_SPACE int64_t*)(o + {vals_at}u))[k] = {v};
 }}
 "#
