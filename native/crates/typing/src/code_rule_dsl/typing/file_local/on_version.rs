@@ -607,10 +607,11 @@ impl<'v> Program<'v> {
             }
             let reason = if rels.output[i] || rels.test[i] || rels.functional[i] || !rels.candidate[i] || moved(rel) {
                 Some("an output, a test, a function, native or lattice, or declared cross-file")
-            } else if positional[i] && self.f.columns(rel).is_some_and(|c| c.iter().any(|(_, t)| !matches!(*t, "sym" | "symbol"))) {
+            } else if positional[i] && self.f.columns(rel).is_some_and(|c| c.iter().any(|(_, t)| !matches!(*t, "sym" | "symbol" | "node_path"))) {
                 // A name found through positions (`qn`: a name's binding by where it is, in its own file) changes only
-                // with its file, as any per-file fact. A value that may be one (a number) would move with every edit
-                // above it.
+                // with its file, as any per-file fact; so does a node's path (`@node_path(n)`, its steps by field and
+                // kind, decision 0722), the one node-made value that crosses. A value that may be one (a number) would
+                // move with every edit above it.
                 Some("it reads positions, and a column may hold one")
             } else if crate::code_rule_dsl::logic::rr::lower::made_on_request(rel) {
                 Some("the on-request rewrite's (decision 0174)")

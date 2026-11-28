@@ -38,16 +38,22 @@ SyncOrmInAsync(o, what, fx) :- sora_query(o, f, what), is_async(f), def_name(f, 
 // `call_target` names it), a call in it by its node path (decision 0722), a class by its `class_def` name. Each def's
 // first query is stated in its own file (`sora_ran`); a finding reads its call's or class's node in its own file and
 // names the query by its path and line.
-.violation SyncOrmReached(at: node, g: symbol, what: symbol, p: symbol, l: number)
-    "`{g}()` runs a blocking ORM query (`{what}` at {p}:{l}) inside `async def`, where Django raises SynchronousOnlyOperation. Call it through `await sync_to_async({g})(...)`, or use the async ORM."
-SyncOrmReached(c, x, what, p, l) :- sora_start(kq, fq, ct, gq), sora_own(kq, fq), sora_first(kq, gq, hq),
-    sora_ran(hq, what, p, l), pt_def(f, fq), nearest(c, f, dj_region_stop), kind(c, "call"), ct = @node_path(c),
-    field(c, "function", fn), text(fn, x).
-.violation SyncOrmReachedInherited(at: node, kx: symbol, fx: symbol, x: symbol, cl: number, what: symbol, p: symbol, l: number)
-    "`{kx}` inherits `async def {fx}`, whose call `{x}()` at line {cl} runs, for this class, a blocking ORM query (`{what}` at {p}:{l}), where Django raises SynchronousOnlyOperation. Call it through `sync_to_async`, or use the async ORM."
-SyncOrmReachedInherited(k, kx, fx, x, cl, what, p, l) :- sora_start(kq, fq, ct, gq), !sora_own(kq, fq),
-    sora_first_new(kq, fq, ct, hq), sora_ran(hq, what, p, l), sora_sync(gq, x), sora_call_at(fq, ct, fx, cl),
-    class_def(k, kq), def_name(k, kx).
+.violation SyncOrmReached(at: node, g: symbol, w: symbol)
+    "`{g}()` runs a blocking ORM query ({w}) inside `async def`, where Django raises SynchronousOnlyOperation. Call it through `await sync_to_async({g})(...)`, or use the async ORM."
+SyncOrmReached(c, x, w) :- pt_def(f, fq), nearest(c, f, dj_region_stop), kind(c, "call"), ct = @node_path(c),
+    sora_reached_msg(fq, ct, w), field(c, "function", fn), text(fn, x).
+// The cross part answers each finding by symbols and the call's node path (decision 0727), its query as one value of
+// the message ("`get()` at p:l"), not led by its path, which would place the row in that path's file (decision 0665);
+// the finding reads it in its own file.
+.decl sora_reached_msg(f: symbol, c: node_path, w: symbol)
+sora_reached_msg(fq, ct, cat("`", cat(what, cat("` at ", cat(p, cat(":", to_string(l))))))) :- sora_start(kq, fq, ct, gq), sora_own(kq, fq), sora_first(kq, gq, hq),
+    sora_ran(hq, what, p, l).
+.violation SyncOrmReachedInherited(at: node, kx: symbol, fx: symbol, x: symbol, cw: symbol, w: symbol)
+    "`{kx}` inherits `async def {fx}`, whose call `{x}()` at {cw} runs, for this class, a blocking ORM query ({w}), where Django raises SynchronousOnlyOperation. Call it through `sync_to_async`, or use the async ORM."
+SyncOrmReachedInherited(k, kx, fx, x, cw, w) :- class_def(k, kq), def_name(k, kx), sora_inh_msg(kq, fx, x, cw, w).
+.decl sora_inh_msg(k: symbol, fx: symbol, x: symbol, cw: symbol, w: symbol)
+sora_inh_msg(kq, fx, x, cat("line ", to_string(cl)), cat("`", cat(what, cat("` at ", cat(p, cat(":", to_string(l))))))) :- sora_start(kq, fq, ct, gq), !sora_own(kq, fq),
+    sora_first_new(kq, fq, ct, hq), sora_ran(hq, what, p, l), sora_sync(gq, x), sora_call_at(fq, ct, fx, cl).
 // sora_own(k, f): async def f is written in k's own body (or is a plain async def, k = f). sora_new(k, f, c, h): k
 // inherits f, and only for k does f's call c reach h, which queries. One of each is named, the least symbol (a `min`
 // over symbols would order their ids).

@@ -43,18 +43,27 @@
 // def's symbols (the class's `class_def` name, the def's `pt_scope_tm`, as `call_target` names it), the call graph is
 // `ghw_edge`'s, and each def's first write is stated in its own file (`ghw_wrote`). A finding reads the handler's
 // node in its own file, and names the write by its path and line.
-.violation GetHandlerWrites(at: node, x: symbol, what: symbol, p: symbol, l: number)
-    "`{x}` answers a safe method (GET/HEAD) but writes to the database: `{what}` at {p}:{l}. Safe methods must be side-effect free; CSRF protection does not cover them. Move the write to a POST handler."
-GetHandlerWrites(f, x, what, p, l) :- ghw_own(kq, fq), ghw_handler(kq, fq, x), ghw_wrote(fq, _, what, p, l),
-    pt_def(f, fq).
-.violation GetHandlerWritesVia(at: node, x: symbol, g: symbol, what: symbol, p: symbol, l: number)
-    "`{x}` answers a safe method (GET/HEAD) but writes to the database in `{g}()`, which it calls: `{what}` at {p}:{l}. Safe methods must be side-effect free; CSRF protection does not cover them. Move the write to a POST handler."
-GetHandlerWritesVia(f, x, y, what, p, l) :- ghw_own(kq, fq), ghw_handler(kq, fq, x), !ghw_wrote(fq, _, _, _, _),
-    ghw_first_hit(kq, fq, hq), ghw_wrote(hq, y, what, p, l), pt_def(f, fq).
-.violation GetHandlerWritesInherited(at: node, kx: symbol, x: symbol, g: symbol, what: symbol, p: symbol, l: number)
-    "`{kx}` answers a safe method (GET/HEAD) with the inherited `{x}`, which for this class writes to the database in `{g}()`: `{what}` at {p}:{l}. Safe methods must be side-effect free; CSRF protection does not cover them. Move the write to a POST handler."
-GetHandlerWritesInherited(k, kx, x, y, what, p, l) :- ghw_handler(kq, fq, x), !ghw_own(kq, fq), ghw_first_new(kq, fq, hq),
-    ghw_wrote(hq, y, what, p, l), class_def(k, kq), def_name(k, kx).
+.violation GetHandlerWrites(at: node, x: symbol, what: symbol, w: symbol)
+    "`{x}` answers a safe method (GET/HEAD) but writes to the database: {w}. Safe methods must be side-effect free; CSRF protection does not cover them. Move the write to a POST handler."
+GetHandlerWrites(f, x, what, w) :- pt_def(f, fq), ghw_own_msg(fq, x, what, w).
+// The cross part answers each finding by the handler's symbol (decision 0727): its message's values, joined across files
+// by symbols alone; the finding decodes the symbol in the handler's own file. The write is one value of the message
+// ("`save()` at p:l"), not led by its path: a column a path leads places its row in that path's file (decision 0665),
+// and the finding is the handler's.
+.decl ghw_own_msg(f: symbol, x: symbol, what: symbol, w: symbol)
+ghw_own_msg(fq, x, what, cat("`", cat(what, cat("` at ", cat(p, cat(":", to_string(l))))))) :- ghw_own(kq, fq), ghw_handler(kq, fq, x), ghw_wrote(fq, _, what, p, l).
+.violation GetHandlerWritesVia(at: node, x: symbol, g: symbol, what: symbol, w: symbol)
+    "`{x}` answers a safe method (GET/HEAD) but writes to the database in `{g}()`, which it calls: {w}. Safe methods must be side-effect free; CSRF protection does not cover them. Move the write to a POST handler."
+GetHandlerWritesVia(f, x, y, what, w) :- pt_def(f, fq), ghw_via_msg(fq, x, y, what, w).
+.decl ghw_via_msg(f: symbol, x: symbol, g: symbol, what: symbol, w: symbol)
+ghw_via_msg(fq, x, y, what, cat("`", cat(what, cat("` at ", cat(p, cat(":", to_string(l))))))) :- ghw_own(kq, fq), ghw_handler(kq, fq, x), !ghw_wrote(fq, _, _, _, _),
+    ghw_first_hit(kq, fq, hq), ghw_wrote(hq, y, what, p, l).
+.violation GetHandlerWritesInherited(at: node, kx: symbol, x: symbol, g: symbol, what: symbol, w: symbol)
+    "`{kx}` answers a safe method (GET/HEAD) with the inherited `{x}`, which for this class writes to the database in `{g}()`: {w}. Safe methods must be side-effect free; CSRF protection does not cover them. Move the write to a POST handler."
+GetHandlerWritesInherited(k, kx, x, y, what, w) :- class_def(k, kq), def_name(k, kx), ghw_inh_msg(kq, x, y, what, w).
+.decl ghw_inh_msg(k: symbol, x: symbol, g: symbol, what: symbol, w: symbol)
+ghw_inh_msg(kq, x, y, what, cat("`", cat(what, cat("` at ", cat(p, cat(":", to_string(l))))))) :- ghw_handler(kq, fq, x), !ghw_own(kq, fq), ghw_first_new(kq, fq, hq),
+    ghw_wrote(hq, y, what, p, l).
 
 // ghw_handler(k, f, x): def f, named x, answers only safe methods: in view class k (its own method or an inherited
 // one), or as a function view (k = f).
@@ -86,11 +95,19 @@ ghw_new(kq, fq, hq) :- ghw_hit(kq, fq, hq), !ghw_own(kq, fq), ghw_handler(kq, fq
 ghw_first_new(kq, fq, hq) :- ghw_new(kq, fq, hq), !ghw_later_new(kq, fq, hq).
 .decl ghw_later_new(k: symbol, f: symbol, h: symbol)
 ghw_later_new(kq, fq, hq) :- ghw_new(kq, fq, hq), ghw_new(kq, fq, gq), gq < hq.
-// ghw_wrote(h, y, what, p, l): def h, named y, writes rows: its first write, `what`, at line l of path p. Stated in
-// h's own file.
+// ghw_wrote(h, y, what, p, l): def h, named y, writes rows: its first write, `what`, at line l of path p (the least
+// line, then the least `what` on it). By line, not by node: what a write reads may be another file's (a model class,
+// `dj_model_at`), so the choice can be the cross part's, which compares no positions (decisions 0649, 0652 item 5);
+// a line in h's own file moves with no edit elsewhere.
+.decl ghw_write_at(h: node, what: symbol, l: number)
+ghw_write_at(h, what, l) :- ghw_write(o, h, what), node_line_number(o, l).
 .decl ghw_wrote(h: symbol, y: symbol, what: symbol, p: symbol, l: number)
-ghw_wrote(hq, y, what, p, l) :- ghw_write(_, h, _), o = min v : { ghw_write(v, h, _) }, ghw_write(o, h, what),
-    pt_def(h, hq), def_name(h, y), node_line_number(o, l), docof(o, d), doc(d, p, _).
+ghw_wrote(hq, y, what, p, l) :- ghw_first_line(h, l), ghw_write_at(h, what, l), !ghw_later_what(h, what),
+    pt_def(h, hq), def_name(h, y), docof(h, d), doc(d, p, _).
+.decl ghw_first_line(h: node, l: number)
+ghw_first_line(h, l) :- ghw_write_at(h, _, _), l = min m : { ghw_write_at(h, _, m) }.
+.decl ghw_later_what(h: node, what: symbol)
+ghw_later_what(h, w) :- ghw_first_line(h, l), ghw_write_at(h, w, l), ghw_write_at(h, v, l), v < w.
 // ghw_safe_action(kq, x): view class kq answers a safe method with its method x: get and head on any view, list and
 // retrieve on a DRF class only (its viewsets route GET to them; Django's View.dispatch never does).
 .decl ghw_safe_action(kq: symbol, x: symbol)
