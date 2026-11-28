@@ -250,7 +250,7 @@ impl Directory {
         let mut l = self.launch("the validation mode's count", &[(id, true)])?;
         let w = l.parts().0[0].bytes_mut().ok_or("a write pin")?;
         // Written before its kernels add to it.
-        w[BODY_AT..BODY_AT + 4].copy_from_slice(&0u32.to_le_bytes());
+        rerail_blocks::gens::set_word(w, BODY_AT, 0u32);
         Ok(Some(id))
     }
 

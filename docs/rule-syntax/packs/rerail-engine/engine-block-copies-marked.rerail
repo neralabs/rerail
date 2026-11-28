@@ -1,0 +1,69 @@
+.policy "engine-block-copies-marked" revision 1
+.description "Mark each copy of values into another structure in the new engine with the kind 0353 allows, or read the block in place."
+.language rust
+.mode log
+.scope include "native/crates/blocks/src/**/*.rs", "native/crates/delta_core/src/**/*.rs", "native/crates/delta_exec/src/**/*.rs", "native/crates/delta_device/src/**/*.rs", "native/crates/delta_twins/src/**/*.rs"
+#include "rust/rerail-engine.rerail"
+// Decision 0353 (AGENTS.md, "Blocks are never copied"): data lives in one place, in one layout, and every reader reads
+// it there. A call that copies values into another structure passes only when it, or the line above, says which
+// allowed kind it is:
+//   // copy: load              bytes from disk into the exact bytes the readers read
+//   // copy: growth            a block that outgrew its space, moved once
+//   // copy: derived           a fact written once where it is computed
+//   // copy: not block data    keys, plan state, text being built: nothing a reader reads instead of a block
+//   // copy (0353 step N)      an existing copy, listed in 0353, that step N removes
+// scripts/check/check_no_block_copies.py checks the lines a commit adds; this rule reads the whole tree, so a copy
+// that came in unmarked (a merge, a file moved) is seen too. Test code is left out.
+//   dst.copy_from_slice(&src)                              UNMARKED_COPY
+//   v.extend_from_slice(rows)  // copy: derived            not reported
+//   // copy (0353 step 4)
+//   core::ptr::copy_nonoverlapping(a, b, n)                not reported
+//   let r = t.row(i).to_vec();                             UNMARKED_COPY (a row read into a Vec)
+
+.violation UNMARKED_COPY(at: node) code "UNMARKED_COPY" "This copies values into another structure: read the block in place (0353), or mark the line with the kind of copy 0353 allows (// copy: load | growth | derived | not block data, or // copy (0353 step N))."
+engine_mark("//[/!]?(?s:.*)\\bcopy(?:: (?:load|growth|derived|not block data)| \\(0353 step [0-9]+\\))(?s:.*)").
+.decl copy_name(x: symbol)
+copy_name("copy_nonoverlapping"). copy_name("copy_from_slice"). copy_name("extend_from_slice"). copy_name("upload").
+copy_name("copy_rows"). copy_name("expand_view"). copy_name("put_pairs").
+// A row, or a row's read, made a vector: `t.row(i).to_vec()`, `s.rows(a, b).to_vec()`, `t.row(i).read().to_vec()`.
+.decl row_read(r: node)
+row_read(r) :- call_name(r, "row", _). row_read(r) :- call_name(r, "rows", _).
+row_read(r) :- call_name(r, "read", _), field(r, "function", f), field(f, "value", q), call_name(q, "row", _).
+.decl copy_at(at: node)
+copy_at(at) :- call_name(_, x, at), copy_name(x).
+copy_at(at) :- call_name(c, "to_vec", at), field(c, "function", f), field(f, "value", r), row_read(r).
+UNMARKED_COPY(at) :- copy_at(at), docof(at, d), !engine_test_doc(d), !in_engine_test(at),
+    engine_mark(re), !marked_by(at, re).
+
+.test copies exactly
+    .fixture "native/crates/blocks/src/a.rs" ```
+        fn f(dst: &mut [u8], src: &[u8], v: &mut Vec<i64>, rows: &[i64]) {
+            dst.copy_from_slice(src);
+            v.extend_from_slice(rows); // copy: derived
+            // copy (0353 step 4)
+            unsafe { core::ptr::copy_nonoverlapping(src.as_ptr(), dst.as_mut_ptr(), 4) };
+            unsafe { core::ptr::copy_nonoverlapping(src.as_ptr(), dst.as_mut_ptr(), 4) };
+            // copy: convenience
+            v.extend_from_slice(rows);
+            v.extend_from_slice(rows); // a copy, said in words
+            let r = t.row(3).to_vec();
+            let q = t.row(3).read().to_vec();
+            let k = keys.to_vec(); // not a row: a vector of keys
+        }
+        #[cfg(test)]
+        mod tests {
+            fn g(dst: &mut [u8], src: &[u8]) { dst.copy_from_slice(src); }
+        }
+        #[cfg(any(test, feature = "test-hooks"))]
+        fn h(dst: &mut [u8], src: &[u8]) { dst.copy_from_slice(src); }
+        ```
+    .fixture "native/crates/blocks/src/a_tests.rs" ```
+        fn g(dst: &mut [u8], src: &[u8]) { dst.copy_from_slice(src); }
+        ```
+    .expect UNMARKED_COPY at "native/crates/blocks/src/a.rs":2
+    .expect UNMARKED_COPY at "native/crates/blocks/src/a.rs":6
+    .expect UNMARKED_COPY at "native/crates/blocks/src/a.rs":8
+    .expect UNMARKED_COPY at "native/crates/blocks/src/a.rs":9
+    .expect UNMARKED_COPY at "native/crates/blocks/src/a.rs":10
+    .expect UNMARKED_COPY at "native/crates/blocks/src/a.rs":11
+.end

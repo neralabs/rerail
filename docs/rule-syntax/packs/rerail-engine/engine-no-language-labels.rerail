@@ -1,0 +1,31 @@
+.policy "engine-no-language-labels" revision 1
+.description "Keep languages out of the new engine's generic layers: no language label in the blocks, the delta executor or its twins."
+.language rust
+.mode steer
+.scope include "native/crates/blocks/src/**/*.rs", "native/crates/delta_core/src/**/*.rs", "native/crates/delta_exec/src/**/*.rs", "native/crates/delta_device/src/**/*.rs", "native/crates/delta_twins/src/**/*.rs"
+#include "rust/rerail-engine.rerail"
+#include "rust/rerail-native.rerail"
+// The user (2026-11-26): "when we support 1000 languages, we will have 1000 different tables in this file?". A
+// language's knowledge (its grammar's kinds, its keying, its phases) is declared in the .rerail that declares its
+// relations and read by the engine; the blocks, the delta executor and its twins are generic and name no language.
+// REVIEW.md forbids branching on a language outside its Engine Adapter. Tests may name one.
+//   if lang == "python" { … }                  LANGUAGE_LABEL
+//   grammar_for("rust")                        LANGUAGE_LABEL
+//   "bootstrap-l0"                             not reported
+
+.violation LANGUAGE_LABEL(at: node) code "LANGUAGE_LABEL" "A language named in the engine's generic layers: declare what differs in the language's .rerail, and read the declaration here."
+LANGUAGE_LABEL(s) :- native_label(s), docof(s, d), !engine_test_doc(d), !in_engine_test(s).
+
+.test labels exactly
+    .fixture "native/crates/delta_exec/src/a.rs" ```
+        fn f(lang: &str) {
+            if lang == "python" { return; }
+            let g = grammar_for("rust");
+            let k = "bootstrap-l0";
+        }
+        #[cfg(test)]
+        fn t() { let l = "php"; }
+        ```
+    .expect LANGUAGE_LABEL at "native/crates/delta_exec/src/a.rs":2
+    .expect LANGUAGE_LABEL at "native/crates/delta_exec/src/a.rs":3
+.end

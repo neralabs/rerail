@@ -1,0 +1,35 @@
+.policy "engine-no-machine-paths" revision 1
+.description "Name no machine in the tree: no home directory or user's path in the engine's Rust, tests included."
+.language rust
+.mode steer
+.scope include "native/crates/blocks/src/**/*.rs", "native/crates/delta_core/src/**/*.rs", "native/crates/delta_exec/src/**/*.rs", "native/crates/delta_device/src/**/*.rs", "native/crates/delta_twins/src/**/*.rs"
+#include "rust/rerail-engine.rerail"
+// AGENTS.md ("Other Macs"): never copy a machine's details into the tree, a commit or a log in it: no hostnames,
+// ssh names, usernames, home paths or addresses. A home directory written in a literal names a user and a machine,
+// and works on that one alone. A path is made from the run's own (a temporary directory, the checkout, an option).
+//   let p = "/Users/someone/orca/out";            MACHINE_PATH
+//   Path::new("/home/ci/rerail")                  MACHINE_PATH
+//   std::env::temp_dir().join("rerail-laws")      not reported
+//   "/usr/bin/env"                                not reported
+
+.violation MACHINE_PATH(at: node) code "MACHINE_PATH" "This names a user's home directory, a machine's detail the tree never holds: make the path from the run's own (a temporary directory, the checkout, an option)."
+MACHINE_PATH(s) :- kind(s, "string_literal"), str(s, v), match("(?s:.*?)(?:^|[^A-Za-z0-9_.])/(?:Users|home)/[A-Za-z0-9_.-]+(?s:.*)", v),
+    !match("(?s:.*?)/(?:Users|home)/(?:[A-Z]+|user|someone|example|<[a-z]+>)(?:/(?s:.*))?", v).
+MACHINE_PATH(s) :- kind(s, "raw_string_literal"), match("(?s:.*?)(?:^|[^A-Za-z0-9_.])/(?:Users|home)/[a-z][A-Za-z0-9_.-]*(?s:.*)", s),
+    !match("(?s:.*?)/(?:Users|home)/(?:user|someone|example)(?:/(?s:.*))?", s).
+
+.test paths exactly
+    .fixture "native/crates/delta_exec/src/a_tests.rs" ```
+        fn f() {
+            let p = "/Users/jdoe/orca/out";
+            let q = std::path::Path::new("/home/ci/rerail");
+            let r = std::env::temp_dir().join("rerail-laws");
+            let s = "/usr/bin/env";
+            let t = "/Users/USER/where";
+            let u = r#"cd /home/build && make"#;
+        }
+        ```
+    .expect MACHINE_PATH at "native/crates/delta_exec/src/a_tests.rs":2
+    .expect MACHINE_PATH at "native/crates/delta_exec/src/a_tests.rs":3
+    .expect MACHINE_PATH at "native/crates/delta_exec/src/a_tests.rs":7
+.end

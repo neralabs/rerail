@@ -1,0 +1,29 @@
+.policy "engine-no-git-processes" revision 1
+.description "Read a repository through gix: the engine starts no git process."
+.language rust
+.mode steer
+.scope include "native/crates/blocks/src/**/*.rs", "native/crates/delta_core/src/**/*.rs", "native/crates/delta_exec/src/**/*.rs", "native/crates/delta_device/src/**/*.rs", "native/crates/delta_twins/src/**/*.rs"
+#include "rust/rerail-engine.rerail"
+// Decision 0497: the engine reads repositories with gix, in process. A git process is an outside program whose
+// version, configuration and lazy fetches the engine does not control, and a cost per call. Tests are held to it
+// too: a test that makes a repository makes it with gix.
+//   std::process::Command::new("git")         GIT_PROCESS
+//   Command::new("/usr/bin/git")              GIT_PROCESS
+//   gix::open(path)                           not reported
+
+.violation GIT_PROCESS(at: node) code "GIT_PROCESS" "The engine starts no git process (decision 0497): read the repository with gix."
+GIT_PROCESS(c) :- call_name(c, "new", _), kind(c, "call_expression"), field(c, "function", f),
+    match("(?:[A-Za-z_][A-Za-z0-9_]*::)*Command::new", f), call_arg(c, 0, a), str(a, s), match("(?:.*/)?git(?:\\.exe)?", s).
+
+.test git exactly
+    .fixture "native/crates/delta_exec/src/a.rs" ```
+        fn f() {
+            let a = std::process::Command::new("git").arg("status").output();
+            let b = Command::new("/usr/bin/git").output();
+            let c = Command::new("cargo").output();
+            let r = gix::open(".");
+        }
+        ```
+    .expect GIT_PROCESS at "native/crates/delta_exec/src/a.rs":2
+    .expect GIT_PROCESS at "native/crates/delta_exec/src/a.rs":3
+.end

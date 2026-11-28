@@ -1,0 +1,53 @@
+// rust/rerail-engine: vocabulary of the rerail-engine rules, on the new engine's Rust (decision 0686's crates:
+// native/crates/{blocks,delta_core,delta_exec,delta_device,delta_twins}).
+//
+// What a rule gets from this library:
+//   engine_test_doc(d)        document d is test code by its name: tests.rs, *_tests.rs, tests_*.rs, or under
+//                             tests/, examples/ or benches/
+//   engine_test_item(n)       n is an item #[test], #[cfg(test)], #[cfg(all(test, …))] or #[cfg(any(test, …))] applies
+//                             to (a test-hooks item is test support, run by tests only)
+//   in_engine_test(n)         n is in a test document, or is or is inside an engine_test_item
+//   engine_code(n)            the engine's own code: n is not in_engine_test (asked of nodes a rule has bound)
+//   call_name(c, x, at)       call c calls a function or method named x, its name node at: `f(…)`, `a::f(…)`,
+//                             `v.f(…)`, `v.f::<T>(…)`
+//   call_arg(c, i, a)         a is call c's i-th argument, from 0
+//   mark_line(d, l, re)       a line comment at line l of document d matches re (a whole comment, `//` included)
+//   marked_by(at, re)         a comment matching re is on at's line or the line above it
+//
+// Builds on core and rust/syntax.rerail (attached: an attribute and the item it applies to).
+#include "rust/syntax.rerail"
+
+.decl engine_test_doc(d: number)
+engine_test_doc(d) :- doc(d, p, _),
+    match("(?s:.*?)(?:^|/)(?:tests|[a-z0-9_]+_tests|tests_[a-z0-9_]+)\\.rs|(?s:.*?)(?:^|/)(?:tests|examples|benches)/(?s:.*)", p).
+
+.decl engine_test_item(n: node)
+engine_test_item(n) :- kind(a, "attribute_item"), match("#\\[cfg\\((?:test|(?:all|any)\\(\\s*test\\b[^\\]]*)\\)\\]", a), attached(a, n).
+engine_test_item(n) :- kind(a, "attribute_item"), match("#\\[(?:test|tokio::test)\\]", a), attached(a, n).
+
+.decl in_engine_test(n: node)
+in_engine_test(n) :- engine_test_item(n).
+in_engine_test(n) :- engine_test_item(t), within(n, t).
+
+.decl call_name(c: node, x: symbol, at: node)
+call_name(c, x, f) :- kind(c, "call_expression"), field(c, "function", f), kind(f, "identifier"), text(f, x).
+call_name(c, x, i) :- kind(c, "call_expression"), field(c, "function", f), callee_name(f, i), text(i, x).
+call_name(c, x, i) :- kind(c, "call_expression"), field(c, "function", g), kind(g, "generic_function"),
+    field(g, "function", f), callee_name(f, i), text(i, x).
+call_name(c, x, f) :- kind(c, "call_expression"), field(c, "function", g), kind(g, "generic_function"),
+    field(g, "function", f), kind(f, "identifier"), text(f, x).
+.decl callee_name(f: node, i: node)
+callee_name(f, i) :- kind(f, "field_expression"), field(f, "field", i).
+callee_name(f, i) :- kind(f, "scoped_identifier"), field(f, "name", i).
+
+.decl call_arg(c: node, i: number, a: node)
+call_arg(c, i, a) :- kind(c, "call_expression"), field(c, "arguments", as), child(as, a, i), !kind(a, "line_comment"),
+    !kind(a, "block_comment").
+
+.decl mark_line(d: number, l: number, re: symbol)
+mark_line(d, l, re) :- engine_mark(re), kind(k, "line_comment"), match(re, k), docof(k, d), line(k, l).
+.decl marked_by(at: node, re: symbol)
+marked_by(at, re) :- engine_mark(re), docof(at, d), line(at, l), mark_line(d, l, re).
+marked_by(at, re) :- engine_mark(re), docof(at, d), line(at, l), mark_line(d, m, re), l = m + 1.
+// The marks a rule asks for: each rule that reads marked_by states its pattern here.
+.decl engine_mark(re: symbol)

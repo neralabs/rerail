@@ -2014,3 +2014,61 @@ or on one edit. Each is now checked on any operator the harness is given.
   walk read 664 beside 16 documents, against 152 beside 4, and fails the test.
 - *A test copied a 1 GB reservation.* The k0 cache test copied the cache block, a 1 GB reservation touched only where
   it is written, three times (4.3 GB peak). It now reads the block where it lies (17 MB).
+
+## The work ledger on the device; pipelines with globals, of L1, on the device (2026-11-28)
+
+Two of the last section's limits are lifted (commit c579632582).
+
+**The device counts its own reads.** In the validation mode a device launch's kernels count their state reads at
+the twins' counting points, so the ledger holds the device's work, not a reading of the kernels' code. The directory
+makes a `kind::WORK` block (8 bytes) the first time the mode is turned on. A validated UKL launch pins it writable
+and sets it to 0 first (`Directory::work_word`). The device table names it a second time under the largest id
+(`gens::WORK_ROW`, `u32::MAX`), as its last row, so `layer_of` finds it with one load (`delta_work`). Every value
+read (`layer_get`) and kill-search step (`layer_kills`) adds 1 to it (`delta_touch`, an atomic add). A launch's
+count goes into the ledger as its op's `reads`, beside each phase's turns and items. `OnDevice::program` now returns
+the items, every instance's.
+
+`the_work_ledger_holds_p1_on_the_device` checks P1 on the device runner by its own ledger: one edit among 4, 8 and
+16 modules, one document let go among as many, and one partition's edit, each within `work_grows`; the scanning toy
+grows. For one run the old whole-set forget was put back. The device's count caught it: 568 reads beside 16
+documents against 148 beside 4, and the test failed. A mixed runner's ledgers are not compared, because its seed
+sends each launch to the CPU or the device, and the larger data's merges move which side a launch lands on.
+
+**L9 as it runs, on the device.** `toys::l9_as_it_runs` steps the per-partition toy over a cold layer, then over an
+edit of one partition, in the validation mode. On the device runner and a mixed one, the check reads what the
+device's kernels committed. The flawed toy is refused, and the sound one passes
+(`l9_as_it_runs_on_the_device_or_mixed`).
+
+**Pipelines take globals, and run the engine's own operator.** A stage now takes globals (`Stage::step` and
+`apply`). `pipeline_laws` takes the globals at each state, and each stage's global wiring (`gwires`). A stage cuts
+off only when its globals are the identity too. `laws::l1_pipeline` runs the document set's tape into L1, with the
+atoms as its global, into `toys::Heads` (each module's rules' heads, projected past the local rule ids), over l0's
+edits (`boot::l0_edit_chain`). Every stage is its composed function's output at every state, and both cut off at the
+two unchanged reads (8 states, 4 cutoffs). The toys moved to `toys` (test-hooks), so the device's tests run the
+toys' chain and diamond and L1's pipeline on the device and a mixed runner, and each run equals the CPU's
+(`pipelines_on_the_device_or_mixed_are_the_cpus`).
+
+## The new engine's coding requirements, as rules (2026-11-28)
+
+The requirements AGENTS.md, the decisions and the user set for this code are now also rules, which the old engine
+runs on the new engine's crates: `docs/rule-syntax/packs/rerail-engine/` (its README lists each rule, its source,
+its mode and what it names today), on the vocabulary of `docs/rule-syntax/lib/rust/rerail-engine.rerail`, run by
+`scripts/check/check_engine_rules.py` (each rule's tests, then every rule over the checkout, in seconds). The Python
+checks read the lines a commit adds, and these rules read the whole tree. Five rules hold and steer: copy marks name
+0353's kinds, a `Pod` holds no `usize` or address, no git process, no machine path, no language label. Four log what
+still breaks them:
+- 41 copies without a 0353 mark, most in `blocks`, `delta_twins` and `delta_core`, which the copy check's list
+  leaves out (one, `region.rs`'s `upload`, is a device upload);
+- 5 zeroed hand-outs (`long.rs` and `scratch.rs` zero each region "as every room's region reads");
+- 7 host sorts (the facts readers the version checks compare by, `Directory::reach`, the file layer's `changed`);
+- 2 global states (`files.rs`'s `REGISTER`, `heap_watch`'s thread-local).
+
+**What running them found besides.** This tree's engine panicked on every rule whose test had no test file: an index
+of an empty relation (here `engine_test_doc`, negated) claimed an 8-byte rows chunk, but a span of no items points
+nowhere (flat 9's `RelSpan::set_bits`), so the chunk was lost, and giving the index back read an address from the
+empty span (`Block::offset_of` past the block). An index of no rows now claims no rows room, and each give-back
+(`give_back_index`, `forget_indexes`, `grow_index_rows`) gives back only the spans that hold room
+(`an_index_of_no_rows_holds_no_rows_room_and_goes_back_cleanly`). `free.rs`'s
+`a_chunk_under_the_resident_size_keeps_its_pages` was red here and on a farm Mac: its big chunk, 8 pages, was under
+the ledger's `GIVE_MIN` (256 KB merged, t57 §8), which a free must reach to give pages back. It is that size now.
+`rerail-blocks --lib` 159 of 159, `rerail-delta-exec --lib` 113 of 113, `rerail-delta-device --lib` 13 of 13.

@@ -1,0 +1,34 @@
+.policy "engine-copy-mark-kinds" revision 1
+.description "Name a copy only by a kind decision 0353 allows: load, growth, derived, not block data, or an existing copy's 0353 step."
+.language rust
+.mode steer
+.scope include "native/crates/blocks/src/**/*.rs", "native/crates/delta_core/src/**/*.rs", "native/crates/delta_exec/src/**/*.rs", "native/crates/delta_device/src/**/*.rs", "native/crates/delta_twins/src/**/*.rs"
+#include "rust/rerail-engine.rerail"
+// A comment that opens with `copy:` or `copy (` is a copy's mark (0353, "The rule"). Only five kinds pass; any other
+// word ("copy: convenience", "copy: a kernel prefers rows") names an exception 0353 does not have, and the list of
+// existing copies only shrinks, each by its step.
+//   // copy: derived (the heads given)          not reported
+//   // copy (0353 step 7)                       not reported
+//   // copy: for speed                          COPY_MARK_KIND
+//   // copy (later)                             COPY_MARK_KIND
+
+.violation COPY_MARK_KIND(at: node) code "COPY_MARK_KIND" "0353 allows no such copy: a mark is copy: load, copy: growth, copy: derived, copy: not block data, or copy (0353 step N) for a copy 0353 lists. Read the block in place instead."
+COPY_MARK_KIND(k) :- kind(k, "line_comment"), match("//[/!]?\\s*copy\\s*[:(](?s:.*)", k),
+    !match("//[/!]?\\s*copy(?:: (?:load|growth|derived|not block data)\\b| \\(0353 step [0-9]+\\))(?s:.*)", k).
+
+.test kinds exactly
+    .fixture "native/crates/delta_exec/src/a.rs" ```
+        fn f() {
+            let a = 1; // copy: derived (the heads given)
+            // copy (0353 step 7)
+            // copy: for speed
+            // copy (later)
+            // copy: not block data
+            // a copy: words in a sentence
+            // copy: loads
+        }
+        ```
+    .expect COPY_MARK_KIND at "native/crates/delta_exec/src/a.rs":4
+    .expect COPY_MARK_KIND at "native/crates/delta_exec/src/a.rs":5
+    .expect COPY_MARK_KIND at "native/crates/delta_exec/src/a.rs":8
+.end

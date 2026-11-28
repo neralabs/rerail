@@ -1,0 +1,42 @@
+.policy "engine-host-never-sorts" revision 1
+.description "Leave every sort to the program: the delta executor and its device runner take runs as they lie and sort nothing."
+.language rust
+.mode log
+.scope include "native/crates/delta_exec/src/**/*.rs", "native/crates/delta_device/src/**/*.rs"
+#include "rust/rerail-engine.rerail"
+// The user (2026-11-24), after the host sorted a device's placed head: "the host should not be sorting ANYTHING".
+// The program (CPU SIMD or GPU) hands every order a relation keeps as sorted runs, written in its block; the host
+// notes them. A host sort is the scalar bottleneck the program removes, and host work on the device path. The
+// executor's crates are the host; test code and test support (#[cfg(any(test, …))]) are left out.
+//   v.sort_unstable()                       HOST_SORT
+//   rows.sort_by_key(|r| r.0)               HOST_SORT
+//   let r = run_of(&keys)                   HOST_SORT
+//   #[cfg(test)] fn t() { v.sort() }        not reported
+
+.violation HOST_SORT(at: node) code "HOST_SORT" "The host sorts nothing: the program writes this order as sorted runs in the relation's block, and the host takes them as they lie."
+.decl sort_name(x: symbol)
+sort_name("sort"). sort_name("sort_unstable"). sort_name("sort_by"). sort_name("sort_by_key").
+sort_name("sort_by_cached_key"). sort_name("sort_unstable_by"). sort_name("sort_unstable_by_key").
+sort_name("sort_keyed"). sort_name("run_of"). sort_name("select_nth_unstable").
+HOST_SORT(at) :- call_name(c, x, at), sort_name(x), docof(c, d), !engine_test_doc(d), !in_engine_test(c).
+
+.test sorts exactly
+    .fixture "native/crates/delta_exec/src/op.rs" ```
+        fn f(v: &mut Vec<u32>, rows: &mut [(u32, u32)], keys: &[u32]) {
+            v.sort_unstable();
+            rows.sort_by_key(|r| r.0);
+            let r = run_of(keys);
+            v.dedup();
+        }
+        #[cfg(test)]
+        fn t(v: &mut Vec<u32>) { v.sort() }
+        #[cfg(any(test, feature = "test-hooks"))]
+        pub fn reference(v: &mut Vec<u32>) { v.sort() }
+        ```
+    .fixture "native/crates/delta_twins/src/sort.rs" ```
+        fn the_program(v: &mut [u32]) { v.sort_unstable() }
+        ```
+    .expect HOST_SORT at "native/crates/delta_exec/src/op.rs":2
+    .expect HOST_SORT at "native/crates/delta_exec/src/op.rs":3
+    .expect HOST_SORT at "native/crates/delta_exec/src/op.rs":4
+.end

@@ -1,0 +1,50 @@
+.policy "engine-no-global-state" revision 1
+.description "Keep the delta executor and its twins free of process state: no mutable static, cell, lock, atomic or thread-local."
+.language rust
+.mode log
+.scope include "native/crates/delta_core/src/**/*.rs", "native/crates/delta_exec/src/**/*.rs", "native/crates/delta_device/src/**/*.rs", "native/crates/delta_twins/src/**/*.rs"
+#include "rust/rerail-engine.rerail"
+// Decision 0442: the engine is re-entrant and holds no global state; two runs in one process, on any threads, never
+// reach each other's state. What a run, a connection or the machine owns is on its object (the directory, the
+// runner, `Machine`). The 0686 crates were built without any: a twin "names no static, thread-local, Once/Lazy cell,
+// lock or atomic" (B1), and the executor's state is its directory's. A constant static (a phase table, a signature)
+// passes. The rest of the engine lists its statics in scripts/check/global-state.txt (check_no_global_state.py) and
+// its thread-locals in run_state's STATE (check_thread_state.py); these crates have no entries there.
+//   static mut N: u32 = 0;                                    GLOBAL_STATE
+//   static NEXT: AtomicU64 = AtomicU64::new(0);               GLOBAL_STATE
+//   static REGISTER: std::sync::Once = Once::new();           GLOBAL_STATE
+//   thread_local! { static T: Cell<u32> = … }                 GLOBAL_STATE
+//   static PHASES: [Phase; 1] = [one("open", …)];             not reported
+
+.violation GLOBAL_STATE(at: node) code "GLOBAL_STATE" "Process state in the delta executor (decision 0442): put it on the object that owns it (the directory, the runner, the machine) and pass it in."
+.decl cell_type(t: node)
+cell_type(t) :- match("(?s:.*?)\\b(?:Mutex|RwLock|Once|OnceLock|LazyLock|OnceCell|Lazy|Atomic[A-Za-z0-9]*|RefCell|Cell|UnsafeCell|Condvar)\\b(?s:.*)", t),
+    kind(s, "static_item"), field(s, "type", t).
+.decl global_state(s: node)
+global_state(s) :- kind(s, "static_item"), has(s, _, "mutable_specifier").
+global_state(s) :- kind(s, "static_item"), field(s, "type", t), cell_type(t).
+global_state(m) :- kind(m, "macro_invocation"), macro_name(m, "thread_local").
+GLOBAL_STATE(s) :- global_state(s), docof(s, d), !engine_test_doc(d), !in_engine_test(s), !in_macro_def(s).
+
+.test statics exactly
+    .fixture "native/crates/delta_exec/src/a.rs" ```
+        use std::sync::atomic::AtomicU64;
+        static mut N: u32 = 0;
+        static NEXT: AtomicU64 = AtomicU64::new(0);
+        fn f() {
+            static REGISTER: std::sync::Once = std::sync::Once::new();
+        }
+        thread_local! { static T: std::cell::Cell<u32> = const { std::cell::Cell::new(0) }; }
+        static PHASES: [u32; 1] = [1];
+        pub static NAME: &str = "open";
+        #[cfg(test)]
+        static SEEN: AtomicU64 = AtomicU64::new(0);
+        ```
+    .fixture "native/crates/blocks/src/ledger.rs" ```
+        static BLOCKS: std::sync::Mutex<u32> = std::sync::Mutex::new(0);
+        ```
+    .expect GLOBAL_STATE at "native/crates/delta_exec/src/a.rs":2
+    .expect GLOBAL_STATE at "native/crates/delta_exec/src/a.rs":3
+    .expect GLOBAL_STATE at "native/crates/delta_exec/src/a.rs":5
+    .expect GLOBAL_STATE at "native/crates/delta_exec/src/a.rs":7
+.end

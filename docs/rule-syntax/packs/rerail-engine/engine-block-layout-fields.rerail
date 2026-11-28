@@ -1,0 +1,52 @@
+.policy "engine-block-layout-fields" revision 1
+.description "Give a block's layout (a Pod type) fixed-width fields and no addresses: no usize, isize, pointer or reference."
+.language rust
+.mode steer
+.scope include "native/crates/blocks/src/**/*.rs", "native/crates/delta_core/src/**/*.rs", "native/crates/delta_exec/src/**/*.rs", "native/crates/delta_device/src/**/*.rs", "native/crates/delta_twins/src/**/*.rs"
+#include "rust/rerail-engine.rerail"
+// A Pod type is a layout a block holds, read where it lies by the CPU, the JIT and the device kernels alike
+// (delta_core::Pod: "#[repr(C)] with every byte a named field, and hold no address"). Two of the user's rules bound
+// its fields. A field stores the width its values need, 32 bits where they fit ("don't store things in 64 bits that
+// fit in 32 bits", 2026-11-24): usize is the host's width, 8 bytes on every 64-bit host and unknown to a kernel. A
+// reference that leaves its block is (descriptor, offset), never an address ("64-bit spans: no dice", 2026-11-27): a
+// pointer or a reference in a block means nothing on another device, or after the block moves.
+//   struct Run { at: usize, n: u32 }  unsafe impl Pod for Run {}         POD_FIELD at `at: usize`
+//   struct Link(*const u8);           unsafe impl Pod for Link {}        POD_FIELD
+//   struct Row { at: u32, n: u32 }    unsafe impl Pod for Row {}         not reported
+//   struct Local { base: *mut u8 }    (not a Pod)                        not reported
+
+.violation POD_FIELD(at: node) code "POD_FIELD" "A block's layout holds this field: store a fixed width its values need (u32 where they fit), and refer across blocks by (descriptor, offset), never by an address."
+.decl pod_type(d: number, x: symbol)
+pod_type(d, x) :- kind(i, "impl_item"), match("(?s:.*?)\\bunsafe\\s+impl\\b(?s:.*)", i), field(i, "trait", t),
+    match("(?:[A-Za-z_$][A-Za-z0-9_]*::)*Pod", t), field(i, "type", ty), kind(ty, "type_identifier"), text(ty, x), docof(i, d).
+.decl field_type(f: node, t: node)
+field_type(f, t) :- kind(f, "field_declaration"), field(f, "type", t).
+field_type(f, f) :- struct_field(_, _, f), !kind(f, "field_declaration").
+.decl wide_or_address(t: node)
+wide_or_address(t) :- kind(t, "primitive_type"), (text(t, "usize") ; text(t, "isize")).
+wide_or_address(t) :- kind(t, "pointer_type").
+wide_or_address(t) :- kind(t, "reference_type").
+wide_or_address(t) :- kind(t, "array_type"), field(t, "element", e), wide_or_address(e).
+POD_FIELD(f) :- kind(s, "struct_item"), field(s, "name", n), text(n, x), docof(s, d), pod_type(d, x),
+    struct_field(s, _, f), field_type(f, t), wide_or_address(t), !in_engine_test(s), !engine_test_doc(d).
+
+.test layouts exactly
+    .fixture "native/crates/delta_core/src/a.rs" ```
+        #[repr(C)]
+        pub struct Run {
+            pub at: usize,
+            pub n: u32,
+        }
+        unsafe impl Pod for Run {}
+        #[repr(C)]
+        pub struct Link(*const u8);
+        unsafe impl crate::Pod for Link {}
+        #[repr(C)]
+        pub struct Row { at: u32, n: u32, spans: [u64; 2], ends: [isize; 2] }
+        unsafe impl Pod for Row {}
+        pub struct Local { base: *mut u8, len: usize }
+        ```
+    .expect POD_FIELD at "native/crates/delta_core/src/a.rs":3
+    .expect POD_FIELD at "native/crates/delta_core/src/a.rs":8
+    .expect POD_FIELD at "native/crates/delta_core/src/a.rs":11
+.end

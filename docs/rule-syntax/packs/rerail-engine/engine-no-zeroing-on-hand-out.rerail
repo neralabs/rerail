@@ -1,0 +1,58 @@
+.policy "engine-no-zeroing-on-hand-out" revision 1
+.description "Hand out memory as it was: the block allocator, rooms, chunks and regions never zero what they give."
+.language rust
+.mode log
+.scope include "native/crates/blocks/src/alloc.rs", "native/crates/blocks/src/chunk.rs", "native/crates/blocks/src/free.rs", "native/crates/blocks/src/long.rs", "native/crates/blocks/src/maps.rs", "native/crates/blocks/src/mem.rs", "native/crates/blocks/src/region.rs", "native/crates/blocks/src/scratch.rs", "native/crates/blocks/src/ledger.rs", "native/crates/blocks/src/mapped.rs", "native/crates/blocks/src/block.rs", "native/crates/delta_core/src/flat/arena.rs", "native/crates/delta_core/src/flat/grow.rs", "native/crates/delta_core/src/flat/pool.rs", "native/crates/slabs/src/**/*.rs"
+#include "rust/rerail-engine.rerail"
+// The user (2026-11-26), after a run zeroed 16 GB of reused chunks: no memset, write_bytes or zeroed take of reused
+// memory by an allocator, room, chunk, lease or region, and no "a room's region reads zero" contract. Zeroing on
+// hand-out touches every page handed out and keeps it resident where the holder writes only a part. A structure
+// that needs a clear start (counts it adds to, bits it sets) writes that state itself, over the memory it uses: an
+// explicit zeroing API the structure calls for it (`zeroed`, `alloc_filled(…, zeroed)`, a function named for
+// zeroing) and a fixed header's clear (`write_bytes(base, 0, size_of::<Header>())`) are that, not this.
+//   unsafe { std::ptr::write_bytes(base, 0, bytes) }      ZEROED_HAND_OUT  (in a take, a region, a new map)
+//   std::alloc::alloc_zeroed(layout)                      ZEROED_HAND_OUT
+//   room.fill(0)                                          ZEROED_HAND_OUT
+//   std::ptr::write_bytes(p, 0xab, n)  (a poison fill)     not reported
+//   pub fn zeroed(&self, n) { … write_bytes(s, 0, n) … }   not reported: the caller asks for zeros
+//   write_bytes(base, 0, size_of::<Header>())             not reported: a header's own clear start
+
+.violation ZEROED_HAND_OUT(at: node) code "ZEROED_HAND_OUT" "This zeroes memory as it is handed out, which touches and pins every page: hand the bytes out as they are, and let the structure write before it reads (a structure that needs a clear start asks for it: an explicit zeroing call over the part it uses)."
+.decl zero_literal(a: node)
+zero_literal(a) :- kind(a, "integer_literal"), match("0+(?:_?(?:u8|u16|u32|u64|usize|i8|i32|i64))?", a).
+.decl zeroing(c: node, at: node)
+zeroing(c, at) :- call_name(c, "write_bytes", at), call_arg(c, 1, z), zero_literal(z).
+zeroing(c, at) :- call_name(c, "fill", at), call_arg(c, 0, z), zero_literal(z), !call_arg(c, 1, _).
+zeroing(c, at) :- call_name(c, x, at), (x = "alloc_zeroed" ; x = "zeroed" ; x = "calloc").
+// A zeroing a caller asks for: inside a function named for zeroing (`zeroed`, `zero`, `alloc_zeroed_chunk`).
+.decl in_zeroing_api(n: node)
+in_zeroing_api(n) :- kind(f, "function_item"), field(f, "name", i), match("(?s:.*?)zero(?s:.*)", i), within(n, f).
+// A fixed structure's own clear start: its length is `size_of::<T>()`.
+.decl header_clear(c: node)
+header_clear(c) :- call_name(c, "write_bytes", _), call_arg(c, 2, n), call_name(n, "size_of", _).
+ZEROED_HAND_OUT(at) :- zeroing(c, at), docof(c, d), !engine_test_doc(d), !in_engine_test(c), !in_zeroing_api(c),
+    !header_clear(c).
+
+.test zeroing exactly
+    .fixture "native/crates/blocks/src/maps.rs" ```
+        fn take(base: *mut u8, bytes: usize, room: &mut [u64], layout: std::alloc::Layout) {
+            unsafe { std::ptr::write_bytes(base, 0, bytes) };
+            let p = unsafe { std::alloc::alloc_zeroed(layout) };
+            room.fill(0);
+            unsafe { std::ptr::write_bytes(base, 0xab, bytes) };
+            room.fill(7);
+        }
+        pub fn zeroed(p: *mut u8, n: usize) { unsafe { std::ptr::write_bytes(p, 0, n) } }
+        fn over(base: *mut u8) { unsafe { std::ptr::write_bytes(base, 0, size_of::<Header>()) } }
+        #[cfg(test)]
+        mod tests {
+            fn t(p: *mut u8) { unsafe { std::ptr::write_bytes(p, 0, 8) } }
+        }
+        ```
+    .fixture "native/crates/delta_exec/src/op.rs" ```
+        fn outside_the_scope(room: &mut [u64]) { room.fill(0); }
+        ```
+    .expect ZEROED_HAND_OUT at "native/crates/blocks/src/maps.rs":2
+    .expect ZEROED_HAND_OUT at "native/crates/blocks/src/maps.rs":3
+    .expect ZEROED_HAND_OUT at "native/crates/blocks/src/maps.rs":4
+.end
