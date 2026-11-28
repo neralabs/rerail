@@ -151,7 +151,11 @@ lane's end, the pass's verdict). `bitlex_lex_rust::ukl::tier1` reads its functio
 printed with every operation in parentheses (Rust's `&` binds tighter than `==`; C's does not), each binding's type
 from its value, a name bound again in its own scope assigned. A line it does not know is an error, so the form stays
 closed: a change to tier 1 the printer does not take fails `json_rust_is_current`, never a kernel. `<ukl/blx64.h>` is
-the block's operations byte by byte, as `s::` defines them.
+the block's operations as `s::` defines them, on a block of eight 64-bit words (SWAR): a byte is reached by a shift of
+its word, and a 16-byte table is read once into two words, each byte's entry shifted out (a shuffle in registers). A
+first form, a 64-byte array a block, ran right on the CPU and the M1 Max, but the M3's back end read the bytes written
+into it back with each pair swapped (byte `i` as `i ^ 1`; a probe of the first block's masks showed it), whatever the
+indexes' masks (decision 0540's fix): the words are the GPU's own form of a block, and run right on both.
 
 The kernels are printed with it, a thread a chunk: `json_t1_ends` (pass 1, each lane's end) and `json_t1_from` (pass
 2, counting, or writing each record at its index and each type's records' numbers into one buffer, each type's list
@@ -214,7 +218,8 @@ LZ4's `LZ4_decompress_safe` decodes to the block; on UKL's CPU backend, compiled
 bytes to 69,804): each loads as a 16z tape and decodes to its tape. `rerail-gpu`'s `z_pieces_encode_in_place`: JSON
 tapes of several blocks with side lists (384 pieces, 388,473 bytes to 36,059), each piece counted and then written by a
 group from where it lies in the tape, at the places its counts give: each the greedy parse of its bytes, on the CPU
-backend, compiled and on the vector path. `rerail-gpu`'s `json_tier2_writes_from_the_middle_as_its_rust`: the tier 1 test's files in chunks of 1, 3 and 16
+backend, compiled and on the vector path. On Metal, on the farm's M3 Max and M1 Max, the three device tests below give the same answers as on UKL's CPU
+backend. `rerail-gpu`'s `json_tier2_writes_from_the_middle_as_its_rust`: the tier 1 test's files in chunks of 1, 3 and 16
 records, each chunk's state from Rust's passes 1 and 3, every chunk written by the device at once, counting and then
 writing, the writer's region taken back (`Writer::device_region`, `from_device_region`, a test's) and finished: the
 serial walk's tape, byte for byte (12 tapes, 10,467 chunks). `json_tokens_as_ukl_are_its_rust`: every record of the tier 1 test's files and of a file of the
