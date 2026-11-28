@@ -1281,10 +1281,24 @@ impl LoweredWave {
             let _stage = crate::code_rule_dsl::prof::Stage::start("labels.wave.labelled");
             self.labelled_indexed(tapes, active, budget)?
         };
+        use super::compile_sets::{Reader, Set};
         let anchors = anchors_on();
         let _stage = crate::code_rule_dsl::prof::Stage::start("labels.wave.roots");
         // A clause is W's on a tape where its labels, or those of a clause it reads, went to W there.
         let to_w = |c: usize, t: usize| given.contains(&(c, t)) || self.feeds[c].iter().any(|&fed| given.contains(&(fed, t)));
+        // A root program whose walk is a node-set formula with no text test (`Set::of`, as a label pass's, 0036): its
+        // roots are the formula's members within its domain, read from the tape's column sets, and no walk runs. On
+        // idc, 87,808 of the 94,040 (clause, tape) root walks were ones; their walks and anchors took 3.2 s of CPU,
+        // the formulas under 1 s (2026-11-28). `RERAIL_SETS=walk` walks them, as it does the label passes.
+        let sets_on = formulas_on();
+        let formulas: Vec<Option<Set>> = self
+            .clauses
+            .iter()
+            .map(|clause| {
+                let walk = Micro::of(&clause.program).filter(|walk| sets_on && walk.texts.is_empty())?;
+                Some(Set::And(vec![clause.domain.set(), Set::of(&walk.words)?]))
+            })
+            .collect();
         let mut limited = Vec::new();
         let mut found = Vec::with_capacity(self.clauses.len());
         let mut roots_cpu = Vec::with_capacity(self.clauses.len());
@@ -1309,10 +1323,15 @@ impl LoweredWave {
                     per.push(members_of_all(sets, &labels).filter(|&node| entry.admits(view, node) && in_domain(&clause.domain, view, sets, node)).collect());
                     continue;
                 }
+                let index = indexes[t].get_or_init(Default::default);
+                if let Some(set) = &formulas[c] {
+                    per.push(bit_members(&Reader { tape: view, index, labels: sets, texts: &[] }.eval(set)).collect());
+                    continue;
+                }
                 // The root walk starts within its anchor (decision 0365): every label it reads is finished.
                 let anchor = anchors.then(|| {
                     // The root walk runs on the interpreter, which tests text at each node it reaches: no rows of its own.
-                    let anchor = anchor_bits(&clause.program, walk.as_ref(), None, view, sets, indexes[t].get_or_init(Default::default), clause.domain.demand(), &|_| false);
+                    let anchor = anchor_bits(&clause.program, walk.as_ref(), None, view, sets, index, clause.domain.demand(), &|_| false);
                     count_anchored(domain(&clause.domain, view, sets).filter(|&node| entry.admits(view, node)), &anchor);
                     anchor
                 });
@@ -2888,6 +2907,20 @@ impl<'a> Anchoring<'a> {
 /// anchors' check against the walks without them, `anchored_walks_find_the_unanchored_roots`).
 pub fn anchors_on() -> bool {
     crate::code_rule_dsl::logic::profile::var("RERAIL_ANCHORS").map_or(true, |mode| mode != "off")
+}
+
+/// The members of a row of bits, in order.
+fn bit_members(bits: &[u64]) -> impl Iterator<Item = u32> + '_ {
+    bits.iter().enumerate().flat_map(|(w, &word)| {
+        let mut word = word;
+        std::iter::from_fn(move || {
+            (word != 0).then(|| {
+                let bit = word.trailing_zeros();
+                word &= word - 1;
+                (w * 64) as u32 + bit
+            })
+        })
+    })
 }
 
 /// Starts `starts` within `anchor`, counted for the profile: the starts kept and those the anchor dropped.

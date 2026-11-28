@@ -2254,3 +2254,48 @@ fn a_domain_of_kinds_is_the_nodes_of_those_kinds() {
         }
     }
 }
+
+/// A root program whose walk is a node-set formula with no text test has its roots read as the formula (`Set::of`
+/// within the domain) on the CPU, as a label pass's are: for every clause on the fixtures (10), the roots the walks
+/// find (`RERAIL_SETS=walk`). Where a walk went to W, its candidates hold the formula's roots.
+#[test]
+fn root_formulas_find_the_walks_roots() {
+    use super::compile_matcher::Backend;
+    let mut tapes = fixtures();
+    tapes.truncate(10);
+    let compiled = clauses();
+    let lowered: Vec<_> = compiled
+        .iter()
+        .flat_map(|(_, compiled)| python_matchers(compiled).filter_map(|(_, grammar)| LoweredMatcher::lower(&match_tree(grammar).ok()?).ok()).collect::<Vec<_>>())
+        .collect();
+    let waves: Vec<LoweredWave> = lowered.chunks(16).map(|chunk| LoweredWave::new(&chunk.iter().collect::<Vec<_>>()).unwrap()).collect();
+    let run = |mode: &str| -> Vec<_> {
+        let _mode = crate::code_rule_dsl::logic::plan::corpus::switches::set(&[("RERAIL_SETS", mode)]);
+        waves
+            .iter()
+            .map(|wave| {
+                let active = vec![vec![true; tapes.len()]; wave.clauses.len()];
+                wave.roots_batch(Backend::Cpu, &tapes, &active).map(|(roots, run)| (roots, run.limited)).unwrap()
+            })
+            .collect()
+    };
+    let walked = run("walk");
+    let formulas = run("formulas");
+    let (mut same, mut within) = (0, 0);
+    for (w, ((walk_roots, walk_limited), (set_roots, set_limited))) in walked.iter().zip(&formulas).enumerate() {
+        for (c, (walk, set)) in walk_roots.iter().zip(set_roots).enumerate() {
+            for (t, (walk, set)) in walk.iter().zip(set).enumerate() {
+                let to_w = |limited: &[(usize, usize)]| limited.contains(&(c, t));
+                if to_w(walk_limited) && !to_w(set_limited) {
+                    assert!(set.is_subset(walk), "wave {w}, clause {c}, tape {t}: a root outside W's candidates");
+                    within += 1;
+                } else {
+                    assert_eq!(walk, set, "wave {w}, clause {c}, tape {t}");
+                    same += 1;
+                }
+            }
+        }
+    }
+    eprintln!("root formulas: {same} (clause, tape) the same, {within} within W's candidates");
+    assert!(same > 1000, "the clauses ran on the fixtures");
+}
