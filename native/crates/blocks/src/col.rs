@@ -78,6 +78,7 @@ fn read(words: &[u64], i: usize, bits: u32) -> u64 {
 }
 
 /// Words `n` values of `bits` bits take, and the spare one.
+#[inline]
 fn words(n: usize, bits: u32) -> usize {
     (n * bits as usize).div_ceil(64) + 1
 }
@@ -850,13 +851,37 @@ impl IntCol {
     }
 
     /// Value `i`, read from the descriptor's fields: no `Dec` made (a sealed chunk's read, decision 0622, is one of
-    /// these per row read at random).
+    /// these per row read at random). A constant or packed column's read is inline at the caller; the others' are
+    /// one call (`get_coded`). As one function of every encoding, each read set up the frame of the largest (six
+    /// register pairs) and ran a `Dec` of the column for `RUNS`: in idc's trace, 3.7 s of samples (2026-11-27).
     #[inline]
     pub fn get(&self, i: usize) -> i64 {
         match self.tag {
             CONST => self.base,
             // PACK takes at least one bit.
             PACK => self.base.wrapping_add(rd(self.data.as_slice(), i, self.bits, u64::MAX >> (64 - self.bits)) as i64),
+            _ => self.get_coded(i),
+        }
+    }
+
+    /// `get` of a column of runs, a line, groups or a dictionary.
+    #[inline(never)]
+    fn get_coded(&self, i: usize) -> i64 {
+        match self.tag {
+            // The last run starting at or before `i` (run 0 starts at 0), read from the descriptor: a search of a
+            // fixed number of halvings, each step's choice a select, not a branch (as a branch, each step's side was
+            // the data's: half mispredicted). A column read at random has few runs (`RUNS_FOR_READS`).
+            RUNS => {
+                let (runs, rmask) = (self.runs.as_slice(), mask_of(self.rbits));
+                let (mut at, mut len) = (0usize, self.nruns as usize);
+                while len > 1 {
+                    let half = len / 2;
+                    let start = rd(runs, at + half, self.rbits, rmask) as usize;
+                    at += half * usize::from(start <= i);
+                    len -= half;
+                }
+                self.base.wrapping_add(rd(self.data.as_slice(), at, self.bits, mask_of(self.bits)) as i64)
+            }
             LINE => {
                 let r = if self.bits == 0 { 0 } else { rd(self.data.as_slice(), i, self.bits, mask_of(self.bits)) };
                 let t = ((i as i128 * self.slope as i128) >> 16) as i64;
@@ -1293,6 +1318,25 @@ mod tests {
                 assert_eq!(&out[..], &v[lo..lo + m], "{} from {lo}", c.tag_name());
             }
         }
+    }
+
+    /// `IntCol::get` of a column of runs finds each position's run by a fixed count of halvings, at every run count
+    /// from 1 (and so at a count not a power of two) and runs of uneven lengths, at their first and last positions.
+    #[test]
+    fn a_column_of_runs_reads_each_position_at_every_run_count() {
+        let mut runs_seen = 0;
+        for nruns in 1..=40usize {
+            let v: Vec<i64> = (0..nruns).flat_map(|k| std::iter::repeat_n(k as i64 * 11 - 50, 1 + (k * 7) % 13)).collect();
+            let e = encode(&v);
+            let block = crate::block::Block::anon(crate::block::kind::FACTS, 1 << 20);
+            let p: *mut IntCol = block.alloc_t(1);
+            unsafe { IntCol::place(p, &block, &e) };
+            let c = unsafe { &*p };
+            runs_seen += usize::from(c.tag == RUNS);
+            let got: Vec<i64> = (0..v.len()).map(|i| c.get(i)).collect();
+            assert_eq!(got, v, "{} of {nruns} runs", c.tag_name());
+        }
+        assert!(runs_seen > 30, "{runs_seen} of the columns were RUNS");
     }
 
     /// Decision 0622 step 4: a column of few values spread wide is a `DICT` for reads at random (`choose_for_reads`),
