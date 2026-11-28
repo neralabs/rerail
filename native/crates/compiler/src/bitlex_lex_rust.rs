@@ -11552,97 +11552,6 @@ fn drop_uncalled_fns(code: &str) -> String {
     s
 }
 
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    /// JSON's records are `structural_start` where the tokens' starts differ from it only where an error refuses the
-    /// file (`refused_equal`): without the error, not.
-    #[test]
-    fn records_are_structural_start_where_an_error_refuses_the_rest() {
-        let path = concat!(env!("CARGO_MANIFEST_DIR"), "/../json_parser/json-simdjson.bitlex");
-        let source = std::fs::read_to_string(path).expect("reads");
-        let stmts = ::bitlex::syntax::parse(&source).expect("parses");
-        let starts = |stmts: &[Stmt]| stmts.iter().filter_map(|s| match s {
-            Stmt::Token { rule: Some(TokenRule::Inside(..)), .. } => None,
-            Stmt::Token { start, .. } => Some(start.clone()),
-            _ => None,
-        }).reduce(|a, b| Expr::Or(Box::new(a), Box::new(b))).expect("a token");
-        let u = factored(&starts(&stmts), &stmts);
-        assert!(matches!(refused_equal(&u, &stmts), Some(Expr::Name(n)) if n == "structural_start"));
-        let without: Vec<Stmt> = stmts.into_iter().filter(|s| !matches!(s, Stmt::Error(why, _) if why == "a string right after a scalar")).collect();
-        assert!(refused_equal(&factored(&starts(&without), &without), &without).is_none(), "no error refuses a quote after a scalar");
-    }
-
-    /// JSON's tier 1 refuses a string open at the end (its fill, as `in_string`, at the last byte): without that
-    /// error, not.
-    #[test]
-    fn json_refuses_a_string_open_at_the_end() {
-        let path = concat!(env!("CARGO_MANIFEST_DIR"), "/../json_parser/json-simdjson.bitlex");
-        let stmts = ::bitlex::syntax::parse(&std::fs::read_to_string(path).expect("reads")).expect("parses");
-        assert!(refuses_open_at_end(&stmts, "str"));
-        let without: Vec<Stmt> = stmts.into_iter().filter(|s| !matches!(s, Stmt::Error(why, _) if why == "a string open at the end of the file")).collect();
-        assert!(!refuses_open_at_end(&without, "str"));
-    }
-
-    /// The dirty end of a scalar (`[1"a"]`) is tier 2's (`run_end_covers`): JSON's error "a string right after a
-    /// scalar" is the one covered, and `ends_after_run` is simdjson's structural or whitespace. On every file of up to
-    /// five bytes of `1"\ [a`, by the grammar's reference evaluator: where the error holds, a run token ends before a
-    /// byte it may not end before (tier 2 refuses there); and where one does, the file is refused (an error, or the
-    /// tree), so tier 2's refusal is the grammar's.
-    #[test]
-    fn a_scalars_dirty_end_is_tier_2s() {
-        let path = concat!(env!("CARGO_MANIFEST_DIR"), "/../json_parser/json-simdjson.bitlex");
-        let stmts = ::bitlex::syntax::parse(&std::fs::read_to_string(path).expect("reads")).expect("parses");
-        let covered = run_end_covers(&stmts);
-        assert_eq!(covered.len(), 1);
-        assert!(matches!(&stmts[covered[0]], Stmt::Error(why, _) if why == "a string right after a scalar"));
-        let run = stmts.iter().find_map(|s| if let Stmt::Token { rule: Some(TokenRule::Run(r)), .. } = s { Some(r.clone()) } else { None }).expect("a run");
-        let (ok, r) = (ends_after_run(&stmts, &run).expect("the ends"), bytes_of_expr(&run, &stmts).expect("its bytes"));
-        let structural_or_ws = |b: u8| b"{}[],: \t\n\r".contains(&b);
-        assert!((0..=255u8).all(|b| ok[usize::from(b)] == structural_or_ws(b)), "simdjson's structural or whitespace");
-        let tables = HashMap::new();
-        let alphabet = b"1\"\\ [a";
-        let (mut files, mut dirty) = (0, 0);
-        for len in 1..=5u32 {
-            for k in 0..(alphabet.len() as u32).pow(len) {
-                let src: Vec<u8> = (0..len).map(|d| alphabet[(k / (alphabet.len() as u32).pow(d)) as usize % alphabet.len()]).collect();
-                let out = ::bitlex::eval::Ev::run(&stmts, &src, &tables).expect("runs");
-                let error = out.errors.iter().any(|e| e == "a string right after a scalar");
-                let ends_dirty = out.tokens.iter().any(|t| !t.mark && ["number", "true", "false", "null"].contains(&t.kind.as_str()) && src.get(t.end).is_some_and(|&b| !ok[usize::from(b)] && !r[usize::from(b)]));
-                assert!(!error || ends_dirty, "{:?}: the error, and no run's dirty end", String::from_utf8_lossy(&src));
-                if ends_dirty {
-                    let refused = !out.errors.is_empty() || out.tree.as_ref().is_none_or(|d| ::bitlex::tree::nodes(d, &out.tokens, src.len()).is_err());
-                    assert!(refused, "{:?}: a run's dirty end in a file the grammar takes", String::from_utf8_lossy(&src));
-                    dirty += 1;
-                }
-                files += 1;
-            }
-        }
-        assert!(dirty > 100, "{dirty} of {files}");
-    }
-
-    /// A mask's `& lv` dropped: where it ends an operand, and `(!x)` then `!x`; not where `lv` begins a longer name.
-    #[test]
-    fn without_lv_drops_the_files_bits() {
-        assert_eq!(without_lv("(v_m_op | v_m_scalar & (!v_m_follows & lv)) & (!v_m_string_tail & lv)"), "(v_m_op | v_m_scalar & !v_m_follows) & !v_m_string_tail");
-        assert_eq!(without_lv("{\n    x & lv\n}"), "{\n    x\n}");
-        assert_eq!(without_lv("a & lv_1 & lvx & lv[i]"), "a & lv_1 & lvx & lv[i]");
-        assert_eq!(without_lv("!(a | b) & lv"), "!(a | b)");
-    }
-
-    /// JSON's records and errors hold at no space whatever the carried masks hold; a class holding the space does.
-    #[test]
-    fn outputs_false_at_the_padding() {
-        let path = concat!(env!("CARGO_MANIFEST_DIR"), "/../json_parser/json-simdjson.bitlex");
-        let stmts = ::bitlex::syntax::parse(&std::fs::read_to_string(path).expect("reads")).expect("parses");
-        let name = |n: &str| Expr::Name(n.to_owned());
-        assert!(false_at(&name("structural_start"), b' ', &stmts));
-        assert!(false_at(&Expr::And(Box::new(name("in_string")), Box::new(name("control"))), b' ', &stmts));
-        assert!(!false_at(&name("ws"), b' ', &stmts));
-        assert!(!false_at(&name("in_string"), b' ', &stmts), "a carried mask is free");
-    }
-}
 
 /// The escapes made of `code` after the token loop (`code_escape`) as passes over the words, each of their masks a
 /// word, not a vector of the file's (decision 0721): a mask's `prev` its word and the word before's, a `fill` its
@@ -11891,5 +11800,97 @@ fn or_and(e: &Expr, out: &mut Vec<Expr>) {
             or_and(b, out);
         }
         e => out.push(e.clone()),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// JSON's records are `structural_start` where the tokens' starts differ from it only where an error refuses the
+    /// file (`refused_equal`): without the error, not.
+    #[test]
+    fn records_are_structural_start_where_an_error_refuses_the_rest() {
+        let path = concat!(env!("CARGO_MANIFEST_DIR"), "/../json_parser/json-simdjson.bitlex");
+        let source = std::fs::read_to_string(path).expect("reads");
+        let stmts = ::bitlex::syntax::parse(&source).expect("parses");
+        let starts = |stmts: &[Stmt]| stmts.iter().filter_map(|s| match s {
+            Stmt::Token { rule: Some(TokenRule::Inside(..)), .. } => None,
+            Stmt::Token { start, .. } => Some(start.clone()),
+            _ => None,
+        }).reduce(|a, b| Expr::Or(Box::new(a), Box::new(b))).expect("a token");
+        let u = factored(&starts(&stmts), &stmts);
+        assert!(matches!(refused_equal(&u, &stmts), Some(Expr::Name(n)) if n == "structural_start"));
+        let without: Vec<Stmt> = stmts.into_iter().filter(|s| !matches!(s, Stmt::Error(why, _) if why == "a string right after a scalar")).collect();
+        assert!(refused_equal(&factored(&starts(&without), &without), &without).is_none(), "no error refuses a quote after a scalar");
+    }
+
+    /// JSON's tier 1 refuses a string open at the end (its fill, as `in_string`, at the last byte): without that
+    /// error, not.
+    #[test]
+    fn json_refuses_a_string_open_at_the_end() {
+        let path = concat!(env!("CARGO_MANIFEST_DIR"), "/../json_parser/json-simdjson.bitlex");
+        let stmts = ::bitlex::syntax::parse(&std::fs::read_to_string(path).expect("reads")).expect("parses");
+        assert!(refuses_open_at_end(&stmts, "str"));
+        let without: Vec<Stmt> = stmts.into_iter().filter(|s| !matches!(s, Stmt::Error(why, _) if why == "a string open at the end of the file")).collect();
+        assert!(!refuses_open_at_end(&without, "str"));
+    }
+
+    /// The dirty end of a scalar (`[1"a"]`) is tier 2's (`run_end_covers`): JSON's error "a string right after a
+    /// scalar" is the one covered, and `ends_after_run` is simdjson's structural or whitespace. On every file of up to
+    /// five bytes of `1"\ [a`, by the grammar's reference evaluator: where the error holds, a run token ends before a
+    /// byte it may not end before (tier 2 refuses there); and where one does, the file is refused (an error, or the
+    /// tree), so tier 2's refusal is the grammar's.
+    #[test]
+    fn a_scalars_dirty_end_is_tier_2s() {
+        let path = concat!(env!("CARGO_MANIFEST_DIR"), "/../json_parser/json-simdjson.bitlex");
+        let stmts = ::bitlex::syntax::parse(&std::fs::read_to_string(path).expect("reads")).expect("parses");
+        let covered = run_end_covers(&stmts);
+        assert_eq!(covered.len(), 1);
+        assert!(matches!(&stmts[covered[0]], Stmt::Error(why, _) if why == "a string right after a scalar"));
+        let run = stmts.iter().find_map(|s| if let Stmt::Token { rule: Some(TokenRule::Run(r)), .. } = s { Some(r.clone()) } else { None }).expect("a run");
+        let (ok, r) = (ends_after_run(&stmts, &run).expect("the ends"), bytes_of_expr(&run, &stmts).expect("its bytes"));
+        let structural_or_ws = |b: u8| b"{}[],: \t\n\r".contains(&b);
+        assert!((0..=255u8).all(|b| ok[usize::from(b)] == structural_or_ws(b)), "simdjson's structural or whitespace");
+        let tables = HashMap::new();
+        let alphabet = b"1\"\\ [a";
+        let (mut files, mut dirty) = (0, 0);
+        for len in 1..=5u32 {
+            for k in 0..(alphabet.len() as u32).pow(len) {
+                let src: Vec<u8> = (0..len).map(|d| alphabet[(k / (alphabet.len() as u32).pow(d)) as usize % alphabet.len()]).collect();
+                let out = ::bitlex::eval::Ev::run(&stmts, &src, &tables).expect("runs");
+                let error = out.errors.iter().any(|e| e == "a string right after a scalar");
+                let ends_dirty = out.tokens.iter().any(|t| !t.mark && ["number", "true", "false", "null"].contains(&t.kind.as_str()) && src.get(t.end).is_some_and(|&b| !ok[usize::from(b)] && !r[usize::from(b)]));
+                assert!(!error || ends_dirty, "{:?}: the error, and no run's dirty end", String::from_utf8_lossy(&src));
+                if ends_dirty {
+                    let refused = !out.errors.is_empty() || out.tree.as_ref().is_none_or(|d| ::bitlex::tree::nodes(d, &out.tokens, src.len()).is_err());
+                    assert!(refused, "{:?}: a run's dirty end in a file the grammar takes", String::from_utf8_lossy(&src));
+                    dirty += 1;
+                }
+                files += 1;
+            }
+        }
+        assert!(dirty > 100, "{dirty} of {files}");
+    }
+
+    /// A mask's `& lv` dropped: where it ends an operand, and `(!x)` then `!x`; not where `lv` begins a longer name.
+    #[test]
+    fn without_lv_drops_the_files_bits() {
+        assert_eq!(without_lv("(v_m_op | v_m_scalar & (!v_m_follows & lv)) & (!v_m_string_tail & lv)"), "(v_m_op | v_m_scalar & !v_m_follows) & !v_m_string_tail");
+        assert_eq!(without_lv("{\n    x & lv\n}"), "{\n    x\n}");
+        assert_eq!(without_lv("a & lv_1 & lvx & lv[i]"), "a & lv_1 & lvx & lv[i]");
+        assert_eq!(without_lv("!(a | b) & lv"), "!(a | b)");
+    }
+
+    /// JSON's records and errors hold at no space whatever the carried masks hold; a class holding the space does.
+    #[test]
+    fn outputs_false_at_the_padding() {
+        let path = concat!(env!("CARGO_MANIFEST_DIR"), "/../json_parser/json-simdjson.bitlex");
+        let stmts = ::bitlex::syntax::parse(&std::fs::read_to_string(path).expect("reads")).expect("parses");
+        let name = |n: &str| Expr::Name(n.to_owned());
+        assert!(false_at(&name("structural_start"), b' ', &stmts));
+        assert!(false_at(&Expr::And(Box::new(name("in_string")), Box::new(name("control"))), b' ', &stmts));
+        assert!(!false_at(&name("ws"), b' ', &stmts));
+        assert!(!false_at(&name("in_string"), b' ', &stmts), "a carried mask is free");
     }
 }
