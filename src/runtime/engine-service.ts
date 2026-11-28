@@ -533,11 +533,15 @@ async function routeEngineEvent(
   const { sessionId } = session;
   const { runtimeKey, runtimeOptions } = resolveRuntimeRoute(session, configuration, options, state);
   const lane = laneOf(runtimeKey, sessionId);
+  // Made and held for the session when its route is chosen, not when its lane runs: the session's next event routed
+  // meanwhile (a pass of untaken events hands on its events without waiting) goes to this runtime (`checkoutRoute`). A
+  // runtime that cannot be made holds nothing.
+  const runtime = runtimeFor(state, runtimeKey, runtimeOptions, sessionId);
+  if (event.kind !== "session-end") holdSessionRuntime(state, sessionId, runtimeKey);
   // The event's work holds its runtime until it has ended: nothing closes it for want of use meanwhile, under an end
   // too, which notes no use.
   const release = state.kept.claim(runtimeKey);
   const execution = state.lanes.run(lane, async () => {
-    const runtime = runtimeFor(state, runtimeKey, runtimeOptions, sessionId);
     // Every event, not only a start: a session whose start was lost still uses this runtime until it ends.
     if (event.kind !== "session-end") noteSessionUse(state, sessionId, runtimeKey, (options.now ?? Date.now)());
     const deliveries = await runtime.ingest(event, { signal, observedAt });
@@ -655,10 +659,15 @@ function runtimeFor(
 
 /** `sessionId` uses the runtime at `runtimeKey` from now on, and was last heard from `at`. */
 function noteSessionUse(state: EngineRoutingState, sessionId: string, runtimeKey: string, at: number): void {
+  holdSessionRuntime(state, sessionId, runtimeKey);
+  state.lastEventAt.set(laneOf(runtimeKey, sessionId), at);
+}
+
+/** `sessionId`'s work goes to the runtime at `runtimeKey` (`checkoutRoute`) until the session lets it go (`releaseSessionRuntime`). */
+function holdSessionRuntime(state: EngineRoutingState, sessionId: string, runtimeKey: string): void {
   const keys = state.runtimeKeysBySession.get(sessionId) ?? new Set<string>();
   keys.add(runtimeKey);
   state.runtimeKeysBySession.set(sessionId, keys);
-  state.lastEventAt.set(laneOf(runtimeKey, sessionId), at);
 }
 
 /** Keeps `work` among what `close` waits for until it settles. */
