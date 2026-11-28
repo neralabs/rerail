@@ -711,3 +711,54 @@ pub fn extras_are_the_walks(src: &[u8]) -> Option<(usize, usize, Option<String>)
     }
     Some((same, rare, first))
 }
+
+/// Block `bi`'s loop tops: where an iteration of the walk starts, each the end of an item (a run of tokens in code,
+/// a string, an extra), and whether one is at the text's end just past the block. Past the last, the walk has read
+/// the text's end. Each iteration reads the layout at its top, then one item. Lane-free: a
+/// run ends after the last byte of code that is not a blank with only spaces and tabs between it and the run's stop;
+/// a string after its closer; a comment at its line's end; a continuation at its next line's start.
+pub(super) fn tops(t: &Masks<'_>, bi: usize) -> (u64, bool) {
+    let src = t.src;
+    let (pb, b, b1) = (*t.blk(bi.saturating_sub(1)), *t.blk(bi), *t.blk(bi + 1));
+    let keep = u128::from(bi > 0);
+    let m = |f: fn(&B) -> u64| w(f(&b), f(&b1));
+    let lim = src.len().saturating_sub(64 * bi).min(128) as u32;
+    let valid = ((1u128 << (lim & 127)) - 1) | 0u128.wrapping_sub(u128::from(lim >> 7));
+    let code = m(|b| b.code);
+    // Runs: the bytes of code a token is read in, and the runs' stops.
+    let nb = code & m(|b| !b.skip & !b.eol & !b.bs) & valid;
+    let nb_below = u128::from(pb.code & !pb.skip & !pb.eol & !pb.bs) >> 63 & keep;
+    let stop = !code | m(|b| b.eol) | m(|b| b.skip & !b.sptab & !b.lf) | m(|b| b.bs) | !valid;
+    let runs = ((nb << 1) | nb_below) & reaching(stop, m(|b| b.sptab));
+    // Strings: after a one-line closer the next byte is code, a string's or a comment's start, or the text's end;
+    // after a triple's first quote, two more quotes.
+    let next = code | m(|b| b.sstart | b.cstart) | !valid;
+    let one = (m(|b| b.send) << 1) & next;
+    let strings = one | ((m(|b| b.send) & !(one >> 1)) << 3);
+    let below_strings = {
+        // A closer in the block below whose end is in this block.
+        let ps = u128::from(pb.send) & 0u128.wrapping_sub(keep);
+        let pn = u128::from(pb.code | pb.sstart | pb.cstart) | (code << 64) | (m(|b| b.sstart | b.cstart) << 64) | (!valid << 64);
+        let one = (ps << 1) & pn;
+        ((one | ((ps & !(one >> 1)) << 3)) >> 64) as u64
+    };
+    // Comments at their line's end; continuations at the next line's start (at the text's end, the end).
+    let comments = m(|b| b.cend);
+    let cont = code & m(|b| b.bs) & valid;
+    let (lf, cr) = (m(|b| b.lf), m(|b| b.eol & !b.lf));
+    let (nl, crlf) = (cont & (lf >> 1), cont & (cr >> 1) & (lf >> 2));
+    let at_end = cont & !(valid >> 1);
+    let conts = (nl << 2) | (crlf << 3) | (at_end << 1);
+    let below_cont = {
+        let pc = u128::from(pb.code & pb.bs) & 0u128.wrapping_sub(keep);
+        let plf = u128::from(pb.lf) | (lf << 64);
+        let pcr = u128::from(pb.eol & !pb.lf) | (cr << 64);
+        let (nl, crlf) = (pc & (plf >> 1), pc & (pcr >> 1) & (plf >> 2));
+        (((nl << 2) | (crlf << 3)) >> 64) as u64
+    };
+    // A comment the text ends in ends at the text's end (its last byte is not code, and no string ends there).
+    let at_text_end = !valid & (valid << 1);
+    let comment_end = ((!code & valid) << 1) & at_text_end;
+    let all = runs | strings | comments | conts | comment_end;
+    ((all as u64) | below_strings | below_cont, all >> 64 & 1 == 1 && src.len() == 64 * (bi + 1))
+}

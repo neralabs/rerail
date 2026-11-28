@@ -70,6 +70,24 @@ fn main() {
         println!("token starts by masks ({}): {blocks} blocks, {same} the walk's, {rare} rare, {differ} files with a block that differs", only.unwrap_or_default());
         return;
     }
+    if only == Some("tops") {
+        // The walk's loop tops by masks against the walk's, at each block's start.
+        let (mut same, mut differ, mut files) = (0, 0, 0);
+        for (p, b) in &all {
+            if let Some((s, first)) = strata::middle::tops_are_the_walks(b) {
+                files += 1;
+                same += s;
+                if let Some(e) = first {
+                    differ += 1;
+                    if differ <= 8 {
+                        println!("{} :: {e}", p.strip_prefix(dir).unwrap_or(p).display());
+                    }
+                }
+            }
+        }
+        println!("loop tops by masks: {files} files, {same} blocks the walk's, {differ} files with a block that differs");
+        return;
+    }
     if only == Some("chunked") {
         // From the middle: each file in chunks of 1, 2, 3 and 16 blocks, each from the one before's exit, against the
         // serial lexer (variant B's).

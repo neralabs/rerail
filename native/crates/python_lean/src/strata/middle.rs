@@ -539,80 +539,33 @@ pub fn entries_in(sums: &[Summary], order: Order<'_>) -> Vec<Option<(RB, i8)>> {
     })
 }
 
-/// Where the walk's first item from byte `64 * from` on is entered (`Entry::p`) and whether the text's end was read
-/// there, by the bytes and the strata below it alone, the strata made from the entry `rb`, `depth` of the chunk at
-/// block `lb` (at most `from`): none where the blocks from `lb - 1` hold no place to enter at (a run of code with no
-/// blank), so that it is asked again from further back.
-///
-/// The walk is entered at the last place below the chunk where it goes on as the serial walk does (a blank in code, a
-/// string's or a comment's start, a line continuation's end, the text's start) and walked to the chunk's start: where it goes does not
-/// depend on the layout it keeps (a layout token takes no bytes). B's code mask is not each item's end: a quote in a
-/// comment marks the comment's line end a string's.
-pub fn probe(src: &[u8], lb: usize, rb: RB, depth: i8, from: usize) -> Option<Place> {
-    if from == 0 {
-        return Some(Place::At(0, false));
-    }
-    let x = 64 * from;
-    let n = src.len();
-    let (c0, r0) = firsts(lb);
-    let r = over_window(src, lb, from, s1_at(src, c0), rb, depth, |m| {
-        let mut after = false;
-        for k in (r0..from).rev() {
-            let b = *m.blk(k);
-            let next = 64 * (k + 1);
-            let code_next = b.code >> 1 | u64::from(next < n && m.bit(next, |b| b.code)) << 63;
-            // A blank in code: an iteration from it reaches the item after it as one from the item before's end does.
-            // A string's or a comment's start (bit `i`: the start is `i + 1`), below the chunk's first byte: the
-            // serial walk comes to it through blanks or from the token it touches.
-            let blank = b.skip & b.code;
-            let starts = b.code & !code_next & if k + 1 == from { !(1u64 << 63) } else { !0 };
-            // The last such place the walk goes on from as the serial one does (from a place inside an
-            // interpolation's code it may not, where its walk refuses or finds B's reading wrong: the one before).
-            let mut places = blank | starts;
-            while places != 0 {
-                let i = 64 * k + 63 - places.leading_zeros() as usize;
-                places &= !(1u64 << (i & 63));
-                // A line continuation's `\n` ends its item: the walk goes on after it.
-                let continued = blank >> (i & 63) & 1 == 1 && src[i] == b'\n' && i >= 1 && (src[i - 1] == b'\\' || (src[i - 1] == b'\r' && i >= 2 && src[i - 2] == b'\\'));
-                let q = if starts >> (i & 63) & 1 == 1 || continued { i + 1 } else { i };
-                if q >= x {
-                    return Some(Place::At(q, false));
-                }
-                match from_place(m, q, x) {
-                    Some(Place::At(p, done)) => return Some(Place::At(p, done)),
-                    Some(Place::After) => after = true,
-                    None => {}
-                }
-            }
-        }
-        // The text's start: the walk's own.
-        match (r0 == 0).then(|| from_place(m, 0, x)).flatten() {
-            Some(e) => Some(e),
-            None => after.then_some(Place::After),
-        }
-    });
-    r.ok()?.0
-}
-
-/// Where the walk enters a chunk.
+/// Where the walk enters a chunk: at its first loop top from the chunk's start on (`Entry::p`), and whether the text's
+/// end was read there (no loop top is left).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum Place {
-    /// At its first item from the chunk's start on (`Entry::p`), and whether the text's end was read there.
-    At(usize, bool),
-    /// After a refusal: the walk from the place found refuses before the chunk. Either the text is refused there (the
-    /// chunk that holds it refuses it, and this chunk's entry is not needed) or the place is not one the serial walk
-    /// goes on from: the chunk is then not entered.
-    After,
+pub struct Place(pub usize, pub bool);
+
+/// Chunk `from..to`'s first loop top by masks (`starts::tops`), over its strata from `rb` and `depth`: the lowest of
+/// its blocks' tops, none where it has none (the chunk after's is then its own). None where the strata do not read
+/// the chunk.
+fn first_top(src: &[u8], from: usize, to: usize, rb: RB, depth: i8) -> Option<Option<usize>> {
+    let (c0, _) = firsts(from);
+    let n = src.len().div_ceil(64);
+    over_window(src, from, to, s1_at(src, c0), rb, depth, |m| {
+        (from..to.min(n)).rev().fold(None, |after, bi| {
+            let (t, at_end) = super::starts::tops(&m, bi);
+            if t != 0 {
+                Some(64 * bi + t.trailing_zeros() as usize)
+            } else if at_end {
+                Some(src.len())
+            } else {
+                after
+            }
+        })
+    })
+    .ok()
+    .map(|(x, ..)| x)
 }
 
-/// The walk from place `q` to its first item from `x` on; none where B's reading is wrong.
-fn from_place(m: Masks<'_>, q: usize, x: usize) -> Option<Place> {
-    match walk::<Vec<u32>>(m, q, false, false, vec![0], false, x) {
-        (_, _, _, _, _, _, true) => None,
-        (Err(_), ..) => Some(Place::After),
-        (Ok(_), _, _, p, _, done, false) => Some(Place::At(p, done)),
-    }
-}
 
 /// A chunk's indents as its walk keeps them over an entry it does not know: the levels it opened (`own`), above the
 /// entry's levels at most `t` (each of the entry's above it closed by the chunk, a dedent each, counted where the
@@ -829,7 +782,7 @@ impl core::fmt::Debug for Middle {
 /// `src` lexed from the middle in chunks of `blocks` blocks: every pass's chunks each on their own, in `order`'s order.
 /// 1. Strata 2 and 3: each chunk's summary from every lane, superposed (`summary_superposed`), and each chunk's entry by the scan
 ///    (`entries_in`).
-/// 2. The walk's entry place in each chunk (`probe`).
+/// 2. The walk's entry place in each chunk: its first loop top by masks, else the chunk after's (`first_top`).
 /// 3. The walk: each chunk's summary from every `open` and `header` with indents it does not know (`walk_summary`),
 ///    and each chunk's entry by the scan (`walk_entries_in`), with the records the chunks before it wrote.
 /// 4. Each chunk's records from its entry (`lex_chunk`), placed at the counts before it.
@@ -843,27 +796,22 @@ pub fn lex_middle(src: &[u8], blocks: usize, order: Order<'_>) -> Result<Middle,
     let sums = each(k, order, |c| summary_superposed(src, range(c).0, range(c).1));
     let strata = entries_in(&sums, order);
     let Some(strata) = strata.into_iter().collect::<Option<Vec<_>>>() else { return Ok(Middle::NotB) };
-    // A chunk's place from its own strata entry, else from the entries of chunks further back.
-    let places = each(k, order, |c| {
-        let mut j = 1;
-        loop {
-            let lb = c.saturating_sub(j);
-            if let Some(x) = probe(src, range(lb).0, strata[lb].0, strata[lb].1, range(c).0) {
-                return Some(x);
-            }
-            if lb == 0 {
-                return None;
-            }
-            j *= 2;
-        }
-    });
-    if let Some(c) = places.iter().position(Option::is_none) {
-        return Ok(Middle::Unknown(c, "a chunk's entry place"));
+    // A chunk's place: its first loop top, else the chunk after's; past the last, the text's end read.
+    let own = each(k, order, |c| first_top(src, range(c).0, range(c).1, strata[c].0, strata[c].1));
+    if let Some(c) = own.iter().position(Option::is_none) {
+        return Ok(Middle::Unknown(c, "a chunk's strata"));
     }
-    let places: Vec<Place> = places.into_iter().flatten().collect();
-    let wsums = each(k, order, |c| match places[c] {
-        Place::At(p, done) => walk_summary(src, range(c).0, range(c).1, strata[c].0, strata[c].1, p, done),
-        Place::After => core::array::from_fn(|_| WalkLane::Unknown),
+    let mut places = vec![Place(src.len(), true); k];
+    for c in (0..k).rev() {
+        places[c] = match own[c] {
+            _ if c == 0 => Place(0, false),
+            Some(Some(p)) => Place(p, false),
+            _ => places.get(c + 1).copied().unwrap_or(Place(src.len(), true)),
+        };
+    }
+    let wsums = each(k, order, |c| {
+        let Place(p, done) = places[c];
+        walk_summary(src, range(c).0, range(c).1, strata[c].0, strata[c].1, p, done)
     });
     let walks = walk_entries_in(&wsums, order);
     for (c, w) in walks.iter().enumerate() {
@@ -875,7 +823,7 @@ pub fn lex_middle(src: &[u8], blocks: usize, order: Order<'_>) -> Result<Middle,
     }
     let entry = |c: usize| {
         let WalkEntry::At { open, header, indents, .. } = &walks[c] else { unreachable!() };
-        let Place::At(p, done) = places[c] else { unreachable!("a chunk entered after a refusal") };
+        let Place(p, done) = places[c];
         Entry { s1: s1_at(src, firsts(range(c).0).0), rb: strata[c].0, depth: strata[c].1, p, open: *open, header: *header, indents: indents.clone(), done }
     };
     let lexed = each(k, order, |c| {
@@ -947,6 +895,32 @@ pub fn entries_are_the_folds(src: &[u8], blocks: usize, order: Order<'_>) -> Opt
         }
     }
     Some(Ok(()))
+}
+
+/// The oracle of `starts::tops`: for each block, the walk's first loop top at or after its start (its chunk's
+/// entry's `p`) against the first by masks.
+pub fn tops_are_the_walks(src: &[u8]) -> Option<(usize, Option<String>)> {
+    let (Ok(_), entries) = lex_chunked(src, 1)? else { return None };
+    let mut t = super::Text { src, b: super::classes(src), first: 0 };
+    if !t.regions_b() || t.depth().is_err() {
+        return None;
+    }
+    let short = core::cell::Cell::new(false);
+    let m = t.m(&short);
+    let n = src.len().div_ceil(64);
+    let tops: Vec<(u64, bool)> = (0..n).map(|bi| super::starts::tops(&m, bi)).collect();
+    let mut same = 0;
+    for (bi, e) in entries.iter().enumerate().skip(1) {
+        let got = (bi..n).find(|&k| tops[k] != (0, false)).map_or((src.len(), true), |k| (if tops[k].0 != 0 { 64 * k + tops[k].0.trailing_zeros() as usize } else { src.len() }, false));
+        if got == (e.p, e.done) {
+            same += 1;
+        } else {
+            let at = 64 * bi;
+            let text = String::from_utf8_lossy(&src[at.saturating_sub(16)..(at + 80).min(src.len())]).into_owned();
+            return Some((same, Some(format!("block {bi}: masks {got:?}, walk {:?} (the text from 16 before the block: {text:?})", (e.p, e.done)))));
+        }
+    }
+    Some((same, None))
 }
 
 #[cfg(test)]
@@ -1221,6 +1195,36 @@ mod tests {
         }
         for t in texts().iter().map(|t| t.as_bytes()).chain(random.iter().map(Vec::as_slice)) {
             if let Some((same, _, first)) = super::super::starts::extras_are_the_walks(t) {
+                blocks += same;
+                if let Some(e) = first {
+                    panic!("{e}: {:?}", String::from_utf8_lossy(t));
+                }
+            }
+        }
+        assert!(blocks > 100, "{blocks}");
+    }
+
+    #[test]
+    fn loop_tops_by_masks_are_the_walks() {
+        let mut blocks = 0;
+        let mut x = 0xbb67_ae85_84ca_a73bu64;
+        let mut random: Vec<Vec<u8>> = Vec::new();
+        for len in [65usize, 130, 400, 1000] {
+            for _ in 0..1000 {
+                random.push(
+                    (0..len)
+                        .map(|_| {
+                            x ^= x << 13;
+                            x ^= x >> 7;
+                            x ^= x << 17;
+                            b"ab #\\\n\n\n  rf'\"(x)=1\x0c:  if\t"[(x >> 8) as usize % 26]
+                        })
+                        .collect(),
+                );
+            }
+        }
+        for t in texts().iter().map(|t| t.as_bytes()).chain(random.iter().map(Vec::as_slice)) {
+            if let Some((same, first)) = super::tops_are_the_walks(t) {
                 blocks += same;
                 if let Some(e) = first {
                     panic!("{e}: {:?}", String::from_utf8_lossy(t));

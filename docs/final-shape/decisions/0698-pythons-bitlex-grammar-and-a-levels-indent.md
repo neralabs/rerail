@@ -893,3 +893,23 @@ statements and blocks end.
     - **As tested:** the extras are the serial walk's on every block that isn't rare: the test texts, 4000 random
       texts of comments, backslashes, line ends, prefixes and quotes, and the corpus (all 223857 blocks; none
       rare).
+106. **The walk's loop tops by masks, in place of the serial probe** (as built: `strata::starts::tops`,
+    `middle::first_top`; `probe` and `from_place` removed).
+    - **Why:** each chunk's walk enters at its first loop top from the chunk's start on. The serial probe found it
+      by walking from a place before the chunk, and a walk branches. The loop tops don't depend on the lanes, so
+      masks give them.
+    - **What a loop top is:** each iteration of the walk reads the layout at its top, then one item: a run of
+      tokens in code (`FAST` is every byte but blanks and line ends, so in code each iteration reads a run), a
+      string whole, or an extra. So the tops are the items' ends:
+      - a run's end: after the last byte of code that is not a blank, with only spaces and tabs between it and the
+        run's stop;
+      - a string's: after its closer (one byte, or three where the byte after the first is not code nor a
+        string's or a comment's start);
+      - a comment's: at its line end, which stratum 2 now keeps (B's `cend`, in both variants), or at the text's
+        end;
+      - a continuation's: at its next line's start.
+    - **A chunk's place:** its first top. A chunk with none takes the chunk after's, by a scan from the last. Past
+      the last top the text's end has been read (`done`). Chunk 0 enters at the text's start.
+    - **As tested:** at every block's start, the first top by masks is the walk's (its entry by `lex_chunked`, `p`
+      and `done`): the test texts, 4000 random texts, and every block of the corpus's 1632 files. The corpus lexed
+      from the middle is still the serial lexer's in 1644 of 1644 files, at 1, 2, 3 and 16 blocks a chunk.
