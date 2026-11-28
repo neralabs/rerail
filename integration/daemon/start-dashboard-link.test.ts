@@ -21,6 +21,8 @@ const ALREADY_ON = "● Rerail is already on in app. 0 rules are on.";
 /** Six commands and up to three daemon starts, a few seconds each on a loaded Windows machine. */
 const TEST_TIMEOUT_MS = 120_000;
 const places: Place[] = [];
+/** Every folder a case made, removed after it even where making its place failed part way. */
+const roots: string[] = [];
 
 /** A Rerail home and user home of their own, and the repository `app` set up and started there with no rules. */
 interface Place {
@@ -39,15 +41,14 @@ interface Outcome {
 }
 
 afterEach(async () => {
-  for (const place of places.splice(0)) {
-    // Whichever daemon runs, this package's or the other's, holds files under the folder until it ends.
-    await rerail(PACKAGE_ROOT, place, ["daemon", "stop"]);
-    await removeFolder(place.root);
-  }
+  // Whichever daemon runs, this package's or the other's, holds files under the folder until it ends.
+  for (const place of places.splice(0)) await rerail(PACKAGE_ROOT, place, ["daemon", "stop"]);
+  for (const root of roots.splice(0)) await removeFolder(root);
 });
 
 function makePlace(): Place {
   const root = realpathSync.native(mkdtempSync(join(tmpdir(), "rerail-start-link-")));
+  roots.push(root);
   const user = join(root, "user-home");
   const home = join(root, "rerail-home");
   const repo = join(root, "app");
