@@ -441,6 +441,15 @@ UKL_INLINE void ukl_run_set_bit(UKL_GLOBAL const uint8_t* t, uint64_t base, uint
     ukl_atomic_or((UKL_GLOBAL uint32_t*)(t + at), 1u << (bit & 31u));
 }
 
+// The presence word at `at` given `bits` (its halves by atomics, each only where it has a bit).
+UKL_INLINE void ukl_run_or_word(UKL_GLOBAL const uint8_t* t, uint64_t at, uint64_t bits)
+{
+    if ((uint32_t)bits != 0u)
+        ukl_atomic_or((UKL_GLOBAL uint32_t*)(t + at), (uint32_t)bits);
+    if ((uint32_t)(bits >> 32) != 0u)
+        ukl_atomic_or((UKL_GLOBAL uint32_t*)(t + at + 4u), (uint32_t)(bits >> 32));
+}
+
 // Block `b`'s rows, its node `j`'s number and its kind field (`finalize`'s), its codes' side list's cursor `low`.
 UKL_INLINE uint32_t ukl_run_kind_field(UKL_GLOBAL const uint8_t* t, uint64_t room, UklWList codes, uint32_t j, UKL_PRIVATE uint32_t* low)
 {
@@ -486,20 +495,36 @@ UKL_ONCE void ukl_run_fin(UKL_PRIVATE UklRun* r, uint32_t b)
     uint64_t presence = ukl_w_part(t, 0u, CLIF_W_PART_PRESENCE), kw = ukl_w_get32(t, 0u, CLIF_W_AT_KW);
     bool keep = (ukl_w_get32(t, 0u, CLIF_W_AT_FLAGS) & 1u) != 0u;
     uint64_t mine = presence + ((uint64_t)b + 1u) * ukl_w_presence_bytes(t, 0u);
+    // The block's kinds and fields gathered in registers (each presence's first word: the bits below 64), and set in
+    // the document's words once a block: every block sets the same few words, so an atomic a node serialized them all.
+    // A bit past 64 is set as it is met.
     uint32_t low = 0u, faults = 0u;
+    uint64_t kinds = 0u, fields = 0u;
     for (uint32_t j = 0u; j < rows; j++) {
         uint32_t kf = ukl_run_kind_field(t, room, codes, j, &low);
         uint32_t kind = kf & 0x7fffu, field = kf >> 16, fault = (kf >> 15) & 1u;
-        ukl_run_set_bit(t, presence, 0u, kind);
-        ukl_run_set_bit(t, presence, kw, field);
-        if (fault != 0u)
-            ukl_run_set_bit(t, presence, 0u, 0u);
-        if (keep) {
-            ukl_w_set_bit(t, mine, 0u, kind);
-            ukl_w_set_bit(t, mine, kw, field);
-            ukl_w_st64(t, mine, ukl_w_ld64(t, mine) | (uint64_t)fault);
+        if (kind < 64u)
+            kinds |= (uint64_t)1 << kind;
+        else {
+            ukl_run_set_bit(t, presence, 0u, kind);
+            if (keep)
+                ukl_w_set_bit(t, mine, 0u, kind);
         }
+        if (field < 64u)
+            fields |= (uint64_t)1 << field;
+        else {
+            ukl_run_set_bit(t, presence, kw, field);
+            if (keep)
+                ukl_w_set_bit(t, mine, kw, field);
+        }
+        kinds |= (uint64_t)fault;
         faults += kind == 0u || fault != 0u ? 1u : 0u;
+    }
+    ukl_run_or_word(t, presence, kinds);
+    ukl_run_or_word(t, presence + 8u * kw, fields);
+    if (keep) {
+        ukl_w_st64(t, mine, ukl_w_ld64(t, mine) | kinds);
+        ukl_w_st64(t, mine + 8u * kw, ukl_w_ld64(t, mine + 8u * kw) | fields);
     }
     // Its side area given back, in block order (`finalize`'s free list).
     uint64_t free0 = ukl_w_len(t, 0u, CLIF_W_PART_FREE);

@@ -475,6 +475,9 @@ pub struct MetalComputeQueue {
     /// The command buffer's staging memory for `enqueue_copy_from_host` (filled up, then another), and how much is
     /// used: one allocation a command buffer, not one a copy. The command buffer keeps it until it completes.
     staging: std::cell::RefCell<Option<(metal::Buffer, u64)>>,
+    /// Whether its compute encoders are concurrent (`set_concurrent`): launches between two `barrier`s may run at
+    /// once, each seeing the writes of those before the last barrier.
+    concurrent: std::cell::Cell<bool>,
     /// The compute encoders it opened: what a launch made resident (`use_buffer`) stays so for the open one's life.
     encoders: std::cell::Cell<u64>,
 }
@@ -560,7 +563,7 @@ fn pooled<R>(f: impl FnOnce() -> R) -> R {
 
 impl MetalComputeQueue {
     pub fn new(queue: &metal::CommandQueueRef) -> Self {
-        MetalComputeQueue { queue: queue.to_owned(), command_buffer: pooled(|| queue.new_command_buffer().to_owned()), open: std::cell::RefCell::new(Open::None), staging: Default::default(), encoders: std::cell::Cell::new(0) }
+        MetalComputeQueue { queue: queue.to_owned(), command_buffer: pooled(|| queue.new_command_buffer().to_owned()), open: std::cell::RefCell::new(Open::None), staging: Default::default(), concurrent: std::cell::Cell::new(false), encoders: std::cell::Cell::new(0) }
     }
 
     /// The open compute encoder (ending an open blit encoder first).
@@ -570,10 +573,34 @@ impl MetalComputeQueue {
             return e.clone();
         }
         Self::end(&mut open);
-        let e = pooled(|| self.command_buffer.new_compute_command_encoder().to_owned());
+        let e = if self.concurrent.get() {
+            pooled(|| self.command_buffer.compute_command_encoder_with_dispatch_type(metal::MTLDispatchType::Concurrent).to_owned())
+        } else {
+            pooled(|| self.command_buffer.new_compute_command_encoder().to_owned())
+        };
         *open = Open::Compute(e.clone());
         self.encoders.set(self.encoders.get() + 1);
         e
+    }
+
+    /// Launches from now on in concurrent compute encoders (`true`), where only a `barrier` orders them, or serial
+    /// ones (`false`, the default: each launch sees the last's writes). The open encoder ends where it changes.
+    pub fn set_concurrent(&self, on: bool) {
+        if self.concurrent.replace(on) != on {
+            Self::end(&mut self.open.borrow_mut());
+        }
+    }
+
+    /// The launches after this see the buffer writes of every launch before it (a concurrent encoder's
+    /// `memoryBarrierWithScope:`; a serial encoder orders its launches already).
+    pub fn barrier(&self) {
+        if let Open::Compute(e) = &*self.open.borrow()
+            && self.concurrent.get()
+        {
+            let e: &metal::ComputeCommandEncoderRef = e;
+            // MTLBarrierScopeBuffers.
+            unsafe { objc::msg_send![e, memoryBarrierWithScope: 1u64] }
+        }
     }
 
     /// The compute encoders it opened so far: a buffer made resident for a launch stays resident for the launches

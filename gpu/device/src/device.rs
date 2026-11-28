@@ -480,6 +480,25 @@ impl ComputeQueue {
         }
     }
 
+    /// Launches from now on unordered between `barrier`s (`true`), so independent launches fill the device together,
+    /// or each after the last (`false`, the default). Metal's concurrent compute encoders; the other backends run
+    /// their launches in order either way.
+    pub fn set_concurrent(&self, on: bool) {
+        #[cfg(target_os = "macos")]
+        if let QueueKind::Native(q) = &self.kind {
+            q.set_concurrent(on);
+        }
+        let _ = on;
+    }
+
+    /// The launches after this see the writes of every launch before it (a no-op where launches run in order).
+    pub fn barrier(&self) {
+        #[cfg(target_os = "macos")]
+        if let QueueKind::Native(q) = &self.kind {
+            q.barrier();
+        }
+    }
+
     pub fn flush(&mut self) -> ComputeEvent {
         match &mut self.kind {
             QueueKind::Native(q) => ComputeEvent::Native(q.flush()),
