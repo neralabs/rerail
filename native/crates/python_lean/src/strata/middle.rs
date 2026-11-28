@@ -1101,8 +1101,9 @@ impl core::fmt::Debug for Middle {
 /// 1. Strata 2 and 3: each chunk's summary from every lane, superposed (`summary_superposed`), and each chunk's entry by the scan
 ///    (`entries_in`).
 /// 2. The walk's entry place in each chunk: its first loop top by masks, else the chunk after's (`first_top`).
-/// 3. The walk: each chunk's summary from every `open` and `header` with indents it does not know (`walk_summary`),
-///    and each chunk's entry by the scan (`walk_entries_in`), with the records the chunks before it wrote.
+/// 3. The walk: each chunk's summary from every `open` and `header` with indents it does not know, by masks
+///    (`walk_summary_masks`), and each chunk's entry by the scan (`walk_entries_in`), with the records the chunks
+///    before it wrote. A chunk the scan gives none waits for the one before's: by its lane, or by lexing it.
 /// 4. Each chunk's records from its entry (`lex_chunk`), placed at the counts before it.
 ///
 /// Where the chunks lexed from their entries leave an entry that is not the next chunk's, that is an error (`Err`).
@@ -1127,11 +1128,38 @@ pub fn lex_middle(src: &[u8], blocks: usize, order: Order<'_>) -> Result<Middle,
             _ => places.get(c + 1).copied().unwrap_or(Place(src.len(), true)),
         };
     }
-    let wsums = each(k, order, |c| {
-        let Place(p, done) = places[c];
-        walk_summary(src, range(c).0, range(c).1, strata[c].0, strata[c].1, p, done)
-    });
-    let walks = walk_entries_in(&wsums, order);
+    let wsums = each(k, order, |c| walk_summary_masks(src, range(c).0, range(c).1, strata[c].0, strata[c].1, places[c], places.get(c + 1).copied()));
+    let mut walks = walk_entries_in(&wsums, order);
+    // A chunk the scan gives no entry waits for the one before's: by that chunk's lane where masks know it, else by
+    // lexing that chunk from its entry.
+    for c in 1..k {
+        if !matches!(walks[c], WalkEntry::Unknown) {
+            continue;
+        }
+        let WalkEntry::At { open, header, indents, toks, extras } = walks[c - 1].clone() else { continue };
+        let by_lane = match &wsums[c - 1][usize::from(combo(open, header))] {
+            WalkLane::Goes { exit, sym, toks: t, extras: x } => sym.apply(&indents).map(|(indents, dedents)| {
+                let (open, header) = COMBOS[usize::from(*exit)];
+                WalkEntry::At { open, header, indents, toks: toks + t + dedents, extras: extras + x }
+            }),
+            WalkLane::Refused(r, sym) => sym.apply(&indents).map(|_| WalkEntry::Refused(*r)),
+            WalkLane::Unknown => None,
+        };
+        walks[c] = match by_lane {
+            Some(w) => w,
+            None => {
+                let Place(p, done) = places[c - 1];
+                let e = Entry { s1: s1_at(src, firsts(range(c - 1).0).0), rb: strata[c - 1].0, depth: strata[c - 1].1, p, open, header, indents, done };
+                let (mut t, mut x) = (Vec::new(), Vec::new());
+                match lex_chunk(src, range(c - 1).0, range(c - 1).1, &e, &mut t, &mut x) {
+                    Chunked::Lexed(next) => WalkEntry::At { open: next.open, header: next.header, indents: next.indents, toks: toks + t.len(), extras: extras + x.len() },
+                    Chunked::Refused(r) => WalkEntry::Refused(r),
+                    Chunked::NotB => return Ok(Middle::NotB),
+                    Chunked::Past => return Err(format!("chunk {} read past the text's end from its entry", c - 1)),
+                }
+            }
+        };
+    }
     for (c, w) in walks.iter().enumerate() {
         match w {
             WalkEntry::Unknown => return Ok(Middle::Unknown(c, "a chunk's walk")),

@@ -941,3 +941,13 @@ statements and blocks end.
       masks know it: every chunk of the test texts at 1, 2, 3 and 16 blocks, 1500 random texts of indented lines,
       headers, brackets, comments and blank lines, and the corpus (1641 files; at 1 block a chunk 653880 lanes the
       walk's and 31137 not known; at 16 blocks, 31452 and 13713; none differ).
+108. **`lex_middle` takes the walk's pass 1 by masks; a chunk masks don't know waits** (as built: in
+    `middle::lex_middle`).
+    - **Pass 1** of the walk is `walk_summary_masks` for every chunk. The serial walk (`walk_summary`) stays as the
+      oracle.
+    - **Pass 3** is the scan as before (`walk_entries_in`). A chunk the scan gives no entry, because a summary
+      before it has a lane masks don't know, waits for the one before's entry. It is that chunk's lane applied to
+      its entry where masks know the lane; else that chunk is lexed from its entry (`lex_chunk`), as pass 2 would.
+      Then the chunks after it go on from there.
+    - **As tested:** the corpus lexed from the middle is the serial lexer's in 1644 of 1644 files, at 1, 2, 3 and 16
+      blocks a chunk, and the crate's tests hold.
