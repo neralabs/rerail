@@ -2,7 +2,7 @@ import { execFileSync } from "node:child_process";
 import { mkdirSync, realpathSync } from "node:fs";
 import { mkdtemp } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { basename, join } from "node:path";
+import { basename, dirname, join } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 /** Paths looked at (`lstat`) and processes started while `counting` is on. */
@@ -144,15 +144,19 @@ describe("the checkout kept for an MCP bridge's folder", () => {
 
   it("asks a Git that ran to its time limit where the folder is once, and keeps that answer until the recorded checkouts change", async () => {
     const app = await recordedCheckout();
-    const folder = join(app, "web");
-    mkdirSync(folder);
-    Object.assign(placements, { unanswered: 4, pastLimit: true });
-    const outside = { checkout: folder, folder: "" };
-    expect(counted(folder)).toMatchObject({ answer: outside, starts: 1 });
-    expect([1, 2, 3].map(() => counted(folder))).toMatchObject(Array(3).fill({ answer: outside, starts: 0 }));
+    const web = join(app, "web");
+    mkdirSync(web);
+    // A top level no read placed yet, whose own `.git` the check of a location in Git would find changed.
+    const tools = repositoryAt(join(dirname(app), "tools"), "https://github.com/acme/tools.git");
+    Object.assign(placements, { unanswered: 8, pastLimit: true });
+    for (const folder of [web, tools]) {
+      const outside = { checkout: folder, folder: "" };
+      expect(counted(folder), folder).toMatchObject({ answer: outside, starts: 1 });
+      expect([1, 2, 3].map(() => counted(folder)), folder).toMatchObject(Array(3).fill({ answer: outside, starts: 0 }));
+    }
     placements.unanswered = 0;
 
-    callerFromHeader(encodeURIComponent(folder), "the recorded checkouts changed");
-    expect(resolved(folder)).toEqual({ checkout: app, folder: "web" });
+    callerFromHeader(encodeURIComponent(web), "the recorded checkouts changed");
+    expect(resolved(web)).toEqual({ checkout: app, folder: "web" });
   });
 });
