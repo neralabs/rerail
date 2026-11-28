@@ -1877,6 +1877,8 @@ pub(in crate::code_rule_dsl) struct Batch {
     /// Whether the host reads its arena's placed tables (`arena_reserved`'s): on Metal a wrapped arena then.
     host_reads: bool,
     reserved: Option<std::sync::Arc<Reservation>>,
+    /// Where its launches are captured for the join lab, and what selects them (`join_capture`, read once a batch).
+    capture: Option<super::join_capture::Config>,
 }
 
 /// A relation a batch's kernels write (`Batch::written`).
@@ -1974,7 +1976,18 @@ impl Batch {
             reserve_arena: false,
             host_reads: false,
             reserved: None,
+            capture: super::join_capture::Config::from_env(),
         })
+    }
+
+    /// Whether its launches may be captured (`join_capture`): its runs' labels are wanted.
+    pub(in crate::code_rule_dsl) fn capturing(&self) -> bool {
+        self.capture.is_some()
+    }
+
+    /// A run encoded into its open program, named on the launch that runs it (`join_capture::Label`).
+    pub(in crate::code_rule_dsl) fn label(&mut self, l: super::join_capture::Label) {
+        self.program.labels.push(l);
     }
 
     /// A table of `slots` columns its program places in its arena (decision 0603 step 5): its rows' room the device's,
@@ -3976,7 +3989,7 @@ impl Batch {
         }
         let kit = Kit { held, resident, descs, items, phases, segs, scans: scan_levels, sorts, script, top, counts, reserved: self.reserve_arena.then(|| self.reserved.clone()).flatten(), phase_items: prog.phases, dispatches, format, uses: prog.uses, hold: prog.hold, rooms: std::mem::take(&mut prog.rooms), maps_grown: false,
                         rebase: Rebase { ca, ops, scans: arena_scans, at: (da, sa, xa), ta: self.arena.as_ref().map_or(Ok(0), |a| address(&a.buffer()))?, tt: self.arena.as_ref().and_then(|a| a.canon_buffer()).map_or(Ok(0), |b| address(&b))? },
-                        end };
+                        end, labels: std::mem::take(&mut prog.labels) };
         // What its jobs reach, held while the program lives (`Ran::holds`).
         let holds = rerail_blocks::ledger::Fence::new();
         for b in kit.uses.iter().map(|(b, _)| b).chain(kit.resident.iter().map(|(b, _)| b)) {
@@ -3984,7 +3997,7 @@ impl Batch {
         }
         let ctl = Words::zeroed(10 + 2 * kit.phase_items.len() + 4 * (kit.dispatches as usize + 2))?;
         let last = kit.end as usize - 1;
-        let r = Ran { ctl: std::sync::Arc::new(ctl), last, phases: kit.phase_items.len(), items: kit.phase_items[last][1], kit, holds };
+        let r = Ran { ctl: std::sync::Arc::new(ctl), last, phases: kit.phase_items.len(), items: kit.phase_items[last][1], kit, holds, capture: None };
         // One that goes on from a program that may still launch again (a park, a chain's budget spent: `finish`) is held until
         // every program before it is whole: launched now, it would read that one's tables and counts before its later
         // phases wrote them, and nothing would run it again (decision 0679: a waved stratum's heads, cut from its
@@ -4082,6 +4095,32 @@ impl Batch {
             b.whole = Some(r.built());
         }
         let kit = &r.kit;
+        let offsets: Vec<u64> = (0..=dispatches).map(|d| 4 * (slot as u64 + 4 * d)).collect();
+        // The join lab's capture (`join_capture`): what it reads as it is about to run, the work before it done.
+        let capture = match &self.capture {
+            Some(cfg) if !kit.labels.is_empty() => {
+                for s in &self.committed {
+                    s.watch().wait();
+                }
+                let mut uses: Vec<(&Buffer, bool)> = kit.uses.iter().map(|(b, w)| (b, *w)).collect();
+                uses.extend(kit.resident.iter().map(|(b, r)| (b, !matches!(r, Reach::Read))));
+                uses.extend(kit.rooms.folds.iter().chain(&kit.rooms.dedups).map(|(_, b, _)| (b, true)));
+                uses.extend(kit.rooms.relocs.iter().map(|(b, _)| (b, true)));
+                let reached = super::join_capture::Reached {
+                    binds: [("descs", &kit.descs.buffer), ("items", &kit.items.buffer), ("phases", &kit.phases.buffer), ("segs", &kit.segs.buffer), ("scans", &kit.scans.buffer), ("sorts", &kit.sorts.buffer), ("script", &kit.script.buffer), ("ctl", &r.ctl.buffer.buffer), ("counts", &kit.counts.buffer)],
+                    top: kit.top.as_ref().map(|t| &t.buffer.buffer),
+                    holds: kit.hold.iter().map(|h| &h.buffer).collect(),
+                    text: text.as_ref(),
+                    table: table.as_ref(),
+                    uses,
+                    format: kit.format,
+                    args: [nphases as u32, kit.dispatches, kit.end, 0],
+                    offsets: offsets.clone(),
+                };
+                super::join_capture::before(cfg, &kit.labels, &reached)
+            }
+            _ => None,
+        };
         let pass = self.open()?;
         // What its jobs reach by address, and its own buffers: resident for the launch.
         let mut seen = std::collections::HashSet::new();
@@ -4104,7 +4143,6 @@ impl Batch {
         if let Some(t) = &kit.top {
             pass.use_read_write(&t.buffer.buffer);
         }
-        let offsets: Vec<u64> = (0..=dispatches).map(|d| 4 * (slot as u64 + 4 * d)).collect();
         pass.chain_at(
             &pipe,
             &[(&kit.descs.buffer, 0), (&kit.items.buffer, 0), (&kit.phases.buffer, 0), (&kit.segs.buffer, 0), (&kit.scans.buffer, 0), (&kit.sorts.buffer, 0), (&kit.script.buffer, 0), (&r.ctl.buffer.buffer, 0), (&kit.counts.buffer, 0)],
@@ -4112,6 +4150,7 @@ impl Batch {
             &r.ctl.buffer.buffer,
             &offsets,
         );
+        r.capture = capture;
         self.programs.push(r);
         // Committed now: the next launch's chain is its own submission too.
         self.submit_open()
@@ -4125,6 +4164,9 @@ impl Batch {
         let mut whole = true;
         let mut again = Vec::new();
         for mut r in std::mem::take(&mut self.programs) {
+            if let Some(c) = r.capture.take() {
+                c.after();
+            }
             let flags = r.ctl.get(6);
             let done = r.ctl.get(10 + r.last);
             // Its last phase's items as reset: its segments' groups (0: all of them).
@@ -4710,6 +4752,8 @@ struct Kit {
     resident: Vec<(Buffer, Reach)>,
     /// The phases its walk takes (`ProgP::end`): those before its tail (`Batch::lattice_tail`).
     end: u32,
+    /// Its runs, where its batch captures (`join_capture`).
+    labels: Vec<super::join_capture::Label>,
 }
 
 /// What a gate's room grew to (`RoomGrow`): its check's new cap, and the live relations grown with it (their block,
@@ -5199,6 +5243,8 @@ struct Program {
     hold: Vec<Held>,
     /// Its rooms mapped as its rows reach them (`Kit::rooms`).
     rooms: Rooms,
+    /// Its runs, where its batch captures (`Batch::label`).
+    labels: Vec<super::join_capture::Label>,
 }
 
 impl Program {
@@ -5490,6 +5536,8 @@ struct Ran {
     /// meanwhile (a stage's parameters, a table's lease) would go back to its pool while a chain still reads it. A
     /// fence never committed ends its uses when dropped.
     holds: std::sync::Arc<rerail_blocks::ledger::Fence>,
+    /// Its launch as captured (`join_capture`), finished once its work is done (`programs_done`).
+    capture: Option<super::join_capture::Pending>,
 }
 
 impl Ran {

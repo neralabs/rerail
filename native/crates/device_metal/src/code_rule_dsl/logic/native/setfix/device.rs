@@ -30,6 +30,7 @@
 use rerail_blocks::vector::Vector;
 use super::{InRel, Interner, JoinRule, Key, Src, Step, Store, Term, Fresh, is_dead, rowcode, thread_cpu};
 use crate::code_rule_dsl::transducer::packed::metal_join as mj;
+use crate::code_rule_dsl::transducer::packed::join_capture as mj_capture;
 use crate::code_rule_dsl::logic::device::{ColumnStats, StatColumn};
 use crate::code_rule_dsl::logic::device::caps;
 use crate::code_rule_dsl::logic::profile;
@@ -2300,6 +2301,14 @@ fn encode_levels(runs: &mut [(&mut Run<'_>, usize)], batch: &mut mj::Batch, rep:
     }
     for (r, _) in runs.iter_mut() {
         r.encode_head(batch)?;
+    }
+    // The join lab's captures (`join_capture`): each run's shape, rule and work (its inputs' rows), named on the
+    // launch that runs it.
+    if batch.capturing() {
+        for (r, _) in runs.iter() {
+            let work = r.rels.iter().flatten().map(|(rel, _)| rel.rows as u64).sum::<u64>().max(1);
+            batch.label(mj_capture::Label { shape: shape_of(r, &r.plan).name(), rule: format!("rule {:016x}", r.plan.key), work });
+        }
     }
     Ok(())
 }

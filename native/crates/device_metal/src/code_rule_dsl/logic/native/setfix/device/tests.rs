@@ -928,6 +928,58 @@ use rerail_blocks::vector::Vector;
         }
     }
 
+    /// The join lab's captures (`join_capture`): a stratum's launch on the device written as what it reads, each
+    /// block it reaches once, its own buffers before and after it, its labels the shapes it runs; finished ("done").
+    #[test]
+    fn a_launch_captured_names_its_shapes_and_regions() {
+        if !crate::code_rule_dsl::transducer::packed::metal_join::available() {
+            return;
+        }
+        let store = crate::code_rule_dsl::fixtures::temp();
+        drop(crate::content_store::ContentStore::open(&store).unwrap());
+        let db = Connection::open(&store).unwrap();
+        crate::code_rule_dsl::logic::native::register(&db).unwrap();
+        crate::code_rule_dsl::logic::native::register_symbols(&db).unwrap();
+        db.execute_batch("CREATE TEMP TABLE g (c0); CREATE TEMP TABLE a (c0, c1); CREATE TEMP TABLE q (c0, c1);").unwrap();
+        for e in 0..300i64 {
+            db.execute("INSERT INTO g VALUES (?1)", [e]).unwrap();
+            db.execute("INSERT INTO a VALUES (?1, ?2)", [e, 300 + e]).unwrap();
+        }
+        let dir = std::env::temp_dir().join(format!("rerail-join-capture-{}", std::process::id()));
+        crate::code_rule_dsl::transducer::packed::join_capture::capture_to(dir.clone());
+        let g = format!("t:x:{}:{}:i", hex("temp.g"), hex("c0"));
+        let a = format!("t:x:{}:{}:ii", hex("temp.a"), hex("c0, c1"));
+        // q(x, y) :- g(x), a(x, y).  q(y, z) :- q(x, z), a(x, y).
+        let seed = format!("pos {g} v0\npos {a} v0 v1\nhead v0 v1");
+        let step = format!("pos d0 v0 v1\npos {a} v0 v2\nhead v2 v1");
+        let spec = ["name captured".to_owned(), "device".into(), "rel q is empty".into(), format!("seed 0 {}", hex(&seed)), format!("join 0 0 {}", hex(&step))].join("\n");
+        super::super::open(&db, &spec).unwrap();
+        super::super::run(&db, "captured", 0).unwrap();
+        let r = super::take_report().expect("a device report");
+        assert!(r.refused.is_none(), "on the device: {r:?}");
+        super::super::close(&db, "captured").unwrap();
+        let waves: Vec<_> = std::fs::read_dir(dir.join("w")).expect("a capture's launches").map(|e| e.unwrap().path()).collect();
+        assert!(!waves.is_empty(), "a launch captured");
+        for w in &waves {
+            let wave = std::fs::read_to_string(w.join("wave.txt")).unwrap();
+            assert!(wave.lines().any(|l| l.starts_with("label ")), "its shapes named: {wave}");
+            assert!(wave.lines().last() == Some("done"), "its outputs written: {wave}");
+            for role in ["descs", "items", "phases", "ctl", "counts"] {
+                assert!(wave.lines().any(|l| l.starts_with(&format!("region {role} {role} "))), "its {role}: {wave}");
+                assert!(w.join(format!("{role}.zst")).exists() && w.join(format!("{role}.after.zst")).exists(), "{role} before and after");
+            }
+            let relocs = zstd::bulk::decompress(&std::fs::read(w.join("relocs.zst")).unwrap(), 1 << 30).unwrap();
+            assert!(!relocs.is_empty() && relocs.len() % 32 == 0, "its addresses as (region, offset, region, offset)");
+            for l in wave.lines().filter(|l| l.starts_with("region ")) {
+                let source = l.rsplit(' ').next().unwrap();
+                if let Some(b) = source.strip_prefix("blocks/") {
+                    assert!(dir.join("blocks").join(b).exists(), "a block it reaches written: {l}");
+                }
+            }
+        }
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
     /// Decision 0603's test: a stratum is one launch and its budget's relaunches, whatever its rules and rounds. The
     /// closure's seed round and its rounds are one program, a chain of dispatches (decision 0674); with a chain of 8
     /// dispatches and a first arena of 16 bytes, its launches go again (each where its chain's dispatches ended with

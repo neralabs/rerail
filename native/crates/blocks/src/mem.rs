@@ -146,6 +146,47 @@ pub fn resident(p: usize, len: usize) -> usize {
     }
 }
 
+/// The runs of written pages (`resident`'s) in `len` bytes at `p`, as (offset from `p`, bytes), clipped to the range:
+/// what a join capture keeps of a reservation mostly never touched (an arena of 4 GB, a room of 16). A range not
+/// mapped holds none; off Unix, the whole range is one run.
+pub fn written_runs(p: usize, len: usize) -> Vec<(usize, usize)> {
+    #[cfg(unix)]
+    {
+        // SAFETY: a query of the system's page size.
+        let page = (unsafe { libc::sysconf(libc::_SC_PAGESIZE) }).max(1) as usize;
+        let (start, end) = (p / page * page, (p + len).next_multiple_of(page));
+        if len == 0 || p == 0 || end <= start {
+            return Vec::new();
+        }
+        let mut v = vec![0u8; (end - start) / page];
+        // SAFETY: `v` has a byte for each page of the range; an unmapped range is an error, read as none.
+        if unsafe { libc::mincore(start as *mut libc::c_void, end - start, v.as_mut_ptr().cast()) } != 0 {
+            return Vec::new();
+        }
+        #[cfg(target_vendor = "apple")]
+        let bit = libc::MINCORE_MODIFIED;
+        #[cfg(not(target_vendor = "apple"))]
+        let bit = 1;
+        let mut runs: Vec<(usize, usize)> = Vec::new();
+        for (i, b) in v.iter().enumerate() {
+            if i32::from(*b) & bit == 0 {
+                continue;
+            }
+            let (a, z) = ((start + i * page).max(p), (start + (i + 1) * page).min(p + len));
+            match runs.last_mut() {
+                Some(last) if last.0 + last.1 == a - p => last.1 += z - a,
+                _ => runs.push((a - p, z - a)),
+            }
+        }
+        runs
+    }
+    #[cfg(not(unix))]
+    {
+        let _ = p;
+        if len == 0 { Vec::new() } else { vec![(0, len)] }
+    }
+}
+
 /// Gives back the whole pages inside `len` bytes at `p` of an anonymous reservation that nothing will read or write
 /// again: on macOS as reusable (`MADV_FREE_REUSABLE`), which takes them out of the footprint at once (`MADV_FREE`
 /// leaves them counted until the OS wants them); elsewhere `MADV_FREE`. Pages the range only partly covers stay.
@@ -246,6 +287,28 @@ pub(crate) mod tests {
             unsafe { super::give_back(p.add(page), page) };
             assert_eq!(super::resident(p as usize, 4 * page), 0, "given back");
         }
+        // SAFETY: the reservation's, released once.
+        unsafe { super::release(p, 4 * page) };
+    }
+
+    /// `written_runs` finds the runs of written pages, clipped to its range: a reservation's second and third pages
+    /// written are one run, its fourth unwritten none; a range starting inside a written page starts the run there.
+    #[cfg(unix)]
+    #[test]
+    fn written_runs_are_the_pages_written_clipped_to_the_range() {
+        let page = crate::block::PAGE;
+        let p = super::reserve(4 * page);
+        assert!(super::written_runs(p as usize, 4 * page).is_empty(), "a reservation unwritten");
+        // SAFETY: the reservation's second and third pages.
+        unsafe {
+            p.add(page + 8).write(1);
+            p.add(2 * page + 8).write(1);
+        }
+        let runs = super::written_runs(p as usize, 4 * page);
+        assert_eq!(runs.len(), 1, "one run: {runs:?}");
+        assert!(runs[0].0 <= page + 8 && runs[0].0 + runs[0].1 >= 2 * page + 9 && runs[0].0 + runs[0].1 <= 3 * page, "{runs:?}");
+        let inside = super::written_runs(p as usize + page + 4, 2 * page);
+        assert!(inside[0].0 == 0 && inside.iter().map(|r| r.1).sum::<usize>() <= 2 * page, "{inside:?}");
         // SAFETY: the reservation's, released once.
         unsafe { super::release(p, 4 * page) };
     }
