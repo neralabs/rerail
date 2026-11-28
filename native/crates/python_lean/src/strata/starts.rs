@@ -163,6 +163,15 @@ fn reaching(hit: u128, through: u128) -> u128 {
 /// Block `bi`'s token starts in code (the serial walk's, its layout tokens and a string's aside), and whether the
 /// block is rare (its starts not known by masks).
 pub(super) fn code_starts(t: &Masks<'_>, bi: usize) -> (u64, bool) {
+    let keep = 0u64.wrapping_sub(u64::from(bi > 0));
+    starts_in(t, bi, w(t.blk(bi.saturating_sub(1)).code & keep, t.blk(bi).code), false)
+}
+
+/// Block `bi`'s token starts in the bytes of `code` (the window of the block below and the block), and whether the
+/// block is rare. In an interpolation (`one_by_one`) the walk reads a token at a time, so a number's rest of a word
+/// run is always a name.
+#[inline(always)]
+fn starts_in(t: &Masks<'_>, bi: usize, code: u128, one_by_one: bool) -> (u64, bool) {
     let src = t.src;
     // The block below (none below the text's start: masked).
     let (pb, b) = (*t.blk(bi.saturating_sub(1)), *t.blk(bi));
@@ -180,9 +189,9 @@ pub(super) fn code_starts(t: &Masks<'_>, bi: usize) -> (u64, bool) {
     let lim = (src.len() + 64).saturating_sub(64 * bi).min(128) as u32;
     let valid = ((1u128 << (lim & 127)) - 1) | 0u128.wrapping_sub(u128::from(lim >> 7));
     // The bytes of code a token is read in: not a blank, a line's end or a backslash (a continuation's).
-    let nb = m(|b| b.code & !b.skip & !b.eol & !b.bs) & valid;
+    let nb = code & m(|b| !b.skip & !b.eol & !b.bs) & valid;
     // Where the walk's run of tokens stops: not code, a line's end, a form feed, a backslash, the text's end.
-    let stop = !m(|b| b.code) | m(|b| b.eol) | m(|b| b.skip & !b.sptab & !b.lf) | m(|b| b.bs) | !valid;
+    let stop = !code | m(|b| b.eol) | m(|b| b.skip & !b.sptab & !b.lf) | m(|b| b.bs) | !valid;
     let word = m(|b| b.word) & nb;
     let high = k(|c| c.high) & nb;
     let op = nb & !word & !high;
@@ -264,7 +273,8 @@ pub(super) fn code_starts(t: &Masks<'_>, bi: usize) -> (u64, bool) {
     let rest = ends & word & !run_start;
     let through = !(starts | stop) & valid;
     // Where the rest starts a block, the walk's next block reads its first byte as a run's start.
-    let rest_starts = rest & (reaching(stop, through) | (1u128 << 64));
+    let all = 0u128.wrapping_sub(u128::from(one_by_one));
+    let rest_starts = rest & (reaching(stop, through) | (1u128 << 64) | all);
     let starts = starts | rest_starts;
     // Rare: a refused byte or one past ASCII in the block; the run of non-blank code the window starts in reaches
     // the block (what it starts with is below the window); a number's rest of a word run that reaches a block's
@@ -273,7 +283,7 @@ pub(super) fn code_starts(t: &Masks<'_>, bi: usize) -> (u64, bool) {
     let reaches = first_run >= (1u128 << 64);
     let rest_word = rest | ((word.wrapping_add((rest << 1) & word) ^ word) & word);
     let crosses = ((rest_word >> 63) & 3 == 3) | (rest_word >> 127 != 0);
-    let rest_far = crosses | ((reaching(starts | stop, through) & rest & !(1u128 << 64)) != rest & !(1u128 << 64));
+    let rest_far = crosses | ((reaching(starts | stop, through) & rest & !(1u128 << 64) & !all) != rest & !(1u128 << 64) & !all);
     // A `.` that starts a token at a block's last byte, before a digit: the walk reads it as an operator (its test
     // of the byte after is the block's).
     let edge = (1u128 << 63) | (1u128 << 127);
@@ -377,6 +387,10 @@ struct SBytes {
     rbrace: u64,
     /// The bytes an escape of two is (`\n`, `\'`, `\\` and the like).
     simple: u64,
+    colon: u64,
+    bang: u64,
+    eq: u64,
+    lower: u64,
 }
 
 #[inline(always)]
@@ -408,6 +422,10 @@ fn sclasses(src: &[u8], at: usize) -> SBytes {
         lbrace: eq(b'{'),
         rbrace: eq(b'}'),
         simple,
+        colon: eq(b':'),
+        bang: eq(b'!'),
+        eq: eq(b'='),
+        lower: (v - s(b'a')).simd_lt(s(26)).to_bitmask(),
     }
 }
 
@@ -433,6 +451,14 @@ pub(super) struct StrCarry {
     text: bool,
     rb: u64,
     rare: bool,
+    /// An interpolation (or its format spec) open past the block, its depth of brackets there, and its bytes of
+    /// code in the block (the next block's window reads them below it).
+    reg: bool,
+    spec: bool,
+    idepth: i8,
+    rcode: u64,
+    /// A conversion's `!` is the block before's last byte: its letter is the block's first.
+    cv: bool,
 }
 
 /// From each of `seeds` forward through `through` (each seed in it): the run to its end.
@@ -489,28 +515,110 @@ pub(super) fn string_starts(t: &Masks<'_>, bi: usize, c: &mut StrCarry) -> (u64,
     let l4 = e & (u_ok | x_ok | (d & d2 & d3));
     let l5 = e & u_ok;
     let covered_e = e | (l2 << 1) | (l3 << 2) | (l4 << 3) | (l5 << 4) | (l5 << 5);
-    // An f-string's braces: a pair of `{` or of `}` is one token; a `{` no `{` pairs with is an interpolation (rare),
-    // a lone `}` a refusal (rare).
+    // An f-string's braces: a pair of `{` or of `}` is one token, a `{` no `{` pairs with opens an interpolation, a
+    // `}` no `}` pairs with is a refusal (rare).
     let fint = inner & ifmt & !covered_e & !hi(c.covered);
+    let f64_ = fint as u64;
     let lb = hi(b.lb) & fint;
     let rb = hi(b.rb) & fint;
-    let lb_pair = lb & hi(b.lbu) & hi(n[1].lbrace);
-    let interp = lb & hi(b.lbu) & !hi(n[1].lbrace);
-    let rbu = rb & !hi(super::escaped(rb as u64, &mut c.rb));
+    let interp = (lb & hi(b.lbu) & !hi(n[1].lbrace)) as u64;
+    // Interpolations, in rounds (unrolled). The brackets' depth `g` over the string's bytes, once: an
+    // interpolation from its `{` at depth `G` (after it) ends at the first `}` after it with `g` at `G - 1` or the
+    // first `:` at `G` (its format spec's start, which ends at the next `}`). A `!` at `G` before no `=` is a
+    // conversion.
+    let (up_l, down_l) = (super::lanes(b.ob & f64_), super::lanes(b.cb & f64_));
+    let mut g = [super::D::splat(0); 4];
+    let mut carry = super::D::splat(0);
+    for r in 0..4 {
+        g[r] = super::prefix_sum(down_l[r] - up_l[r]) + carry;
+        carry = super::D::splat(g[r][15]);
+    }
+    let g_at = |bit: u64| g[(bit.trailing_zeros() as usize >> 4) & 3][bit.trailing_zeros() as usize & 15];
+    let eqm = |v: i8| (0..4).fold(0u64, |m, r| m | (g[r].simd_eq(super::D::splat(v)).to_bitmask() << (16 * r)));
+    let (rbr, colon, cbm) = (b.rb & f64_, n[0].colon & f64_, b.cb & f64_);
+    let above = |x: u64| !(x | x.wrapping_sub(1));
+    let below = |x: u64| x.wrapping_sub(1) & !x;
+    let sel = |c: bool, a: u64, b: u64| (a & 0u64.wrapping_sub(u64::from(c))) | (b & !0u64.wrapping_sub(u64::from(c)));
+    // A round: the open interpolation or spec (if any) to its end, then the next interpolation's start.
+    #[derive(Clone, Copy, Default)]
+    struct Round {
+        todo: u64,
+        reg: bool,
+        spec: bool,
+        gv: i8,
+        code: u64,
+        convs: u64,
+        marks: u64,
+        bytes: u64,
+        closes: u64,
+        bad: bool,
+        cont_reg: bool,
+        cont_spec: bool,
+        cont_gv: i8,
+    }
+    let round = |st: Round| {
+        let regm = 0u64.wrapping_sub(u64::from(st.reg));
+        let (at0, atm1) = (eqm(st.gv), eqm(st.gv.wrapping_sub(1)));
+        let ends = ((rbr & atm1) | (colon & at0)) & st.todo & regm;
+        let end = ends.isolate_lowest_one();
+        let region = st.todo & below(end) & regm;
+        let conv = n[0].bang & !n[1].eq & at0 & region & f64_;
+        let bad_reg = (cbm & atm1 & region) | (conv & !n[1].lower) | (region & (b.eol | b.hash | b.bs | b.sstart | b.send));
+        let is_colon = end & colon != 0;
+        let spec_from = sel(is_colon, above(end), sel(st.spec, st.todo, 0));
+        let sends = rbr & spec_from;
+        let send_ = sends.isolate_lowest_one();
+        let spec_bytes = spec_from & below(send_);
+        let bad_spec = spec_bytes & (b.lb | b.lf | b.send);
+        let close = (end & !colon) | send_;
+        let active = st.reg | st.spec;
+        let todo = sel(active, above(close), st.todo);
+        let a = interp & todo;
+        let a = a.isolate_lowest_one();
+        Round {
+            todo: above(a),
+            reg: a != 0,
+            spec: false,
+            gv: g_at(a),
+            code: st.code | (region & !(conv | conv << 1)),
+            convs: st.convs | conv,
+            marks: st.marks | a | close | (end & colon) | conv,
+            bytes: st.bytes | region | spec_bytes | end | close | a,
+            closes: st.closes | close,
+            bad: st.bad | ((bad_reg | bad_spec) != 0) | (((region | spec_bytes) & !(interior as u64)) != 0),
+            cont_reg: st.cont_reg | (st.reg & (end == 0)),
+            cont_spec: st.cont_spec | ((is_colon | st.spec) & (send_ == 0)),
+            cont_gv: sel(st.reg & (end == 0), st.gv as u8 as u64, st.cont_gv as u8 as u64) as u8 as i8,
+        }
+    };
+    let r0 = Round { todo: !0, reg: c.reg, spec: c.spec, gv: c.idepth.wrapping_neg(), ..Round::default() };
+    let r = round(round(round(round(round(r0)))));
+    let r = Round { code: r.code & !u64::from(c.cv), ..r };
+    // More interpolations than the rounds read: rare.
+    let more = r.reg;
+    let ibytes_all = hi(r.bytes);
+    let (rcode, rare_code) = starts_in(t, bi, w(c.rcode, r.code), true);
+    let lb_pair = lb & !ibytes_all & hi(b.lbu) & hi(n[1].lbrace);
+    let rb_t = rb & !ibytes_all;
+    let rbu = rb_t & !hi(super::escaped(rb_t as u64, &mut c.rb));
     let rb_pair = rbu & hi(n[1].rbrace);
     let lone_rb = rbu & !hi(n[1].rbrace);
     let covered = covered_e | lb_pair | (lb_pair << 1) | rb_pair | (rb_pair << 1) | hi(c.covered);
-    // A string's text: the bytes of its interior no token above takes, nor a format string's brace.
-    let text = inner & !covered & !lb & !rb & !closer;
+    // A string's text: the bytes of its interior no token above takes, nor a format string's brace, nor an
+    // interpolation's.
+    let text = inner & !covered & !lb & !rb & !closer & !ibytes_all;
     let text_starts = text & !((text << 1) | bool128(c.text));
-    let starts = s | text_starts | e | lb_pair | rb_pair | (closer & mask);
-    // Rare: a prefix that leaves the block; `\U` or `\N{` (long escapes); an interpolation or a lone `}`; a raw
-    // string's backslash where its text has not begun, or a raw f-string's (the walk's quirks there); a string the
-    // carry says is rare.
+    let starts = s | text_starts | (e & !ibytes_all) | lb_pair | rb_pair | (closer & mask) | hi(r.marks) | hi(rcode & r.code);
+    // Rare: `\U` or `\N{` (long escapes); a lone `}`; a raw string's backslash where its text has not begun, or a
+    // raw f-string's (the walk's quirks there); an interpolation the masks do not read (a string, a comment, a
+    // backslash or a line's end in it; a bracket it does not open closed in it; a conversion of no letter; a `{`
+    // or a line's end in its spec; more than the rounds); a string the carry says is rare.
     let long = e & hi(n[1].big_u | (n[1].big_n & n[2].lbrace)) != 0;
     let raw_first = oe | (bool128(c.open & !c.text) & !hi(c.covered) & 1);
     let raw_quirk = (hi(b.bs) & inner & iraw & (raw_first | ifmt)) != 0;
-    let rare_here = c.rare | long | (interp != 0) | (lone_rb != 0) | raw_quirk;
+    let rare_interp = r.bad | more | (rare_code & ((r.code | c.rcode) != 0));
+    let rare_here = c.rare | long | (lone_rb != 0) | raw_quirk | rare_interp;
+    let depth_end = g[3][15];
     // The carry out.
     let open = interior >> 64 & 1 == 1;
     // A quote past the block is the next block's to read (its opener's end too); an opener's end past it, of a
@@ -533,7 +641,12 @@ pub(super) fn string_starts(t: &Masks<'_>, bi: usize, c: &mut StrCarry) -> (u64,
         covered: (covered >> 64) as u64,
         text: text >> 63 & 1 == 1,
         rb: c.rb,
-        rare: open & (c.rare | (interp != 0)),
+        rare: open & (c.rare | rare_interp),
+        reg: r.cont_reg,
+        spec: r.cont_spec,
+        idepth: depth_end.wrapping_sub(r.cont_gv),
+        rcode: r.code,
+        cv: r.convs >> 63 != 0,
     };
     (starts as u64, rare_here)
 }

@@ -1183,7 +1183,7 @@ mod tests {
                             x ^= x << 13;
                             x ^= x >> 7;
                             x ^= x << 17;
-                            b"ab'\"\\\\nx41{}{}rbf u N \n#=(1)U\r0'\\"[(x >> 8) as usize % 33]
+                            b"ab'\"\\\\nx41{}{}rbf u N \n#=(1)U\r0'\\!:[]{f'"[(x >> 8) as usize % 40]
                         })
                         .collect(),
                 );

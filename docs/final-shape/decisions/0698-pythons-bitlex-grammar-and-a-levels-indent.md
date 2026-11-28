@@ -857,3 +857,24 @@ statements and blocks end.
     - **As tested:** the starts in strings are the serial walk's on every block that isn't rare: the test texts,
       4000 random texts of quotes, prefixes, escapes, braces and line ends, and the corpus (214698 of 223857 blocks;
       9159 rare, 0 differ). Most rare blocks hold an interpolation, which the next layer reads.
+104. **The walk's starts in interpolations by masks** (in `strata::starts::string_starts`).
+    - **Where each one ends:** one prefix sum `g` of the brackets over a format string's bytes per block. An
+      interpolation from its `{` (where `g` is `G`) ends at the first `}` after it with `g` at `G − 1`, or at the
+      first `:` at `G`. A `:` starts its format spec, which ends at the next `}`. A `!` at `G` before no `=` is a
+      conversion of two bytes.
+    - **In rounds:** each round takes the open interpolation or spec to its end, then the next `{` after it. Five
+      rounds are unrolled: the carry's, and four more. A block with a fifth interpolation is rare.
+    - **The tokens inside:** the starts in code (item 102) over the interpolations' bytes, from the function the two
+      share (`starts_in`). The serial interpolation reads one token at a time, so a number's rest of a word run is
+      always a name there.
+    - **Carried to the next block:** an interpolation or spec open past the block, its depth there, its bytes of
+      code (the next block's window reads them), and a conversion's `!` at the block's last byte.
+    - **Rare:**
+      - a string, a comment, a backslash or a line's end in an interpolation;
+      - a bracket it does not open, closed in it;
+      - a conversion with no letter;
+      - a `{` or a line's end in a spec;
+      - more interpolations than the rounds.
+    - **As tested:** the starts in strings are the serial walk's on every block that isn't rare: the test texts,
+      4000 random texts (with `!`, `:`, brackets and `f'` added) and the corpus. Rare blocks drop from 9159 to 781
+      of 223857, and none differ.
