@@ -461,7 +461,7 @@ fn diagnostic_rows(outputs: &crate::code_rule_dsl::logic::plan::output::Outputs)
 
 /// A finding's row as its JSON object: `policy`, `clause`, `code`, `path`, `line`, `at`, `tag` (`null` for none),
 /// `message`, and `parameters` by name. Each value as its column holds it: a text a string, an integer or a node a
-/// number (a node's value as the run held it), NULL `null`. Nothing is parsed.
+/// number (a node's value as the run held it), a node path its text, NULL `null`. Nothing is parsed.
 fn diagnostic(rel: &str, row: &crate::code_rule_dsl::logic::plan::output::Row<'_>) -> Result<serde_json::Value, String> {
     use crate::code_rule_dsl::logic::plan::output::Value;
     let value = |c: usize| -> serde_json::Value {
@@ -469,6 +469,8 @@ fn diagnostic(rel: &str, row: &crate::code_rule_dsl::logic::plan::output::Row<'_
             Value::Text(t) => serde_json::json!(t),
             Value::Int(n) => serde_json::json!(n),
             Value::Node(_) => serde_json::json!(row.raw(c)),
+            // A node path's text, as the outputs show it (decision 0722).
+            v @ Value::Path { .. } => serde_json::json!(v.to_string()),
             Value::Null => serde_json::Value::Null,
         }
     };

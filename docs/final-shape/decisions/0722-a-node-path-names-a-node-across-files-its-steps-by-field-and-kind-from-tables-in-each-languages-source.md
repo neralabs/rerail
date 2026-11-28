@@ -174,3 +174,46 @@ does not have at run time). Both cost no stability, and both made paths shorter.
      b.py::g/body.return (line 6)`), `..._of_a_program_a_file_holds` (an HTML script's call, at its file's lines),
      `..._of_a_parsed_string` (two strings' annotation, one tape value, one path),
      `a_path_is_spelled_by_its_units_and_labelled_steps`; the ledger probes `@path_spelling` and `@path_file`.
+5. **The points-to rules name nodes by their paths; `pt_tm` is gone** (this commit).
+   - `pt_tm`, the offset terms, `pt_gtm`, `pt_tm_same` and `pt_tm_scope` are removed. A scope's term (a module, a
+     definition) stays its P1 symbol (`pt_scope_tm`), because a workspace value is a symbol and `pt_base` joins a
+     class's term with a value's symbol. Every other node's term is `@node_path(n)`, and the solve's term columns are
+     `node_path`. A lambda and a dead definition (`py_dead_at`), which have no P1 symbol, are named by their path's
+     spelling (`@path_spelling(@node_path(f))`).
+   - A `"gen"` value is the node that made it (a call or an annotation), so it is a path, not a symbol. Each value
+     relation with a kind column that a generic value reaches has a twin `R_g` without the kind, holding paths: `pt_qv`,
+     `pt_bv`, `pt_decval`, `pt_pv`, `pt_fv`, `pt_fret`. Each rule that passes a value of any kind has a twin for the
+     generic one, and the "has a value" checks read the twins too. The types part's values (`pt_tv`, `pt_tbv`,
+     `pt_tqv`) are nodes (builtin, decl, ext), so their value column is a path; an import's `"ext"` value, which no
+     rule reads, is the import scope's path.
+   - The interface (`points-to.rerail`) reads each answer back with `@path_node`, anchored in the file that asks
+     (`docof(c, d), doc(d, p, _)`), so a cross-file part reads no positions (decision 0677).
+   - A phase's exports reach the next phase as text; the reader's binder (`corpus::atoms_source`) turns a `node_path`
+     column's text back into its word, the base interned in the store. The outputs image keeps a path column
+     (`col::PATH`), and a cell shows it as its text (`output::Value::Path`).
+   - The batch keeps each node's word (`Batch::node_path`) and each word's node (`path_at`) once made: a rule asks
+     for a node's path in every derivation that reaches it, as it once joined `pt_tm`'s one row. Without them the
+     codec walked from the granule's start on every call, and the run took 36% more instructions.
+   - Measured, the Django pack over corpus0 (300 files), one engine (profiling build), HEAD's rules against these,
+     each in a fresh store, one after the other on one host, CPU:
+
+     | | before (`pt_tm`) | after (node paths) |
+     |---|---|---|
+     | place-term atoms (`q@b+l^n`) | 422,904 | 0 |
+     | atoms' bytes | 94.6 MB | 19.0 MB |
+     | atoms folder | 69.9 MB | 18.6 MB |
+     | instructions | 886.3 G | 870.8 G (−1.8%) |
+     | cycles | 252.8 G | 243.1 G (−3.8%) |
+     | user CPU | 76.0 s | 73.6 s |
+     | peak | 2.30 GB | 2.22 GB |
+
+     The outputs' 74 relations are the same row for row; corpus0 has no finding of these packs, so the findings are
+     the pack tests'. Before the batch kept the words, the same run took 1,129 G instructions (+36%), most of it in
+     `DocPaths::down` from the granule's start; a first memo inside `encode` left `Batch::node_path`'s rank select
+     before it (+1.2%).
+
+   - Open: the three functions have no device form (the coverage ledger's "no computed term" rows: django 5 calls of
+     `@node_path`, lib 2, engine 1; `@path_node` 1; `@path_spelling` 1). The reads are to be written once, for every
+     reader (decision 0310), as engine work item 2 says.
+   - Tests: the node path tests and the 30 points-to oracle tests (34) (`typing::oracle_tests`, the jedi spans split into calls' paths and scopes'
+     symbols), `test-rr` over `packs/django`, `lib/python` and `leg-083` (36 pass), the coverage ledger.

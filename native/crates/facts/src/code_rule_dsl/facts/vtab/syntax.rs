@@ -2794,6 +2794,11 @@ pub struct Batch {
     node_paths: parking_lot::Mutex<HashMap<usize, Option<Arc<NodePaths>>>>,
     /// The documents by their paths' root text (`path_root`), for a path read back.
     path_roots: OnceLock<HashMap<String, usize>>,
+    /// Each node path read back (`path_at`): its document and node, decoded the first time a rule reads it.
+    path_words: parking_lot::Mutex<rustc_hash::FxHashMap<u64, Option<(usize, u32)>>>,
+    /// Each node's path (`node_path`), made the first time a rule asks: a rule asks in every derivation that reaches
+    /// the node, and its steps from its granule's start and its base's atom are the same each time.
+    node_words: parking_lot::Mutex<rustc_hash::FxHashMap<i64, Option<i64>>>,
     /// Its documents' keys by their `doc` rows' modules' atoms (`keys_of_modules`), once a read by a module asked.
     by_module: OnceLock<Option<HashMap<i64, Vec<u32>>>>,
     /// Each host's guests' keys (`Batch::guests_of`), once a read by a host's node asked.
@@ -2977,6 +2982,16 @@ impl Batch {
     /// Node `n`'s path (`@node_path`, decision 0722): its granule's key atom, then its steps. None for a span, an
     /// extra or a node of a document not in the batch.
     pub fn node_path(&self, n: i64) -> Option<i64> {
+        if let Some(&word) = self.node_words.lock().get(&n) {
+            return word;
+        }
+        let word = self.node_path_made(n);
+        self.node_words.lock().insert(n, word);
+        word
+    }
+
+    /// `node_path`'s word, made: node `n` found through the batch's ids (decision 0724: no id is decoded by a shift).
+    fn node_path_made(&self, n: i64) -> Option<i64> {
         let (i, local) = self.docs.of_id(n)?;
         let p = &self.docs[i];
         let x = p.ranks().select(Item::Node, local)?;
@@ -2989,7 +3004,8 @@ impl Batch {
     /// The node path `w` names (`@path_node`): its document is the one of the batch whose root text its base starts
     /// with; none for another's, or one whose granule or steps the tape no longer has.
     pub fn path_node(&self, w: i64) -> Option<i64> {
-        let (i, _, x) = self.path_at(w)?;
+        let known = self.path_words.lock().get(&(w as u64)).copied();
+        let (i, x) = known.unwrap_or_else(|| self.path_at(w).map(|(i, _, x)| (i, x)))?;
         let p = &self.docs[i];
         let local = p.local_of_node(x);
         (local != NONE).then(|| p.global(local))
@@ -2997,6 +3013,16 @@ impl Batch {
 
     /// The node path `w` decoded: its document's index, its paths and its node there (in their projection's ids).
     fn path_at(&self, w: i64) -> Option<(usize, Arc<NodePaths>, u32)> {
+        if let Some(&at) = self.path_words.lock().get(&(w as u64)) {
+            let (i, x) = at?;
+            return Some((i, self.node_paths(i)?, x));
+        }
+        let at = self.path_decoded(w);
+        self.path_words.lock().insert(w as u64, at.as_ref().map(|(i, _, x)| (*i, *x)));
+        at
+    }
+
+    fn path_decoded(&self, w: i64) -> Option<(usize, Arc<NodePaths>, u32)> {
         let atoms = RunAtoms(&*self.atoms);
         let text = paths::Atoms::text(&atoms, (w as u64 >> 32) as u32)?;
         let root = paths::root_of(&text)?;
@@ -4351,6 +4377,8 @@ impl Batch {
             by_path: OnceLock::new(),
             node_paths: Default::default(),
             path_roots: OnceLock::new(),
+            path_words: Default::default(),
+            node_words: Default::default(),
             guests_of: OnceLock::new(),
             by_file_key: OnceLock::new(),
             by_module: OnceLock::new(),

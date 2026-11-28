@@ -47,8 +47,8 @@ pub mod col {
     pub const NODE: u8 = 1;
     /// An integer, shown as it is.
     pub const INT: u8 = 2;
-    /// A node path (decision 0722) in a memo entry's rows: its base's string, by its index in the image, in the high
-    /// 32 bits, its steps below; read back as this process's atom of the string, the steps as they are.
+    /// A node path (decision 0722): its base's string, by its index in the image, in the high 32 bits, its steps
+    /// below; read back as this process's atom of the string, the steps as they are, and shown `base\t/steps`.
     pub const PATH: u8 = 3;
 }
 
@@ -331,6 +331,8 @@ impl Builder {
                     let v = rel.col(c)[i];
                     rows.push(match t {
                         col::TEXT => i64::from(self.text(rel.image.string(v as u32))),
+                        // A node path (decision 0722): its base's string held again here, its steps as they are.
+                        col::PATH => i64::from(self.text(rel.image.string((v as u64 >> 32) as u32))) << 32 | (v & 0xffff_ffff),
                         col::NODE => {
                             if let Some((path, line)) = rel.image.place(v) {
                                 let path = path.to_owned();
@@ -629,6 +631,7 @@ impl<'a> Rel<'a> {
         let v = self.col(c)[i];
         match self.types()[c] {
             col::TEXT => Value::Text(self.image.string(v as u32)),
+            col::PATH => Value::Path { base: self.image.string((v as u64 >> 32) as u32), steps: v as u32 },
             _ if v == NULL => Value::Null,
             col::NODE => Value::Node(self.image.node(v)),
             _ => Value::Int(v),
@@ -671,6 +674,10 @@ impl<'a> Rel<'a> {
         h.word(u64::from(t));
         match t {
             col::TEXT => h.word(seen.text(self.image, v as u32)),
+            col::PATH => {
+                h.word(seen.text(self.image, (v as u64 >> 32) as u32));
+                h.word(v as u32 as u64);
+            }
             col::NODE if v < -1 => match self.image.u64s(R::Places).as_chunks::<3>().0.iter().find(|p| p[0] as i64 == v) {
                 Some(p) => {
                     h.word(seen.text(self.image, p[1] as u32));
@@ -842,7 +849,8 @@ impl Image {
             for c in 0..rel.width {
                 match rel.types()[c] {
                     col::TEXT if rel.col(c).iter().any(|&v| v < 0 || v as u64 >= strings) => return Err(bad(format!("relation {} column {c}: no such string", r[0]))),
-                    col::TEXT | col::NODE | col::INT => {}
+                    col::PATH if rel.col(c).iter().any(|&v| (v as u64 >> 32) >= strings) => return Err(bad(format!("relation {} column {c}: a node path's base names no string", r[0]))),
+                    col::TEXT | col::NODE | col::INT | col::PATH => {}
                     t => return Err(bad(format!("column type {t}"))),
                 }
             }
@@ -986,6 +994,9 @@ pub enum Value<'a> {
     Text(&'a str),
     Int(i64),
     Node(Node<'a>),
+    /// A node path (decision 0722): its base's text and its steps. Shown as the run's outputs show it,
+    /// `base\t/steps`.
+    Path { base: &'a str, steps: u32 },
     /// None (SQL's NULL), in a node or int column.
     Null,
 }
@@ -1038,7 +1049,7 @@ impl<'a> Value<'a> {
         match self {
             Value::Int(v) => Some(*v),
             Value::Node(n) => n.number(),
-            Value::Text(_) | Value::Null => None,
+            Value::Text(_) | Value::Path { .. } | Value::Null => None,
         }
     }
     /// A text, held as long as the image is.
@@ -1072,6 +1083,7 @@ impl std::fmt::Display for Value<'_> {
             Value::Text(t) => f.write_str(t),
             Value::Int(v) => write!(f, "{v}"),
             Value::Node(n) => write!(f, "{n}"),
+            Value::Path { base, steps } => write!(f, "{base}\t/{steps:x}"),
             Value::Null => f.write_str("None"),
         }
     }
