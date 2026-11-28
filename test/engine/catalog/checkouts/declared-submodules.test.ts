@@ -226,6 +226,31 @@ describe("a checkout's declared submodules while Git runs past its time limit re
     await submodulesAskedAgain(alpha);
   });
 
+  it.each([
+    ["runs past its limit", "pastLimit"],
+    ["answers", "answers"],
+  ] as const)("keeps the answer a listing's Git gave while a placement's learning ran when the learning's Git %s", async (_, offThread) => {
+    const { alpha, sub } = await checkoutWithSubmodule();
+    Object.assign(git, { onThread: "answers", offThread });
+    const learning = learnDeclaredSubmodules(alpha);
+    // The listing's Git answers on the thread first: the learning's 200 ms limit is a timer this thread runs only after it.
+    const owners = new CheckoutOwners();
+    expect(owners.declaredSubmodules(alpha)).toEqual([sub]);
+    expect(await learning).toEqual(offThread === "answers" ? [sub] : []);
+
+    expect(owners.declaredSubmodules(alpha)).toEqual([sub]);
+    expect([git.blocking, git.asks]).toEqual([2, 1]);
+  });
+
+  it("keeps the checkout past its limit where a placement's learning ran past it, so the listing after answers at once", async () => {
+    const { alpha } = await checkoutWithSubmodule();
+    Object.assign(git, { onThread: "pastLimit", offThread: "pastLimit" });
+    expect(await learnDeclaredSubmodules(alpha)).toEqual([]);
+    expect(new CheckoutOwners().declaredSubmodules(alpha)).toEqual([]);
+    expect([git.blocking, git.asks]).toEqual([0, 2]);
+    await submodulesAskedAgain(alpha);
+  });
+
   it("stays kept when an ask runs past its limit again with no fact of the checkout read", async () => {
     const { alpha } = await checkoutWithSubmodule();
     Object.assign(git, { onThread: "pastLimit", offThread: "pastLimit" });
