@@ -157,15 +157,17 @@ impl FileLocal {
     /// placeless, and which read none of their own readers. Found to a fixed point: a relation no file-local rule reads
     /// once the others are staged is not staged.
     ///
-    /// `requests`: the program's requests and the relations their answers make (`corpus::world::answers`): asked inside
-    /// the program's fixpoint, so no relation a request is derived from is staged. One derived from an answer is, the
-    /// stage asking the requests below it itself (decision 0727).
-    pub fn staging(v: &std::sync::Arc<Version>, requests: &BTreeSet<String>) -> Result<Staging, String> {
+    /// `requests`: the program's requests and the relations their answers make (`corpus::world::answers`): asked and
+    /// answered inside the program's fixpoint (a guest's `parsed`, a document a load brings), so none is read by a
+    /// stage, nor what they read. `constants`: the relations the run folds before the program (`constants::fold`, decision
+    /// 0094 §6), a stage's own run among them: an answer read only through one of those (the Python version, by
+    /// `pyvenv.cfg`; the stubs' directories) is a fact by then, and what reads it may be staged (decision 0727).
+    pub fn staging(v: &std::sync::Arc<Version>, requests: &BTreeSet<String>, constants: &BTreeSet<String>) -> Result<Staging, String> {
         let d = crate::code_rule_dsl::logic::program_image::manager::analysis::<FieldsData>(v)?;
         let f = Fields::over(v, &d);
         let p = Program::of(v, f);
         let whole = p.split(None, None);
-        let (able, not_able) = p.stageable(&whole, requests);
+        let (able, not_able) = p.stageable(&whole, requests, constants);
         let comp = p.components();
         // A relation of names the split found cross-file, and why no stage takes it: its cause, for the report.
         let mut refused: BTreeMap<String, String> = not_able.into_iter().filter(|(r, _)| !whole.local.contains(r)).collect();
@@ -520,7 +522,7 @@ impl<'v> Program<'v> {
     /// node, document key or path, nor a nullable one, and no covered view), of no node column, neither an output, native, a lattice, a test, nor moved or declared
     /// cross-file, whose rules and the rules below them read no position. A relation whose strongly connected
     /// component holds one not in `taken` reads one of its own readers: refused, a cycle.
-    fn stageable(&self, whole: &FileLocal, requests: &BTreeSet<String>) -> (BTreeSet<u32>, BTreeMap<String, String>) {
+    fn stageable(&self, whole: &FileLocal, requests: &BTreeSet<String>, constants: &BTreeSet<String>) -> (BTreeSet<u32>, BTreeMap<String, String>) {
         let rels = &self.rels;
         let n = rels.n;
         // Whether a relation's rules, or those below them, read a position: to their fixed point.
@@ -538,8 +540,9 @@ impl<'v> Program<'v> {
             }
         }
         let moved = |rel: &str| self.f.qualified(rel, super::CROSS_FILE) || self.f.qualified(rel, super::READ_LOCATED) || self.f.qualified(rel, super::MOVED_CROSS_FILE);
-        // A request's cone (decision 0065 §2a) is the program's fixpoint's own: a relation a request is derived from is
-        // not staged. One derived from an answer is (below).
+        // A request's cone and what a load answers (decision 0065 §2a) are the program's fixpoint's own: the documents a
+        // load brings are read there, after any stage ran. A relation a request is derived from, or one derived from an
+        // answer other than through a folded constant, is not staged.
         let below = |from: Vec<u32>| -> Vec<bool> {
             let mut seen = vec![false; n];
             let mut todo = from;
@@ -585,9 +588,20 @@ impl<'v> Program<'v> {
                 }
             }
         }
-        // A relation derived from what a request answers (a module's name, by the files its package holds; the Python
-        // version, by `pyvenv.cfg`) is staged with the requests below it: the stage is a phase, which asks them itself
-        // (decision 0727; 0065 §2a kept them the program's, and every Python symbol with them).
+        // A folded constant is a fact before the program runs, whatever answers it read: what reads it is not answered.
+        let mut answered: Vec<bool> = (0..n).map(|r| requests.contains(self.name(r as u32)) || self.f.produced(self.name(r as u32))).collect();
+        loop {
+            let mut changed = false;
+            for r in 0..n {
+                if !answered[r] && rels.is_derived(r as u32) && !constants.contains(self.name(r as u32)) && rels.rules[r].iter().any(|&k| self.rules[k].reads().any(|a| answered[a.rel().0 as usize])) {
+                    answered[r] = true;
+                    changed = true;
+                }
+            }
+            if !changed {
+                break;
+            }
+        }
         let mut able = BTreeSet::new();
         let mut why = BTreeMap::new();
         for r in 0..n as u32 {
@@ -616,6 +630,8 @@ impl<'v> Program<'v> {
                 Some("the on-request rewrite's (decision 0174)")
             } else if requested[i] {
                 Some("a request is derived from it (decision 0065 §2a)")
+            } else if answered[i] {
+                Some("it is derived from what a load answers (decision 0065 §2a)")
             } else if named.contains(rel) {
                 Some("a rule names it as a value")
             } else if branded(rel) {
