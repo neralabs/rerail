@@ -22,6 +22,7 @@
 
 .decl py_names__reads_at(p: symbol, m: symbol) by_path 1
 .decl py_names__exports(m: symbol, x: symbol, q: symbol) keyed
+.decl py_names__exported_name(m: symbol, x: symbol) keyed
 .decl py_names__class(m: symbol, c: symbol) keyed
 .decl py_names__defined(m: symbol, q: symbol) keyed
 .decl py_names__public(m: symbol, x: symbol) keyed
@@ -44,7 +45,11 @@ export_at(n, q0, q) :- qn(n, q0), split_dot(q0, m, x), docof(n, d), doc(d, p, _)
     py_names__exports(m, x, q).
 // sym_of (python/scopes) rule 1: through an import (qn), then re-exports; q0 itself where nothing re-exports it.
 sym_of(n, q) :- export_at(n, _, q).
-sym_of(n, q0) :- qn(n, q0), !export_at(n, q0, _).
+sym_of(n, q0) :- qn(n, q0), !qn_exported(n).
+// qn_exported(n): n's qualified name is a name its module exports, resolved through `export_at` instead.
+.decl qn_exported(n: node)
+qn_exported(n) :- qn(n, q0), split_dot(q0, m, x), docof(n, d), doc(d, p, _), py_names__reads_at(p, m),
+    py_names__exported_name(m, x).
 // Rule 3: a def or class of the run read as an attribute of its class, by its qualname. A class's members are
 // defined in its own module, which its file reads.
 sym_of(n, q) :- attr_of(n, o, a), sym_of(o, c), docof(n, d), doc(d, p, _), py_names__reads_at(p, m),

@@ -54,6 +54,7 @@
 .decl py_names__ancestor(m: symbol, q: symbol, b: symbol) keyed
 .decl py_names__member_method(m: symbol, q: symbol, x: symbol) keyed
 .decl py_names__member_ref(m: symbol, q: symbol, x: symbol, s: symbol) keyed
+.decl py_names__member_call(m: symbol, q: symbol, x: symbol, f: symbol) keyed
 // dj_run(q): q is a class of the run. dj_anc(q, b): b is among class q's bases, at any depth. dj_method(q, x): class
 // q's own body defines method x.
 .decl dj_run(q: symbol)
@@ -125,9 +126,16 @@ dj_meta_from(c, b) :- py_names__bases(_, c, b), dj_meta_q(c, mt), py_names__base
 dj_meta_from(c, a) :- dj_meta_from(c, b), dj_meta_from(b, a).
 .decl dj_has_meta(q: symbol)
 dj_has_meta(q) :- dj_meta_q(q, _).
-// dj_model_q(q): q is a model by its line: a known model base itself, or one among its ancestors.
+// Model evidence agrees with the consumer library: ancestry or an own field, excluding query expressions.
 .decl dj_model_q(q: symbol)
+dj_model_q(q) :- dj_run(q), dj_model_base(q).
 dj_model_q(q) :- dj_run(q), dj_anc(q, b), dj_model_base(b).
+dj_model_q(q) :- py_names__member_call(_, q, x, f), x != "output_field", split_dot(f, fm, t),
+    dj_field_module(fm), (suffix("Field", t) ; dj_relation_class(t)), !dj_expression_q(q).
+.decl dj_expression_q(q: symbol)
+dj_expression_q(q) :- dj_run(q), dj_anc(q, b), (prefix("django.db.models.expressions.", b) ;
+    prefix("django.db.models.functions.", b) ; prefix("django.db.models.aggregates.", b) ;
+    prefix("django.db.models.lookups.", b) ; dj_expression_base(b)).
 // dj_opts_from(q, s): class q's Meta options include class s's own Meta's: q's own, an abstract base's q takes
 // (dj_meta_from), and a concrete model base's, at any depth (multi-table inheritance or a proxy: that table's
 // constraints hold for q's rows too).
@@ -244,7 +252,7 @@ receiver_fn(m, fq, q) :- dj_rcv_fn(k, fq), dj_rcv_sender(k, q), py_names__define
 // A task's .delay() that already waits for the commit (python/django's dj_task_waits_for_commit), and a form's
 // clean_<x> called by an ancestor (django-practice-clean-field-returns-value). Each file's rules turn its own classes,
 // task decorators and apps into symbols; the phase joins them by symbol, a class's ancestors by py_names' ancestor. A name is read
-// as the file binds it or, imported, by its qualified name (`sym_of ; qn`), as dj_signal reads one.
+// through py_names' exports when imported through a workspace re-export.
 // dj_own_defer(o, x): class o's own method x, delay or apply_async, calls transaction.on_commit.
 .decl dj_own_defer(o: symbol, x: symbol)
 dj_own_defer(o, x) :- class_def(c, o), kind(h, "function_definition"), nearest(h, c, scope), def_name(h, x),
@@ -258,7 +266,7 @@ dj_defer_q(q) :- dj_run(q), (x = "delay" ; x = "apply_async"), !dj_method(q, x),
 // dj_task_base_here(f, b): def f's decorator is a call passing `base=` the class b names (`@shared_task(base=X)`).
 .decl dj_task_base_here(f: symbol, b: symbol)
 dj_task_base_here(fq, bq) :- kind(g, "function_definition"), qualname(g, fq), decorator(g, e), kind(e, "call"),
-    call_arg(e, _, "base", bv), (sym_of(bv, bq) ; qn(bv, bq)).
+    call_arg(e, _, "base", bv), dj_resolved_name(bv, bq).
 .decl deferred_task(m: symbol, f: symbol)
 deferred_task(m, fq) :- py_names__defined(m, fq), dj_task_base_here(fq, bq), dj_defer_q(bq).
 // dj_task_here(f): def f is decorated as a task.
@@ -272,14 +280,14 @@ dj_task_deco(e) :- kind(e, "call"), field(e, "function", f), dj_task_deco(f).
 task_def(m, fq) :- py_names__defined(m, fq), dj_task_here(fq).
 // dj_app_cls_here(b): a `celery.Celery(..., task_cls=X)` call, X naming class b.
 .decl dj_app_cls_here(b: symbol)
-dj_app_cls_here(bq) :- kind(k, "call"), field(k, "function", f), (sym_of(f, c) ; qn(f, c)), c = "celery.Celery",
-    call_arg(k, _, "task_cls", v), (sym_of(v, bq) ; qn(v, bq)).
+dj_app_cls_here(bq) :- kind(k, "call"), field(k, "function", f), dj_resolved_name(f, "celery.Celery"),
+    call_arg(k, _, "task_cls", v), dj_resolved_name(v, bq).
 .decl app_defers(m: symbol)
 app_defers(m) :- py_names__reads_at(_, m), dj_app_cls_here(bq), dj_defer_q(bq).
 // dj_own_view_model(o, s): class o's own body says `model = S` or `queryset = S.objects…`.
 .decl dj_own_view_model(o: symbol, s: symbol)
 dj_own_view_model(o, s) :- class_asg(o, x, r), (x = "model" ; x = "queryset"), unparen(r, e),
-    (w = e ; dj_qs_root(e, w)), (sym_of(w, s) ; qn(w, s)).
+    (w = e ; dj_qs_root(e, w)), dj_resolved_name(w, s).
 .decl view_model(m: symbol, q: symbol, s: symbol)
 view_model(m, q, s) :- py_names__class(m, q), dj_own_view_model(q, s).
 view_model(m, q, s) :- py_names__class(m, q), dj_anc(q, o), dj_own_view_model(o, s).
@@ -289,3 +297,17 @@ dj_own_clean_call(o, x) :- class_def(a, o), kind(k, "call"), field(k, "function"
     text(s, "self"), nearest(k, a, "class_definition").
 .decl anc_clean_call(m: symbol, q: symbol, x: symbol)
 anc_clean_call(m, q, x) :- py_names__class(m, q), dj_anc(q, o), dj_own_clean_call(o, x).
+
+// Resolve only the names these declarations ask for, keeping the node in its own file while joining the
+// phase's symbol-only exports. An exported name with no resolved target must not fall back to its barrel name.
+.decl dj_resolved_name(n: node, q: symbol)
+dj_resolved_name(n, q) :- dj_name_request(n), sym_of(n, q).
+dj_resolved_name(n, q) :- dj_name_request(n), qn(n, raw), split_dot(raw, m, x), py_names__exports(m, x, q).
+dj_resolved_name(n, raw) :- dj_name_request(n), qn(n, raw), !dj_name_exported(n).
+.decl dj_name_exported(n: node)
+dj_name_exported(n) :- dj_name_request(n), qn(n, raw), split_dot(raw, m, x), py_names__exported_name(m, x).
+.decl dj_name_request(n: node)
+dj_name_request(n) :- kind(g, "function_definition"), decorator(g, e), kind(e, "call"), call_arg(e, _, "base", n).
+dj_name_request(f) :- kind(k, "call"), field(k, "function", f).
+dj_name_request(n) :- kind(k, "call"), call_arg(k, _, "task_cls", n).
+dj_name_request(w) :- class_asg(_, x, r), (x = "model" ; x = "queryset"), unparen(r, e), (w = e ; dj_qs_root(e, w)).

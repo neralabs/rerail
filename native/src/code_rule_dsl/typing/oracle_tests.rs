@@ -1303,9 +1303,6 @@ at(p, s, \"finding\") :- LEG_083_TYPED(f), node(d, f, _, s, _), doc(d, p, _).
     let _ = std::fs::remove_dir_all(&rule_dir);
 }
 
-/// Each call's callee class, where calling a class: Jedi's `goto` names the class, the program its `__init__`. The
-/// spans are every definition's, not the targets' only: a row about a definition is then not a function of its
-/// callers, which a run memoising per import component (decision 0076) needs.
 /// The spans a run's outputs are scored against Jedi's by, over typing program `name`: `calls_p3`'s rules are
 /// python/points-to's, whose own relations are named `pt_…`.
 fn jedi_spans(name: &str) -> String {
@@ -1329,6 +1326,9 @@ oracle_jedi_kind(\"call\"). oracle_jedi_kind(\"function_definition\"). oracle_je
 .output oracle_jedi_cls, oracle_jedi_at, oracle_jedi_path
 ";
 
+/// Each call's callee class, where calling a class: Jedi's `goto` names the class, the program its `__init__`. The
+/// spans are every definition's, not the targets' only: a row about a definition is then not a function of its
+/// callers, which a run memoising per import component (decision 0076) needs.
 const JEDI_SPANS: &str = "
 .decl oracle_jedi_cls(c: node, k: node)
 oracle_jedi_cls(c, k) :- callee(c, e), pv(e, \"cls\", k).

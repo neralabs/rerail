@@ -168,15 +168,20 @@ sfu_call_at(gq, ct, gx, p, l) :- call_target(c, _), owner(c, g), pt_tm(g, gq), p
 sfu_call_covered(gq, ct) :- sfu_call_via(gq, ct, s), sfu_atomic(s).
 .decl sfu_bare(g: symbol, c: symbol, f: symbol)
 sfu_bare(gq, ct, fq) :- sfu_call_cand(gq, ct, fq), !sfu_call_covered(gq, ct).
-// sfu_mod_call(f, l): a call at module level, outside tests, at line l reaches f.
-.decl sfu_mod_call(f: symbol, l: number)
-sfu_mod_call(fq, l) :- call_target(c, fq), !owner(c, _), docof(c, d), !dj_test_doc(d), line(c, l).
+// sfu_mod_call(f, p, l): a call at module level, outside tests, at line l of path p reaches f. sfu_mod_first(f, p, l):
+// the first such call of path p by line, compared in its own file (decision 0649).
+.decl sfu_mod_call(f: symbol, p: symbol, l: number)
+sfu_mod_call(fq, p, l) :- call_target(c, fq), !owner(c, _), docof(c, d), !dj_test_doc(d), doc(d, p, _), line(c, l).
+.decl sfu_mod_first(f: symbol, p: symbol, l: number)
+sfu_mod_first(fq, p, l) :- sfu_mod_call(fq, p, l), !sfu_mod_later(fq, p, l).
+.decl sfu_mod_later(f: symbol, p: symbol, l: number)
+sfu_mod_later(fq, p, l) :- sfu_mod_call(fq, p, l), sfu_mod_call(fq, p, m), m < l.
 // sfu_exposed(f): def f may run with no transaction open: an entry point, or called bare from a def that may, or from
 // module level.
 .decl sfu_exposed(f: symbol)
 sfu_exposed(fq) :- sfu_entry(fq).
 sfu_exposed(fq) :- sfu_up(fq), sfu_bare(gq, _, fq), sfu_exposed(gq).
-sfu_exposed(fq) :- sfu_up(fq), sfu_mod_call(fq, _).
+sfu_exposed(fq) :- sfu_up(fq), sfu_mod_call(fq, _, _).
 // sfu_entry(f): no code outside tests calls f, by a known or an unknown target, so a framework (a URL route, a task
 // queue, a command, a signal) does; a view is in a transaction when the project sets ATOMIC_REQUESTS. Test callers
 // do not count: they run in TestCase's transaction, and a task a test calls directly is still an entry point. f has
@@ -242,17 +247,30 @@ sfu_atomic_view(fq) :- dj_atomic_requests(), kind(f, "function_definition"), par
 sfu_atomic_view(fq) :- dj_atomic_requests(), dj_view_class(k), nearest(f, k, scope), kind(f, "function_definition"),
     pt_tm(f, fq).
 
-// sfu_why(f, why): how f runs outside a transaction: an entry point, or its first bare call by line (a module-level
-// one included, which names no caller).
+// sfu_why(f, why): how f runs outside a transaction: an entry point; else a bare call from a def that may run with no
+// transaction open, the least by caller and call (lines are compared only within a file, decision 0649); else a call
+// at module level, its file's first by line, of the least path.
 .decl sfu_why(f: symbol, why: symbol)
 sfu_why(fq, "no code in the project calls it, so it is an entry point (a view, task, command or receiver) and nothing opens a transaction around it") :-
     sfu_entry(fq).
 sfu_why(fq, cat("`", cat(g, cat("` calls it outside a transaction at ", cat(p, cat(":", to_string(l))))))) :-
-    sfu_exposed(fq), !sfu_entry(fq), l = min m : { sfu_bare_line(fq, m) }, sfu_bare(gq, ct, fq), sfu_exposed(gq),
-    sfu_call_at(gq, ct, g, p, l).
-.decl sfu_bare_line(f: symbol, l: number)
-sfu_bare_line(fq, l) :- sfu_bare(gq, ct, fq), sfu_exposed(gq), sfu_call_at(gq, ct, _, _, l).
-sfu_bare_line(fq, l) :- sfu_up(fq), sfu_mod_call(fq, l).
+    sfu_exposed(fq), !sfu_entry(fq), sfu_first_bare(fq, gq, ct), sfu_call_at(gq, ct, g, p, l).
+sfu_why(fq, cat("a call at module level reaches it, at ", cat(p, cat(":", to_string(l))))) :-
+    sfu_exposed(fq), !sfu_entry(fq), !sfu_bare_exposed(fq, _, _), sfu_first_mod(fq, p), sfu_mod_first(fq, p, l).
+// sfu_bare_exposed(f, g, c): call c, in def g, reaches f bare, and g may run with no transaction open.
+// sfu_first_bare(f, g, c): the least of those by g, then by c.
+.decl sfu_bare_exposed(f: symbol, g: symbol, c: symbol)
+sfu_bare_exposed(fq, gq, ct) :- sfu_bare(gq, ct, fq), sfu_exposed(gq).
+.decl sfu_first_bare(f: symbol, g: symbol, c: symbol)
+sfu_first_bare(fq, gq, ct) :- sfu_bare_exposed(fq, gq, ct), !sfu_later_bare(fq, gq, ct).
+.decl sfu_later_bare(f: symbol, g: symbol, c: symbol)
+sfu_later_bare(fq, gq, ct) :- sfu_bare_exposed(fq, gq, ct), sfu_bare_exposed(fq, hq, _), hq < gq.
+sfu_later_bare(fq, gq, ct) :- sfu_bare_exposed(fq, gq, ct), sfu_bare_exposed(fq, gq, dt), dt < ct.
+// sfu_first_mod(f, p): the least path of a module-level call reaching f.
+.decl sfu_first_mod(f: symbol, p: symbol)
+sfu_first_mod(fq, p) :- sfu_mod_first(fq, p, _), !sfu_later_mod(fq, p).
+.decl sfu_later_mod(f: symbol, p: symbol)
+sfu_later_mod(fq, p) :- sfu_mod_first(fq, p, _), sfu_mod_first(fq, q, _), q < p.
 
 // The cases, `cases/django-practice-select-for-update-outside-atomic/`, read as one repository: each line ending in `#
 // caught` is reported, and no other line.

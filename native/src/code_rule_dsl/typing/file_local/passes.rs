@@ -4,10 +4,10 @@
 use super::FileLocal;
 use crate::code_rule_dsl::logic::plan::fields::{Fields, FieldsData};
 use crate::code_rule_dsl::logic::program_image::Builder;
-use crate::code_rule_dsl::logic::program_image::build::T;
+use crate::code_rule_dsl::logic::program_image::build::{Rewrite, T};
 use crate::code_rule_dsl::logic::program_image::manager::{Cx, ProgramPass, ProgramW};
 use crate::code_rule_dsl::logic::plan::body;
-use crate::code_rule_dsl::logic::program_image::{Lit as L, LitRef, RuleRef, Slot, TermRef, Version};
+use crate::code_rule_dsl::logic::program_image::{AtomRef, Lit as L, LitRef, RuleRef, Slot, TermRef, Version};
 use std::collections::{BTreeSet, HashMap, HashSet};
 
 mod factorize;
@@ -170,7 +170,8 @@ impl ProgramPass for Locate {
             let key = split.paths.get(rel.as_str()).and_then(|c| c.first().copied()).filter(|_| read_locally && !f.lattice(rel));
             // A relay made in an earlier round (`r_at…(d, …) :- r(…), doc(…)`) is not made again: a cross-file rule that
             // reads the target now (a reader a later round's move took to the cross-file part, `MoveCrossFile`) reads it.
-            let earlier = rules.iter().find(|r| head(r).starts_with(&format!("{rel}_at")) && reads(r).contains(rel.as_str()) && reads(r).contains("doc"));
+            let relay_of = |name: &str| name.strip_prefix(rel.as_str()).and_then(|s| s.strip_prefix("_at")).is_some_and(|s| s.bytes().all(|c| c == b'_'));
+            let earlier = rules.iter().find(|r| relay_of(head(r)) && reads(r).contains(rel.as_str()) && reads(r).contains("doc"));
             if let (Some(_), Some(r)) = (key, earlier) {
                 relayed.insert(rel.clone(), head(r).to_owned());
                 rewired = true;
@@ -267,20 +268,8 @@ impl ProgramPass for Locate {
         for item in items {
             match item {
                 Item::Keep(r) if !local.contains(head(&r)) && r.body().filter_map(|l| l.atom()).any(|a| relayed.contains_key(v.rel_name(a.rel()))) => {
-                    // A cross-file rule reading a relayed target reads its located form.
-                    let args: Vec<T<'_>> = r.head().args().map(|t| t_of(&input, r, t)).collect();
-                    let mut rb = b.rule().source(r.id()).head(head(&r), &args);
-                    for l in r.body() {
-                        rb = match l.view() {
-                            L::Atom(a) if relayed.contains_key(v.rel_name(a.rel())) => {
-                                let mut args = vec![T::Wild];
-                                args.extend(a.args().map(|t| t_of(&input, r, t)));
-                                rb.atom_with(relayed[v.rel_name(a.rel())].as_str(), &args, a.neg(), a.gated())
-                            }
-                            _ => rb.lit(&input, r, l),
-                        };
-                    }
-                    rb.finish()?;
+                    // A cross-file rule reading a relayed target reads its located form, in an aggregate too.
+                    b.rewrite(&input, r, &mut ReadLocated { v, relayed: &relayed }).finish()?;
                 }
                 Item::Keep(r) => {
                     b.keep(&input, r);
@@ -440,6 +429,23 @@ fn write_onto(b: &mut Builder<'_>, input: &Version, round: &Round<'_>, onto: boo
         b.add_qualifiers(&words);
     }
     Ok(())
+}
+
+/// A cross-file rule's reads of relayed targets, as reads of their located forms (`r_at(_, …)`), in an aggregate too.
+struct ReadLocated<'a> {
+    v: &'a Version,
+    relayed: &'a HashMap<String, String>,
+}
+
+impl Rewrite for ReadLocated<'_> {
+    fn atom_as(&mut self, a: AtomRef<'_>) -> Option<(String, bool, bool)> {
+        self.relayed.get(self.v.rel_name(a.rel())).map(|at| (at.clone(), a.neg(), a.gated()))
+    }
+    fn prefix(&mut self, a: AtomRef<'_>, out: &mut Vec<T<'static>>) {
+        if self.relayed.contains_key(self.v.rel_name(a.rel())) {
+            out.push(T::Wild);
+        }
+    }
 }
 
 /// A variable of `rule` by its name (the passes ported from the tree read variables as it does).

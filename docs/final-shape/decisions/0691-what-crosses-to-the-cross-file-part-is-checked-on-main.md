@@ -38,16 +38,26 @@ on main, without a merge, so that main's rules are fixed and no new rule breaks 
    - `locate`'s moves also carry `MOVED_CROSS_FILE`, so a move is told apart from a declaration.
    - The version split records its undeclared crossings (`FileLocal::crossings`).
    - `node_crossings` names the relations a node enters, each under the crossing it follows (the split's causes).
-   - `position_reads` finds 0649's reads.
+   - `position_reads` finds 0649's reads: of a position relation, and (after the review, `position_columns`) of a
+     column a per-file relation, an export or a pushed join's `fl…` helper fills from one, inferred to a fixpoint
+     over the whole program as node columns are. A finding's own place (an output and the helpers made of one) is
+     not one. Nor is a position carried only to outputs, as a finding naming another file's line needs (the
+     explainer's recipe 5, `dj_names`' hooks "keyed by place"): a rule that reads each position once and uses it for
+     nothing but its head (`carries`: no comparison, join, negation or aggregate over it), into a relation each of
+     whose positions' readers places a finding or carries them on to one (`place_only`, the greatest such set; a
+     position nothing reads on is none).
 2. **Reports by default, refusals on request.** Preparation checks each split it makes. `RERAIL_STRICT_CROSSINGS`,
-   `RERAIL_STRICT_NODES` and `RERAIL_STRICT_POSITIONS` refuse a program. `RERAIL_SHOW_CROSSINGS` prints what was
-   found, and `RERAIL_CROSSINGS=FILE` and `RERAIL_NODE_CROSSINGS=FILE` append the names. A prepared program read back
-   from the store keeps no crossings: it was checked when it was prepared.
+   `RERAIL_STRICT_NODES` and `RERAIL_STRICT_POSITIONS` refuse a program. `RERAIL_SHOW_CROSSINGS` prints the
+   crossings found and `RERAIL_SHOW_POSITIONS` the cross part's position reads; `RERAIL_CROSSINGS=FILE`,
+   `RERAIL_NODE_CROSSINGS=FILE` and `RERAIL_POSITIONS=FILE` append the names. A prepared program read back from the
+   store keeps no crossings: it was checked when it was prepared. The three strict switches are part of the prepared
+   key (`PREPARING`), so a strict run never reuses a program prepared without them.
 3. **Lists that only shrink.** `tools::pack_split_tests` runs every pack and the data layer's policies as
    `run-policies` does, over a file of each language with the `.scope` paths dropped, in a store of the test's own.
-   It compares what it finds with three lists in `native/src/code_rule_dsl/`:
+   It compares what it finds with four lists in `native/src/code_rule_dsl/`:
    - `split_crossings.txt` (0652);
    - `node_crossings.txt` (0677);
+   - `position_reads.txt` (0649, added after the review: the data layer's 21, batched and alone);
    - `policies_not_run.txt`, the policies that fail on the test's files for an error of their own, whose programs go
      unchecked.
 
@@ -178,7 +188,9 @@ Found on the way and fixed:
    - Added, each a consequence named here, not a new rule:
      - The data layer's `er_edge` and `er_skip` (eager-resolve). The paths fix moves them cross-file, where before
        their rows were relayed by a built name and dropped. The branch's matching rewrite of `eager-resolve.rerail`
-       is data-layer text, not ported.
+       was not ported here; 458216ef87 (review F2) rewrote it on main instead: the last line kept by symbol
+       (`er_last_line`) and the calls naming a def keyed by each file's path (`er_calls`), so `er_edge` and
+       `er_skip` no longer cross.
      - React's `sandbox_token`, under `sandbox_value`'s `match_all` table (`rr_ctx`/`rr_mall`, a lowering's value
        view, not covered here). It was hidden while `iframe` crossed under `jsx_source_runtime`.
    - Not ported, as not split work: the branch's run options decided before the run (9dccfd0b30, on constant-folding
@@ -437,7 +449,11 @@ Found on the way and fixed:
      rewritten); every pack's split test; the rule files' own tests and `check_rr`; the SQL executor's tests; the
      executors' coverage; Django's 27 rule tests.
    - Lists: split 28 → 27, node 166 → 157 (Django 1 → 0 in both, JavaScript 1 → 0, python-main 7 → 0). Every entry
-     left is the data layer's.
+     left is the data layer's. After this PR's review: split 27 → 23 and node 157 → 149. 3b468e43f6 (0710)
+     took `csb_owner` out of the node list; 458216ef87 took out `er_edge` and `er_skip` (split) and `er_dirty`,
+     `er_edge` and `er_phase` (node); e9723c2076 removed their stale `data-layer:alone` copies. The review's
+     splitter fixes then take out the batched data layer's `violation` (split 23 → 22): a reader whose head an
+     anchored reader places in one document now ties a covered view's documents through that head.
 
 18. **A phase runs only for what an output reads** (the branch's bc43f5c906 and 0702). Fix 12 made points-to the
     phase `points_to`, and `python/calls.rerail` includes it. So every policy that includes `calls.rerail` for one
@@ -474,6 +490,31 @@ of about 16 ms on a cold store, which keeps it. Phase 1 needs those constants: `
 `py_site`, `py_stub_dir` and `py_version`. The complexity pack's remaining difference with the merge base (31.5 G
 against 29.5 G over 762 files) is that run, plus small per-program costs spread over the run.
 
+## Fixes after the review
+
+- **The split.** A reader covers a located view only where it ties the view's location columns to one document,
+  through its own reads or through a head its own readers place (`anchors`); a name built from a path (`cat`,
+  `@replace_all`) places no document; a reader leaving the file-local set asks its covered views again. Tests: the
+  three reproduced cases in `typing::file_local::tests`.
+- **Locate.** A cross-file aggregate over a relayed target reads its located form, as a plain read does; an earlier
+  round's relay is found by its exact name (`r_at`, `r_at_`, …), not by a prefix.
+- **Positions** (0649): read through a per-file relation or a pushed join, and listed (`position_reads.txt`), above.
+  Django's 7 carry another file's line to a finding's message only, and are no reads; the one that compared lines
+  across files is fixed in the rule: `select-for-update-outside-atomic` names a bare call by caller and call, not the
+  least line over every file (whose call it then looked up by that line alone), and a module-level call by its file's
+  first line, compared in that file. The data layer's `la_find` and `pos_ref_at` leave the list the same way.
+- **Guests.** A guest's field constant, which hiding qualifies by its grammar (`javascript:function`), narrows the
+  texts made as a plain field does, so `field(c, "function", f), text(f, x)` over a Vue `<script>` has its rows; and
+  a cached tape kept for the matchers is parsed again where its dialect embeds others, so its guests' comments
+  (a `<script>`'s `eslint-disable`) suppress on a warm store too.
+- **TypeScript modules.** Files of one stem are modules of their own: the one TypeScript resolves first (`.ts`
+  before `.js`, `.mjs` before `.cjs`) is the stem, each other its whole path, and `./a` resolves to the first. The
+  phase names each file's module from the run's files (`module_at`), and a file reads its own by its path, so its
+  memo entry stays its own (a lookup of the tree's `file` setting widened every reader's). A package is told by its
+  specifier (the phase's `package_at`), not by having no module of its name: a root-level `redis.js` no longer hides
+  `redis#createClient`. The phase's `module` export goes.
+- **Rules.** AIR301's handler class is a call's again; typed parameter properties compare the parameter's own type.
+
 ## Pages
 
 The pages written while this was worked out are in [0691/](0691/README.md): the survey of the two branches, main's
@@ -492,3 +533,6 @@ also holds the runtime of every pack against the merge base, at the end of the w
 - 0652's follow-up `same_document_ties` is not ported: it is a tie of `product_demand`'s reader demands, which main
   lacks, and SIM113, its case here, has not crossed since fix 3.
 - The data layer's entries (not in this pull request's scope, 2026-11-25).
+- Decision [0710](0710-no-language-in-the-split-or-the-repository-reader.md) replaces this record's lists of
+  settings relations by name (`SETTINGS_BY_PATH`, `SETTINGS_BY_FOLDER`) with placement declared on each `.decl`
+  (`setting`, `keyed`, `by_path`).

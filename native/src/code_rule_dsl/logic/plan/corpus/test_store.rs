@@ -258,13 +258,14 @@ pub(in crate::code_rule_dsl) fn carried(c: &mut crate::code_rule_dsl::logic::run
     c.part(&["SINKS"], crate::code_rule_dsl::logic::run_state::Shared(sinks(), hand_sinks));
 }
 
-/// The files a test's runs append their split's crossings to (`crossings_checked`, `nodes_checked`), in place of
-/// `RERAIL_CROSSINGS` and `RERAIL_NODE_CROSSINGS`: the environment is the process's, and the tests of one process
-/// (`cargo test`) run at once, each its own lists.
+/// The files a test's runs append their split's crossings to (`crossings_checked`, `nodes_checked`,
+/// `positions_checked`), in place of `RERAIL_CROSSINGS`, `RERAIL_NODE_CROSSINGS` and `RERAIL_POSITIONS`: the
+/// environment is the process's, and the tests of one process (`cargo test`) run at once, each its own lists.
 #[derive(Clone, Debug)]
 pub struct Sinks {
     pub crossings: PathBuf,
     pub nodes: PathBuf,
+    pub positions: PathBuf,
 }
 
 thread_local! {

@@ -161,7 +161,8 @@ fn_component(f, f) :- fn_expr(f), estree_parent(f, p), other_position(p, f), ret
     (!field(f, "name", _) ; field(f, "name", n), text(n, x), !match("_*[a-z].*", x)), ret_jsx(f).
 fn_component(f, f) :- fn_expr(f), estree_parent(f, p), kind(p, "assignment_expression"), field(p, "right", f),
     field(p, "left", l), kind(l, "member_expression"), ret_jsx_null(f), (!field(f, "name", _) ; field(f, "name", n),
-    text(n, x), !match("_*[a-z].*", x)), (text(l, "module.exports") ; field(l, "property", q), text(q, y), !match("_*[a-z].*", y)).
+    text(n, x), !match("_*[a-z].*", x)), (text(l, "module.exports") ; field(l, "property", q),
+    !kind(q, "private_property_identifier"), text(q, y), !match("_*[a-z].*", y)).
 // isFirstLetterCapitalized, written where a name is read as `!match("_*[a-z].*", x)`: leading underscores are skipped
 // and the next character must not change when upper-cased, so `_Foo`, `$x` and `__` count and `foo` does not (ASCII
 // letters only, here). A test of the name's text alone, as ESLint's is: a relation of the names that pass it, made from

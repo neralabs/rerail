@@ -8,8 +8,8 @@
 //! its output by the manager, which hands `maintain` the edit. The fixpoints, and the questions they ask of a rule,
 //! are the tree's, one for one.
 //!
-//! While the tree's split runs too (its passes are not yet on versions), a debug build checks the two agree
-//! (`file_local::programs_over`).
+//! The tree's split still runs where a pass reads the tree (`split_located`, `locate`); nothing here checks that the
+//! two agree.
 
 use super::{CHUNK_VALUES, Setting, document_column, option_input, path_key_column};
 use crate::code_rule_dsl::logic::plan::fields::{Fields, FieldsData};
@@ -382,7 +382,7 @@ impl<'v> Program<'v> {
                 .filter_map(|&r| {
                     let rules = &rels.rules[r as usize];
                     let placed: Vec<Bits> = rules.iter().map(|&k| forms.get(k).placed_classes(rels, &locs)).collect();
-                    let kept: Vec<usize> = locs[r as usize].iter().copied().filter(|&c| rules.iter().zip(&placed).all(|(&k, p)| forms.get(k).head_placed_built(self.v, self.rules[k], c, p))).collect();
+                    let kept: Vec<usize> = locs[r as usize].iter().copied().filter(|&c| rules.iter().zip(&placed).all(|(&k, p)| forms.get(k).head_placed(self.rules[k], c, p))).collect();
                     (kept != locs[r as usize]).then_some((r, kept))
                 })
                 .collect();
@@ -666,6 +666,13 @@ impl<'v> Program<'v> {
                 }
                 causes.entry(self.name(r).to_owned()).or_insert(why);
             }
+            if left {
+                // Anchoring can depend on a reader through several located views, not only a direct read.
+                // Reconsider those covers against the new local set before keeping any of their readers local.
+                for r in (0..n).filter(|&r| in_scope[r] && covered_now[r]) {
+                    next.extend(rels.rules[r].iter().copied());
+                }
+            }
             next.sort_unstable();
             next.dedup();
             dirty = Some(next);
@@ -875,7 +882,7 @@ impl<'v> Program<'v> {
             let Some(TermRef::Var(x)) = a.args().nth(col) else { return Err(format!("reader reads it at no variable: {}", self.v.show_rule(reader))) };
             let key = [Some(MapT::Var(qc[x.0 as usize]))];
             let placeless = |x: u32| hold.placeless[x as usize];
-            if rels.rules[hold.root as usize].iter().any(|&k| maps_at(self.v, self.rules[k], reader, None, &key, &[], &placeless, &columns, true)) {
+            if rels.rules[hold.root as usize].iter().any(|&k| maps_at(self.v, self.rules[k], reader, None, &key, &[], &[], &placeless, &columns, true)) {
                 continue;
             }
             let mut passed = reader.head().args().enumerate().filter(|(_, t)| matches!(t, TermRef::Var(y) if qc[y.0 as usize] == qc[x.0 as usize])).map(|(c, _)| c);
@@ -934,7 +941,7 @@ impl<'v> Program<'v> {
         let placed = self.placed_classes(r, reader, h, cross_reader, cx);
         for (at, l) in reader.body().enumerate() {
             match l.view() {
-                L::Atom(a) if a.rel().0 == r => self.read_covered(r, reader, at, a, &placed, cross_reader, own, cx)?,
+                L::Atom(a) if a.rel().0 == r => self.read_covered(r, reader, at, a, &placed, own, cx)?,
                 L::Agg { atom, .. } if atom.rel().0 == r => return Err("aggregated by a reader".into()),
                 _ => {}
             }
@@ -988,7 +995,7 @@ impl<'v> Program<'v> {
     /// …`). Their tests are of the head's values alone, so where one's row is over every file the other's is in the
     /// reader's chunk.
     #[allow(clippy::too_many_arguments)]
-    fn read_covered(&self, r: u32, reader: RuleRef<'v>, at: usize, a: crate::code_rule_dsl::logic::program_image::AtomRef<'_>, placed: &BTreeSet<u32>, cross_reader: bool, own: &[RuleRef<'v>], cx: &Cover<'_>) -> Result<(), String> {
+    fn read_covered(&self, r: u32, reader: RuleRef<'v>, at: usize, a: crate::code_rule_dsl::logic::program_image::AtomRef<'_>, placed: &BTreeSet<u32>, own: &[RuleRef<'v>], cx: &Cover<'_>) -> Result<(), String> {
         let qc = value_classes(reader);
         let columns = |x: u32| cx.columns(&self.rels, x);
         let placeless = |x: u32| cx.placeless[x as usize];
@@ -997,10 +1004,15 @@ impl<'v> Program<'v> {
         if !columns(r).iter().all(|&c| args.get(c).and_then(|t| t.var()).is_some_and(|s| placed.contains(&qc[s.0 as usize]))) {
             return Err(format!("reader leaves a location open: {}", self.v.show_rule(reader)));
         }
-        if cross_reader && !one_place(self.v, reader, r, &placeless, &columns, at_cols()) {
-            return Err(format!("cross-file reader places the view in two documents: {}", self.v.show_rule(reader)));
+        // An anchored file-local reader's head is placed in one document by its own readers (`anchors`): its location
+        // columns are tied together, as a read's are.
+        let h = reader.head().rel().0;
+        let anchored = cx.local_now[h as usize] && !cx.valueless[h as usize] && self.anchors(h, cx);
+        let tied: Vec<Slot> = if anchored { cx.locs[h as usize].iter().filter_map(|&c| reader.head().args().nth(c).and_then(|t| t.var())).collect() } else { Vec::new() };
+        if !one_place(self.v, reader, r, &placeless, &columns, &tied, at_cols()) {
+            return Err(format!("reader does not tie the view's documents: {}", self.v.show_rule(reader)));
         }
-        let found: Vec<bool> = own.iter().map(|&rule| maps(self.v, rule, reader, at, columns(r), &placeless, &columns)).collect();
+        let found: Vec<bool> = own.iter().map(|&rule| maps(self.v, rule, reader, at, columns(r), &tied, &placeless, &columns)).collect();
         let covered_by_found = |rule: &RuleRef<'v>| own.iter().zip(&found).any(|(other, ok)| *ok && same_rest(self.v, *rule, *other, &placeless));
         match own.iter().zip(&found).find(|(rule, ok)| !**ok && !covered_by_found(rule)) {
             Some((rule, _)) => Err(format!("rule {} not found in reader {}", self.v.show_rule(*rule), self.v.show_rule(reader))),
@@ -1043,7 +1055,7 @@ impl<'v> Program<'v> {
         let v = self.v;
         let mut strict: BTreeSet<String> = BTreeSet::new();
         for l in rule.body() {
-            if let L::Atom(a) | L::Agg { atom: a, .. } = l.view()
+            if let L::Atom(a) = l.view()
                 && !a.neg()
             {
                 let rel = v.rel_name(a.rel());
@@ -1262,11 +1274,14 @@ struct Anchoring<'a> {
 }
 
 /// Whether `reader`'s positive located reads, other than of `r`, place `vars` in one document: joined through their
-/// location columns, `a = b`, `@doc` and `nearest` (decision 0652, a cross-file reader of a covered view).
-fn one_place<'c>(v: &Version, reader: RuleRef<'_>, r: u32, placeless: &dyn Fn(u32) -> bool, columns: &dyn Fn(u32) -> &'c [usize], vars: impl Iterator<Item = Slot>) -> bool {
+/// location columns, `a = b`, `@doc`, `nearest` and `tied` (an anchored head's location variables, decision 0652).
+fn one_place<'c>(v: &Version, reader: RuleRef<'_>, r: u32, placeless: &dyn Fn(u32) -> bool, columns: &dyn Fn(u32) -> &'c [usize], tied: &[Slot], vars: impl Iterator<Item = Slot>) -> bool {
     let mut doc: Vec<u32> = (0..reader.var_count() as u32).collect();
     for (a, b) in super::var_equalities_in(v, reader) {
         join(&mut doc, a.0, b.0);
+    }
+    for w in tied.windows(2) {
+        join(&mut doc, w[0].0, w[1].0);
     }
     for l in reader.body() {
         match l.view() {
@@ -1361,11 +1376,12 @@ fn same_rest(v: &Version, a: RuleRef<'_>, b: RuleRef<'_>, placeless: &dyn Fn(u32
 /// the head fixes. The rule's other literals (comparisons, placeless reads, negated reads, which must be anchored)
 /// read no mapped variable but those the head fixes. A head argument the read leaves `_` fixes nothing. A class of
 /// the rule's variables may stand for several of the reader's terms: its head columns' arguments, equal in any row.
-fn maps<'c>(v: &Version, rule: RuleRef<'_>, reader: RuleRef<'_>, at: usize, anchors: &[usize], placeless: &dyn Fn(u32) -> bool, columns: &dyn Fn(u32) -> &'c [usize]) -> bool {
+#[allow(clippy::too_many_arguments)]
+fn maps<'c>(v: &Version, rule: RuleRef<'_>, reader: RuleRef<'_>, at: usize, anchors: &[usize], tied: &[Slot], placeless: &dyn Fn(u32) -> bool, columns: &dyn Fn(u32) -> &'c [usize]) -> bool {
     let qc = value_classes(reader);
     let Some(L::Atom(read)) = reader.body().nth(at).map(|l| l.view()) else { return false };
     let head: Vec<Option<MapT>> = read.args().map(|u| MapT::of(&qc, u)).collect();
-    maps_at(v, rule, reader, Some(at), &head, anchors, placeless, columns, false)
+    maps_at(v, rule, reader, Some(at), &head, anchors, tied, placeless, columns, false)
 }
 
 /// A term of a reader as `maps` binds a rule's variables to it: a class of its variables, or a constant.
@@ -1387,12 +1403,13 @@ impl MapT {
     }
 }
 
-/// `maps` with the head's arguments given (`head`), the reader's literal `at` a read of it where there is one. Where
+/// `maps` with the head's arguments given (`head`), the reader's literal `at` a read of it where there is one, and
+/// `tied` the reader's variables placed in one document by its anchored head. Where
 /// `exact`, `rule` is a keyed family's root's (`covers_keyed`): each of its literals is found in the reader as it is,
 /// every atom (negated, placeless) a reader's atom of its relation and sign, each comparison one of the reader's, since
 /// the rule's whole body must hold in the reader's rows, not only its reads.
 #[allow(clippy::too_many_arguments)]
-fn maps_at<'c>(v: &Version, rule: RuleRef<'_>, reader: RuleRef<'_>, at: Option<usize>, head: &[Option<MapT>], anchors: &[usize], placeless: &dyn Fn(u32) -> bool, columns: &dyn Fn(u32) -> &'c [usize], exact: bool) -> bool {
+fn maps_at<'c>(v: &Version, rule: RuleRef<'_>, reader: RuleRef<'_>, at: Option<usize>, head: &[Option<MapT>], anchors: &[usize], tied: &[Slot], placeless: &dyn Fn(u32) -> bool, columns: &dyn Fn(u32) -> &'c [usize], exact: bool) -> bool {
     let (rc, qc) = (value_classes(rule), value_classes(reader));
     let target = |t: TermRef<'_>| MapT::of(&qc, t);
     let Some(HeadMap { mut bind, anchor_vars, head_calls }) = head_map(rule, head, anchors, &rc, exact) else { return false };
@@ -1401,11 +1418,7 @@ fn maps_at<'c>(v: &Version, rule: RuleRef<'_>, reader: RuleRef<'_>, at: Option<u
     let anchored_roots: BTreeSet<u32> = anchor_vars.iter().map(|&v| find(&mut doc, v)).collect();
     let mut anchored = |a: AtomRef<'_>| located_vars(a, columns).into_iter().any(|v| anchored_roots.contains(&find(&mut doc, v)));
     let Some(body) = MapBody::of(rule, &rc, exact, placeless, &mut anchored) else { return false };
-    if !head_calls.iter().all(|&s| given[rc[s as usize] as usize]) {
-        return false;
-    }
-    // The rule's other literals read no mapped variable but those the head fixes.
-    if body.others.iter().flatten().any(|&s| body.in_mapped[rc[s as usize] as usize] && !given[rc[s as usize] as usize]) {
+    if !body.fixed_by_head(&head_calls, &given, &rc) {
         return false;
     }
     let targets: Vec<_> = reader
@@ -1424,8 +1437,38 @@ fn maps_at<'c>(v: &Version, rule: RuleRef<'_>, reader: RuleRef<'_>, at: Option<u
         })
         .collect();
     let m = Mapping { v, rc: &rc, target: &target };
-    let done = |bind: &mut Vec<Vec<MapT>>| body.cmps.iter().all(|&cmp| theirs.iter().any(|&other| m.same_cmp(cmp, other, bind)));
+    let done = |bind: &mut Vec<Vec<MapT>>| {
+        if !body.cmps.iter().all(|&cmp| theirs.iter().any(|&other| m.same_cmp(cmp, other, bind))) {
+            return false;
+        }
+        if exact || anchors.is_empty() {
+            return true;
+        }
+        // A mapped read must be in the anchored document, not merely present somewhere in a cross-file reader.
+        let Some(places) = mapped_places(&anchor_vars, &body.mapped, bind, &rc, columns) else { return false };
+        let Some(L::Atom(read)) = at.and_then(|at| reader.body().nth(at)).map(|l| l.view()) else { return false };
+        one_place(v, reader, read.rel().0, placeless, columns, tied, places.into_iter())
+    };
     m.go(0, &body.mapped, &targets, &mut bind, &mut 0, &done)
+}
+
+/// The reader's variables that the head's anchored variables `anchor_vars`, and the mapped reads' located variables,
+/// are bound to (`bind`, by value class `rc`): `None` where one is bound to nothing or to no variable, or where a
+/// mapped read leaves a location column unnamed.
+fn mapped_places<'c>(anchor_vars: &[u32], mapped: &[AtomRef<'_>], bind: &[Vec<MapT>], rc: &[u32], columns: &dyn Fn(u32) -> &'c [usize]) -> Option<Vec<Slot>> {
+    let mut places = Vec::new();
+    for s in anchor_vars.iter().copied().chain(mapped.iter().flat_map(|a| located_vars(*a, columns))) {
+        let terms = &bind[rc[s as usize] as usize];
+        if terms.is_empty() {
+            return None;
+        }
+        for term in terms {
+            let MapT::Var(slot) = term else { return None };
+            places.push(Slot(*slot));
+        }
+    }
+    let unnamed = mapped.iter().any(|a| columns(a.rel().0).iter().any(|&c| a.args().nth(c).and_then(|t| t.var()).is_none()));
+    (!unnamed).then_some(places)
 }
 
 type AtomRef<'r> = crate::code_rule_dsl::logic::program_image::AtomRef<'r>;
@@ -1510,6 +1553,12 @@ struct MapBody<'r> {
 }
 
 impl<'r> MapBody<'r> {
+    /// Whether the head fixes what the body needs: each variable a head call reads (`head_calls`) is given (`given`, by
+    /// value class `rc`), and the rule's other literals read no mapped variable but those the head fixes.
+    fn fixed_by_head(&self, head_calls: &[u32], given: &[bool], rc: &[u32]) -> bool {
+        let given_at = |s: u32| given[rc[s as usize] as usize];
+        head_calls.iter().all(|&s| given_at(s)) && !self.others.iter().flatten().any(|&s| self.in_mapped[rc[s as usize] as usize] && !given_at(s))
+    }
     /// `rule`'s body sorted; `None` where a literal cannot be mapped.
     fn of(rule: RuleRef<'r>, rc: &[u32], exact: bool, placeless: &dyn Fn(u32) -> bool, anchored: &mut dyn FnMut(AtomRef<'_>) -> bool) -> Option<Self> {
         let mut body = MapBody { mapped: Vec::new(), cmps: Vec::new(), in_mapped: vec![false; rule.var_count()], others: Vec::new() };
@@ -1561,7 +1610,7 @@ impl<'r> MapBody<'r> {
                 term_slots(l, &mut vs);
                 term_slots(r, &mut vs);
             }
-            L::Nearest { .. } => return true,
+            L::Nearest { .. } => return false,
             _ => return false,
         }
         self.others.push(vs);
@@ -1971,27 +2020,8 @@ struct Form {
     /// a column that places a document is a file's path (a location is a node or a number), so each names one
     /// document, the same for every atom that writes it (decision 0665).
     paths: u32,
-    /// A variable built from another (`x = f(y, …)`), by class: (x's, y's), where y leads the string x is built from
-    /// (`name_built`). It names y's document where y does (decision 0665): a module from its file's path, a symbol
-    /// from its module.
-    built: Vec<(u32, u32)>,
 }
 
-/// The functions a document's name is built through (decision 0665): a string the path leads (`cat`'s `concat`), which
-/// keeps the whole path, so two documents build two names. A pattern's group (`rx_group`, `match`'s capture) or a
-/// replacement (`@replace_all`) can build one name from two paths (`a/b.py` and `a.b.py` give `a.b`; every
-/// `__init__.py` has one stem), and a join by it is of every document building it: it names no document (review F2).
-const NAME_BUILDERS: [&str; 1] = ["concat"];
-
-/// The variable a term's string is built from, where it leads it: the term itself, or the first argument of a
-/// `NAME_BUILDERS` call, through each such call (`cat(cat(m, "."), q)`'s `m`).
-fn name_built(v: &Version, t: TermRef<'_>) -> Option<crate::code_rule_dsl::logic::program_image::Slot> {
-    match t {
-        TermRef::Var(s) => Some(s),
-        TermRef::Call(f, mut xs) if NAME_BUILDERS.contains(&v.text(f)) => xs.next().and_then(|x| name_built(v, x)),
-        _ => None,
-    }
-}
 
 impl Form {
     fn of(v: &Version, rule: RuleRef<'_>) -> Form {
@@ -2087,16 +2117,7 @@ impl Form {
         let binders = (n + tapes.len()) as u32;
         let paths = binders + lits.len() as u32;
         let ids = paths as usize + strings.len();
-        let built = rule
-            .body()
-            .filter_map(|l| match l.view() {
-                L::Cmp { l: TermRef::Var(x), op: CmpOp::Eq, r: r @ TermRef::Call(..) } | L::Cmp { l: r @ TermRef::Call(..), op: CmpOp::Eq, r: TermRef::Var(x) } => {
-                    name_built(v, r).map(|y| (class[x.0 as usize], class[y.0 as usize]))
-                }
-                _ => None,
-            })
-            .collect();
-        Form { named, class, lits, splices, ids, binders, paths, built }
+        Form { named, class, lits, splices, ids, binders, paths }
     }
 
     /// The slot a head argument is, when the body names it.
@@ -2115,16 +2136,10 @@ impl Form {
         })
     }
 
-    /// The classes the placing columns place, and each built from one of them (`built`).
+    /// Only values read unchanged from placing columns retain their document identity. An injective string
+    /// transformation is not the original path: `cat(p, "i")` can equal another document's path.
     fn placed_classes(&self, rels: &Rels<'_>, locs: &[Vec<usize>]) -> Bits {
-        let mut out = self.placed_classes_over(rels, locs, &rels.base_locs);
-        loop {
-            let grew: Vec<u32> = self.built.iter().filter(|&&(x, y)| out.has(y) && !out.has(x)).map(|&(x, _)| x).collect();
-            if grew.is_empty() {
-                return out;
-            }
-            grew.into_iter().for_each(|x| out.set(x));
-        }
+        self.placed_classes_over(rels, locs, &rels.base_locs)
     }
 
     /// `placed_classes` with the base relations' columns `base`: their placing columns, or their locations alone.
@@ -2138,7 +2153,7 @@ impl Form {
                 out.set(*a);
                 continue;
             }
-            if let Lit::Read { neg: false, rel, args, .. } = l {
+            if let Lit::Read { neg: false, plain: true, rel, args, .. } = l {
                 let columns = if rels.is_derived(*rel) { &locs[*rel as usize] } else { &base[*rel as usize] };
                 for &c in columns {
                     if let Some(Some(v)) = args.get(c) {
@@ -2176,11 +2191,6 @@ impl Form {
         rule.head().args().nth(c).and_then(|t| self.var(t)).is_some_and(|v| placed.has(self.class[v as usize]))
     }
 
-    /// `head_placed`, or a string built from a placed variable (`name_built`): a placing column, not a location.
-    fn head_placed_built(&self, v: &Version, rule: RuleRef<'_>, c: usize, placed: &Bits) -> bool {
-        self.head_placed(rule, c, placed)
-            || rule.head().args().nth(c).filter(|t| matches!(t, TermRef::Call(..))).and_then(|t| name_built(v, t)).is_some_and(|s| self.named[s.0 as usize] && placed.has(self.class[s.0 as usize]))
-    }
 
     fn filters(&self, rule: RuleRef<'_>, rels: &Rels<'_>, filters: &[bool]) -> bool {
         let mut strings = Bits::new(self.ids);
@@ -2239,7 +2249,7 @@ impl Form {
     fn nullable_row(&self, rels: &Rels<'_>, locs: &[Vec<usize>], nulls: &[Vec<usize>], strict: &Bits) -> Vec<(u32, u32)> {
         let mut nullable_row: Vec<(u32, u32)> = Vec::new();
         for l in &self.lits {
-            let Lit::Read { neg: false, rel, args, .. } = l else { continue };
+            let Lit::Read { neg: false, plain: true, rel, args, .. } = l else { continue };
             let anchor = locs[*rel as usize].iter().find_map(|&c| args.get(c).copied().flatten()).filter(|_| rels.is_derived(*rel));
             let Some(anchor) = anchor else { continue };
             let vars = nulls[*rel as usize].iter().filter_map(|&c| args.get(c).copied().flatten());

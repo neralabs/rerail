@@ -50,8 +50,8 @@
 // (phases/node_resolve.rerail) resolves each file's specifiers, and hands the files on by path.
 //
 // Builds on tsx/values (api_use for the global require and require.resolve, const_str, first_arg), tsx/node
-// (builtin_spec, the Node.js module table), tsx/node-package (pkg_file) and core (package_for, package_field,
-// tsconfig_for, tsconfig_path).
+// (builtin_spec, the Node.js module table), tsx/node-package (pkg_file), tsx/project (tsconfig_for, tsconfig_path:
+// ECMAScript's project reader, decision 0710) and core (package_for, package_field).
 
 #include "tsx/node.rerail"   // builtin_spec
 #include "tsx/node-package.rerail"

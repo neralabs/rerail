@@ -187,6 +187,62 @@ fn suppress_lines_drop_the_findings_the_linters_comments_silence() {
     assert_eq!(lines(&alone, "eslint.js"), [1, 5], "{alone:#}");
 }
 
+/// A program with no `.policy` names its findings' policy `""` (lowering's), and its `suppress` lines are kept under
+/// that name: Ruff's `# noqa` naming the code drops its finding, one naming another code keeps it.
+#[test]
+fn suppress_lines_of_a_program_with_no_policy_drop_its_findings() {
+    let noqa = "shout(1)\nshout(2)  # noqa: SH001\nshout(3)  # noqa: E501\n";
+    let policy = ".language python\n.mode log\n\
+        .violation Found(at: node) code \"SH001\" \"shout() is called here\"\n    suppress ruff \"SH001\"\n\
+        Found(c) :- kind(c, \"call\"), field(c, \"function\", f), text(f, \"shout\").\n";
+    let root = folder("rr-host-suppress-unnamed", &[("noqa.py", noqa)]);
+    let rules = folder("rr-host-suppress-unnamed-rules", &[("unnamed.rerail", policy)]);
+    let result = run_over(&root, &[rules.join("unnamed.rerail")]);
+    let _ = (std::fs::remove_dir_all(&root), std::fs::remove_dir_all(&rules));
+    assert_eq!(result["failures"], json!([]), "{result:#}");
+    let mut lines: Vec<i64> = result["findings"].as_array().unwrap().iter().map(|f| f["line"].as_i64().unwrap()).collect();
+    lines.sort_unstable();
+    assert_eq!(lines, [1, 3], "{result:#}");
+}
+
+/// A `.language typescript` policy runs once a dialect with files (`.ts` into its run's folder, `.js` into the
+/// `javascript` folder below it), and its `suppress` lines read each file in its own dialect: an ESLint comment drops
+/// the finding it names in the `.js` file as in the `.ts` one, both when two policies run as one pack
+/// (`tools::pack_suppressed`) and when one runs alone (`tools::program_runs`).
+#[test]
+fn suppress_lines_drop_findings_in_each_dialect_of_a_typescript_run() {
+    let source = "shout(1);\nshout(2); // eslint-disable-line no-shout\nyell(3);\nyell(4); // eslint-disable-line no-yell\n";
+    let root = folder("rr-host-suppress-dialects", &[("a.ts", source), ("b.js", source)]);
+    let rules = folder(
+        "rr-host-suppress-dialects-rules",
+        &[
+            ("shout.rerail", &calls_of("rr-host-ts-shout", "typescript", "call_expression", "shout", "no-shout", "eslint \"no-shout\"")),
+            ("yell.rerail", &calls_of("rr-host-ts-yell", "typescript", "call_expression", "yell", "no-yell", "eslint \"no-yell\"")),
+        ],
+    );
+    let together = run_over(&root, &[rules.join("shout.rerail"), rules.join("yell.rerail")]);
+    let alone = run_over(&root, &[rules.join("shout.rerail")]);
+    let _ = (std::fs::remove_dir_all(&root), std::fs::remove_dir_all(&rules));
+    let lines = |result: &Value, policy: &str, path: &str| -> Vec<i64> {
+        let mut lines: Vec<i64> = result["findings"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .filter(|f| f["policy"] == policy && f["path"] == path)
+            .map(|f| f["line"].as_i64().unwrap())
+            .collect();
+        lines.sort_unstable();
+        lines
+    };
+    for path in ["a.ts", "b.js"] {
+        assert_eq!(lines(&together, "rr-host-ts-shout", path), [1], "{path}: {together:#}");
+        assert_eq!(lines(&together, "rr-host-ts-yell", path), [3], "{path}: {together:#}");
+        assert_eq!(lines(&alone, "rr-host-ts-shout", path), [1], "{path}: {alone:#}");
+    }
+    assert_eq!(together["findings"].as_array().unwrap().len(), 4, "{together:#}");
+    assert_eq!(alone["findings"].as_array().unwrap().len(), 2, "{alone:#}");
+}
+
 /// `over {c}`: Bandit reads its `# nosec` over the lines of the node a line names, not only `at`'s. A finding at a
 /// call's argument, on the call's second line, with `# nosec B201` on its third: dropped when the line reads over the
 /// call, kept when it reads over `at` alone.
@@ -207,4 +263,28 @@ fn a_suppress_line_reads_its_linters_comments_over_the_column_it_names() {
     let lines = |policy: &str| -> Vec<i64> { result["findings"].as_array().unwrap().iter().filter(|f| f["policy"] == policy).map(|f| f["line"].as_i64().unwrap()).collect() };
     assert_eq!(lines("rr-host-over"), Vec::<i64>::new(), "{result:#}");
     assert_eq!(lines("rr-host-at"), [2], "{result:#}");
+}
+
+/// A Vue file's `<script>` is a guest tree: an ESLint comment there drops the finding it names, as it does in a
+/// JavaScript file, and keeps the next line's. Run twice: the second run reads the file's tape from the store,
+/// which keeps the file's own tape alone, and the matchers' tree still holds the script's comments.
+#[test]
+fn a_vue_scripts_eslint_comments_drop_its_findings_on_a_warm_store_too() {
+    let source = "<template><p>x</p></template>\n<script>\nshout(1); // eslint-disable-line no-shout\nshout(2);\n// eslint-disable-next-line no-shout\nshout(3);\n</script>\n";
+    let policy = ".policy \"rr-host-vue\" revision 1\n.language vue\n.mode log\n\
+        .violation Found(at: node) code \"no-shout\" \"shout() is called here\"\n    suppress eslint \"no-shout\"\n\
+        Found(c) :- kind(se, \"script_element\"), child(se, raw, _), kind(raw, \"raw_text\"), parsed(raw, \"javascript\", p),\n\
+            within(c, p), kind(c, \"call_expression\"), field(c, \"function\", f), text(f, \"shout\").\n";
+    let root = folder("rr-host-vue", &[("a.vue", source)]);
+    let rules = folder("rr-host-vue-rules", &[("vue.rerail", policy)]);
+    let lines = |result: &Value| -> Vec<i64> {
+        let mut lines: Vec<i64> = result["findings"].as_array().unwrap().iter().map(|f| f["line"].as_i64().unwrap()).collect();
+        lines.sort_unstable();
+        lines
+    };
+    let cold = run_over(&root, &[rules.join("vue.rerail")]);
+    let warm = run_over(&root, &[rules.join("vue.rerail")]);
+    let _ = (std::fs::remove_dir_all(&root), std::fs::remove_dir_all(&rules));
+    assert_eq!(lines(&cold), [4], "{cold:#}");
+    assert_eq!(lines(&warm), [4], "{warm:#}");
 }

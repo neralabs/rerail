@@ -16,7 +16,8 @@ type Matchers = [(String, String, Vec<String>)];
 /// The `all` a matcher's object sits in, and whether that one is an `inside`'s.
 type Outer<'a> = Option<(&'a serde_json::Map<String, serde_json::Value>, bool)>;
 
-/// A kind as the program holds it (`python:call`) or as a grammar names it (`call`).
+/// A kind or field as the program holds it (`python:call`, a guest's as hiding names it) or as a grammar names it
+/// (`call`).
 fn bare(k: &str) -> String {
     k.rsplit(':').next().unwrap_or(k).to_owned()
 }
@@ -429,13 +430,14 @@ impl<'p> TextReads<'p> {
         Constraints::default()
     }
 
-    /// The fields `v` is a node in (`field(_, "F", v)`).
+    /// The fields `v` is a node in (`field(_, "F", v)`), as the grammar names them: a guest's field is qualified by its
+    /// grammar (`javascript:function`), which no node's field name is.
     fn fields_of(&self, body: &[Literal], v: &str) -> BTreeSet<String> {
         let base = !self.kinds.redefined.contains("field");
         body.iter().filter_map(Literal::atom).filter(|a| base && !a.neg && a.rel == "field").filter_map(|a| match (a.args.get(1), a.args.get(2)) {
-            (Some(Term::Str(f)), Some(Term::Var(x))) if x == v => Some(f.clone()),
+            (Some(Term::Str(f)), Some(Term::Var(x))) if x == v => Some(bare(f)),
             _ => None,
-        }).map(String::from).collect()
+        }).collect()
     }
 
     /// What narrows the nodes `v` is a child of (`child(p, v, _)`): each such parent's kinds, or the fields it is in;

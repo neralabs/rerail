@@ -461,7 +461,8 @@ fn eval_sql_substr(name: &str, text: &str, numbers: &[i64]) -> Option<String> {
     match name {
         "sql_substr" => Some(sql_substr(text, numbers[0], Some(numbers[1]))),
         "sql_substr2" => Some(sql_substr(text, numbers[0], None)),
-        _ => (!text.is_empty()).then(|| sql_substr_bytes(text, numbers[0], numbers[1])),
+        "sql_substr_bytes" => (!text.is_empty()).then(|| sql_substr_bytes(text, numbers[0], numbers[1])),
+        _ => None,
     }
 }
 
@@ -474,7 +475,8 @@ fn eval_sql_text(name: &str, text: &[&str]) -> Option<String> {
         "sql_rtrim2" => text[0].trim_end_matches(|c| text[1].contains(c)).to_owned(),
         "sql_upper" => text[0].to_ascii_uppercase(),
         "sql_lower" => text[0].to_ascii_lowercase(),
-        _ => if text[1].is_empty() { text[0].to_owned() } else { text[0].replace(text[1], text[2]) },
+        "sql_replace" => if text[1].is_empty() { text[0].to_owned() } else { text[0].replace(text[1], text[2]) },
+        _ => return None,
     })
 }
 

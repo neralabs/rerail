@@ -124,6 +124,10 @@ pub const PREPARING: &[&str] = &[
     "RERAIL_RULE_ORDER",
     // Guests' copies kept unfolded (`hiding::fold_own`).
     "RERAIL_SHOWN_COPIES",
+    // Refusals must also run after a non-strict preparation was cached.
+    "RERAIL_STRICT_CROSSINGS",
+    "RERAIL_STRICT_NODES",
+    "RERAIL_STRICT_POSITIONS",
 ];
 
 pub mod phase0;

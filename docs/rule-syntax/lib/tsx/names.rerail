@@ -453,25 +453,30 @@ local_of(sp, l) :- !field(sp, "alias", _), field(sp, "name", n), spec_name(n, l)
 source_of(n, m) :- nearest(n, i, "import_statement"), field(i, "source", s), str(s, m).
 
 // target(d, spec, t): specifier spec in document d names t, a workspace document's module or a package name;
-// exports(m, x, q): module m exports name x, which is symbol q. Both are resolved across the workspace's files
-// (relative paths against every file, tsconfig `paths`, chains of re-exports) by the phase `tsx_names`
-// (docs/rule-syntax/lib/phases/tsx_names.rerail), which runs first over the same files and hands on
-// symbols alone: here they are read as settings are, so a rule reading them stays per-file (decision 0665).
+// exports(m, x, q): module m exports name x, which is symbol q; package_at(p, spec): spec names a package;
+// module_at(p, m): the file at p is module m. Each is resolved across the workspace's files (relative paths against
+// every file, tsconfig `paths`, chains of re-exports, files of one stem) by the phase `tsx_names`
+// (docs/rule-syntax/lib/phases/tsx_names.rerail), which runs first over the same files and hands on symbols alone:
+// here they are read as settings are, so a rule reading them stays per-file (decision 0665).
 .decl tsx_names__target_at(p: symbol, spec: symbol, t: symbol) by_path 2
+.decl tsx_names__package_at(p: symbol, spec: symbol) by_path
+.decl tsx_names__module_at(p: symbol, m: symbol) by_path
 .decl tsx_names__exports(m: symbol, x: symbol, q: symbol) keyed
-.decl tsx_names__module(m: symbol) keyed
+ts_module_at(p, m) :- tsx_names__module_at(p, m).
 .decl target(d: number, spec: symbol, t: symbol)
 target(d, s, t) :- doc(d, p, _), tsx_names__target_at(p, s, t).
+.decl package_target(d: number, t: symbol)  // a specifier in document d names package t
+package_target(d, t) :- doc(d, p, _), tsx_names__package_at(p, s), tsx_names__target_at(p, s, t).
 
 // sym_of(n, q): an identifier or member chain denotes q.
 // The main relation rules use: `sym_of(tag, "react-router-dom#BrowserRouter")` matches the tag however the
 // router was imported, renamed or re-exported. Four cases:
 .decl sym_of(n: node, q: symbol)
 // Cases 1, 2 and 4 name x of a resolved target t (`resolved_name`): a workspace module's export, followed through
-// re-exports by the phase (`tsx_names__exports`), else (a package, no workspace module) opaque, "react-router-dom#Link". Read
-// by the node's own target, each stays in its file (decision 0665).
+// re-exports by the phase (`tsx_names__exports`), else (a package, told by its specifier) opaque,
+// "react-router-dom#Link". Read by the node's own target, each stays in its file (decision 0665).
 sym_of(n, q) :- resolved_name(n, t, x), tsx_names__exports(t, x, q).
-sym_of(n, @qname(t, x)) :- resolved_name(n, t, x), !tsx_names__module(t).
+sym_of(n, @qname(t, x)) :- resolved_name(n, t, x), docof(n, d), package_target(d, t).
 // 3. A name declared at the top level of this file: `function App() {}; App` -> "src/app#App". This is the same
 // symbol other files get when they import App, so cross-file joins meet here.
 sym_of(n, @qname(m, x)) :- kind(n, "identifier"), ref_site(n, site), top_level(site, x), docof(n, d), ts_module(d, m).

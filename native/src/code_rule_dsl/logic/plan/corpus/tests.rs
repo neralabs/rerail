@@ -1607,7 +1607,7 @@ passes(f) :- uses(_, f), node_text(f, t), contains("pass", t).
 /// one value be reused under another, or make a session's next run cold.
 #[test]
 fn every_switch_lowering_reads_is_classified() {
-    /// The switches combining, lowering and preparation read that change no prepared program: checks, dumps, traces
+    /// The switches combining, lowering and preparation read that change no prepared program: dumps, traces
     /// and profiles, the store's and the cost model's paths, the session's binding.
     const NOT_PREPARING: &[&str] = &[
         "RERAIL_BLESS_CENSUS",
@@ -1616,15 +1616,12 @@ fn every_switch_lowering_reads_is_classified() {
         "RERAIL_MERGE_WHY",
         "RERAIL_SPLIT_CHECK",
         "RERAIL_SPLIT_DUMP",
-        // The checks of what crosses to the cross-file part (decisions 0649, 0652, 0677, 0691): reports and lists, and
-        // refusals of a program, which change no prepared program.
+        // Reporting switches do not refuse programs; strict refusals are in PREPARING.
         "RERAIL_CROSSINGS",
         "RERAIL_NODE_CROSSINGS",
+        "RERAIL_POSITIONS",
         "RERAIL_SHOW_CROSSINGS",
         "RERAIL_SHOW_POSITIONS",
-        "RERAIL_STRICT_CROSSINGS",
-        "RERAIL_STRICT_NODES",
-        "RERAIL_STRICT_POSITIONS",
         "RERAIL_DEMAND_DUMP",
         "RERAIL_PREPARED_TRACE",
         // A measurement aid (`version_trace`): each program made from another written to a directory; the programs
@@ -1763,6 +1760,50 @@ fn every_switch_lowering_reads_is_classified() {
     }
     let unread: Vec<&str> = super::COMBINING.iter().chain(super::PREPARING).copied().filter(|s| !seen.contains(*s)).collect();
     assert!(unread.is_empty(), "switches listed as combining or preparing that nothing there reads: {unread:?}");
+}
+
+/// A program prepared without a strict switch is not reused under it: the refusal runs on the warm store too.
+#[test]
+fn strict_crossing_checks_do_not_reuse_a_non_strict_preparation() {
+    let dir = crate::code_rule_dsl::fixtures::temp().with_extension("strict-preparation");
+    let _ = std::fs::remove_dir_all(&dir);
+    let root = dir.join("root");
+    std::fs::create_dir_all(&root).unwrap();
+    std::fs::write(root.join("a.py"), "def a(): pass\na()\n").unwrap();
+    std::fs::write(root.join("b.py"), "def b(): pass\nb()\n").unwrap();
+    super::TEST_TAPE_CACHE.with(|p| *p.borrow_mut() = Some(dir.join("store.sqlite")));
+    let body = ".decl pair(a: symbol, b: symbol)\npair(a, b) :- doc(d, a, _), doc(e, b, _), d != e.\n.decl result(a: symbol)\nresult(a) :- pair(a, _).\n.output result\n";
+    let rule = dir.join("rule.rerail");
+    std::fs::write(&rule, format!("#include \"core.rerail\"\n{body}")).unwrap();
+    let text = crate::code_rule_dsl::logic::rr::print(&crate::code_rule_dsl::logic::rr::parse_file(&rule).unwrap()).unwrap();
+    let out = dir.join("out");
+    let run = || super::run(&text, &root, None, &out, "program", crate::code_rule_dsl::typing::file_local::Binding::Cpu, 1 << 18);
+    {
+        let _off = super::switches::set(&[("RERAIL_STRICT_CROSSINGS", "0")]);
+        run().unwrap();
+    }
+    let _strict = super::switches::set(&[("RERAIL_STRICT_CROSSINGS", "1")]);
+    let error = run().err().map(|e| e.to_string()).unwrap_or_default();
+    assert!(error.contains("pair"), "a warm strict run refuses the crossing: {error}");
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// The tape cache keeps a file's own tape alone: a Vue file's matchers' tree, made from a cached tape, still holds its
+/// `<script>`'s guest, whose comments its ESLint directives are (`suppress::vue::script_directives`). Both the miss
+/// (queued) and the hit (read back) give the guest.
+#[test]
+fn a_cached_tape_kept_for_the_matchers_holds_its_guests() {
+    let dir = crate::code_rule_dsl::fixtures::temp().with_extension("kept-guests");
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).unwrap();
+    let store = crate::content_store::ContentStore::open(&dir.join("store.sqlite")).unwrap();
+    let file = crate::code_rule_dsl::facts::core::Source { language: "vue".into(), source: std::sync::Arc::new("<script>\n// eslint-disable-next-line no-x\nx();\n</script>\n".into()) };
+    for round in ["miss", "hit"] {
+        let (_, doc) = crate::code_rule_dsl::facts::core::build_in_wave_with_tape(&file, &store, None, None, false, true).unwrap();
+        let guests = doc.expect("a kept tape").guests().expect("its guests");
+        assert_eq!(guests.len(), 1, "{round}: the script's program");
+    }
+    let _ = std::fs::remove_dir_all(&dir);
 }
 
 /// A program whose per-file rule reads the project's settings (decision 0665): a function of a file under a package
@@ -2696,6 +2737,36 @@ failed(p, x) :- spec_failed(n), node_target(n, x, _), docof(n, d), doc(d, p, _).
     let (resolved, failed) = run("out2");
     assert!(resolved.contains(&row(&["src/a.js", "./nope", "src/nope.js"])), "{resolved:?}");
     assert!(failed.is_empty(), "{failed:?}");
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// A tsconfig `paths` alias resolves against the effective `baseUrl`, inherited through `extends` from the folder of
+/// the configuration that sets it (`tsconfig(dir, base)`, from the root): `web/tsconfig.json` extends
+/// `base/tsconfig.base.json`, whose `"baseUrl": "src"` is `base/src`, so `@/model` is `base/src/model.ts`.
+#[test]
+fn a_paths_alias_resolves_against_an_inherited_base_url() {
+    crate::install_store_functions();
+    let dir = crate::code_rule_dsl::fixtures::temp().with_extension("tsconfig-base");
+    let _ = std::fs::remove_dir_all(&dir);
+    let ws = dir.join("ws");
+    for (path, text) in [
+        ("base/tsconfig.base.json", r#"{"compilerOptions": {"baseUrl": "src"}}"#),
+        ("web/tsconfig.json", r#"{"extends": "../base/tsconfig.base.json", "compilerOptions": {"paths": {"@/*": ["*"]}}}"#),
+        ("base/src/model.ts", "export const value = 1;\n"),
+        ("web/main.ts", "import { value as imported } from \"@/model\";\nimported;\n"),
+    ] {
+        let to = ws.join(path);
+        std::fs::create_dir_all(to.parent().unwrap()).unwrap();
+        std::fs::write(to, text).unwrap();
+    }
+    let rule = dir.join("program.rerail");
+    std::fs::write(&rule, ".language typescript\n#include \"tsx/names.rerail\"\n.decl resolved(q: symbol)\nresolved(q) :- kind(n, \"identifier\"), text(n, \"imported\"), sym_of(n, q).\n.output resolved\n").unwrap();
+    let program = crate::code_rule_dsl::logic::rr::print(&crate::code_rule_dsl::logic::rr::parse_file(&rule).unwrap()).unwrap();
+    super::TEST_TAPE_CACHE.with(|p| *p.borrow_mut() = Some(dir.join("store.sqlite")));
+    super::run(&program, &ws, None, &dir.join("out"), "program", crate::code_rule_dsl::typing::file_local::Binding::Cpu, 1 << 18).unwrap();
+    let outputs = super::super::output::Outputs::open(&dir.join("out")).unwrap();
+    let resolved: Vec<Vec<String>> = outputs.get("resolved").map(|r| r.shown()).unwrap_or_default();
+    assert!(resolved.contains(&vec!["base/src/model#value".to_owned()]), "{resolved:?}");
     let _ = std::fs::remove_dir_all(&dir);
 }
 

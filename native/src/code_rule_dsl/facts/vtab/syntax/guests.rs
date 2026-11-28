@@ -74,8 +74,9 @@ impl GuestRows {
     #[allow(clippy::too_many_arguments)]
     fn hosted(&mut self, p: &Projected, g: &Guest, [key, tape, grammar]: [i64; 3], root: Option<i64>, docs: &[Projected], host_nodes: bool, string: &mut dyn FnMut(&str) -> usize) {
         self.guest.push([key, i64::from(g.host), g.at, grammar]);
-        // A program is asked for by its embedding as well as its grammar (`compiled-view`, `php`).
-        let names: [Option<i64>; 2] = [Some(grammar), g.embedding.map(|e| string(e) as i64)];
+        // A program is asked for by its embedding as well as its grammar (`compiled-view`, `php`); an embedding that
+        // has its grammar's name is one name, and one row.
+        let names: [Option<i64>; 2] = [Some(grammar), g.embedding.map(|e| string(e) as i64).filter(|&e| e != grammar)];
         self.sub_tape.extend(names.iter().flatten().map(|&n| [g.at, n, tape]));
         let Some(r) = root else { return };
         self.parsed.extend(names.iter().flatten().map(|&n| [g.at, n, r]));

@@ -18,7 +18,7 @@
 //
 // e.g. with `class Base: …`, `class Child(Base): …`, then `x = Child()` and `x.run()` in pkg/models.py, the
 // receiver x of `x.run()` has type_of(<x>, "pkg.models.Child") and proven_type for "pkg.models.Child",
-// "pkg.models.Base" and "object". In `def f(y): y.run()` the receiver has type_open(<y>): annotations are not
-// read yet.
+// "pkg.models.Base" and "object". In `def f(y): y.run()` the receiver has type_open(<y>): an unannotated parameter
+// may hold any value; `def f(y: Child)` reads the annotation as an instance of Child.
 
 #include "python/points-to.rerail"

@@ -421,21 +421,18 @@ lone_main(f) :- def_name(f, "main"),
     (<code>child</code>, <code>field</code>, <code>within</code>), or <code>nearest</code>.</p>
 <pre><code><span class="c">// You mean "a and b are in the same file". The split sees two documents.</span>
 
-<span class="c">// 1. Joined by the path's text: two documents may share a path value</span>
-pair(a, b) :- kind(a, "class"), kind(b, "def"),
-    docof(a, d), doc(d, p, _), docof(b, e), doc(e, p, _).
-
-<span class="c">// 2. Linked only by a comparison: a test filters, it does not join</span>
+<span class="c">// 1. Linked only by a comparison: a test filters, it does not join</span>
 pair(a, b) :- kind(a, "class"), kind(b, "def"), a &lt; b.
 
-<span class="c">// 3. Same file "by convention": a name both sides share</span>
+<span class="c">// 2. Same file "by convention": a name both sides share</span>
 pair(a, b) :- class_name(a, x), def_owner(b, x).</code></pre>
-    <div class="msg">pair: joins 2 documents: {a d} {b e}
-pair: joins 2 documents: {a} {b}</div>
+    <div class="msg">pair: joins 2 documents: {a} {b}</div>
 <pre><code><span class="c">// The forms the split reads as one document:</span>
 pair(a, b) :- kind(a, "class"), kind(b, "def"), docof(a, d), docof(b, d).
 pair(a, b) :- kind(a, "class"), kind(b, "def"), @doc(a) = @doc(b).
 pair(a, b) :- kind(a, "class"), within(b, a).        <span class="c">// b inside a</span>
+<span class="c">// A document's own path names it alone; a path built from it (cat, replace) does not.</span>
+pair(a, b) :- kind(a, "class"), kind(b, "def"), docof(a, d), doc(d, p, _), docof(b, e), doc(e, p, _).
 pair(a, b) :- field(a, "body", s), child(s, b, _).   <span class="c">// a tree relation</span></code></pre>
     <p class="why">Comparisons do not tie anything: <code>a != b</code> and <code>a &lt; b</code> only filter rows
     that the other reads already joined. A rule whose only link between two groups of reads is a comparison is a

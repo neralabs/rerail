@@ -164,8 +164,8 @@ fn json_tool_call_rule_finds_its_examples() {
 
 /// A value's `type` is the node's own (`value_type_of(n, t)`), not its text's (decision 0677): `value_type(v, t)` is
 /// keyed by the text, which `"12"` and `12` share, so `value(n, x), value_type(x, "int")` held at the string too,
-/// from the int's row, and joined every file's types in the cross-file part. A value followed through a binding
-/// (`follow`) is no node's own, and keeps its text's type.
+/// from the int's row, and joined every file's types in the cross-file part. Followed values also carry the
+/// expression's own type, through `static_value_type_of`.
 #[test]
 fn json_rules_value_type_is_the_nodes_own() {
     let rule = |value: &str| {
@@ -177,7 +177,7 @@ fn json_rules_value_type_is_the_nodes_own() {
     let own = super::Translator::new().translate_text(&rule(r#"{"type":"int"}"#), "int-literal").expect("translates");
     assert!(own.contains("value_type_of(") && !own.contains("value_type("), "{own}");
     let followed = super::Translator::new().translate_text(&rule(r#"{"follow":true,"type":"int"}"#), "int-literal").expect("translates");
-    assert!(followed.contains("static_value(") && followed.contains("value_type("), "{followed}");
+    assert!(followed.contains("static_value_type_of(") && !followed.contains("value_type("), "{followed}");
     let dir = tempfile::tempdir().unwrap();
     let policy = dir.path().join("int-literal.rerail");
     std::fs::write(&policy, &own).unwrap();
@@ -190,6 +190,7 @@ fn json_rules_value_type_is_the_nodes_own() {
         report["diagnostics"].as_array().unwrap().iter().map(|d| d["line"].as_i64().unwrap()).collect::<Vec<_>>()
     };
     assert_eq!(lines(&own), [2], "the int alone, not the string of the same text:\n{own}");
+    assert_eq!(lines(&followed), [2], "followed literals must not share types by spelling:\n{followed}");
     // The text's type, as it was translated: the string's text is the int's, so it is found too.
     let at = own.find("value_type_of(").unwrap() + "value_type_of(".len();
     let node = own[at..].split(',').next().unwrap();

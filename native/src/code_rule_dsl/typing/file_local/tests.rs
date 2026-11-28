@@ -41,6 +41,41 @@ fn a_relation_naming_no_document_moves_to_the_cross_file_part() {
     assert_eq!(moved(&program), ["aware"]);
 }
 
+#[test]
+fn a_reader_cannot_supply_an_unproved_same_document_tie() {
+    let v = read(
+        ".decl node(d: number, n: node, k: symbol, s: number, e: number)\n.input node\n\
+         .decl text(n: node, x: symbol)\n.input text\n\
+         .decl same_name(a: node, b: node)\nsame_name(a, b) :- text(a, x), text(b, x).\n\
+         .decl calls(c: node, f: node)\ncalls(c, f) :- node(_, c, \"call\", _, _), node(_, f, \"def\", _, _), same_name(c, f).\n.output calls\n",
+    );
+    let split = split_of(&v);
+    assert!(!split.local.contains("same_name"), "{split:?}");
+    assert!(!split.local.contains("calls"), "{split:?}");
+}
+
+#[test]
+fn a_cross_file_reader_cannot_cover_another_documents_values() {
+    let v = read(
+        ".decl node(d: number, n: node, k: symbol, s: number, e: number)\n.input node\n\
+         .decl val(n: node, y: symbol)\n.input val\n\
+         .decl view(m: node, y: symbol)\nview(m, y) :- node(_, m, \"module\", _, _), val(_, y).\n\
+         .decl result(m: node, n: node) cross_file\nresult(m, n) :- view(m, y), val(n, y).\n.output result\n",
+    );
+    let split = split_of(&v);
+    assert!(!split.local.contains("view"), "{split:?}");
+}
+#[test]
+fn a_transformed_path_is_not_the_path_a_reader_joins() {
+    let v = read(
+        ".decl doc(d: number, p: symbol, m: symbol)\n.input doc\n\
+         .decl stub(p: symbol)\nstub(cat(p, \"i\")) :- doc(_, p, _).\n\
+         .decl has_stub(d: number)\nhas_stub(d) :- doc(d, p, _), stub(p).\n.output has_stub\n",
+    );
+    assert!(!split_of(&v).local.contains("has_stub"));
+}
+
+
 /// `v` with every row the chunks hand on located (one `Locate` round), and the relations located.
 fn located_v(v: std::sync::Arc<crate::code_rule_dsl::logic::program_image::Version>) -> (std::sync::Arc<crate::code_rule_dsl::logic::program_image::Version>, Result<Vec<String>, Vec<String>>) {
     let mut pass = Locate::default();
@@ -127,6 +162,26 @@ fn a_join_by_a_files_own_path_stays_per_file() {
     assert_eq!(split.locations[relay], vec![0], "the relay's rows name their document: {:?}", split.locations);
 }
 
+/// A cross-file aggregate over a relayed target counts its located form, as a plain read does: `line_of` is read by
+/// the per-file `last` and relayed (`a_join_by_a_files_own_path_stays_per_file`), `shared` reads it across files,
+/// and `tally` counts its rows: both read `line_of_at`.
+#[test]
+fn a_cross_file_aggregate_reads_a_relayed_targets_located_form() {
+    let text = ".decl doc(d: number, path: symbol, module: symbol)\n.input doc\n.decl src_line(d: number, l: number, sp: span)\n.input src_line\n\
+                .decl line_of(p: symbol, l: number)\nline_of(p, l) :- doc(d, p, _), src_line(d, l, _).\n\
+                .decl last(p: symbol, k: number)\nlast(p, k) :- line_of(p, _), k = max l : { line_of(p, l) }.\n\
+                .decl lead(p: symbol, l: number)\nlead(p, l) :- last(p, k), line_of(p, l), l < k.\n.output lead\n\
+                .decl shared(p: symbol)\nshared(p) :- line_of(p, l), line_of(q, l), p != q.\n.output shared\n\
+                .decl tally(k: number)\ntally(k) :- k = count : { line_of(_, _) }.\n.output tally\n";
+    let (out, found) = located_v(read(text));
+    assert!(found.as_ref().is_ok_and(|f| f.iter().any(|r| r == "line_of")), "{found:?}");
+    let reads = |head: &str| -> Vec<String> { out.rules().filter(|r| out.rel_name(r.head().rel()) == head).flat_map(|r| reads_v(&out, r)).collect() };
+    let (shared, tally) = (reads("shared"), reads("tally"));
+    let shown = || out.rules().map(|r| out.show_rule(r)).collect::<Vec<_>>().join("\n");
+    assert!(!shared.is_empty() && shared.iter().all(|r| r.starts_with("line_of_at")), "{shared:?}\n{}", shown());
+    assert!(!tally.is_empty() && tally.iter().all(|r| r.starts_with("line_of_at")), "the aggregate reads the relay too: {tally:?}\n{}", shown());
+}
+
 /// Module resolution handed on by a phase (decision 0665, tsx/names.rerail over the phase `tsx_names`): the phase's
 /// export, symbols alone and every file's rows, is read as a setting is, and a file's own targets are its rows by
 /// its path, so a rule resolving a file's imports through it stays per-file. The same resolution made in the run
@@ -146,10 +201,8 @@ fn a_rule_resolving_through_a_phases_names_stays_per_file() {
     assert!(!split.local.contains("near"), "another file's path, joined in the run: {:?}", split.local);
 }
 
-/// A name built from a file's path by a pattern or a replacement is no file's own (review F2): a module from the path (a
-/// named group of a whole-path pattern, its separators replaced) is `a.b` for `a/b.py` and `a.b.py` alike, so an
-/// aggregate over a symbol it leads (eager-resolve's last def of each symbol) is of every file building that symbol,
-/// and cross-file. A name the path itself leads (`cat(p, "::", q)`) is one file's: an aggregate over it stays per-file.
+/// A transformed path is not a document identity. Neither replacing separators nor concatenating text proves
+/// that equal resulting symbols came from the same file: paths and suffixes may themselves contain separators.
 #[test]
 fn a_symbol_built_from_a_files_module_is_every_files_that_builds_it() {
     let text = ".decl doc(d: number, path: symbol, module: symbol)\n.input doc\n\
@@ -166,22 +219,17 @@ fn a_symbol_built_from_a_files_module_is_every_files_that_builds_it() {
     assert_eq!(split.path_keys.get("sym").map(Vec::as_slice), None, "the symbol is no file's key: {:?}", split.path_keys);
     assert!(!split.local.contains("last_def"), "two files can build one symbol: {:?}", split.local);
     assert!(!split.local.contains("last_tail"), "nor one the module does not lead: {:?}", split.local);
-    // The path leading the name: one file's.
+    // A concatenated key can collide too; retaining its original path separately is the safe local key.
     let led = ".decl doc(d: number, path: symbol, module: symbol)\n.input doc\n\
                .decl qual(f: node, q: symbol)\n.input qual\n.decl docof(n: node, d: number)\n.input docof\n.decl line(n: node, l: number)\n.input line\n\
                .decl sym(f: node, s: symbol)\nsym(f, cat(p, \"::\", q)) :- qual(f, q), docof(f, d), doc(d, p, _).\n\
                .decl last_def(s: symbol, f: node)\nlast_def(s, f) :- sym(f, s), line(f, l), l = max a : { sym(g, s), line(g, a) }.\n.output last_def\n";
     let split = split_of(&read(led));
-    assert!(split.local.contains("last_def"), "{:?} {:?}", split.local, split.causes);
+    assert!(!split.local.contains("last_def"), "{:?} {:?}", split.local, split.causes);
 }
 
-/// A name built from a file's path (`cat(p, "::", q)`) places a row in that file, but `doc` holds no such name, so
-/// `locate` finds a row's document by a key that is the path as it is (`FileLocal::paths`, decision 0665). A relation
-/// keyed by both, which per-file rules and a cross-file rule read, is relayed by its path: by the built name, every
-/// row was looked up in `doc` and found in no document, and the cross-file part read none (data-layer's
-/// `plp_find_k`, 0677 fix 3f). One keyed by the built name alone is not relayed by it, and moves to the cross-file part;
-/// its rule then reads the relayed relation from there, in a later round, through the relay already made (it was
-/// blocked, and moved too).
+/// A relation retaining its original path can be relayed by that path. A transformed key alone is not a
+/// document identity and must move cross-file rather than looking the transformed value up in `doc`.
 #[test]
 fn a_row_is_located_by_its_path_not_a_name_built_from_it() {
     let text = ".decl doc(d: number, path: symbol, module: symbol)\n.input doc\n.decl qual(f: node, q: symbol)\n.input qual\n\
@@ -197,10 +245,10 @@ fn a_row_is_located_by_its_path_not_a_name_built_from_it() {
     let v = read(text);
     let split = split_of(&v);
     for rel in ["keyed", "copied"] {
-        assert_eq!(split.path_keys.get(rel).map(|c| c.as_slice()), Some(&[0, 1][..]), "{rel}: both place its row: {:?}", split.path_keys);
+        assert_eq!(split.path_keys.get(rel).map(|c| c.as_slice()), Some(&[1][..]), "{rel}: only the unchanged path places its row: {:?}", split.path_keys);
         assert_eq!(split.paths.get(rel).map(|c| c.as_slice()), Some(&[1][..]), "{rel}: the path alone is one: {:?}", split.paths);
     }
-    assert_eq!(split.path_keys.get("built").map(|c| c.as_slice()), Some(&[0][..]), "{:?}", split.path_keys);
+    assert!(!split.path_keys.contains_key("built"), "{:?}", split.path_keys);
     assert!(!split.paths.contains_key("built"), "a built name is no path: {:?}", split.paths);
     let mut p = crate::code_rule_dsl::logic::program_image::manager::Pipeline::new("test", v);
     let found = locate_all(&mut p);
@@ -208,7 +256,7 @@ fn a_row_is_located_by_its_path_not_a_name_built_from_it() {
     let relay: Vec<String> = out.rules().filter(|r| out.rel_name(r.head().rel()).starts_with("copied_at")).map(|r| out.show_rule(r)).collect();
     assert!(found.is_ok() && relay.len() == 1, "{found:?} {relay:?}");
     assert!(relay[0].contains("doc($__located_d, $__c1"), "found through the path, column 1: {relay:?}");
-    assert!(moved_v(&out).iter().any(|r| r == "built"), "not relayed by the built name: {:?}", moved_v(&out));
+    assert!(!split_of(&out).local.contains("built"), "the transformed key stays cross-file");
     assert!(!moved_v(&out).iter().any(|r| r == "keyed" || r == "copied"), "relayed, not moved: {:?}", moved_v(&out));
     let built: Vec<Vec<String>> = rules_v(&out, "built").into_iter().map(|r| reads_v(&out, r)).collect();
     assert!(built.iter().all(|r| r.iter().any(|a| a.starts_with("keyed_at"))), "the moved rule reads the relay: {built:?}");
@@ -599,7 +647,7 @@ distinct(a, x) :- attr(e, a, x, w), attr(e, b, x, v), a != b, !clash(x, v, w).
     }
     assert!(split.filters.contains("clash"), "{:?}", split.filters);
     crossings_checked(&programs_of(read(base)).unwrap(), true).unwrap();
-    let refused = crossings_checked(&programs_of(read(r#"
+    let undefined = r#"
 .decl node(d: number, n: node, kind: symbol, start: number, end: number)
 .decl text(n: node, s: symbol)
 .input node, text
@@ -608,8 +656,17 @@ defined(x) :- node(_, n, "def", _, _), text(n, x).
 .decl undefined_ref(n: node)
 undefined_ref(n) :- node(_, n, "ref", _, _), text(n, x), !defined(x).
 .output undefined_ref
-"#)).unwrap(), true).unwrap_err();
+"#;
+    let refused = crossings_checked(&programs_of(read(undefined)).unwrap(), true).unwrap_err();
     assert!(refused.contains("undefined_ref"), "{refused}");
+    // As a run splits it, located first (`locate`): `defined` is read back from its located form, cross-file by what
+    // it is for (`READ_LOCATED`, 0691), and `undefined_ref` follows it, so the run refuses nothing and says why.
+    let mut program = crate::code_rule_dsl::logic::rr::parse(undefined).unwrap();
+    locate(&mut program).unwrap();
+    let (v, _) = crate::code_rule_dsl::logic::program_image::Builder::of_program(&program).unwrap().finish().unwrap();
+    let run = programs_of(v).unwrap();
+    crossings_checked(&run, true).unwrap();
+    assert_eq!(run.causes.get("undefined_ref").map(String::as_str), Some("reads cross-file defined"), "{:?}", run.causes);
     // A located view joining two documents by a name (`pc_modattr`): each rule's reads are tied to a head location
     // column, and its reader holds both columns in its own document, so it reads only rows of its document.
     let located = r#"
@@ -1266,7 +1323,9 @@ named(f, s) :- uses(f, _), child(p, f, _), node(_, p, "call", _, _), text(p, s).
 const INVARIANT_INPUTS: &str = ".decl node(d: number, n: node, kind: symbol, start: number, end: number)\n.input node\n\
                                 .decl line(n: node, l: number)\n.input line\n";
 
-/// The split of `text` (after `INVARIANT_INPUTS`), as a run makes it (`programs_of`, with `locate`'s moves).
+/// The split of `text` (after `INVARIANT_INPUTS`): `programs_of` after the tree's `locate` (its moves; no relay or path
+/// key, which a run's `locate_all` on the version adds). A run's own preparation: `preparation::run`, as
+/// `a_position_handed_on_by_a_per_file_relation_is_found` takes it.
 fn invariant_split(text: &str) -> Programs {
     let mut program = crate::code_rule_dsl::logic::rr::parse(&format!("{INVARIANT_INPUTS}{text}")).unwrap();
     locate(&mut program).unwrap();
@@ -1370,7 +1429,45 @@ fn a_position_read_in_the_cross_file_part_is_found() {
          .decl found(n: node)\nfound(n) :- node(_, n, k, _, _), kinds(k, _), line(n, _).\n.output found\n",
     );
     assert_eq!(split.positions, [("kinds".to_owned(), "line".to_owned())], "{:?}", split.positions);
-    assert!(positions_checked(&split.positions, true).is_err());
+    assert!(positions_checked(&split, true).is_err());
+}
+
+/// A position handed on by a per-file relation is a position in the cross part too: `pos` carries each node's line,
+/// and `kinds` joins two documents' rows of it. As a run prepares the program (`preparation::run`: its pushed joins,
+/// `fl…`, read in place of `line`) and splits it, the read is named, by the reader.
+#[test]
+fn a_position_handed_on_by_a_per_file_relation_is_found() {
+    let text = format!(
+        "{INVARIANT_INPUTS}.decl pos(n: node, l: number)\npos(n, l) :- node(_, n, _, _, _), line(n, l).\n\
+         .decl kinds(k: symbol, l: number) cross_file\nkinds(k, l) :- pos(n, l), node(d, n, k, _, _), node(e, _, k, _, _), d != e.\n\
+         .decl pushed(k: symbol, l: number) cross_file\npushed(k, l) :- node(d, n, k, _, _), line(n, l), node(e, _, k, _, _), d != e.\n\
+         .decl found(k: symbol)\nfound(k) :- kinds(k, _).\nfound(k) :- pushed(k, _).\n.output found\n"
+    );
+    let (v, _) = crate::code_rule_dsl::logic::program_image::Builder::of_program(&crate::code_rule_dsl::logic::rr::parse(&text).unwrap()).unwrap().finish().unwrap();
+    let (prepared, _) = crate::code_rule_dsl::logic::plan::corpus::preparation::run(v, false).unwrap();
+    let split = programs_of(prepared).unwrap();
+    let readers: std::collections::BTreeSet<&str> = split.positions.iter().map(|(h, _)| h.as_str()).collect();
+    assert!(readers.contains("kinds") && readers.contains("pushed"), "{:?}", split.positions);
+    assert!(positions_checked(&split, true).is_err());
+}
+
+/// A position the cross part only carries to a finding, as a finding naming another file's line needs (the
+/// explainer's recipe 5), is no position read: `named` hands its line, unread but by the finding, on to `violation`.
+/// One it compares is: `later` tests the line in the cross part.
+#[test]
+fn a_position_carried_only_to_a_finding_is_no_read_but_one_compared_is() {
+    let text = format!(
+        "{INVARIANT_INPUTS}.decl pos(n: node, l: number)\npos(n, l) :- node(_, n, _, _, _), line(n, l).\n\
+         .decl named(k: symbol, l: number) cross_file\nnamed(k, l) :- pos(n, l), node(d, n, k, _, _), node(e, _, k, _, _), d != e.\n\
+         .decl later(k: symbol) cross_file\nlater(k) :- pos(n, l), node(d, n, k, _, _), node(e, _, k, _, _), d != e, l > 3.\n\
+         .decl violation(rule: symbol, clause: symbol, code: symbol, path: symbol, line: number, col: number)\n\
+         violation(\"p\", \"named\", \"C\", k, l, 0) :- named(k, l).\nviolation(\"p\", \"later\", \"C\", k, 1, 0) :- later(k).\n.output violation\n"
+    );
+    let (v, _) = crate::code_rule_dsl::logic::program_image::Builder::of_program(&crate::code_rule_dsl::logic::rr::parse(&text).unwrap()).unwrap().finish().unwrap();
+    let (prepared, _) = crate::code_rule_dsl::logic::plan::corpus::preparation::run(v, false).unwrap();
+    let split = programs_of(prepared).unwrap();
+    let readers: std::collections::BTreeSet<&str> = split.positions.iter().map(|(h, _)| h.as_str()).collect();
+    assert!(!readers.contains("named") && readers.contains("later"), "{:?}", split.positions);
 }
 
 /// The explainer's cases (the authors' page on per-file and cross-file rules): each as the split reads it, with the

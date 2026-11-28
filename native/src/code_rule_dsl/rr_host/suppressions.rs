@@ -11,9 +11,9 @@
 use super::findings::parsed_as;
 use super::spans::FileSpans;
 use crate::code_rule_dsl::logic::plan::output::{Node, Row, Value};
-use crate::code_rule_dsl::logic::rr::{self, SUPPRESS_TOOLS};
+use crate::code_rule_dsl::logic::rr;
 use crate::code_rule_dsl::matcher::FileScopeSlot;
-use crate::code_rule_dsl::suppress::{self, Suppress};
+use crate::code_rule_dsl::suppress::Suppress;
 use crate::code_rule_dsl::tape::TapeDoc;
 use crate::code_rule_dsl::violations::finding_suppressed;
 use ast_grep_core::AstGrep;
@@ -38,10 +38,10 @@ struct Line {
 }
 
 impl Suppressions {
-    /// Those a program's settings hold (its `.policy`'s `.violation`s'): `[key, text]` pairs.
+    /// Those a program's settings hold (its `.policy`'s `.violation`s'): `[key, text]` pairs. A program with no
+    /// `.policy` keeps them under the policy `""`, the one lowering names its findings by (`Lowerer::findings`).
     pub fn add<'s>(&mut self, settings: impl IntoIterator<Item = (&'s str, &'s str)> + Clone) -> Result<(), String> {
-        let policy = settings.clone().into_iter().find(|(key, _)| *key == "policy").and_then(|(_, text)| text.split('"').nth(1));
-        let Some(policy) = policy else { return Ok(()) };
+        let policy = settings.clone().into_iter().find(|(key, _)| *key == "policy").and_then(|(_, text)| text.split('"').nth(1)).unwrap_or_default();
         let language = settings.clone().into_iter().find(|(key, _)| *key == "language").map(|(_, text)| text.trim().trim_matches('"').to_owned());
         for (_, text) in settings.into_iter().filter(|(key, _)| *key == "suppress") {
             let (violation, line) = line(text).map_err(|e| format!("{policy}: suppress {text}: {e}"))?;
@@ -159,25 +159,23 @@ fn node_over<'t>(mut node: ast_grep_core::Node<'t, TapeDoc>, bytes: &Range<usize
 }
 
 /// A `suppress` setting's text, `V TOOL "rule", … [over {c}]`: the violation's name, and the line as the JSON rule's
-/// `suppress` for the tool's kind (`suppress::parse`).
+/// `suppress` for the tool's kind (`rr::suppress_spec`).
 fn line(text: &str) -> Result<(String, Line), String> {
     let tokens = tokens(text).map_err(|rerail_rr_syntax::Error::Syntax(error)| error)?;
     let words: Vec<&Tok<'_>> = tokens.iter().map(|(tok, _, _)| tok).collect();
     let [Tok::Id(violation), Tok::Id(tool), rest @ ..] = words.as_slice() else {
         return Err("no violation and linter".to_owned());
     };
-    let (_, kind, list) = SUPPRESS_TOOLS.iter().find(|(name, _, _)| name == tool).ok_or_else(|| format!("no linter {tool}"))?;
     let names: Vec<&str> = rest.iter().map_while(|tok| match tok {
         Tok::Str(name) => Some(Some(&**name)),
         Tok::P(",") => Some(None),
         _ => None,
     }).flatten().collect();
+    let suppress = rr::suppress_spec(tool, &names).ok_or_else(|| format!("no linter {tool}"))??;
     let over = match rest.iter().position(|tok| matches!(tok, Tok::Id("over"))).map(|at| &rest[at + 1..]) {
         Some([Tok::P("{"), Tok::Id(column), Tok::P("}"), ..]) => Some((*column).to_owned()),
         Some(_) => return Err("over names no column".to_owned()),
         None => None,
     };
-    let spec = serde_json::json!({ *kind: { *list: names } });
-    let suppress = suppress::parse(&spec, "suppress").map_err(|e| e.reason)?;
     Ok(((*violation).to_owned(), Line { suppress, over }))
 }

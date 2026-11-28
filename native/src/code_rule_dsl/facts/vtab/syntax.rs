@@ -848,8 +848,9 @@ pub struct Guest {
     /// `at`: the host's node or span (`host << 32 | local`).
     pub at: i64,
     pub grammar: String,
-    /// The embedding a program was built through (`compiled-view`), when it was: a rule asks for the program by it
-    /// (`parsed(r, "compiled-view", p)`), so its `parsed` and `sub_tape` rows name it as well as `grammar`.
+    /// The embedding a program was built through (Blade's `compiled-view`, Vue's `script-block`), when it was: a rule
+    /// asks for the program by it (`parsed(r, "compiled-view", p)`), so its `parsed` and `sub_tape` rows name it as
+    /// well as `grammar` (once, where the two are the same name).
     pub embedding: Option<&'static str>,
     /// "program" or "fragment" (`doc_role`).
     pub role: String,

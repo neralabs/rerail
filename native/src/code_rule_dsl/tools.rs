@@ -1863,6 +1863,10 @@ mod pack_split_tests {
     /// line each, as `NodeCrossing::named` names them.
     const NODE_CROSSINGS: &str = include_str!("node_crossings.txt");
 
+    /// The relations of the cross-file part that still read a position (decision 0649), by pack: `<pack> <relation>`,
+    /// a line each, a helper by its source relation (`positions_checked`).
+    const POSITION_READS: &str = include_str!("position_reads.txt");
+
     /// The policies that do not run on the test's files, for an error of their own (a relation no producer makes, a
     /// form the lowering does not take): `<pack> <policy file>`, a line each. Their programs go unchecked, so the
     /// list only shrinks.
@@ -1884,11 +1888,11 @@ mod pack_split_tests {
         ALONE.with(|a| a.set(batch == "off"));
         let from = crate::source_tree::native().join("..").join(dir);
         let tmp = tempfile::tempdir().unwrap();
-        let (crossings, nodes) = (tmp.path().join("crossings"), tmp.path().join("node-crossings"));
+        let (crossings, nodes, positions) = (tmp.path().join("crossings"), tmp.path().join("node-crossings"), tmp.path().join("positions"));
         // A store of the test's own: a prepared program read back from a store was checked when it was prepared, and
         // its split keeps no crossings (`prepared_of`), so every program is prepared here.
         crate::code_rule_dsl::logic::plan::corpus::TEST_TAPE_CACHE.with(|p| *p.borrow_mut() = Some(tmp.path().join("store.sqlite")));
-        let _sinks = crate::code_rule_dsl::logic::plan::corpus::test_store::with_sinks(crate::code_rule_dsl::logic::plan::corpus::test_store::Sinks { crossings: crossings.clone(), nodes: nodes.clone() });
+        let _sinks = crate::code_rule_dsl::logic::plan::corpus::test_store::with_sinks(crate::code_rule_dsl::logic::plan::corpus::test_store::Sinks { crossings: crossings.clone(), nodes: nodes.clone(), positions: positions.clone() });
         let rules = tmp.path().join("rules").join(dir);
         let mut policies = copy_unscoped(&from, &rules);
         policies.sort();
@@ -1904,6 +1908,7 @@ mod pack_split_tests {
         let failures: Vec<String> = [
             ("cross-file without a declaration (decision 0652)", &crossings, SPLIT_CROSSINGS, "split_crossings.txt"),
             ("holding a node id in the cross-file part (decision 0677)", &nodes, NODE_CROSSINGS, "node_crossings.txt"),
+            ("reading a position in the cross-file part (decision 0649)", &positions, POSITION_READS, "position_reads.txt"),
         ]
         .into_iter()
         .flat_map(|(what, path, list, file)| list_failures(&pack, what, &read_found(path), list, file))

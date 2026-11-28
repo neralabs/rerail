@@ -12,6 +12,21 @@ dj_model_base("mptt.models.MPTTModel"). dj_model_base("polymorphic.models.Polymo
 dj_model_base("treebeard.mp_tree.MP_Node"). dj_model_base("treebeard.ns_tree.NS_Node").
 dj_model_base("treebeard.al_tree.AL_Node"). dj_model_base("model_utils.models.TimeStampedModel").
 dj_model_base("django_extensions.db.models.TimeStampedModel"). dj_model_base("wagtail.models.Page").
+// dj_field_module(m): the modules model field classes are imported from (`models.CharField`, `JSONField`, ...).
+.decl dj_field_module(m: symbol)
+dj_field_module("django.db.models"). dj_field_module("django.db.models.fields").
+dj_field_module("django.db.models.fields.related"). dj_field_module("django.db.models.fields.json").
+dj_field_module("django.contrib.postgres.fields"). dj_field_module("django.contrib.gis.db.models").
+dj_field_module("modelcluster.fields").
+.decl dj_relation_class(t: symbol)
+dj_relation_class("ForeignKey"). dj_relation_class("OneToOneField"). dj_relation_class("ManyToManyField").
+dj_relation_class("ParentalKey"). dj_relation_class("ParentalManyToManyField").
+.decl dj_expression_base(q: symbol)
+dj_expression_base("django.db.models.Func"). dj_expression_base("django.db.models.Expression").
+dj_expression_base("django.db.models.Aggregate"). dj_expression_base("django.db.models.Transform").
+dj_expression_base("django.db.models.Lookup"). dj_expression_base("django.db.models.Subquery").
+dj_expression_base("django.db.models.ExpressionWrapper"). dj_expression_base("django.db.models.Value").
+dj_expression_base("django.db.models.Window").
 // dj_test_doc(d): DefectDojo keeps its tests in `unittests/`, netbox its test helpers in `utilities/testing/`.
 .decl dj_test_doc(d: number)
 dj_test_doc(d) :- doc(d, _, _), (path_part(d, "tests") ; path_part(d, "test") ; path_part(d, "testing") ;

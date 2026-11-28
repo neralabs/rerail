@@ -40,7 +40,7 @@ id_value(n, x) :- unescape(n, x), !contains("\\", x).
 .decl id_kind(n: node)
 id_kind(n) :- (kind(n, "identifier") ; kind(n, "property_identifier") ; kind(n, "shorthand_property_identifier") ;
     kind(n, "shorthand_property_identifier_pattern") ; kind(n, "private_property_identifier")).
-// unescape(n, t): t is identifier n's text with its escapes decoded: a\u{62}c → abc. The text splits into pieces
+// unescape(n, t): t is identifier n's text with its escapes decoded: a\u{62}\u0063 → abc. The text splits into pieces
 // (a run of plain text, one escape, or a lone backslash), each decoded on its own and joined in order of its column; a
 // piece that does not decode keeps its backslash, so id_value has no row. One step, not one escape per round: no value
 // grows by recursion. Each relation is keyed by the identifier, and its pieces are spans of it (`match_all` over the
@@ -68,7 +68,7 @@ escape_piece(n, o, x) :- kind(n, "private_property_identifier"), escaped_id(n),
 unescape_piece(n, o, p) :- escape_piece(n, o, p), !contains("\\", p).
 unescape_piece(n, o, d) :- hex_piece(n, o, d).
 unescape_piece(n, o, p) :- escape_piece(n, o, p), contains("\\", p), !hex_decodes(n, o).
-.decl hex_piece(n: node, o: number, d: symbol)  // a and \u{61} → a
+.decl hex_piece(n: node, o: number, d: symbol)  // \u0061 and \u{61} → a
 hex_piece(n, o, d) :- escape_piece(n, o, p), match("\\\\u(?<H>[0-9a-fA-F]{4})", p), hex_char(@lower(H), d).
 hex_piece(n, o, d) :- escape_piece(n, o, p), match("\\\\u\\{0*(?<H>[0-9a-fA-F]{1,4})\\}", p),
     h = cat("000", @lower(H)), hex_char(@slice(h, strlen(h) - 4, strlen(h)), d).
