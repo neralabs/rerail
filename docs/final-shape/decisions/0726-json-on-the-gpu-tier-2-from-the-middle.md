@@ -468,6 +468,50 @@ this work"). So the device's 16z is compared with the CPU phases run with the sa
 tier 2's `chunk_starts`, `depths`, the bracket words and kinds, the spans, the entries' scan, `serial_entries`,
 `parse_middle`, the shadow out, and the whole loop's `run_range` and `write_range`.
 
+### 13. Tier 2 as phases timed, against the old program (2026-11-28)
+
+Both programs on the farm's M1 Max, minutes apart, at load averages of 4 to 17 (the M3 Max was off the network):
+the phases from 1b4e610f92's tree, the old program from adfe543212's (the commit before its removal), each
+`json_tier2_timings` and `json_batch_timings` under `--profile profiling`. The 2 MB file of §9: 602,915 records, a
+tape of 2,678,063 bytes. GPU time by the device's clock, warm, the best of 5.
+
+| GPU ms, one file | old program | phases |
+|---|---|---|
+| tier 2 and 16z, chunks of 16 records | 14.6 | 88.2 |
+| chunks of 64 | 13.9 | 52.7 |
+| chunks of 256 | 32.5 | 99.3 |
+| buffers held | 648 MB | 5,831 MB |
+| a batch of 8 files of 2 MB | 184 MB/s | 27 MB/s |
+| a batch of 16 | 189 MB/s | out of the GPU's memory |
+
+The CPU's whole path to 16z on one thread, the writer kept, is 11.3 ms. So the phases are 4 to 6 times the old
+program and slower than one CPU thread.
+
+**Each phase** (`RERAIL_T2_PHASE_TIMES`: a command buffer a phase), with the GPU's counters (Instruments' Metal GPU
+Counters, the M1 Max; each phase's mean over its buffers):
+
+| phase | chunks of 16 | of 64 | of 256 | counters at 16 and 64 |
+|---|---|---|---|---|
+| P2, the level sort | 40.2 ms | 9.4 | 5.5 | read bandwidth 86–88%, write 73%, MMU limiter 65–81%, ALU 0.5% |
+| P7, the frame sort | 30.7 | 8.5 | 5.7 | read bandwidth 85–100%, write 71–86% |
+| P6, the rows | 10.2 | 12.0 | 50.0 | occupancy 8–11%, ALU 7–8%, bandwidth under 10%; 1.7% occupancy at 256 |
+| 16z | 5.3 | 10.6 | 18.4 | occupancy 0.4–1.4%, all else under 3% |
+| FIN and TAIL | 3.1 | 3.3 | 3.0 | occupancy 0.6–0.8% |
+| P1, P3, P4, P5, P8 | 7.6 | 4.6 | 11.5 | occupancy 8–11% at 16 and 64 |
+| LAY, MAKE, END | 0.3 | 0.3 | 0.3 | |
+
+The old program's walks, its count and write, took 3.2 ms each at chunks of 64. Its 16z took 2.2 ms at every chunk size.
+
+**What bounds each.** Every phase takes the parse's chunk size (`size`), which fits P1, P4, P5 and P6 alone.
+
+- The sorts keep 256 counts a chunk. At chunks of 16 there are 75,000 chunks of level items and 150,000 of event
+  items. Each digit's count tree holds 256 × 4 words a chunk, so about 460 million words for the two sorts. That is
+  most of the 5.8 GB, with the room's bound twice the records. A merge is 256 adds by one lane. So P2 and P7 move that
+  tree through memory, and run at the bandwidth's limit with no arithmetic.
+- P6 walks each chunk on one lane, as the old program's pass 2 did: latency-bound, and worse as chunks grow.
+- 16z's few thousand pieces, FIN's and TAIL's blocks, in chunks of `size` on one lane each, leave the GPU nearly
+  idle.
+
 ## Tests
 
 Tier 2 as phases (§12): `rerail-json-aot`'s `tier2_by_phases_is_the_serial_tape`: 720 tapes by phases, each the serial

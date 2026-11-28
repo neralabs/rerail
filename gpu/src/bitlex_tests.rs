@@ -191,6 +191,8 @@ fn json_tier2_timings() {
         let b16z = best(&mut || bitlex(true));
         eprintln!("CPU, one thread, writer kept: the lean parser to 16 {l16:?} ({} bytes), to 16z {l16z:?} ({} bytes); Bitlex's tiers to 16 {b16:?}, to 16z {b16z:?}", sizes.0, sizes.1);
     }
+    // `RERAIL_T2_PHASE_TIMES`: each phase's GPU time, a command buffer a phase (the old program's switch too).
+    let timed = std::env::var_os("RERAIL_T2_PHASE_TIMES").is_some();
     for size in [16usize, 64, 256] {
         let (mut lexing, mut chain, mut wall) = (f64::MAX, f64::MAX, std::time::Duration::MAX);
         // Each step's wall, the best round's: tier 1 (the upload, its launches and the wait), tier 2's host part (its
@@ -207,12 +209,22 @@ fn json_tier2_timings() {
             let (gl, tl) = (crate::device::gpu_seconds_awaited(), t.elapsed());
             let ph = Ph::lay(&mut kept, &lex, size, &mut m);
             let tp = t.elapsed();
+            let mut each = [0f64; Ph::PHASES as usize];
             for phase in 0..Ph::PHASES {
+                let g = crate::device::gpu_seconds_awaited();
                 ph.launch(&mut q, p, &lex, phase);
                 q.barrier();
+                if timed {
+                    q.flush().await_().unwrap();
+                    each[phase as usize] = crate::device::gpu_seconds_awaited() - g;
+                }
             }
             q.flush().await_().unwrap();
             let (g1, tr) = (crate::device::gpu_seconds_awaited(), t.elapsed());
+            if timed {
+                let groups: Vec<String> = PHASE_GROUPS.iter().map(|&(name, a, b)| format!("{name} {:.2}", each[a..b].iter().sum::<f64>() * 1e3)).collect();
+                eprintln!("  round {round}, each phase's GPU ms (a command buffer a phase): {}", groups.join(", "));
+            }
             assert_eq!(ph.verdict(), (0, 1), "chunks of {size}: the failure and the finish");
             let zb = ph.z();
             let done = ph.tape(&mut m);
@@ -233,6 +245,9 @@ fn json_tier2_timings() {
         eprintln!("  wall: the first round {first:?} (buffers made: {}), the best {wall:?}: tier 1 {:?}, tier 2's host part {:?}, tier 2 and 16z {:?}, the tapes read {:?}; buffers held {} MB", kept.made - made, steps[0], steps[1], steps[2], steps[3], kept.held() >> 20);
     }
 }
+
+/// The program's phases (`<ukl/t2_phases.h>`'s numbers) by the page's names: each name's first and past-last phase.
+const PHASE_GROUPS: [(&str, usize, usize); 14] = [("LAY", 0, 1), ("P1", 1, 3), ("P2", 3, 11), ("P3", 11, 13), ("P4", 13, 15), ("P5", 15, 17), ("P7", 17, 25), ("P8", 25, 29), ("MAKE", 29, 30), ("P6", 30, 32), ("END", 32, 33), ("FIN", 33, 34), ("TAIL", 34, 36), ("16z", 36, 50)];
 
 /// A JSON file of at least `bytes` bytes: a list of objects (numbers, strings, lists, a nest every 50), its numbers
 /// from `seed`.
