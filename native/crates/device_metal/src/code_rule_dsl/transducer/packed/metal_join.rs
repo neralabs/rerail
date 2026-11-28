@@ -1094,7 +1094,6 @@ fn last_offset(room: &rerail_blocks::relation::IndexRoom) -> usize {
 }
 
 /// The buffer of `home`'s block as it is now (reaching what it holds now), the block kept with it.
-
 fn bound(home: &std::sync::Arc<crate::code_rule_dsl::facts::rows::Facts>) -> Result<Held, Error> {
     let device = rerail_accel_gpu::gpu::join::device().map_err(|_| Error::BackendCapacity)?;
     held_block(device, home, Box::new(home.clone()))

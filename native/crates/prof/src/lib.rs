@@ -981,8 +981,10 @@ pub mod work {
     static START: std::sync::Once = std::sync::Once::new();
     /// What the sampler found, by thread (`rerail_context::work::slots`' order).
     static TABLE: std::sync::LazyLock<std::sync::Mutex<Vec<Thread>>> = std::sync::LazyLock::new(Default::default);
+    /// The joins' ids by name, and each join's name and its steps' names by id - 1.
+    type Joins = (HashMap<String, u16>, Vec<(String, Vec<String>)>);
     /// The joins' names and their steps' (`join`), by id - 1.
-    static JOINS: std::sync::LazyLock<std::sync::Mutex<(HashMap<String, u16>, Vec<(String, Vec<String>)>)>> = std::sync::LazyLock::new(Default::default);
+    static JOINS: std::sync::LazyLock<std::sync::Mutex<Joins>> = std::sync::LazyLock::new(Default::default);
     /// The milliseconds between looks.
     const EVERY_MS: u64 = 2;
 

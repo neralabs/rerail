@@ -524,7 +524,7 @@ unsafe impl VTabCursor for Cursor {
     fn column(&self, ctx: &mut Context, column: c_int) -> Result<()> {
         match self.rows[self.row].get(column as usize) {
             Some(v) => ctx.set_result(v),
-            None => ctx.set_result(&rusqlite::types::Null),
+            None => ctx.set_result(rusqlite::types::Null),
         }
     }
 

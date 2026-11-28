@@ -356,7 +356,7 @@ fn applied(given: Option<&super::Texts<'_>>, key: &[u8; 32], root: &Path, out: &
     let mut report = Report { plans, ..Report::default() };
     let name = crate::code_rule_dsl::logic::plan::output::FILE;
     let bytes = &kept.image;
-    if let Some(target) = captured.as_deref_mut() {
+    if let Some(target) = captured {
         target.extend_from_slice(bytes);
     } else {
         crate::code_rule_dsl::logic::plan::output::replace(out, &[bytes]).map_err(|e| Error::Plan(format!("{name}: {e}")))?;

@@ -81,6 +81,13 @@ pub struct Document<'a> {
     pub sha256: Option<[u8; 32]>,
 }
 
+impl<'a> Document<'a> {
+    /// A document of no known hash.
+    pub fn new(lang: &'a Lang, source: &'a [u8], tag: u8, z: bool, blocks: bool, nodes: usize) -> Self {
+        Document { lang, source, tag, z, blocks, nodes, sha256: None }
+    }
+}
+
 /// Format 16 or 16z written in one pass as a parser goes (decision 0434 §2), by the writer's ops in CLIF (§6)
 /// through their Rust: `f16::Writer`. Its API and its bytes are the hand-written reference writer's
 /// (`reference::Writer`, whose doc says what each op writes where), which the tests check it against (R13, R16).
@@ -127,7 +134,7 @@ impl Writer {
     pub fn new(lang: &Lang, source: &[u8], terminators: crate::newlines::Terminators, tag: u8, z: bool, blocks: bool, nodes: usize) -> Self {
         // (`reused` takes the thread's writer between documents instead.)
         let mut w = Writer::empty();
-        w.begin(lang, source, terminators, tag, z, blocks, nodes);
+        w.begin(&Document::new(lang, source, tag, z, blocks, nodes), terminators);
         w
     }
 
@@ -136,15 +143,15 @@ impl Writer {
     /// buffers): a writer made a document made them each again (1.14 M arrays on cold PostHog).
     pub fn reused(lang: &Lang, source: &[u8], terminators: crate::newlines::Terminators, tag: u8, z: bool, blocks: bool, nodes: usize) -> Self {
         let mut w = SPARE.try_with(|s| s.take()).ok().flatten().unwrap_or_else(Writer::empty);
-        w.begin(lang, source, terminators, tag, z, blocks, nodes);
+        w.begin(&Document::new(lang, source, tag, z, blocks, nodes), terminators);
         w
     }
 
     /// `reused`, its tapes going to `rooms` (decision 0353 step 4a, row 17; `placing`): the thread's writer keeps its
     /// parts' buffers, and takes this document's rooms. A region left from other rooms is not this document's.
-    pub fn reused_in(rooms: Option<std::sync::Arc<dyn crate::home::Rooms>>, lang: &Lang, source: &[u8], terminators: crate::newlines::Terminators, tag: u8, z: bool, blocks: bool, nodes: usize) -> Self {
+    pub fn reused_in(rooms: Option<std::sync::Arc<dyn crate::home::Rooms>>, doc: &Document<'_>, terminators: crate::newlines::Terminators) -> Self {
         let mut w = Writer::reused_for(rooms);
-        w.begin(lang, source, terminators, tag, z, blocks, nodes);
+        w.begin(doc, terminators);
         w
     }
 
@@ -189,8 +196,9 @@ impl Writer {
     /// the next. A buffer's bytes are the last document's: the ops write each byte before they read it (in tests every
     /// part kept is filled with `FRESH`, so a byte read before it is written shows).
     /// The line index is of the source's lines as its language's `terminators` end them (decision 0612).
-    pub fn begin(&mut self, lang: &Lang, source: &[u8], terminators: crate::newlines::Terminators, tag: u8, z: bool, blocks: bool, nodes: usize) {
-        self.begin_with(&Document { lang, source, tag, z, blocks, nodes, sha256: None }, |out| crate::newlines::index_into(out, source, terminators));
+    pub fn begin(&mut self, doc: &Document<'_>, terminators: crate::newlines::Terminators) {
+        let source = doc.source;
+        self.begin_with(doc, |out| crate::newlines::index_into(out, source, terminators));
     }
 
     /// `begin`, the newline index written into its part by `lines` (`newlines::index_of`), in the part's own buffer: a

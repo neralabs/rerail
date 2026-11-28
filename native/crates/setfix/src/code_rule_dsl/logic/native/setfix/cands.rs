@@ -582,7 +582,7 @@ pub(super) fn ask_chunk(j: &JoinRule, step: &Step, test: &rowcode::Test, chunk: 
 /// `0..n` alone, as a loop to `n` does.
 #[inline]
 fn chunk_rows_only(alive: &mut [u64], n: usize) {
-    if n % 64 != 0 && let Some(w) = alive.get_mut(n / 64) {
+    if !n.is_multiple_of(64) && let Some(w) = alive.get_mut(n / 64) {
         *w &= (1u64 << (n % 64)) - 1;
     }
 }
@@ -624,8 +624,8 @@ fn ask_derived_chunk(rel: &InRel, ix: &Csr, step: &Step, test: &rowcode::Test, c
     run_counts().chunk_asks[2].fetch_add(1, std::sync::atomic::Ordering::Relaxed);
     let (mut none, mut one) = (0u64, 0u64);
     let (mut hs, mut found) = ([0u64; 64], [(0u32, 0u32); 64]);
-    for w in 0..n.div_ceil(64) {
-        let (base, live) = (w * 64, alive[w]);
+    for (w, slot) in alive.iter_mut().enumerate().take(n.div_ceil(64)) {
+        let (base, live) = (w * 64, *slot);
         let mut m = live;
         while m != 0 {
             let r = m.trailing_zeros() as usize;
@@ -668,7 +668,7 @@ fn ask_derived_chunk(rel: &InRel, ix: &Csr, step: &Step, test: &rowcode::Test, c
                 }
             }
         }
-        alive[w] = pass;
+        *slot = pass;
     }
     Some((none, one))
 }

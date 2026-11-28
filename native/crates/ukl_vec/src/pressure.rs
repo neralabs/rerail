@@ -149,10 +149,7 @@ fn depths(f: &Func) -> (Vec<u32>, Vec<usize>) {
     }
     let mut depth = vec![0u32; nb];
     let mut inner = vec![(usize::MAX, usize::MAX); nb];
-    for b in 0..nb {
-        if idom[b] == usize::MAX {
-            continue;
-        }
+    for (b, _) in idom.iter().enumerate().filter(|&(_, &d)| d != usize::MAX) {
         for h in f.succs(b) {
             let h = h as usize;
             if !dominates(h, b) {
@@ -416,8 +413,8 @@ pub fn of_func(ssa: &Ssa, f: &Func) -> FuncPressure {
             if n > 0 {
                 let r = kept(&live);
                 fp.exchanges += freq[b] * f64::from(n);
-                for k in 0..6 {
-                    fp.kept[k] += freq[b] * f64::from(n) * r[k];
+                for (kept, rk) in fp.kept.iter_mut().zip(r) {
+                    *kept += freq[b] * f64::from(n) * rk;
                 }
             }
         }
@@ -429,8 +426,8 @@ pub fn of_func(ssa: &Ssa, f: &Func) -> FuncPressure {
             }
             let r = kept(&l);
             fp.exchanges += freq[b];
-            for k in 0..6 {
-                fp.kept[k] += freq[b] * r[k];
+            for (kept, rk) in fp.kept.iter_mut().zip(r) {
+                *kept += freq[b] * rk;
             }
         }
         fp.blocks.push((freq[b], inner[b], here));

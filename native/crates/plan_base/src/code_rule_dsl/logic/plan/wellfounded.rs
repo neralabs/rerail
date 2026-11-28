@@ -408,7 +408,7 @@ impl Analysis for Proofs {
                 Ok(m) => (ORDERS.iter().position(|o| *o == m.order).expect("an order") as i64, String::new()),
                 Err(e) => (-1, e.clone()),
             };
-            out.push([s("comp"), Value::Int(k as i64), Value::Int(code), s(&why)].into_iter().chain(self.all[*comp].iter().map(|r| s(r))).collect());
+            out.push([s("comp"), Value::Int(k as i64), Value::Int(code), s(&why)].into_iter().chain(self.all[*comp].iter().map(&s)).collect());
             if let Ok(m) = verdict {
                 for (rel, col) in &m.col {
                     out.push(vec![s("col"), Value::Int(k as i64), s(rel), Value::Int(*col as i64), Value::Int(m.rank.get(rel).map_or(-1, |r| i64::from(*r)))]);
@@ -521,7 +521,7 @@ fn classify(rules: &[Rule], helpers: &Helpers, types: &dyn Fn(&str) -> Vec<Strin
                     Some(Step::U) => "U",
                     Some(Step::S) => "S",
                     _ => {
-                        let others: BTreeSet<&str> = r.atoms.iter().map(|a| a.rel.as_str()).filter(|a| !comp.contains(*a)).collect();
+                        let others: BTreeSet<&str> = r.atoms.iter().map(|a| a.rel.as_str()).filter(|a| !comp.contains(a)).collect();
                         failed = Some(format!("an unknown step: {}", others.into_iter().collect::<Vec<_>>().join(", ")));
                         break 'rules;
                     }

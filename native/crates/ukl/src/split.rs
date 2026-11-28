@@ -339,16 +339,12 @@ fn definitions(msl: &str) -> HashMap<&str, (usize, usize)> {
         } else if d == 0 && (c.is_ascii_alphabetic() || c == b'_') && (i == 0 || !is_ident(s[i - 1])) {
             let end = i + s[i..].iter().position(|&c| !is_ident(c)).unwrap_or(s.len() - i);
             let k = skip_trivia(s, end);
-            if s.get(k) == Some(&b'(') {
-                if let Some(close) = matching(s, k) {
-                    let r = skip_trivia(s, close);
-                    if s.get(r) == Some(&b'{') {
-                        if let Some(stop) = matching(s, r) {
-                            out.entry(&msl[i..end]).or_insert((r, stop));
-                            i = stop;
-                            continue;
-                        }
-                    }
+            if s.get(k) == Some(&b'(') && let Some(close) = matching(s, k) {
+                let r = skip_trivia(s, close);
+                if s.get(r) == Some(&b'{') && let Some(stop) = matching(s, r) {
+                    out.entry(&msl[i..end]).or_insert((r, stop));
+                    i = stop;
+                    continue;
                 }
             }
             i = end;
@@ -410,10 +406,8 @@ fn kernel_spans(msl: &str) -> Vec<(usize, &str, usize)> {
         // Attributes before it (`[[max_total_threads_per_threadgroup(N)]] kernel`) go with it.
         let mut start = k;
         let before = msl[..k].trim_end();
-        if before.ends_with("]]") {
-            if let Some(open) = before.rfind("[[") {
-                start = open;
-            }
+        if before.ends_with("]]") && let Some(open) = before.rfind("[[") {
+            start = open;
         }
         out.push((start, name, end));
         at = end;

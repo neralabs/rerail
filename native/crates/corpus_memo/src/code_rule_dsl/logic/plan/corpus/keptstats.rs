@@ -380,8 +380,8 @@ impl Keeper {
             let width = stats.columns().len();
             match syms(rel, stats.columns()).filter(|c| c.len() == width) {
                 Some(cols) => {
-                    for c in 0..width {
-                        let (exact, watched) = if cols[c] { (&mut exact, &mut watched) } else { (&mut exact_n, &mut watched_n) };
+                    for (c, &exact_col) in cols.iter().enumerate() {
+                        let (exact, watched) = if exact_col { (&mut exact, &mut watched) } else { (&mut exact_n, &mut watched_n) };
                         exact.extend(stats.take_exact(c).map(|pairs| (rel.clone(), c, pairs)));
                         let pairs = stats.take_watched(c);
                         if !pairs.is_empty() {

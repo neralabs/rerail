@@ -1066,7 +1066,7 @@ mod partition_tests {
         shuffled.swap(1, 20);
         shuffled.swap(4, 12);
         let mut h = 0x9e37_79b9u64;
-        let scattered: Vec<i64> = (0..300).map(|_| { h ^= h << 13; h ^= h >> 7; h ^= h << 17; (h % 7) as i64 + 2 << 32 | (h >> 20) as i64 % 90 }).collect();
+        let scattered: Vec<i64> = (0..300).map(|_| { h ^= h << 13; h ^= h >> 7; h ^= h << 17; (((h % 7) as i64 + 2) << 32) | ((h >> 20) as i64 % 90) }).collect();
         for (values, is_runs) in [(runs, true), (shuffled, false), (scattered, false)] {
             let mut r = Relation::new(&["n", "s"]);
             r.push(&[-5, 0]);
@@ -2005,7 +2005,6 @@ fn session_group() -> usize {
 /// A relation a batch makes (`text`, `op`, the matchers'), over its groups (decision 0494): every document made, the
 /// one group's rows when one group holds them all (a batch read whole); before, what is known without making a
 /// document, and a probe of the first column makes the documents it names.
-
 pub(super) struct MadeRows {
     pub(super) batch: Arc<Batch>,
     pub(super) rel: usize,
@@ -2457,7 +2456,7 @@ impl Source for MadeRows {
         match (self.done(), self.batch.rows.counted(self.rel)) {
             (Some(t), _) => t.len() > 0,
             (None, Some(n)) => n > 0,
-            (None, None) => self.batch.docs.len() > 0,
+            (None, None) => !self.batch.docs.is_empty(),
         }
     }
     /// Before its rows are made, its counts as given, else `doc`'s its documents' (a row a file): the target's estimate

@@ -1345,131 +1345,6 @@ impl<T: Pod> std::ops::Deref for Rec<T> {
     }
 }
 
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    /// A structure made with no room inside an owner's scope (`within`) takes the owner's room; outside it, the
-    /// thread's stack; the scope before comes back at its end, nested or after a panic.
-    #[test]
-    fn a_structure_made_within_an_owner_takes_its_room() {
-        let owner = Arc::new(Block::anon(crate::block::kind::FACTS, 1 << 20));
-        let room: Arc<dyn Room> = Arc::new(InBlock(owner.clone()));
-        let in_owner = || {
-            let r = default_room().region(64, 8, "a test's");
-            Arc::ptr_eq(place_of(&r).expect("placed").0, &owner)
-        };
-        assert!(within(&room, in_owner), "the owner's block");
-        assert!(within(&room, || within(&room, in_owner) && in_owner()), "nested, and the outer scope after");
-        assert!(!in_owner(), "outside the scope, the thread's stack");
-        let _ = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| within(&room, || panic!("inside"))));
-        assert!(!in_owner(), "a panic's end restores the scope before");
-    }
-
-    /// What is made `long` lies in the thread's long-lived room (decision 0342, amended 2026-11-24), and the stack
-    /// is the room again after it.
-    #[test]
-    fn what_is_made_long_lies_in_the_threads_long_room() {
-        let r = long(|| default_room().region(64, 8, "a test's"));
-        assert!(r.owner().downcast_ref::<crate::long::InLong>().is_some(), "made long: a long room's slot");
-        let s = default_room().region(64, 8, "a test's");
-        assert!(s.owner().downcast_ref::<crate::scratch::OnStack>().is_some(), "after it: the stack");
-    }
-
-    /// An id table in a block (`IdTable`, a set of row ids found by their rows' hashes) finds each id through growth,
-    /// removals that move ids probed past the removed one back, and an id written again in its slot; ids whose hashes
-    /// collide are told apart by their rows. (The engine's other id set in a block, `facts::rows::IdSet`, was merged
-    /// into it, with this test.)
-    #[test]
-    fn an_id_table_finds_each_id_through_growth_and_removals() {
-        // Rows are their ids' values; a hash of 8 values only, so many collide.
-        let row = |id: u32| u64::from(id) * 7 + 1;
-        let hash = |&id: &u32| row(id) % 8;
-        let mut set: IdTable<u32> = IdTable::new();
-        for id in 0..3000u32 {
-            assert_eq!(set.find(hash(&id), |&i| row(i) == row(id)), None);
-            set.insert_unique(hash(&id), id, hash);
-        }
-        assert_eq!(set.len(), 3000);
-        for id in (0..3000u32).step_by(3) {
-            assert_eq!(set.remove(hash(&id), |&i| row(i) == row(id), hash), Some(id));
-        }
-        assert_eq!(set.len(), 2000);
-        for id in 0..3000u32 {
-            let want = (id % 3 != 0).then_some(id);
-            assert_eq!(set.find(hash(&id), |&i| row(i) == row(id)).copied(), want, "id {id}");
-        }
-        assert!(set.find_mut(hash(&1), |&i| i == 1).map(|v| *v = 1).is_some());
-        assert!(set.find_mut(hash(&0), |&i| i == 0).is_none(), "a removed id is not held");
-    }
-    use crate::block::kind;
-
-    fn room() -> Arc<dyn Room> {
-        Arc::new(InBlock(Arc::new(Block::anon(kind::FACTS, 1 << 24).with_free_list())))
-    }
-
-    /// A region past half a new block's size, just over a power of two (the strings' table: 33,554,500 bytes), takes
-    /// a block of its own that holds the free list's chunk for it, aligned to its size.
-    #[test]
-    fn an_anonymous_room_holds_a_region_past_a_power_of_two() {
-        let room = FreeRoom::large();
-        for bytes in [(32 << 20) + 68, (64 << 20) + 1, 100] {
-            let r = room.region(bytes, 8, "a test's region");
-            assert_eq!(r.len(), bytes);
-        }
-    }
-
-    #[test]
-    fn a_block_hash_holds_what_a_hash_map_holds() {
-        let mut m = BlockHash::<u64, u32>::new(room());
-        let mut want = std::collections::HashMap::new();
-        for i in 0..5000u64 {
-            let k = (i * 7919) % 3001;
-            if i % 5 == 4 {
-                assert_eq!(m.remove(&k), want.remove(&k));
-            } else {
-                assert_eq!(m.insert(k, i as u32), want.insert(k, i as u32));
-            }
-        }
-        m.insert(u64::MAX, 9);
-        want.insert(u64::MAX, 9);
-        assert_eq!(m.len(), want.len());
-        for (k, v) in &want {
-            assert_eq!(m.get(k), Some(v));
-        }
-        let mut got: Vec<_> = m.iter().collect();
-        got.sort();
-        let mut all: Vec<_> = want.into_iter().collect();
-        all.sort();
-        assert_eq!(got, all);
-    }
-
-    #[test]
-    fn a_sorted_map_finds_its_keys_and_keeps_the_last_value() {
-        let entries: Vec<(u32, u32)> = (0..1000u32).map(|i| ((i * 37) % 500, i)).collect();
-        let m = BlockSorted::build(&*room(), entries.len(), entries.iter().copied());
-        assert_eq!(m.len(), 500);
-        assert!(m.keys().windows(2).all(|w| w[0] < w[1]));
-        for (k, _) in &entries {
-            let last = entries.iter().rev().find(|(k2, _)| k2 == k).unwrap().1;
-            assert_eq!(m.get(k), Some(&last));
-        }
-    }
-
-    #[test]
-    fn an_interner_holds_each_string_once() {
-        let mut t = BlockInterner::new(room());
-        let words: Vec<String> = (0..3000).map(|i| format!("w{}", i % 1200)).collect();
-        let ids: Vec<usize> = words.iter().map(|w| t.intern(w)).collect();
-        assert_eq!(t.len(), 1200);
-        for (w, &i) in words.iter().zip(&ids) {
-            assert_eq!(t.get(i), w);
-            assert_eq!(t.find(w), Some(i));
-        }
-        assert_eq!(t.intern(""), 1200);
-        assert_eq!(t.get(1200), "");
-    }
-}
 impl<K: Key, V: Pod + Copy> std::panic::UnwindSafe for BlockHash<K, V> {}
 impl<K: Key, V: Pod + Copy> std::panic::RefUnwindSafe for BlockHash<K, V> {}
 impl<K: Pod + Copy + Ord, V: Pod + Copy> std::panic::UnwindSafe for BlockSorted<K, V> {}
@@ -1646,5 +1521,131 @@ impl<T: Pod + Copy> IdTable<T> {
 impl<T: Pod + Copy> Clone for IdTable<T> {
     fn clone(&self) -> Self {
         IdTable { tags: self.tags.clone(), vals: self.vals.clone(), len: self.len }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// A structure made with no room inside an owner's scope (`within`) takes the owner's room; outside it, the
+    /// thread's stack; the scope before comes back at its end, nested or after a panic.
+    #[test]
+    fn a_structure_made_within_an_owner_takes_its_room() {
+        let owner = Arc::new(Block::anon(crate::block::kind::FACTS, 1 << 20));
+        let room: Arc<dyn Room> = Arc::new(InBlock(owner.clone()));
+        let in_owner = || {
+            let r = default_room().region(64, 8, "a test's");
+            Arc::ptr_eq(place_of(&r).expect("placed").0, &owner)
+        };
+        assert!(within(&room, in_owner), "the owner's block");
+        assert!(within(&room, || within(&room, in_owner) && in_owner()), "nested, and the outer scope after");
+        assert!(!in_owner(), "outside the scope, the thread's stack");
+        let _ = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| within(&room, || panic!("inside"))));
+        assert!(!in_owner(), "a panic's end restores the scope before");
+    }
+
+    /// What is made `long` lies in the thread's long-lived room (decision 0342, amended 2026-11-24), and the stack
+    /// is the room again after it.
+    #[test]
+    fn what_is_made_long_lies_in_the_threads_long_room() {
+        let r = long(|| default_room().region(64, 8, "a test's"));
+        assert!(r.owner().downcast_ref::<crate::long::InLong>().is_some(), "made long: a long room's slot");
+        let s = default_room().region(64, 8, "a test's");
+        assert!(s.owner().downcast_ref::<crate::scratch::OnStack>().is_some(), "after it: the stack");
+    }
+
+    /// An id table in a block (`IdTable`, a set of row ids found by their rows' hashes) finds each id through growth,
+    /// removals that move ids probed past the removed one back, and an id written again in its slot; ids whose hashes
+    /// collide are told apart by their rows. (The engine's other id set in a block, `facts::rows::IdSet`, was merged
+    /// into it, with this test.)
+    #[test]
+    fn an_id_table_finds_each_id_through_growth_and_removals() {
+        // Rows are their ids' values; a hash of 8 values only, so many collide.
+        let row = |id: u32| u64::from(id) * 7 + 1;
+        let hash = |&id: &u32| row(id) % 8;
+        let mut set: IdTable<u32> = IdTable::new();
+        for id in 0..3000u32 {
+            assert_eq!(set.find(hash(&id), |&i| row(i) == row(id)), None);
+            set.insert_unique(hash(&id), id, hash);
+        }
+        assert_eq!(set.len(), 3000);
+        for id in (0..3000u32).step_by(3) {
+            assert_eq!(set.remove(hash(&id), |&i| row(i) == row(id), hash), Some(id));
+        }
+        assert_eq!(set.len(), 2000);
+        for id in 0..3000u32 {
+            let want = (id % 3 != 0).then_some(id);
+            assert_eq!(set.find(hash(&id), |&i| row(i) == row(id)).copied(), want, "id {id}");
+        }
+        assert!(set.find_mut(hash(&1), |&i| i == 1).map(|v| *v = 1).is_some());
+        assert!(set.find_mut(hash(&0), |&i| i == 0).is_none(), "a removed id is not held");
+    }
+    use crate::block::kind;
+
+    fn room() -> Arc<dyn Room> {
+        Arc::new(InBlock(Arc::new(Block::anon(kind::FACTS, 1 << 24).with_free_list())))
+    }
+
+    /// A region past half a new block's size, just over a power of two (the strings' table: 33,554,500 bytes), takes
+    /// a block of its own that holds the free list's chunk for it, aligned to its size.
+    #[test]
+    fn an_anonymous_room_holds_a_region_past_a_power_of_two() {
+        let room = FreeRoom::large();
+        for bytes in [(32 << 20) + 68, (64 << 20) + 1, 100] {
+            let r = room.region(bytes, 8, "a test's region");
+            assert_eq!(r.len(), bytes);
+        }
+    }
+
+    #[test]
+    fn a_block_hash_holds_what_a_hash_map_holds() {
+        let mut m = BlockHash::<u64, u32>::new(room());
+        let mut want = std::collections::HashMap::new();
+        for i in 0..5000u64 {
+            let k = (i * 7919) % 3001;
+            if i % 5 == 4 {
+                assert_eq!(m.remove(&k), want.remove(&k));
+            } else {
+                assert_eq!(m.insert(k, i as u32), want.insert(k, i as u32));
+            }
+        }
+        m.insert(u64::MAX, 9);
+        want.insert(u64::MAX, 9);
+        assert_eq!(m.len(), want.len());
+        for (k, v) in &want {
+            assert_eq!(m.get(k), Some(v));
+        }
+        let mut got: Vec<_> = m.iter().collect();
+        got.sort();
+        let mut all: Vec<_> = want.into_iter().collect();
+        all.sort();
+        assert_eq!(got, all);
+    }
+
+    #[test]
+    fn a_sorted_map_finds_its_keys_and_keeps_the_last_value() {
+        let entries: Vec<(u32, u32)> = (0..1000u32).map(|i| ((i * 37) % 500, i)).collect();
+        let m = BlockSorted::build(&*room(), entries.len(), entries.iter().copied());
+        assert_eq!(m.len(), 500);
+        assert!(m.keys().windows(2).all(|w| w[0] < w[1]));
+        for (k, _) in &entries {
+            let last = entries.iter().rev().find(|(k2, _)| k2 == k).unwrap().1;
+            assert_eq!(m.get(k), Some(&last));
+        }
+    }
+
+    #[test]
+    fn an_interner_holds_each_string_once() {
+        let mut t = BlockInterner::new(room());
+        let words: Vec<String> = (0..3000).map(|i| format!("w{}", i % 1200)).collect();
+        let ids: Vec<usize> = words.iter().map(|w| t.intern(w)).collect();
+        assert_eq!(t.len(), 1200);
+        for (w, &i) in words.iter().zip(&ids) {
+            assert_eq!(t.get(i), w);
+            assert_eq!(t.find(w), Some(i));
+        }
+        assert_eq!(t.intern(""), 1200);
+        assert_eq!(t.get(1200), "");
     }
 }

@@ -2064,7 +2064,7 @@ mod layouts {
         let r = v.heads(v.rel("h1").unwrap()).find(|r| r.body().count() > 1).unwrap();
         let n = r.head().args().next().unwrap().var().unwrap();
         let at = |rel: &str, neg: bool| r.body().find(|l| matches!(l.view(), Lit::Atom(a) if a.rel() == v.rel(rel).unwrap() && a.neg() == neg)).unwrap();
-        assert!(l.at_most_one(at("field", false), &BTreeSet::from([n])) == false, "field from its parent: a few");
+        assert!(!l.at_most_one(at("field", false), &BTreeSet::from([n])), "field from its parent: a few");
         let Lit::Atom(f) = at("field", false).view() else { unreachable!() };
         let o = f.args().nth(2).unwrap().var().unwrap();
         assert!(l.at_most_one(at("field", false), &BTreeSet::from([o])), "field by its child");

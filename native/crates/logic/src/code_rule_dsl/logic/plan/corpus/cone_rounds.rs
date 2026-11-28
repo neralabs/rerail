@@ -435,10 +435,8 @@ impl Answers {
         ledger.taken_back.extend(taken);
         // A load this run asked and was not given (past the budget, say) is asked again: a place may be free now.
         let given: HashSet<(i64, i64)> = self.rows.get(super::world::LOADED).into_iter().flat_map(FlatRows::iter).filter(|r| r.len() == 3 && !gone.contains(&(r[1], r[2]))).map(|r| (r[1], r[2])).collect();
-        if !docs.is_empty() {
-            if let Some(loads) = self.asked.get_mut(super::world::LOAD) {
-                loads.retain(|k| !(k.len() == 3 && !given.contains(&(k[1], k[2]))));
-            }
+        if !docs.is_empty() && let Some(loads) = self.asked.get_mut(super::world::LOAD) {
+            loads.retain(|k| !(k.len() == 3 && !given.contains(&(k[1], k[2]))));
         }
         withdrawn.extend(docs.iter().copied());
         let mut touched = BTreeSet::new();

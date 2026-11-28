@@ -6784,7 +6784,7 @@ impl Gen<'_> {
             if let Some((e, _)) = &r.empty {
                 self.names.insert(e.clone(), format!("m_{}", ident(e)));
                 self.regional.insert(e.clone());
-                self.forget_name(&e);
+                self.forget_name(e);
             }
             // A kind that nests: its `else`, no mask of the loop's (it refuses past its levels).
             if let Some((_, e)) = &r.nests {
@@ -7125,7 +7125,7 @@ impl Gen<'_> {
                 }
                 self.class(name, &set);
                 self.class_bytes.insert(name.clone(), set);
-                self.forget_name(&name);
+                self.forget_name(name);
             }
         }
         let mut skip: Option<Expr> = None;
@@ -7144,7 +7144,7 @@ impl Gen<'_> {
                 // A mask not made of the regions: stage 1's.
                 Stmt::Mask(name, e) if !self.regional(e) => {
                     self.defs.insert(name.clone(), e.clone());
-                    self.forget_name(&name);
+                    self.forget_name(name);
                     let id = match e {
                         Expr::Name(_) => self.node(e)?,
                         _ => {
@@ -7162,9 +7162,9 @@ impl Gen<'_> {
                 }
                 Stmt::Mask(name, e) => {
                     self.regional.insert(name.clone());
-                    self.forget_name(&name);
+                    self.forget_name(name);
                     self.defs.insert(name.clone(), e.clone());
-                    self.forget_name(&name);
+                    self.forget_name(name);
                     let _ = writeln!(self.body, "    // mask {name} = {}", show(e));
                     // Its expression reads the names before it, so it is made before it is a name of the regions.
                     let v = match e {
@@ -8318,7 +8318,7 @@ impl Gen<'_> {
             let sb = if picked { [false; 256] } else { sb };
             let start_read = {
                 let these: Vec<(&str, &Expr)> = x.assumed.iter().filter(|a| a.0.as_ref() == Some(kind)).map(|a| (a.1.as_str(), &a.2)).collect();
-                if these.is_empty() { start.clone() } else { substitute(&start, &these, &self.defs) }
+                if these.is_empty() { start.clone() } else { substitute(start, &these, &self.defs) }
             };
             row_arms.push(RowArm { resume, word, open: open_k.is_some(), row: *row, first: sb, tail, starts: first_tests, start: if picked { Expr::Empty } else { start.clone() }, start_read, check, body: format!("{{\n            // `{kind}`: {how}\n{decl}            //~defs\n            //~spans\n            let l = {l};\n            let l = l.max(s);\n{pause}{scans}            //~passed\n{hits}            (l, {k}, {extra_is}, "), bits });
         }

@@ -3307,7 +3307,7 @@ pub fn run(conn: impl Scoped, name: &str, max_waves: u32) -> Result<String> {
         let mut outs = Some(crate::code_rule_dsl::logic::lanes::wave::take(&tickets).map_err(|e| err(format!("{name}: {e}")))?);
         let mut guard = comp.store.write().unwrap();
         form_name = cl.name();
-        closure_ran = Some(forms::framed(form_name, &name, &mut || cl.finish(outs.take().expect("one finish"), &mut guard)));
+        closure_ran = Some(forms::framed(form_name, name, &mut || cl.finish(outs.take().expect("one finish"), &mut guard)));
         drop(guard);
         comp.form = Some(cl);
     } else if !seeded && let Some(mut cl) = comp.form.take() {
@@ -3369,7 +3369,7 @@ pub fn run(conn: impl Scoped, name: &str, max_waves: u32) -> Result<String> {
             cl.take_seeds(std::mem::take(&mut folded));
         }
         form_name = cl.name();
-        let prep = forms::framed(form_name, &name, &mut || cl.prepare(store, syms));
+        let prep = forms::framed(form_name, name, &mut || cl.prepare(store, syms));
         match prep {
             None => closure_ran = Some(None),
             Some(launches) if !launches.is_empty() && crate::code_rule_dsl::logic::lanes::wave::can_wait() => {
@@ -3389,7 +3389,7 @@ pub fn run(conn: impl Scoped, name: &str, max_waves: u32) -> Result<String> {
                     let (done, _) = crate::code_rule_dsl::logic::lanes::prof::run("closure", batch).map_err(|e| err(format!("{name}: {e}")))?;
                     done.into_iter().map(|d| d.out).collect()
                 });
-                closure_ran = Some(forms::framed(form_name, &name, &mut || cl.finish(outs.take().expect("one finish"), store)));
+                closure_ran = Some(forms::framed(form_name, name, &mut || cl.finish(outs.take().expect("one finish"), store)));
             }
         }
         drop(guard);
@@ -3813,7 +3813,7 @@ pub fn run(conn: impl Scoped, name: &str, max_waves: u32) -> Result<String> {
     let solve = t0.elapsed();
     // The rows the form made, each return; the generic joins' are counted where their step counts are taken
     // (`step_counts`), once each.
-    forms::account(form_name, &name, form_rows, form_visits, 0);
+    forms::account(form_name, name, form_rows, form_visits, 0);
     let per: Vec<String> = per.iter().map(|(t, n, c)| format!("{:.1}:{n}:{:.3}", t * 1e3, c * 1e3)).collect();
     if was_cut {
         return Ok(format!("0 {waves} {visits} {runs} {skips} {:.1} {:.1} {} 5", solve.as_secs_f64() * 1e3, t0.elapsed().as_secs_f64() * 1e3, per.join(",")));
@@ -5444,7 +5444,7 @@ impl View {
                 let mut found: Vec<(u32, [i64; READ])> = rows
                     .into_iter()
                     .map(|row| {
-                        self.src.row_at(row, &all, &mut got);
+                        self.src.row_at(row, all, &mut got);
                         let mut vals = [0i64; READ];
                         for c in 0..all.len() {
                             if need >> c & 1 != 0 {
@@ -5686,7 +5686,7 @@ impl Csr {
                 let _kind = rerail_prof::work::doing(rerail_prof::work::BUILD);
                 let bits = if cands::node_bits_on() && self.looks_again(rel, 0) { rel.node_bits(self.cols[0]) } else { None };
                 run_counts().node_bits[usize::from(bits.is_none())].fetch_add(1, AtomicOrdering::Relaxed);
-                let Some(bits) = bits else { return None };
+                let bits = bits?;
                 let _ = self.bits.set(bits);
                 self.bits.get()?
             }
@@ -7327,14 +7327,10 @@ impl InRel {
                 let rows = v.src.sorted_rows(c, k).unwrap_or(&[]);
                 run(rows.len(), &|i| Some(RowRef::Source(v, rows[i] as usize).read()))
             }
-        } else if !ix.composite && !ix.source || self.view.is_none() {
-            let ids = ix.get(self, ikey);
-            run(ids.len(), &|i| live(ids[i]))
-        } else {
+        } else if (ix.composite || ix.source) && let Some(v) = &self.view {
             // A source's lookup: its candidates, as `probe_each` finds them, drawn by position where the source holds
             // them (`View::find_seq`) as an index's are. Read whole, each match read and kept by the walk, one search at
             // a run's end took 36 s and 14 GB (t50 step 9).
-            let v = self.view.as_ref().expect("a relation with no view is answered above");
             let seq = if ix.composite {
                 let eq: Vec<(usize, i64)> = icols.iter().zip(ikey).map(|(&c, &k)| (v.cols[c], k)).collect();
                 crate::code_rule_dsl::facts::vtab::Seq::rows(v.src.lookup_all(&eq).unwrap_or_default())
@@ -7342,6 +7338,9 @@ impl InRel {
                 v.find_seq(icols, ikey, ix.lead)
             };
             run(seq.len(), &|i| Some(RowRef::Source(v, seq.nth(i)).read()))
+        } else {
+            let ids = ix.get(self, ikey);
+            run(ids.len(), &|i| live(ids[i]))
         }
     }
 
@@ -10184,7 +10183,6 @@ fn run_join_in_each_unframed(j: &JoinRule, head: usize, store: &Store, syms: &mu
         cx.budget = budget;
         cx.stop |= stop || cx.work > budget;
         // The read back, with the buffer's room for the step's next rows.
-        let mut rows = rows;
         rows.clear();
         cx.batch[i] = Some((t, rows));
     }

@@ -203,7 +203,6 @@ pub(super) fn shift_spans(store: &ContentStore, scope: &str, d: i64, start: i64)
         }
         flat.extend(row);
     }
-    drop(chain);
     if moved > 0 {
         store.queue_kept(space, vec![put(SPAN, d, b"iiii", flat, false)]);
         store.settle_kept(&space);

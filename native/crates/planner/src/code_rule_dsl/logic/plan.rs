@@ -1592,7 +1592,7 @@ fn stratum_label(scc: &super::front::Comp) -> String {
 #[derive(Clone, Debug)]
 pub enum Delta {
     Marks { gone: usize, added: usize },
-    Rows { gone: Vector<i64>, added: Vector<i64> },
+    Rows { gone: Box<Vector<i64>>, added: Box<Vector<i64>> },
 }
 
 impl Delta {
@@ -1607,7 +1607,7 @@ impl Delta {
     pub fn rows(&self, rel: &super::native::component::InRel) -> Option<(Vector<i64>, Vector<i64>)> {
         match self {
             Delta::Marks { .. } => rel.version_delta().map(|(added, gone)| (gone, added)),
-            Delta::Rows { gone, added } => Some((gone.clone(), added.clone())),
+            Delta::Rows { gone, added } => Some((Vector::clone(gone), Vector::clone(added))),
         }
     }
 }
@@ -1620,7 +1620,7 @@ enum Moved {
     Marks,
     /// Its rows gone and added, row-major: a relation that cannot be made a version of its kept rows (a reach index
     /// held over its source, decision 0119).
-    Rows(Vector<i64>, Vector<i64>),
+    Rows(Box<Vector<i64>>, Box<Vector<i64>>),
 }
 
 /// The delta of `rel`, derived again (a reach index made again against its old rows kept in memory, decision 0331, or
@@ -1667,7 +1667,7 @@ fn kept_delta(db: &Connection, rel: &str, old: &Arc<super::native::component::In
             (None, None) => unreachable!(),
         }
     }
-    Ok(if minus.is_empty() && plus.is_empty() { Moved::Not } else { Moved::Rows(minus, plus) })
+    Ok(if minus.is_empty() && plus.is_empty() { Moved::Not } else { Moved::Rows(Box::new(minus), Box::new(plus)) })
 }
 
 /// A relation's rows gone and added (`Moved::Rows`) as its minus and plus versions, beside its old rows `old` (kept,
@@ -3434,7 +3434,7 @@ impl<'a> Run<'a, '_> {
         let rels: Vec<&str> = scc.iter().collect();
         let ri: BTreeMap<String, usize> = rels.iter().enumerate().map(|(i, r)| ((*r).to_owned(), i)).collect();
         let name = format!("prog_{}", rels[0]);
-        let mut gates: Vec<(&str, &super::program_image::ArchivedGateRef)> = f.gates().iter().map(|g| (f.text(g.key), g)).filter(|(g, _)| scc.contains(*g)).collect();
+        let mut gates: Vec<(&str, &super::program_image::ArchivedGateRef)> = f.gates().iter().map(|g| (f.text(g.key), g)).filter(|(g, _)| scc.contains(g)).collect();
         gates.sort_by(|a, b| (a.1.level, a.0).cmp(&(b.1.level, b.0)));
         // A gate's rule only placed it here.
         let rules: Vec<RuleKey> = rules.iter().copied().filter(|&r| !gates.iter().any(|(g, _)| *g == vs.head_at(r))).collect();
@@ -3677,7 +3677,7 @@ impl<'a> Run<'a, '_> {
             }
             let Some(spec) = self.whole_join_spec(b, &order, None, &ri, scc, native_rels) else {
                 if answering {
-                    let reads: Vec<String> = (0..b.len()).filter_map(|i| b.atom(i)).map(|a| b.rel(a)).filter(|a| !scc.contains(*a)).map(str::to_owned).collect();
+                    let reads: Vec<String> = (0..b.len()).filter_map(|i| b.atom(i)).map(|a| b.rel(a)).filter(|a| !scc.contains(a)).map(str::to_owned).collect();
                     self.materialize(&reads)?;
                     self.ensure_indexes(Order::new(b, &order))?;
                     let select = self.model.sql_select(pf, b, &order, None, None)?;
@@ -3845,7 +3845,7 @@ impl<'a> Run<'a, '_> {
                 let at = order.iter().position(|s| s.at == ai).expect("the delta atom");
                 let Some(spec) = self.whole_join_spec(b, &order, Some(at), &ri, scc, native_rels) else {
                     if answering {
-                        let reads: Vec<String> = (0..b.len()).filter_map(|i| b.atom(i)).map(|a| b.rel(a)).filter(|a| !scc.contains(*a)).map(str::to_owned).collect();
+                        let reads: Vec<String> = (0..b.len()).filter_map(|i| b.atom(i)).map(|a| b.rel(a)).filter(|a| !scc.contains(a)).map(str::to_owned).collect();
                         // SQL reads the views too (`native_stratum` made only those no native join reads in place).
                         self.ensure(&reads)?;
                         self.materialize(&reads)?;
@@ -5788,7 +5788,7 @@ pub trait KeptStrata {
 fn moved_versions(r: &str, diffs: &HashMap<String, [Arc<super::native::component::InRel>; 3]>, m: &mut dyn Maintain, db: &Connection, f0: Fields<'_>, rules_by: &IndexMap<&str, Vec<RuleKey>>, run_vs: &body::Versions) -> Option<([Arc<dyn crate::code_rule_dsl::facts::vtab::Source>; 4], Option<rerail_blocks::vector::Vector<usize>>)> {
     if let (Some([o, mi, pl]), Some(now)) = (diffs.get(r), super::native::component::held(db, r)) {
         let cols = |x: &Arc<super::native::component::InRel>| x.source((0..o.k).map(|c| sql_col(r, c)).collect());
-        return Some(([cols(&o), cols(mi), cols(pl), cols(&now)], None));
+        return Some(([cols(o), cols(mi), cols(pl), cols(&now)], None));
     }
     let (base, cols) = if f0.is_input(r) {
         (r.to_owned(), None)
@@ -6278,7 +6278,7 @@ fn with_answers(f: Fields<'_>, db: &Connection, scc: &super::front::Comp, reads:
     let mut reads = reads?;
     for req in scc {
         let ps = f.answers_of(req);
-        if !ps.iter().any(|p| scc.contains(*p)) {
+        if !ps.iter().any(|p| scc.contains(p)) {
             continue;
         }
         for p in ps {
@@ -7331,7 +7331,7 @@ fn run_within(program: &body::Placed, db: &Connection, inputs: Inputs, lowering:
     let level_reads: Vec<BTreeSet<String>> = by_stratum
         .iter()
         .zip(sccs.iter())
-        .map(|(rules, scc)| rules.iter().flat_map(|&r| reads_of(&run_vs, r)).filter(|r| !scc.contains(*r)).map(str::to_owned).collect())
+        .map(|(rules, scc)| rules.iter().flat_map(|&r| reads_of(&run_vs, r)).filter(|r| !scc.contains(r)).map(str::to_owned).collect())
         .collect();
     let mut waved = vec![false; sccs.len()];
     // Strata waiting on their device wave: position, key, driver's state.
@@ -7560,7 +7560,7 @@ fn run_within(program: &body::Placed, db: &Connection, inputs: Inputs, lowering:
                     let scc = &sccs[j];
                     let rules: Vec<RuleKey> = scc.iter().flat_map(|rel| rules_by.get(rel).into_iter().flatten().copied()).collect();
                     let reads = stratum_reads(f0, &run_vs, scc, &rules);
-                    let moved: BTreeSet<String> = reads.iter().filter(|r| !scc.contains(*r) && moved_rels.contains(r.as_str())).cloned().collect();
+                    let moved: BTreeSet<String> = reads.iter().filter(|r| !scc.contains(r) && moved_rels.contains(r.as_str())).cloned().collect();
                     // Decision 0563 B: a stratum none of whose rules sees a row of its changed reads' deltas, by kind
                     // or by key, is passed on as one no read of which changed. A native's stratum and a view of an
                     // input are left to their own paths.
@@ -7599,7 +7599,7 @@ fn run_within(program: &body::Placed, db: &Connection, inputs: Inputs, lowering:
                             continue;
                         }
                         // Not kept: derived from its reads, as they were, so its rows are as they were.
-                        need.extend(reads.iter().filter(|r| !scc.contains(*r)).cloned());
+                        need.extend(reads.iter().filter(|r| !scc.contains(r)).cloned());
                         base_strata.push(j);
                         if std::env::var_os("RERAIL_MODE_TRACE").is_some() {
                             eprintln!("RERAIL_MODE_TRACE {}: {} (its reads unchanged)", stratum_key(scc), crate::code_rule_dsl::logic::plan::again::NOT_KEPT);
@@ -7614,7 +7614,7 @@ fn run_within(program: &body::Placed, db: &Connection, inputs: Inputs, lowering:
                     // `kept_delta`), else against the index its reads' old rows close to, made again (`reach_was`: made
                     // in place, the index keeps no rows, decision 0119 §3). Any other operator's readers derive again.
                     if scc.iter().any(|r| f0.native(r).is_some_and(|n| !matches!(n.spec, super::program_image::ArchivedNativeSpec::TextTest { .. }))) {
-                        need.extend(reads.iter().filter(|r| !scc.contains(*r)).cloned());
+                        need.extend(reads.iter().filter(|r| !scc.contains(r)).cloned());
                         base_strata.push(j);
                         outcome.again.push((stratum_key(scc), crate::code_rule_dsl::logic::plan::again::NATIVE_OPERATOR));
                         for r in scc {
@@ -7853,9 +7853,9 @@ fn run_within(program: &body::Placed, db: &Connection, inputs: Inputs, lowering:
             // A request this stratum makes and answers inside its fixpoint (decision 0065 §2a) is its native step:
             // Its reads include the observed answers. A changed answer invalidates the stratum.
             // (A request whose answers are all above the stratum is answered there, once its rows are whole.)
-            let asks: Vec<&str> = scc.iter().filter(|r| f0.answers_of(r).iter().any(|p| scc.contains(*p))).collect();
+            let asks: Vec<&str> = scc.iter().filter(|r| f0.answers_of(r).iter().any(|p| scc.contains(p))).collect();
             // A stratum of produced relations above their requests is their native step: their rows are the answers.
-            let above: Vec<(&str, &str)> = scc.iter().filter_map(|r| f0.request_of(r).filter(|q| !scc.contains(*q)).map(|q| (r, q))).collect();
+            let above: Vec<(&str, &str)> = scc.iter().filter_map(|r| f0.request_of(r).filter(|q| !scc.contains(q)).map(|q| (r, q))).collect();
             let produced_only = rules.is_empty() && !above.is_empty() && above.len() == scc.len();
             let answering = (!asks.is_empty() || produced_only) && run.answer.is_some();
             // A view is made over what its stratum holds, so it is as its stratum's other relations and reads are.
@@ -7865,7 +7865,7 @@ fn run_within(program: &body::Placed, db: &Connection, inputs: Inputs, lowering:
             let mut nows: Option<Vec<(String, u64)>> = Some(Vec::new());
             // A stratum's reads of its own relations (its recursion) are what it derives from its other reads; one
             // that is an input too (rows given, and answers added to them) is read as an input.
-            for r in reads.iter().filter(|r| !scc.contains(*r) || input_set.contains(r.as_str())) {
+            for r in reads.iter().filter(|r| !scc.contains(r) || input_set.contains(r.as_str())) {
                 let now = if fresh.contains_key(r) {
                     fresh[r]
                 } else if input_set.contains(r.as_str()) {
@@ -8124,7 +8124,7 @@ fn run_within(program: &body::Placed, db: &Connection, inputs: Inputs, lowering:
             super::profile::decision("filters every row passes, read as their relation", || format!("{rel} as {of}"));
             run.native_rels.insert(rel.to_string());
             if let Some(&card) = run.model.stats.card.get(of.as_str()) {
-                run.model.stats.card.insert(rel.to_string(), card);
+                run.model.stats.card.insert(rel, card);
             }
             for c in 0..f0.types(rel).len() {
                 let k = (of.clone(), c);

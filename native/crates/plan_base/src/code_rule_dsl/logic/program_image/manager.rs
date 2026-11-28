@@ -1090,9 +1090,9 @@ impl Run {
 enum Prior {
     None,
     /// Its input is the step's.
-    Same(Kept),
+    Same(Box<Kept>),
     /// The step's input is an edit of its input (`Delta::of` reads it; not a new base).
-    Edit(Kept, Delta),
+    Edit(Box<Kept>, Box<Delta>),
 }
 
 /// Passes run in order over a version (0281 §5). Each step's error stops the pipeline, named by its pass; `finish`
@@ -1429,7 +1429,7 @@ impl<'s> Pipeline<'s> {
     fn prior(&mut self, pass: &'static str) -> Result<Prior> {
         let Some(k) = self.last.get_mut(self.kept.len()).and_then(|k| k.take_if(|k| k.pass == pass)) else { return Ok(Prior::None) };
         if Arc::ptr_eq(&k.input, &self.v) {
-            return Ok(Prior::Same(k));
+            return Ok(Prior::Same(Box::new(k)));
         }
         // An input not made as an edit of the last one (a step after one that ran whole): a rebuilt delta, of the
         // whole program, is never read, so it is not made.
@@ -1443,7 +1443,7 @@ impl<'s> Pipeline<'s> {
         let cx = Cx { v: &self.v, store: self.v.analyses(), pass, decided: &self.decided, asked: None };
         self.v.analyses().carry(k.input.analyses(), &cx, &d)?;
         self.v.analyses().set_lineage(&k.input, &d);
-        Ok(Prior::Edit(k, d))
+        Ok(Prior::Edit(Box::new(k), Box::new(d)))
     }
 
     /// Records a step that made `out` by an edit of `from` (the input, or the last output a rerun wrote onto): its

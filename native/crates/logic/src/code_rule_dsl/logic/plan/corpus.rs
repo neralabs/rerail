@@ -2933,7 +2933,7 @@ fn run_observed_within(
     // Which groups they are is a function of the tests, kept with the program.
     let group_keys = {
         let _s = crate::code_rule_dsl::logic::profile::span(|| "the text tests' groups of automata".into());
-        super::kept_analyses::kept_value(source, "text tests' groups", 1, &[], || vocabulary.group_keys(), |keys| keys.iter().map(|k| vec![crate::code_rule_dsl::logic::front::Value::Str(k.as_str().into())].into()).collect(), |rows| rows.iter().map(|r| match r.first() { Some(crate::code_rule_dsl::logic::front::Value::Str(k)) => Some(k.to_string()), _ => None }).collect())
+        super::kept_analyses::kept_value(source, "text tests' groups", 1, &[], || vocabulary.group_keys(), |keys| keys.iter().map(|k| vec![crate::code_rule_dsl::logic::front::Value::Str(k.as_str().into())]).collect(), |rows| rows.iter().map(|r| match r.first() { Some(crate::code_rule_dsl::logic::front::Value::Str(k)) => Some(k.to_string()), _ => None }).collect())
     };
     let groups = { let _s = crate::code_rule_dsl::logic::profile::span(|| "the groups' images, read".into()); Arc::new(crate::code_rule_dsl::logic::rr::HeldDfas::read(crate::code_rule_dsl::logic::rr::ImageDfas(crate::code_rule_dsl::logic::rr::image_store()), &group_keys)) };
     let dense = groups.stored() || docs.len() >= DENSE_TEXT_DOCS;
@@ -3052,7 +3052,7 @@ fn run_observed_within(
         let spans = {
             let _s = crate::code_rule_dsl::logic::profile::span(|| "the spans whose text is read".into());
             let of = |v: &crate::code_rule_dsl::logic::program_image::Version| super::kept_analyses::kept_value(v, "spans whose text is read", 2, &[], || super::text_demand::span_text_demand(v), super::text_demand::span_rows, super::text_demand::span_of_rows);
-            let ((mut spans, mut tokens), (cross, cross_tokens)) = (of(&*local_v), of(&*cross_version));
+            let ((mut spans, mut tokens), (cross, cross_tokens)) = (of(&local_v), of(&cross_version));
             spans.extend(cross);
             tokens |= cross_tokens;
             (spans, tokens)
@@ -3623,7 +3623,7 @@ fn run_observed_within(
                     Order::Back => "node_order",
                     Order::Climbs | Order::Falls | Order::Same => continue,
                 };
-                if comp.iter().all(|r| derived_here(r)) {
+                if comp.iter().all(&derived_here) {
                     keys.insert(key.to_owned());
                 }
             }
@@ -7062,7 +7062,7 @@ fn run_observed_within(
             false => {
                 let at = db.path().ok_or_else(|| Error::Plan("callable relations: the run's store has no path".to_owned()))?;
                 let conn = rusqlite::Connection::open(at).map_err(|e| Error::Plan(format!("callable relations: {e}")))?;
-                Some(calls::Calls::new(&callees, lowered.ops, dialect, conn, &modes)?)
+                Some(calls::Calls::new(&callees, lowered.ops, dialect, conn, modes)?)
             }
         };
         let modes = modes.to_owned();

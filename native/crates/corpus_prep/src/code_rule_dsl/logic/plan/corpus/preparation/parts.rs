@@ -574,7 +574,7 @@ impl Prepared {
 }
 
 pub fn hex(bytes: &[u8]) -> String {
-    rerail_prof::code_rule_dsl::prof::lower_hex(&bytes[..])
+    rerail_prof::code_rule_dsl::prof::lower_hex(bytes)
 }
 
 pub fn unhex(text: &str) -> Option<[u8; 32]> {

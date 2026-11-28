@@ -28,6 +28,14 @@ use crate::ssa::{Func, Inst, NONE, O, Shape, Ssa, V};
 
 type R<T> = Result<T, Error>;
 
+/// The values an `or` of loads is the bytes of, each with its bytes' places (`Cg::byte_src`, `or_bytes`).
+type ByteSrcs = Vec<(Value, [u8; 16])>;
+/// A function's code ranges by source location (start, end, location), for `RERAIL_UKL_VEC_CL_MAP`.
+type SrcSpans = Vec<(u32, u32, u32)>;
+/// A value a region holds in place of another's, with what it held (its form, steps and raw parts), put back by
+/// `Cg::undo`.
+type Applied = (V, Rp, Option<Steps>, Option<Vec<Value>>);
+
 /// Where the compiled code finds what it reads of the runtime's state (`exec`): offsets in a SIMD group's state and
 /// in the launch's environment. The code holds no address of its process.
 #[derive(Clone, Copy, Debug)]
@@ -248,7 +256,7 @@ fn compile_with(ssa: &Ssa, name: &str, w: u32, places: &Places, listed: bool) ->
         .enumerate()
         .map(|(k, f)| signature(f, k == 0, w, if keeps[k] { cranelift_codegen::isa::CallConv::PreserveAll } else { cc }))
         .collect();
-    let ids: Vec<FuncId> = sigs.iter().enumerate().map(|(k, s)| module.declare_function(&format!("f{k}"), Linkage::Local, s)).collect::<Result<_, _>>().map_err(|e| Error(format!("{name}: {e}")))?;
+    let ids: Vec<FuncId> = sigs.iter().enumerate().map(|(k, s)| module.declare_function(&format!("f{k}"), Linkage::Local, s).map_err(|e| Error(format!("{name}: {e}")))).collect::<Result<_, _>>()?;
     let mut fbc = FunctionBuilderContext::new();
     let mut ctx = module.make_context();
     // The kernel's function again for a chunk whose lanes all run (`Cg::full`), after the SSA's functions.
@@ -257,7 +265,7 @@ fn compile_with(ssa: &Ssa, name: &str, w: u32, places: &Places, listed: bool) ->
     // A development hook: each machine instruction's SSA value, to the file `RERAIL_UKL_VEC_CL_MAP` names (appended),
     // for a profile of the compiled code: `start end kernel function value operation`.
     let map = std::env::var("RERAIL_UKL_VEC_CL_MAP").ok();
-    let mut spans: Vec<(usize, Vec<(u32, u32, u32)>)> = Vec::new();
+    let mut spans: Vec<(usize, SrcSpans)> = Vec::new();
     let mut listing = Vec::new();
     let jobs = (0..ssa.funcs.len()).map(|k| (k, false)).chain(std::iter::once((0, true)));
     for (k, full) in jobs {
@@ -294,10 +302,8 @@ fn compile_with(ssa: &Ssa, name: &str, w: u32, places: &Places, listed: bool) ->
             listing.push(ctx.compiled_code().and_then(|c| c.vcode.clone()).unwrap_or_default());
         }
         kept = kept.and_then(|kp| kp.add(&ctx));
-        if map.is_some() && !full {
-            if let Some(cc) = ctx.compiled_code() {
-                spans.push((k, cc.buffer.get_srclocs_sorted().iter().map(|l| (l.start, l.end, l.loc.bits())).collect::<Vec<_>>()));
-            }
+        if map.is_some() && !full && let Some(cc) = ctx.compiled_code() {
+            spans.push((k, cc.buffer.get_srclocs_sorted().iter().map(|l| (l.start, l.end, l.loc.bits())).collect::<Vec<_>>()));
         }
         module.clear_context(&mut ctx);
     }
@@ -422,7 +428,7 @@ pub fn load(bytes: &[u8]) -> Option<Compiled> {
     }
     let mut module = module().ok()?;
     let sig = Signature::new(module.isa().default_call_conv());
-    let ids: Vec<FuncId> = (0..n).map(|k| module.declare_function(&format!("f{k}"), Linkage::Local, &sig)).collect::<Result<_, _>>().ok()?;
+    let ids: Vec<FuncId> = (0..n).map(|k| module.declare_function(&format!("f{k}"), Linkage::Local, &sig).ok()).collect::<Option<_>>()?;
     for &id in &ids {
         let align = u32_of(take(4)?);
         let len = u64::from_le_bytes(take(8)?.try_into().ok()?) as usize;
@@ -741,7 +747,7 @@ struct Cg<'a, 'b> {
     bmember: HashMap<V, (usize, i64)>,
     /// An unsigned such load's lanes as each register's window and the window's byte each byte of its lanes is (0xff:
     /// 0), with the block it is in: an `or` of them is one swizzle of their bytes (`or_bytes`).
-    byte_src: HashMap<V, (usize, Vec<(Value, [u8; 16])>)>,
+    byte_src: HashMap<V, (usize, ByteSrcs)>,
     /// Each value's readers (`ssa::reads`): how many, and which.
     nuse: Vec<u32>,
     users: Vec<Vec<V>>,
@@ -790,7 +796,8 @@ struct Cg<'a, 'b> {
     /// The values each region reads again (not made again): their own values are this region's, their operands' not
     /// (an operand not live at the region's start is another region's), so a pattern of operands (`based`) skips them.
     reloaded: HashSet<(usize, V)>,
-    applied: Vec<(V, Rp, Option<Steps>, Option<Vec<Value>>)>,
+    /// The values this region holds in place of others' (`begin`), put back at its end (`undo`).
+    applied: Vec<Applied>,
     region: usize,
     /// The values kept across regions: each one's place in the save area (a chunk's at `16 * parts * chunk` past
     /// it), its form (`Rp`'s: 0 uniform, 1 lanes, 2 a mask) and its parts' types; the area's bytes, its slot and
@@ -1949,12 +1956,8 @@ impl<'a, 'b> Cg<'a, 'b> {
     /// A uniform `bool` as a branch's condition: the comparison it was made from, if it was.
     fn cond(&self, v: Value) -> Value {
         let dfg = &self.b.func.dfg;
-        if let ir::ValueDef::Result(inst, 0) = dfg.value_def(v) {
-            if let ir::InstructionData::Unary { opcode: ir::Opcode::Uextend, arg } = dfg.insts[inst] {
-                if dfg.value_type(arg) == I8 {
-                    return arg;
-                }
-            }
+        if let ir::ValueDef::Result(inst, 0) = dfg.value_def(v) && let ir::InstructionData::Unary { opcode: ir::Opcode::Uextend, arg } = dfg.insts[inst] && dfg.value_type(arg) == I8 {
+            return arg;
         }
         v
     }
@@ -2773,7 +2776,7 @@ impl<'a, 'b> Cg<'a, 'b> {
         let grouped = |g: &Self, v: V, k: u32| {
             let st = g.steps.get(&v)?;
             let gr = st.group.clone()?;
-            (st.exact && st.step >= 0 && k < 63 && (st.step as i128) * 31 < (1i128 << k) && gr.align() >= k).then(|| (gr, st.step))
+            (st.exact && st.step >= 0 && k < 63 && (st.step as i128) * 31 < (1i128 << k) && gr.align() >= k).then_some((gr, st.step))
         };
         // A lanes shift count with steps, all under `limit`: its first lane's count (an `I64`) and its steps.
         let counts = |g: &mut Self, s: V, limit: u64| -> Option<(Value, i64)> {
@@ -3185,7 +3188,7 @@ impl<'a, 'b> Cg<'a, 'b> {
         };
         let (n, _) = parts(m, self.w);
         // Each register's window and the bytes placed so far; the terms left.
-        let mut merged: Vec<(Vec<(Value, [u8; 16])>, Vec<V>)> = Vec::new();
+        let mut merged: Vec<(ByteSrcs, Vec<V>)> = Vec::new();
         let mut rest = Vec::new();
         'term: for &t in &terms {
             if let Some((ld, eb, k)) = placed(self, t) {
@@ -3274,22 +3277,20 @@ impl<'a, 'b> Cg<'a, 'b> {
             return (self.bools_of(&k), Some(k));
         }
         // A shift by a uniform count: the vector's.
-        if matches!(op, Op::Shl | Op::Shr) && !m.float() {
-            if let Rp::U(c) = self.vals[x as usize] {
-                let bits = i64::from(m.bits().max(1));
-                let s = self.b.ins().band_imm(c, bits - 1);
-                let s = if wide(m) { s } else { self.b.ins().ireduce(I32, s) };
-                let r: Vec<Value> = pa
-                    .iter()
-                    .map(|&p| match (op, m.signed()) {
-                        (Op::Shl, _) => self.b.ins().ishl(p, s),
-                        (_, true) => self.b.ins().sshr(p, s),
-                        _ => self.b.ins().ushr(p, s),
-                    })
-                    .collect();
-                let r = if wide(m) { r } else { r.into_iter().map(|v| self.norm32(m, v)).collect() };
-                return (r, None);
-            }
+        if matches!(op, Op::Shl | Op::Shr) && !m.float() && let Rp::U(c) = self.vals[x as usize] {
+            let bits = i64::from(m.bits().max(1));
+            let s = self.b.ins().band_imm(c, bits - 1);
+            let s = if wide(m) { s } else { self.b.ins().ireduce(I32, s) };
+            let r: Vec<Value> = pa
+                .iter()
+                .map(|&p| match (op, m.signed()) {
+                    (Op::Shl, _) => self.b.ins().ishl(p, s),
+                    (_, true) => self.b.ins().sshr(p, s),
+                    _ => self.b.ins().ushr(p, s),
+                })
+                .collect();
+            let r = if wide(m) { r } else { r.into_iter().map(|v| self.norm32(m, v)).collect() };
+            return (r, None);
         }
         // A product by a constant power of two (an index scaled to its element's bytes): a shift. AArch64 has no
         // 64-bit lanes' multiply, so Cranelift's is nine instructions.
@@ -3641,36 +3642,34 @@ impl<'a, 'b> Cg<'a, 'b> {
                 return self.splat(u, m);
             }
         }
-        if w > 1 {
-            if let Some((base, off, from, shift)) = self.based(addr) {
-                // A uniform base and each lane's 32-bit index: a lane's load of base and the index, extended and
-                // scaled (`ldr w, [x, w, uxtw #2]`), the index out of its vector; a lane that does not run reads the
-                // first running lane's place (none running: the scratch area's).
-                let po = self.lanes(off, from);
-                let (base, po) = if full {
-                    (base, po)
-                } else {
-                    let bits = self.mask_bits(&k);
-                    let none = self.b.ins().icmp_imm(IntCC::Equal, bits, 0);
-                    let idx = self.b.ins().ctz(bits);
-                    let idx = self.b.ins().band_imm(idx, i64::from(w - 1));
-                    let first = self.lane_at(&po, from, idx);
-                    let first = self.b.ins().ireduce(I32, first);
-                    let zero = self.b.ins().iconst(I32, 0);
-                    let first = self.b.ins().select(none, zero, first);
-                    let scratch = self.b.ins().load(I64, mf(), self.env, self.pl.scratch);
-                    let base = self.b.ins().select(none, scratch, base);
-                    let sp = self.b.ins().splat(I32X4, first);
-                    let po: Vec<Value> = po.iter().zip(&k).map(|(&o, &km)| self.b.ins().bitselect(km, o, sp)).collect();
-                    (base, po)
-                };
-                return self.gather(m, &mut |g, j| {
-                    let o = g.b.ins().extractlane(po[(j / 4) as usize], (j % 4) as u8);
-                    let o = if from.signed() { g.b.ins().sextend(I64, o) } else { g.b.ins().uextend(I64, o) };
-                    let o = if shift == 0 { o } else { g.b.ins().ishl_imm(o, i64::from(shift)) };
-                    g.b.ins().iadd(base, o)
-                });
-            }
+        if w > 1 && let Some((base, off, from, shift)) = self.based(addr) {
+            // A uniform base and each lane's 32-bit index: a lane's load of base and the index, extended and
+            // scaled (`ldr w, [x, w, uxtw #2]`), the index out of its vector; a lane that does not run reads the
+            // first running lane's place (none running: the scratch area's).
+            let po = self.lanes(off, from);
+            let (base, po) = if full {
+                (base, po)
+            } else {
+                let bits = self.mask_bits(&k);
+                let none = self.b.ins().icmp_imm(IntCC::Equal, bits, 0);
+                let idx = self.b.ins().ctz(bits);
+                let idx = self.b.ins().band_imm(idx, i64::from(w - 1));
+                let first = self.lane_at(&po, from, idx);
+                let first = self.b.ins().ireduce(I32, first);
+                let zero = self.b.ins().iconst(I32, 0);
+                let first = self.b.ins().select(none, zero, first);
+                let scratch = self.b.ins().load(I64, mf(), self.env, self.pl.scratch);
+                let base = self.b.ins().select(none, scratch, base);
+                let sp = self.b.ins().splat(I32X4, first);
+                let po: Vec<Value> = po.iter().zip(&k).map(|(&o, &km)| self.b.ins().bitselect(km, o, sp)).collect();
+                (base, po)
+            };
+            return self.gather(m, &mut |g, j| {
+                let o = g.b.ins().extractlane(po[(j / 4) as usize], (j % 4) as u8);
+                let o = if from.signed() { g.b.ins().sextend(I64, o) } else { g.b.ins().uextend(I64, o) };
+                let o = if shift == 0 { o } else { g.b.ins().ishl_imm(o, i64::from(shift)) };
+                g.b.ins().iadd(base, o)
+            });
         }
         let pa = self.lanes(addr, M::PTR);
         let pa = if full || w == 1 {
@@ -3912,13 +3911,11 @@ impl<'a, 'b> Cg<'a, 'b> {
     }
 
     fn store_lanes(&mut self, m: M, addr: V, x: V, mask: V) {
-        if (mask == self.entry_v && self.kernel) || self.all(mask) {
-            if let Some((at, off)) = self.one_lane_at(addr) {
-                let px = self.lanes(x, m);
-                let v = self.uniform_of(px[0], m);
-                self.store_u(m, at, v, off);
-                return;
-            }
+        if ((mask == self.entry_v && self.kernel) || self.all(mask)) && let Some((at, off)) = self.one_lane_at(addr) {
+            let px = self.lanes(x, m);
+            let v = self.uniform_of(px[0], m);
+            self.store_u(m, at, v, off);
+            return;
         }
         if self.hold_bytes(m, addr, x, mask) {
             return;
@@ -3940,48 +3937,44 @@ impl<'a, 'b> Cg<'a, 'b> {
 
     fn store_lanes_each(&mut self, m: M, addr: V, x: V, mask: V) {
         let w = self.w;
-        if let Some(&(base, stride)) = self.frame_of.get(&addr) {
-            if stride == m.bytes() && (m.bytes() == 4 || m.bytes() == 8) && w > 1 {
-                let at = self.frame_start(base, stride);
-                let px = self.lanes(x, m);
-                let (_, t) = parts(m, w);
-                let full = mask == self.entry_v || self.all(mask);
-                let px = if full {
-                    px
-                } else {
-                    let old: Vec<Value> = (0..px.len()).map(|p| self.b.ins().load(t, mf(), at, 16 * p as i32)).collect();
-                    self.select_lanes(mask, m, px, old)
-                };
-                // At a width under a register's lanes, its lanes past the chunk's are the next chunk's: kept.
-                let lanes_per = if wide(m) { 2 } else { 4 };
-                if w < lanes_per {
-                    for j in 0..w {
-                        let s = self.extract(&px, m, j);
-                        self.b.ins().store(mf(), s, at, (j * m.bytes()) as i32);
-                    }
-                } else {
-                    for (p, v) in px.iter().enumerate() {
-                        self.b.ins().store(mf(), *v, at, 16 * p as i32);
-                    }
+        if let Some(&(base, stride)) = self.frame_of.get(&addr) && stride == m.bytes() && (m.bytes() == 4 || m.bytes() == 8) && w > 1 {
+            let at = self.frame_start(base, stride);
+            let px = self.lanes(x, m);
+            let (_, t) = parts(m, w);
+            let full = mask == self.entry_v || self.all(mask);
+            let px = if full {
+                px
+            } else {
+                let old: Vec<Value> = (0..px.len()).map(|p| self.b.ins().load(t, mf(), at, 16 * p as i32)).collect();
+                self.select_lanes(mask, m, px, old)
+            };
+            // At a width under a register's lanes, its lanes past the chunk's are the next chunk's: kept.
+            let lanes_per = if wide(m) { 2 } else { 4 };
+            if w < lanes_per {
+                for j in 0..w {
+                    let s = self.extract(&px, m, j);
+                    self.b.ins().store(mf(), s, at, (j * m.bytes()) as i32);
                 }
-                return;
+            } else {
+                for (p, v) in px.iter().enumerate() {
+                    self.b.ins().store(mf(), *v, at, 16 * p as i32);
+                }
             }
+            return;
         }
-        if (mask == self.entry_v && self.kernel) || self.all(mask) {
-            if let Some(at) = self.consecutive(addr, m.bytes()) {
-                let px = self.lanes(x, m);
-                if w == 1 || w < if wide(m) { 2 } else { 4 } {
-                    for j in 0..w {
-                        let s = self.extract(&px, m, j);
-                        self.b.ins().store(mf(), s, at, (j * m.bytes()) as i32);
-                    }
-                } else {
-                    for (p, v) in px.iter().enumerate() {
-                        self.b.ins().store(mf(), *v, at, 16 * p as i32);
-                    }
+        if ((mask == self.entry_v && self.kernel) || self.all(mask)) && let Some(at) = self.consecutive(addr, m.bytes()) {
+            let px = self.lanes(x, m);
+            if w == 1 || w < if wide(m) { 2 } else { 4 } {
+                for j in 0..w {
+                    let s = self.extract(&px, m, j);
+                    self.b.ins().store(mf(), s, at, (j * m.bytes()) as i32);
                 }
-                return;
+            } else {
+                for (p, v) in px.iter().enumerate() {
+                    self.b.ins().store(mf(), *v, at, 16 * p as i32);
+                }
             }
+            return;
         }
         // Each lane's address as written by hand: the first lane's plus the lane's place (consecutive), a uniform
         // base plus the lane's 32-bit index scaled (`str w, [x, w, uxtw #2]`), else the lane's of the addresses.
@@ -4237,10 +4230,8 @@ impl<'a, 'b> Cg<'a, 'b> {
                     if let Some(st) = self.stepped(op, om, i.a, i.b, x) {
                         self.steps.insert(x, st);
                     }
-                    if op == Op::Or {
-                        if let Some(r) = self.or_bytes(om, x) {
-                            return Ok(Rp::L(r));
-                        }
+                    if op == Op::Or && let Some(r) = self.or_bytes(om, x) {
+                        return Ok(Rp::L(r));
                     }
                     if let Some(r) = self.group_bin(op, om, i.a, i.b, x) {
                         return Ok(Rp::L(r));

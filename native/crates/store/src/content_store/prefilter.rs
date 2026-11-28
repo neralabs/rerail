@@ -18,6 +18,9 @@
 
 pub mod kept;
 pub mod vocabulary;
+
+/// What fills a kept relation's rows (`sorted_put`'s): it gives each value, in order, to the push it is handed.
+type Fill<'a> = dyn FnMut(&mut dyn FnMut(i64)) + 'a;
 pub(in crate::content_store) mod vtab;
 
 #[allow(unused_imports)]
@@ -92,7 +95,6 @@ impl ContentStore {
                 change.put(tape, &rows)?;
             }
             drop(sums);
-            drop(view);
             change.write(&path, t, old.as_ref())
         }))?;
         self.note_kept(&kept::space(), written);

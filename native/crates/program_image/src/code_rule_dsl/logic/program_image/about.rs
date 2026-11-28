@@ -599,7 +599,7 @@ impl Builder<'_> {
             Some(&Cell::Int(k)) => Some(k),
             _ => None,
         };
-        let mut kept: Vector<i64> = main.iter().filter(|r| named(self, r, 2, gates)).filter_map(|r| number(r)).collect();
+        let mut kept: Vector<i64> = main.iter().filter(|r| named(self, r, 2, gates)).filter_map(&number).collect();
         if kept.len() == main.len() {
             return;
         }

@@ -100,7 +100,7 @@ pub fn kept_terms<R: KeptRead + ?Sized>(view: &R, kind: i64, lang: i64, key: &st
 
 fn key_puts(kind: i64, lang: i64, key: &str, upto: i64, terms: &[i64]) -> StoreResult<Vec<KeptPut>> {
     let p = part(kind, lang, key);
-    let put = |rel: &str, types: &[u8], n: usize, fill: &mut dyn FnMut(&mut dyn FnMut(i64))| {
+    let put = |rel: &str, types: &[u8], n: usize, fill: &mut super::Fill<'_>| {
         sorted_put(rel, ident(rel), p, types, n, |push| {
             fill(push);
             Ok::<(), StoreError>(())
@@ -179,7 +179,6 @@ impl ContentStore {
                 }
             }
             drop(sums);
-            drop(counts_view);
             let written = if puts.is_empty() { None } else { super::super::kept_facts::write_space(&path, t, &space(), puts, None)? };
             Ok((out.into_iter().map(Option::unwrap_or_default).collect::<Vec<_>>(), written))
         }))?;
@@ -196,11 +195,9 @@ impl ContentStore {
         let (mut from, mut found) = (Vec::new(), Vec::new());
         for (i, key) in keys.iter().enumerate() {
             let was = kept_view.as_ref().and_then(|v| kept_key(v, kind, lang, key));
-            if let Some((upto, terms)) = &was {
-                if *upto >= head {
-                    out[i] = Some(terms.clone());
-                    continue;
-                }
+            if let Some((upto, terms)) = &was && *upto >= head {
+                out[i] = Some(terms.clone());
+                continue;
             }
             if let Some(lits) = literals(key) {
                 let texts: Vec<&str> = lits.iter().map(String::as_str).collect();

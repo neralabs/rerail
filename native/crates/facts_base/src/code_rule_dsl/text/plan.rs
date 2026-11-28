@@ -53,7 +53,7 @@ pub struct Key(pub String);
 impl Plan {
     /// The plan as text: what the key digests. Literals are hex, so the text is unambiguous.
     pub(in crate::code_rule_dsl) fn canonical(&self) -> String {
-        let hex = |bytes: &[u8]| rerail_prof::code_rule_dsl::prof::lower_hex(&bytes[..]);
+        let hex = |bytes: &[u8]| rerail_prof::code_rule_dsl::prof::lower_hex(bytes);
         match self {
             Self::Always => "always".to_owned(),
             Self::Never => "never".to_owned(),

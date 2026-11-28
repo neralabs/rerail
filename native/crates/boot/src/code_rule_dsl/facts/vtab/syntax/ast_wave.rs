@@ -403,7 +403,7 @@ fn matched(
             if budget > 0 {
                 profile::decision("ast captures over a file's visit budget (no rows)", || format!("{}: {budget} roots", m.rel));
             }
-            for row in found_rows.iter().flat_map(|t| t.chunks_exact(1)) {
+            for row in found_rows.iter().flat_map(|t| t.iter().map(std::slice::from_ref)) {
                 r.push(row);
                 rows += 1;
             }

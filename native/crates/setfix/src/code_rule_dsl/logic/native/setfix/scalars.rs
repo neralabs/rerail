@@ -271,7 +271,7 @@ impl Pool {
             key.clear();
             key.extend(selected.columns.iter().map(|&c| at(c)));
             let shard = self.shard_of(&key);
-            shards[shard].add(&key, selected.value.map(&at));
+            shards[shard].add(&key, selected.value.map(at));
         });
         let mut groups = 0;
         for (shard, built) in self.0.iter().zip(shards) {

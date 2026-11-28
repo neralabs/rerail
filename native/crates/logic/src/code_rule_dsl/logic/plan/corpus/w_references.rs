@@ -140,7 +140,7 @@ impl Files {
             let edges = graph.labelled_reference_rows();
             let symbols: Vec<String> = edges.iter().flat_map(|(edge, _)| [symbol(&edge.path, edge.source), symbol(&edge.target_path, edge.target)]).collect();
             let symbols = intern(&symbols.iter().map(String::as_str).collect::<Vec<_>>())?;
-            let mut rows = edges.iter().zip(symbols.chunks_exact(2)).map(|((_, via), s)| Ok([s[0], s[1], atom(via)?])).collect::<Result<Vec<_>>>()?;
+            let mut rows = edges.iter().zip(symbols.as_chunks::<2>().0).map(|((_, via), s)| Ok([s[0], s[1], atom(via)?])).collect::<Result<Vec<_>>>()?;
             rows.sort_unstable();
             rows.dedup();
             out.push((RELATIONS[0], columns(3), (0..3).map(|c| Some(rows.iter().map(|r| r[c]).collect())).collect()));

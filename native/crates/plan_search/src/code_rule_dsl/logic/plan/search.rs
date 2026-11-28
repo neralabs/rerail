@@ -969,7 +969,7 @@ impl Model {
             indexes: st.indexes.clone(),
             docs: st.docs,
             memo: Default::default(),
-            estimated: rels.iter().filter(|r| st.estimated.contains(*r)).cloned().collect(),
+            estimated: rels.iter().filter(|r| st.estimated.contains(r)).cloned().collect(),
             steps_cache: StepsCache::default(),
             kindsets: st.kindsets.clone(),
             lookup: st.lookup.clone(),
@@ -2093,9 +2093,7 @@ pub fn prepared_held() -> Arc<prepared::ByVersion> {
 pub fn plans_to_store() -> Option<StoredPlans> {
     let plans = with_plans(|p| p.cloned())?;
     // A run that kept no plan changes none: the store's are not read for it.
-    if plans.kept.load().iter().next().is_none() {
-        return None;
-    }
+    plans.kept.load().iter().next()?;
     plans.settle();
     let (kept, stored) = (plans.kept.load(), plans.stored.load());
     let mut out: Option<StoredPlans> = None;
@@ -6164,7 +6162,7 @@ pub fn column_sources(vs: &body::Versions, scc: &super::super::front::Comp, rule
 pub fn recursive<'v>(b: &Body<'v>, scc: &super::super::front::Comp) -> Vec<(usize, &'v str)> {
     (0..b.len())
         .filter_map(|i| b.plain_atom(i).filter(|a| !a.neg()).map(|a| (i, b.rel(a))))
-        .filter(|(_, rel)| scc.contains(*rel))
+        .filter(|(_, rel)| scc.contains(rel))
         .collect()
 }
 

@@ -39,7 +39,7 @@ pub mod codes_dir {
     const LEN: usize = include!(concat!(env!("OUT_DIR"), "/codes_len.rs"));
     #[repr(C, align(16384))]
     struct Aligned<T>(T);
-    const _: () = assert!(align_of::<Aligned<u8>>() == super::codes::ALIGN && LEN % super::codes::ALIGN == 0);
+    const _: () = assert!(align_of::<Aligned<u8>>() == super::codes::ALIGN && LEN.is_multiple_of(super::codes::ALIGN));
     const _: () = assert!(cfg!(target_endian = "little"), "the directory's image is little-endian");
     const _: () = assert!(size_of::<rerail_clif::view_reads::CodesLang>() == super::codes::LANG_BYTES, "a language's place, as the reads read it");
     static DIR: Aligned<[u8; LEN]> = Aligned(*include_bytes!(concat!(env!("OUT_DIR"), "/codes.bin")));

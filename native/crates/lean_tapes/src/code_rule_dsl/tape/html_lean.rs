@@ -42,7 +42,7 @@ impl TreeParser for Lean {
 
     /// An embedded page's text (a string or a template that holds HTML).
     fn program(&self, grammar: &Grammar, text: &str, omit: Vector<[u32; 2]>, budget: &dyn Fn() -> bool) -> Option<Result<TapeImage, String>> {
-        encode_omitting(grammar, &Source::text(text), "document", omit, budget).expect("a document is a start").ok()
+        encode_omitting(grammar, Source::text(text), "document", omit, budget).expect("a document is a start").ok()
     }
 
     /// One element (decision 0466). Its scripts and styles are its `raw_text`: a fragment's tape is one image, and no

@@ -479,7 +479,7 @@ impl GroupProgram {
     #[cfg(test)]
     pub fn range(&self, text: &str) -> Option<(usize, usize)> {
         let b = self.automaton.bytes();
-        let w: Vec<u32> = b.chunks_exact(4).map(|c| u32::from_le_bytes(c.try_into().unwrap())).collect();
+        let w: Vec<u32> = b.as_chunks::<4>().0.iter().map(|c| u32::from_le_bytes(*c)).collect();
         group_range(&w, text.as_bytes())
     }
 }

@@ -369,7 +369,7 @@ fn rows_of_their_parts() {
     bad[3] = -1;
     assert!(Rows::of_parts(r.types().to_vec(), bad, texts.clone(), r.len()).is_err());
     // Values not of the rows' count.
-    assert!(Rows::of_parts(Vec::from(&r.types()[..]), rerail_blocks::vector::Vector::from(&vals[..8][..]), texts.clone(), r.len()).is_err());
+    assert!(Rows::of_parts(Vec::from(r.types()), rerail_blocks::vector::Vector::from(&vals[..8][..]), texts.clone(), r.len()).is_err());
     assert!(Rows::of_parts(Vec::new(), rerail_blocks::vector![1], Vec::new(), 1).is_err());
     // Rows of no columns: their count.
     let bare = Rows::of_parts(Vec::new(), rerail_blocks::vector::Vector::new(), Vec::new(), 2).unwrap();

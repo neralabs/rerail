@@ -68,14 +68,18 @@ struct Sg {
     stack: Option<crate::fiber::Stack>,
 }
 
+/// The values each agreed decision took, by its node: the first SIMD group's in turn, and how many each group has
+/// made (`h_agree`, decision 0567 §3).
+type Agreed = HashMap<u32, (Vec<u64>, Vec<usize>)>;
+
 /// A resident group's slot.
 struct Slot {
     _frames: Vec<u128>,
     /// The SIMD groups' exchange areas (two halves of `cl::XHALF` bytes each), for chunks.
     xbufs: Vec<u128>,
     shared: Vec<u128>,
-    g: Vec<Box<Sg>>,
-    agreed: HashMap<u32, (Vec<u64>, Vec<usize>)>,
+    g: Vec<Sg>,
+    agreed: Agreed,
     group: [u32; 3],
     busy: bool,
 }
@@ -84,7 +88,7 @@ struct Slot {
 struct Cx<'p> {
     p: &'p Program,
     kernel: &'p str,
-    agreed: RefCell<HashMap<u32, (Vec<u64>, Vec<usize>)>>,
+    agreed: RefCell<Agreed>,
     fault: RefCell<Option<Error>>,
 }
 
@@ -288,7 +292,7 @@ pub fn run(p: &Program, k: &Kernel, args: &[Arg], launch: Launch) -> R<()> {
                 let g = (0..nsg as u32)
                     .map(|s| {
                         let lin = |l: usize| s * W as u32 + l as u32;
-                        Box::new(Sg {
+                        Sg {
                             env: 0,
                             frame: base + u64::from(s) * frame as u64,
                             live: 0,
@@ -304,7 +308,7 @@ pub fn run(p: &Program, k: &Kernel, args: &[Arg], launch: Launch) -> R<()> {
                             own: Default::default(),
                             back: Default::default(),
                             stack: None,
-                        })
+                        }
                     })
                     .collect();
                 Slot { _frames: frames, xbufs, shared: vec![0u128; (own + local).div_ceil(16) as usize + 1], g, agreed: HashMap::new(), group: [0; 3], busy: false }
@@ -345,7 +349,7 @@ pub fn run(p: &Program, k: &Kernel, args: &[Arg], launch: Launch) -> R<()> {
                 unsafe { fill(base, m.bytes() as usize, b, mask) };
             }
             if waits {
-                let sgp = &mut **sg as *mut Sg;
+                let sgp = &mut *sg as *mut Sg;
                 let stack = sg.stack.get_or_insert_with(crate::fiber::Stack::new);
                 // SAFETY: the stack is the SIMD group's, kept while its fiber runs; `fiber_start` never returns.
                 unsafe { crate::fiber::prepare(&mut (*sgp).own, stack, fiber_start, sgp as u64) };
@@ -430,11 +434,11 @@ fn cx_of(sg: *mut Sg) -> &'static Cx<'static> {
 }
 
 /// The group's SIMD groups, each's code called in turn (none waits for another): it has ended.
-fn group_calls(cx: &Cx, g: &mut [Box<Sg>]) -> R<bool> {
+fn group_calls(cx: &Cx, g: &mut [Sg]) -> R<bool> {
     for sg in g.iter_mut() {
         let entry = sg.entry.expect("a started SIMD group's kernel");
         // SAFETY: the SIMD group's state, live while its code runs.
-        unsafe { entry(&mut **sg as *mut Sg as *mut u8) };
+        unsafe { entry(&mut *sg as *mut Sg as *mut u8) };
         sg.done = true;
         if let Some(e) = cx.fault.borrow_mut().take() {
             return Err(e);
@@ -444,10 +448,10 @@ fn group_calls(cx: &Cx, g: &mut [Box<Sg>]) -> R<bool> {
 }
 
 /// The group's SIMD groups in turns, as `run`'s, each a fiber: whether it has ended.
-fn group_run(cx: &Cx, g: &mut [Box<Sg>]) -> R<bool> {
+fn group_run(cx: &Cx, g: &mut [Sg]) -> R<bool> {
     loop {
         for sg in g.iter_mut().filter(|sg| !sg.done && sg.wait == Wait::Run) {
-            let p = &mut **sg as *mut Sg;
+            let p = &mut *sg as *mut Sg;
             // SAFETY: the fiber is prepared or stopped at a helper; it switches back here.
             unsafe { crate::fiber::switch(&mut (*p).back, &(*p).own) };
             if let Some(e) = cx.fault.borrow_mut().take() {

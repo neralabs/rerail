@@ -439,5 +439,5 @@ fn metal_set_steps_compute_the_cpus_candidate_sets() {
     for (rule, (cpu, metal)) in rules.iter().zip(cpu.iter().zip(&metal)) {
         assert_eq!(cpu, metal, "{rule}");
     }
-    assert!(cpu.iter().any(|set| set.len() > 0));
+    assert!(cpu.iter().any(|set| !set.is_empty()));
 }

@@ -2195,7 +2195,7 @@ fn formulas(
     enum Plan<'a> {
         /// A fact whose findings are a node set (`nthChild`): read from the tape's sibling positions.
         Fact(&'a crate::code_rule_dsl::matcher::Fact),
-        Set { walk: Micro, program: &'a Program, domain: &'a Domain, set: Set },
+        Set { walk: Box<Micro>, program: &'a Program, domain: &'a Domain, set: Set },
     }
     let plans = level
         .iter()
@@ -2214,7 +2214,7 @@ fn formulas(
                 Label::Targets(..) => Set::targets(&walk.words, starts)?,
                 _ => Set::And(vec![starts, Set::of(&walk.words)?]),
             };
-            Some(Plan::Set { walk, program, domain, set })
+            Some(Plan::Set { walk: Box::new(walk), program, domain, set })
         })
         .collect::<Vec<_>>();
     let on = level.iter().map(|&(clause, _)| (0..views.len()).map(|tape| active(clause, tape)).collect::<Vec<_>>()).collect::<Vec<_>>();

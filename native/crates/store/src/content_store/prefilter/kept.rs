@@ -418,7 +418,7 @@ fn puts_of_tape(tape: i64, rows: &TapeRows) -> StoreResult<Vec<KeptPut>> {
     let kinds: Vec<[i64; 5]> = rows.kinds.iter().map(|(k, n, s, b)| { let (at, len) = place(b); [*k, *n, *s, at, len] }).collect();
     let terms: Vec<[i64; 5]> = rows.terms.iter().map(|(t, k, n, b)| { let (at, len) = place(b); [*t, *k, *n, at, len] }).collect();
     let covers: Vec<[i64; 5]> = rows.covers.iter().map(|(k, bad, r, b)| { let (at, len) = place(b); [*k, *bad, *r, at, len] }).collect();
-    let put = |rel: &str, types: &[u8], n: usize, fill: &mut dyn FnMut(&mut dyn FnMut(i64))| {
+    let put = |rel: &str, types: &[u8], n: usize, fill: &mut super::Fill<'_>| {
         sorted_put(rel, ident(rel), tape, types, n, |push| {
             fill(push);
             Ok::<(), StoreError>(())
@@ -506,7 +506,7 @@ impl Change {
             merge::<5>(&kind_runs, &new_kinds, 1, |_| n_kinds += 1);
             merge::<5>(&term_runs, &new_terms, 3, |_| n_terms += 1);
             let rows = (n_kinds + n_terms) as i64;
-            let put = |rel: &str, types: &[u8], n: usize, fill: &mut dyn FnMut(&mut dyn FnMut(i64))| {
+            let put = |rel: &str, types: &[u8], n: usize, fill: &mut super::Fill<'_>| {
                 sorted_put(rel, ident(rel), part, types, n, |push| {
                     fill(push);
                     Ok::<(), StoreError>(())
@@ -517,7 +517,6 @@ impl Change {
             self.puts.push(put(TERM_SUM, b"isiii", n_terms, &mut |push| merge::<5>(&term_runs, &new_terms, 3, |row| row.iter().for_each(|&v| push(v))))?);
         }
         drop(sums);
-        drop(view);
         if self.puts.is_empty() {
             return Ok(None);
         }
@@ -550,10 +549,8 @@ fn merge<const W: usize>(runs: &[Kept<'_>], new: &[[i64; W]], key: usize, mut em
                 }
             }
         }
-        if let Some(row) = new.get(at_new) {
-            if least.is_none_or(|l| row[..key] < l[..key]) {
-                least = Some(*row);
-            }
+        if let Some(row) = new.get(at_new) && least.is_none_or(|l| row[..key] < l[..key]) {
+            least = Some(*row);
         }
         let Some(least) = least else { return };
         let mut sum = [0i64; W];

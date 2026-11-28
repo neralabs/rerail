@@ -25,7 +25,7 @@ impl Definition {
 enum Keys {
     Native {
         source: String,
-        version: versions::Version,
+        version: Box<versions::Version>,
     },
     Query(String),
     Incoming,
@@ -309,7 +309,7 @@ impl Phase {
             source,
             Keys::Native {
                 source: keys.into(),
-                version,
+                version: Box::new(version),
             },
         )
     }

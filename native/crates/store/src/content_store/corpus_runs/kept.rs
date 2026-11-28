@@ -417,7 +417,7 @@ impl<'v> Corpus<'v> {
         let Some(e) = self.entry(RELATIONS, plan, 0) else { return Vec::new() };
         let text = bytes_of(&e);
         let parts: Vec<&[u8]> = text.split(|b| *b == 0).collect();
-        parts.chunks_exact(2).map(|p| (String::from_utf8_lossy(p[0]).into_owned(), String::from_utf8_lossy(p[1]).into_owned())).collect()
+        parts.as_chunks::<2>().0.iter().map(|[a, b]| (String::from_utf8_lossy(a).into_owned(), String::from_utf8_lossy(b).into_owned())).collect()
     }
 
     pub fn state(&self) -> KeptState {
@@ -506,7 +506,6 @@ pub(in crate::content_store) fn write_with<T>(store: &Path, t: &Connection, f: i
     let mut w = Write::default();
     let out = f(&Corpus(view.as_ref().map(|v| v as &dyn KeptRead)), &mut w)?;
     let puts = w.puts.into_values().filter(|p| !p.kept_as(view.as_ref().and_then(|v| v.get(&FactKey { rel: p.rel, ident: &p.ident, part: p.part }).filter(|e| *e.key.ident == p.ident)))).map(Want::put).collect::<StoreResult<Vec<_>>>()?;
-    drop(view);
     drop(kept);
     let written = if puts.is_empty() { None } else { write_space(store, t, &space(), puts, None)? };
     Ok((out, written))

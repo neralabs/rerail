@@ -259,10 +259,13 @@ pub(super) fn file_key(path: &Path) -> Option<FileKey> {
     }
 }
 
+/// A thread's connection to a store: the store's identity (`store_identity`), the file it opened, and the connection.
+type HeldConnection = (i64, Option<FileKey>, SharedConnection);
+
 thread_local! {
     /// By shared object (its `Connections`' number) and database path: the store's identity (`store_identity`), the
     /// file the connection opened (the path named it before and after the open), and the connection to it.
-    static THREAD_CONNECTIONS: RefCell<HashMap<(u64, PathBuf), (i64, Option<FileKey>, SharedConnection)>> =
+    static THREAD_CONNECTIONS: RefCell<HashMap<(u64, PathBuf), HeldConnection>> =
         RefCell::new(HashMap::new());
 }
 
@@ -907,12 +910,15 @@ impl ContentStore {
     }
 }
 
+/// The kept-facts spaces a thread's open write scopes have written: each by its store's path and its key.
+type WrittenSpaces = std::collections::HashSet<(std::path::PathBuf, [u8; 32])>;
+
 thread_local! {
     /// Whether this thread runs the store writer's batch (`ContentStore::in_one_transaction`).
     static BATCH: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
     /// The write scopes open on this thread (a transaction of `begin`'s, the writer's batch), and the kept-facts spaces
     /// their transaction has written, by store (`first_write_of_space`).
-    static WRITTEN_SPACES: std::cell::RefCell<(u32, std::collections::HashSet<(std::path::PathBuf, [u8; 32])>)> =
+    static WRITTEN_SPACES: std::cell::RefCell<(u32, WrittenSpaces)> =
         std::cell::RefCell::new((0, std::collections::HashSet::new()));
 }
 

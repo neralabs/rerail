@@ -617,7 +617,7 @@ impl<'a> Pp<'a> {
                 v
             };
             let before = self.reqs.len();
-            self.enter(d, t, end, args, parent, ppos, needs);
+            self.enter(Expansion { def: d, name: t, end }, args, parent, ppos, needs);
             if self.reqs.len() > before {
                 let r = &mut self.reqs[before];
                 (r.dep_at, r.dep_n) = (self.deps.len() as u32, dv.len() as u32);
@@ -810,8 +810,9 @@ impl<'a> Pp<'a> {
         self.scratch_tok(P::Str, T::Eof, &q, like.flags & (BOL | SPACE), like.exp)
     }
 
-    /// Macro `d`'s expansion of the call `name` with `args`, entered as the next source.
-    fn enter(&mut self, d: u32, name: Tk, end: Tk, args: Vec<Vec<Tk>>, parent: u32, ppos: u32, needs_args: bool) {
+    /// Macro `call.def`'s expansion of the call `call.name` with `args`, entered as the next source.
+    fn enter(&mut self, call: Expansion, args: Vec<Vec<Tk>>, parent: u32, ppos: u32, needs_args: bool) {
+        let Expansion { def: d, name, end } = call;
         self.exps.push(Expansion { def: d, name, end });
         let id = self.exps.len() as u32;
         {

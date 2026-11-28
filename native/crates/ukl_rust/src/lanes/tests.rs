@@ -257,15 +257,21 @@ fn the_scalar_reads_are_the_compiled_reads() {
     use rerail_blocks::bloom::{self, Bloom};
     let reads = rerail_clif::jit::Reads::new();
     let f = |name: &str| reads.function(name);
-    // SAFETY: each read's signature: its descriptor's address, then its parameters.
-    let (get, dead, group, row, mark): (extern "C" fn(*const u8, u32, u32, *const u8) -> u64, extern "C" fn(*const u8, u32) -> u32, extern "C" fn(*const u8, u32, u64) -> u64, extern "C" fn(*const u8, u32, u32) -> u32, extern "C" fn(*const u8, u32, u32) -> u32) =
-        unsafe { (std::mem::transmute(f("rel_get")), std::mem::transmute(f("rel_dead")), std::mem::transmute(f("rel_group")), std::mem::transmute(f("rel_group_row")), std::mem::transmute(f("rel_group_mark"))) };
-    let (len, put, rows_get): (extern "C" fn(*const u8) -> u32, extern "C" fn(*const u8, u32, u32, u64) -> u32, extern "C" fn(*const u8, u32, u32) -> u64) =
-        unsafe { (std::mem::transmute(f("rows_len")), std::mem::transmute(f("rows_put")), std::mem::transmute(f("rows_get"))) };
-    let (mix, hash, may): (extern "C" fn(*const u8, u64, u64) -> u64, extern "C" fn(*const u8, u64) -> u64, extern "C" fn(*const u8, u64) -> u32) =
-        unsafe { (std::mem::transmute(f("rel_key_mix")), std::mem::transmute(f("bloom_hash")), std::mem::transmute(f("bloom_may"))) };
-    let (atoms_at, atoms_len): (extern "C" fn(*const u8, u32) -> u64, extern "C" fn(*const u8, u32) -> u32) = unsafe { (std::mem::transmute(f("atoms_at")), std::mem::transmute(f("atoms_len"))) };
-    let atoms_find: extern "C" fn(*const u8, u64, u32, u32) -> u32 = unsafe { std::mem::transmute(f("atoms_find")) };
+    // SAFETY (each): the read's signature: its descriptor's address, then its parameters.
+    let get = unsafe { std::mem::transmute::<*const u8, extern "C" fn(*const u8, u32, u32, *const u8) -> u64>(f("rel_get")) };
+    let dead = unsafe { std::mem::transmute::<*const u8, extern "C" fn(*const u8, u32) -> u32>(f("rel_dead")) };
+    let group = unsafe { std::mem::transmute::<*const u8, extern "C" fn(*const u8, u32, u64) -> u64>(f("rel_group")) };
+    let row = unsafe { std::mem::transmute::<*const u8, extern "C" fn(*const u8, u32, u32) -> u32>(f("rel_group_row")) };
+    let mark = unsafe { std::mem::transmute::<*const u8, extern "C" fn(*const u8, u32, u32) -> u32>(f("rel_group_mark")) };
+    let len = unsafe { std::mem::transmute::<*const u8, extern "C" fn(*const u8) -> u32>(f("rows_len")) };
+    let put = unsafe { std::mem::transmute::<*const u8, extern "C" fn(*const u8, u32, u32, u64) -> u32>(f("rows_put")) };
+    let rows_get = unsafe { std::mem::transmute::<*const u8, extern "C" fn(*const u8, u32, u32) -> u64>(f("rows_get")) };
+    let mix = unsafe { std::mem::transmute::<*const u8, extern "C" fn(*const u8, u64, u64) -> u64>(f("rel_key_mix")) };
+    let hash = unsafe { std::mem::transmute::<*const u8, extern "C" fn(*const u8, u64) -> u64>(f("bloom_hash")) };
+    let may = unsafe { std::mem::transmute::<*const u8, extern "C" fn(*const u8, u64) -> u32>(f("bloom_may")) };
+    let atoms_at = unsafe { std::mem::transmute::<*const u8, extern "C" fn(*const u8, u32) -> u64>(f("atoms_at")) };
+    let atoms_len = unsafe { std::mem::transmute::<*const u8, extern "C" fn(*const u8, u32) -> u32>(f("atoms_len")) };
+    let atoms_find = unsafe { std::mem::transmute::<*const u8, extern "C" fn(*const u8, u64, u32, u32) -> u32>(f("atoms_find")) };
 
     let spec = Spec { widths: vec![8, 4], order: vec![0], indexes: vec![vec![1]], min_log: 4 };
     let lock = Mutex::new(());

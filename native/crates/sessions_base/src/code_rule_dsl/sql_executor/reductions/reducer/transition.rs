@@ -289,7 +289,7 @@ impl InitialCursor {
 }
 pub enum InitialPrepared {
     Reused,
-    Evaluate(Option<InitialCursor>),
+    Evaluate(Box<Option<InitialCursor>>),
 }
 
 pub fn prepare_initial(
@@ -297,7 +297,7 @@ pub fn prepare_initial(
     w: &mut Work<'_>,
     objects: &mut Vec<(String,bool)>,
 ) -> Result<InitialPrepared> {
-    let Some(input) = input(r,w) else { return Ok(InitialPrepared::Evaluate(None)); };
+    let Some(input) = input(r,w) else { return Ok(InitialPrepared::Evaluate(Box::new(None))); };
     let signature = Arc::clone(r.transition_key.as_ref().unwrap());
     let before = InitialCursor { signature, input };
     let store = w.versions.unwrap();
@@ -321,7 +321,7 @@ pub fn prepare_initial(
         if let Some(operation)=operation { operation.finish(1); }
         return Ok(InitialPrepared::Reused);
     }
-    Ok(InitialPrepared::Evaluate(Some(before)))
+    Ok(InitialPrepared::Evaluate(Box::new(Some(before))))
 }
 
 pub fn remember_initial(r: &Reducer, w: &mut Work<'_>, before: Option<InitialCursor>) {
@@ -347,7 +347,7 @@ pub fn initialize(
         InitialPrepared::Reused => Ok(()),
         InitialPrepared::Evaluate(before) => {
             r.initialize(w.db,objects,storage,w.versions.is_some())?;
-            remember_initial(r,w,before);
+            remember_initial(r,w,*before);
             Ok(())
         }
     }

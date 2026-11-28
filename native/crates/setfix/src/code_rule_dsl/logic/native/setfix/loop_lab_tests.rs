@@ -160,16 +160,16 @@ fn a_joins_candidates_cost() {
     }
     time("parts: candidates", keys.len(), &|| {
         let (mut hints, mut last) = ([0u32; runs::HINTS], LastProbe::default());
-        keys.iter().map(|&k| { let (_, c) = cands::candidates(&j, &src, &store, &[k], &spec, &mut hints, &mut last, need, None, false); i64::from(c.any(|_| false)) + 1 }).sum()
+        keys.iter().map(|&k| { let (_, c) = cands::candidates(&j, src, &store, &[k], &spec, &mut hints, &mut last, need, None, false); i64::from(c.any(|_| false)) + 1 }).sum()
     });
     time("parts: candidates, ids walked", keys.len(), &|| {
         let (mut hints, mut last) = ([0u32; runs::HINTS], LastProbe::default());
-        keys.iter().map(|&k| { let (_, c) = cands::candidates(&j, &src, &store, &[k], &spec, &mut hints, &mut last, need, None, false); let mut s = 0i64; c.any(|id| { s += i64::from(id); false }); s }).sum()
+        keys.iter().map(|&k| { let (_, c) = cands::candidates(&j, src, &store, &[k], &spec, &mut hints, &mut last, need, None, false); let mut s = 0i64; c.any(|id| { s += i64::from(id); false }); s }).sum()
     });
     time("parts: candidates, rows read (each)", keys.len(), &|| {
         let (mut hints, mut last) = ([0u32; runs::HINTS], LastProbe::default());
         keys.iter().map(|&k| {
-            let (rows, c) = cands::candidates(&j, &src, &store, &[k], &spec, &mut hints, &mut last, need, None, false);
+            let (rows, c) = cands::candidates(&j, src, &store, &[k], &spec, &mut hints, &mut last, need, None, false);
             let mut s = 0i64;
             rows.each(c, need, &mut LastProbe::default(), |_, row| { if row.at(0) == k { s += row.at(1) } false });
             s

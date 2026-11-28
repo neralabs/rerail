@@ -262,9 +262,7 @@ fn uniform_values_read_for_their_low_bits_are_each_32_bit_value() {
     want[40] = g;
     want[62] = 0;
     want[63] = 0;
-    for l in 41..62 {
-        want[l] = 0;
-    }
+    want[41..62].fill(0);
     assert_eq!(out, want);
 }
 
@@ -300,10 +298,10 @@ fn a_division_by_zero_in_lanes_that_do_not_run_it_is_none() {
     let want: Vec<u32> = (0..64u32)
         .map(|l| {
             let d = l % 4;
-            let mut q = if d != 0 { (1000 + l) / d + 77 % d } else { 0 };
+            let mut q = (1000 + l).checked_div(d).map_or(0, |x| x + 77 % d);
             let e = u64::from(l & 3);
-            if e != 0 {
-                q = q.wrapping_add(((u64::from(l) << 33) / e) as u32);
+            if let Some(x) = (u64::from(l) << 33).checked_div(e) {
+                q = q.wrapping_add(x as u32);
             }
             q
         })
@@ -630,10 +628,10 @@ fn thirty_two_bit_lanes_divide_as_each_lanes_integer() {
             let b = u as u8;
             match l % 8 {
                 0 => u / 10 + u % 64,
-                1 => u % 10 ^ u / 64,
+                1 => (u % 10) ^ (u / 64),
                 2 => (s / 7) as u32 ^ (s % 7) as u32,
                 3 => (s.wrapping_div(sd) as u32).wrapping_add(s.wrapping_rem(sd) as u32),
-                4 => u / d ^ u % d,
+                4 => (u / d) ^ (u % d),
                 5 => mn.wrapping_div(m1) as u32 ^ (s % 16) as u32,
                 6 => u / k + u % k,
                 _ => u32::from(b / d as u8) + u32::from(b % 3),
@@ -698,7 +696,7 @@ fn a_threadgroup_barrier_in_a_chunked_kernel_waits_for_the_other_simd_group() {
         "    ukl_tg_barrier();\n",
         "    out[lid] = v ^ ukl_sg_sum(lid __UKL_ARGS);"
     ));
-    let ballot = |g: u32| (0..32u32).filter(|l| (g * 32 + l) % 3 == 0).fold(0u32, |a, l| a | 1 << l);
+    let ballot = |g: u32| (0..32u32).filter(|l| (g * 32 + l).is_multiple_of(3)).fold(0u32, |a, l| a | 1 << l);
     for l in 0..64u32 {
         let (g, o) = (l / 32, (l ^ 32) / 32);
         let sum: u32 = (g * 32..g * 32 + 32).sum();
@@ -942,6 +940,7 @@ fn fma_loop(code: &str) -> Vec<&str> {
 ///   shifted to their places;
 /// - the counter up to 0, tested at the loop's end with no compare;
 /// - fewer instructions a lane at each wider width.
+///
 /// AArch64's code.
 #[test]
 #[cfg(target_arch = "aarch64")]
@@ -1129,8 +1128,8 @@ fn a_floating_multiply_add_is_rounded_once() {
     let tape = super::c_tape(&src).unwrap();
     let p = super::lower::lower(&src, &tape).unwrap_or_else(|e| panic!("{e}"));
     let k = super::vector::vectorize(&p, p.kernel("t_fma").unwrap()).unwrap_or_else(|e| panic!("{}", e.0));
-    let a = vec![1.0f32 + 2f32.powi(-12); 32];
-    let b = vec![1.0f32 + 2f32.powi(-11); 32];
+    let a = [1.0f32 + 2f32.powi(-12); 32];
+    let b = [1.0f32 + 2f32.powi(-11); 32];
     assert_eq!(a[0] * a[0] - b[0], 0.0, "rounded twice");
     let want = vec![2f32.powi(-24); 96];
     let run = |k: &super::vector::Kernel, exec| {
@@ -1196,7 +1195,7 @@ fn the_nearest_kernels_atomics_are_loads_stores_and_one_maximum() {
     const NODES: u32 = 16;
     const FINAL: u32 = 0x8000_0000;
     let parent = |i: u32| (i > 0).then(|| (i - 1) / 2);
-    let member = |s: u32, i: u32| i % (s + 2) == 0;
+    let member = |s: u32, i: u32| i.is_multiple_of(s + 2);
     let (mut start, mut want) = (Vec::new(), Vec::new());
     for s in 0..4u32 {
         for i in 0..NODES {

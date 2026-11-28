@@ -463,7 +463,7 @@ mod tests {
         };
         // SET, a quarter of the nodes (`bind_only`, `rr_ast_8`).
         let set = NodeKeyed::try_set(&block, nodes).expect("room");
-        let held: Vec<i64> = (0..nodes).filter(|_| lcg(&mut s) % 4 == 0).map(|l| { set.add(l); i64::from(l) }).collect();
+        let held: Vec<i64> = (0..nodes).filter(|_| lcg(&mut s).is_multiple_of(4)).map(|l| { set.add(l); i64::from(l) }).collect();
         let (rel, ix) = relation(&block, 1, &held);
         let (rel_ns, a) = time(&|| probes.iter().filter(|&&l| probe(rel, ix, l).next().is_some()).count() as u64);
         let (col_ns, b) = time(&|| probes.iter().filter(|&&l| set.has(l)).count() as u64);
@@ -473,7 +473,7 @@ mod tests {
         let one = NodeKeyed::try_one(&block, nodes).expect("room");
         let mut rows: Vec<i64> = Vec::new();
         for l in 0..nodes {
-            let (keep, v) = (lcg(&mut s) % 3 != 0, lcg(&mut s) % nodes);
+            let (keep, v) = (!lcg(&mut s).is_multiple_of(3), lcg(&mut s) % nodes);
             if keep {
                 one.put(l, v).unwrap();
                 rows.extend([i64::from(l), i64::from(v)]);

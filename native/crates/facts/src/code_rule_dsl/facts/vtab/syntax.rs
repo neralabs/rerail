@@ -4507,7 +4507,7 @@ impl Batch {
             // A path's parts read where it lies, each once: a few, so each is checked against those before it (a
             // list and a set a document before).
             let parts = || d.path.split('/').filter(|s| !s.is_empty());
-            if let Some(last) = parts().last() {
+            if let Some(last) = parts().next_back() {
                 file_name.push([key, string(last) as i64]);
             }
             for (i, part) in parts().enumerate() {

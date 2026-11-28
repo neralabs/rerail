@@ -75,7 +75,7 @@ pub struct Compiled {
 /// `rerail_c_pp::tape::lang`), or its own, of its names (`table`).
 enum Table {
     Shared(&'static rerail_tape_format::f16::Lang),
-    Own(rerail_tape_format::f16::Lang),
+    Own(Box<rerail_tape_format::f16::Lang>),
 }
 
 /// The format 16 table of a grammar's tape (decision 0631): each of its kinds (the `kinds` given, then the `own`
@@ -191,7 +191,7 @@ pub(crate) fn compile_kinds(grammar: &str, kinds: &[&str], fields: &[&str], seed
     let parser = native_cpu_stream::Parser::with_cut(&native, &cut).map_err(|e| format!("Cranelift: {e:?}"))?;
     let table = match shared {
         Some(lang) => Table::Shared(lang),
-        None => Table::Own(table(kinds.len(), own, fields.len(), &program.readings.extras)),
+        None => Table::Own(Box::new(table(kinds.len(), own, fields.len(), &program.readings.extras))),
     };
     Ok(Compiled { parser, native: native.block_programs[0].clone(), program, words, machine, table, numbers: Default::default() })
 }

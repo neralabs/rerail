@@ -1592,7 +1592,7 @@ impl<'v> Program<'v> {
                         if placeless[s] {
                             continue;
                         }
-                        let in_family = matches!(at[s], Some(_));
+                        let in_family = at[s].is_some();
                         let at_key = matches!(a.args().next(), Some(TermRef::Var(y)) if classes[y.0 as usize] == key);
                         if !in_family || !at_key {
                             fits = false;
@@ -1751,7 +1751,7 @@ impl<'v> Program<'v> {
                     let qc = value_classes(reader);
                     let targets = Held::of(self.targets_of(reader, r, local_now, locs));
                     let cx = ThroughCx { local_now, covered, placeless, locs, targets: &targets, seen: Default::default(), known: Default::default(), steps: Default::default() };
-                    let through = |x: u32, head: &[Vec<Bound>]| self.through(x, head, reader, &cx);
+                    let through = |x: u32, head: &[Vec<Bound>]| self.through(x, head, &cx);
                     for l in reader.body() {
                         let (a, every) = match l.view() {
                             L::Atom(a) => (a, every_row),
@@ -1821,7 +1821,7 @@ impl<'v> Program<'v> {
             }
             let targets = Held::of(self.targets_of(reader, r, local_now, locs));
             let cx = ThroughCx { local_now, covered, placeless, locs, targets: &targets, seen: Default::default(), known: Default::default(), steps: Default::default() };
-            let through = |x: u32, head: &[Vec<Bound>]| self.through(x, head, reader, &cx);
+            let through = |x: u32, head: &[Vec<Bound>]| self.through(x, head, &cx);
             for (at, l) in reader.body().enumerate() {
                 match l.view() {
                     L::Agg { atom: a, .. } if a.rel().0 == r && valueless[r as usize] => {
@@ -1955,7 +1955,7 @@ impl<'v> Program<'v> {
     fn native_inputs(&self, h: u32) -> Vec<(u32, Vec<Option<usize>>, bool)> {
         let width = |x: RelId| self.f.columns(self.v.rel_name(x)).map_or(0, |c| c.len());
         match self.f.native(self.name(h)).map(|nat| &nat.spec) {
-            Some(ArchivedNativeSpec::MatchAll { input, .. }) if self.rels.functional[h as usize] => vec![((*input).0, vec![Some(0)], false)],
+            Some(ArchivedNativeSpec::MatchAll { input, .. }) if self.rels.functional[h as usize] => vec![(input.0, vec![Some(0)], false)],
             Some(ArchivedNativeSpec::Rank { query, counted, group, .. }) => {
                 let (query, counted, group): (RelId, RelId, usize) = (*query, *counted, *group as usize);
                 let (wq, wc) = (width(query), width(counted));
@@ -1971,18 +1971,18 @@ impl<'v> Program<'v> {
     /// levels deep (the format family's, 0708: five).
     const THROUGH_DEPTH: usize = 64;
 
-    /// Whether the covered view of values `s`, its columns at `head`, is found in `reader`'s rows (decision 0708):
+    /// Whether the covered view of values `s`, its columns at `head`, is found in its reader's rows (the caller's `maps`, decision 0708):
     /// each of its rules is (`maps_at`), passing through the covered views of values they read in turn. `None` where
     /// `s` is no such view. A view asked again at the same values on the way is taken as found: a row of it there is
     /// derived from rows of lower height, which the asking proves found. What is known is kept for the reader's one
     /// question (`ThroughCx`). A native is asked of its inputs.
-    fn through(&self, s: u32, head: &[Vec<Bound>], reader: RuleRef<'v>, cx: &ThroughCx<'_>) -> Option<bool> {
+    fn through(&self, s: u32, head: &[Vec<Bound>], cx: &ThroughCx<'_>) -> Option<bool> {
         // A native whose rows at a tuple are its inputs' rows there (`native_inputs`) is asked of each input there.
         let inputs = if cx.local_now[s as usize] { self.native_inputs(s) } else { Vec::new() };
         if !inputs.is_empty() {
             for (x, cols, _) in inputs {
                 let at: Vec<Vec<Bound>> = cols.iter().map(|c| c.and_then(|c| head.get(c).cloned()).unwrap_or_default()).collect();
-                if !self.through(x, &at, reader, cx)? {
+                if !self.through(x, &at, cx)? {
                     return Some(false);
                 }
             }
@@ -2009,7 +2009,7 @@ impl<'v> Program<'v> {
         cx.seen.borrow_mut().push(key.clone());
         let rels = &self.rels;
         let columns = |x: u32| -> &[usize] { if rels.is_derived(x) { &cx.locs[x as usize] } else { &rels.base_locs[x as usize] } };
-        let through = |x: u32, h: &[Vec<Bound>]| self.through(x, h, reader, cx);
+        let through = |x: u32, h: &[Vec<Bound>]| self.through(x, h, cx);
         let found = rels.rules[s as usize].iter().all(|&k| maps_at(self.v, self.rules[k], head, true, cx.targets, &[], &|x| cx.placeless[x as usize], &columns, &through));
         cx.seen.borrow_mut().pop();
         // Found while a view on the way was taken as found holds only if it is: kept only where none was.

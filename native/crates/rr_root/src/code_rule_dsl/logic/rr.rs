@@ -2550,7 +2550,7 @@ fn check_names(statements: &Files, core_unlisted: bool) -> Result<(), Error> {
         .filter(|(file, _)| *file == core)
         .flat_map(|(_, statements)| statements)
         .filter_map(|s| if let Some(S::Decl(name)) = s.what() { Some(name.to_owned()) } else { None })
-        .chain(core_names().iter().cloned().filter(|_| core_unlisted && !listed))
+        .chain(core_names().iter().filter(|_| core_unlisted && !listed).cloned())
         .filter(|name| !LIBRARY_DERIVED.contains(&name.as_str()))
         .collect();
     for (file, statements) in statements.iter().filter(|(file, _)| *file != core) {

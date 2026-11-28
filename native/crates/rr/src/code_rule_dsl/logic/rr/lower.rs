@@ -192,7 +192,7 @@ enum Logged {
     Skip(usize),
     /// An outlined literal's alternatives (`outline_put`): those kept in the rule, those of the helper relation, and
     /// the variables it shares with the rule, its columns.
-    Kept(Vector<usize>, Vector<usize>, Vec<String>),
+    Kept(Box<(Vector<usize>, Vector<usize>, Vec<String>)>),
 }
 
 /// What the literals a helper's rules are written with say of their variables, in the order written (decision 0276
@@ -4053,9 +4053,9 @@ impl Lowerer {
         let (keep, out, shared) = match self.replay {
             Some(at) => {
                 debug_assert_eq!(at, end);
-                let Some(Logged::Kept(keep, out, shared)) = self.log.get(at).cloned() else { panic!("a replayed outline reads its alternatives") };
+                let Some(Logged::Kept(kept)) = self.log.get(at).cloned() else { panic!("a replayed outline reads its alternatives") };
                 self.replay = Some(at + 1);
-                (keep, out, shared)
+                *kept
             }
             None => {
                 let scans = (0..n).map(|p| self.scan_alternative(start, |me| f(me, p))).collect::<Result<Vec<_>, _>>()?;
@@ -4064,7 +4064,7 @@ impl Lowerer {
                 // `unset(x)` is lowered in a rule's own body only (`emit_atom`).
                 let (out, keep): (Vector<usize>, Vector<usize>) = (0..n).partition(|&p| !scans[p].unset && scans[p].grounds(&shared));
                 let (keep, out) = if out.len() < 2 { (keep.into_iter().chain(out).collect(), Vector::new()) } else { (keep, out) };
-                self.log.push(Logged::Kept(keep.clone(), out.clone(), shared.clone()));
+                self.log.push(Logged::Kept(Box::new((keep.clone(), out.clone(), shared.clone()))));
                 (keep, out, shared)
             }
         };

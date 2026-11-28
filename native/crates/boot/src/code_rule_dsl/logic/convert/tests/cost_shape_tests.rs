@@ -527,12 +527,10 @@ fn crossing_or_constant(text: &str) -> (std::collections::HashSet<String>, std::
     let mut statements: Vec<String> = Vec::new();
     for line in text.lines() {
         let line = line.split("//").next().unwrap_or("");
-        if line.starts_with([' ', '\t']) && !line.trim().is_empty() {
-            if let Some(last) = statements.last_mut() {
-                last.push(' ');
-                last.push_str(line.trim());
-                continue;
-            }
+        if line.starts_with([' ', '\t']) && !line.trim().is_empty() && let Some(last) = statements.last_mut() {
+            last.push(' ');
+            last.push_str(line.trim());
+            continue;
         }
         if !line.trim().is_empty() {
             statements.push(line.trim().to_owned());

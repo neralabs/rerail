@@ -585,7 +585,7 @@ fn composition(seed: &Seed, dirs: &Dirs) -> Option<Composition> {
         // Each name a file has (its own `core.rerail` too) has its candidate beside the file, held absent
         // (`p0_absent`: every candidate not there); one there is the run's to resolve.
         if let Some((own_path, _)) = &own {
-            let Some((dir, _)) = bootstrap_spelling(&own_path.to_string_lossy()).rsplit_once('/').map(|(d, f)| (d.to_owned(), f.to_owned())) else { return None };
+            let (dir, _) = bootstrap_spelling(&own_path.to_string_lossy()).rsplit_once('/').map(|(d, f)| (d.to_owned(), f.to_owned()))?;
             let beside = candidate_path(&dir, &name);
             if super::observe(|o| o.kind(&beside)) != Kind::Missing {
                 return None;

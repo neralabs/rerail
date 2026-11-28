@@ -891,14 +891,12 @@ fn linked(device: &Device, split: &rerail_ukl::split::Split) -> Result<(Library,
 fn unit(device: &Device, u: &rerail_ukl::split::Unit, links: &[metal::DynamicLibrary], path: &Path) -> Result<metal::DynamicLibrary, String> {
     objc::rc::autoreleasepool(|| {
         let what = format!("unit {}", u.name);
-        if path.is_file() {
-            if let Ok(d) = device.new_dynamic_library_with_url(&url_of(path)) {
-                // Kept before its exits were read: read on a G13 (decision 0672).
-                rerail_device::compute_kernel_metal::refuse_exit_codes_in(device, path, &what)?;
-                // Its use, for the store's pruning (the oldest unused first).
-                let _ = std::fs::File::options().append(true).open(path).and_then(|f| f.set_modified(std::time::SystemTime::now()));
-                return Ok(d);
-            }
+        if path.is_file() && let Ok(d) = device.new_dynamic_library_with_url(&url_of(path)) {
+            // Kept before its exits were read: read on a G13 (decision 0672).
+            rerail_device::compute_kernel_metal::refuse_exit_codes_in(device, path, &what)?;
+            // Its use, for the store's pruning (the oldest unused first).
+            let _ = std::fs::File::options().append(true).open(path).and_then(|f| f.set_modified(std::time::SystemTime::now()));
+            return Ok(d);
         }
         let o = metal::CompileOptions::new();
         o.set_library_type(metal::MTLLibraryType::Dynamic);

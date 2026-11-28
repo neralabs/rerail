@@ -54,13 +54,16 @@ pub(crate) fn shipped(device: &crate::device::Device, dir: &std::path::Path, sou
     })
 }
 
+/// Each target's (programs shipped, programs already there) and the failures, `program target: why`.
+type ShipCounts = (HashMap<String, (u64, u64)>, Vec<String>);
+
 /// A build that ships kernels (`rerail-engine kernels ship --targets`, decision 0645 step 3): each program compiled
 /// in this process is also prepared for each of `targets` and compiled for it ahead of time, into `dir`.
 struct Ship {
     dir: std::path::PathBuf,
     targets: Vec<rerail_ukl::Target>,
-    /// Each target's (programs shipped, programs already there) and the failures, `program target: why`.
-    counts: Mutex<(HashMap<String, (u64, u64)>, Vec<String>)>,
+    /// What it shipped and what failed (`ShipCounts`).
+    counts: Mutex<ShipCounts>,
 }
 
 /// The process's shipping, when it is a build that ships (a build tool's mode, set once).

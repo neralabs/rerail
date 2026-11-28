@@ -24,7 +24,7 @@ impl Template {
                 snapshots.push(std::mem::replace(&mut output.old, empty));
                 if let Keys::Native { version, .. } = &mut output.keys {
                     let empty = version.empty_like();
-                    snapshots.push(std::mem::replace(version, empty));
+                    snapshots.push(std::mem::replace(&mut **version, empty));
                 }
                 output
             })
@@ -88,7 +88,7 @@ impl Template {
                     if !version.same_schema(current) {
                         return Err(error("SQL publication key schema changed"));
                     }
-                    *version = current.clone();
+                    **version = current.clone();
                 }
                 Ok(bound)
             })

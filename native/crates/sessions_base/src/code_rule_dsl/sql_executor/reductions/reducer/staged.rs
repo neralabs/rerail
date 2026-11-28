@@ -48,7 +48,7 @@ impl Batch {
         if !r.shared_owner() || objects.iter().any(|(name,_)|name==&r.groups) { return Ok(()); }
         let before=match transition::prepare_initial(r,w,objects)? {
             transition::InitialPrepared::Reused => return Ok(()),
-            transition::InitialPrepared::Evaluate(before) => before,
+            transition::InitialPrepared::Evaluate(before) => *before,
         };
         let shared=before.as_ref().and_then(|before|self.initial.iter().find(|previous|
             previous.before.as_ref().is_some_and(|p|before.equivalent(p))));

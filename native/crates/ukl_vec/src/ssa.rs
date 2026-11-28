@@ -29,6 +29,18 @@ use crate::run::W;
 
 type R<T> = Result<T, Error>;
 
+/// A function's signature as its lowering takes it: its arguments' variables and types, which are uniform, and its
+/// result's type.
+struct FnSig<'a> {
+    args: &'a [(u32, M)],
+    uni: &'a [bool],
+    ret: M,
+}
+
+/// An instruction as the entry block's values are found by it (`in_entry`): its operation, sub-operation, type and
+/// operands.
+type EntryKey = (O, u8, u32, u32, u32, u32, u32);
+
 /// A value: its index in its function.
 pub type V = u32;
 
@@ -439,7 +451,7 @@ pub fn build(vt: &Tape, names: &dyn Fn(u32) -> String, called: &dyn Fn(u32) -> b
         let mut b = Fb::new(&v, &exits, &bodies, &funcs, root, k == 0);
         b.region = region;
         b.promote(root, &args);
-        let func = b.function(k as u32, name, region, &args, &uni, ret, root)?;
+        let func = b.function(k as u32, name, region, FnSig { args: &args, uni: &uni, ret }, root)?;
         if func.insts.len() > MAX_VALUES {
             return Err(Error(format!("{}: {} values, over {MAX_VALUES}: too large to compile", func.name, func.insts.len())));
         }
@@ -504,7 +516,7 @@ struct Fb<'a, 't> {
     /// The uniform addresses of read-only bytes (`bytes_at`'s, and offsets into them), made in the entry block.
     read_only: std::collections::HashSet<V>,
     /// The values made once in the entry block past its constants and arguments (`in_entry`), by instruction.
-    entry_vals: HashMap<(O, u8, u32, u32, u32, u32, u32), V>,
+    entry_vals: HashMap<EntryKey, V>,
     entry_made: std::collections::HashSet<V>,
     /// The node being made is an operand of an operation in lanes (`expr`): its value is the lanes', not made once.
     lanes_parent: bool,
@@ -732,7 +744,7 @@ impl<'a, 't> Fb<'a, 't> {
     /// Instruction `i` (a uniform value of values made in the entry block) made once there, after the values made
     /// there before it.
     fn in_entry(&mut self, mut i: Inst) -> V {
-        let key = (i.op, i.sub, i.m.0, i.a, i.b, i.c, i.d);
+        let key: EntryKey = (i.op, i.sub, i.m.0, i.a, i.b, i.c, i.d);
         if let Some(&x) = self.entry_vals.get(&key) {
             return x;
         }
@@ -766,7 +778,7 @@ impl<'a, 't> Fb<'a, 't> {
         self.push(Inst::new(op, m, a, b, c, d))
     }
 
-    fn ins_sub(&mut self, op: O, sub: u32, m: M, a: u32, b: u32, c: u32, d: u32) -> V {
+    fn ins_sub(&mut self, op: O, sub: u32, m: M, [a, b, c, d]: [u32; 4]) -> V {
         let mut i = Inst::new(op, m, a, b, c, d);
         i.sub = sub as u8;
         self.push(i)
@@ -1156,7 +1168,7 @@ impl<'a, 't> Fb<'a, 't> {
 
     // The function.
 
-    fn function(mut self, k: u32, name: String, region: u32, args: &[(u32, M)], uni: &[bool], ret: M, root: usize) -> R<Func> {
+    fn function(mut self, k: u32, name: String, region: u32, FnSig { args, uni, ret }: FnSig<'_>, root: usize) -> R<Func> {
         self.region = region;
         let b0 = self.block();
         self.seal(b0);
@@ -1435,7 +1447,7 @@ impl<'a, 't> Fb<'a, 't> {
             let r = self.read_mask(rest);
             let x = self.ins(O::First, m, c, r, 0, 0);
             self.shaped(x, Shape::Uniform);
-            let eq = self.ins_sub(O::Bin, Op::Eq as u32, M::B, c, x, NONE, m.0);
+            let eq = self.ins_sub(O::Bin, Op::Eq as u32, M::B, [c, x, NONE, m.0]);
             self.shaped(eq, Shape::Lanes);
             let me = self.mask_of(eq);
             let now = self.mask_op(O::MAnd, r, me);
@@ -1894,7 +1906,7 @@ impl<'a, 't> Fb<'a, 't> {
                 let a = self.fit(a, m);
                 let a = if once { self.scalar(a) } else { a };
                 let s = self.shape(a);
-                let x = self.ins_sub(O::Un, op as u32, if op == Op::LNot { M::B } else { m }, a, 0, 0, 0);
+                let x = self.ins_sub(O::Un, op as u32, if op == Op::LNot { M::B } else { m }, [a, 0, 0, 0]);
                 // `!x`'s result is a `bool` of `x`'s type's truth: the operand's type is `m`.
                 self.insts[x as usize].d = m.0;
                 self.shaped(x, s)
@@ -1930,7 +1942,7 @@ impl<'a, 't> Fb<'a, 't> {
         let rm = if op.compares() { M::B } else { m };
         // An integer division's lanes: those that run divide (a lane that does not may hold a 0).
         let mask = if matches!(op, Op::Div | Op::Rem) && !m.float() { self.cur() } else { NONE };
-        let x = self.ins_sub(O::Bin, op as u32, rm, a, b, mask, m.0);
+        let x = self.ins_sub(O::Bin, op as u32, rm, [a, b, mask, m.0]);
         self.shaped(x, s);
         x
     }
@@ -2077,14 +2089,14 @@ impl<'a, 't> Fb<'a, 't> {
             Builtin::SubGroupReduceAdd | Builtin::SubGroupReduceMin | Builtin::SubGroupReduceMax => {
                 let x = self.fit(args[0], m);
                 let c = self.cur();
-                let r = self.ins_sub(O::Reduce, b as u32, m, x, c, 0, 0);
+                let r = self.ins_sub(O::Reduce, b as u32, m, [x, c, 0, 0]);
                 set(self, r, Shape::Uniform)
             }
             Builtin::SubGroupShuffle | Builtin::SubGroupShuffleUp | Builtin::SubGroupShuffleDown | Builtin::SubGroupShuffleXor => {
                 let x = self.fit(args[0], m);
                 let lane = self.fit(args[1], M::U32);
                 let c = self.cur();
-                let r = self.ins_sub(O::Shuffle, b as u32, m, x, lane, c, 0);
+                let r = self.ins_sub(O::Shuffle, b as u32, m, [x, lane, c, 0]);
                 set(self, r, Shape::Lanes)
             }
             _ if crate::vector::is_atomic(b) => {
@@ -2098,12 +2110,12 @@ impl<'a, 't> Fb<'a, 't> {
                     ops[k] = if one { self.scalar(a) } else { a };
                 }
                 let c = self.cur();
-                let r = self.ins_sub(O::Atomic, b as u32, m, ops[0], ops[1], ops[2], c);
+                let r = self.ins_sub(O::Atomic, b as u32, m, [ops[0], ops[1], ops[2], c]);
                 set(self, r, if one { Shape::Uniform } else { Shape::Lanes })
             }
             Builtin::LocalSize | Builtin::GlobalSize | Builtin::GroupId | Builtin::NumGroups => {
                 let dim = self.scalar(args[0]);
-                let r = self.ins_sub(O::GroupInfo, b as u32, m, dim, 0, 0, 0);
+                let r = self.ins_sub(O::GroupInfo, b as u32, m, [dim, 0, 0, 0]);
                 set(self, r, Shape::Uniform)
             }
             _ => {
@@ -2115,7 +2127,7 @@ impl<'a, 't> Fb<'a, 't> {
                     held[k] = if once { self.scalar(a) } else { a };
                 }
                 let s = held.iter().filter(|&&x| x != NONE).map(|&x| self.shape(x)).max().unwrap_or(Shape::Uniform);
-                let r = self.ins_sub(O::LaneOp, b as u32, m, held[0], held[1], from.0, held[2]);
+                let r = self.ins_sub(O::LaneOp, b as u32, m, [held[0], held[1], from.0, held[2]]);
                 set(self, r, s)
             }
         }))
@@ -2426,11 +2438,8 @@ impl<'a, 't> Fb<'a, 't> {
         let pure = |op: O| matches!(op, O::Const | O::Arg | O::Entry | O::NoLanes | O::Undef | O::Param | O::Bin | O::Un | O::Cast | O::Select | O::First | O::MaskOf | O::MAnd | O::MOr | O::MAndNot | O::Any | O::Global | O::Shared | O::FrameAddr | O::Lid | O::Gid | O::Lane | O::GroupInfo | O::LaneOp | O::Load);
         let mut used = vec![false; self.insts.len()];
         let mut work: Vec<V> = Vec::new();
-        for b in 0..nb {
-            if !reach[b] {
-                continue;
-            }
-            for &x in &self.blocks[b].insts {
+        for (blk, _) in self.blocks.iter().zip(&reach).filter(|(_, r)| **r) {
+            for &x in &blk.insts {
                 if self.repl.contains_key(&x) {
                     continue;
                 }
@@ -2453,11 +2462,9 @@ impl<'a, 't> Fb<'a, 't> {
                     work.push(self.resolve(self.extra[e as usize]));
                 }
             }
-            if i.op == O::Param {
-                if let Some(ph) = self.phis.get(&x) {
-                    for &o in &ph.ops {
-                        work.push(self.resolve(o));
-                    }
+            if i.op == O::Param && let Some(ph) = self.phis.get(&x) {
+                for &o in &ph.ops {
+                    work.push(self.resolve(o));
                 }
             }
             // A jump uses its target's live parameters' operands: added below as they are found live.

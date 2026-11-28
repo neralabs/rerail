@@ -3630,7 +3630,7 @@ impl Program {
                         if has_repeats
                             && !self.admit_query_state(
                                 &path,
-                                &arena,
+                                arena,
                                 &mut *seen_states,
                                 &mut task_work,
                             )?
@@ -3727,7 +3727,7 @@ impl Program {
                         && !admitted
                         && !self.admit_query_state(
                             &path,
-                            &arena,
+                            arena,
                             &mut *seen_states,
                             &mut task_work,
                         )?

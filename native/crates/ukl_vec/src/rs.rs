@@ -23,6 +23,13 @@ use std::collections::{BTreeMap, HashMap, HashSet};
 
 type R<T> = Result<T, Error>;
 
+/// A strided read's index (`Em::strided`): its first lane's, the step between lanes and the scale it is multiplied by.
+struct Stride<'a> {
+    first: &'a str,
+    stride: &'a str,
+    scale: u32,
+}
+
 fn err<T>(what: impl std::fmt::Display) -> R<T> {
     Err(Error(format!("the Rust of a kernel: {what}")))
 }
@@ -568,7 +575,7 @@ impl Em<'_> {
             }
         }
         let r = if self.rolled() { splats(&r, self.p) } else { r };
-        self.line_at(&untyped(&r))
+        self.line_at(untyped(&r))
     }
 
     fn line_at(&mut self, s: impl AsRef<str>) {
@@ -4648,7 +4655,7 @@ impl Em<'_> {
                     // Lanes a stride apart: each lane's at its step from the first's.
                     i @ V::Lin(f, s) => {
                         let (base, i) = (base.clone(), i.clone());
-                        let g = self.strided(m, &base, f, s, 4, cx, |me| {
+                        let g = self.strided(m, &base, Stride { first: f, stride: s, scale: 4 }, cx, |me| {
                             let l = me.lanes(&i, M::U32)?;
                             Ok(if cx.full { me.gather_all(&base, &l) } else { me.gather(&base, &l, &cur) })
                         })?;
@@ -4761,7 +4768,7 @@ impl Em<'_> {
     /// Each lane's `m` at `base` plus its index `first + j * stride` times `scale` (lane `j`'s), in a register's lanes
     /// one load each at a step of the stride's bytes, where every lane of `cx` runs and no lane's index wraps (as the
     /// program finds them); else `other`'s (each lane's index).
-    fn strided(&mut self, m: M, base: &str, first: &str, stride: &str, scale: u32, cx: &Cx, other: impl FnOnce(&mut Self) -> R<String>) -> R<String> {
+    fn strided(&mut self, m: M, base: &str, Stride { first, stride, scale }: Stride<'_>, cx: &Cx, other: impl FnOnce(&mut Self) -> R<String>) -> R<String> {
         let (e, p, w) = (m.bytes(), self.p, self.w);
         let n = if e == 8 { 2 * p } else { p };
         let t = self.tmp();
@@ -5119,7 +5126,7 @@ impl Em<'_> {
             self.line("} else {");
             self.ind += 1;
             let idx = idx.clone();
-            let g = self.strided(m, base, f, s, scale, cx, |me| {
+            let g = self.strided(m, base, Stride { first: f, stride: s, scale }, cx, |me| {
                 let l = me.lanes(&idx, M::U32)?;
                 let V::L(g, _) = me.load_elems(m, base, &V::L(l, M::U32), scale, cx)? else { unreachable!() };
                 Ok(g)
@@ -5134,7 +5141,7 @@ impl Em<'_> {
             && scale > 0
         {
             let idx = idx.clone();
-            let g = self.strided(m, base, f, s, scale, cx, |me| {
+            let g = self.strided(m, base, Stride { first: f, stride: s, scale }, cx, |me| {
                 let l = me.lanes(&idx, M::U32)?;
                 let V::L(g, _) = me.load_elems(m, base, &V::L(l, M::U32), scale, cx)? else { unreachable!() };
                 Ok(g)

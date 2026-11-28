@@ -3472,7 +3472,7 @@ DEFINE_KERNEL2(syntax_tests, view_probe, ROBUFFER, uint8_t, b, "[block]", ARGS, 
                         .buffer("out", &out)
                         .uses(&tt)
                         .uses(&lb)
-                        .uses(&cb)
+                        .uses(cb)
                         .uses(&cache)
                         .run(&[(u64::from(n) * 16).div_ceil(64)], &[64])
                         .unwrap_or_else(|e| panic!("{e}"));

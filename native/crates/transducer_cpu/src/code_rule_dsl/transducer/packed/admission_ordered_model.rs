@@ -22,8 +22,8 @@ enum Kind {
     // The marker encloses only the still-pending continuation subtree. An offer
     // from a later external branch cannot update an already separate exit.
     Greedy {
-        body: Vector<usize>,
-        last_offer: Vector<usize>,
+        body: Box<Vector<usize>>,
+        last_offer: Box<Vector<usize>>,
     },
 }
 
@@ -369,8 +369,8 @@ fn execute_mode(
                         let mut body = item.position.clone();
                         body.push(0);
                         alternative.kind = Kind::Greedy {
-                            body,
-                            last_offer: item.position.clone(),
+                            body: Box::new(body),
+                            last_offer: Box::new(item.position.clone()),
                         };
                         retain(&mut offers, &mut retained, alternative)?;
                     } else {

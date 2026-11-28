@@ -779,7 +779,7 @@ impl ContentStore {
     /// Whether a keep decision was made since the memo entries it left unreachable were collected (`sweep_memo`).
     pub fn memo_sweep_wanted(&self) -> StoreResult<bool> {
         let connection = self.connection.lock().expect("content store connection unavailable");
-        Ok(memo_sweep_wanted(&connection)?)
+        memo_sweep_wanted(&connection)
     }
 
     /// Collects the memo entries the last keep decision left unreachable (decision 0227), and records that decision as

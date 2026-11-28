@@ -838,10 +838,8 @@ fn the_library_reads_a_nearest_members_child_as_one_literal() {
             let has = |rel: &str, a: &str, p: &str| atoms.iter().any(|(r, x)| r == rel && x.len() == 3 && ((rel == "field" && x[0] == a && x[2] == p) || (rel == "child" && x[0] == a && x[1] == p)));
             for (rel, x) in &atoms {
                 // `nearest(n, a, S, p), field(a, "F", p)`: `nearest_in_field(n, a, S, "F")`, no field read.
-                if rel == "nearest" && x.len() == 4 {
-                    if let Some((_, w)) = atoms.iter().find(|(r, w)| r == "field" && w.len() == 3 && w[0] == x[1] && w[2] == x[3] && w[1].starts_with('"')) {
-                        found.push(format!("{}: {}: write nearest_in_field({}, {}, {}, {}) for nearest(.., {}) and its field", path.strip_prefix(&lib).unwrap().display(), head.trim(), x[0], x[1], x[2], w[1], x[3]));
-                    }
+                if rel == "nearest" && x.len() == 4 && let Some((_, w)) = atoms.iter().find(|(r, w)| r == "field" && w.len() == 3 && w[0] == x[1] && w[2] == x[3] && w[1].starts_with('"')) {
+                    found.push(format!("{}: {}: write nearest_in_field({}, {}, {}, {}) for nearest(.., {}) and its field", path.strip_prefix(&lib).unwrap().display(), head.trim(), x[0], x[1], x[2], w[1], x[3]));
                 }
                 if rel != "nearest" || x.len() != 3 {
                     continue;

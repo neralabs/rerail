@@ -56,7 +56,7 @@ impl TreeParser for Lean {
 
     /// An embedded program's text, read as it is (a Vue component's script, an HTML page's).
     fn program(&self, grammar: &Grammar, text: &str, omit: Vector<[u32; 2]>, budget: &dyn Fn() -> bool) -> Option<Result<TapeImage, String>> {
-        encode_omitting(self.0, grammar, &Source::text(text), "program", omit, budget).expect("a program is a start").ok()
+        encode_omitting(self.0, grammar, Source::text(text), "program", omit, budget).expect("a program is a start").ok()
     }
 
     fn parse(&self, grammar: &Grammar, source: &Source<'_>, budget: &dyn Fn() -> bool) -> Option<Result<FileImage, TemplateError>> {

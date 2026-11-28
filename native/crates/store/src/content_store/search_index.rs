@@ -21,6 +21,9 @@ use std::collections::BTreeSet;
 #[cfg(any(test, feature = "test-hooks"))]
 use std::sync::atomic::Ordering;
 
+/// How a frame's bytes are checked against its hash, where they are (`HashKey::tape_identity`'s): none for a tape.
+type Identity<'a> = Option<&'a dyn Fn(&[u8]) -> HashKey>;
+
 const SET: &str = "si_set";
 const KIND: &str = "si_kind";
 
@@ -79,7 +82,6 @@ pub(in crate::content_store) fn forget_tapes(store: &std::path::Path, t: &Connec
     let Some(old) = open(store, t)? else { return Ok(None) };
     let view = old.view();
     let puts: Vec<KeptPut> = tapes.iter().filter(|&&tape| set(&view, tape).is_some()).flat_map(|&tape| gone(tape)).collect();
-    drop(view);
     if puts.is_empty() {
         return Ok(None);
     }
@@ -166,7 +168,6 @@ impl ContentStore {
                 // Nothing reads the count of an incomplete set.
                 puts.push(set_put(tape, [index_version, 1, 0, 0])?);
             }
-            drop(view);
             if puts.is_empty() { Ok(None) } else { write_space(&path, t, &space(), puts, None) }
         })?;
         self.note_kept(&space(), written);
@@ -270,14 +271,13 @@ impl ContentStore {
             }
             rows
         };
-        drop(view);
         // A source is checked against its hash; its tape by its length (its identity names what made it, not its bytes:
         // `HashKey::tape_identity`).
         // In a segment (decision 0295 step 5): read there; one whose segment is gone is not indexed, nor an archived
         // one (decision 0450 step 4): placed back to be indexed in the background, it would undo the archive. An index
         // made before its archive is kept; a run that reads the tape places it back, and it is indexed after.
         let mut maps = super::segments::SegmentMaps::new(super::object_segments::object_dir(&self.database_path));
-        let mut decode = |(length, hash, [seg, at, len]): Frame, identity: Option<&dyn Fn(&[u8]) -> HashKey>| -> StoreResult<Option<super::ObjectBytes>> {
+        let mut decode = |(length, hash, [seg, at, len]): Frame, identity: Identity<'_>| -> StoreResult<Option<super::ObjectBytes>> {
             let Some(frame) = super::object_segments::row_frame(&mut maps, seg, at, len) else { return Ok(None) };
             let bytes = super::ObjectBytes::Mapped(frame.segment().clone());
             if usize::try_from(length).ok() != Some(bytes.len()) || identity.is_some_and(|identity| identity(&bytes) != hash) {
