@@ -3621,6 +3621,27 @@ fn the_relative_import_builtins_are_the_sqls() {
     assert_eq!(got, [[".", "0", "p.q.r.x"], ["...", "2", "p.x"], ["..sub", "1", "p.q.sub.x"]]);
 }
 
+/// `.rerail`'s `@substr(s, start, length)` counts from 0: the data-layer programs' forms of SQL's `substr` (a prefix
+/// `substr(s, 1, n)`, a suffix `substr(s, -6)`, the rest `substr(s, k + 1)`) give the SQL's texts.
+#[test]
+fn substr_counts_from_zero_as_the_programs_write_it() {
+    let dir = crate::code_rule_dsl::fixtures::temp().with_extension("substr");
+    std::fs::create_dir_all(&dir).unwrap();
+    std::fs::write(dir.join("a.py"), "x = 1\n").unwrap();
+    let program = ".language python\n.decl name(n: symbol)\n.decl cut(a: symbol, b: symbol, c: symbol, d: symbol)\n.output cut\n\
+                   name(\"impl/x_async\").\n\
+                   cut(a, b, c, d) :- name(n), a = @substr(n, 0, 4), b = @substr(n, @sub(@length(n), 6), 6),\n\
+                       c = @substr(n, 0, @sub(@length(n), 6)), d = @substr(n, 5, @length(n)).\n";
+    super::TEST_TAPE_CACHE.with(|p| *p.borrow_mut() = Some(dir.join("store.sqlite")));
+    let out = dir.join("out");
+    let ran = super::run_all(&[program], &dir, &out, "program", crate::code_rule_dsl::typing::file_local::Binding::Cpu, 1 << 18);
+    let got = crate::code_rule_dsl::logic::plan::output::shown(&out, "cut").unwrap_or_default();
+    super::TEST_TAPE_CACHE.with(|p| *p.borrow_mut() = None);
+    let _ = std::fs::remove_dir_all(&dir);
+    ran.unwrap_or_else(|e| panic!("{e}"));
+    assert_eq!(got, [["impl", "_async", "impl/x", "x_async"]]);
+}
+
 /// An `ast` atom's capture naming a group of a regex on the root node binds the group's text, as the data layer's
 /// `capture.BASE` reads it: none where the group takes no part (`import z`), one row per binding under `each`
 /// (`ENTRY` twice in one module), and a name W binds stays W's.

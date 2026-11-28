@@ -215,16 +215,16 @@ parameters(f, n) :- param_node(f, p), visible_child(p, x), ordinal(x, 0), kind(x
 files(d, src) :- module_root(d, m), text(m, src).
 .decl primary_file(d: number)
 primary_file(d) :- files(d, _), doc(d, p), in_list("primary_path", p).
-primary_file(d) :- files(d, _), doc(d, p), @rx_matches(p, "(?:^|/)__init__\\.py$") = 0, @substr(p, 1, 36) = "impl/common/l2070_server_plan/steps/".
-primary_file(d) :- files(d, _), doc(d, p), @rx_matches(p, "(?:^|/)__init__\\.py$") = 0, @substr(p, 1, 51) = "impl/common/l7300_sql_versioned_transactions/steps/".
-primary_file(d) :- files(d, _), doc(d, p), @rx_matches(p, "(?:^|/)__init__\\.py$") = 0, @substr(p, 1, 40) = "impl/common/l9700_sql_graph_query/steps/".
-primary_file(d) :- files(d, _), doc(d, p), @rx_matches(p, "(?:^|/)__init__\\.py$") = 0, @substr(p, 1, 41) = "impl/common/l2070_server_plan/strategies/".
+primary_file(d) :- files(d, _), doc(d, p), @rx_matches(p, "(?:^|/)__init__\\.py$") = 0, @substr(p, 0, 36) = "impl/common/l2070_server_plan/steps/".
+primary_file(d) :- files(d, _), doc(d, p), @rx_matches(p, "(?:^|/)__init__\\.py$") = 0, @substr(p, 0, 51) = "impl/common/l7300_sql_versioned_transactions/steps/".
+primary_file(d) :- files(d, _), doc(d, p), @rx_matches(p, "(?:^|/)__init__\\.py$") = 0, @substr(p, 0, 40) = "impl/common/l9700_sql_graph_query/steps/".
+primary_file(d) :- files(d, _), doc(d, p), @rx_matches(p, "(?:^|/)__init__\\.py$") = 0, @substr(p, 0, 41) = "impl/common/l2070_server_plan/strategies/".
 primary_file(d) :- files(d, _), doc(d, p), @rx_matches(p, "(?:^|/)__init__\\.py$") = 0, @rx_matches(p, "^impl/common/l2070_server_plan/[^/]+$") = 1.
 .decl fallback_file(d: number)
-fallback_file(d) :- files(d, _), doc(d, p), @rx_matches(p, "(?:^|/)__init__\\.py$") = 0, @substr(p, 1, 14) = "l9750_graphql/".
-fallback_file(d) :- files(d, _), doc(d, p), @rx_matches(p, "(?:^|/)__init__\\.py$") = 0, @substr(p, 1, 15) = "l2080_lazy_orm/".
-fallback_file(d) :- files(d, _), doc(d, p), @rx_matches(p, "(?:^|/)__init__\\.py$") = 0, @substr(p, 1, 20) = "l2060_query_builder/".
-fallback_file(d) :- files(d, _), doc(d, p), @rx_matches(p, "(?:^|/)__init__\\.py$") = 0, @substr(p, 1, 15) = "l9900_auto_api/".
+fallback_file(d) :- files(d, _), doc(d, p), @rx_matches(p, "(?:^|/)__init__\\.py$") = 0, @substr(p, 0, 14) = "l9750_graphql/".
+fallback_file(d) :- files(d, _), doc(d, p), @rx_matches(p, "(?:^|/)__init__\\.py$") = 0, @substr(p, 0, 15) = "l2080_lazy_orm/".
+fallback_file(d) :- files(d, _), doc(d, p), @rx_matches(p, "(?:^|/)__init__\\.py$") = 0, @substr(p, 0, 20) = "l2060_query_builder/".
+fallback_file(d) :- files(d, _), doc(d, p), @rx_matches(p, "(?:^|/)__init__\\.py$") = 0, @substr(p, 0, 15) = "l9900_auto_api/".
 
 // ---- base_names, method_nodes ----
 // COALESCE(rx_extract(text, …, 1), text): the extract when the pattern matches (its group is mandatory), else the text.
@@ -493,11 +493,11 @@ atom_origin_count(a, id, k) :- atom_imports(a, id, _), k = count : { atom_import
 // origin: the import's origin || the atom past its head; trusted: unshadowed and one distinct origin.
 .decl resolved_atoms(ann: node, atom_id: symbol, s: number, e: number, origin: symbol)
 resolved_atoms(a, id, s, e, o) :- annotation_atoms(a, _, id, s, e, t), atom_imports(a, id, io), h = @rx_extract(t, "^[A-Za-z_]\\w*", 0),
-    o = @concat(io, @substr(t, @add(@length(h), 1))).
+    o = @concat(io, @substr(t, @length(h), @length(t))).
 resolved_atoms(a, id, s, e, t) :- annotation_atoms(a, _, id, s, e, t), !has_atom_import(a, id).
 .decl resolved_trusted(ann: node, atom_id: symbol, origin: symbol)
 resolved_trusted(a, id, o) :- annotation_atoms(a, _, id, _, _, t), atom_unshadowed(a, id, io), atom_origin_count(a, id, 1),
-    h = @rx_extract(t, "^[A-Za-z_]\\w*", 0), o = @concat(io, @substr(t, @add(@length(h), 1))).
+    h = @rx_extract(t, "^[A-Za-z_]\\w*", 0), o = @concat(io, @substr(t, @length(h), @length(t))).
 // Atoms inside a trusted Literal[…] (any argument) or Annotated[…] (past the first) of the annotation's type.
 .decl generic_arg(ann: node, origin: symbol, arg: node)
 generic_arg(a, io, arg) :- annotations(a, _), field(a, "type", ty), docof(a, d), node(d, ty, _, ts, te), node(d, g, "generic_type", gs, ge), snode(g),
@@ -588,9 +588,9 @@ in_list("runtime_builder_kw", "parse_fn"). in_list("runtime_builder_kw", "servic
 .decl in_tests(d: number)
 in_tests(d) :- files(d, _), doc(d, p), @rx_matches(p, "(?:^|/)tests(?:/|$)") = 1.
 .decl steps_file(d: number)
-steps_file(d) :- files(d, _), doc(d, p), @substr(p, 1, 36) = "impl/common/l2070_server_plan/steps/".
-steps_file(d) :- files(d, _), doc(d, p), @substr(p, 1, 51) = "impl/common/l7300_sql_versioned_transactions/steps/".
-steps_file(d) :- files(d, _), doc(d, p), @substr(p, 1, 40) = "impl/common/l9700_sql_graph_query/steps/".
+steps_file(d) :- files(d, _), doc(d, p), @substr(p, 0, 36) = "impl/common/l2070_server_plan/steps/".
+steps_file(d) :- files(d, _), doc(d, p), @substr(p, 0, 51) = "impl/common/l7300_sql_versioned_transactions/steps/".
+steps_file(d) :- files(d, _), doc(d, p), @substr(p, 0, 40) = "impl/common/l9700_sql_graph_query/steps/".
 // (p IN exec5 OR p IN ('…/sql_backend_executor.py')) AND NOT p = 'l2070_batching/executor.py'
 .decl executor_scope(d: number)
 executor_scope(d) :- files(d, _), doc(d, p), in_list("exec5", p), p != "l2070_batching/executor.py".
@@ -623,7 +623,7 @@ string_argument(c, i, v) :- arguments(c, a, i), string_at(a, v).
 .decl contains_(outer: node, inner: node)
 contains_(o, n) :- functions(o, _), docof(o, d), node(d, o, _, os, oe), node(d, n, _, ns, ne), os <= ns, oe >= ne.
 .decl not_async_text(f: node)
-not_async_text(f) :- functions(f, _), text(f, t), @substr(t, 1, 5) != "async".
+not_async_text(f) :- functions(f, _), text(f, t), @substr(t, 0, 5) != "async".
 
 // ---- diagnostics_0 ----
 .decl diagnostics_0(n: node, issue: symbol, identity: symbol, detector: symbol)
@@ -653,7 +653,7 @@ keyword_any(c) :- keywords(c, _, _, _).
 // callee = 'compile' OR callee LIKE 'Sql…' OR (callee = 'CompiledStep' AND a `grammar` keyword)
 .decl spq021_callee(c: node)
 spq021_callee(n) :- calls(n, _, _, _, "compile").
-spq021_callee(n) :- calls(n, _, _, _, ce), @substr(ce, 1, 3) = "Sql".
+spq021_callee(n) :- calls(n, _, _, _, ce), @substr(ce, 0, 3) = "Sql".
 spq021_callee(n) :- calls(n, _, _, _, "CompiledStep"), keyword_named(n, "grammar").
 diagnostics_0(n, "SPQ-021", id, "_check_conditional_sql_compile_ownership") :- spq021_callee(n), docof(n, d), doc(d, "l2070_batching/conditional_step.py"),
     method_nodes(_, _, "compile", "ConditionalStep", n), primary_file(d), id = @id(n).
@@ -679,17 +679,17 @@ diagnostics_0(n, "SPQ-048", id, "_check_batched_step_construction_sets_batching_
     @rx_matches(p, "(?:^|/)batch_fusion\\.py$") = 1, descendant_callee(n, "PhysicalStatementGroup"), !descendant_callee(n, "_set_batching_metrics_hint"),
     primary_file(d), id = @id(n).
 // sync: the last method / module function named the `_async` name less its suffix.
-diagnostics_0(n, "SPQ-001", id, "_check_sync_async_duplication") :- methods(n, c, name, _), @substr(name, -6) = "_async",
-    base = @substr(name, 1, @sub(@length(name), 6)), last_methods(sync, c, base), !abstract_functions(n), !abstract_functions(sync),
+diagnostics_0(n, "SPQ-001", id, "_check_sync_async_duplication") :- methods(n, c, name, _), @substr(name, @sub(@length(name), 6), 6) = "_async",
+    base = @substr(name, 0, @sub(@length(name), 6)), last_methods(sync, c, base), !abstract_functions(n), !abstract_functions(sync),
     statement_count(n, k), k > 3, docof(n, d), primary_file(d), id = @id(n).
-diagnostics_0(n, "SPQ-001", id, "_check_sync_async_duplication") :- methods(n, c, name, _), @substr(name, -6) = "_async",
-    base = @substr(name, 1, @sub(@length(name), 6)), last_methods(sync, c, base), !abstract_functions(n), !abstract_functions(sync),
+diagnostics_0(n, "SPQ-001", id, "_check_sync_async_duplication") :- methods(n, c, name, _), @substr(name, @sub(@length(name), 6), 6) = "_async",
+    base = @substr(name, 0, @sub(@length(name), 6)), last_methods(sync, c, base), !abstract_functions(n), !abstract_functions(sync),
     statement_count(sync, k), k > 3, docof(n, d), primary_file(d), id = @id(n).
-diagnostics_0(n, "SPQ-001", id, "_check_sync_async_duplication") :- module_functions(n, name), @substr(name, -6) = "_async",
-    base = @substr(name, 1, @sub(@length(name), 6)), docof(n, d), last_module_functions(sync, base), docof(sync, d),
+diagnostics_0(n, "SPQ-001", id, "_check_sync_async_duplication") :- module_functions(n, name), @substr(name, @sub(@length(name), 6), 6) = "_async",
+    base = @substr(name, 0, @sub(@length(name), 6)), docof(n, d), last_module_functions(sync, base), docof(sync, d),
     statement_count(n, k), k > 3, primary_file(d), id = @id(n).
-diagnostics_0(n, "SPQ-001", id, "_check_sync_async_duplication") :- module_functions(n, name), @substr(name, -6) = "_async",
-    base = @substr(name, 1, @sub(@length(name), 6)), docof(n, d), last_module_functions(sync, base), docof(sync, d),
+diagnostics_0(n, "SPQ-001", id, "_check_sync_async_duplication") :- module_functions(n, name), @substr(name, @sub(@length(name), 6), 6) = "_async",
+    base = @substr(name, 0, @sub(@length(name), 6)), docof(n, d), last_module_functions(sync, base), docof(sync, d),
     statement_count(sync, k), k > 3, primary_file(d), id = @id(n).
 
 // ---- diagnostics_1 ----
@@ -776,7 +776,7 @@ diagnostics_2(n, "SPQ-013", id, "_check_executor_python_execution") :- attribute
 
 // ---- diagnostics_3 ----
 .decl strategies_file(d: number)
-strategies_file(d) :- files(d, _), doc(d, p), @substr(p, 1, 41) = "impl/common/l2070_server_plan/strategies/".
+strategies_file(d) :- files(d, _), doc(d, p), @substr(p, 0, 41) = "impl/common/l2070_server_plan/strategies/".
 .decl diagnostics_3(n: node, issue: symbol, identity: symbol, detector: symbol)
 diagnostics_3(n, "SPQ-018", id, "_check_executor_python_execution") :- attributes(n, attr, _, _), in_list("runtime_result_kw", attr), method_nodes(_, _, _, cn, n),
     in_list("executor_classes", cn), docof(n, d), executor_scope(d), exec_helper_source(d), primary_file(d), id = @id(n).
@@ -832,10 +832,10 @@ diagnostics_3(n, "SPQ-041", id, "_check_serverplan_cleanup_ratchets") :- calls(n
 
 // ---- diagnostics_4 ----
 .decl projection_prefix(d: number)
-projection_prefix(d) :- files(d, _), doc(d, p), @substr(p, 1, 20) = "l2060_query_builder/".
-projection_prefix(d) :- files(d, _), doc(d, p), @substr(p, 1, 30) = "impl/common/l2070_server_plan/".
-projection_prefix(d) :- files(d, _), doc(d, p), @substr(p, 1, 15) = "l2080_lazy_orm/".
-projection_prefix(d) :- files(d, _), doc(d, p), @substr(p, 1, 15) = "l9900_auto_api/".
+projection_prefix(d) :- files(d, _), doc(d, p), @substr(p, 0, 20) = "l2060_query_builder/".
+projection_prefix(d) :- files(d, _), doc(d, p), @substr(p, 0, 30) = "impl/common/l2070_server_plan/".
+projection_prefix(d) :- files(d, _), doc(d, p), @substr(p, 0, 15) = "l2080_lazy_orm/".
+projection_prefix(d) :- files(d, _), doc(d, p), @substr(p, 0, 15) = "l9900_auto_api/".
 .decl non_false_child(v: node)
 non_false_child(v) :- visible_child(v, x), kind(x, k), k != "false", k != "comment".
 .decl row_semantics_node(y: node)
@@ -884,7 +884,7 @@ diagnostics_4(n, "SPQ-043", id, "_check_projection_helper_execution_fallback") :
     @rx_matches(src, "extract|project|projected|projection|tuple") = 1, @rx_matches(src, "execute|execute_async|resolve|resolve_async") = 1,
     prim_or_fallback(d), id = @id(n).
 diagnostics_4(n, "SPQ-044", id, "_check_materialized_row_semantics_fallback") :- functions(n, _), docof(n, d), !in_tests(d), doc(d, p),
-    @substr(p, 1, 15) = "l9900_auto_api/", scoped_nodes(n, x), py_names(x, t), in_list("row_names", t), scoped_nodes(n, y), row_semantics_node(y),
+    @substr(p, 0, 15) = "l9900_auto_api/", scoped_nodes(n, x), py_names(x, t), in_list("row_names", t), scoped_nodes(n, y), row_semantics_node(y),
     files(d, src), @rx_matches(src, "_apply_orderby_to_dict_rows|_parse_orderby_clauses|_stable_sort_with_nulls_last|all_rows|candidates|group_rows|items|ordered_rows|out|page|page_rows|parse_filter_for_fields|parse_odata_filter_expression|rows|source_rows") = 1,
     prim_or_fallback(d), id = @id(n).
 diagnostics_4(n, "SPQ-030", id, "_check_conditional_serverplan_fallback") :- branch_in_fn(n, f), branch_mixed(n), docof(n, d), fallback_source(d),

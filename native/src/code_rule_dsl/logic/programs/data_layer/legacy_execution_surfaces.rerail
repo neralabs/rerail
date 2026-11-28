@@ -194,8 +194,8 @@ argument_second(c, a) :- arguments(c, a), k = count : { argument_before(a, _) },
 .decl two_arguments(call: node)
 two_arguments(c) :- arguments(c, a), arguments(c, b), a != b.
 .decl paths(d: number, path: symbol)
-paths(d, q) :- nodes(n), docof(n, d), doc(d, p), @substr(p, 1, 4) = "api/", q = @substr(p, 5).
-paths(d, p) :- nodes(n), docof(n, d), doc(d, p), @substr(p, 1, 4) != "api/".
+paths(d, q) :- nodes(n), docof(n, d), doc(d, p), @substr(p, 0, 4) = "api/", q = @substr(p, 4, @length(p)).
+paths(d, p) :- nodes(n), docof(n, d), doc(d, p), @substr(p, 0, 4) != "api/".
 
 // ---- ownership: nearest function / class, outermost function, ancestor-or-self (03 §7: not recursion) ----
 // The SQL walks `edges` from the parentless rows; every ancestor of a row is a row, so it is the tape's ancestry.
@@ -249,9 +249,9 @@ boundary_runner("run_in_legacy_execution_boundary"). boundary_runner("run_in_leg
 valid_boundary(d) :- functions(f, _), decorators(f, _, m), boundary_marker(m), docof(f, d).
 // lazy.name = CASE WHEN substr(f.name, -6) = '_async' THEN substr(f.name, 1, length(f.name) - 6) || '_lazy' ELSE f.name || '_lazy' END
 valid_boundary(d) :- functions(f, n), ownership_fn(c, f), calls(c, _, "identifier", _, q), boundary_runner(q), docof(f, d),
-    @substr(n, -6) = "_async", lazy = @concat(@substr(n, 1, @sub(@length(n), 6)), "_lazy"), functions(g, lazy), docof(g, d).
+    @substr(n, @sub(@length(n), 6), 6) = "_async", lazy = @concat(@substr(n, 0, @sub(@length(n), 6)), "_lazy"), functions(g, lazy), docof(g, d).
 valid_boundary(d) :- functions(f, n), ownership_fn(c, f), calls(c, _, "identifier", _, q), boundary_runner(q), docof(f, d),
-    @substr(n, -6) != "_async", lazy = @concat(n, "_lazy"), functions(g, lazy), docof(g, d).
+    @substr(n, @sub(@length(n), 6), 6) != "_async", lazy = @concat(n, "_lazy"), functions(g, lazy), docof(g, d).
 
 // ---- receiver_edges, receiver_tokens: a set recursion over the in-file receiver graph ----
 .decl receiver_edges(src: node, dst: node)
@@ -291,7 +291,7 @@ call_candidates(f, c, q) :- active_functions(f, _, _), !function_legacy(f), owne
 // substr(f.symbol, 1, length(f.symbol) - length(f.name)) || c.callee: the method's class prefix and the callee.
 call_candidates(f, c, cand) :- active_functions(f, name, sym), !function_legacy(f), ownership_fn(c, f), calls(c, fn, _, _, q),
     attributes(fn, _, _, ot), self_receiver(ot), !resolve_callee(q), @instr(sym, ".") > 0,
-    cand = @concat(@substr(sym, 1, @sub(@length(sym), @length(name))), q).
+    cand = @concat(@substr(sym, 0, @sub(@length(sym), @length(name))), q).
 // GROUP BY caller, anchor, candidate HAVING count(*) = 1 AND min(f.id) != caller: the one active function of the
 // file named or qualified by the candidate.
 .decl candidate_match(caller: node, anchor: node, candidate: symbol, f: node)
@@ -358,7 +358,7 @@ leg_dir_excluded("LEG-050", "impl/sqlite/fts", "impl/sqlite/fts/fts_manager.py")
 leg_dir_excluded("LEG-060", "impl/common/l9700_sql_graph_query", "impl/common/l9700_sql_graph_query/sql_graph_query.py").
 .decl in_leg_dir(issue: symbol, dir: symbol, d: number)
 in_leg_dir(i, r, d) :- leg_dir(i, r, _, _), paths(d, r), !leg_dir_excluded(i, r, r).
-in_leg_dir(i, r, d) :- leg_dir(i, r, x, l), paths(d, p), @substr(p, 1, l) = x, !leg_dir_excluded(i, r, p).
+in_leg_dir(i, r, d) :- leg_dir(i, r, x, l), paths(d, p), @substr(p, 0, l) = x, !leg_dir_excluded(i, r, p).
 // The LEG-08x files: implementation code outside tests and the boundary's own modules.
 .decl leg08_scope(d: number)
 leg08_scope(d) :- paths(d, p), @rx_matches(p, "^(?:impl/|data_layer/|l[0-9])") = 1, @rx_matches(p, "(?:^|/)tests/") = 0,

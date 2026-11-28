@@ -191,7 +191,7 @@ compiled_sql_surface(c) :- compiled_grammar(c).
 // ---- compile_aliases: `name = self._attr` in a step's compile ----
 .decl compile_aliases(method: node, name: symbol, attr: symbol)
 compile_aliases(m, n, attr) :- step_methods(m, _, "compile"), assignments_fn(a, m), assignments(a, l), kind(l, "identifier"), text(l, n),
-    assignments_value(a, v), attributes(v, attr, _, "self"), @substr(attr, 1, 1) = "_".
+    assignments_value(a, v), attributes(v, attr, _, "self"), @substr(attr, 0, 1) = "_".
 
 // ---- callback_links ----
 // A post_op/post_op_with_refs/on_commit/on_rollback keyword naming a function, of a CompiledStep owned by a step's

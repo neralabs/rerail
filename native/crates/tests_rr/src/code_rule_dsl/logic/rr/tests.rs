@@ -717,6 +717,9 @@ fn arithmetic_of_another_count_is_refused() {
     let e = parse(".decl a(x: number)\n.output a\na(x) :- x = @add(3, 2, 1).").unwrap_err().to_string();
     assert!(e.contains("@add takes two arguments, not 3"), "{e}");
     parse(".decl a(x: number)\n.output a\na(x) :- x = @sub(3, 2, 1).").unwrap();
+    // SQL's `substr(s, y)` is not `.rerail`'s `@substr(s, start, length)`.
+    let e = parse(".decl a(x: symbol)\n.output a\na(x) :- x = @substr(\"abc\", 2).").unwrap_err().to_string();
+    assert!(e.contains("@substr takes three arguments"), "{e}");
 }
 
 /// What is not lowered yet says so by name. A `must` head needs its relation declared `must, may`; a `.violation`

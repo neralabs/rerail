@@ -199,8 +199,8 @@ has_all(d) :- first_all(d, _).
 export_names(d, m, n, t) :- imports(i, m, n, t, "symbol"), raw_import_top(i), docof(i, d), doc(d, p), @rx_matches(p, "^data_layer/[^/]+\\.py$") = 1.
 export_names(d, m, n, fq) :- declarations(id, _, d, n, k, m, fq), k != "method", doc(d, p), @rx_matches(p, "^data_layer/[^/]+\\.py$") = 1.
 .decl exported_roots(d: number, export_module: symbol, export_name: symbol, symbol: symbol)
-exported_roots(d, m, n, id) :- export_names(d, m, n, t), resolved_names(t, id), @substr(n, 1, 1) != "_", !has_all(d).
-exported_roots(d, m, n, id) :- export_names(d, m, n, t), resolved_names(t, id), @substr(n, 1, 1) != "_", first_all(d, a), raw_all_array(a),
+exported_roots(d, m, n, id) :- export_names(d, m, n, t), resolved_names(t, id), @substr(n, 0, 1) != "_", !has_all(d).
+exported_roots(d, m, n, id) :- export_names(d, m, n, t), resolved_names(t, id), @substr(n, 0, 1) != "_", first_all(d, a), raw_all_array(a),
     raw_all_name(a, n).
 .decl exported_symbol(symbol: symbol)
 exported_symbol(id) :- exported_roots(_, _, _, id).
@@ -215,7 +215,7 @@ excluded_method("disable_thread_affinity_checks"). excluded_method("get_thread_c
 excluded_method("validate_legacy_delegates"). excluded_method("versioned_read"). excluded_method("versioned_write").
 .decl public_candidate(owner: symbol, name: symbol, symbol: symbol, len: number, route: symbol)
 public_candidate(o, n, id, l, r) :- exported_symbol(o), hierarchy(o, c, r), declarations(c, _, _, cn, _, cm, _),
-    declarations(id, x, _, n, "method", cm, _), decl_class(id, cn), @substr(n, 1, 1) != "_", !excluded_method(n), !property_like(x),
+    declarations(id, x, _, n, "method", cm, _), decl_class(id, cn), @substr(n, 0, 1) != "_", !excluded_method(n), !property_like(x),
     l = @length(r).
 // row_number() OVER (PARTITION BY owner, name ORDER BY depth, route) = 1, as two aggregates.
 .decl public_len(owner: symbol, name: symbol, len: number)
@@ -247,7 +247,7 @@ legacy_sync(id) :- own_decorator(id, n), @rx_matches(n, "(?:legacy_sync|legacy_m
 legacy_async(id) :- own_decorator(id, n), @rx_matches(n, "(?:legacy_async|legacy_module_async|direct_legacy_module_async)$") = 1.
 .decl lazy_decorated(id: symbol)
 lazy_decorated(id) :- own_decorator(id, n), @rx_matches(n, "pure_lazy|apply_lazy_to_public_lazy_methods|(?:^|\\.)lazy$") = 1.
-lazy_decorated(id) :- traits(id, _, _, name, _), @substr(name, 1, 1) != "_", @rx_matches(name, "_lazy$") = 1, scoped_decorator(id, n),
+lazy_decorated(id) :- traits(id, _, _, name, _), @substr(name, 0, 1) != "_", @rx_matches(name, "_lazy$") = 1, scoped_decorator(id, n),
     @rx_matches(n, "pure_lazy|apply_lazy_to_public_lazy_methods|(?:^|\\.)lazy$") = 1.
 .decl private_api(id: symbol)
 private_api(id) :- scoped_decorator(id, n), @rx_matches(n, "(?:^|\\.)(?:internal_api|private_api|private_public_api)$") = 1.
@@ -345,7 +345,7 @@ mixed_name(n) :- traits(_, _, _, n, _), l = @lower(n), @rx_matches(l, "lazy") = 
 .decl protocol_base(c: node)
 protocol_base(c) :- raw_base(c, _, b), @instr(b, "Protocol") > 0.
 .decl surface_row(scope: symbol, owner: symbol, ordinal: symbol, symbol: symbol, name: symbol)
-surface_row("function", m, o, id, n) :- exported_roots(_, m, en, id), traits(id, _, d, n, "function"), @substr(n, 1, 1) != "_", doc(d, p),
+surface_row("function", m, o, id, n) :- exported_roots(_, m, en, id), traits(id, _, d, n, "function"), @substr(n, 0, 1) != "_", doc(d, p),
     @instr(p, "_internal/") != 1, o = @concat(m, @char(0), en).
 surface_row("method", cn, n, id, n) :- exported_symbol(c), traits(c, cx, _, cn, "class"), public_methods(c, _, id), traits(id, _, _, n, _),
     !private_api(c), !private_api(id), @rx_matches(cn, "Protocol$|^Async") = 0, !protocol_base(cx).

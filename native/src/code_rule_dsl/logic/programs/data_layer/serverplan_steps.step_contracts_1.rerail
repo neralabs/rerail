@@ -248,12 +248,12 @@ local_bindings(f, n, v) :- local_binding(f, n, a, s), local_binding_last(f, n, s
 // `self._x = …` anywhere under a step method other than __init__.
 .decl resolved_attributes(cls: node, attr: symbol)
 resolved_attributes(c, attr) :- step_methods(m, c, mn), mn != "__init__", descendants(m, b), assignments(b, t), attributes(t, attr, _, "self"),
-    @substr(attr, 1, 1) = "_".
+    @substr(attr, 0, 1) = "_".
 
 // ---- compile_aliases: `name = self._attr` in a step's compile ----
 .decl compile_aliases(method: node, name: symbol, attr: symbol)
 compile_aliases(m, n, attr) :- step_methods(m, _, "compile"), assignments_fn(a, m), assignments(a, l), kind(l, "identifier"), text(l, n),
-    assignments_value(a, v), attributes(v, attr, _, "self"), @substr(attr, 1, 1) = "_".
+    assignments_value(a, v), attributes(v, attr, _, "self"), @substr(attr, 0, 1) = "_".
 
 // ---- column_derived (E0 #51): a set recursion up `edges` and through local bindings to the names that read them ----
 // LIKE '%cte_output_columns' (ASCII case-insensitive suffix).

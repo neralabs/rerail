@@ -5984,6 +5984,10 @@ impl Lowerer {
                 if matches!(name.as_str(), "add" | "sub" | "mul" | "div" | "max" | "min") && terms.len() != 2 {
                     return Err(Error::Syntax(format!("@{name} takes two arguments, not {}", terms.len())));
                 }
+                // `.rerail`'s `@substr` is `(s, start, length)`, its start counted from 0: SQL's `substr(s, y)` is not it.
+                if name == "substr" && terms.len() != 3 {
+                    return Err(Error::Syntax(format!("@substr takes three arguments (a text, a start counted from 0, a length), not {}", terms.len())));
+                }
                 call(self, if name == "dot" { "cat" } else { &name }, terms)
             }
             T::Call { name, functor: false, args } => {

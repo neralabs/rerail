@@ -93,10 +93,10 @@ c2_primary_path("l2070_batching/compilation.py"). c2_primary_path("l2070_batchin
 c2_non_init(d) :- c2_files(d), doc(d, p), @rx_matches(p, "(?:^|/)__init__\\.py$") = 0.
 .decl c2_primary_file(d: number)
 c2_primary_file(d) :- c2_files(d), doc(d, p), c2_primary_path(p).
-c2_primary_file(d) :- c2_non_init(d), doc(d, p), @substr(p, 1, 36) = "impl/common/l2070_server_plan/steps/".
-c2_primary_file(d) :- c2_non_init(d), doc(d, p), @substr(p, 1, 51) = "impl/common/l7300_sql_versioned_transactions/steps/".
-c2_primary_file(d) :- c2_non_init(d), doc(d, p), @substr(p, 1, 40) = "impl/common/l9700_sql_graph_query/steps/".
-c2_primary_file(d) :- c2_non_init(d), doc(d, p), @substr(p, 1, 41) = "impl/common/l2070_server_plan/strategies/".
+c2_primary_file(d) :- c2_non_init(d), doc(d, p), @substr(p, 0, 36) = "impl/common/l2070_server_plan/steps/".
+c2_primary_file(d) :- c2_non_init(d), doc(d, p), @substr(p, 0, 51) = "impl/common/l7300_sql_versioned_transactions/steps/".
+c2_primary_file(d) :- c2_non_init(d), doc(d, p), @substr(p, 0, 40) = "impl/common/l9700_sql_graph_query/steps/".
+c2_primary_file(d) :- c2_non_init(d), doc(d, p), @substr(p, 0, 41) = "impl/common/l2070_server_plan/strategies/".
 c2_primary_file(d) :- c2_non_init(d), doc(d, p), @rx_matches(p, "^impl/common/l2070_server_plan/[^/]+$") = 1.
 .decl c2_callback_file(d: number)
 c2_callback_file(d) :- c2_non_init(d), doc(d, p), @rx_matches(p, "^(?:impl|l[0-9]{4}_[^/]+)/") = 1.
