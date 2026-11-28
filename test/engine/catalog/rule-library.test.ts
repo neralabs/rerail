@@ -129,9 +129,9 @@ describe("library rules", () => {
     expect(quarantinedLibraryRules(db)).toEqual([]);
   });
 
-  it("rerail rules approve says a library rule whose stored document is no JSON runs nowhere", async () => {
-    const db = await temporaryDatabase();
-    upsertLibraryRule(db, ruleCatalog, codeRule("broken"), "code");
+  /** `rerail rules approve broken good` where library rule broken's stored document is no JSON: its exit code and output. */
+  async function approveBrokenAndGood(db: Awaited<ReturnType<typeof temporaryDatabase>>): Promise<{ code: number; printed: string }> {
+    for (const id of ["broken", "good"]) upsertLibraryRule(db, ruleCatalog, codeRule(id), "code");
     // Its first byte changed, as a damaged file leaves it.
     const text = db.$client.prepare("SELECT document_json FROM library_rules WHERE rule_id = 'broken'").pluck().get() as string;
     db.$client.prepare("UPDATE library_rules SET document_json = ? WHERE rule_id = 'broken'").run(`[${text.slice(1)}`);
@@ -139,12 +139,29 @@ describe("library rules", () => {
     execFileSync("git", ["init", "-q", "-b", "main"], { cwd: repo });
     let printed = "";
     const stdout = { write: (line: string) => { printed += line; } };
+    const code = runRuleApproveCommand(["broken", "good", "--repo", repo], () => "usage", { stdout }, db.$client.name);
+    return { code, printed };
+  }
 
-    expect(runRuleApproveCommand(["broken", "--repo", repo], () => "usage", { stdout }, db.$client.name)).toBe(0);
+  it("rerail rules approve says a library rule whose stored document is no JSON runs nowhere, approves it not, and the others", async () => {
+    const db = await temporaryDatabase();
 
-    expect(printed).toMatch(
-      /^● broken has content that is no JSON object \(.+\), which only a damaged file or a hand edit leaves; it runs nowhere\n● Approved rule broken: .+\n$/u,
-    );
+    expect(await approveBrokenAndGood(db)).toEqual({
+      code: 1,
+      printed: expect.stringMatching(
+        /^● broken has content that is no JSON object \(.+\), which only a damaged file or a hand edit leaves; it runs nowhere and is not approved\n● good \(code rule\) has this content:\n[^●]+● Approved rule good: .+\n$/u,
+      ),
+    });
+    expect(db.$client.prepare("SELECT subject_id FROM rule_approvals ORDER BY subject_id").pluck().all()).toEqual(["good"]);
+  });
+
+  it("leaves a library rule rerail rules approve could not show waiting once its document is written again as it was", async () => {
+    const db = await temporaryDatabase();
+    await approveBrokenAndGood(db);
+
+    const written = upsertLibraryRule(db, ruleCatalog, codeRule("broken"), "code");
+
+    expect(isApproved(db, ruleSubject("broken", written.payloadHash))).toBe(false);
   });
 });
 

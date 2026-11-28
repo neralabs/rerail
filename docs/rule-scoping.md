@@ -268,7 +268,7 @@ An edit, or a new pack version, is new content and waits again. Going back to ap
 <details>
 <summary>How approving works, and its limits</summary>
 
-`rerail rules approve` first prints what it approves: a rule's JSON in full, invisible characters written as escapes, or a pack's rule ids. Rerail's command files never pre-approve it, so a coding agent's host asks the person before it runs.
+`rerail rules approve` first prints what it approves: a rule's JSON in full, invisible characters written as escapes, or a pack's rule ids. A library rule whose stored document is no JSON (a damaged file or a hand edit) cannot be shown, so it is not approved and the command exits 1. Rerail's command files never pre-approve it, so a coding agent's host asks the person before it runs.
 
 The session footer counts what waits (`2 to approve`), as does `/rerail`, and Overview lists it. An approval changes the configuration signature, so a running session picks it up at its next event.
 
