@@ -93,7 +93,7 @@ const EST_MARGIN: f64 = 2.0;
 /// The device's buffers share the Metal budget (`metal_buffer_limit`, 512 MB by default; decision 0126) with the
 /// buffer pool and the other lanes. The device joins keep within about a quarter of it at the default (their sizes
 /// below are those at 512 MB, scaled with the budget, `metal_share`):
-/// the most bytes one binding table may take: past it the rule is refused at run time and runs on the CPU, named;
+/// the most bytes one binding table is expected to take: past it a warning is counted (decision 0728), the rule runs;
 fn table_max() -> usize { rerail_accel::budget::metal_share(48 << 20) }
 /// the most bytes one submission's tables may take: past it the rules after go into the next submission;
 fn batch_max() -> usize { rerail_accel::budget::metal_share(64 << 20) }
@@ -2272,8 +2272,9 @@ impl<'p> Run<'p> {
                         self.caps[o] = self.guess(k, cap_in, nr.or(right.map(|r| r.0.rows)).unwrap_or(0), &own.growth);
                     }
                     let cap = self.caps[o];
+                    // Past one table's share of the budget: a warning, counted, never a refusal (decision 0728).
                     if 8 * self.plan.nslots.max(1) * cap > table_max() {
-                        return Err(format!("a binding table of {cap} rows past the device's budget"));
+                        crate::code_rule_dsl::logic::lanes::prof::count("device join (decision 0095)", "binding tables past one table's share of the Metal budget (decision 0728: a warning)", 1);
                     }
                     // Placed by its program (decision 0603 step 5): its rows' room the device's, from the rows its
                     // level counts; `cap` its rows as guessed.

@@ -219,18 +219,22 @@ pub(super) fn sample() {
                     rerail_prof::heap::alloc_by(ptr, len, rerail_prof::heap::DEVICE);
                 }
             });
-            // Q203 (c): what holds the device's budget when a lease is refused, by the span that leased it (the first
-            // few refusals of a process).
+            // Q203 (c): what holds the device's budget when a lease passes it (decision 0728: a warning, not a
+            // refusal), by the span that leased it.
             rerail_accel::gpu::shared::set_refusal_hook(|why| {
-                // Every refusal by the span that asked (one line), the holdings for the first few.
                 static TOLD: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
-                eprintln!("rerail: refused in {}: {why}", rerail_prof::heap::name(rerail_prof::heap::span()));
-                if TOLD.fetch_add(1, std::sync::atomic::Ordering::Relaxed) >= 6 {
+                // The first 20 passes by the span that asked, the holdings for the first 6 (the count is the profile's).
+                let told = TOLD.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+                if told >= 20 {
+                    return;
+                }
+                eprintln!("rerail: past the Metal budget in {}: {why}", rerail_prof::heap::name(rerail_prof::heap::span()));
+                if told >= 6 {
                     return;
                 }
                 let held: Vec<(u32, u64)> = rerail_prof::heap::snapshot().into_iter().filter(|(id, _)| id & rerail_prof::heap::DEVICE != 0).collect();
                 let all: u64 = held.iter().map(|h| h.1).sum();
-                let mut out = format!("rerail: refused, device leases by span ({} MB sampled): {why}", all >> 20);
+                let mut out = format!("rerail: past the Metal budget, device leases by span ({} MB sampled): {why}", all >> 20);
                 for (id, bytes) in held.iter().take(12) {
                     out.push_str(&format!("\n  {:>6.1} MB  {}", *bytes as f64 / 1048576.0, rerail_prof::heap::name(*id)));
                 }

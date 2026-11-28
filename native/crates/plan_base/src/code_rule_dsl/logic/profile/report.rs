@@ -484,6 +484,12 @@ pub fn write(dir: &Path, header: &str) -> std::io::Result<()> {
     // Warnings: the shapes that usually explain a slow rule.
     let _ = writeln!(r, "\n== Warnings");
     let mut warned = 0;
+    // The Metal budget passed (decision 0728): the leases and reservations taken past it, a warning, never a refusal.
+    let (passed, most) = rerail_accel::gpu::shared::budget_passed();
+    if passed > 0 {
+        let _ = writeln!(r, "- the Metal budget ({} MB) was passed {passed} times, by {} MB at most: the device's leases and reservations went on past it (decision 0728). RERAIL_METAL_MB moves the line.", rerail_accel::budget::metal() >> 20, most >> 20);
+        warned += 1;
+    }
     // A device path that failed and ran on the CPU instead.
     for ((topic, why), n) in &state.decisions {
         if topic.contains("fell back to the CPU") {

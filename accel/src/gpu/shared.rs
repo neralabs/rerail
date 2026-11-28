@@ -157,6 +157,34 @@ pub fn set_refusal_hook(hook: fn(&str)) {
     let _ = REFUSAL_HOOK.set(hook);
 }
 
+/// The times the Metal budget was passed (`past_budget`), and the most bytes past it: a warning, never a refusal
+/// (decision 0728). The run goes on over the line; the profile's warnings name them.
+static PAST: [std::sync::atomic::AtomicUsize; 2] = [std::sync::atomic::AtomicUsize::new(0), std::sync::atomic::AtomicUsize::new(0)];
+
+/// The times the Metal budget was passed, and the most bytes past it (decision 0728).
+pub fn budget_passed() -> (usize, usize) {
+    (PAST[0].load(std::sync::atomic::Ordering::Relaxed), PAST[1].load(std::sync::atomic::Ordering::Relaxed))
+}
+
+/// A lease or reservation past the Metal budget by `past` bytes, taken: counted, the first few said on stderr, and
+/// the profiler's hook told (what holds the budget then). Decision 0728: the budget is a warning line, not a refusal.
+fn past_budget(why: &str, past: usize) {
+    use std::sync::atomic::Ordering::Relaxed;
+    if PAST[0].fetch_add(1, Relaxed) < 4 {
+        eprintln!("rerail: warning: {why} (going on past it; decision 0728)");
+    }
+    PAST[1].fetch_max(past, Relaxed);
+    if let Some(hook) = REFUSAL_HOOK.get() {
+        hook(why);
+    }
+}
+
+/// The bytes the device's leases, its reservations and the buffer pool's ledger would pass the Metal budget by with
+/// `need` more.
+fn past_by(need: usize) -> usize {
+    (other() + dev().live.load(std::sync::atomic::Ordering::Relaxed) + reserved() + need).saturating_sub(crate::budget::metal())
+}
+
 fn leased(b: &DeviceBuffer) {
     dev().live.fetch_add(b.length() as usize, std::sync::atomic::Ordering::Relaxed);
     if let Some(hook) = LEASE_HOOK.get() {
@@ -679,7 +707,7 @@ fn lease_file(kind: u32, bytes: usize, path: &std::path::Path, for_device: bool)
 pub fn lease_deferrable_within(kind: u32, bytes: usize, path: &std::path::Path) -> Result<rerail_blocks::deferrable::Deferrable, String> {
     let need = class(bytes.max(SLAB_MIN));
     if !make_room(need) {
-        return Err(format!("device budget: a deferrable lease of {} MB past the Metal budget of {} MB", need >> 20, crate::budget::metal() >> 20));
+        past_budget(&format!("device budget: a deferrable lease of {} MB past the Metal budget of {} MB", need >> 20, crate::budget::metal() >> 20), past_by(need));
     }
     lease_deferrable(kind, bytes, path)
 }
@@ -840,10 +868,7 @@ pub fn lease_within(bytes: usize) -> Result<Pooled, String> {
             "device budget: a lease of {} MB past the Metal budget of {} MB ({} MB leased, {} MB idle, {} MB reserved by the buffer pool; this thread's admission {} MB, {} MB of it left, {} MB reserved in all; threads keep {} MB of join scratch)",
             need >> 20, crate::budget::metal() >> 20, live >> 20, idle >> 20, other() >> 20, admitted >> 20, left >> 20, reserved() >> 20, kept()[0].0 >> 20
         );
-        if let Some(hook) = REFUSAL_HOOK.get() {
-            hook(&why);
-        }
-        return Err(why);
+        past_budget(&why, past_by(need));
     }
     lease(bytes).map(held_here)
 }
@@ -866,7 +891,8 @@ pub fn draw_reserved(bytes: usize) -> bool {
 /// it encodes anything (decision 0386: a wait holds no uncommitted command buffer); its bounded leases are then drawn
 /// from the reservation (`lease_within`). A reservation that does not fit waits for the leases other threads hold to
 /// come back, running the pool's jobs meanwhile (`exec::help_until_as`), instead of the stratum going to the CPU at
-/// once while the room it needs is about to be freed. It does not wait, and the stratum runs on the CPU:
+/// once while the room it needs is about to be freed. It does not wait, and the stratum takes its room past the
+/// budget, with a warning (decision 0728: the budget is a warning line, never a refusal):
 /// - when it is past the whole budget, which no lease coming back makes room for;
 /// - when the threads not waiting themselves hold less than it lacks (what a waiting thread holds comes back only
 ///   when it stops waiting, and its own thread's only when it goes on: waiting for either is a deadlock);
@@ -876,15 +902,20 @@ pub fn admit(bytes: usize, patience: f64) -> Result<Admitted, String> {
     if bytes == 0 || q180_off("admit") {
         return Ok(Admitted { waited: 0.0 });
     }
+    let reserve = || {
+        dev().reserved.fetch_add(bytes, std::sync::atomic::Ordering::Relaxed);
+        RESERVE_LEFT.with(|r| r.set(r.get() + bytes));
+        ADMITTED.with(|a| a.set(a.get() + bytes));
+    };
     if bytes > budget {
-        return Err(format!("device admission: {} MB past the Metal budget of {} MB", bytes >> 20, budget >> 20));
+        past_budget(&format!("device admission: {} MB past the Metal budget of {} MB", bytes >> 20, budget >> 20), past_by(bytes));
+        reserve();
+        return Ok(Admitted { waited: 0.0 });
     }
     let take = || {
         let fits = make_room(bytes);
         if fits {
-            dev().reserved.fetch_add(bytes, std::sync::atomic::Ordering::Relaxed);
-            RESERVE_LEFT.with(|r| r.set(r.get() + bytes));
-            ADMITTED.with(|a| a.set(a.get() + bytes));
+            reserve();
         }
         fits
     };
@@ -916,7 +947,11 @@ pub fn admit(bytes: usize, patience: f64) -> Result<Admitted, String> {
         e.1 -= 1;
     }
     drop(h);
-    got.map(|()| Admitted { waited: t0.elapsed().as_secs_f64() })
+    if let Err(why) = got {
+        past_budget(&why, past_by(bytes));
+        reserve();
+    }
+    Ok(Admitted { waited: t0.elapsed().as_secs_f64() })
 }
 
 /// A measurement aid (Q203): `RERAIL_Q180_OFF`, a comma list of `est` (tables sized by the planner's estimates),
@@ -1114,10 +1149,10 @@ mod tests {
         assert!(rerail_blocks::ledger::of_address(at).is_none());
     }
 
-    /// A bounded lease is refused once relational work's leases would pass the Metal budget, and fits again once they
-    /// are dropped.
+    /// A bounded lease past the Metal budget is taken, with a warning counted (decision 0728: the budget is a warning
+    /// line, never a refusal), and fits within it again once the first is dropped.
     #[test]
-    fn a_bounded_lease_keeps_within_the_metal_budget() {
+    fn a_bounded_lease_past_the_metal_budget_is_taken_with_a_warning() {
         if layer().is_none() {
             return;
         }
@@ -1125,17 +1160,18 @@ mod tests {
         let (live, _) = held_bytes();
         crate::budget::METAL_TEST.with(|m| m.set(live + (96 << 20)));
         let first = lease_within(64 << 20).expect("64 MB fits a budget of 96 MB more than is leased");
-        let refused = lease_within(64 << 20);
-        assert!(refused.as_ref().is_err_and(|e| e.contains("device budget")), "a second 64 MB passes the budget");
+        let passed = budget_passed().0;
+        let past = lease_within(64 << 20).expect("a second 64 MB passes the budget, and is taken");
+        assert!(budget_passed().0 > passed && budget_passed().1 >= 32 << 20, "the pass counted, by at least 32 MB: {:?}", budget_passed());
         drop(first);
-        drop(refused);
+        drop(past);
         assert!(lease_within(64 << 20).is_ok(), "fits again once the first is dropped");
         crate::budget::METAL_TEST.with(|m| m.set(0));
     }
 
     /// Q203's admission: a reservation that does not fit waits for another thread's leases to come back, and is
     /// taken then; it does not wait for what its own thread holds, nor past its patience, nor for more than the
-    /// budget; and its leases are drawn from it.
+    /// budget, and is then taken past the budget with a warning (decision 0728); and its leases are drawn from it.
     #[test]
     fn a_stratum_waits_for_room_others_hold_and_only_that() {
         if layer().is_none() {
@@ -1145,7 +1181,10 @@ mod tests {
         let (live, _) = held_bytes();
         let budget = live + (96 << 20);
         crate::budget::METAL_TEST.with(|m| m.set(budget));
-        assert!(admit(budget + 1, 10.0).is_err_and(|e| e.contains("past the Metal budget")), "past the whole budget: no wait");
+        let passed = budget_passed().0;
+        let t0 = std::time::Instant::now();
+        drop(admit(budget + 1, 10.0).expect("past the whole budget: taken, with a warning"));
+        assert!(t0.elapsed().as_secs_f64() < 1.0 && budget_passed().0 > passed, "no wait, one warning");
         // Another thread holds 64 MB for 200 ms: 48 MB waits for it, and is taken once it is back.
         let (held, go) = (std::sync::mpsc::channel(), std::sync::mpsc::channel::<()>());
         let other = std::thread::spawn(move || {
@@ -1158,8 +1197,9 @@ mod tests {
         held.1.recv().unwrap();
         // Past its patience: it gives up, and the 64 MB is still held.
         let t0 = std::time::Instant::now();
-        assert!(admit(48 << 20, 0.05).is_err_and(|e| e.contains("what waiting is worth")), "past its patience");
-        assert!(t0.elapsed().as_secs_f64() < 1.0);
+        let passed = budget_passed().0;
+        drop(admit(48 << 20, 0.05).expect("past its patience: taken past the budget"));
+        assert!(t0.elapsed().as_secs_f64() < 1.0 && budget_passed().0 > passed, "waited its patience alone, one warning");
         go.0.send(()).unwrap();
         let room = admit(48 << 20, 10.0).expect("room once the other thread's lease is back");
         assert!(room.waited > 0.1, "it waited for the other thread: {} s", room.waited);
@@ -1170,8 +1210,9 @@ mod tests {
         drop(room);
         // What this thread holds itself never comes back while it waits: no wait.
         let t0 = std::time::Instant::now();
-        assert!(admit(64 << 20, 10.0).is_err_and(|e| e.contains("held by threads that go on")), "its own leases: no wait");
-        assert!(t0.elapsed().as_secs_f64() < 1.0, "refused at once, not at its patience");
+        let passed = budget_passed().0;
+        drop(admit(64 << 20, 10.0).expect("its own leases: no wait, taken past the budget"));
+        assert!(t0.elapsed().as_secs_f64() < 1.0 && budget_passed().0 > passed, "at once, not at its patience; one warning");
         drop(mine);
         assert!(admit(64 << 20, 0.0).is_ok(), "fits once its own lease is back");
         crate::budget::METAL_TEST.with(|m| m.set(0));
