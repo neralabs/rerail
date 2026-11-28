@@ -204,6 +204,18 @@ describe("a checkout's saved scan settings that parse to settings this version k
     expect(logged()).toContain(`: the scan settings saved for ${read.workspaceRoot} read in part: the settings_json of its audit_settings row holds mode (mode: `);
     controls.close();
   });
+
+  // Every object inherits `constructor` and `toString`, so only a test of the patch's own keys tells such a key apart.
+  it("keep keys this version does not know whose names every object inherits through a save that does not set them", async () => {
+    const { path, controls } = await fixture();
+    controls.updateSettings("a", { mode: "log" });
+    storeSettings(path, "{\"scope\":\"touched-files\",\"mode\":\"log\",\"constructor\":1,\"toString\":\"later\"}");
+    spyOnStderr();
+
+    expect(controls.updateSettings("a", { mode: "steer" }).settings).toEqual({ ...DEFAULT_AUDIT_SETTINGS, scope: "touched-files" });
+    expect(settingsText(path)).toBe("{\"scope\":\"touched-files\",\"mode\":\"steer\",\"constructor\":1,\"toString\":\"later\"}");
+    controls.close();
+  });
 });
 
 describe("a session's scan requests whose stored text does not read", () => {

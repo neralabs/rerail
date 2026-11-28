@@ -500,7 +500,7 @@ export class SqliteAuditControlStore {
     const { settings: before, unread } = this.#settings(workspaceRoot, spelt) ?? { settings: DEFAULT_AUDIT_SETTINGS, unread: {} };
     const settings = auditSettingsSchema.parse({ ...before, ...patch });
     const { steerStrategy, ...saved } = settings;
-    const kept = Object.fromEntries(Object.entries(unread).filter(([key]) => !(key in patch)));
+    const kept = Object.fromEntries(Object.entries(unread).filter(([key]) => !Object.hasOwn(patch, key)));
     const row = { ...(steerStrategy === "message" ? saved : settings), ...kept };
     this.#database.insert(auditSettings).values({ workspaceRoot, settings: row, updatedAt: Date.now() })
       .onConflictDoUpdate({ target: auditSettings.workspaceRoot, set: { settings: row, updatedAt: Date.now() } }).run();
