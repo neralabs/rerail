@@ -104,6 +104,28 @@ describe("rerail feedback", () => {
     expect(output).toContain(`\`rerail feedback list --rule ${RULE}\` prints it for a rule misfire issue (https://github.com/neralabs/rerail/issues/new?template=2-rule-misfire.yml)`);
   });
 
+  it("keeps the note on the session the rule steered past a later receipt whose stored text is no JSON", async () => {
+    const { root, run, notes } = await steeredRepository();
+    const store = new SqliteSessionStore(defaultRerailDatabasePath());
+    const database = openRerailDatabase(defaultRerailDatabasePath());
+    try {
+      const repositoryId = database.$client.prepare("SELECT repository_id AS id FROM sessions WHERE session_id = 'steered'").get() as { id: string };
+      const later = { host: "claude-code" as const, sessionId: "later", cwd: join(root, "repo") };
+      store.openSession(later, Date.now(), repositoryId.id);
+      store.recordSteer(later, "later-receipt", [RULE]);
+      store.close();
+      // One byte changed, as a damaged file leaves it: the rule ids' "[" made "{".
+      database.$client.prepare("UPDATE events SET payload_json = replace(payload_json, '\"ruleIds\":[', '\"ruleIds\":{') WHERE event_id = ?")
+        .run("steering-delivered:later-receipt");
+    } finally {
+      database.$client.close();
+    }
+
+    await run(RULE, "asserts are the repo convention");
+
+    expect(notes()).toEqual([expect.objectContaining({ ruleId: RULE, sessionId: "steered" })]);
+  });
+
   it("refuses control, bidi and zero-width characters in the reason or the rule id, keeping nothing", async () => {
     const { run, notes } = await steeredRepository();
 
