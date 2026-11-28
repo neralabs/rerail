@@ -1156,3 +1156,27 @@ statements and blocks end.
     - **As measured** (as item 113, 16 blocks a chunk, on the M1 Max at load 2, both builds there): the walk's
       summaries from 22472M to 15310M instructions and from 4346M to 3055M cycles, about 61 to 43 cycles a
       byte. All the passes from the middle went from 8646M to 7343M cycles.
+118. **The walk's pass 3 by look-back, as 0715's `entries_waits`; its Hillis–Steele scan removed** (as built:
+    `middle::walk_entries_look_back`, `apply_walk`, `walk_after_by_sym`, `IN_FLIGHT`).
+    - **Why:** the design page gives the nest's entries by the core's look-back. The walk still had a
+      Hillis–Steele scan, which cost most at 1 block a chunk: log2 of the chunks rounds of `then_walk` over every
+      chunk. A lane it did not know also spread to every chunk the composed ranges covered.
+    - **The look-back:** the chunks go in waves of `IN_FLIGHT` = 32. Each chunk composes the summaries back to the
+      last entry known (`then_walk`, no branch) and applies the composition to that entry. `apply_walk` is
+      `Sym::apply` in the fixed size, for any entry's indents; `WLane::entry`, its case for `[0]`, is gone.
+    - **Waits:** where the composition does not know a chunk's entry, the chunk waits for its predecessor's, and
+      the chunks after look back to it. Its predecessor's entry is that one's summary applied to it. Where masks do
+      not know that lane, it is the lane in `Sym` (`walk_after_by_sym`), else that chunk lexed again, as before.
+    - **As tested:** `walk_scan_is_syms` compares the look-back's entries with the scan by `Sym`, with its waits
+      taken by `Sym`: 0 files differ at 1, 3 and 16 blocks a chunk. The 30 tests pass on AArch64 and x86-64. From
+      the middle is still the serial lexer's in 1644 of 1644 files.
+    - **The counts now** (as item 113's table; "by the lane before" is 0 where the lane in fixed size gives the
+      entry first; lexed again includes a wave's first chunk):
+
+      | Chunk size (blocks) | Chunks | Lanes not known | Waits | By the lane before | Lexed again |
+      |---|---|---|---|---|---|
+      | 1 | 230899 | 1263 | 355 (36400 before) | 0 | 365 |
+      | 16 | 15216 | 735 | 180 (2258) | 0 | 182 |
+
+    - **As measured** (2 passes, on the M1 Max, both builds there): the walk's pass 3 went from 4779M to 521M
+      cycles at 1 block a chunk, and from 112M to 6M at 16.

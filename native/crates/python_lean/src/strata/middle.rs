@@ -1716,21 +1716,6 @@ impl WLane {
         w.conds[..sym.conds.len()].copy_from_slice(&sym.conds);
         w
     }
-
-    /// The lane's entry from the text's start (indents `[0]`): its `open`, `header`, indents and counts.
-    fn entry(&self) -> WalkEntry {
-        let held = (0..self.nconds).all(|i| !(self.conds[i].0 <= 0 && 0 <= self.conds[i].1));
-        match self.kind {
-            GOES if held => {
-                let (open, header) = COMBOS[usize::from(self.exit)];
-                let mut indents: Vec<u32> = if self.t >= 0 { vec![0] } else { Vec::new() };
-                indents.extend(&self.own[..self.len]);
-                WalkEntry::At { open, header, indents, toks: self.toks + usize::from(self.t < 0), extras: self.extras }
-            }
-            REFUSED if held => WalkEntry::Refused(self.refusal),
-            _ => WalkEntry::Unknown,
-        }
-    }
 }
 
 /// Lane `a` then the summary `b` (`Sym::then` in a fixed size): no branch. `a` goes on into `b`'s lane of its exit;
@@ -1810,24 +1795,90 @@ pub enum WalkEntry {
     Unknown,
 }
 
-/// Pass 3 of the walk: each chunk's walk entry, by Hillis and Steele's scan of the summaries' compositions in fixed
-/// size (`then_walk`, no branch), each round's chunks in `order`'s order.
-pub fn walk_entries_in(sums: &[WalkSummary], order: Order<'_>) -> Vec<WalkEntry> {
-    let mut acc: Vec<WLanes> = sums.iter().map(|s| s.each_ref().map(WLane::of)).collect();
-    let mut d = 1;
-    while d < acc.len() {
-        acc = each(acc.len(), order, |c| if c < d { acc[c] } else { then_walk(&acc[c - d], &acc[c]) });
-        d *= 2;
-    }
-    each(acc.len(), order, |c| {
-        if c == 0 {
-            return WalkEntry::At { open: false, header: false, indents: vec![0], toks: 0, extras: 0 };
+/// Summary `w` from entry `e`: the lane of `e`'s `open` and `header` applied to its indents (`Sym::apply` in a fixed
+/// size). Unknown where that lane is, or one of its reads of the entry does not hold for `e`'s indents.
+fn apply_walk(w: &WLanes, e: &WalkEntry) -> WalkEntry {
+    let WalkEntry::At { open, header, indents, toks, extras } = e else { return e.clone() };
+    let l = &w[usize::from(combo(*open, *header))];
+    let hit = (0..l.nconds).any(|i| indents.iter().any(|&x| l.conds[i].0 <= i64::from(x) && i64::from(x) <= l.conds[i].1));
+    match l.kind {
+        GOES if !hit => {
+            let (open, header) = COMBOS[usize::from(l.exit)];
+            let dedents = indents.iter().filter(|&&x| i64::from(x) > l.t).count();
+            let mut out: Vec<u32> = indents.iter().copied().filter(|&x| i64::from(x) <= l.t).collect();
+            out.extend(&l.own[..l.len]);
+            WalkEntry::At { open, header, indents: out, toks: toks + l.toks + dedents, extras: extras + l.extras }
         }
-        acc[c - 1][0].entry()
-    })
+        REFUSED if !hit => WalkEntry::Refused(l.refusal),
+        _ => WalkEntry::Unknown,
+    }
 }
 
-/// Pass 3 of the walk by `Sym` (the oracle of `walk_entries_in`): the same scan by `compose_walk`.
+/// Pass 3 of the walk: each chunk's walk entry, by a single-pass prefix sum with decoupled look-back (Merrill and
+/// Garland's, as 0715's `entries_waits`). The chunks go in waves of `IN_FLIGHT`. A chunk composes the summaries back
+/// to the last entry known (`then_walk`, no branch) and applies the composition to it. Where that does not know its
+/// entry, the chunk waits for its predecessor's: that one's summary applied to it, else (a lane masks do not know
+/// there) `wait(c, e)` from the predecessor's entry `e`; the chunks after it look back to it. With the chunks that
+/// waited.
+pub fn walk_entries_look_back<E>(sums: &[WalkSummary], mut wait: impl FnMut(usize, &WalkEntry) -> Result<WalkEntry, E>) -> Result<(Vec<WalkEntry>, usize), E> {
+    let wl: Vec<WLanes> = sums.iter().map(|s| s.each_ref().map(WLane::of)).collect();
+    // The text's first chunk's entry.
+    let start = WalkEntry::At { open: false, header: false, indents: vec![0], toks: 0, extras: 0 };
+    let mut out: Vec<WalkEntry> = Vec::with_capacity(sums.len());
+    let mut waits = 0;
+    // Chunk `c`'s entry from its predecessor's: its summary applied, else (a lane masks do not know there) `wait`'s.
+    let mut after = |out: &[WalkEntry], c: usize| -> Result<WalkEntry, E> {
+        match apply_walk(&wl[c - 1], &out[c - 1]) {
+            WalkEntry::Unknown if matches!(out[c - 1], WalkEntry::At { .. }) => wait(c, &out[c - 1]),
+            e => Ok(e),
+        }
+    };
+    let mut w = 0;
+    while w < sums.len() {
+        // The chunks `w..w + IN_FLIGHT` in flight: the last chunk whose entry is known (`k`), and the summaries
+        // composed from it.
+        let mut k = w;
+        let first = if w == 0 { start.clone() } else { after(&out, w)? };
+        out.push(first);
+        let top = (w + IN_FLIGHT).min(sums.len());
+        let mut agg: Option<WLanes> = None;
+        for c in w + 1..top {
+            let a = agg.map_or(wl[c - 1], |a| then_walk(&a, &wl[c - 1]));
+            agg = Some(a);
+            let e = match apply_walk(&a, &out[k]) {
+                WalkEntry::Unknown if matches!(out[k], WalkEntry::At { .. }) => {
+                    // The chunk waits for its predecessor's entry: from it on, the chunks after look back to this one.
+                    waits += 1;
+                    (k, agg) = (c, None);
+                    after(&out, c)?
+                }
+                e => e,
+            };
+            out.push(e);
+        }
+        w = top;
+    }
+    Ok((out, waits))
+}
+
+/// The chunks pass 3 of the walk has in flight at once (`walk_entries_look_back`), as 0715's.
+pub const IN_FLIGHT: usize = 32;
+
+/// Chunk `c`'s walk entry from its predecessor's `e`, by the predecessor's lane in `Sym` (no fixed size): none where
+/// masks do not know that lane or one of its reads of `e` does not hold.
+fn walk_after_by_sym(s: &WalkSummary, e: &WalkEntry) -> Option<WalkEntry> {
+    let WalkEntry::At { open, header, indents, toks, extras } = e else { return Some(e.clone()) };
+    match &s[usize::from(combo(*open, *header))] {
+        WalkLane::Goes { exit, sym, toks: t, extras: x } => sym.apply(indents).map(|(indents, dedents)| {
+            let (open, header) = COMBOS[usize::from(*exit)];
+            WalkEntry::At { open, header, indents, toks: toks + t + dedents, extras: extras + x }
+        }),
+        WalkLane::Refused(r, sym) => sym.apply(indents).map(|_| WalkEntry::Refused(*r)),
+        WalkLane::Unknown => None,
+    }
+}
+
+/// Pass 3 of the walk by `Sym` (the oracle of `walk_entries_look_back`): Hillis and Steele's scan by `compose_walk`: the same scan by `compose_walk`.
 pub fn walk_entries_by_sym(sums: &[WalkSummary], order: Order<'_>) -> Vec<WalkEntry> {
     let mut acc = sums.to_vec();
     let mut d = 1;
@@ -1905,8 +1956,8 @@ impl core::fmt::Debug for Middle {
 ///    (`entries_in`).
 /// 2. The walk's entry place in each chunk: its first loop top by masks, else the chunk after's (`first_top`).
 /// 3. The walk: each chunk's summary from every `open` and `header` with indents it does not know, by masks
-///    (`walk_summary_masks`), and each chunk's entry by the scan (`walk_entries_in`), with the records the chunks
-///    before it wrote. A chunk the scan gives none waits for the one before's: by its lane, or by lexing it.
+///    (`walk_summary_masks`), and each chunk's entry by the look-back (`walk_entries_look_back`), with the records the
+///    chunks before it wrote. A chunk the look-back gives none waits for the one before's: by its lane, or by lexing it.
 /// 4. Each chunk's records from its entry (`lex_chunk`), placed at the counts before it.
 ///
 /// Where the chunks lexed from their entries leave an entry that is not the next chunk's, that is an error (`Err`).
@@ -1945,42 +1996,30 @@ pub fn lex_middle_to(src: &[u8], blocks: usize, order: Order<'_>, stop: Stage, c
     if stop == Stage::WalkSummaries {
         return Ok(Middle::Stopped(wsums.iter().flatten().filter(|l| matches!(l, WalkLane::Goes { .. })).count()));
     }
-    let mut walks = walk_entries_in(&wsums, order);
-    // A chunk the scan gives no entry waits for the one before's: by that chunk's lane where masks know it, else by
-    // lexing that chunk from its entry.
-    for c in 1..k {
-        if !matches!(walks[c], WalkEntry::Unknown) {
-            continue;
+    // A chunk the look-back gives no entry waits for the one before's: by that chunk's lane where masks know it, else
+    // by lexing that chunk from its entry.
+    let wait = |c: usize, prev: &WalkEntry| -> Result<WalkEntry, Result<Middle, String>> {
+        if let Some(w) = walk_after_by_sym(&wsums[c - 1], prev) {
+            counts.by_lane += 1;
+            return Ok(w);
         }
-        counts.waits += 1;
-        let WalkEntry::At { open, header, indents, toks, extras } = walks[c - 1].clone() else { continue };
-        let by_lane = match &wsums[c - 1][usize::from(combo(open, header))] {
-            WalkLane::Goes { exit, sym, toks: t, extras: x } => sym.apply(&indents).map(|(indents, dedents)| {
-                let (open, header) = COMBOS[usize::from(*exit)];
-                WalkEntry::At { open, header, indents, toks: toks + t + dedents, extras: extras + x }
-            }),
-            WalkLane::Refused(r, sym) => sym.apply(&indents).map(|_| WalkEntry::Refused(*r)),
-            WalkLane::Unknown => None,
-        };
-        walks[c] = match by_lane {
-            Some(w) => {
-                counts.by_lane += 1;
-                w
-            }
-            None => {
-                counts.lexed_again += 1;
-                let Place(p, done) = places[c - 1];
-                let e = Entry { s1: s1_at(src, firsts(range(c - 1).0).0), rb: strata[c - 1].0, depth: strata[c - 1].1, p, open, header, indents, done };
-                let (mut t, mut x) = (Vec::new(), Vec::new());
-                match lex_chunk(src, range(c - 1).0, range(c - 1).1, &e, &mut t, &mut x) {
-                    Chunked::Lexed(next) => WalkEntry::At { open: next.open, header: next.header, indents: next.indents, toks: toks + t.len(), extras: extras + x.len() },
-                    Chunked::Refused(r) => WalkEntry::Refused(r),
-                    Chunked::NotB => return Ok(Middle::NotB),
-                    Chunked::Past => return Err(format!("chunk {} read past the text's end from its entry", c - 1)),
-                }
-            }
-        };
-    }
+        counts.lexed_again += 1;
+        let WalkEntry::At { open, header, indents, toks, extras } = prev.clone() else { unreachable!("a wait's predecessor is at an entry") };
+        let Place(p, done) = places[c - 1];
+        let e = Entry { s1: s1_at(src, firsts(range(c - 1).0).0), rb: strata[c - 1].0, depth: strata[c - 1].1, p, open, header, indents, done };
+        let (mut t, mut x) = (Vec::new(), Vec::new());
+        match lex_chunk(src, range(c - 1).0, range(c - 1).1, &e, &mut t, &mut x) {
+            Chunked::Lexed(next) => Ok(WalkEntry::At { open: next.open, header: next.header, indents: next.indents, toks: toks + t.len(), extras: extras + x.len() }),
+            Chunked::Refused(r) => Ok(WalkEntry::Refused(r)),
+            Chunked::NotB => Err(Ok(Middle::NotB)),
+            Chunked::Past => Err(Err(format!("chunk {} read past the text's end from its entry", c - 1))),
+        }
+    };
+    let (walks, waits) = match walk_entries_look_back(&wsums, wait) {
+        Ok(x) => x,
+        Err(r) => return r,
+    };
+    counts.waits += waits;
     if stop == Stage::WalkScan {
         return Ok(Middle::Stopped(walks.len()));
     }
@@ -2131,22 +2170,22 @@ pub fn layout_is_the_walks(src: &[u8], blocks: usize) -> Option<(usize, usize, O
     Some((same, unknown, None))
 }
 
-/// The oracle of pass 3's fixed-size scan (`walk_entries_in`): for a text in chunks of `blocks` blocks, with the
-/// summaries by masks (as `lex_middle` makes them), each chunk's entry against the scan by `Sym`
-/// (`walk_entries_by_sym`). The entries the same, those the fixed sizes do not know where `Sym` does (the chunk waits),
-/// and the first that differs. None where the strata do not read the text.
+/// The oracle of pass 3's look-back in fixed size (`walk_entries_look_back`): for a text in chunks of `blocks`
+/// blocks, with the summaries by masks (as `lex_middle` makes them), each chunk's entry against the scan by `Sym`
+/// (`walk_entries_by_sym`), a chunk that waits given its entry by its predecessor's lane in `Sym`. The entries the
+/// same, the chunks that waited, and the first that differs. None where the strata do not read the text.
 pub fn walk_scan_is_syms(src: &[u8], blocks: usize, order: Order<'_>) -> Option<(usize, usize, Option<String>)> {
     let blocks = blocks.max(1);
     let strata = strata_of(src, blocks)?;
     let k = strata.len();
     let inputs = walk_inputs(src, blocks, &strata, &in_order).ok()?;
     let wsums: Vec<_> = (0..k).map(|c| inputs.summary(src, blocks, &strata, c).0).collect();
-    let (fixed, by_sym) = (walk_entries_in(&wsums, order), walk_entries_by_sym(&wsums, order));
-    let (mut same, mut waits) = (0, 0);
+    let by_sym = walk_entries_by_sym(&wsums, order);
+    let (fixed, waits) = walk_entries_look_back(&wsums, |c, e| Ok::<_, core::convert::Infallible>(walk_after_by_sym(&wsums[c - 1], e).unwrap_or(WalkEntry::Unknown))).unwrap_or_else(|x| match x {});
+    let mut same = 0;
     for (c, (f, y)) in fixed.iter().zip(&by_sym).enumerate() {
         match (f, y) {
             (WalkEntry::Unknown, WalkEntry::Unknown) => {}
-            (WalkEntry::Unknown, _) => waits += 1,
             (a, b) if a == b => same += 1,
             (a, b) => return Some((same, waits, Some(format!("chunk {c} of {k}, {blocks} blocks a chunk: fixed {a:?}, by Sym {b:?}")))),
         }

@@ -253,7 +253,7 @@ fn main() {
                     }
                 }
             }
-            println!("chunks of {blocks} blocks: the walk's scan in fixed size: {same} entries the scan by Sym's, {waits} it does not know (the chunk waits), {bad} files with one that differs");
+            println!("chunks of {blocks} blocks: the walk's look-back in fixed size: {same} entries the scan by Sym's, {waits} chunks that waited, {bad} files with one that differs");
         }
         return;
     }
