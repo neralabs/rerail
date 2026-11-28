@@ -6435,18 +6435,6 @@ fn run_observed_within(
             // Measured on the chunk's worker (`export_totals`, absorbed above): only the rows it added are counted here.
             totals.held(rel, inserted);
         }
-        // An asked phase's held relations' rows by file (decision 0705), found before the entries are written to.
-        let held_found: Vec<(String, std::result::Result<(usize, HashMap<i64, Vector<i64>>), String>)> = if attributable {
-            held_rows.iter().map(|(rel, rows)| {
-                let found = match rows {
-                    Some(rows) => by_file_of(rel, rows.as_ref()).map(|by_file| (rows.columns().len(), by_file)),
-                    None => Err(format!("held {rel}: not held at the chunk's end")),
-                };
-                (rel.clone(), found)
-            }).collect()
-        } else {
-            Vec::new()
-        };
         // The rows by file, every export's side by side on the pool, then handed to the entries in the exports' order.
         if attributable {
             let _s = crate::code_rule_dsl::logic::profile::span(|| "attribute to files".into());
@@ -6474,21 +6462,37 @@ fn run_observed_within(
                 }
             }
         }
-        // An asked phase's held relations (decision 0705), into the entries alone: never handed to the cross part.
+        // An asked phase's held relations (decision 0705) and a callable's reads, into the entries alone: never handed
+        // to the cross part. Written in place: read where they lie, a batch at a time, each document's run of rows
+        // put in its files' entries at once (no rows by file gathered first, decision 0353). Rows that cannot be
+        // attributed leave the chunk's entries unwritten (`attributable`), so a relation put in part is never kept.
         if attributable {
-            for (rel, found) in held_found {
-                match found {
-                    Ok((width, by_file)) => {
-                        for (f, values) in by_file {
-                            entries.get_mut(&f).expect("checked").rows.entry(rel.clone()).or_insert_with(|| (width, Vector::new())).1.extend(values);
-                        }
-                    }
-                    Err(why) => {
-                        memo_why.insert(why);
-                        attributable = false;
-                        break;
-                    }
+            let _s = crate::code_rule_dsl::logic::profile::span(|| "the held relations, into their files' entries".into());
+            for (rel, rows) in &held_rows {
+                let put = match (rows, split.locations.get(rel).and_then(|l| l.first().copied())) {
+                    (None, _) => Err(format!("held {rel}: not held at the chunk's end")),
+                    (_, None) => Err(format!("export {rel}: no location column")),
+                    (Some(rows), Some(at)) => held_into_entries(rel, rows.as_ref(), at, &owners, &mut entries),
+                };
+                if let Err(why) = put {
+                    memo_why.insert(why);
+                    attributable = false;
+                    break;
                 }
+            }
+            // What each held relation put in the entries: its rows held, and the values the entries took (a row of a
+            // value document is put in each file that asked for it).
+            if crate::code_rule_dsl::logic::profile::on() {
+                crate::code_rule_dsl::logic::profile::decision("held relations put in the files' entries (decision 0705)", || {
+                    held_rows
+                        .iter()
+                        .map(|(rel, rows)| {
+                            let values: usize = entries.values().filter_map(|e| e.rows.get(rel)).map(|(_, v)| v.len()).sum();
+                            format!("{rel} ({} rows held, {values} values put)", rows.as_ref().map_or(0, |r| r.len()))
+                        })
+                        .collect::<Vec<_>>()
+                        .join(", ")
+                });
             }
         }
         // A partial hit's relations its chunk did not derive: its entry's rows and lines, handed on as an evaluated
@@ -10624,6 +10628,85 @@ fn held_source(db: &Connection, got: &Outcome, rel: &str) -> Result<Arc<dyn crat
         return Err(Error::Plan(format!("{rel} is not held")));
     }
     Ok(Arc::new(Rows::of(db, rel, &crate::code_rule_dsl::logic::sql::ident(rel))?))
+}
+
+/// A held relation's rows (`rows`, its location column `at`) put in their files' entries (`owners` of a row's
+/// document), read where they lie: the location column counted first, so each file's rows are made once at their
+/// size, then the rows read a batch at a time (a held relation's batches, `each_held_batch`; a source's rows
+/// otherwise), each run of one document's rows appended to its files' rows, which then move into the entries. `Err`
+/// names why a row cannot be attributed (a row naming no document, or another chunk's).
+fn held_into_entries(rel: &str, rows: &dyn crate::code_rule_dsl::facts::vtab::Source, at: usize, owners: &dyn Fn(i64) -> Vector<i64>, entries: &mut HashMap<i64, memo::Entry>) -> std::result::Result<(), String> {
+    use rustc_hash::FxHashMap;
+    let width = rows.columns().len();
+    let n = rows.len();
+    if width == 0 || n == 0 {
+        return Ok(());
+    }
+    // Each document's files (`owners` depends on the document alone), and its rows.
+    let mut of_doc: FxHashMap<i64, (Vector<i64>, usize)> = FxHashMap::default();
+    for r in 0..n {
+        let v = rows.value(r, at);
+        let d = memo::document_of(v);
+        match of_doc.get_mut(&d) {
+            Some((_, k)) => *k += 1,
+            None => {
+                let of = owners(v);
+                if of.is_empty() || !of.iter().all(|f| entries.contains_key(f)) {
+                    return Err(format!("held {rel}: {}", if of.is_empty() { "a row naming no document" } else { "a row naming another chunk's document" }));
+                }
+                of_doc.insert(d, (of, 1));
+            }
+        }
+    }
+    let mut per_file: FxHashMap<i64, Vector<i64>> = FxHashMap::default();
+    {
+        let mut sizes: FxHashMap<i64, usize> = FxHashMap::default();
+        for (of, k) in of_doc.values() {
+            for f in of.iter() {
+                *sizes.entry(*f).or_default() += k * width;
+            }
+        }
+        for (f, size) in sizes {
+            per_file.insert(f, Vector::with_capacity(size));
+        }
+    }
+    let mut batch_into = |batch: &[i64]| {
+        let m = batch.len() / width;
+        let mut s = 0;
+        while s < m {
+            let d = memo::document_of(batch[s * width + at]);
+            let mut e = s + 1;
+            while e < m && memo::document_of(batch[e * width + at]) == d {
+                e += 1;
+            }
+            for f in of_doc[&d].0.iter() {
+                per_file.get_mut(f).expect("sized").extend_from_slice(&batch[s * width..e * width]);
+            }
+            s = e;
+        }
+    };
+    if crate::code_rule_dsl::logic::native::component::each_held_batch(rows, width, &mut batch_into).is_none() {
+        const BATCH: usize = 4096;
+        let all: Vector<usize> = (0..width).collect();
+        let mut scratch = vec![0i64; width * BATCH];
+        for start in (0..n).step_by(BATCH) {
+            let m = (n - start).min(BATCH);
+            for r in 0..m {
+                rows.row_at(start + r, &all, &mut scratch[r * width..(r + 1) * width]);
+            }
+            batch_into(&scratch[..m * width]);
+        }
+    }
+    for (f, values) in per_file {
+        let entry = entries.get_mut(&f).expect("checked");
+        match entry.rows.get_mut(rel) {
+            Some((_, had)) => had.extend_from_slice(&values),
+            None => {
+                entry.rows.insert(rel.to_owned(), (width, values));
+            }
+        }
+    }
+    Ok(())
 }
 
 /// Rows made once into a relation of `width` columns `c0`, `c1`, …: an answer's rows, or a view's the rounds made.

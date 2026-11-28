@@ -254,3 +254,17 @@ producing several, each its own stratum (the C preprocessor's `c_pp_tu_req`), wa
 a_header_edit_asks_again_only_for_the_units_that_read_it`: each unit 7 times); each request is posted once now, and a
 produced relation once asked is not asked again. Tests: `rerail-tests-corpus` (281 passed, with the coverage ledger's
 one more `to_number`, the router's, and `RERAIL_ASKS` classified a measurement aid), `rerail-tests-rr` (298).
+
+**The call's two hot spots, made cheap.** A profile of the call against no call (PostHog, get-handler-writes, each
+span's own CPU) found its extra cost in two places. The cone's digests (`cone_digests`) read each export a value at
+a time, a part search for every value, and hashed each row with a SHA-256 block: it now reads part by part
+(`Exports::visit`, `Rows::each_run`) and hashes a row with SipHash-1-3's 128 bits under fixed keys (77 samples, from
+119). And what a callable reads of a file (`pt_callee`, `pt_tm`, `pt_vpos`: 552,420 rows of `pt_tm` alone), held in
+every file's entry so that a later run's call into a file it does not build finds its rows (`calls::Held::add_entry`),
+was gathered by file into rows of its own before the entries took a second copy of them (`by_file_of`, decision 0705's
+held relations with it): 0.151 s and 239 MB a cold run. It is now written into the entries once, where it lies
+(`held_into_entries`): the location column counted first, each file's rows made at their size, each run of a
+document's rows appended to its files' rows, which move into the entries: 0.023 s and 2 MB. The same 5 findings. Two
+runs of the same program differ by 6.4 G instructions and 43 MB of peak, more than either change, so neither is
+claimed in the run's totals (785.8 G and 792.3 G instructions, against 780.4 G with no call). Tests: `rerail-tests-corpus` (281
+passed), `rerail-tests-rr` (298), `calls::tests`, `answers::tests`, `complete_answer` (14).
