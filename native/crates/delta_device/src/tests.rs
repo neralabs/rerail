@@ -274,6 +274,26 @@ fn the_boot_run_on_the_device_or_mixed_is_the_cpus() {
     }
 }
 
+/// The harness's laws for L1 over l0's chain of edits on disk (`harness_over_edits`: L1, L2, L3, L4 and L5, its cache
+/// dropped at a step each seed picks, and D1 under a changing want) on the tests' device and on a mixed runner.
+#[test]
+fn the_harness_passes_l1_over_edits_of_l0_on_the_device_or_mixed() {
+    use rerail_delta_exec::boot::harness_over_edits;
+    use rerail_delta_exec::contract::Bench;
+    device();
+    let base = |name: &str| std::env::temp_dir().join(format!("rerail-harness-{}-{name}", std::process::id()));
+    let on = Runner::on(Box::new(Gpu::host().expect("the tests' device"))).unwrap_or_else(|e| panic!("{e}"));
+    let mut bench = Bench::on(on);
+    harness_over_edits(&mut bench, &base("device"), false, 1..=2).unwrap_or_else(|e| panic!("the device: {e}"));
+    harness_over_edits(&mut bench, &base("device-want"), true, 4..=4).unwrap_or_else(|e| panic!("the device, a want: {e}"));
+    for seed in 1..=2u64 {
+        let mut bench = Bench::on(Runner::mixed(Box::new(Gpu::host().expect("the tests' device")), seed).unwrap_or_else(|e| panic!("{e}")));
+        harness_over_edits(&mut bench, &base(&format!("mixed-{seed}")), seed == 2, seed..=seed).unwrap_or_else(|e| panic!("seed {seed}: {e}"));
+        let [cpu, dev] = bench.ops.mixed_launches().expect("a mixed runner");
+        assert!(cpu > 0 && dev > 0, "seed {seed}: launches on both ({cpu} on the CPU, {dev} on the device)");
+    }
+}
+
 /// The boot chain (0686: Shape and Invariants, §3) on the tests' device and on three mixed runners: cold, unchanged,
 /// comments only and a rule added, each from the last run's pins. Every run shows what the CPU's must
 /// (`check_boot_chain`), and its K-form, its pins' changes and its launches are the CPU run's.

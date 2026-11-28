@@ -3,7 +3,7 @@
 use super::*;
 use crate::L0;
 use crate::boot::{DocSet, Pins};
-use crate::contract::{Bench, Global, Instance, harness_on, oracle_rows, reference};
+use crate::contract::{Bench, Global, Instance, oracle_rows, reference};
 use crate::dir::Directory;
 use crate::files::{Doc, Store, World};
 use crate::files::tests::{past_racy_window, racy_window, root, write};
@@ -49,14 +49,6 @@ impl Disk {
         Disk { root, docs, atoms, l1, inst, last }
     }
 
-    /// l0 read by the file layer (B§8's run, its first line).
-    fn answer(&mut self, bench: &mut Bench) -> Doc {
-        let mut leaves = self.docs.world.leaves_w(&mut bench.dir);
-        let doc = self.docs.read(bench, &mut leaves, self.atoms, PATH, MODULE).unwrap();
-        self.docs.world.commit_leaves(&bench.ops, &mut bench.dir, leaves).unwrap();
-        doc
-    }
-
     /// B§8's run, its first two lines, from `last`: its pins.
     fn run_from(&mut self, bench: &mut Bench, last: Option<&Pins>) -> Result<(Pins, Doc, Work), String> {
         crate::boot::run(&self.l1, &mut self.inst, PATH, MODULE, self.atoms, &mut self.docs, bench, last)
@@ -82,37 +74,14 @@ impl Disk {
 
 /// l0 with a rule added, a rule changed and a rule removed.
 fn edits() -> [String; 3] {
-    let added = format!("{L0}\nb6_added(c, h) :- k_rule(_, c, h), !k_wild(_, c).\n");
-    let changed = added.replace("k_wild(d, t) :- kind(d, t, \"wildcard\").", "k_wild(d, t) :- kind(d, t, \"wildcard\"), node(d, t, _, _, _).");
-    let line = changed.lines().find(|l| l.starts_with("k_num(")).unwrap().to_string();
-    let removed = changed.replace(&format!("{line}\n"), "");
-    assert!(added != L0 && changed != added && removed != changed);
-    [added, changed, removed]
+    crate::boot::chain_edits()
 }
 
 #[test]
 fn the_harness_passes_l1_over_edits_of_l0_on_disk() {
     let mut bench = Bench::new().unwrap();
-    let mut disk = Disk::new(&mut bench, "b6-chain");
-    let (mut heads, mut globals) = (vec![vec![None]], vec![vec![Global { block: disk.atoms.0, count: 0 }]]);
-    let [added, changed, removed] = edits();
-    // Each edit's stat differs from the one before (its size, its modification time).
-    let chain = [None, None, Some(added.as_str()), Some(changed.as_str()), None, Some(removed.as_str()), Some(L0)];
-    for (k, e) in chain.into_iter().enumerate() {
-        if let Some(text) = e {
-            disk.edit(text, 50 - 5 * k as u64);
-        }
-        disk.answer(&mut bench);
-        heads.push(vec![disk.docs.tape.head()]);
-        globals.push(vec![disk.globals(&bench)]);
-    }
-    assert_eq!(heads[1], heads[2], "an unchanged file is the identity");
-    let Disk { l1, mut docs, .. } = disk;
-    // L5: the cache dropped at a random step of the chain, a seed each.
-    for seed in 1..=3u64 {
-        let drop_at = 1 + (rerail_blocks::layer::mix(seed) % (heads.len() as u64 - 1)) as usize;
-        harness_on(&l1, &mut bench, std::slice::from_mut(&mut docs.tape), &heads, &globals, drop_at, None).unwrap_or_else(|b| panic!("{b:?}"));
-    }
+    let (root, _) = root("b6-chain");
+    crate::boot::harness_over_edits(&mut bench, root.parent().unwrap(), false, 1..=3).unwrap_or_else(|e| panic!("{e}"));
 }
 
 /// D1 on L1 over the same chain of edits on disk: under a want that names all of l0's relations, two of them, none,
@@ -122,28 +91,8 @@ fn the_harness_passes_l1_over_edits_of_l0_on_disk() {
 #[test]
 fn the_harness_passes_l1_under_a_changing_want() {
     let mut bench = Bench::new().unwrap();
-    let mut disk = Disk::new(&mut bench, "b6-want");
-    let (mut heads, mut globals) = (vec![vec![None]], vec![vec![Global { block: disk.atoms.0, count: 0 }]]);
-    let [added, changed, removed] = edits();
-    let chain = [None, None, Some(added.as_str()), None, Some(changed.as_str()), None, Some(removed.as_str()), Some(L0)];
-    for (k, e) in chain.into_iter().enumerate() {
-        if let Some(text) = e {
-            disk.edit(text, 50 - 5 * k as u64);
-        }
-        disk.answer(&mut bench);
-        heads.push(vec![disk.docs.tape.head()]);
-        globals.push(vec![disk.globals(&bench)]);
-    }
-    let d = disk.docs.key(&bench.dir, disk.atoms, PATH).unwrap();
-    let all: BTreeSet<(usize, i64)> = (0..crate::kform::RELATIONS.len()).map(|k| (k, d)).collect();
-    let some = BTreeSet::from([(1, d), (3, d)]);
-    let cycle = [all.clone(), some, BTreeSet::new(), BTreeSet::new(), all];
-    let wants: Vec<BTreeSet<(usize, i64)>> = (0..heads.len()).map(|k| cycle[k % cycle.len()].clone()).collect();
-    let Disk { l1, mut docs, .. } = disk;
-    for seed in 4..=5u64 {
-        let drop_at = 1 + (rerail_blocks::layer::mix(seed) % (heads.len() as u64 - 1)) as usize;
-        harness_on(&l1, &mut bench, std::slice::from_mut(&mut docs.tape), &heads, &globals, drop_at, Some(&wants)).unwrap_or_else(|b| panic!("{b:?}"));
-    }
+    let (root, _) = root("b6-want");
+    crate::boot::harness_over_edits(&mut bench, root.parent().unwrap(), true, 4..=5).unwrap_or_else(|e| panic!("{e}"));
 }
 
 /// Demand reaches the world as reads (P§7.1): a run whose productions name another document asks for it and lets l0

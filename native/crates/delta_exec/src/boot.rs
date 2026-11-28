@@ -630,3 +630,70 @@ pub fn check_boot_chain(runs: &[Ran], atoms: impl Fn(&str) -> Option<i64>) {
     assert_eq!((new[1].len(), new[2].len(), new[3].len(), new[6].len()), (2, 7, 5, 2), "two steps, seven arguments (two in the head), five variables, two wildcards");
     assert!(new[7].is_empty(), "the module's stratum unchanged");
 }
+
+/// l0 with a rule added, then that rule's neighbour changed, then a rule removed: the edits the harness's chains
+/// thread through L1.
+#[cfg(any(test, feature = "test-hooks"))]
+pub fn chain_edits() -> [String; 3] {
+    let l0 = crate::L0;
+    let added = format!("{l0}\nb6_added(c, h) :- k_rule(_, c, h), !k_wild(_, c).\n");
+    let changed = added.replace("k_wild(d, t) :- kind(d, t, \"wildcard\").", "k_wild(d, t) :- kind(d, t, \"wildcard\"), node(d, t, _, _, _).");
+    let line = changed.lines().find(|l| l.starts_with("k_num(")).expect("a k_num rule").to_string();
+    let removed = changed.replace(&format!("{line}\n"), "");
+    assert!(added != l0 && changed != added && removed != changed);
+    [added, changed, removed]
+}
+
+/// The harness's laws (L1 to L5, and D1 under `wants`) for L1 over a chain of edits of l0 on disk, on `bench`: the file
+/// layer reads each version into the document set (an unchanged one twice, the identity), and `contract::harness_on`
+/// threads the set's states through L1, its cache dropped at a step each seed of `seeds` picks. Under `wants`, the want
+/// cycles through all of l0's relations, two of them and none.
+#[cfg(any(test, feature = "test-hooks"))]
+pub fn harness_over_edits(bench: &mut Bench, base: &std::path::Path, wants: bool, seeds: std::ops::RangeInclusive<u64>) -> Result<(), String> {
+    use std::collections::BTreeSet;
+    const PATH: &str = "bootstrap-l0.rerail";
+    let root = base.join("root");
+    std::fs::create_dir_all(&root).map_err(|e| e.to_string())?;
+    let store = crate::files::Store::open(&base.join("store"))?;
+    let atoms = Atoms::new(&mut bench.dir);
+    let world = World::new(root.clone(), store, &bench.dir, [None; 3])?;
+    let mut docs = DocSet::new(world, &bench.dir, None, None)?;
+    let [added, changed, removed] = chain_edits();
+    let l0 = crate::L0.to_string();
+    // Each edit's stat differs from the one before (its size, its modification time); `None` reads the file again.
+    let chain: Vec<Option<&String>> = if wants {
+        vec![Some(&l0), None, Some(&added), None, Some(&changed), None, Some(&removed), Some(&l0)]
+    } else {
+        vec![Some(&l0), None, Some(&added), Some(&changed), None, Some(&removed), Some(&l0)]
+    };
+    let count = |dir: &Directory| Global { block: atoms.0, count: u64::from(atoms.count(dir)) };
+    let (mut heads, mut globals) = (vec![vec![None]], vec![vec![count(&bench.dir)]]); // copy: not block data (the chain's states)
+    for (k, e) in chain.into_iter().enumerate() {
+        if let Some(text) = e {
+            std::fs::write(root.join(PATH), text).map_err(|e| e.to_string())?;
+            let f = std::fs::File::options().write(true).open(root.join(PATH)).map_err(|e| e.to_string())?;
+            f.set_modified(std::time::SystemTime::now() - std::time::Duration::from_secs(600 - 10 * k as u64)).map_err(|e| e.to_string())?;
+        }
+        let mut leaves = docs.world.leaves_w(&mut bench.dir);
+        docs.read(bench, &mut leaves, atoms, PATH, "bootstrap-l0")?;
+        docs.world.commit_leaves(&bench.ops, &mut bench.dir, leaves)?;
+        heads.push(vec![docs.tape.head()]);
+        globals.push(vec![count(&bench.dir)]);
+    }
+    if heads[1] != heads[2] {
+        return Err("an unchanged file is the identity: the set's head moved".into());
+    }
+    let wanted = if wants {
+        let d = docs.key(&bench.dir, atoms, PATH)?;
+        let all: BTreeSet<(usize, i64)> = (0..RELATIONS.len()).map(|k| (k, d)).collect();
+        let cycle = [all.clone(), BTreeSet::from([(1, d), (3, d)]), BTreeSet::new(), BTreeSet::new(), all];
+        Some((0..heads.len()).map(|k| cycle[k % cycle.len()].clone()).collect::<Vec<_>>())
+    } else {
+        None
+    };
+    for seed in seeds {
+        let drop_at = 1 + (rerail_blocks::layer::mix(seed) % (heads.len() as u64 - 1)) as usize;
+        crate::contract::harness_on(&L1, bench, std::slice::from_mut(&mut docs.tape), &heads, &globals, drop_at, wanted.as_deref()).map_err(|b| format!("seed {seed}: {b:?}"))?;
+    }
+    Ok(())
+}
