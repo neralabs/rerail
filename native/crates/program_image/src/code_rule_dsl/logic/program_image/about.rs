@@ -25,6 +25,10 @@ pub const RELATION_COLUMNS: &[(&str, &[usize])] = &[
     ("native_reach", &[1, 2, 3]),
     ("native_reach_through", &[1, 2, 3]),
     ("native_rank", &[1, 2, 3]),
+    ("native_form", &[1]),
+    ("native_form_read", &[1, 3]),
+    ("native_form_demand", &[1, 3]),
+    ("native_form_arg", &[1]),
     ("lattice", &[1]),
     ("lattice_merge", &[1]),
     ("lattice_widen", &[1]),
@@ -55,6 +59,7 @@ pub enum NativeKind {
     Reach,
     ReachThrough,
     Rank,
+    Form,
 }
 rerail_section::plain_archive!(NativeKind);
 
@@ -85,6 +90,9 @@ pub enum NativeSpec {
     ReachThrough { reach: RelId, map: RelId },
     /// Its op's text.
     Rank { query: RelId, counted: RelId, group: usize, op: AtomId },
+    /// The form's name, its keyed column and the demand relations that ask its values, the relations it reads in
+    /// order, and its words.
+    Form { form: AtomId, keyed: Option<usize>, demand: Vec<RelId>, reads: Vec<RelId>, args: Vec<AtomId> },
 }
 
 /// A lattice relation's declaration, as the analyses read it.
@@ -246,6 +254,8 @@ impl AboutData {
         let mut shape_after: Vec<(i64, AtomId)> = Vec::new();
         let mut shape_bound: Vec<(i64, i64, AtomId)> = Vec::new();
         let mut layouts: Vec<(RelId, i64, crate::code_rule_dsl::logic::front::ast::LayoutFact)> = Vec::new();
+        let mut form_reads: Vec<(RelId, i64, RelId, bool)> = Vec::new();
+        let mut form_args: Vec<(RelId, i64, AtomId)> = Vec::new();
         for f in v.about_facts() {
             let name = v.text(f.name());
             for row in f.rows() {
@@ -306,6 +316,21 @@ impl AboutData {
                             _ => None,
                         },
                     )),
+                    "native_form" => about.natives.extend(native(
+                        NativeKind::Form,
+                        &[],
+                        a(2).map(|form| NativeSpec::Form { form, keyed: int(row.get(3).copied()).and_then(|k| usize::try_from(k).ok()), demand: Vec::new(), reads: Vec::new(), args: Vec::new() }),
+                    )),
+                    "native_form_read" | "native_form_demand" => {
+                        if let (Some(rel), Some(i), Some(read)) = (r(1), int(row.get(2).copied()), r(3)) {
+                            form_reads.push((rel, i, read, name == "native_form_demand"));
+                        }
+                    }
+                    "native_form_arg" => {
+                        if let (Some(rel), Some(i), Some(arg)) = (r(1), int(row.get(2).copied()), a(3)) {
+                            form_args.push((rel, i, arg));
+                        }
+                    }
                     "native_reach_through" => about.natives.extend(native(NativeKind::ReachThrough, &[2, 3], r(2).zip(r(3)).map(|(reach, map)| NativeSpec::ReachThrough { reach, map }))),
                     "lattice" => {
                         if let (Some(rel), Some(Cell::Int(keys)), Some(ty)) = (r(1), row.get(2).copied(), row.get(3).copied().and_then(atom)) {
@@ -379,6 +404,20 @@ impl AboutData {
         for (rel, _, p) in patterns {
             if let Some(NativeRef { spec: NativeSpec::TextTest { patterns, .. }, .. }) = about.natives.iter_mut().find(|n| n.rel == rel) {
                 patterns.push(p);
+            }
+        }
+        // Reads before demand, each in its order (`front::ast::Native::reads`).
+        form_reads.sort_unstable_by_key(|&(rel, i, _, demand)| (rel, demand, i));
+        for (rel, _, x, is_demand) in form_reads {
+            if let Some(NativeRef { spec: NativeSpec::Form { reads, demand, .. }, reads: all, .. }) = about.natives.iter_mut().find(|n| n.rel == rel) {
+                if is_demand { demand.push(x) } else { reads.push(x) }
+                all.push(x);
+            }
+        }
+        form_args.sort_unstable_by_key(|&(rel, i, _)| (rel, i));
+        for (rel, _, x) in form_args {
+            if let Some(NativeRef { spec: NativeSpec::Form { args, .. }, .. }) = about.natives.iter_mut().find(|n| n.rel == rel) {
+                args.push(x);
             }
         }
         groups.sort_unstable_by_key(|&(rel, i, _)| (rel, i));

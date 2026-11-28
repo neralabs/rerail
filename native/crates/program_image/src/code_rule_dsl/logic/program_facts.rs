@@ -128,6 +128,10 @@ pub fn schema() -> BTreeMap<Name, crate::code_rule_dsl::logic::front::name::List
         ("native_reach", &["p:sym", "rel:sym", "seed:sym", "edge:sym"]),
         ("native_reach_through", &["p:sym", "rel:sym", "reach:sym", "map:sym"]),
         ("native_rank", &["p:sym", "rel:sym", "query:sym", "counted:sym", "group:int", "op:sym"]),
+        ("native_form", &["p:sym", "rel:sym", "form:sym", "keyed:int"]),
+        ("native_form_read", &["p:sym", "rel:sym", "i:int", "read:sym"]),
+        ("native_form_demand", &["p:sym", "rel:sym", "i:int", "demand:sym"]),
+        ("native_form_arg", &["p:sym", "rel:sym", "i:int", "arg:sym"]),
         ("rx_span", &["p:sym", "span:sym", "s:sym"]),
         // `ast_patterns`: the AST patterns the program matches (`n ~ `…``), each by its text.
         ("ast_pattern", &["p:sym", "s:sym"]),
@@ -398,6 +402,18 @@ impl Writer<'_> {
             Native::Reach { seed, edge } => self.row("native_reach", vec![s(rel), s(seed), s(edge)]),
             Native::ReachThrough { reach, map } => self.row("native_reach_through", vec![s(rel), s(reach), s(map)]),
             Native::Rank { query, counted, group, op } => self.row("native_rank", vec![s(rel), s(query), s(counted), n(*group), s(op)]),
+            Native::Form { form, keyed, reads, args } => {
+                self.row("native_form", vec![s(rel), s(form), n(keyed.as_ref().map_or(-1, |k| k.0 as i64))]);
+                for (i, d) in keyed.iter().flat_map(|k| k.1.iter()).enumerate() {
+                    self.row("native_form_demand", vec![s(rel), n(i), s(d)]);
+                }
+                for (i, read) in reads.iter().enumerate() {
+                    self.row("native_form_read", vec![s(rel), n(i), s(read)]);
+                }
+                for (i, arg) in args.iter().enumerate() {
+                    self.row("native_form_arg", vec![s(rel), n(i), s(arg)]);
+                }
+            }
         }
     }
 }
@@ -456,7 +472,7 @@ pub enum Field<'a> {
 }
 
 /// The native relations' about relations: each names its relation in its first column after the program's.
-pub const NATIVE_RELATIONS: &[&str] = &["native_dfs", "native_roots", "native_match", "native_group", "native_text_test", "native_text_pattern", "native_python_candidates", "native_python", "native_components", "native_reach", "native_reach_through", "native_rank"];
+pub const NATIVE_RELATIONS: &[&str] = &["native_dfs", "native_roots", "native_match", "native_group", "native_text_test", "native_text_pattern", "native_python_candidates", "native_python", "native_components", "native_reach", "native_reach_through", "native_rank", "native_form", "native_form_read", "native_form_demand", "native_form_arg"];
 
 impl<'a> Field<'a> {
     /// The relations this field's rows are rows of: stating the field replaces all of theirs.
@@ -827,6 +843,17 @@ impl<'a, C: Cell> Reader<'a, C> {
         }
         for row in self.get("native_components") {
             out.insert(text(&row[0])?, Native::Components { edge: text(&row[1])?, own: text(&row[2])? });
+        }
+        let form_reads = self.by_id_text("native_form_read")?;
+        let form_args = self.by_id_text("native_form_arg")?;
+        let form_demand = self.by_id_text("native_form_demand")?;
+        for row in self.get("native_form") {
+            let rel = text(&row[0])?;
+            let reads = ordered(form_reads.get(&rel).into_iter().flatten().map(|r| Ok((int(&r[0])?, text(&r[1])?))).collect::<Result<Vec<_>, String>>()?);
+            let args = ordered(form_args.get(&rel).into_iter().flatten().map(|r| Ok((int(&r[0])?, text(&r[1])?))).collect::<Result<Vec<_>, String>>()?);
+            let demand = ordered(form_demand.get(&rel).into_iter().flatten().map(|r| Ok((int(&r[0])?, text(&r[1])?))).collect::<Result<Vec<_>, String>>()?);
+            let keyed = usize::try_from(int(&row[2])?).ok().map(|c| (c, demand));
+            out.insert(rel, Native::Form { form: text(&row[1])?, keyed, reads, args });
         }
         for row in self.get("native_reach") {
             out.insert(text(&row[0])?, Native::Reach { seed: text(&row[1])?, edge: text(&row[2])? });

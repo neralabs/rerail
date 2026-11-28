@@ -798,6 +798,13 @@ impl<'a> Run<'a, '_> {
         use super::program_image::{ArchivedNativeSpec, NativeSpec};
         let vs = Arc::clone(&self.versions);
         let f = vs.whole(self.version);
+        // A Rust form reads what it reads where the run holds it: nothing made a table.
+        if let ArchivedNativeSpec::Form { form, keyed, demand, reads, args } = &native.spec {
+            let demand: Vec<String> = demand.iter().map(|&d| f.rel_name(d).to_owned()).collect();
+            let reads: Vec<String> = reads.iter().map(|&d| f.rel_name(d).to_owned()).collect();
+            let args: Vec<&str> = args.iter().map(|&a| f.text(a)).collect();
+            return self.form_relation(rel, f.text(*form), keyed.as_ref().map(|&k| k as usize), &demand, &reads, &args);
+        }
         let reads: Vec<String> = native.reads.iter().map(|&r| f.rel_name(r).to_owned()).collect();
         self.ensure(&reads)?;
         self.materialize(&reads)?;
@@ -816,6 +823,7 @@ impl<'a> Run<'a, '_> {
             ArchivedNativeSpec::Reach { .. } | ArchivedNativeSpec::ReachThrough { .. } => return self.reach_rows(rel, &native.spec),
             ArchivedNativeSpec::Python { kind, input, targets } => return self.python_relation(rel, f.text(*kind), f.rel_name(*input), targets.map(|t| f.rel_name(t))),
             ArchivedNativeSpec::PythonCandidates { input, targets, .. } => return self.python_relation(rel, "candidates", f.rel_name(*input), Some(f.rel_name(*targets))),
+            ArchivedNativeSpec::Form { .. } => unreachable!("a form is made above"),
         };
         let cols = |r: &str, n: usize| (0..n).map(|c| self.model.col(r, c)).collect::<Vec<_>>();
         let read = |sql: &str, width: usize| -> Result<Vec<Vector<i64>>> {
@@ -854,6 +862,72 @@ impl<'a> Run<'a, '_> {
         } else { None };
         if source.is_none() { self.ensure(&[input.to_owned()])?; }
         self.demands.read(&self.db, input, &self.model.col(input, 0), source)
+    }
+
+    /// A Rust form's rows (`front::Native::Form`): made by the registered form over the run's batch, for the values
+    /// of column `keyed` its demand relations ask (every row without), held as the relation's rows, its symbols
+    /// interned once. It reads its relations where the run holds them (decision 0353).
+    fn form_relation(&mut self, rel: &str, name: &str, keyed: Option<usize>, demand: &[String], reads: &[String], args: &[&str]) -> Result<usize> {
+        use super::native::component;
+        use crate::code_rule_dsl::facts::vtab::{self, syntax::forms};
+        let form = forms::form(name).ok_or_else(|| Error::Plan(format!("{rel}: no Rust form {name} is registered")))?;
+        if self.model.inputs.atoms.is_none() {
+            return Err(Error::Plan(format!("{rel}: a Rust form needs the run's symbols as atoms")));
+        }
+        let width = self.fields().width(rel);
+        if form.columns().len() != width {
+            return Err(Error::Plan(format!("{rel}: form {name} makes {} columns, the relation has {width}", form.columns().len())));
+        }
+        let keys = match keyed {
+            None => None,
+            Some(_) => {
+                let mut keys: Vec<i64> = Vec::new();
+                for d in demand {
+                    keys.extend(self.native_demand(d)?.iter().copied());
+                }
+                keys.sort_unstable();
+                keys.dedup();
+                Some(keys)
+            }
+        };
+        let mut held = Vec::with_capacity(reads.len());
+        for r in reads {
+            let source = if self.native_rels.contains(r) { component::derived(self.db, r) } else if self.fields().is_input(r) { vtab::bound_source(self.db, r) } else { None };
+            held.push(source.ok_or_else(|| Error::Plan(format!("{rel}: form {name} reads {r}, which the run does not hold")))?);
+        }
+        let mut out = forms::FormRows::new(width);
+        if keys.as_ref().is_none_or(|k| !k.is_empty()) {
+            let source = vtab::bound_source(self.db, "node").ok_or_else(|| Error::Plan(format!("{rel}: form {name} needs bound syntax facts")))?;
+            let batch = source.python_batch().ok_or_else(|| Error::Plan(format!("{rel}: form {name} needs a syntax batch")))?;
+            let call = forms::FormCall { batch: &batch, keys: keys.as_deref(), reads: &held, args };
+            let _span = super::profile::span(|| format!("form {name}: {rel}"));
+            form.rows(&call, keyed.unwrap_or(0), &mut out).map_err(|e| Error::Plan(format!("{rel}: form {name}: {e}")))?;
+        }
+        let symbols: Vec<usize> = form.columns().iter().enumerate().filter(|(_, t)| **t == "sym").map(|(i, _)| i).collect();
+        if !symbols.is_empty() && !out.is_empty() {
+            let ids = super::native::intern_batch(&self.db, out.texts.iter().map(String::as_str))?;
+            for row in out.cells.chunks_mut(width) {
+                for &c in &symbols {
+                    row[c] = ids[row[c] as usize];
+                }
+            }
+        }
+        let values: Vec<Vector<i64>> = out.cells.chunks(width.max(1)).map(|r| r.iter().copied().collect()).collect();
+        component::retain(self.db, rel, values, vec![b'i'; width])?;
+        self.native_rels.insert(rel.to_owned());
+        let source = component::derived(self.db, rel).expect("just retained");
+        let stats = source.statistics().expect("retained relations own their statistics");
+        live_stats(&mut self.model, rel, LiveRel {
+            n: source.len() as i64,
+            delta: source.len() as i64,
+            ndv: stats.iter().map(|s| s.2).collect(),
+            sq: stats.iter().map(|s| s.3).collect(),
+            freq: Vec::new(),
+            keys: Vec::new(),
+            counts: Vec::new(),
+        });
+        super::profile::decision("Rust form result", || format!("{rel}: form {name}, {}, rows={}", keys.as_ref().map_or("all keys".to_owned(), |k| format!("{} keys asked", k.len())), source.len()));
+        Ok(source.len())
     }
 
     /// One producer invocation for a completed demand relation; native rows never take a SQL round trip.
@@ -8050,7 +8124,7 @@ fn run_within(program: &body::Placed, db: &Connection, inputs: Inputs, lowering:
         }
         // Python operators consume completed demands, not their synthetic locality-proof rules. Keep native
         // inputs and outputs in the set store before the SQL fallback can materialize them.
-        use super::program_image::{ArchivedNativeSpec, NativeSpec};
+        use super::program_image::{ArchivedNativeRef, ArchivedNativeSpec, NativeSpec};
         if atoms && scc.iter().any(|r| matches!(f0.native(r).map(|n| &n.spec), Some(ArchivedNativeSpec::Python { .. } | ArchivedNativeSpec::PythonCandidates { .. }))) {
             let rel = scc.iter().next().unwrap();
             let (kind, input, targets) = match f0.native(rel).map(|n| &n.spec) {
@@ -8063,6 +8137,26 @@ fn run_within(program: &body::Placed, db: &Connection, inputs: Inputs, lowering:
             }
             let n = run.python_relation(rel, kind, input, targets)?;
             super::profile::stratum(&skey, "native fact operator over retained demand relations", String::new);
+            super::profile::note(format!("{rel} rows"), || n.to_string());
+            outcome.native.insert(key);
+            continue;
+        }
+        // A form's rule only orders it: evaluated, it would make other rows than its form's.
+        if let Some(rel) = scc.iter().find(|r| matches!(f0.native(r).map(|n| &n.spec), Some(ArchivedNativeSpec::Form { .. })))
+            && (scc.len() > 1 || !atoms)
+        {
+            return Err(Error::Plan(format!("{rel}: a Rust form in a recursive stratum ({} relations) or a run without atoms", scc.len())));
+        }
+        // A Rust form (`front::Native::Form`) over its demand and what it reads, held: its rule only orders it.
+        if atoms
+            && let [rel] = scc.iter().collect::<Vec<_>>().as_slice()
+            && let Some(native @ ArchivedNativeRef { spec: ArchivedNativeSpec::Form { .. }, .. }) = f0.native(rel)
+        {
+            if native.reads.iter().any(|&r| scc.contains(f0.rel_name(r))) {
+                return Err(Error::Plan(format!("{rel}: a Rust form reads its own stratum")));
+            }
+            let n = run.native_relation(rel, native)?;
+            super::profile::stratum(&skey, "Rust form over its demand", String::new);
             super::profile::note(format!("{rel} rows"), || n.to_string());
             outcome.native.insert(key);
             continue;

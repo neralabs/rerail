@@ -68,6 +68,8 @@ pub mod code_rule_dsl {
             #[cfg(test)]
             pub mod callable_tests;
             #[cfg(test)]
+            pub mod forms_tests;
+            #[cfg(test)]
             pub mod tape_tests;
             #[cfg(test)]
             pub mod tests;

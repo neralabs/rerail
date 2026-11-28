@@ -642,6 +642,11 @@ pub enum Native {
     Python { kind: String, input: String, targets: Option<String> },
     /// Conservative call candidates over demanded documents; exact semantic operators remain separate.
     PythonCandidates { input: String, targets: String, context: String, member: String },
+    /// `.form r FORM reads s… args w…`: `r`'s rows made by the Rust form `FORM` (registered by name,
+    /// `facts::vtab::syntax::Form`) over the chunk's tapes and the relations `reads`. With `keyed`, only for the
+    /// values of column `keyed.0` its demand relations `keyed.1` ask (the guards the magic transformation gives its
+    /// rules), else every row. `args` are its words (kinds, fields).
+    Form { form: String, keyed: Option<(usize, Vec<String>)>, reads: Vec<String>, args: Vec<String> },
 }
 
 impl Native {
@@ -672,6 +677,11 @@ impl Native {
                 *query = rename(query);
                 *counted = rename(counted);
             }
+            Native::Form { keyed, reads, .. } => {
+                for r in reads.iter_mut().chain(keyed.iter_mut().flat_map(|(_, d)| d.iter_mut())) {
+                    *r = rename(r);
+                }
+            }
         }
     }
     /// The relations it reads.
@@ -685,6 +695,7 @@ impl Native {
             Native::Reach { seed, edge } => vec![seed.as_str(), edge.as_str()],
             Native::ReachThrough { reach, map } => vec![reach.as_str(), map.as_str()],
             Native::Rank { query, counted, .. } => vec![query.as_str(), counted.as_str()],
+            Native::Form { keyed, reads, .. } => reads.iter().chain(keyed.iter().flat_map(|(_, d)| d.iter())).map(String::as_str).collect(),
         }
     }
 }

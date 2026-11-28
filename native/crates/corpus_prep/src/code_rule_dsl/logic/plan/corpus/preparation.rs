@@ -20,6 +20,7 @@ pub mod asks;
 pub mod callable;
 pub mod prune;
 pub mod rank;
+pub mod forms;
 pub mod simplify;
 mod nearest;
 pub mod parts;
@@ -304,6 +305,8 @@ pub(super) fn front_of(version: Arc<Version>, dialect: crate::code_rule_dsl::lan
         p.program(&mut kept::Kept);
     }
     p.program(&mut simplify::BaseInputs);
+    // A relation with a Rust form (`.form`) is made by it: its rules give way to one that orders it.
+    p.program(&mut forms::Forms::default());
     // Only the rules an output reads, directly or through other rules (T's front prunes the same way).
     p.program(&mut prune::Prune::default());
     // Bodies simplified (decision 0038), then pruned again.
@@ -350,6 +353,12 @@ pub(super) fn front_of(version: Arc<Version>, dialect: crate::code_rule_dsl::lan
                 let _ = write!(out, "// ---- a program, its outputs: {}\n{}", outputs.join(", "), v.rules().map(|r| format!("{}\n", v.show_rule(r))).collect::<String>());
             }
         }
+    }
+    // A form made for the values its demand asks, where the demand guards its every rule on a column it is keyed by.
+    let mut form_demand = forms::FormDemand::default();
+    p.program(&mut form_demand);
+    if form_demand.unguarded {
+        p.program(&mut prune::Prune::default());
     }
     let mut undo = demand::UndoInCycles::default();
     p.program(&mut undo);

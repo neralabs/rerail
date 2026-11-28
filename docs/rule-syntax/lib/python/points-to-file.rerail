@@ -844,6 +844,9 @@ pt_gtm(n, cat("~", to_string(d), "@", to_string(b), "+", to_string(e - b), "^", 
 // name, so not that.
 .decl pt_tm_same(n: node, c: number)
 .pragma "magic-transform" "pt_tm_same"
+// Made by its Rust form (`tape.same_span`), for the nodes its readers ask: a walk up each one's parents. The rules
+// below are its definition, and the form's tests' oracle.
+.form pt_tm_same tape.same_span
 pt_tm_same(n, 0) :- node(_, n, _, _, _), !child(_, n, _).
 pt_tm_same(n, 0) :- child(p, n, _), node(_, p, _, pb, _), node(_, n, _, b, _), pb != b.
 pt_tm_same(n, 0) :- child(p, n, _), node(_, p, _, _, pe), node(_, n, _, _, e), pe != e.

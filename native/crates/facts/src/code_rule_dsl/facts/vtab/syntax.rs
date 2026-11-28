@@ -68,6 +68,7 @@ mod cells;
 #[cfg(any(target_os = "macos", target_os = "linux", windows))]
 pub mod device_chunk;
 pub mod view_docs;
+pub mod forms;
 use guests::GuestRows;
 
 /// Which projection of the tree a batch serves.

@@ -273,6 +273,7 @@ impl<'v> Printer<'v> {
                 let (rel, x, y, z) = (relation(head_rel), var("rr_x"), var("rr_y"), var("rr_z"));
                 format!("{rel}({x}, {y}) :- {}({x}, {y}).\n{rel}({x}, {z}) :- {rel}({x}, {y}), {}({y}, {z}).", relation(seed), relation(edge))
             }
+            Native::Form { .. } => unreachable!("a form's rule is printed as it is"),
             Native::ReachThrough { reach, map } => {
                 let (x, e, q) = (var("rr_x"), var("rr_e"), var("rr_q"));
                 format!("{}({x}, {q}) :- {}({x}, {e}), {}({e}, {q}).", relation(head_rel), relation(reach), relation(map))
@@ -416,7 +417,8 @@ fn print_written(v: &Version) -> Result<String, Error> {
     let natives = ProgramFields::natives(v);
     for r in v.rules() {
         // A relation made natively is printed as what made it: its rule only orders it after its inputs.
-        if let Some(native) = natives.get(v.rel_name(r.head().rel())) {
+        // A Rust form's rule is printed as it is: its `.form` setting makes it a form again when read back.
+        if let Some(native) = natives.get(v.rel_name(r.head().rel())).filter(|n| !matches!(n, Native::Form { .. })) {
             writeln!(out, "{}", p.native_rule(r, native)?).expect("a string");
             continue;
         }
