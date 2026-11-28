@@ -24,10 +24,17 @@
 //   P8   over the events' items in frame order: P8a each item's frame, the segmented last-value of the heads (`p3_run`,
 //        `last_merge`, `p8a_write`); P8b each item's frame's children so far and the last one's node (`p8b_run`,
 //        `kids_merge`, `p8b_write`).
+//   P6   the tape's rows: MAKE each of its blocks (`make_blocks`, from P5's nodes); P6C and P6W each chunk from its
+//        state (its place, its levels, its frames by `chunk_frames`, its sum's nodes and last start) on the cursor
+//        from the middle on the writer's region `t` (`write_step`), counting its side lists' entries, then writing.
+//   F    END each block's side lists counted, the last block ending the middle (`end_middle`); FIN each block final,
+//        its laid bytes and faults a leaf of B (an add); TAIL the tail from B's root; PIECES each block's lists laid
+//        from its sum, and the newline index, where they go.
 
 #pragma once
+#include <ukl/writer_mid.h>
 #define UKL_PH_FIELDS UKL_GLOBAL const uint8_t* src; UKL_GLOBAL const uint32_t* starts; UKL_GLOBAL uint32_t* arrays; UKL_GLOBAL const uint32_t* toks; \
-    UKL_GLOBAL uint8_t* rets; uint32_t n; uint32_t len; bool refused;
+    UKL_GLOBAL uint8_t* rets; UKL_GLOBAL const uint8_t* t; UKL_GLOBAL uint32_t* f2; uint32_t n; uint32_t len; bool refused;
 #include <ukl/phases_run.h>
 
 // The program's header, after the runner's: the host's (the records a chunk, the pool's words, the arrays' words), then
@@ -61,7 +68,32 @@
 #define UKL_T2_O_EKEYS (UKL_PH_H + 24u)
 #define UKL_T2_O_FRAME_OF (UKL_PH_H + 25u)
 #define UKL_T2_O_KIDS (UKL_PH_H + 26u)
-#define UKL_T2_H (UKL_PH_H + 32u)
+#define UKL_T2_NB (UKL_PH_H + 27u)
+// The host's: the blocks its region has room for.
+#define UKL_T2_MOST (UKL_PH_H + 28u)
+#define UKL_T2_G_END (UKL_PH_H + 29u)
+#define UKL_T2_ENDED (UKL_PH_H + 30u)
+#define UKL_T2_TAILED (UKL_PH_H + 31u)
+// The finish's layout (`UKL_T2_F_*` words from it).
+#define UKL_T2_F (UKL_PH_H + 32u)
+#define UKL_T2_F_TAIL 0u
+#define UKL_T2_F_BLOCKS_END 10u
+#define UKL_T2_F_HOME 11u
+#define UKL_T2_F_ERRORS0 12u
+#define UKL_T2_F_FAULTS 13u
+#define UKL_T2_F_WORDS 14u
+#define UKL_T2_F_COUNT 15u
+#define UKL_T2_F_LAID0 16u
+#define UKL_T2_F_SIZE 17u
+#define UKL_T2_G_FIN (UKL_PH_H + 64u)
+#define UKL_T2_FIN_TARGET (UKL_PH_H + 65u)
+// 1 once the tape is finished.
+#define UKL_T2_DONE (UKL_PH_H + 66u)
+#define UKL_T2_NLINES (UKL_PH_H + 67u)
+// Each chunk's stop where it failed (the first: its kind and chunk).
+#define UKL_T2_STOPPED (UKL_PH_H + 68u)
+#define UKL_T2_H (UKL_PH_H + 80u)
+#define UKL_T2_LINE_BYTES 512u
 
 #define UKL_T2_PH_LAY 0u
 #define UKL_T2_PH_P1 1u
@@ -79,7 +111,14 @@
 #define UKL_T2_PH_P8AW 26u
 #define UKL_T2_PH_P8B 27u
 #define UKL_T2_PH_P8BW 28u
-#define UKL_T2_PHASES 29u
+#define UKL_T2_PH_MAKE 29u
+#define UKL_T2_PH_P6C 30u
+#define UKL_T2_PH_P6W 31u
+#define UKL_T2_PH_END 32u
+#define UKL_T2_PH_FIN 33u
+#define UKL_T2_PH_TAIL 34u
+#define UKL_T2_PH_PIECES 35u
+#define UKL_T2_PHASES 36u
 
 #define UKL_T2_TP1 0u
 // Digit `d`'s trees: its chunks' counts `UKL_T2_TP2 + 2d`, its keys' after it.
@@ -90,6 +129,7 @@
 #define UKL_T2_TP7 8u
 #define UKL_T2_TP8A 12u
 #define UKL_T2_TP8B 13u
+#define UKL_T2_TB 14u
 #define UKL_T2_OP_P1 0u
 #define UKL_T2_OP_ADD1 1u
 #define UKL_T2_OP_KEYS 2u
@@ -116,6 +156,11 @@ UKL_INLINE void ukl_t2_p8a_write(UKL_GLOBAL const uint32_t* items, uint32_t a, u
 UKL_INLINE void ukl_t2_p8b_run(UKL_GLOBAL const uint32_t* items, UKL_GLOBAL const uint32_t* events, uint32_t a, uint32_t b, UKL_COHERENT uint32_t* out);
 UKL_INLINE void ukl_t2_p8b_write(UKL_GLOBAL const uint32_t* items, UKL_GLOBAL const uint32_t* events, uint32_t a, uint32_t b, UKL_COHERENT const uint32_t* sum,
                                  UKL_GLOBAL uint32_t* kids);
+UKL_INLINE uint32_t ukl_t2_write(UKL_GLOBAL const uint8_t* src, UKL_GLOBAL const uint32_t* starts, uint32_t n, uint32_t len, UKL_GLOBAL const uint8_t* t,
+                                 UKL_GLOBAL const uint32_t* depth, UKL_GLOBAL const uint32_t* container, uint32_t low, uint32_t a, uint32_t b, uint32_t pl,
+                                 UKL_GLOBAL uint8_t* ret, UKL_GLOBAL const uint32_t* eitems, uint32_t ne, UKL_GLOBAL const uint32_t* frame_of,
+                                 UKL_GLOBAL const uint32_t* kids, UKL_GLOBAL const uint32_t* events, UKL_GLOBAL const uint32_t* at, uint32_t slow,
+                                 UKL_GLOBAL uint32_t* room, bool count);
 UKL_INLINE uint32_t ukl_t2_places(void);
 UKL_INLINE uint32_t ukl_t2_depth(void);
 UKL_INLINE uint32_t ukl_t2_walk_refused(void);
@@ -163,6 +208,9 @@ UKL_INLINE void ukl_t2_lay(UKL_PRIVATE UklPh* r)
     }
     at = ukl_t2_tree(m, UKL_T2_TP8A, at, echunks, 2u, UKL_T2_OP_LAST);
     at = ukl_t2_tree(m, UKL_T2_TP8B, at, echunks, 3u, UKL_T2_OP_KIDS);
+    // The tape's blocks at the host's room (`most`): B's leaves the blocks MAKE makes.
+    at = ukl_t2_tree(m, UKL_T2_TB, at, m[UKL_T2_MOST], 5u, UKL_PH_OP_ADD);
+    m[UKL_T2_STOPPED] = UKL_T2_NONE;
     m[UKL_T2_REFUSED_AT] = UKL_T2_NONE;
     uint32_t aw = 0u;
     m[UKL_T2_O_DEPTH] = aw;
@@ -195,7 +243,7 @@ UKL_INLINE void ukl_t2_lay(UKL_PRIVATE UklPh* r)
     m[UKL_T2_O_KIDS] = aw;
     aw += 6u * most_ev;
     // Past a room, or past the arrivals' stride: what it needs (the pool's words, else the arrays').
-    if (at > m[UKL_T2_ROOM] || UKL_PH_NODES(ichunks) > m[UKL_PH_MS] || UKL_PH_NODES(echunks) > m[UKL_PH_MS])
+    if (at > m[UKL_T2_ROOM] || UKL_PH_NODES(ichunks) > m[UKL_PH_MS] || UKL_PH_NODES(echunks) > m[UKL_PH_MS] || UKL_PH_NODES(m[UKL_T2_MOST]) > m[UKL_PH_MS])
         m[UKL_T2_NEED] = at;
     else if (aw > m[UKL_T2_AROOM])
         m[UKL_T2_NEED] = aw;
@@ -224,6 +272,391 @@ UKL_INLINE void ukl_t2_sort(UKL_PRIVATE UklPh* r, uint32_t t0, uint32_t d, uint3
     }
 }
 
+// ---- The finish (the old middle's, on the phases' pool and B's tree) --------------------------------------------
+
+// The first failure kept.
+UKL_INLINE void ukl_t2f_fail(UKL_PRIVATE UklPh* r, uint32_t code) { ukl_ph_fail(r, code); }
+
+// A counter's arrival: whether it brought it to `target`.
+UKL_INLINE bool ukl_t2f_arrive(UKL_PRIVATE UklPh* r, uint32_t at, uint32_t target)
+{
+    ukl_fence_device();
+    bool last = ukl_atomic_add(&r->m[at], 1u) + 1u == target;
+    ukl_fence_device();
+    return last;
+}
+
+UKL_INLINE uint32_t ukl_t2f_nodes_blocks(uint32_t n)
+{
+    uint32_t nb = (n + CLIF_W_Z - 1u) / CLIF_W_Z;
+    return nb == 0u ? 1u : nb;
+}
+
+// `len` bytes from `from` to `to` in the region, each byte its own store at the ends (a neighbour's bytes another item
+// writes are never read and written back), aligned words between.
+UKL_INLINE void ukl_t2f_copy(UKL_GLOBAL const uint8_t* t, uint64_t to, uint64_t from, uint64_t len)
+{
+    uint64_t k = 0u;
+    for (; k < len && ((to + k) & 7u) != 0u; k++)
+        ukl_w_st8(t, to + k, ukl_w_ld8(t, from + k));
+    for (; k + 8u <= len; k += 8u)
+        ukl_w_st64(t, to + k, ukl_w_ld64(t, from + k));
+    for (; k < len; k++)
+        ukl_w_st8(t, to + k, ukl_w_ld8(t, from + k));
+}
+
+// `v`'s low `w` bytes at `to`, a byte a store.
+UKL_INLINE void ukl_t2f_put_bytes(UKL_GLOBAL const uint8_t* t, uint64_t to, uint64_t v, uint32_t w)
+{
+    for (uint32_t k = 0u; k < w; k++)
+        ukl_w_st8(t, to + k, (v >> (8u * k)) & 0xffu);
+}
+
+// Bit `bit` of the presence's words from `word0` at `base`, set by an atomic (blocks set the document's at once).
+UKL_INLINE void ukl_t2f_set_bit(UKL_GLOBAL const uint8_t* t, uint64_t base, uint64_t word0, uint32_t bit)
+{
+    uint64_t at = base + (((uint64_t)(bit >> 6) + word0) << 3) + 4u * ((bit >> 5) & 1u);
+    ukl_atomic_or((UKL_GLOBAL uint32_t*)(t + at), 1u << (bit & 31u));
+}
+
+// The presence word at `at` given `bits` (its halves by atomics, each only where it has a bit).
+UKL_INLINE void ukl_t2f_or_word(UKL_GLOBAL const uint8_t* t, uint64_t at, uint64_t bits)
+{
+    if ((uint32_t)bits != 0u)
+        ukl_atomic_or((UKL_GLOBAL uint32_t*)(t + at), (uint32_t)bits);
+    if ((uint32_t)(bits >> 32) != 0u)
+        ukl_atomic_or((UKL_GLOBAL uint32_t*)(t + at + 4u), (uint32_t)(bits >> 32));
+}
+
+// Block `b`'s rows, its node `j`'s number and its kind field (`finalize`'s), its codes' side list's cursor `low`.
+UKL_INLINE uint32_t ukl_t2f_kind_field(UKL_GLOBAL const uint8_t* t, uint64_t room, UklWList codes, uint32_t j, UKL_PRIVATE uint32_t* low)
+{
+    uint32_t cut = ukl_w_get32(t, 0u, CLIF_W_AT_CUT), per = ukl_w_get32(t, 0u, CLIF_W_AT_PER);
+    uint64_t kinds = ukl_w_part(t, 0u, CLIF_W_PART_KINDS), numbers = ukl_w_len(t, 0u, CLIF_W_PART_KINDS) >> 2;
+    uint32_t byte = ukl_w_ld8(t, room + j), number = byte;
+    if (byte >= cut) {
+        uint32_t rest = 0u;
+        if (*low < codes.count) {
+            if (ukl_w_ld16(t, codes.js + 2u * (uint64_t)*low) == j)
+                rest = (uint32_t)ukl_w_ld64(t, codes.vs + 8u * (uint64_t)*low);
+            *low += 1u;
+        }
+        number = cut + (byte - cut) * per + rest;
+    }
+    return (uint64_t)number < numbers ? ukl_w_ld32(t, kinds + 4u * (uint64_t)number) : 0u;
+}
+
+UKL_INLINE uint32_t ukl_t2f_rows(UKL_PRIVATE UklPh* r, uint32_t b)
+{
+    uint32_t n = r->m[UKL_T2_NODES], rows = n - b * CLIF_W_Z;
+    return rows < CLIF_W_Z ? rows : CLIF_W_Z;
+}
+
+// Side list `q`'s laid bytes in a block of `rows` (`lay`'s): each sub-block's entries' end, their offsets, values.
+UKL_INLINE uint32_t ukl_t2f_laid_len(UKL_GLOBAL const uint8_t* t, uint64_t area, uint32_t q, uint32_t rows)
+{
+    UklWList l = ukl_w_list(t, area, q);
+    uint32_t subs = (rows + CLIF_W_BLOCK - 1u) >> 8;
+    return l.count != 0u ? 2u * subs + l.count + l.count * (uint32_t)ukl_w_get32(t, 0u, CLIF_W_AT_VW + 4u * q) : 0u;
+}
+
+// FIN(b): block `b` final, as `finalize` makes it but where its bytes go: its presence (the document's by atomics, its
+// own where blocks are kept) and its table entry; its counts a leaf of B: each side list's laid bytes, its faults.
+UKL_ONCE void ukl_t2f_fin(UKL_PRIVATE UklPh* r, uint32_t b)
+{
+    UKL_GLOBAL const uint8_t* t = r->t;
+    uint64_t e = ukl_w_entry(t, 0u, b);
+    if (ukl_w_ld32(t, e + 8u) != 0u)
+        ukl_t2f_fail(r, 2u);
+    ukl_w_st32(t, e + 8u, 1u);
+    uint32_t rows = ukl_t2f_rows(r, b);
+    uint64_t room = ukl_w_room_of(t, 0u, b), area = ukl_w_area_of(t, 0u, b);
+    UklWList codes = ukl_w_list(t, area, 0u);
+    uint64_t presence = ukl_w_part(t, 0u, CLIF_W_PART_PRESENCE), kw = ukl_w_get32(t, 0u, CLIF_W_AT_KW);
+    bool keep = (ukl_w_get32(t, 0u, CLIF_W_AT_FLAGS) & 1u) != 0u;
+    uint64_t mine = presence + ((uint64_t)b + 1u) * ukl_w_presence_bytes(t, 0u);
+    // The block's kinds and fields gathered in registers (each presence's first word: the bits below 64), and set in
+    // the document's words once a block: every block sets the same few words, so an atomic a node serialized them all.
+    // A bit past 64 is set as it is met.
+    uint32_t low = 0u, faults = 0u;
+    uint64_t kinds = 0u, fields = 0u;
+    for (uint32_t j = 0u; j < rows; j++) {
+        uint32_t kf = ukl_t2f_kind_field(t, room, codes, j, &low);
+        uint32_t kind = kf & 0x7fffu, field = kf >> 16, fault = (kf >> 15) & 1u;
+        if (kind < 64u)
+            kinds |= (uint64_t)1 << kind;
+        else {
+            ukl_t2f_set_bit(t, presence, 0u, kind);
+            if (keep)
+                ukl_w_set_bit(t, mine, 0u, kind);
+        }
+        if (field < 64u)
+            fields |= (uint64_t)1 << field;
+        else {
+            ukl_t2f_set_bit(t, presence, kw, field);
+            if (keep)
+                ukl_w_set_bit(t, mine, kw, field);
+        }
+        kinds |= (uint64_t)fault;
+        faults += kind == 0u || fault != 0u ? 1u : 0u;
+    }
+    ukl_t2f_or_word(t, presence, kinds);
+    ukl_t2f_or_word(t, presence + 8u * kw, fields);
+    if (keep) {
+        ukl_w_st64(t, mine, ukl_w_ld64(t, mine) | kinds);
+        ukl_w_st64(t, mine + 8u * kw, ukl_w_ld64(t, mine + 8u * kw) | fields);
+    }
+    // Its side area given back, in block order (`finalize`'s free list).
+    uint64_t free0 = ukl_w_len(t, 0u, CLIF_W_PART_FREE);
+    ukl_w_st32(t, ukl_w_part(t, 0u, CLIF_W_PART_FREE) + free0 + 4u * (uint64_t)b, ukl_w_ld32(t, e + 4u));
+    UklPhPool v = ukl_ph_leaf(r, UKL_T2_TB, b);
+    for (uint32_t q = 0u; q < 4u; q++)
+        v[q] = ukl_t2f_laid_len(t, area, q, rows);
+    v[4] = faults;
+    ukl_ph_up(r, UKL_T2_TB, b);
+}
+
+// B's root (`finish_tail`'s): the state's lengths, the last block's columns down to its rows, the tail laid out and
+// its zeros written, the header, the presence's header and the document's words; then each block's pieces (FIN2) and
+// the newline index's (LINES) are written where they go.
+UKL_ONCE bool ukl_t2f_tail(UKL_PRIVATE UklPh* r)
+{
+    UKL_GLOBAL const uint8_t* t = r->t;
+    UklPhPool m = r->m;
+    UklPhPool tot = ukl_ph_total(r, UKL_T2_TB);
+    uint32_t n = m[UKL_T2_NODES], count = m[UKL_T2_NB], f = UKL_T2_F;
+    uint64_t laid = (uint64_t)tot[0] + tot[1] + tot[2] + tot[3];
+    uint64_t errors0 = ukl_w_len(t, 0u, CLIF_W_PART_ERRORS), nfaults = tot[4];
+    m[f + UKL_T2_F_ERRORS0] = (uint32_t)errors0;
+    if (ukl_w_room(t, 0u, CLIF_W_PART_ERRORS, errors0 + 4u * nfaults) != 0u) {
+        ukl_t2f_fail(r, 4u);
+        return false;
+    }
+    m[f + UKL_T2_F_LAID0] = (uint32_t)ukl_w_len(t, 0u, CLIF_W_PART_LAID);
+    ukl_w_set_len(t, 0u, CLIF_W_PART_ERRORS, errors0 + 4u * nfaults);
+    ukl_w_set_len(t, 0u, CLIF_W_PART_FREE, ukl_w_len(t, 0u, CLIF_W_PART_FREE) + 4u * (uint64_t)count);
+    ukl_w_set_len(t, 0u, CLIF_W_PART_LAID, ukl_w_len(t, 0u, CLIF_W_PART_LAID) + laid);
+    ukl_w_set_len(t, 0u, CLIF_W_PART_LAID_AT, (uint64_t)count * CLIF_W_LAID_AT);
+    uint64_t out = ukl_w_part(t, 0u, CLIF_W_PART_OUT);
+    // The last block's columns down to its rows.
+    uint32_t last = count - 1u;
+    uint64_t rows = n - last * CLIF_W_Z, room = ukl_w_room_of(t, 0u, last), before = 1u, blocks_end = CLIF_W_HEAD16;
+    for (uint32_t c = 1u; c < 5u; c++) {
+        uint64_t len = c == 4u ? ((rows + CLIF_W_K - 1u) >> 3) * ukl_w_get32(t, 0u, CLIF_W_AT_CW) : rows * ukl_w_width(t, 0u, c - 1u);
+        uint64_t to = room + rows * before;
+        clif_w_copy(t, 0u, to, room + ukl_w_col(t, 0u, c), len);
+        if (c == 4u)
+            blocks_end = to + len - out;
+        else
+            before += ukl_w_width(t, 0u, c - 1u);
+    }
+    uint64_t lines_len = ukl_w_len(t, 0u, CLIF_W_PART_LINES);
+    uint64_t kw = ukl_w_get32(t, 0u, CLIF_W_AT_KW), fw = ukl_w_get32(t, 0u, CLIF_W_AT_FW);
+    bool keep = (ukl_w_get32(t, 0u, CLIF_W_AT_FLAGS) & 1u) != 0u;
+    uint64_t pcount = keep ? (uint64_t)count + 1u : 1u;
+    uint64_t need = blocks_end + laid + ((uint64_t)count + 1u) * 16u + lines_len + 64u + 16u + 8u * (kw + fw) * pcount + 4u * nfaults;
+    if (ukl_w_room(t, 0u, CLIF_W_PART_OUT, need) != 0u) {
+        ukl_t2f_fail(r, 5u);
+        return false;
+    }
+    ukl_w_st64(t, out + blocks_end, 0u);
+    uint64_t pos = blocks_end + 8u, tail[10];
+    for (uint32_t q = 0u; q < 4u; q++) {
+        tail[q] = pos;
+        pos += tot[q];
+        ukl_w_st64(t, out + pos, 0u);
+        pos += 8u;
+    }
+    ukl_w_st64(t, out + pos, 0u);
+    pos = (pos + 3u) & ~(uint64_t)3;
+    for (uint32_t q = 0u; q < 4u; q++)
+        tail[4u + q] = pos + 4u * ((uint64_t)count + 1u) * q;
+    pos += 16u * ((uint64_t)count + 1u);
+    uint64_t lines_at = pos, end = lines_at + lines_len + 8u;
+    ukl_w_st64(t, out + lines_at + lines_len, 0u);
+    tail[8] = lines_at;
+    tail[9] = end;
+    ukl_w_set_len(t, 0u, CLIF_W_PART_OUT, end);
+    ukl_w_write_head(t, 0u, out, CLIF_W_MAGIC16, tail);
+    for (uint32_t k = 0u; k < 10u; k++)
+        m[f + UKL_T2_F_TAIL + k] = (uint32_t)tail[k];
+    m[f + UKL_T2_F_BLOCKS_END] = (uint32_t)blocks_end;
+    // The presence after the tape (`presence::lay_words`): zeros to a multiple of 8, its header, the words, the faults.
+    uint64_t home = (end + 7u) & ~(uint64_t)7;
+    for (uint64_t k = end; k < home; k++)
+        ukl_w_st8(t, out + k, 0u);
+    ukl_w_st32(t, out + home, (uint32_t)kw);
+    ukl_w_st32(t, out + home + 4u, (uint32_t)fw);
+    ukl_w_st32(t, out + home + 8u, (uint32_t)pcount);
+    ukl_w_st32(t, out + home + 12u, (uint32_t)nfaults);
+    uint64_t presence = ukl_w_part(t, 0u, CLIF_W_PART_PRESENCE);
+    for (uint64_t k = 0u; k < kw + fw; k++)
+        ukl_w_st64(t, out + home + 16u + 8u * k, ukl_w_ld64(t, presence + 8u * k));
+    m[f + UKL_T2_F_HOME] = (uint32_t)home;
+    m[f + UKL_T2_F_WORDS] = (uint32_t)(kw + fw);
+    m[f + UKL_T2_F_COUNT] = (uint32_t)pcount;
+    m[f + UKL_T2_F_FAULTS] = (uint32_t)(home + 16u + 8u * (kw + fw) * pcount);
+    uint32_t nlines = (uint32_t)((lines_len + UKL_T2_LINE_BYTES - 1u) / UKL_T2_LINE_BYTES);
+    m[UKL_T2_NLINES] = nlines;
+    m[UKL_T2_FIN_TARGET] = count + nlines;
+    return true;
+}
+
+// The tape finished: every block's pieces and the newline index written.
+UKL_INLINE void ukl_t2f_finished(UKL_PRIVATE UklPh* r)
+{
+    if (ukl_t2f_arrive(r, UKL_T2_G_FIN, r->m[UKL_T2_FIN_TARGET]))
+        ukl_atomic_store(&r->m[UKL_T2_DONE], 1u);
+}
+
+// FIN2(b), B's leaf: block `b`'s side lists laid where they go in the tape (`lay`'s bytes, a byte a store), their part
+// starts, its faults in the ERRORS part and the presence, its own presence words.
+UKL_ONCE void ukl_t2f_fin2(UKL_PRIVATE UklPh* r, uint32_t b, UklPhPool before)
+{
+    UKL_GLOBAL const uint8_t* t = r->t;
+    UklPhPool m = r->m;
+    uint32_t f = UKL_T2_F, count = m[UKL_T2_NB];
+    UklPhPool mine = ukl_ph_leaf(r, UKL_T2_TB, b);
+    uint32_t rows = ukl_t2f_rows(r, b);
+    uint64_t out = ukl_w_part(t, 0u, CLIF_W_PART_OUT), area = ukl_w_area_of(t, 0u, b), room = ukl_w_room_of(t, 0u, b);
+    uint64_t laid_before = (uint64_t)before[0] + before[1] + before[2] + before[3];
+    uint64_t laid_at = ukl_w_part(t, 0u, CLIF_W_PART_LAID_AT) + (uint64_t)b * CLIF_W_LAID_AT;
+    uint64_t laid0 = m[f + UKL_T2_F_LAID0];
+    uint32_t subs = (rows + CLIF_W_BLOCK - 1u) >> 8;
+    uint64_t in_block = 0u;
+    for (uint32_t q = 0u; q < 4u; q++) {
+        UklWList l = ukl_w_list(t, area, q);
+        uint64_t vw = ukl_w_get32(t, 0u, CLIF_W_AT_VW + 4u * q), len = mine[q];
+        uint64_t at = out + m[f + UKL_T2_F_TAIL + q] + before[q];
+        if (l.count != 0u) {
+            uint32_t k = 0u;
+            for (uint32_t sub = 0u; sub < subs; sub++) {
+                while (k < l.count && ukl_w_ld16(t, l.js + 2u * (uint64_t)k) >> 8 == sub)
+                    k++;
+                ukl_t2f_put_bytes(t, at + 2u * (uint64_t)sub, k, 2u);
+            }
+            uint64_t offsets = at + 2u * (uint64_t)subs;
+            for (uint32_t j = 0u; j < l.count; j++)
+                ukl_w_st8(t, offsets + j, ukl_w_ld16(t, l.js + 2u * (uint64_t)j) & 0xffu);
+            uint64_t values = offsets + l.count;
+            for (uint32_t j = 0u; j < l.count; j++)
+                ukl_t2f_put_bytes(t, values + (uint64_t)j * vw, ukl_w_ld64(t, l.vs + 8u * (uint64_t)j), (uint32_t)vw);
+        }
+        // Its laid part's entry (the laid bytes in block order, each block's lists in turn), and its part start.
+        ukl_w_st32(t, laid_at + 8u * q, (uint32_t)(laid0 + laid_before + in_block));
+        ukl_w_st32(t, laid_at + 8u * q + 4u, (uint32_t)len);
+        in_block += len;
+        uint64_t starts = out + m[f + UKL_T2_F_TAIL + 4u + q];
+        ukl_w_st32(t, starts + 4u * (uint64_t)b, before[q]);
+        if (b + 1u == count)
+            ukl_w_st32(t, starts + 4u * (uint64_t)count, before[q] + (uint32_t)len);
+    }
+    // Its faults, in row order after the blocks' before it: in the ERRORS part and the presence.
+    UklWList codes = ukl_w_list(t, area, 0u);
+    uint64_t errors = ukl_w_part(t, 0u, CLIF_W_PART_ERRORS) + m[f + UKL_T2_F_ERRORS0] + 4u * (uint64_t)before[4];
+    uint64_t faults = out + m[f + UKL_T2_F_FAULTS] + 4u * (uint64_t)before[4];
+    uint32_t low = 0u, k = 0u;
+    for (uint32_t j = 0u; j < rows; j++) {
+        uint32_t kf = ukl_t2f_kind_field(t, room, codes, j, &low);
+        if ((kf & 0x7fffu) == 0u || ((kf >> 15) & 1u) != 0u) {
+            ukl_w_st32(t, errors + 4u * (uint64_t)k, b * CLIF_W_Z + j);
+            ukl_w_st32(t, faults + 4u * (uint64_t)k, b * CLIF_W_Z + j);
+            k++;
+        }
+    }
+    // Its own presence words, where blocks are kept.
+    uint32_t words = m[f + UKL_T2_F_WORDS];
+    if (m[f + UKL_T2_F_COUNT] > 1u) {
+        uint64_t from = ukl_w_part(t, 0u, CLIF_W_PART_PRESENCE) + ((uint64_t)b + 1u) * 8u * words;
+        uint64_t to = out + m[f + UKL_T2_F_HOME] + 16u + ((uint64_t)b + 1u) * 8u * words;
+        for (uint32_t w = 0u; w < words; w++)
+            ukl_w_st64(t, to + 8u * w, ukl_w_ld64(t, from + 8u * w));
+    }
+    ukl_t2f_finished(r);
+}
+
+// LINES(k): bytes `512k..` of the newline index into the tail.
+UKL_ONCE void ukl_t2f_lines(UKL_PRIVATE UklPh* r, uint32_t k)
+{
+    UKL_GLOBAL const uint8_t* t = r->t;
+    uint64_t len = ukl_w_len(t, 0u, CLIF_W_PART_LINES), at = (uint64_t)k * UKL_T2_LINE_BYTES;
+    uint64_t n = len - at < UKL_T2_LINE_BYTES ? len - at : UKL_T2_LINE_BYTES;
+    uint64_t out = ukl_w_part(t, 0u, CLIF_W_PART_OUT) + r->m[UKL_T2_F + UKL_T2_F_TAIL + 8u];
+    ukl_t2f_copy(t, out + at, ukl_w_part(t, 0u, CLIF_W_PART_LINES) + at, n);
+    ukl_t2f_finished(r);
+}
+
+// Every block ended (`end_middle`): `finish_blocks`' checks and the last node's slot; then each block final.
+UKL_ONCE void ukl_t2f_ended(UKL_PRIVATE UklPh* r)
+{
+    UKL_GLOBAL const uint8_t* t = r->t;
+    UklPhPool m = r->m;
+    UklPhPool end = ukl_ph_total(r, UKL_T2_TP5);
+    uint32_t n = m[UKL_T2_NODES];
+    ukl_wmid_ended(t, 0u, n, end[7] != 0u ? (uint64_t)end[5] | ((uint64_t)end[6] << 32) : 0u);
+    if (ukl_w_get32(t, 0u, CLIF_W_AT_BAD) != 0u || ukl_w_get32(t, 0u, CLIF_W_AT_OPEN_LEN) != 0u || ukl_w_is_z(t, 0u)) {
+        ukl_t2f_fail(r, 6u);
+        return;
+    }
+    if (n != 0u && clif_w_put(t, 0u, 0u, n - 1u, 1u) != 0u) {
+        ukl_t2f_fail(r, 7u);
+        return;
+    }
+    // The rooms the blocks write into at once: the free list (a side area a block, in block order), the laid parts'.
+    uint32_t nb = m[UKL_T2_NB];
+    if (ukl_w_room(t, 0u, CLIF_W_PART_FREE, ukl_w_len(t, 0u, CLIF_W_PART_FREE) + 4u * (uint64_t)nb) != 0u
+        || ukl_w_room(t, 0u, CLIF_W_PART_LAID_AT, (uint64_t)nb * CLIF_W_LAID_AT) != 0u) {
+        ukl_t2f_fail(r, 4u);
+        return;
+    }
+    ukl_atomic_store(&m[UKL_T2_ENDED], 1u);
+}
+
+
+// P6 and F's items: phase `ph`'s item `c` (a block, or a chunk for P6C and P6W).
+UKL_INLINE void ukl_t2_finish_item(UKL_PRIVATE UklPh* r, uint32_t ph, uint32_t c)
+{
+    UklPhPool m = r->m;
+    UKL_GLOBAL const uint8_t* t = r->t;
+    uint32_t nb = m[UKL_T2_NB];
+    if (ph == UKL_T2_PH_MAKE) {
+        if (ukl_wmid_make_block(t, 0u, c) != 0u)
+            ukl_t2f_fail(r, 9u);
+        if (c == 0u && ukl_wmid_made(t, 0u, nb) != 0u)
+            ukl_t2f_fail(r, 10u);
+    } else if (ph == UKL_T2_PH_P6C || ph == UKL_T2_PH_P6W) {
+        uint32_t n = r->n, size = m[UKL_T2_SIZE], a = c * size, b = a + size < n + 1u ? a + size : n + 1u, chunks = m[UKL_T2_CHUNKS];
+        UKL_GLOBAL uint32_t* place = r->arrays + m[UKL_T2_O_PLACE];
+        uint32_t places = ukl_t2_places();
+        if (place[c] >= places)
+            return;
+        UKL_GLOBAL uint32_t* room = r->f2 + UKL_WMID_FRAME * 5u * (a + c);
+        uint32_t x = ukl_t2_write(r->src, r->starts, n, r->len, t, r->arrays + m[UKL_T2_O_DEPTH], r->arrays + m[UKL_T2_O_CONTAINER], ukl_ph_leaf(r, UKL_T2_TP1, c)[1],
+                                  a, b, place[c], r->rets + c * ukl_t2_depth(), r->arrays + m[UKL_T2_O_EITEMS], m[UKL_T2_EITEMS], r->arrays + m[UKL_T2_O_FRAME_OF],
+                                  r->arrays + m[UKL_T2_O_KIDS], r->arrays + m[UKL_T2_O_EVENTS], r->arrays + m[UKL_T2_O_SHAPE_AT] + UKL_T2_W_SHAPE * c,
+                                  ukl_ph_leaf(r, UKL_T2_TP5, c)[4], room, ph == UKL_T2_PH_P6C);
+        // At its end; the file's end only in the last chunk the walk reaches.
+        bool fine = x == 0u || (x == 1u && (c + 1u == chunks || place[c + 1u] >= places));
+        if (!fine) {
+            ukl_atomic_min(&m[UKL_T2_STOPPED], c);
+            ukl_t2f_fail(r, 20u + x);
+        }
+    } else if (ph == UKL_T2_PH_END) {
+        ukl_wmid_end_block(t, 0u, c);
+        if (ukl_t2f_arrive(r, UKL_T2_G_END, nb))
+            ukl_t2f_ended(r);
+    } else if (ph == UKL_T2_PH_FIN) {
+        ukl_t2f_fin(r, c);
+    } else if (ph == UKL_T2_PH_TAIL) {
+        if (ukl_t2f_tail(r))
+            ukl_atomic_store(&m[UKL_T2_TAILED], 1u);
+    } else if (c < nb) {
+        ukl_t2f_fin2(r, c, ukl_ph_sum(r, UKL_T2_TB, c));
+    } else {
+        ukl_t2f_lines(r, c - nb);
+    }
+}
+
 UKL_INLINE uint32_t ukl_ph_items(UKL_PRIVATE UklPh* r, uint32_t ph)
 {
     if (r->refused)
@@ -240,6 +673,18 @@ UKL_INLINE uint32_t ukl_ph_items(UKL_PRIVATE UklPh* r, uint32_t ph)
         return 0u;
     if (ph >= UKL_T2_PH_P7 && ph < UKL_T2_PH_P7 + 8u)
         return (ph - UKL_T2_PH_P7) % 4u == 1u || (ph - UKL_T2_PH_P7) % 4u == 2u ? UKL_T2_KEYS : r->m[UKL_T2_ECHUNKS];
+    if (ph >= UKL_T2_PH_MAKE && ukl_atomic_poll(&r->m[UKL_PH_FAIL]) != 0u)
+        return 0u;
+    if (ph == UKL_T2_PH_MAKE || ph == UKL_T2_PH_END)
+        return r->m[UKL_T2_NB];
+    if (ph == UKL_T2_PH_P6C || ph == UKL_T2_PH_P6W)
+        return r->m[UKL_T2_CHUNKS];
+    if (ph == UKL_T2_PH_FIN)
+        return ukl_atomic_poll(&r->m[UKL_T2_ENDED]) == 1u ? r->m[UKL_T2_NB] : 0u;
+    if (ph == UKL_T2_PH_TAIL)
+        return ukl_atomic_poll(&r->m[UKL_T2_ENDED]) == 1u ? 1u : 0u;
+    if (ph == UKL_T2_PH_PIECES)
+        return ukl_atomic_poll(&r->m[UKL_T2_TAILED]) == 1u ? r->m[UKL_T2_NB] + r->m[UKL_T2_NLINES] : 0u;
     if (ph >= UKL_T2_PH_P8A)
         return r->m[UKL_T2_ECHUNKS];
     return r->m[UKL_T2_CHUNKS];
@@ -312,6 +757,12 @@ UKL_INLINE void ukl_ph_item(UKL_PRIVATE UklPh* r, uint32_t ph, uint32_t c)
                 m[UKL_PH_TREE + UKL_PH_TW * (UKL_T2_TP7 + 2u) + 3u] = ec;
                 m[UKL_PH_TREE + UKL_PH_TW * UKL_T2_TP8A + 3u] = ec;
                 m[UKL_PH_TREE + UKL_PH_TW * UKL_T2_TP8B + 3u] = ec;
+                // The tape's blocks.
+                uint32_t nb = ukl_t2f_nodes_blocks(total[0]);
+                m[UKL_T2_NB] = nb;
+                m[UKL_PH_TREE + UKL_PH_TW * UKL_T2_TB + 3u] = nb;
+                if (nb > m[UKL_T2_MOST])
+                    ukl_t2f_fail(r, 8u);
             }
         }
     } else if (ph == UKL_T2_PH_P3 || ph == UKL_T2_PH_P3W) {
@@ -324,6 +775,8 @@ UKL_INLINE void ukl_ph_item(UKL_PRIVATE UklPh* r, uint32_t ph, uint32_t c)
         } else {
             ukl_t2_p3_write(items, ia, ib, ukl_ph_sum(r, UKL_T2_TP3, c), r->arrays + m[UKL_T2_O_CONTAINER], r->arrays + m[UKL_T2_O_HEAD_AT]);
         }
+    } else if (ph >= UKL_T2_PH_MAKE) {
+        ukl_t2_finish_item(r, ph, c);
     } else if (ph >= UKL_T2_PH_P8A) {
         // Over the events' items in frame order (P7's last digit's, in `eitems`).
         uint32_t ni = m[UKL_T2_EITEMS], ia = c * size, ib = ia + size < ni ? ia + size : ni;

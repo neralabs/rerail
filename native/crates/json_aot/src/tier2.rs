@@ -2294,6 +2294,10 @@ pub struct Phases {
     pub eitems: Vec<Item>,
     pub frame_of: Vec<u32>,
     pub kids: Vec<Kids>,
+    /// The events' items, their frames' children and the events as words, as the operators take them.
+    pub eitems_w: Vec<u32>,
+    pub kids_w: Vec<u32>,
+    pub events_w: Vec<u32>,
 }
 
 // ---- The phases' block operators in closed form: u32 words and pointers, as the UKL printer prints them (one
@@ -2662,6 +2666,49 @@ pub unsafe fn p8b_write(items: &[u32], events: &[u32], a: usize, b: usize, sum: 
     }
 }
 
+/// A writer frame's words (`<ukl/writer_mid.h>`'s): its node, its children so far, its last child (`NONE`: none), its
+/// start's low and high words.
+pub const FRAME_W: usize = 5;
+
+/// The frames chunk `c` writes into at its start (P8's), outermost first, at `out` (`FRAME_W` words each): its sum
+/// `at` (P5's) says the frames open before it and its events before it, its own shape's lowest frame depth (`low`,
+/// biased) how many of them it reaches. Frame `k`'s is level `k + 1` of the events' items in frame order (`eitems`,
+/// `ne` of them), its last item before the chunk's first event (a bounded search): that item's frame's opening event
+/// and its children so far. Their count.
+///
+/// # Safety
+/// `out` has room for the frames.
+pub unsafe fn chunk_frames(eitems: &[u32], ne: usize, frame_of: &[u32], kids: &[u32], events: &[u32], at: &[u32], low: u32, out: *mut u32) -> usize {
+    let fd = (at[3] - D0) as usize;
+    let up = (D0 + 1 - low) as usize;
+    let need = if up < fd { up } else { fd };
+    let mut w = 0;
+    for k in fd - need..fd {
+        let level = (k + 1) as u32;
+        let mut lo = 0;
+        let mut hi = ne;
+        while lo < hi {
+            let mid = (lo + hi) / 2;
+            let l = eitems[3 * mid];
+            if l < level || (l == level && eitems[3 * mid + 1] < at[1]) {
+                lo = mid + 1;
+            } else {
+                hi = mid;
+            }
+        }
+        let x = lo - 1;
+        let head = eitems[3 * x + 2] != 0;
+        let o = frame_of[x] as usize;
+        unsafe { *out.add(FRAME_W * w) = events[8 * o + 2] };
+        unsafe { *out.add(FRAME_W * w + 1) = if head { 0 } else { kids[3 * x + 1] } };
+        unsafe { *out.add(FRAME_W * w + 2) = if head { NONE } else { kids[3 * x + 2] } };
+        unsafe { *out.add(FRAME_W * w + 3) = events[8 * o + 4] };
+        unsafe { *out.add(FRAME_W * w + 4) = events[8 * o + 5] };
+        w += 1;
+    }
+    w
+}
+
 /// The return place of a level of kind `k` (`STEP_CONT`'s, as the printer's table).
 pub fn step_cont(k: usize) -> u32 {
     step_cont_t(k)
@@ -2862,7 +2909,7 @@ impl Phases {
             // SAFETY: each record's item in one chunk only; its head in one.
             unsafe { p3_write(&iw, ic[c].0, ic[c].1, &p3_at[c], cp, hp) };
         });
-        let mut ph = Phases { n, size, depth, depth_w: dw, p1, items, head_at, container, place: Vec::new(), refused: None, shapes: Vec::new(), shape_at: Vec::new(), events: Vec::new(), eitems: Vec::new(), frame_of: Vec::new(), kids: Vec::new() };
+        let mut ph = Phases { n, size, depth, depth_w: dw, p1, items, head_at, container, place: Vec::new(), refused: None, shapes: Vec::new(), shape_at: Vec::new(), events: Vec::new(), eitems: Vec::new(), frame_of: Vec::new(), kids: Vec::new(), eitems_w: Vec::new(), kids_w: Vec::new(), events_w: Vec::new() };
         // P4: each chunk's place map, its pops below its start reading its containers' return places.
         let maps: Vec<Places> = each(rc.len(), order, |c| {
             let mut m = [STEP_REFUSED; 32];
@@ -2992,6 +3039,9 @@ impl Phases {
             unsafe { p8b_write(&ew, &evw, ec[c].0, ec[c].1, &p8b_at[c], kp) };
         });
         let kids: Vec<Kids> = kw.chunks_exact(3).map(|w| Kids { reset: w[0] != 0, count: w[1], last: w[2] }).collect();
+        ph.eitems_w = ew;
+        ph.kids_w = kw;
+        ph.events_w = evw;
         ph.eitems = eitems;
         ph.frame_of = frame_of;
         ph.kids = kids;
@@ -3047,22 +3097,14 @@ impl Phases {
     pub fn at(&self, src: &[u8], lx: &crate::tier1::Lexed, c: usize) -> At {
         let a = c * self.size.max(1);
         let (ret, depth) = self.rets(src, lx, c, a);
-        // The frames it closes and the one it writes into: frame k's level k + 1 in the frame order, its last item
-        // before the chunk's first event: that item's frame and its children so far.
-        let s = self.shape_at[c];
-        let fd = s.net as usize;
-        let need = ((1 - self.shapes[c].low) as usize).min(fd);
-        let frames = (fd - need..fd)
-            .map(|k| {
-                let level = (k + 1) as u32;
-                let p = self.eitems.partition_point(|x| (x.level, x.record) < (level, s.events));
-                let (it, o) = (self.eitems[p - 1], self.frame_of[p - 1]);
-                let kd = self.kids[p - 1];
-                let (kids, last) = if it.head { (0, NONE) } else { (kd.count, kd.last) };
-                let open = self.events[o as usize];
-                Frame { node: open.node, kids, last, start: open.start }
-            })
-            .collect();
+        // The frames it closes and the one it writes into (`chunk_frames`).
+        let (ew, kw, evw) = (&self.eitems_w, &self.kids_w, &self.events_w);
+        let at_w = shape_words(&self.shape_at[c]);
+        let low = shape_words(&self.shapes[c])[4];
+        let mut fw = vec![0u32; FRAME_W * (STEP_DEPTH + 2)];
+        // SAFETY: room for a frame a level the walk holds, and one.
+        let nf = unsafe { chunk_frames(ew, ew.len() / 3, &self.frame_of, kw, evw, &at_w, low, fw.as_mut_ptr()) };
+        let frames = fw[..FRAME_W * nf].chunks_exact(FRAME_W).map(|f| Frame { node: f[0], kids: f[1], last: f[2], start: u64::from(f[3]) | (u64::from(f[4]) << 32) }).collect();
         let s = self.shape_at[c];
         At { entry: Entry { i: a, e: s.e.unwrap_or(0), depth, st: self.place[c] }, ret, nodes: s.nodes, end: None, frames, prev_start: s.last_start.unwrap_or(0) }
     }

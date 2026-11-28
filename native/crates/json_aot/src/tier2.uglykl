@@ -1073,6 +1073,395 @@ else {}
 return json_t2_stop_err(UKL_NONE);
 }
 
+UKL_INLINE json_t2_Stop json_t2_run_step_Mid(UKL_GLOBAL const uint8_t* src, json_t2_Lx lx, UKL_PRIVATE UklWMid* d, json_t2_Entry en, UKL_GLOBAL uint8_t* ret, uint32_t low, uint32_t stop)
+{
+UKL_GLOBAL const uint32_t* starts = lx.starts;
+uint32_t count = lx.count;
+uint32_t len = lx.len;
+uint32_t i = en.i;
+uint32_t e = en.e;
+uint32_t depth = en.depth;
+uint32_t st = en.st;
+uint32_t jmp_ = 0u;
+while (true) {
+if ((i >= stop)) {
+return json_t2_stop_at(i, e, depth, st);
+}
+{
+uint32_t m0_ = st;
+if ((m0_ == 0u)) {
+json_t2_open_Mid(d, 0u, ((uint64_t)(json_t2_at(src, starts, i))));
+{
+uint32_t m1_ = json_t2_peek(src, starts, i);
+if ((m1_ == 0x7bu)) {
+if ((src[((uint32_t)(starts[(count - 1u)]))] != 0x7du)) {
+return json_t2_stop_err(json_t2_at(src, starts, i));
+}
+if ((depth == json_t2_DEPTH)) {
+return json_t2_stop_err(json_t2_at(src, starts, i));
+}
+if ((json_t2_peek(src, starts, (i + 1u)) == 0x7du)) {
+// `object`, empty: its opener.
+i += 1u;
+st = 15u;
+continue;
+} else {
+json_t2_open_Mid(d, 15u, ((uint64_t)(json_t2_at(src, starts, i))));
+ret[depth] = 14u;
+depth += 1u;
+st = 1u;
+continue;
+}
+}
+else if ((m1_ == 0x5bu)) {
+if ((src[((uint32_t)(starts[(count - 1u)]))] != 0x5du)) {
+return json_t2_stop_err(json_t2_at(src, starts, i));
+}
+if ((depth == json_t2_DEPTH)) {
+return json_t2_stop_err(json_t2_at(src, starts, i));
+}
+if ((json_t2_peek(src, starts, (i + 1u)) == 0x5du)) {
+// `array`, empty: its opener.
+i += 1u;
+st = 16u;
+continue;
+} else {
+json_t2_open_Mid(d, 16u, ((uint64_t)(json_t2_at(src, starts, i))));
+ret[depth] = 14u;
+depth += 1u;
+st = 6u;
+continue;
+}
+}
+else {
+uint32_t t1_[5] = {3u, 4u, 5u, 6u, 7u};
+json_t2_R t0_ = json_t2_value_primitive_Mid(src, starts, d, (&i), t1_);
+if (!t0_.ok) {
+uint32_t x = t0_.v;
+return json_t2_stop_err(x);
+}
+e = t0_.v;
+}
+}
+json_t2_close_Mid(d, ((uint64_t)(len)));
+if ((i != count)) {
+return json_t2_stop_err(json_t2_at(src, starts, i));
+}
+return json_t2_stop_ok();
+}
+else if ((m0_ == 1u)) {
+i += 1u;
+st = 2u;
+continue;
+}
+else if ((m0_ == 2u)) {
+// The list 'l2: its element; its separator, a place of its own, goes back to it.
+json_t2_open_Mid(d, 8u, ((uint64_t)(json_t2_at(src, starts, i))));
+{
+uint32_t m2_ = json_t2_peek(src, starts, i);
+if ((m2_ == 0x22u)) {}
+else {
+return json_t2_stop_err(json_t2_at(src, starts, i));
+}
+}
+uint32_t t3_[1] = {18u};
+json_t2_R t2_ = json_t2_string_Mid(src, starts, d, (&i), t3_);
+if (!t2_.ok) {
+uint32_t x = t2_.v;
+return json_t2_stop_err(x);
+}
+e = t2_.v;
+st = 13u;
+continue;
+}
+else if ((m0_ == 3u)) {
+{
+uint32_t m3_ = json_t2_peek(src, starts, i);
+if ((m3_ == 0x2cu)) {
+i += 1u;
+st = 2u;
+continue;
+}
+else if ((m3_ == 0x7du)) {
+uint32_t s = ((uint32_t)(starts[i]));
+i += 1u;
+e = (s + 1u);
+json_t2_close_Mid(d, ((uint64_t)(e)));
+// The place the level's call returns to, by its depth (a level ends only inside its call).
+if ((depth == 0u)) {
+return json_t2_stop_err(json_t2_at(src, starts, i));
+}
+depth -= 1u;
+if ((depth < low)) {
+return json_t2_stop_read(i, e, depth, st);
+}
+st = ret[depth];
+continue;
+}
+else {
+return json_t2_stop_err(json_t2_at(src, starts, i));
+}
+}
+}
+else if ((m0_ == 4u || m0_ == 8u || m0_ == 14u)) {
+while (true) {
+if ((i >= stop)) {
+return json_t2_stop_at(i, e, depth, st);
+}
+// Where a level returns: its caller's rest, by the place it pushed.
+{
+uint32_t m4_ = st;
+if ((m4_ == 4u)) {
+json_t2_close_Mid(d, ((uint64_t)(e)));
+st = 3u;
+jmp_ = 1u;
+break;
+}
+else if ((m4_ == 8u)) {
+{
+uint32_t m5_ = json_t2_peek(src, starts, i);
+if ((m5_ == 0x2cu)) {
+i += 1u;
+st = 7u;
+jmp_ = 1u;
+break;
+}
+else if ((m5_ == 0x5du)) {
+uint32_t s = ((uint32_t)(starts[i]));
+i += 1u;
+e = (s + 1u);
+json_t2_close_Mid(d, ((uint64_t)(e)));
+// The place the level's call returns to, by its depth (a level ends only inside its call).
+if ((depth == 0u)) {
+return json_t2_stop_err(json_t2_at(src, starts, i));
+}
+depth -= 1u;
+if ((depth < low)) {
+return json_t2_stop_read(i, e, depth, st);
+}
+st = ret[depth];
+continue;
+}
+else {
+return json_t2_stop_err(json_t2_at(src, starts, i));
+}
+}
+}
+else if ((m4_ == 14u)) {
+json_t2_close_Mid(d, ((uint64_t)(len)));
+if ((i != count)) {
+return json_t2_stop_err(json_t2_at(src, starts, i));
+}
+return json_t2_stop_ok();
+}
+else {}
+}
+}
+if (jmp_ != 0u) {
+if (jmp_ == 1u) {
+jmp_ = 0u;
+continue;
+}
+break;
+}
+}
+else if ((m0_ == 5u)) {
+// `object`, empty: its closer (tested again: a step is taken from every place).
+if (((i == 0u) || (json_t2_peek(src, starts, i) != 0x7du))) {
+return json_t2_stop_err(json_t2_at(src, starts, i));
+}
+uint32_t s = ((uint32_t)(starts[(i - 1u)]));
+e = (((uint32_t)(starts[i])) + 1u);
+i += 1u;
+json_t2_leaf_Mid(d, 14u, ((uint64_t)(s)), ((uint64_t)(e)));
+st = 4u;
+continue;
+}
+else if ((m0_ == 6u)) {
+i += 1u;
+st = 7u;
+continue;
+}
+else if ((m0_ == 7u)) {
+// The list 'l7: its element; its separator, a place of its own, goes back to it.
+{
+uint32_t m6_ = json_t2_peek(src, starts, i);
+if ((m6_ == 0x7bu)) {
+if ((depth == json_t2_DEPTH)) {
+return json_t2_stop_err(json_t2_at(src, starts, i));
+}
+if ((json_t2_peek(src, starts, (i + 1u)) == 0x7du)) {
+// `object`, empty: its opener.
+i += 1u;
+st = 9u;
+continue;
+} else {
+json_t2_open_Mid(d, 15u, ((uint64_t)(json_t2_at(src, starts, i))));
+ret[depth] = 8u;
+depth += 1u;
+st = 1u;
+continue;
+}
+}
+else if ((m6_ == 0x5bu)) {
+if ((depth == json_t2_DEPTH)) {
+return json_t2_stop_err(json_t2_at(src, starts, i));
+}
+if ((json_t2_peek(src, starts, (i + 1u)) == 0x5du)) {
+// `array`, empty: its opener.
+i += 1u;
+st = 10u;
+continue;
+} else {
+json_t2_open_Mid(d, 16u, ((uint64_t)(json_t2_at(src, starts, i))));
+ret[depth] = 8u;
+depth += 1u;
+st = 6u;
+continue;
+}
+}
+else {
+uint32_t t5_[5] = {3u, 4u, 5u, 6u, 7u};
+json_t2_R t4_ = json_t2_value_primitive_Mid(src, starts, d, (&i), t5_);
+if (!t4_.ok) {
+uint32_t x = t4_.v;
+return json_t2_stop_err(x);
+}
+e = t4_.v;
+}
+}
+st = 8u;
+continue;
+}
+else if ((m0_ == 9u)) {
+// `object`, empty: its closer (tested again: a step is taken from every place).
+if (((i == 0u) || (json_t2_peek(src, starts, i) != 0x7du))) {
+return json_t2_stop_err(json_t2_at(src, starts, i));
+}
+uint32_t s = ((uint32_t)(starts[(i - 1u)]));
+e = (((uint32_t)(starts[i])) + 1u);
+i += 1u;
+json_t2_leaf_Mid(d, 15u, ((uint64_t)(s)), ((uint64_t)(e)));
+st = 8u;
+continue;
+}
+else if ((m0_ == 10u)) {
+// `array`, empty: its closer (tested again: a step is taken from every place).
+if (((i == 0u) || (json_t2_peek(src, starts, i) != 0x5du))) {
+return json_t2_stop_err(json_t2_at(src, starts, i));
+}
+uint32_t s = ((uint32_t)(starts[(i - 1u)]));
+e = (((uint32_t)(starts[i])) + 1u);
+i += 1u;
+json_t2_leaf_Mid(d, 16u, ((uint64_t)(s)), ((uint64_t)(e)));
+st = 8u;
+continue;
+}
+else if ((m0_ == 11u)) {
+// `array`, empty: its closer (tested again: a step is taken from every place).
+if (((i == 0u) || (json_t2_peek(src, starts, i) != 0x5du))) {
+return json_t2_stop_err(json_t2_at(src, starts, i));
+}
+uint32_t s = ((uint32_t)(starts[(i - 1u)]));
+e = (((uint32_t)(starts[i])) + 1u);
+i += 1u;
+json_t2_leaf_Mid(d, 17u, ((uint64_t)(s)), ((uint64_t)(e)));
+st = 4u;
+continue;
+}
+else if ((m0_ == 12u)) {
+{
+uint32_t m7_ = json_t2_peek(src, starts, i);
+if ((m7_ == 0x7bu)) {
+if ((depth == json_t2_DEPTH)) {
+return json_t2_stop_err(json_t2_at(src, starts, i));
+}
+if ((json_t2_peek(src, starts, (i + 1u)) == 0x7du)) {
+// `object`, empty: its opener.
+i += 1u;
+st = 5u;
+continue;
+} else {
+json_t2_open_Mid(d, 14u, ((uint64_t)(json_t2_at(src, starts, i))));
+ret[depth] = 4u;
+depth += 1u;
+st = 1u;
+continue;
+}
+}
+else if ((m7_ == 0x5bu)) {
+if ((depth == json_t2_DEPTH)) {
+return json_t2_stop_err(json_t2_at(src, starts, i));
+}
+if ((json_t2_peek(src, starts, (i + 1u)) == 0x5du)) {
+// `array`, empty: its opener.
+i += 1u;
+st = 11u;
+continue;
+} else {
+json_t2_open_Mid(d, 17u, ((uint64_t)(json_t2_at(src, starts, i))));
+ret[depth] = 4u;
+depth += 1u;
+st = 6u;
+continue;
+}
+}
+else {
+uint32_t t7_[5] = {9u, 10u, 11u, 12u, 13u};
+json_t2_R t6_ = json_t2_value_primitive_Mid(src, starts, d, (&i), t7_);
+if (!t6_.ok) {
+uint32_t x = t6_.v;
+return json_t2_stop_err(x);
+}
+e = t6_.v;
+}
+}
+st = 4u;
+continue;
+}
+else if ((m0_ == 13u)) {
+{
+uint32_t m8_ = json_t2_peek(src, starts, i);
+if ((m8_ == 0x3au)) {
+i += 1u;
+}
+else {
+return json_t2_stop_err(json_t2_at(src, starts, i));
+}
+}
+st = 12u;
+continue;
+}
+else if ((m0_ == 15u)) {
+// `object`, empty: its closer (tested again: a step is taken from every place).
+if (((i == 0u) || (json_t2_peek(src, starts, i) != 0x7du))) {
+return json_t2_stop_err(json_t2_at(src, starts, i));
+}
+uint32_t s = ((uint32_t)(starts[(i - 1u)]));
+e = (((uint32_t)(starts[i])) + 1u);
+i += 1u;
+json_t2_leaf_Mid(d, 15u, ((uint64_t)(s)), ((uint64_t)(e)));
+st = 14u;
+continue;
+}
+else if ((m0_ == 16u)) {
+// `array`, empty: its closer (tested again: a step is taken from every place).
+if (((i == 0u) || (json_t2_peek(src, starts, i) != 0x5du))) {
+return json_t2_stop_err(json_t2_at(src, starts, i));
+}
+uint32_t s = ((uint32_t)(starts[(i - 1u)]));
+e = (((uint32_t)(starts[i])) + 1u);
+i += 1u;
+json_t2_leaf_Mid(d, 16u, ((uint64_t)(s)), ((uint64_t)(e)));
+st = 14u;
+continue;
+}
+else {}
+}
+}
+return json_t2_stop_err(UKL_NONE);
+}
+
 UKL_INLINE void json_t2_open_Sh(UKL_PRIVATE json_t2_Sh* d, uint32_t number, uint64_t start)
 {
 // SAFETY: the cursor's state's room is reserved for the run (`parse`).
@@ -2585,6 +2974,8 @@ DEFINE_KERNEL2(tier2, json_t2_phases,
                RWBUFFER, uint32_t, arrays,  "[arrays]",
                ROBUFFER, uint32_t, toks,    "[count * 5]",
                RWBUFFER, uint8_t,  rets,    "[chunks * json_t2_DEPTH]",
+               RWBUFFER, uint8_t,  t,       "[region]",
+               RWBUFFER, uint32_t, f2,      "[(count + 1 + chunks) * 25]",
                LANE,     uint16_t, lane,    )
 {
     UklPh r;
@@ -2596,6 +2987,8 @@ DEFINE_KERNEL2(tier2, json_t2_phases,
     r.arrays = arrays;
     r.toks = toks;
     r.rets = rets;
+    r.t = t;
+    r.f2 = f2;
     r.len = lexed[UKL_LEX_LEN];
     r.n = lexed[UKL_LEX_COUNT];
     r.refused = lexed[UKL_LEX_REFUSED] != 0u || lexed[UKL_LEX_SHORT] != 0u;
@@ -2647,6 +3040,7 @@ DEFINE_KERNEL2(tier2, json_t2_z_write,
 #define json_t2_STEP_REFUSED 255u
 #define json_t2_STEP_ENDS 254u
 #define json_t2_SHAPE_W 10u
+#define json_t2_FRAME_W UKL_WMID_FRAME
 UKL_INLINE uint32_t json_t2_bracket_code(UKL_GLOBAL const uint8_t* src, UKL_GLOBAL const uint32_t* starts, uint32_t n, uint32_t r)
 {
 if ((r >= n)) {
@@ -3002,6 +3396,38 @@ last = events[((8u * ((uint32_t)(items[((3u * x) + 1u)]))) + 2u)];
 }
 }
 
+UKL_INLINE uint32_t json_t2_chunk_frames(UKL_GLOBAL const uint32_t* eitems, uint32_t ne, UKL_GLOBAL const uint32_t* frame_of, UKL_GLOBAL const uint32_t* kids, UKL_GLOBAL const uint32_t* events, UKL_GLOBAL const uint32_t* at, uint32_t low, UKL_GLOBAL uint32_t* out)
+{
+uint32_t fd = ((uint32_t)((at[3u] - json_t2_D0)));
+uint32_t up = ((uint32_t)(((json_t2_D0 + 1u) - low)));
+uint32_t need = ((up < fd) ? up : fd);
+uint32_t w = 0u;
+for (uint32_t k = (fd - need); k < fd; k++) {
+uint32_t level = ((uint32_t)((k + 1u)));
+uint32_t lo = 0u;
+uint32_t hi = ne;
+while ((lo < hi)) {
+uint32_t mid = ((lo + hi) / 2u);
+uint32_t l = eitems[(3u * mid)];
+if (((l < level) || ((l == level) && (eitems[((3u * mid) + 1u)] < at[1u])))) {
+lo = (mid + 1u);
+} else {
+hi = mid;
+}
+}
+uint32_t x = (lo - 1u);
+bool head = (eitems[((3u * x) + 2u)] != 0u);
+uint32_t o = ((uint32_t)(frame_of[x]));
+(*(out + (json_t2_FRAME_W * w))) = events[((8u * o) + 2u)];
+(*(out + ((json_t2_FRAME_W * w) + 1u))) = (head ? 0u : kids[((3u * x) + 1u)]);
+(*(out + ((json_t2_FRAME_W * w) + 2u))) = (head ? json_t2_NONE : kids[((3u * x) + 2u)]);
+(*(out + ((json_t2_FRAME_W * w) + 3u))) = events[((8u * o) + 4u)];
+(*(out + ((json_t2_FRAME_W * w) + 4u))) = events[((8u * o) + 5u)];
+w += 1u;
+}
+return w;
+}
+
 UKL_INLINE void ukl_ph_merge(uint32_t op, UKL_COHERENT const uint32_t* a, UKL_COHERENT const uint32_t* b, UKL_COHERENT uint32_t* out)
 {
     if (op == UKL_T2_OP_P1)
@@ -3044,6 +3470,40 @@ UKL_INLINE void ukl_t2_p3_write(UKL_GLOBAL const uint32_t* items, uint32_t a, ui
 UKL_INLINE void ukl_t2_p8a_write(UKL_GLOBAL const uint32_t* items, uint32_t a, uint32_t b, UKL_COHERENT const uint32_t* sum, UKL_GLOBAL uint32_t* frame_of) { json_t2_p8a_write(items, a, b, sum, frame_of); }
 UKL_INLINE void ukl_t2_p8b_run(UKL_GLOBAL const uint32_t* items, UKL_GLOBAL const uint32_t* events, uint32_t a, uint32_t b, UKL_COHERENT uint32_t* out) { json_t2_p8b_run(items, events, a, b, out); }
 UKL_INLINE void ukl_t2_p8b_write(UKL_GLOBAL const uint32_t* items, UKL_GLOBAL const uint32_t* events, uint32_t a, uint32_t b, UKL_COHERENT const uint32_t* sum, UKL_GLOBAL uint32_t* kids) { json_t2_p8b_write(items, events, a, b, sum, kids); }
+// P6 (`write_step`): chunk `a..b` from its state on the cursor from the middle, on the writer's region `t`: counting
+// its side lists' entries (`count`), or writing them. Its frames (`chunk_frames`, from its sum `at` and its own
+// shape's lowest frame depth `slow`) into its room, its levels (`known_rets`) in its row `ret`. Its stop: 0 at its
+// end, 1 the file's end, 2 deeper than the walk goes, else 2 and its stop's kind.
+UKL_INLINE uint32_t ukl_t2_write(UKL_GLOBAL const uint8_t* src, UKL_GLOBAL const uint32_t* starts, uint32_t n, uint32_t len, UKL_GLOBAL const uint8_t* t,
+                                 UKL_GLOBAL const uint32_t* depth, UKL_GLOBAL const uint32_t* container, uint32_t low, uint32_t a, uint32_t b, uint32_t pl,
+                                 UKL_GLOBAL uint8_t* ret, UKL_GLOBAL const uint32_t* eitems, uint32_t ne, UKL_GLOBAL const uint32_t* frame_of,
+                                 UKL_GLOBAL const uint32_t* kids, UKL_GLOBAL const uint32_t* events, UKL_GLOBAL const uint32_t* at, uint32_t slow,
+                                 UKL_GLOBAL uint32_t* room, bool count)
+{
+    uint32_t wd = json_t2_walk_depth_at(src, starts, n, depth, a);
+    if (wd > json_t2_STEP_DEPTH)
+        return 2u;
+    json_t2_known_rets(src, starts, n, depth, container, low, a, ret);
+    uint32_t nf = json_t2_chunk_frames(eitems, ne, frame_of, kids, events, at, slow, room);
+    // Its room: the frames open at its entry, and as many as its records open (`5 * (span + 1)` frames).
+    if (nf + 3u * (b - a) + 4u > 5u * (b - a + 1u))
+        return 7u;
+    json_t2_Lx lx;
+    lx.starts = starts;
+    lx.count = n;
+    lx.len = len;
+    json_t2_Entry en;
+    en.i = a;
+    en.e = at[9] != 0u ? at[8] : 0u;
+    en.depth = wd;
+    en.st = pl;
+    uint64_t prev = at[7] != 0u ? (uint64_t)at[5] | ((uint64_t)at[6] << 32) : 0u;
+    UklWMid d = ukl_wmid_resume(t, 0u, at[0], prev, room, nf, count);
+    json_t2_Stop x = json_t2_run_step_Mid(src, lx, &d, en, ret, 0u, b);
+    if (x.kind == 0u && x.en.i == b)
+        return 0u;
+    return x.kind == 2u ? 1u : 2u + x.kind;
+}
 UKL_INLINE uint32_t ukl_t2_places(void) { return json_t2_STEP_PLACES; }
 UKL_INLINE uint32_t ukl_t2_depth(void) { return json_t2_DEPTH; }
 UKL_INLINE uint32_t ukl_t2_walk_refused(void) { return json_t2_STEP_REFUSED; }

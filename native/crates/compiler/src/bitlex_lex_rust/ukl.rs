@@ -1847,10 +1847,10 @@ UKL_INLINE {p}Stop {p}stop_err(uint32_t x) {{ return {p}stop_of(3u, 0u, 0u, 0u, 
     }
     // Pass 2's: each walk helper, then the walk from a place, on the writer's cursor from the middle.
     let mut mid = names.clone();
-    for f in walk.iter().chain(&["run_range"]) {
+    for f in walk.iter().chain(&["run_range", "run_step"]) {
         mid.insert((*f).into(), format!("{p}{f}_Mid"));
     }
-    for f in walk.iter().chain(&["run_range"]) {
+    for f in walk.iter().chain(&["run_range", "run_step"]) {
         print_fn(&lines, f, &format!("{p}{f}_Mid"), "UklWMid", p, &mid, &returns, &mut out)?;
     }
     // Pass 1's: the walk helpers and the walk from a place, on the shadow of the writer's frames.
@@ -2124,7 +2124,7 @@ UKL_INLINE uint32_t ukl_run_cont(uint32_t k) {{ return {p}cont(k); }}
     ph.insert("D0".into(), format!("{p}D0"));
     ph.insert("KEYS".into(), format!("{p}KEYS"));
     ph.insert("step_cont_t".into(), format!("{p}step_cont_t"));
-    for c in ["STEP_PLACES", "STEP_DEPTH", "STEP_REFUSED", "STEP_ENDS", "SHAPE_W", "ROOT"] {
+    for c in ["STEP_PLACES", "STEP_DEPTH", "STEP_REFUSED", "STEP_ENDS", "SHAPE_W", "ROOT", "FRAME_W"] {
         ph.insert(c.into(), format!("{p}{c}"));
     }
     for f in PHASE_FNS {
@@ -2134,7 +2134,7 @@ UKL_INLINE uint32_t ukl_run_cont(uint32_t k) {{ return {p}cont(k); }}
         .iter()
         .find_map(|l| l.strip_prefix("pub const STEP_PLACES: usize = ").and_then(|r| r.strip_suffix(';')))
         .ok_or("as UKL: no STEP_PLACES")?;
-    let _ = writeln!(out, "#define {p}KEYS 256u\n#define {p}STEP_PLACES {places}u\n#define {p}STEP_DEPTH {p}DEPTH\n#define {p}STEP_REFUSED 255u\n#define {p}STEP_ENDS 254u\n#define {p}SHAPE_W 10u");
+    let _ = writeln!(out, "#define {p}KEYS 256u\n#define {p}STEP_PLACES {places}u\n#define {p}STEP_DEPTH {p}DEPTH\n#define {p}STEP_REFUSED 255u\n#define {p}STEP_ENDS 254u\n#define {p}SHAPE_W 10u\n#define {p}FRAME_W UKL_WMID_FRAME");
     for f in PHASE_FNS {
         print_fn(&lines, f, &format!("{p}{f}"), "", p, &ph, &returns, &mut out)?;
     }
@@ -2183,6 +2183,40 @@ UKL_INLINE void ukl_t2_p3_write(UKL_GLOBAL const uint32_t* items, uint32_t a, ui
 UKL_INLINE void ukl_t2_p8a_write(UKL_GLOBAL const uint32_t* items, uint32_t a, uint32_t b, UKL_COHERENT const uint32_t* sum, UKL_GLOBAL uint32_t* frame_of) {{ {p}p8a_write(items, a, b, sum, frame_of); }}
 UKL_INLINE void ukl_t2_p8b_run(UKL_GLOBAL const uint32_t* items, UKL_GLOBAL const uint32_t* events, uint32_t a, uint32_t b, UKL_COHERENT uint32_t* out) {{ {p}p8b_run(items, events, a, b, out); }}
 UKL_INLINE void ukl_t2_p8b_write(UKL_GLOBAL const uint32_t* items, UKL_GLOBAL const uint32_t* events, uint32_t a, uint32_t b, UKL_COHERENT const uint32_t* sum, UKL_GLOBAL uint32_t* kids) {{ {p}p8b_write(items, events, a, b, sum, kids); }}
+// P6 (`write_step`): chunk `a..b` from its state on the cursor from the middle, on the writer's region `t`: counting
+// its side lists' entries (`count`), or writing them. Its frames (`chunk_frames`, from its sum `at` and its own
+// shape's lowest frame depth `slow`) into its room, its levels (`known_rets`) in its row `ret`. Its stop: 0 at its
+// end, 1 the file's end, 2 deeper than the walk goes, else 2 and its stop's kind.
+UKL_INLINE uint32_t ukl_t2_write(UKL_GLOBAL const uint8_t* src, UKL_GLOBAL const uint32_t* starts, uint32_t n, uint32_t len, UKL_GLOBAL const uint8_t* t,
+                                 UKL_GLOBAL const uint32_t* depth, UKL_GLOBAL const uint32_t* container, uint32_t low, uint32_t a, uint32_t b, uint32_t pl,
+                                 UKL_GLOBAL uint8_t* ret, UKL_GLOBAL const uint32_t* eitems, uint32_t ne, UKL_GLOBAL const uint32_t* frame_of,
+                                 UKL_GLOBAL const uint32_t* kids, UKL_GLOBAL const uint32_t* events, UKL_GLOBAL const uint32_t* at, uint32_t slow,
+                                 UKL_GLOBAL uint32_t* room, bool count)
+{{
+    uint32_t wd = {p}walk_depth_at(src, starts, n, depth, a);
+    if (wd > {p}STEP_DEPTH)
+        return 2u;
+    {p}known_rets(src, starts, n, depth, container, low, a, ret);
+    uint32_t nf = {p}chunk_frames(eitems, ne, frame_of, kids, events, at, slow, room);
+    // Its room: the frames open at its entry, and as many as its records open (`5 * (span + 1)` frames).
+    if (nf + 3u * (b - a) + 4u > 5u * (b - a + 1u))
+        return 7u;
+    {p}Lx lx;
+    lx.starts = starts;
+    lx.count = n;
+    lx.len = len;
+    {p}Entry en;
+    en.i = a;
+    en.e = at[9] != 0u ? at[8] : 0u;
+    en.depth = wd;
+    en.st = pl;
+    uint64_t prev = at[7] != 0u ? (uint64_t)at[5] | ((uint64_t)at[6] << 32) : 0u;
+    UklWMid d = ukl_wmid_resume(t, 0u, at[0], prev, room, nf, count);
+    {p}Stop x = {p}run_step_Mid(src, lx, &d, en, ret, 0u, b);
+    if (x.kind == 0u && x.en.i == b)
+        return 0u;
+    return x.kind == 2u ? 1u : 2u + x.kind;
+}}
 UKL_INLINE uint32_t ukl_t2_places(void) {{ return {p}STEP_PLACES; }}
 UKL_INLINE uint32_t ukl_t2_depth(void) {{ return {p}DEPTH; }}
 UKL_INLINE uint32_t ukl_t2_walk_refused(void) {{ return {p}STEP_REFUSED; }}
@@ -2236,7 +2270,7 @@ UKL_INLINE void ukl_t2_p1_write(UKL_GLOBAL const uint8_t* src, UKL_GLOBAL const 
 }
 
 /// The phases' block operators the printer prints, in order (each after the ones it calls).
-const PHASE_FNS: &[&str] = &["bracket_code", "empty_close_at", "p1_unit", "p1_run", "p1_merge", "p1_write", "add1_unit", "add1_merge", "p2_unit", "p2_merge", "p2_run", "p2_write", "starts_level", "last_unit", "last_merge", "p3_run", "p3_write", "step_cont", "walk_depth_at", "known_rets", "places_unit_w", "places_merge_w", "shape_unit", "shape_merge", "p8a_write", "kids_unit", "kids_merge", "p8b_run", "p8b_write"];
+const PHASE_FNS: &[&str] = &["bracket_code", "empty_close_at", "p1_unit", "p1_run", "p1_merge", "p1_write", "add1_unit", "add1_merge", "p2_unit", "p2_merge", "p2_run", "p2_write", "starts_level", "last_unit", "last_merge", "p3_run", "p3_write", "step_cont", "walk_depth_at", "known_rets", "places_unit_w", "places_merge_w", "shape_unit", "shape_merge", "p8a_write", "kids_unit", "kids_merge", "p8b_run", "p8b_write", "chunk_frames"];
 
 /// Tier 2's two programs as UKL kernels, launched a phase at a time in order (decision 0726). `<ukl/middle_run.h>`'s
 /// phases are three kernels, each its phases a constant mask, so it holds their code alone (its compile and its
@@ -2339,6 +2373,8 @@ DEFINE_KERNEL2(tier2, {p}phases,
                RWBUFFER, uint32_t, arrays,  "[arrays]",
                ROBUFFER, uint32_t, toks,    "[count * 5]",
                RWBUFFER, uint8_t,  rets,    "[chunks * {p}DEPTH]",
+               RWBUFFER, uint8_t,  t,       "[region]",
+               RWBUFFER, uint32_t, f2,      "[(count + 1 + chunks) * 25]",
                LANE,     uint16_t, lane,    )
 {{
     UklPh r;
@@ -2350,6 +2386,8 @@ DEFINE_KERNEL2(tier2, {p}phases,
     r.arrays = arrays;
     r.toks = toks;
     r.rets = rets;
+    r.t = t;
+    r.f2 = f2;
     r.len = lexed[UKL_LEX_LEN];
     r.n = lexed[UKL_LEX_COUNT];
     r.refused = lexed[UKL_LEX_REFUSED] != 0u || lexed[UKL_LEX_SHORT] != 0u;

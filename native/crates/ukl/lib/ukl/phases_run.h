@@ -53,6 +53,27 @@ typedef struct UklPh {
 UKL_INLINE void ukl_ph_merge(uint32_t op, UKL_COHERENT const uint32_t* a, UKL_COHERENT const uint32_t* b, UKL_COHERENT uint32_t* out);
 UKL_INLINE void ukl_ph_unit(uint32_t op, UKL_COHERENT uint32_t* out);
 
+// The runner's own op: a sum of the record's words, each added (`UKL_PH_OP_ADD`; the grammar's ops are below it).
+#define UKL_PH_OP_ADD 1000u
+UKL_INLINE void ukl_ph_merge_w(uint32_t op, uint32_t w, UKL_COHERENT const uint32_t* a, UKL_COHERENT const uint32_t* b, UKL_COHERENT uint32_t* out)
+{
+    if (op == UKL_PH_OP_ADD) {
+        for (uint32_t k = 0u; k < w; k++)
+            out[k] = a[k] + b[k];
+    } else {
+        ukl_ph_merge(op, a, b, out);
+    }
+}
+UKL_INLINE void ukl_ph_unit_w(uint32_t op, uint32_t w, UKL_COHERENT uint32_t* out)
+{
+    if (op == UKL_PH_OP_ADD) {
+        for (uint32_t k = 0u; k < w; k++)
+            out[k] = 0u;
+    } else {
+        ukl_ph_unit(op, out);
+    }
+}
+
 UKL_INLINE uint32_t ukl_ph_t(UKL_PRIVATE UklPh* r, uint32_t t, uint32_t k) { return r->m[UKL_PH_TREE + UKL_PH_TW * t + k]; }
 UKL_INLINE uint32_t ukl_ph_width(UKL_PRIVATE UklPh* r, uint32_t t) { return ukl_ph_t(r, t, 2u); }
 UKL_INLINE uint32_t ukl_ph_leaves(UKL_PRIVATE UklPh* r, uint32_t t) { return ukl_ph_t(r, t, 3u); }
@@ -99,7 +120,7 @@ UKL_INLINE void ukl_ph_up(UKL_PRIVATE UklPh* r, uint32_t t, uint32_t c)
         if (two && !ukl_ph_meet(r, t, up + p))
             return;
         if (two)
-            ukl_ph_merge(op, ukl_ph_node(r, t, base + 2u * p), ukl_ph_node(r, t, base + 2u * p + 1u), ukl_ph_node(r, t, up + p));
+            ukl_ph_merge_w(op, w, ukl_ph_node(r, t, base + 2u * p), ukl_ph_node(r, t, base + 2u * p + 1u), ukl_ph_node(r, t, up + p));
         else
             ukl_ph_copy(ukl_ph_node(r, t, base + 2u * p), ukl_ph_node(r, t, up + p), w);
         ukl_fence_device();
@@ -129,7 +150,7 @@ UKL_INLINE UklPhPool ukl_ph_sum(UKL_PRIVATE UklPh* r, uint32_t t, uint32_t c)
     s[0] = r->m + ukl_ph_t(r, t, 1u) + 2u * w * c;
     s[1] = s[0] + w;
     uint32_t cur = 0u;
-    ukl_ph_unit(op, s[0]);
+    ukl_ph_unit_w(op, w, s[0]);
     for (uint32_t l = levels; l > 0u; l--) {
         uint32_t below = 0u, size = n;
         for (uint32_t k = 0u; k + 1u < l; k++) {
@@ -139,7 +160,7 @@ UKL_INLINE UklPhPool ukl_ph_sum(UKL_PRIVATE UklPh* r, uint32_t t, uint32_t c)
         uint32_t x = c >> (l - 1u);
         if (x % 2u == 0u)
             continue;
-        ukl_ph_merge(op, s[cur], ukl_ph_node(r, t, below + x - 1u), s[1u - cur]);
+        ukl_ph_merge_w(op, w, s[cur], ukl_ph_node(r, t, below + x - 1u), s[1u - cur]);
         cur = 1u - cur;
     }
     return s[cur];

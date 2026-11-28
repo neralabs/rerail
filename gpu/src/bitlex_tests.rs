@@ -1248,7 +1248,7 @@ unsafe impl Pod for T2PArgs {}
 
 /// The runner's header and the program's (`<ukl/phases_run.h>`, `<ukl/t2_phases.h>`).
 const PH_H: usize = 160;
-const T2_H: usize = PH_H + 32;
+const T2_H: usize = PH_H + 80;
 
 /// Tier 2 as phases on the device (`json_t2_phases`, `<ukl/t2_phases.h>`), P1 from tier 1's records on the device:
 /// the layout laid from the records the device found, each chunk's depth summary a leaf of P1's arrival tree, each
@@ -1270,7 +1270,8 @@ fn json_tier2_phases_are_the_cpus() {
     let p1 = program("json_tier1.uglykl", rerail_json_aot::TIER1_UKL).unwrap_or_else(|e| panic!("{}: {e}", crate::device::backend()));
     let p2 = program("json_tier2.uglykl", rerail_json_aot::TIER2_UKL).unwrap_or_else(|e| panic!("{}: {e}", crate::device::backend()));
     let f = p2.function("json_t2_phases").unwrap();
-    let (mut runs, mut records, mut refusals, mut events) = (0usize, 0usize, 0usize, 0usize);
+    let (mut runs, mut records, mut refusals, mut events, mut tapes, mut bytes) = (0usize, 0usize, 0usize, 0usize, 0usize, 0usize);
+    let lang = json_lang();
     for (k, file) in files().into_iter().chain(nested()).enumerate() {
         let buf = rerail_json_aot::padded(&file);
         let n = file.len();
@@ -1281,6 +1282,10 @@ fn json_tier2_phases_are_the_cpus() {
         }
         let typed = rerail_json_aot::lex_typed(&buf, n, LEX_BLOCKS);
         let toks = middle::tokens(&buf, &typed.lexed, &typed.types, &middle::in_order);
+        // The serial walk's finished tape, where it parses.
+        let lx = rerail_json_aot::lex(&buf, n);
+        let mut sw = json_writer(&lang, &file);
+        let want = rerail_json_aot::parse_lexed(&buf, &lx, &mut sw).ok().map(|()| sw.finish().expect("the serial tape").tape.as_bytes().to_vec());
         for size in [1usize, 7, 64] {
             let at = |what: &str| format!("{}: file {k}, chunks of {size}: {what}", crate::device::backend());
             // The room from the records' bound (the device's layout says what it takes).
@@ -1296,17 +1301,31 @@ fn json_tier2_phases_are_the_cpus() {
             let room = room + 2 * (tree(echunks, 256) + tree(256, 1)) + tree(echunks, 2) + tree(echunks, 3);
             let aroom = 15 * (lex.records + 1) + 1024 + 11 * chunks + 28 * most_ev;
             let rb = kept.get("phases rets", 1024 * chunks);
+            let fb = kept.get("phases frames", 4 * 25 * (lex.records + 1 + chunks));
+            // The writer's region handed over, with room for the nodes the records and their tokens can make.
+            let mut mw = json_writer(&lang, &file);
+            let most = 1 + count + lex.token_nodes();
+            mw.reserve_run(most, (1024 + 1) * 3 + 1);
+            mw.final_as_written();
+            mw.reserve_device_finish(most);
+            let region = mw.device_region_len();
+            let tb = kept.get("phases region", region);
+            // SAFETY: the buffer holds `region` bytes; no launch runs while the host writes them.
+            mw.device_region_into(unsafe { std::slice::from_raw_parts_mut(tb.contents().cast::<u8>(), region) });
+            let most_blocks = most.div_ceil(1024).max(1);
+            let ms = ms.max(2 * most_blocks + 40);
+            let room = room + tree(most_blocks, 5);
             let pb = kept.get("phases pool", 4 * room);
             let ab = kept.get("phases arrays", 4 * aroom);
-            let meet = kept.meet("phases meet", 16 * ms);
+            let meet = kept.meet("phases meet", 16 * ms.max(2 * (1 + count + lex.token_nodes()).div_ceil(1024) + 40));
             let epoch = kept.next_epoch();
             {
                 let h = words_of(&pb, T2_H);
                 h.fill(0);
                 (h[0], h[1]) = (epoch, ms as u32);
-                (h[PH_H], h[PH_H + 1], h[PH_H + 8]) = (size as u32, room as u32, aroom as u32);
+                (h[PH_H], h[PH_H + 1], h[PH_H + 8], h[PH_H + 28]) = (size as u32, room as u32, aroom as u32, most_blocks as u32);
             }
-            for phase in 0..29u32 {
+            for phase in 0..36u32 {
                 launch(&mut q, f)
                     .value("args", &T2PArgs { phase, pad: 0 })
                     .buffer("src", &lex.src)
@@ -1317,6 +1336,8 @@ fn json_tier2_phases_are_the_cpus() {
                     .buffer("arrays", &ab)
                     .buffer("toks", &lex.tokens)
                     .buffer("rets", &rb)
+                    .buffer("t", &tb)
+                    .buffer("f2", &fb)
                     .run(&[groups()], &[64])
                     .unwrap();
                 q.barrier();
@@ -1381,9 +1402,17 @@ fn json_tier2_phases_are_the_cpus() {
                 assert_eq!(&arr[ok + 3 * x..ok + 3 * x + 3], &[u32::from(kd.reset), kd.count, kd.last], "{}", at(&format!("event item {x}'s frame's children")));
             }
             events += ne;
+            // P6 and F: the tape finished on the device, the serial walk's byte for byte.
+            assert_eq!((m[2], m[PH_H + 66]), (0, 1), "{}", at(&format!("the failure and the finish (the first chunk stopped: {})", m[PH_H + 68])));
+            mw.from_device_region(&read::<u8>(&tb, region));
+            let have = mw.finished_on_device().expect("the tape finished on the device").tape.as_bytes().to_vec();
+            let want = want.as_ref().expect("the serial walk parses what the phases do");
+            assert!(have == *want, "{}", at(&format!("the tape differs at byte {:?} of {} ({} bytes)", have.iter().zip(want).position(|(a, b)| a != b), want.len(), have.len())));
+            tapes += 1;
+            bytes += have.len();
             runs += 1;
             records += count;
         }
     }
-    eprintln!("{}: tier 2 as phases, P1-P8 on the device: {runs} runs ({refusals} refused at a chunk's place), {records} records' depths, items in level order, containers, heads and places, {events} events, their items in frame order, frames and children the CPU phases'", crate::device::backend());
+    eprintln!("{}: tier 2 as phases, P1-P8, P6 and the finish on the device: {runs} runs ({refusals} refused at a chunk's place), {records} records' depths, items in level order, containers, heads and places, {events} events, their items in frame order, frames and children the CPU phases'; {tapes} tapes finished on the device, the serial walk's, {bytes} bytes", crate::device::backend());
 }
