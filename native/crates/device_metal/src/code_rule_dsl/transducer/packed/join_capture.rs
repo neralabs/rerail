@@ -40,6 +40,9 @@ pub(in crate::code_rule_dsl) struct Label {
     pub(in crate::code_rule_dsl) work: u64,
     /// Its stratum's identity across runs (`setfix::replay`): the scalar replay's link to the stratum.
     pub(in crate::code_rule_dsl) stratum: u64,
+    /// Its stage records' forms in this launch, in their order (`rerail_ukl_rust::join_program::classes`): the class
+    /// generator's (`join-lab classes`).
+    pub(in crate::code_rule_dsl) forms: Vec<u64>,
 }
 
 /// Where captures go, and what selects them (`RERAIL_JOIN_CAPTURE`, `_ONLY`, `_MIN`, `_MB`): read once a batch.
@@ -551,7 +554,9 @@ fn write_before(cfg: &Config, id: u64, labels: &[Label], reach: &Reached<'_>) ->
         writeln!(w, "unresolved_in {} {n} {}", regions[*i].name, some.join(" "))?;
     }
     for l in labels {
-        writeln!(w, "label {} {} {} {:016x}", l.shape, l.rule.replace(' ', "_"), l.work, l.stratum)?;
+        let forms: Vec<String> = l.forms.iter().map(|f| format!("{f:016x}")).collect();
+        let forms = if forms.is_empty() { "-".to_owned() } else { forms.join(",") };
+        writeln!(w, "label {} {} {} {:016x} {forms}", l.shape, l.rule.replace(' ', "_"), l.work, l.stratum)?;
     }
     for r in &regions {
         writeln!(w, "region {} {} {:#x} {:#x} {} {} {}", r.name, r.role, r.base, r.dev, r.len, r.kind, r.source)?;

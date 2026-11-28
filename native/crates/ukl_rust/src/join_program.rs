@@ -1858,6 +1858,7 @@ unsafe fn text_range(f: u32, x: &Txt, n0: i64, n1: i64) -> (u32, u32, bool) {
 // ---- The stages' functions, a thread a binding (or a candidate row). ----
 
 /// The buffers an item's job reaches (`Job`, its words placed in the arena where its size script placed them).
+pub mod classes;
 mod dedup_lanes;
 pub mod reads;
 mod stage_lanes;
@@ -3917,6 +3918,8 @@ struct Prog {
     a: ProgP,
     /// Its items' time by kind (`join_run_timed`, the join lab's), none for the kernel's own run.
     clock: *mut ItemClock,
+    /// The classes its stages' jobs run by where their forms are theirs (`join_run_classed`), none: the program's work.
+    classes: *const classes::Classes,
 }
 
 /// A replay's items by kind (`join_run_timed`, the join lab's profile): each kind's items run and their nanoseconds.
@@ -4296,6 +4299,9 @@ impl Prog {
 
     /// Threads [t0, t1) of job `j`, of kind `kind`: a range's vector work, or each thread's own.
     unsafe fn range(&self, kind: u32, j: &Job, b: &Bufs, t0: u32, t1: u32) {
+        if !self.classes.is_null() && (*self.classes).range(kind, j, b, t0, t1) {
+            return;
+        }
         let stage = |s: *const Stage| St::new(&*s, b.l, j.r, j.rf);
         let lat = || &*(j.p as *const LatP);
         match kind {
@@ -4487,6 +4493,16 @@ pub unsafe fn join_run(argv: *const *const u8, l: &Launch) {
 ///
 /// As `join_run`'s; `clock` is null or an `ItemClock` of the caller's, which only this group's run writes.
 pub unsafe fn join_run_timed(argv: *const *const u8, l: &Launch, clock: *mut ItemClock) {
+    join_run_classed(argv, l, clock, None);
+}
+
+/// `join_run_timed`, each job of a stage whose form is one of `classes`' run by its class's parts
+/// (`classes::Classes`), the rest by the program's work.
+///
+/// # Safety
+///
+/// As `join_run_timed`'s.
+pub unsafe fn join_run_classed(argv: *const *const u8, l: &Launch, clock: *mut ItemClock, classes: Option<&classes::Classes>) {
     let threads = l.block[0] * l.block[1] * l.block[2];
     assert!(threads == TG, "join_run: a group of {TG} threads, not {threads}");
     let buf = |i: usize| (*argv.add(i) as *const *mut u8).read_unaligned();
@@ -4503,6 +4519,7 @@ pub unsafe fn join_run_timed(argv: *const *const u8, l: &Launch, clock: *mut Ite
         counts: buf(8) as *mut u32,
         a,
         clock,
+        classes: classes.map_or(core::ptr::null(), |c| c as *const classes::Classes),
     };
     // Its groups run one after another on one thread (the CPU device's), each as the kernel's group.
     prog.group(l.group[0]);

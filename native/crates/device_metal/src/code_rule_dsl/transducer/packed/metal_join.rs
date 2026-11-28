@@ -1885,6 +1885,9 @@ pub(in crate::code_rule_dsl) struct Batch {
     reserved: Option<std::sync::Arc<Reservation>>,
     /// Where its launches are captured for the join lab, and what selects them (`join_capture`, read once a batch).
     capture: Option<super::join_capture::Config>,
+    /// Where it captures: the forms of the stage records its jobs queued (`rerail_ukl_rust::join_program::classes`),
+    /// in their order, a witness's write after its stage; the runs' labels name theirs (`join_capture::Label::forms`).
+    pub(in crate::code_rule_dsl) forms: Vec<u64>,
 }
 
 /// A relation a batch's kernels write (`Batch::written`).
@@ -1983,6 +1986,7 @@ impl Batch {
             host_reads: false,
             reserved: None,
             capture: super::join_capture::Config::from_env(),
+            forms: Vec::new(),
         })
     }
 
@@ -3450,6 +3454,12 @@ impl Batch {
     /// A sorted dedup whose key, ranked with those of the level's queued ones, passes 64 bits (`flush`'s wide sort)
     /// ends the level too: each group's keys sort apart, every one's under its rank.
     fn queue(&mut self, job: Job) -> Result<(), Error> {
+        if self.capture.is_some() && matches!(job.kind, JobKind::Stage | JobKind::Scan | JobKind::Witness | JobKind::Row | JobKind::Map) {
+            for s in std::iter::once(&job.stage).chain(job.write.as_ref()) {
+                // SAFETY: a stage record, laid out as the program's (`join_program`'s `Stage`, its size asserted).
+                self.forms.push(unsafe { rerail_ukl_rust::join_program::classes::form_of_record((s as *const Stage).cast()) });
+            }
+        }
         let wider = job.wide > 0 && {
             let (n, bits) = self.queued.iter().filter(|q| q.wide > 0).fold((1, job.key_bits), |(n, b), q| (n + 1, b.max(q.key_bits)));
             bits + rank_bits(n) > 64

@@ -2,26 +2,17 @@
 //!
 //! A class is a shape's join written from parts, one a stage and `Emit` at its end. `part` names the part a stage
 //! needs, from its kind, its mode and its input as the catalogue gives them (`shapes.yaml`); `BUILT` lists the parts
-//! the library has, and `CLASSES` the generated classes (`register!`'s table, by shape key). A shape with a stage
-//! whose part is not built has no class: the lab lists it with that part (`missing`), and its work is the part's
-//! claim on the work queue.
+//! the library has (`rerail_ukl_rust::join_program::classes`, each generic over its stage's form), whose table
+//! registers the generated classes by shape key. A shape with a stage whose part is not built has no class: the lab
+//! lists it with that part (`missing`), and its work is the part's claim on the work queue.
 
-/// The parts the library has built.
-pub const BUILT: &[&str] = &[];
+/// The parts the library has built, by name, each of any view (`OwnRead<node>` is `OwnRead`'s). `Text` and `Arith`
+/// are the program's work for a text's and a map's rows, which a class's stage leaves to it.
+pub const BUILT: &[&str] = &["Scan", "ScanKind", "ByValue", "Hash", "OwnRead", "Children", "Climb", "Cmp", "Lattice", "Witness", "Seeded", "Text", "Arith", "Emit"];
 
-/// A class registered for a shape: its key and its name (`s-<key>`).
-#[derive(Clone, Copy, Debug)]
-pub struct Class {
-    pub key: u64,
-    pub name: &'static str,
-}
-
-/// The generated classes, by key (the generator's `table.rs`).
-pub const CLASSES: &[Class] = &[];
-
-/// The class of the shape of key `key`.
-pub fn class_of(key: u64) -> Option<&'static Class> {
-    CLASSES.iter().find(|c| c.key == key)
+/// Whether part `p` is built (`BUILT`, by its name before its parameters).
+pub fn built(p: &str) -> bool {
+    BUILT.contains(&p.split('<').next().unwrap_or(p))
 }
 
 /// The key of a shape named `s-<key>`.
@@ -80,7 +71,7 @@ pub fn part(kind: &str, mode: &str, input: &str, view: Option<u32>, keyed: bool)
 
 /// Of `needed` (a shape's parts, `Emit` with them), the first the library has not built.
 pub fn missing<'a>(needed: &'a [String]) -> Option<&'a str> {
-    needed.iter().map(String::as_str).find(|p| !BUILT.contains(p))
+    needed.iter().map(String::as_str).find(|p| !built(p))
 }
 
 #[cfg(test)]
@@ -97,10 +88,10 @@ mod tests {
         assert_eq!(part("atom", "join", "view", Some(1), false).as_deref(), Some("ScanKind<node>"));
         assert_eq!(part("names", "rowtext", "none", None, false).as_deref(), Some("Text<names>"));
         assert_eq!(part("pass", "join", "none", None, false), None);
-        // None built yet: a shape's first part is its missing one.
+        // A shape's first part not built is its missing one.
         let needed = vec!["Scan<Rel>".to_owned(), "Emit".to_owned()];
-        assert_eq!(missing(&needed), Some("Scan<Rel>"));
+        assert_eq!(missing(&needed), None);
+        assert_eq!(missing(&["Hash".to_owned(), "atom/other/words".to_owned()]), Some("atom/other/words"));
         assert_eq!(key_of("s-28c54b9d365aab6f"), Some(0x28c5_4b9d_365a_ab6f));
-        assert!(class_of(0x28c5_4b9d_365a_ab6f).is_none());
     }
 }

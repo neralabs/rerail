@@ -999,6 +999,7 @@ use rerail_blocks::vector::Vector;
                 assert_eq!(r.name, "captured");
                 assert!(r.rels.iter().any(|(t, n, _)| t == "q" && *n == 600), "q's rows: {r:?}");
             }
+            held_by_classes(&w);
         }
         let run = std::fs::read_to_string(dir.join("run.txt")).expect("the run recorded");
         assert!(run.lines().next().is_some_and(|l| l.starts_with("cwd ")) && run.lines().any(|l| l.starts_with("arg ")), "its directory and arguments: {run}");
@@ -1015,6 +1016,107 @@ use rerail_blocks::vector::Vector;
         let got = replay::records(&std::fs::read_to_string(dir.join("replay.txt")).expect("the replay's records"));
         let got = got.get(&want.stratum).unwrap_or_else(|| panic!("the stratum known again by its identity {:016x}: {got:?}", want.stratum));
         assert_eq!(want.differs(got), None, "the scalar joins make the program's rows");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// The join lab's classes (its design, steps 6 and 7) of launch `w`: each run's stage records named by their forms,
+    /// and its chain run again with its stages' jobs run by its shapes' classes: what it leaves is what the program's
+    /// run of it leaves, byte for byte (both the lab's, their groups in one order), and what the launch left (as the
+    /// program's is held to it: byte for byte where the launch's groups ran in that order). A launch whose shapes' classes the table lacks fails, naming them; with `RERAIL_CLASSES_WRITE=1` it adds
+    /// them first (as `join-lab classes` does), for the next build.
+    fn held_by_classes(w: &rerail_join_lab::Wave) {
+        assert!(w.labels.iter().all(|l| !l.forms.is_empty()), "each run's stages' forms: {:?}", w.labels);
+        let path = rerail_join_lab::classes::table_path();
+        let mut t = rerail_join_lab::classes::parse(&std::fs::read_to_string(&path).unwrap()).unwrap();
+        if let Err(why) = rerail_join_lab::classes::covers(&t, std::slice::from_ref(w)) {
+            if std::env::var_os("RERAIL_CLASSES_WRITE").is_some() {
+                rerail_join_lab::classes::add(&mut t, std::slice::from_ref(w));
+                std::fs::write(&path, rerail_join_lab::classes::write(&t)).unwrap();
+            }
+            panic!("{why}: the classes' table lacks this launch's classes (RERAIL_CLASSES_WRITE=1 adds them, as `join-lab classes` does)");
+        }
+        let mut l = w.load().unwrap();
+        let ran = l.run_on(rerail_join_lab::Engine::Class).unwrap_or_else(|e| panic!("{}: {e}", w.dir.display()));
+        assert!(ran.classed[0] > 0 && ran.classed[2] == 0, "its stages' jobs run by their classes: {ran:?}");
+        let mut p = w.load().unwrap();
+        p.run();
+        let apart = p.against(&l, false);
+        assert!(apart.is_empty(), "{}: the classes leave what the program leaves: {apart:?}", w.dir.display());
+        for d in l.compare(true).unwrap() {
+            assert!(d.differ == 0, "{}: the classes leave what the launch left: {d:?}", w.dir.display());
+        }
+    }
+
+    /// Each part of the classes over a chunk (the join lab's design, step 6): a stratum of rules whose stages are a
+    /// scan, keyed joins, a semi-join, an anti-join, filters, arithmetic, aggregates (by keys, by none, a value tested),
+    /// run on the device with its launches captured, each launch then run by its shapes' classes and held to what it
+    /// left, and by the program alike.
+    #[test]
+    fn each_part_over_a_chunk_leaves_what_the_program_left() {
+        if !crate::code_rule_dsl::transducer::packed::metal_join::available() {
+            return;
+        }
+        let store = crate::code_rule_dsl::fixtures::temp();
+        drop(crate::content_store::ContentStore::open(&store).unwrap());
+        let db = Connection::open(&store).unwrap();
+        crate::code_rule_dsl::logic::native::register(&db).unwrap();
+        crate::code_rule_dsl::logic::native::register_symbols(&db).unwrap();
+        let mut x = 11u64;
+        let mut next = |m: i64| {
+            x = x.wrapping_mul(6364136223846793005).wrapping_add(1442695040888963407);
+            ((x >> 33) as i64).rem_euclid(m)
+        };
+        db.execute_batch("CREATE TEMP TABLE a (c0, c1); CREATE TEMP TABLE b (c0, c1); CREATE TEMP TABLE c (c0); CREATE TEMP TABLE h0 (c0, c1);").unwrap();
+        for _ in 0..1500 {
+            db.execute("INSERT INTO a VALUES (?1, ?2)", [((next(4) << 32) | next(500)), next(200)]).unwrap();
+        }
+        for _ in 0..2000 {
+            db.execute("INSERT INTO b VALUES (?1, ?2)", [next(200), ((next(4) << 32) | next(500))]).unwrap();
+        }
+        for _ in 0..300 {
+            db.execute("INSERT INTO c VALUES (?1)", [((next(4) << 32) | next(500))]).unwrap();
+        }
+        let src = |t: &str, cols: &str, types: &str| format!("t:x:{}:{}:{types}", hex(&format!("temp.{t}")), hex(cols));
+        let (a, b, c) = (src("a", "c0, c1", "ii"), src("b", "c0, c1", "ii"), src("c", "c0", "i"));
+        let rules = [
+            format!("pos {a} v0 v1\npos {b} v1 v2\nlt v2 v0\ndeq v2 v0\nneg {c} v2\nhead v0 v2"),
+            format!("pos {a} v0 i:3\npos {c} v0\nhead v0 i:7"),
+            format!("pos {a} v0 v1\npos {c} v0\nne v1 i:5\neq v2 v1\ndocof v3 v0\nhead v1 v2"),
+            format!("pos {a} v0 v1\npos {b} v1 v2\nhead v0 v2"),
+            format!("pos {a} v0 v1\nfunc rr_add v2 v0 v1\nfunc rr_sub v3 v1 i:3\nfunc rr_div v4 v2 v3\nlt v4 v0\nhead v0 v4"),
+            format!("pos {c} v0\ncount {a} v0 _ v1\nhead v0 v1"),
+            format!("pos {c} v0\nsum {a} v0 _ 1 v1\nhead v0 v1"),
+            format!("pos {b} v0 v1\nmin {a} _ v0 0 v2\nhead v1 v2"),
+            format!("pos {a} v0 v1\nmax {a} v0 _ 1 v1\nhead v0 v1"),
+            format!("pos {c} v0\ncount {b} _ _ v1\nhead v0 v1"),
+            format!("pos {c} v0\nneg {a} v0 _\nhead v0 v0"),
+        ];
+        let dir = std::env::temp_dir().join(format!("rerail-join-parts-{}", std::process::id()));
+        crate::code_rule_dsl::transducer::packed::join_capture::capture_to(dir.clone());
+        let mut spec = vec!["name parts".to_owned(), "device".into(), "rel h0 ii empty".into()];
+        spec.extend(rules.iter().map(|r| format!("seed 0 {}", hex(r))));
+        super::super::open(&db, &spec.join("\n")).unwrap();
+        super::super::run(&db, "parts", 0).unwrap();
+        let r = super::take_report().expect("a device report");
+        assert!(r.refused.is_none(), "on the device: {r:?}");
+        super::super::close(&db, "parts").unwrap();
+        let waves = rerail_join_lab::Wave::all(&dir).unwrap();
+        assert!(!waves.is_empty(), "a launch captured");
+        for w in &waves {
+            let mut l = w.load().unwrap();
+            l.run();
+            for d in l.compare(true).unwrap() {
+                assert!(d.differ == 0, "{}: the program leaves what the launch left: {d:?}", w.dir.display());
+            }
+            held_by_classes(w);
+        }
+        // Its groups ran across the CPU device's threads, in no order: what the order chooses (the arena's claims) is not
+        // held byte for byte (`Wave::exact_on`'s), and the classes are held to the program's run beside them.
+        // Its stages' parts, every one of them: the stratum's forms' parts named.
+        let parts: std::collections::BTreeSet<&str> = waves.iter().flat_map(|w| &w.labels).flat_map(|l| &l.forms).flat_map(|&f| rerail_ukl_rust::join_program::classes::part_names(f)).collect();
+        for p in ["Scan<Rel>", "ByValue<Rel>", "Hash", "Hash<NEG>", "Cmp", "Lattice", "Ops", "Binds", "Emit"] {
+            assert!(parts.contains(p), "a stage of part {p}: {parts:?}");
+        }
         let _ = std::fs::remove_dir_all(&dir);
     }
 

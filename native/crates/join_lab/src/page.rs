@@ -249,7 +249,7 @@ pub fn write(tsv: &str, catalogue: Option<&BTreeMap<String, Entry>>, folded: &dy
         let built = rerail_join_shapes::parts::BUILT.len();
         let _ = write!(h, "<section><h2>By part</h2><p class=muted>The parts the replayed shapes' classes are made of, by the <code>{}</code> time of the shapes that need each (a shape's time counted once for every part it needs). {}</p><div class=\"scroll\"><table><thead><tr><th>Part</th><th>Built</th><th>ms of its shapes</th><th style=\"width:30%\"></th><th>Shapes</th><th>Rows in</th></tr></thead><tbody>", esc(&lead), if built == 0 { "No part is built yet, so no class runs and no cycles are spent in one: this is the order the parts' library takes them in.".to_owned() } else { format!("{built} parts built.") });
         for (p, (ms, work, n)) in &ps {
-            let b = rerail_join_shapes::parts::BUILT.contains(&p.as_str());
+            let b = rerail_join_shapes::parts::built(p);
             let _ = write!(h, "<tr><td><code>{}</code></td><td class=\"{}\">{}</td><td class=n>{ms:.3}</td><td><div class=bar style=\"width:{:.1}%\"></div></td><td class=n>{n}</td><td class=n>{work}</td></tr>", esc(p), if b { "ok" } else { "warn" }, if b { "yes" } else { "no" }, 100.0 * ms / top);
         }
         let _ = write!(h, "</tbody></table></div></section>");

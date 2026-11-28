@@ -2294,10 +2294,14 @@ impl<'p> Run<'p> {
 /// relations are `own`'s.
 fn encode_levels(runs: &mut [(&mut Run<'_>, usize)], batch: &mut mj::Batch, rep: &mut Report, own: &mut Own, names: &Interner) -> Result<(), String> {
     let depth = runs.iter().map(|(r, _)| r.plan.stages.len()).max().unwrap_or(0);
+    // Each run's stages' forms (`mj::Batch::forms`, where it captures): its label's.
+    let mut forms: Vec<Vec<u64>> = vec![Vec::new(); runs.len()];
     for k in 0..depth {
-        for (r, from) in runs.iter_mut() {
+        for (x, (r, from)) in runs.iter_mut().enumerate() {
             if k >= *from && k < r.plan.stages.len() {
+                let before = batch.forms.len();
                 r.encode_stage(k, batch, rep, own, names)?;
+                forms[x].extend_from_slice(&batch.forms[before..]);
             }
         }
     }
@@ -2307,10 +2311,12 @@ fn encode_levels(runs: &mut [(&mut Run<'_>, usize)], batch: &mut mj::Batch, rep:
     // The join lab's captures (`join_capture`): each run's shape, rule and work (its inputs' rows), named on the
     // launch that runs it.
     if batch.capturing() {
-        for (r, _) in runs.iter() {
+        for (x, (r, _)) in runs.iter().enumerate() {
             let work = r.rels.iter().flatten().map(|(rel, _)| rel.rows as u64).sum::<u64>().max(1);
-            batch.label(mj_capture::Label { shape: shape_of(r, &r.plan).name(), rule: format!("rule {:016x}", r.plan.key), work, stratum: r.stratum });
+            let forms = std::mem::take(&mut forms[x]);
+            batch.label(mj_capture::Label { shape: shape_of(r, &r.plan).name(), rule: format!("rule {:016x}", r.plan.key), work, stratum: r.stratum, forms });
         }
+        batch.forms.clear();
     }
     Ok(())
 }

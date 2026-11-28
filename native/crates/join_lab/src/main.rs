@@ -19,12 +19,14 @@
 //! - `join-lab script <capture> --engine e [--upto K] [--only <text>]`: each launch's size script as the engine's
 //!   load binds it (after its first K dispatches ran), each address placed in the region that holds it (or none).
 //! - `join-lab page <results.tsv> [--shapes shapes.yaml] -o page.html`: the page of a profile's results.
+//! - `join-lab classes <capture>...`: the classes' table (`rerail_ukl_rust::join_program::classes`' `table.rs`, in
+//!   the tree) with the classes of the captures' shapes added, each with the forms its runs' stage records had.
 
 use rerail_join_lab::{Engine, Wave};
 use std::path::Path;
 
 fn usage() -> ! {
-    eprintln!("usage: join-lab list <capture> [--shapes shapes.yaml]\n       join-lab run <capture> [--engine class,program,scalar,metal] [--only <text>]\n       join-lab profile <capture> [--engine class,program,scalar,metal] [--repeat N] [--core N] [--sample] [--only <text>] [-o results.tsv]\n       join-lab diverge <capture> --engine a,b [--only <text>]\n       join-lab script <capture> --engine e [--upto K] [--only <text>]\n       join-lab page <results.tsv> [--shapes shapes.yaml] -o page.html");
+    eprintln!("usage: join-lab list <capture> [--shapes shapes.yaml]\n       join-lab run <capture> [--engine class,program,scalar,metal] [--only <text>]\n       join-lab profile <capture> [--engine class,program,scalar,metal] [--repeat N] [--core N] [--sample] [--only <text>] [-o results.tsv]\n       join-lab diverge <capture> --engine a,b [--only <text>]\n       join-lab script <capture> --engine e [--upto K] [--only <text>]\n       join-lab page <results.tsv> [--shapes shapes.yaml] -o page.html\n       join-lab classes <capture>...");
     std::process::exit(2);
 }
 
@@ -110,6 +112,23 @@ fn main() {
     let Some(target) = args.get(1) else { usage() };
     let only = flag(&args, "--only");
     match cmd {
+        "classes" => {
+            let path = rerail_join_lab::classes::table_path();
+            let mut t = std::fs::read_to_string(&path).map_err(|e| e.to_string()).and_then(|x| rerail_join_lab::classes::parse(&x)).unwrap_or_else(|e| {
+                eprintln!("join-lab: {}: {e}", path.display());
+                std::process::exit(1);
+            });
+            let before = t.len();
+            for c in args[1..].iter().filter(|a| !a.starts_with("--")) {
+                rerail_join_lab::classes::add(&mut t, &waves(c, only));
+            }
+            if let Err(e) = std::fs::write(&path, rerail_join_lab::classes::write(&t)) {
+                eprintln!("join-lab: {}: {e}", path.display());
+                std::process::exit(1);
+            }
+            let forms: std::collections::BTreeSet<u64> = t.values().flat_map(|(_, f)| f.iter().copied()).collect();
+            println!("{}: {} classes ({} added), {} forms", path.display(), t.len(), t.len() - before, forms.len());
+        }
         "list" => {
             println!("{:<16} {:>8} {:>10} {:>12}  shapes (work)", "launch", "regions", "bytes", "unresolved");
             for w in waves(target, only) {

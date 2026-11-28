@@ -8,6 +8,7 @@
 //! holds what it left to what the engine's launch left.
 
 pub mod catalogue;
+pub mod classes;
 pub mod counters;
 #[cfg(feature = "metal")]
 pub mod metal;
@@ -28,6 +29,9 @@ pub struct Label {
     pub work: u64,
     /// Its stratum's identity across runs (`setfix::replay`): `0` in a capture that does not name it.
     pub stratum: u64,
+    /// Its stage records' forms in the launch, in their order (`rerail_ukl_rust::join_program::classes`): none in a
+    /// capture that does not name them.
+    pub forms: Vec<u64>,
 }
 
 /// A region a launch reached (`region` lines): its name, its role (one of `join_run`'s binds, `top`, `hold`, `text`,
@@ -114,7 +118,8 @@ impl Wave {
                 "unbound" => w.unbound = num(rest)?,
                 // Where they lie, and a few of them: what a capture's reader looks into.
                 "unresolved_in" => {}
-                // `label <shape> rule_<key> <work> [<stratum>]`: a shape's name may hold spaces, its rule's never.
+                // `label <shape> rule_<key> <work> [<stratum> [<forms>]]`: a shape's name may hold spaces, its rule's never;
+                // its forms hex, by commas (`-`: none).
                 "label" => {
                     let words: Vec<&str> = rest.split(' ').collect();
                     let Some(r) = words.iter().rposition(|x| x.starts_with("rule_")).filter(|&r| r > 0 && r + 1 < words.len()) else { return Err(bad(format!("label: {line}"))) };
@@ -122,7 +127,11 @@ impl Wave {
                         Some(h) => u64::from_str_radix(h, 16).map_err(|e| bad(format!("label: {line}: {e}")))?,
                         None => 0,
                     };
-                    w.labels.push(Label { shape: words[..r].join(" "), rule: words[r].replace('_', " "), work: num(words[r + 1])?, stratum });
+                    let forms = match words.get(r + 3) {
+                        Some(&"-") | None => Vec::new(),
+                        Some(f) => f.split(',').map(|h| u64::from_str_radix(h, 16)).collect::<Result<_, _>>().map_err(|e| bad(format!("label: {line}: {e}")))?,
+                    };
+                    w.labels.push(Label { shape: words[..r].join(" "), rule: words[r].replace('_', " "), work: num(words[r + 1])?, stratum, forms });
                 }
                 "region" => {
                     let f: Vec<&str> = rest.splitn(7, ' ').collect();
@@ -174,7 +183,7 @@ impl Wave {
     /// in order) of a capture its own device made. A device's threads claim places in the order they come, run to run
     /// (a Metal capture replayed on Metal differs so), so another's is held to it by what it makes (`compare`).
     pub fn exact_on(&self, e: Engine) -> bool {
-        e == Engine::Program && self.device == Some(Engine::Program)
+        matches!(e, Engine::Program | Engine::Class) && self.device == Some(Engine::Program)
     }
 
     /// Its regions placed in this process, their addresses bound again where they lie now.
@@ -440,6 +449,9 @@ pub struct Ran {
     pub seconds: f64,
     /// Its items' time by kind (the program's, `join_run_timed`): each kind's name, nanoseconds and items.
     pub kinds: Vec<(&'static str, u64, u64)>,
+    /// On the classes: the stage jobs' ranges their classes ran, those whose text work the program ran, those no
+    /// class fit (`Classes::ran`).
+    pub classed: [u64; 3],
 }
 
 /// A region the replay left otherwise than the engine's launch: its bytes compared, those that differ, the first.
@@ -463,10 +475,18 @@ impl Loaded {
     pub fn run_on(&mut self, e: Engine) -> io::Result<Ran> {
         match e {
             Engine::Program => Ok(self.run()),
-            Engine::Class => Err(bad(match self.classes() {
-                Err(why) => why,
-                Ok(_) => "the classes' executor (the design's step 7) is not built".into(),
-            })),
+            Engine::Class => {
+                let classes = self.classes().map_err(bad)?;
+                let ran = self.run_classed(false, Some(&classes));
+                // Every job of a stage its class's, or its text's work the program's (`Text<..>`): one no class fits is
+                // the class's shape's form not generated (`join-lab classes`).
+                let unfit = classes.unfit();
+                if !unfit.is_empty() {
+                    let forms: Vec<String> = unfit.iter().map(|f| format!("{f:016x}")).collect();
+                    return Err(bad(format!("{} ranges of stage records no class fits, forms {}", classes.ran()[2], forms.join(","))));
+                }
+                Ok(Ran { classed: classes.ran(), ..ran })
+            }
             #[cfg(feature = "metal")]
             Engine::Metal => {
                 let w = self.wraps.as_ref().ok_or_else(|| bad("the metal engine: a launch loaded for another engine".into()))?;
@@ -480,7 +500,7 @@ impl Loaded {
     }
 
     /// The classes of its runs' shapes (`Wave::classes`).
-    pub fn classes(&self) -> Result<Vec<&'static rerail_join_shapes::parts::Class>, String> {
+    pub fn classes(&self) -> Result<rerail_ukl_rust::join_program::classes::Classes, String> {
         self.wave.classes()
     }
 
@@ -492,6 +512,11 @@ impl Loaded {
 
     /// `run`, with its items' time by kind where `timed` (`join_run_timed`).
     pub fn run_timed(&mut self, timed: bool) -> Ran {
+        self.run_classed(timed, None)
+    }
+
+    /// `run_timed`, its stages' jobs run by `classes` where their forms are theirs (`join_run_classed`).
+    pub fn run_classed(&mut self, timed: bool, classes: Option<&rerail_ukl_rust::join_program::classes::Classes>) -> Ran {
         let mut clock = rerail_ukl_rust::join_program::ItemClock::default();
         let clock_at: *mut rerail_ukl_rust::join_program::ItemClock = if timed { &raw mut clock } else { std::ptr::null_mut() };
         let ctl = self.binds[7] as usize;
@@ -520,7 +545,7 @@ impl Loaded {
                 let l = rerail_ukl_rust::Launch { group: [x, y, z], block: [TG, 1, 1], groups: grid };
                 // SAFETY: `argv` holds the program's buffers' addresses where the lab placed them, its `ProgP`, and the
                 // shim's two; the regions they reach are the capture's, bound again.
-                unsafe { rerail_ukl_rust::join_program::join_run_timed(argv.as_ptr(), &l, clock_at) };
+                unsafe { rerail_ukl_rust::join_program::join_run_classed(argv.as_ptr(), &l, clock_at, classes) };
             }
         }
         ran.seconds = start.elapsed().as_secs_f64();
@@ -841,7 +866,7 @@ impl Loaded {
     /// counted equal where each holds an address at the same offset of the same region (an address its kernel wrote).
     /// With `across` (either not held byte for byte, `Wave::exact_on`), the regions `ORDERED` names not compared, and a made text's value held to the
     /// other's by its text.
-    fn against(&self, other: &Loaded, across: bool) -> Vec<(String, usize, Option<(usize, u64, u64)>)> {
+    pub fn against(&self, other: &Loaded, across: bool) -> Vec<(String, usize, Option<(usize, u64, u64)>)> {
         // The words bound again, by the capture's relocations and the codes' homes (whose device word is each
         // engine's own: none on the host, its wrap's on the device).
         let mut relocated: std::collections::HashSet<(usize, usize)> = self.relocated().unwrap_or_default().into_iter().collect();
@@ -952,7 +977,7 @@ pub fn first_divergence(w: &Wave, a: Engine, b: Engine) -> io::Result<Option<Div
 pub enum Engine {
     Program,
     Metal,
-    /// Its shapes' classes (`rerail_join_shapes::parts::CLASSES`), where each has one.
+    /// Its shapes' classes (`rerail_ukl_rust::join_program::classes::CLASSES`), where each has one.
     Class,
     /// Setfix's scalar joins over its strata, in the engine's run of them again (`scalar`, the `scalar` feature).
     Scalar,
@@ -986,16 +1011,16 @@ impl Wave {
         self.dir.file_name().map_or(String::new(), |n| n.to_string_lossy().into_owned())
     }
 
-    /// The classes of its runs' shapes (`rerail_join_shapes::parts::CLASSES`), or the shapes that have none.
-    pub fn classes(&self) -> Result<Vec<&'static rerail_join_shapes::parts::Class>, String> {
-        let (mut found, mut none) = (Vec::new(), Vec::new());
-        for l in &self.labels {
-            match rerail_join_shapes::parts::key_of(&l.shape).and_then(rerail_join_shapes::parts::class_of) {
-                Some(c) => found.push(c),
-                None => none.push(l.shape.as_str()),
-            }
+    /// The classes of its runs' shapes (`rerail_ukl_rust::join_program::classes::CLASSES`), or the shapes that have
+    /// none.
+    pub fn classes(&self) -> Result<rerail_ukl_rust::join_program::classes::Classes, String> {
+        use rerail_ukl_rust::join_program::classes;
+        let keys: Vec<u64> = self.labels.iter().filter_map(|l| rerail_join_shapes::parts::key_of(&l.shape)).collect();
+        let none: Vec<&str> = self.labels.iter().filter(|l| rerail_join_shapes::parts::key_of(&l.shape).and_then(classes::class_of).is_none()).map(|l| l.shape.as_str()).collect();
+        if !none.is_empty() {
+            return Err(format!("no class: {}", none.join(" ")));
         }
-        if none.is_empty() { Ok(found) } else { Err(format!("no class: {}", none.join(" "))) }
+        classes::Classes::of(&keys).map_err(|k| format!("no class: s-{k:016x}"))
     }
 
     /// The bytes its capture holds on disk: its own files, and the block files it names (each once).

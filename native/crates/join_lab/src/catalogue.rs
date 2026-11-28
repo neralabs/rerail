@@ -54,9 +54,10 @@ impl Entry {
 
     /// Its class's name, or the first part it lacks.
     pub fn class(&self) -> Result<&'static str, String> {
-        match rerail_join_shapes::parts::key_of(&self.name).and_then(rerail_join_shapes::parts::class_of) {
+        match rerail_join_shapes::parts::key_of(&self.name).and_then(rerail_ukl_rust::join_program::classes::class_of) {
             Some(c) => Ok(c.name),
-            None => Err(rerail_join_shapes::parts::missing(&self.parts()).unwrap_or("its class").to_owned()),
+            // Its parts built, its class not generated from a capture of it (`join-lab classes`).
+            None => Err(rerail_join_shapes::parts::missing(&self.parts()).unwrap_or("its class (join-lab classes)").to_owned()),
         }
     }
 }
@@ -140,6 +141,7 @@ mod tests {
         assert_eq!(e.instances, vec![("rule 44b0f1b068d64aad".to_owned(), 64)]);
         assert_eq!(c["s-1"].runs, 2);
         assert_eq!(e.parts(), vec!["ScanKind<doc>".to_owned(), "Arith".into(), "Emit".into()]);
-        assert_eq!(e.class(), Err("ScanKind<doc>".to_owned()));
+        // Its parts built, its class not generated.
+        assert_eq!(e.class(), Err("its class (join-lab classes)".to_owned()));
     }
 }
