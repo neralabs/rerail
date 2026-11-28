@@ -208,12 +208,13 @@ impl Projection {
         let shape = if core_shape { Shape::Core } else { Shape::T };
         let verdict = shape == Shape::T && error_triple;
         let mut reads: BTreeSet<String> = reads.into_iter().filter(|r| !derived.contains(r)).collect();
-        // A typed read of a line or a token is its node counterpart's relation (`places::typed`): made where either is
-        // read. A match's are its own in core.rerail's shape (`Extra::match_reads`, decision 0724 §3).
+        // A typed read of a token is its node counterpart's relation (`places::typed`): made where either is read. A
+        // match's and a line's are their own in core.rerail's shape (`Extra::match_reads`, `line_reads`, decision 0724
+        // §3).
         let counterparts: Vec<String> = reads
             .iter()
             .filter_map(|r| crate::code_rule_dsl::facts::core::typed(r))
-            .filter(|(ty, _)| !(shape == Shape::Core && *ty == crate::code_rule_dsl::facts::core::PlaceType::Match))
+            .filter(|(ty, _)| !(shape == Shape::Core && matches!(ty, crate::code_rule_dsl::facts::core::PlaceType::Match | crate::code_rule_dsl::facts::core::PlaceType::Line)))
             .map(|(_, n)| n.to_owned())
             .collect();
         reads.extend(counterparts);
@@ -261,7 +262,7 @@ impl Projection {
 
     fn wants_span_text(&self, within: crate::code_rule_dsl::logic::front::ast::SpanIn) -> bool {
         use crate::code_rule_dsl::logic::front::ast::SpanIn;
-        self.wants("text") && self.text_spans.as_ref().map_or_else(
+        (self.wants("text") || self.wants("line_text")) && self.text_spans.as_ref().map_or_else(
             || self.wants(match within { SpanIn::Source => "source", SpanIn::Line => "src_line", _ => "text" }),
             |spans| spans.contains(&within),
         )
@@ -3520,6 +3521,9 @@ struct Extra {
     /// `match_line_number`, `match_end_line_number`, `match_start_column`. A match's id is its number in its document,
     /// in no node's space, so its rows are these, never a node read's.
     match_reads: MatchReads,
+    /// A line's own reads (decision 0724 §3, step 3), in core.rerail's shape: `line_number`, `line_document`,
+    /// `line_text`. A line's id is its number in its document (0 its whole source, `source`), in no node's space.
+    line_reads: LineReads,
     sources: Vector<[i64; 2]>,
     src_lines: Vector<[i64; 3]>,
     line_counts: Vector<[i64; 2]>,
@@ -3565,6 +3569,18 @@ struct MatchReads {
     cols: Vector<[i64; 2]>,
 }
 
+/// Which of a line's own reads are made, and their rows (`Extra::line_reads`): each `[line, value]`.
+#[derive(Default)]
+struct LineReads {
+    own: bool,
+    number: bool,
+    document: bool,
+    text: bool,
+    numbers: Vector<[i64; 2]>,
+    documents: Vector<[i64; 2]>,
+    texts: Vector<[i64; 2]>,
+}
+
 /// A text's matches of one pattern: each match's groups as (match, group, start, end), offsets in the text.
 type GroupSpans = Arc<[(u32, u32, u32, u32)]>;
 
@@ -3602,8 +3618,8 @@ impl Extra {
             src_line: read("src_line"),
             line_count: read("line_count"),
             text: read("text"),
-            source_text: read("text") && source_text,
-            line_text: read("text") && line_text,
+            source_text: (read("text") || read("line_text")) && source_text,
+            line_text: (read("text") || read("line_text")) && line_text,
             line: read("line"),
             end_line: read("end_line"),
             col: read("col"),
@@ -3618,6 +3634,13 @@ impl Extra {
             comment: shape == Shape::T && read("comment"),
             rx_span: shape == Shape::Core && read("rx_span"),
             node_places: shape != Shape::Core,
+            line_reads: LineReads {
+                own: shape == Shape::Core,
+                number: read("line_number"),
+                document: read("line_document"),
+                text: read("line_text"),
+                ..LineReads::default()
+            },
             match_reads: MatchReads {
                 own: shape == Shape::Core,
                 text: read("match_text"),
@@ -3672,6 +3695,26 @@ impl Extra {
         }
         if self.col {
             self.cols.push([sp, col as i64]);
+        }
+    }
+
+    /// Line `sp`'s rows, starting on line `first` (the whole source on its first), its text `body` made where
+    /// `text_too` (`span`'s, a line's own reads where its ids are its own: `LineReads`).
+    #[allow(clippy::too_many_arguments)]
+    fn line_span(&mut self, sp: i64, first: usize, last: usize, body: &str, text_too: bool, text: &mut Vector<[i64; 2]>, string: &mut dyn FnMut(&str) -> usize) {
+        if !self.line_reads.own {
+            return self.span(sp, first, last, 0, body, text_too, text, string);
+        }
+        let r = &mut self.line_reads;
+        // Its number is the line it starts on: its own, and the whole source's first (`LineTable::place`).
+        if r.number {
+            r.numbers.push([sp, first as i64]);
+        }
+        if r.document {
+            r.documents.push([sp, self.file]);
+        }
+        if r.text && text_too {
+            r.texts.push([sp, string(body) as i64]);
         }
     }
 
@@ -3836,7 +3879,12 @@ impl Extra {
         self.file = i64::from(p.file());
         let key = i64::from(p.key());
         use granules::ExtraSpan;
-        let span = |kind: ExtraSpan, i: usize| extra_span(key, kind, u32::try_from(i).unwrap_or(u32::MAX));
+        // A line's id is its number where its reads are its own (decision 0724 §3), else a span's.
+        let own_lines = self.line_reads.own;
+        let span = |kind: ExtraSpan, i: usize| match kind {
+            ExtraSpan::Line if own_lines => Ok(rerail_blocks::located::Located::of(key, u32::try_from(i).unwrap_or(u32::MAX)).0),
+            _ => extra_span(key, kind, u32::try_from(i).unwrap_or(u32::MAX)),
+        };
         let source = f.source.as_str();
         self.later = 0;
         if self.comment && let Some(dialect) = dialect {
@@ -3879,8 +3927,8 @@ impl Extra {
         if self.source {
             let sp = span(ExtraSpan::Line, 0)?;
             self.sources.push([key, sp]);
-            let (first, last, col) = lines.place([0, source.len() as u32]);
-            self.span(sp, first as usize, last as usize, col as usize, source, self.source_text, text, string);
+            let (first, last, _) = lines.place([0, source.len() as u32]);
+            self.line_span(sp, first as usize, last as usize, source, self.source_text, text, string);
             source_at = Some(made.len());
             made.push((sp, 0..source.len()));
         }
@@ -3890,7 +3938,7 @@ impl Extra {
                 let sp = span(ExtraSpan::Line, l)?;
                 let [a, b] = lines.text_of(l, source.as_bytes()).map(|at| at as usize);
                 self.src_lines.push([key, l as i64, sp]);
-                self.span(sp, l, l, 0, &source[a..b], self.line_text, text, string);
+                self.line_span(sp, l, l, &source[a..b], self.line_text, text, string);
                 made.push((sp, a..b));
             }
             lines_at.end = made.len();
@@ -4102,6 +4150,14 @@ impl Extra {
         }
         if self.rx_span {
             out.push(("rx_span", relation(&["p", "c", "j", "g", "m"], &mut self.rx_spans.iter().map(|&[p, c, j, g, m]| rerail_facts_base::row![atom(p), c, j, atom(g), m])).with_atoms(&[true, false, false, true, false])));
+        }
+        let l = &self.line_reads;
+        for (on, name, rows) in [(l.number, "line_number", &l.numbers), (l.document, "line_document", &l.documents), (l.text, "line_text", &l.texts)] {
+            if on && l.own {
+                let columns = crate::code_rule_dsl::facts::core::input_columns(name).expect("a typed read's columns");
+                let made = relation(columns, &mut rows.iter().map(|&[x, v]| if name == "line_text" { rerail_facts_base::row![x, atom(v)] } else { rerail_facts_base::row![x, v] }));
+                out.push((name, if name == "line_text" { made.with_atoms(&[false, true]) } else { made }));
+            }
         }
         let r = &self.match_reads;
         for (on, name, rows) in [(r.text, "match_text", &r.texts), (r.document, "match_document", &r.documents), (r.line, "match_line_number", &r.lines), (r.end_line, "match_end_line_number", &r.end_lines), (r.col, "match_start_column", &r.cols)] {

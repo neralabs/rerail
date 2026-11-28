@@ -1,0 +1,36 @@
+.policy "typed-reads" revision 1
+.description "A line's and a match's own reads (decision 0724 §3): each its own id, read by its own relations."
+.language rust
+.mode log
+.scope include "**/*.rs"
+
+// A line whose text is exactly `// TODO`.
+.violation TODO_LINE(at: line) "a TODO line"
+TODO_LINE(l) :- document_line(_, l), line_text(l, "// TODO").
+
+// The third line of each document, by its number.
+.violation THIRD(at: line) "the third line"
+THIRD(l) :- document_line_by_number(_, 3, l), line_number(l, 3), line_document(l, d), doc(d, _, _).
+
+// A line holding `fn`, by a regex over the line.
+.violation FN_MATCH(at: match) "a fn"
+FN_MATCH(m) :- document_line(_, l), line_regex_match("\\bfn\\b", l, m).
+
+// The whole source starts on line 1.
+.violation SOURCE_ZERO(at: line) "the source"
+SOURCE_ZERO(sp) :- document_source(_, sp), line_number(sp, 1).
+
+.test lines_are_read_by_their_own_reads exactly
+    .fixture "a.rs" ```
+        fn a() {}
+        // TODO
+        struct S;
+        // other
+        fn b() {}
+        ```
+    .expect TODO_LINE at "a.rs":2
+    .expect THIRD at "a.rs":3
+    .expect FN_MATCH at "a.rs":1
+    .expect FN_MATCH at "a.rs":5
+    .expect SOURCE_ZERO at "a.rs":1
+.end
