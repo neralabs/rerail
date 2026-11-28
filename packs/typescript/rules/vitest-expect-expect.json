@@ -1,7 +1,7 @@
 {
   "format": "rerail.policy/v1",
   "id": "vitest-expect-expect",
-  "revision": 3,
+  "revision": 4,
   "mode": "steer",
   "description": "Add at least one expect or assert call to every Vitest test; a test without assertions passes no matter what the code does.",
   "scope": {
@@ -422,19 +422,6 @@
                   "field": "object",
                   "matches": "vitest-it-test-callee"
                 }
-              },
-              {
-                "kind": "call_expression",
-                "has": {
-                  "field": "function",
-                  "matches": "vitest-it-test-callee"
-                }
-              },
-              {
-                "kind": "parenthesized_expression",
-                "has": {
-                  "matches": "vitest-it-test-callee"
-                }
               }
             ]
           },
@@ -816,19 +803,6 @@
                 "kind": "member_expression",
                 "has": {
                   "field": "object",
-                  "matches": "vitest-bench-callee"
-                }
-              },
-              {
-                "kind": "call_expression",
-                "has": {
-                  "field": "function",
-                  "matches": "vitest-bench-callee"
-                }
-              },
-              {
-                "kind": "parenthesized_expression",
-                "has": {
                   "matches": "vitest-bench-callee"
                 }
               }
@@ -1215,19 +1189,6 @@
                   "field": "object",
                   "matches": "vitest-xit-xtest-callee"
                 }
-              },
-              {
-                "kind": "call_expression",
-                "has": {
-                  "field": "function",
-                  "matches": "vitest-xit-xtest-callee"
-                }
-              },
-              {
-                "kind": "parenthesized_expression",
-                "has": {
-                  "matches": "vitest-xit-xtest-callee"
-                }
               }
             ]
           },
@@ -1611,19 +1572,6 @@
                   "field": "object",
                   "matches": "vitest-fit-callee"
                 }
-              },
-              {
-                "kind": "call_expression",
-                "has": {
-                  "field": "function",
-                  "matches": "vitest-fit-callee"
-                }
-              },
-              {
-                "kind": "parenthesized_expression",
-                "has": {
-                  "matches": "vitest-fit-callee"
-                }
               }
             ]
           },
@@ -1641,19 +1589,6 @@
                 "kind": "member_expression",
                 "has": {
                   "field": "object",
-                  "matches": "vitest-bench-fit-it-test-xit-xtest-context-callee"
-                }
-              },
-              {
-                "kind": "call_expression",
-                "has": {
-                  "field": "function",
-                  "matches": "vitest-bench-fit-it-test-xit-xtest-context-callee"
-                }
-              },
-              {
-                "kind": "parenthesized_expression",
-                "has": {
                   "matches": "vitest-bench-fit-it-test-xit-xtest-context-callee"
                 }
               }

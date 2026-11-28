@@ -3,6 +3,7 @@ import { dirname, join, matchesGlob, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { z } from "zod";
 import { CODE_RULE_LANGUAGE_FAMILIES, compareDeterministicStrings, RULE_PACK_RULE_ID } from "../../src/engine/index.js";
+import { repetitionExemptionSchema } from "./manifest.js";
 
 export const HARNESS_DIRECTORY = dirname(fileURLToPath(import.meta.url));
 export const RERAIL_ROOT = resolve(HARNESS_DIRECTORY, "..", "..");
@@ -85,6 +86,9 @@ export type CapabilityExemption = z.infer<typeof exemptionSchema>;
 const suppressionExemptionSchema = z.strictObject({ rule: nonEmpty, reason: z.string().trim().min(20) });
 export type SuppressionExemption = z.infer<typeof suppressionExemptionSchema>;
 
+/** An own rule's runs of one node kind along a nesting path, and why they are not copies, as gates.yaml's `repetition_exempt` is a port's. */
+const ownRepetitionExemptionSchema = z.strictObject({ rule: nonEmpty, ...repetitionExemptionSchema.shape });
+
 const familySchema = z.enum(CODE_RULE_LANGUAGE_FAMILIES);
 
 export const packSchema = z
@@ -109,6 +113,12 @@ export const packSchema = z
      * `violation.suppress` (pack validation, check 2).
      */
     own: z.array(z.string().regex(RULE_PACK_RULE_ID, "rule ids are lowercase kebab-case")).default([]),
+    /**
+     * Own rules, by `rule`, with the `runs` of one node kind along a nesting path that compact's no-written-out-repetition
+     * measures and the `reason` they are not copies written out: the check passes those runs, and fails the exemption
+     * once it is stale.
+     */
+    repetitionExemptions: z.array(ownRepetitionExemptionSchema).default([]),
     /** Expected-findings directory, relative to the pack directory; default `upstream/` beside conformance.json. */
     oracles: nonEmpty.optional(),
   })
@@ -135,6 +145,12 @@ export const packSchema = z
     for (const { rule } of pack.suppressionExemptions) if (!rules.has(rule)) issue(`suppression exemption for ${rule}, which is not a rule of the pack`);
     for (const id of duplicates(pack.own)) issue(`duplicate own rule ${id}`);
     for (const id of pack.own) if (rules.has(id)) issue(`${id} is listed as an own rule and also has a port entry`);
+  })
+  .superRefine((pack, context) => {
+    const own = new Set(pack.own);
+    const rules = pack.repetitionExemptions.map(exemption => exemption.rule);
+    for (const rule of rules.filter((rule, index) => rules.indexOf(rule) !== index)) context.addIssue({ code: "custom", message: `duplicate repetition exemption for ${rule}` });
+    for (const rule of rules) if (!own.has(rule)) context.addIssue({ code: "custom", message: `repetition exemption for ${rule}, which is not an own rule (a port's goes in its gates.yaml)` });
   });
 export type Pack = z.infer<typeof packSchema>;
 

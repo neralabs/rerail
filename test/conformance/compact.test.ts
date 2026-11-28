@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { test } from "vitest";
 
-import { NESTING_RUN_LIMIT, REPEATED_SHARE_LIMIT, SIZE_FLAG_BYTES, compactGate } from "../../conformance/languages/checks/compact.js";
+import { NESTING_RUN_LIMIT, REPEATED_SHARE_LIMIT, SIZE_FLAG_BYTES, compactGate, type RepetitionExemption } from "../../conformance/languages/checks/compact.js";
 
 const FLAGGED = SIZE_FLAG_BYTES + 1;
 
@@ -95,6 +95,47 @@ test("compact finds repetition written out along one nesting path, through wrapp
   // A recursive utility walks a tree; it is reported, not counted as written-out repetition.
   const recursive = rule({ matches: "walk" }, { utils: { walk: { any: [{ kind: "identifier" }, { kind: "parenthesized_expression", has: { matches: "walk" } }] } } });
   assert.equal(compactGate(FLAGGED, recursive).metrics.nestingRun, 1);
+});
+
+test("compact follows a query into its language's shared define utilities", () => {
+  const nested = (depth: number): Record<string, unknown> => Object.fromEntries(Array.from({ length: depth }, (_, index) => [`level${index}`, { kind: "parenthesized_expression", has: index < depth - 1 ? { matches: `level${index + 1}` } : { kind: "identifier" } }]));
+  const shared = (language: string, utils: Record<string, unknown>) => ({ id: "shared", define: { language, utils } });
+  const query = (extra: Record<string, unknown> = {}) => ({ id: "c", forbid: { ast: { language: "typescript", rule: { matches: "level0" }, ...extra } } });
+  // A parenthesized expression three deep, written out through shared utilities, is written-out repetition.
+  const result = compactGate(FLAGGED, { clauses: [shared("typescript", nested(3)), query()] });
+  assert.equal(result.metrics.nestingRun, NESTING_RUN_LIMIT);
+  assert.equal(result.checks.find((check) => check.id === "no-written-out-repetition")!.ok, false);
+  // Another language's define is invisible to the query.
+  assert.equal(compactGate(FLAGGED, { clauses: [shared("python", nested(3)), query()] }).metrics.nestingRun, 0);
+  // A query's own utilities and its shared ones join along one path.
+  const ownFirst = query({ utils: { level0: { kind: "parenthesized_expression", has: { matches: "level1" } } } });
+  assert.equal(compactGate(FLAGGED, { clauses: [shared("typescript", { level1: nested(3).level1, level2: nested(3).level2 }), ownFirst] }).metrics.nestingRun, NESTING_RUN_LIMIT);
+  // Shared utilities that reach each other walk a tree and end.
+  const cycle = { a: { kind: "parenthesized_expression", has: { matches: "b" } }, b: { kind: "parenthesized_expression", has: { matches: "a" } } };
+  const cyclic = compactGate(FLAGGED, { clauses: [shared("typescript", cycle), { id: "c", forbid: { ast: { language: "typescript", rule: { matches: "a" } } } }] });
+  assert.equal(cyclic.metrics.nestingRun, 2);
+});
+
+test("compact passes the runs a rule declares are not copies, fails a run it does not declare, and fails the declaration once they are gone", () => {
+  const chain = (depth: number, kind = "parenthesized_expression"): Record<string, unknown> => (depth === 1 ? { kind } : { kind, has: chain(depth - 1, kind) });
+  const repetition = (bytes: number, body: Record<string, unknown>, exempt?: RepetitionExemption) => compactGate(bytes, rule(body), exempt).checks.find((check) => check.id === "no-written-out-repetition");
+  const reason = "each step is the next enclosing expression";
+  const exempt = { runs: { parenthesized_expression: 3 }, reason };
+  const measured = (most: number, long: string) => `the most times one node kind occurs along a single nesting path: ${most} (limit ${NESTING_RUN_LIMIT})${long === "" ? "" : `; runs of ${NESTING_RUN_LIMIT} or more: ${long}`}`;
+  assert.deepEqual(repetition(FLAGGED, chain(3), exempt), { id: "no-written-out-repetition", ok: true, detail: `exempt (${reason}); ${measured(3, "parenthesized_expression 3")}` });
+  // Without the declaration the same run still fails.
+  assert.equal(repetition(FLAGGED, chain(3))!.ok, false);
+  // A run the declaration does not name, or a longer one than it names, was not judged: the declaration covers neither.
+  const notDeclared = (most: number, long: string, excused = "parenthesized_expression 3") => `the exemption (${reason}) excuses ${excused}, not the runs measured; ${measured(most, long)}; set its runs to those measured if they are not copies either, or rewrite the repetition`;
+  assert.deepEqual(repetition(FLAGGED, { all: [chain(3), { has: chain(6, "call_expression") }] }, exempt), { id: "no-written-out-repetition", ok: false, detail: notDeclared(6, "call_expression 6, parenthesized_expression 3") });
+  assert.deepEqual(repetition(FLAGGED, chain(4), exempt), { id: "no-written-out-repetition", ok: false, detail: notDeclared(4, "parenthesized_expression 4") });
+  // A run it names that went away no longer needs excusing, though another run still does.
+  const tooMany = { runs: { call_expression: 3, parenthesized_expression: 3 }, reason };
+  assert.deepEqual(repetition(FLAGGED, chain(3), tooMany), { id: "no-written-out-repetition", ok: false, detail: notDeclared(3, "parenthesized_expression 3", "call_expression 3, parenthesized_expression 3") });
+  // Once every run is under the limit, or the document under the flag, the declaration is stale.
+  assert.deepEqual(repetition(FLAGGED, chain(2), exempt), { id: "no-written-out-repetition", ok: false, detail: `stale exemption (${reason}): ${measured(2, "")}; remove the exemption` });
+  assert.deepEqual(repetition(100, chain(3), exempt), { id: "no-written-out-repetition", ok: false, detail: `stale exemption (${reason}): 100 bytes, under the ${SIZE_FLAG_BYTES}-byte flag; remove the exemption` });
+  assert.equal(repetition(100, chain(3)), undefined);
 });
 
 test("compact reports recursive utilities called by id or with parameters, per query", () => {

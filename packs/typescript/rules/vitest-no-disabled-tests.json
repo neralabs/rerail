@@ -1,7 +1,7 @@
 {
   "format": "rerail.policy/v1",
   "id": "vitest-no-disabled-tests",
-  "revision": 3,
+  "revision": 4,
   "mode": "log",
   "description": "Fix or delete disabled Vitest tests, such as skipped tests, x-prefixed tests, pending() or tests with no function; they silently never run.",
   "scope": {
@@ -422,19 +422,6 @@
                   "field": "object",
                   "matches": "vitest-it-test-callee"
                 }
-              },
-              {
-                "kind": "call_expression",
-                "has": {
-                  "field": "function",
-                  "matches": "vitest-it-test-callee"
-                }
-              },
-              {
-                "kind": "parenthesized_expression",
-                "has": {
-                  "matches": "vitest-it-test-callee"
-                }
               }
             ]
           },
@@ -586,19 +573,6 @@
                 "kind": "member_expression",
                 "has": {
                   "field": "object",
-                  "matches": "vitest-describe-suite-callee"
-                }
-              },
-              {
-                "kind": "call_expression",
-                "has": {
-                  "field": "function",
-                  "matches": "vitest-describe-suite-callee"
-                }
-              },
-              {
-                "kind": "parenthesized_expression",
-                "has": {
                   "matches": "vitest-describe-suite-callee"
                 }
               }
@@ -984,19 +958,6 @@
                   "field": "object",
                   "matches": "vitest-bench-callee"
                 }
-              },
-              {
-                "kind": "call_expression",
-                "has": {
-                  "field": "function",
-                  "matches": "vitest-bench-callee"
-                }
-              },
-              {
-                "kind": "parenthesized_expression",
-                "has": {
-                  "matches": "vitest-bench-callee"
-                }
               }
             ]
           },
@@ -1148,19 +1109,6 @@
                 "kind": "member_expression",
                 "has": {
                   "field": "object",
-                  "matches": "vitest-vi-vitest-callee"
-                }
-              },
-              {
-                "kind": "call_expression",
-                "has": {
-                  "field": "function",
-                  "matches": "vitest-vi-vitest-callee"
-                }
-              },
-              {
-                "kind": "parenthesized_expression",
-                "has": {
                   "matches": "vitest-vi-vitest-callee"
                 }
               }
@@ -1315,19 +1263,6 @@
                   "field": "object",
                   "matches": "vitest-expect-callee"
                 }
-              },
-              {
-                "kind": "call_expression",
-                "has": {
-                  "field": "function",
-                  "matches": "vitest-expect-callee"
-                }
-              },
-              {
-                "kind": "parenthesized_expression",
-                "has": {
-                  "matches": "vitest-expect-callee"
-                }
               }
             ]
           },
@@ -1480,19 +1415,6 @@
                   "field": "object",
                   "matches": "vitest-expectTypeOf-callee"
                 }
-              },
-              {
-                "kind": "call_expression",
-                "has": {
-                  "field": "function",
-                  "matches": "vitest-expectTypeOf-callee"
-                }
-              },
-              {
-                "kind": "parenthesized_expression",
-                "has": {
-                  "matches": "vitest-expectTypeOf-callee"
-                }
               }
             ]
           },
@@ -1510,19 +1432,6 @@
                 "kind": "member_expression",
                 "has": {
                   "field": "object",
-                  "matches": "vitest-bench-describe-expect-expectTypeOf-it-suite-test-vi-vitest-context-callee"
-                }
-              },
-              {
-                "kind": "call_expression",
-                "has": {
-                  "field": "function",
-                  "matches": "vitest-bench-describe-expect-expectTypeOf-it-suite-test-vi-vitest-context-callee"
-                }
-              },
-              {
-                "kind": "parenthesized_expression",
-                "has": {
                   "matches": "vitest-bench-describe-expect-expectTypeOf-it-suite-test-vi-vitest-context-callee"
                 }
               }
@@ -1910,19 +1819,6 @@
                   "field": "object",
                   "matches": "vitest-xdescribe-xit-xtest-callee"
                 }
-              },
-              {
-                "kind": "call_expression",
-                "has": {
-                  "field": "function",
-                  "matches": "vitest-xdescribe-xit-xtest-callee"
-                }
-              },
-              {
-                "kind": "parenthesized_expression",
-                "has": {
-                  "matches": "vitest-xdescribe-xit-xtest-callee"
-                }
               }
             ]
           },
@@ -1940,19 +1836,6 @@
                 "kind": "member_expression",
                 "has": {
                   "field": "object",
-                  "matches": "vitest-xdescribe-xit-xtest-context-callee"
-                }
-              },
-              {
-                "kind": "call_expression",
-                "has": {
-                  "field": "function",
-                  "matches": "vitest-xdescribe-xit-xtest-context-callee"
-                }
-              },
-              {
-                "kind": "parenthesized_expression",
-                "has": {
                   "matches": "vitest-xdescribe-xit-xtest-context-callee"
                 }
               }
@@ -2105,19 +1988,6 @@
                 "kind": "member_expression",
                 "has": {
                   "field": "object",
-                  "matches": "vitest-describe-callee"
-                }
-              },
-              {
-                "kind": "call_expression",
-                "has": {
-                  "field": "function",
-                  "matches": "vitest-describe-callee"
-                }
-              },
-              {
-                "kind": "parenthesized_expression",
-                "has": {
                   "matches": "vitest-describe-callee"
                 }
               }
@@ -2504,19 +2374,6 @@
                   "field": "object",
                   "matches": "vitest-fdescribe-fit-callee"
                 }
-              },
-              {
-                "kind": "call_expression",
-                "has": {
-                  "field": "function",
-                  "matches": "vitest-fdescribe-fit-callee"
-                }
-              },
-              {
-                "kind": "parenthesized_expression",
-                "has": {
-                  "matches": "vitest-fdescribe-fit-callee"
-                }
               }
             ]
           },
@@ -2534,19 +2391,6 @@
                 "kind": "member_expression",
                 "has": {
                   "field": "object",
-                  "matches": "vitest-bench-describe-fdescribe-fit-it-test-xdescribe-xit-xtest-context-callee"
-                }
-              },
-              {
-                "kind": "call_expression",
-                "has": {
-                  "field": "function",
-                  "matches": "vitest-bench-describe-fdescribe-fit-it-test-xdescribe-xit-xtest-context-callee"
-                }
-              },
-              {
-                "kind": "parenthesized_expression",
-                "has": {
                   "matches": "vitest-bench-describe-fdescribe-fit-it-test-xdescribe-xit-xtest-context-callee"
                 }
               }
@@ -2705,19 +2549,6 @@
                   "field": "object",
                   "matches": "vitest-xit-xtest-callee"
                 }
-              },
-              {
-                "kind": "call_expression",
-                "has": {
-                  "field": "function",
-                  "matches": "vitest-xit-xtest-callee"
-                }
-              },
-              {
-                "kind": "parenthesized_expression",
-                "has": {
-                  "matches": "vitest-xit-xtest-callee"
-                }
               }
             ]
           },
@@ -2873,19 +2704,6 @@
                   "field": "object",
                   "matches": "vitest-fit-callee"
                 }
-              },
-              {
-                "kind": "call_expression",
-                "has": {
-                  "field": "function",
-                  "matches": "vitest-fit-callee"
-                }
-              },
-              {
-                "kind": "parenthesized_expression",
-                "has": {
-                  "matches": "vitest-fit-callee"
-                }
               }
             ]
           },
@@ -2903,19 +2721,6 @@
                 "kind": "member_expression",
                 "has": {
                   "field": "object",
-                  "matches": "vitest-bench-fit-it-test-xit-xtest-context-callee"
-                }
-              },
-              {
-                "kind": "call_expression",
-                "has": {
-                  "field": "function",
-                  "matches": "vitest-bench-fit-it-test-xit-xtest-context-callee"
-                }
-              },
-              {
-                "kind": "parenthesized_expression",
-                "has": {
                   "matches": "vitest-bench-fit-it-test-xit-xtest-context-callee"
                 }
               }

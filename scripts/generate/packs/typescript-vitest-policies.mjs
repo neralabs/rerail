@@ -313,7 +313,7 @@ function namedCallee(utils, names) {
     any.push({ matches: `vitest-${labelOf(cases)}-extended` });
   }
   utils[`vitest-${label}-named`] = { kind: "identifier", any };
-  utils[`vitest-${label}-callee`] = chain(`vitest-${label}-callee`, `vitest-${label}-named`);
+  utils[`vitest-${label}-callee`] = memberChain(`vitest-${label}-callee`, `vitest-${label}-named`);
   return `vitest-${label}-callee`;
 }
 
@@ -321,7 +321,7 @@ function namedCallee(utils, names) {
 function contextCallee(utils, names) {
   const label = labelOf(names);
   utils[`vitest-${label}-context`] = { kind: "identifier", regex: oneOf(names), matches: "vitest-test-context" };
-  utils[`vitest-${label}-context-callee`] = chain(`vitest-${label}-context-callee`, `vitest-${label}-context`);
+  utils[`vitest-${label}-context-callee`] = memberChain(`vitest-${label}-context-callee`, `vitest-${label}-context`);
   return `vitest-${label}-context-callee`;
 }
 
@@ -368,6 +368,14 @@ function chain(self, head) {
       { kind: "parenthesized_expression", has: { matches: self } },
     ],
   };
+}
+
+/**
+ * A node `head` matches, or a member chain from one: `chain` without its call and parenthesis steps, for a callee
+ * `vitestCallee` also matches against `^<head>.<link>…$`, whose text holds no call or parenthesis for them to match.
+ */
+function memberChain(self, head) {
+  return { any: [{ matches: head }, { kind: "member_expression", has: { field: "object", matches: self } }] };
 }
 
 /** A function upstream reads, whose parameters it looks at. */

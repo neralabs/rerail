@@ -1,7 +1,7 @@
 {
   "format": "rerail.policy/v1",
   "id": "typescript-eslint-explicit-module-boundary-types",
-  "revision": 1,
+  "revision": 2,
   "mode": "steer",
   "description": "Declare return and parameter types on exported TypeScript functions and public class methods; the module's API then doesn't depend on inference.",
   "scope": {
@@ -729,7 +729,7 @@
                   },
                   "kind": "arrow_function",
                   "field": "body",
-                  "matches": "checked-higher-order"
+                  "matches": "checked"
                 }
               },
               {
@@ -759,7 +759,7 @@
                 "matches": "function"
               },
               {
-                "matches": "returns-function"
+                "matches": "returns-functions"
               },
               {
                 "matches": "checked"
@@ -795,16 +795,6 @@
                 }
               }
             }
-          },
-          "returns-function": {
-            "any": [
-              {
-                "matches": "returns-function-body"
-              },
-              {
-                "matches": "returns-functions"
-              }
-            ]
           },
           "late-checked": {
             "pattern": "$LATE",
