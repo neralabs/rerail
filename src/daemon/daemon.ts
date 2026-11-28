@@ -286,13 +286,20 @@ interface ListenPorts {
 async function listenPreferred(server: DaemonServer, ports: ListenPorts, host: string): Promise<void> {
   if (ports.port !== undefined && ports.port !== 0) return await listen(server, ports.port, host);
   for (const candidate of candidatePorts(ports)) {
-    try {
-      return await listen(server, candidate, host);
-    } catch (error) {
-      if (candidate !== ports.remembered && !portTaken(error)) throw error;
-    }
+    if (await listenedOn(server, candidate, ports, host)) return;
   }
   await listen(server, 0, host);
+}
+
+/** Whether the server now listens on `candidate`; false when the start moves on to the next port. */
+async function listenedOn(server: DaemonServer, candidate: number, ports: ListenPorts, host: string): Promise<boolean> {
+  try {
+    await listen(server, candidate, host);
+    return true;
+  } catch (error) {
+    if (candidate !== ports.remembered && !portTaken(error)) throw error;
+    return false;
+  }
 }
 
 /** The ports `listenPreferred` tries in order before a free one: the preferred port, then, without `port` 0, the remembered and the default. */
