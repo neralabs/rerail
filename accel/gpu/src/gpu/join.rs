@@ -100,7 +100,8 @@ pub struct Column {
     pub rows: usize,
 }
 
-/// The process's device in the device layer, whatever its backend.
+/// The device the join programs run on here (`shared::join_layer`): the host's where they run on the host
+/// (`shared::on_host`), else the process's (`shared::device`).
 pub fn device() -> Result<&'static rerail_device::device::Device, String> {
     shared::join_layer().map(|l| l.device).ok_or_else(|| "no device".to_owned())
 }

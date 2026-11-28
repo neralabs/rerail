@@ -20,7 +20,7 @@ pub use sources::*;
 /// 0 (several), 16 and 16z, on a device other than Metal (`metal_join::program_pipe`): `join_run`, written by hand
 /// (`join_program`), which reads the views' format as the compiled reads do, so one Rust for each. Not `sources.rs`, which rerail-ukl-vec's tests write: device-metal's test (`join_rust`) holds these to
 /// the source.
-pub const JOIN_PROGRAM: [u64; 3] = [0xe713e693075e49c6, 0xe6960f6d8c53b254, 0x8378e2089d0f0811];
+pub const JOIN_PROGRAM: [u64; 3] = [0x7e4ca879eea6d0d9, 0xe298f1de79e0099b, 0x3c5a4b2f3793cba4];
 
 /// A group's launch, as a kernel's Rust reads it: its group's position, its threads' (each dimension's), and the
 /// groups'.
@@ -64,9 +64,22 @@ pub fn digest(text: &str, defines: &[(&str, &str)]) -> u64 {
     h
 }
 
+/// The join program's kernel (decision 0674: its chain's driver): on the CPU it runs only as its SIMD Rust
+/// (`join_program::join_run`), never its UKL's build, until the user says otherwise. Every other kernel runs its Rust
+/// where it has it, else its UKL.
+pub const JOIN_KERNELS: [&str; 1] = ["join_run"];
+
+/// Whether `text`, specialized by `defines`, is the join program (`JOIN_PROGRAM` defined, its kernels compiled).
+pub fn is_join_program(text: &str, defines: &[(&str, &str)]) -> bool {
+    (defines.iter().any(|(n, _)| *n == "JOIN_PROGRAM") || text.contains("#define JOIN_PROGRAM ")) && text.contains(", join_run,")
+}
+
 /// The kernels of the program `text` (specialized by `defines`) that run as Rust on this processor: each its name
 /// and Rust. None where no kernel here was written from that text and those defines.
-pub fn kernels(text: &str, defines: &[(&str, &str)]) -> Vec<(&'static str, Kernel)> {
+///
+/// The join program whose text or defines are not the ones `join_program` was written from is an error: its UKL's build
+/// never runs in the Rust's place (it is orders of magnitude slower, and nothing would say so).
+pub fn kernels(text: &str, defines: &[(&str, &str)]) -> Result<Vec<(&'static str, Kernel)>, String> {
     let d = digest(text, defines);
     let mut out: Vec<(&'static str, Kernel)> = Vec::new();
     #[cfg(target_arch = "aarch64")]
@@ -75,8 +88,13 @@ pub fn kernels(text: &str, defines: &[(&str, &str)]) -> Vec<(&'static str, Kerne
     }
     if JOIN_PROGRAM.contains(&d) {
         out.push(("join_run", join_program::join_run));
+    } else if is_join_program(text, defines) {
+        return Err(format!(
+            "the join program's Rust (rerail_ukl_rust::join_program::join_run) was not written from this source (digest {d:#018x}): \
+             bring join_program to the source and JOIN_PROGRAM to its digests. Its UKL's build is not run in the Rust's place."
+        ));
     }
-    out
+    Ok(out)
 }
 
 #[cfg(test)]
@@ -91,8 +109,19 @@ mod tests {
     }
 
     /// Another text, or the same with another define, has no kernel here: its compiler's build runs.
+    /// A join program that is not the source `join_run` was written from is refused: its UKL's build does not run in
+    /// the Rust's place.
+    #[test]
+    fn a_changed_join_program_is_refused() {
+        let text = "#define JOIN_PROGRAM 1\nDEFINE_KERNEL2(join, join_run, ...)\n";
+        let e = super::kernels(text, &[]).unwrap_err();
+        assert!(e.contains("join_run") && e.contains("not written from this source"), "{e}");
+        // The same source without `JOIN_PROGRAM` compiles none of those kernels.
+        assert!(super::kernels("DEFINE_KERNEL2(join, join_run, ...)\n", &[]).unwrap().is_empty());
+    }
+
     #[test]
     fn another_program_has_no_rust() {
-        assert!(super::kernels("kernel text", &[("UKL_CONSTANT_0", "16")]).is_empty());
+        assert!(super::kernels("kernel text", &[("UKL_CONSTANT_0", "16")]).unwrap().is_empty());
     }
 }

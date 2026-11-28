@@ -168,7 +168,8 @@ impl Slab {
         self.block.reserved()
     }
 
-    /// A room of `bytes` at 16 bytes, zero, or `None` when the slab cannot hold it.
+    /// A room of `bytes` at 16 bytes (as the slab's memory holds it: its holder writes it), or `None` when the slab
+    /// cannot hold it.
     fn room(&self, bytes: usize) -> Option<usize> {
         self.block.try_alloc(bytes, ALIGN)
     }
@@ -556,8 +557,8 @@ fn source_room(len: usize) -> usize {
     aligned(len.max(1) + SOURCE_MARGIN)
 }
 
-/// Zero bytes past each source in its slab (a slab is mapped zeroed, and nothing else is written
-/// there): tier 2 reads its words in place, a window past the file's end reading zeros, as the
+/// Zero bytes past each source in its slab, written with its bytes (a recycled slab holds an earlier
+/// user's): tier 2 reads its words in place, a window past the file's end reading zeros, as the
 /// batch's layout (`block_native::BACK`).
 pub const SOURCE_MARGIN: usize = 256;
 
@@ -595,8 +596,12 @@ pub fn admit_sources_digested(files: &[&[u8]], digests: &[[u8; 32]]) -> Result<V
         let room = source_room(bytes.len());
         let (at, offset) = state.room(room, &keep)?;
         let entry = &mut state.slabs[at];
-        // SAFETY: `room` gave this range to this source alone, inside the slab's mapping.
-        unsafe { std::ptr::copy_nonoverlapping(bytes.as_ptr(), entry.slab.host().add(offset), bytes.len()) };
+        // SAFETY: `room` gave this range to this source alone, inside the slab's mapping: its bytes, then the zeros its
+        // readers' window reads past them (`SOURCE_MARGIN`), up to the room's end.
+        unsafe {
+            std::ptr::copy_nonoverlapping(bytes.as_ptr(), entry.slab.host().add(offset), bytes.len());
+            std::ptr::write_bytes(entry.slab.host().add(offset + bytes.len()), 0, room - bytes.len());
+        }
         entry.last_use = clock;
         let slab = Arc::clone(&entry.slab);
         keep.push(slab.id);
@@ -842,9 +847,9 @@ mod tests {
     use super::*;
 
     /// The residency's slabs are the pool's: one evicted goes back to it whole, and the next slab leased of its class is
-    /// that buffer, its rooms zeroed though it holds the last lease's bytes.
+    /// that buffer, holding the last lease's bytes: a source placed there writes its margin's zeros with it.
     #[test]
-    fn an_evicted_slab_is_recycled_and_its_rooms_read_zero() {
+    fn an_evicted_slab_is_recycled_and_a_source_writes_its_margin() {
         if crate::device().is_err() {
             return;
         }
@@ -860,14 +865,15 @@ mod tests {
         drop(first);
         assert!(evict(), "the residency's slab retired");
         assert_eq!(held().sources, 0);
-        // A smaller source, of the same class: the buffer comes back, dirty, and its room reads zero past the bytes.
+        // A smaller source, of the same class: the buffer comes back, dirty, and its margin past the bytes is written
+        // zero with them.
         let small = vec![0x11_u8; SLAB_BYTES + (1 << 19)];
         let again = admit_sources(&[&small]).unwrap();
         assert_eq!(again[0].slab.device_buffer().device_address(), address, "the evicted slab's buffer served the next lease");
         assert_eq!(again[0].bytes(), &small[..]);
-        // SAFETY: the room's margin, inside the slab, written by no one but the zeroing.
+        // SAFETY: the room's margin, inside the slab, written with the source.
         let margin = unsafe { std::slice::from_raw_parts(again[0].slab.host().add(again[0].offset + small.len()), SOURCE_MARGIN) };
-        assert!(margin.iter().all(|&b| b == 0), "a room in a recycled slab is zero");
+        assert!(margin.iter().all(|&b| b == 0), "a source's margin in a recycled slab is zero");
         drop(again);
         clear();
     }

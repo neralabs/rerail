@@ -158,13 +158,20 @@ fn program_on(host: bool, name: &str, text: &str, defines: &[(&str, &str)]) -> R
     let slot: Slot = std::sync::Arc::clone(PROGRAMS.get_or_init(Default::default).lock().unwrap_or_else(|p| p.into_inner()).entry(key.clone()).or_default());
     slot.get_or_init(|| {
         let shared = if host { crate::shared::host() } else { crate::shared::get().ok_or("no device")? };
-        ship(name, text, defines);
+        if !host {
+            ship(name, text, defines);
+        }
         let started = std::time::Instant::now();
+        // `RERAIL_CPU_RUST=0` runs a kernel's UKL build in place of its Rust, except the joins': the CPU runs the join
+        // program only as its SIMD Rust (the user's order, until they say otherwise), so it is refused for that.
         let rust = !std::env::var("RERAIL_CPU_RUST").is_ok_and(|v| v == "0");
+        if !rust && rerail_ukl_rust::is_join_program(text, defines) {
+            return Err(format!("{name}: RERAIL_CPU_RUST=0 is refused for the join program: the CPU runs the joins only as their SIMD Rust"));
+        }
         let (library, preprocessed, bytes) = if host || crate::vec::on(&shared.device) {
             // Its rows the interpreter's, its kernels that are Rust of this text and these defines that Rust.
             let library = crate::vec::library(name, &format!("/<kernels>/{name}"), text, defines)?;
-            let library = if rust { library.with_rust(text, defines) } else { library };
+            let library = if rust { library.with_rust(text, defines)? } else { library };
             (library, started.elapsed(), text.len())
         } else {
             let source = preprocess_with(name, text, defines)?;
@@ -175,8 +182,8 @@ fn program_on(host: bool, name: &str, text: &str, defines: &[(&str, &str)]) -> R
                 None => ComputeFunctionLibrary::compile_from_source(&shared.device, &source, name)?,
             };
             // On the CPU, a kernel that is Rust of this very text and these defines runs as that Rust (decision 0567
-            // step 3). `RERAIL_CPU_RUST=0`, a measurement aid: every kernel the compiler's build.
-            let library = if std::env::var("RERAIL_CPU_RUST").is_ok_and(|v| v == "0") { library } else { library.with_rust(text, defines) };
+            // step 3).
+            let library = if rust { library.with_rust(text, defines)? } else { library };
             (library, preprocessed, source.len())
         };
         // `RERAIL_GPU_TIMES`, a measurement aid: each program's preprocessing and compile (or load), on stderr.

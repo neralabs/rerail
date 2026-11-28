@@ -138,6 +138,9 @@ pub(in crate::code_rule_dsl) const ROW_KEPT: u32 = 1 << 9;
 /// store's hash in the atoms directory's tables (decision 0666), and no row where no atom is. A symbol, not an arena
 /// text: an atom keyed by it is probed by value.
 pub(in crate::code_rule_dsl) const ROW_FIND: u32 = 1 << 10;
+/// With `ROW_FIND`: a text no atom is keeps its row, its value -1, so a negated atom keyed by it finds no row and
+/// passes, as the CPU's probe by its interned value finds none.
+pub(in crate::code_rule_dsl) const ROW_FIND_NONE: u32 = 1 << 11;
 pub(in crate::code_rule_dsl) const TEXTFN_LOWER: u32 = 0;
 pub(in crate::code_rule_dsl) const TEXTFN_HEAD: u32 = 1;
 pub(in crate::code_rule_dsl) const TEXTFN_DIR: u32 = 2;
@@ -171,6 +174,28 @@ pub(in crate::code_rule_dsl) const TEXTFN_HOST: u32 = 2;
 pub(in crate::code_rule_dsl) const TEXTFN_UNHELD: u32 = 4;
 /// An operand that is an arena text (a text function's value).
 pub(in crate::code_rule_dsl) const OPND_ARENA: u32 = 3;
+/// An operand that is a node's text (`@rr_node_text_any`): its span of its document's source, read where it lies
+/// through the batch's node view (`Batch::node_texts`, bound as the stage's `v_dir`), never made.
+pub(in crate::code_rule_dsl) const OPND_NODE: u32 = 4;
+/// Whether stage `stage` reads nodes through the batch's node view (`Batch::node_texts`, its `v_dir`): a text stage
+/// (`TEXTOP`, `STRCMP`, `ROWTEXT`) with a node's text among its operands (`OPND_NODE`), or a filter whose bind is a
+/// node's preorder key (`ARITH_NODE_ORDER`).
+pub(in crate::code_rule_dsl) fn reads_node_texts(stage: &Stage) -> bool {
+    let k = stage.agg[1];
+    // A string join's `agg[1]` is no operands' kinds (it reads its relation, by `v_dir` where that is a view).
+    let strjoin = stage.mode == ROWTEXT && stage.agg[0] & 15 == ROW_STRJOIN;
+    let text = matches!(stage.mode, TEXTOP | STRCMP | ROWTEXT) && !strjoin && [k & 15, (k >> 4) & 15, (k >> 8) & 15].contains(&OPND_NODE);
+    text || reads_node_orders(stage)
+}
+
+/// Whether filter `stage` binds a node's preorder key (`ARITH_NODE_ORDER`), read through its `v_dir`.
+pub(in crate::code_rule_dsl) fn reads_node_orders(stage: &Stage) -> bool {
+    stage.mode == FILTER
+        && (0..(stage.nbinds as usize).min(stage.bind_kind.len())).any(|b| stage.bind_kind[b] == BIND_ARITH && stage.arith.get(stage.bind_idx[b] as usize).is_some_and(|a| a[0] == ARITH_NODE_ORDER))
+}
+
+/// A held text's form (`setfix::device`'s `deferred`, beside `CAT_DOT` and `CAT_PLAIN`): a node's text (`OPND_NODE`).
+pub(in crate::code_rule_dsl) const NODE_TEXT: u32 = 2;
 /// An arena text's value: the sign bit, its offset from bit 24, its length in the low 24 bits.
 pub(in crate::code_rule_dsl) const ARENA_TEXT: i64 = i64::MIN;
 
@@ -195,6 +220,10 @@ pub(in crate::code_rule_dsl) const ARITH_DIV: u32 = 3;
 pub(in crate::code_rule_dsl) const ARITH_MOD: u32 = 4;
 pub(in crate::code_rule_dsl) const ARITH_MAX: u32 = 5;
 pub(in crate::code_rule_dsl) const ARITH_MIN: u32 = 6;
+/// A node's preorder key (`@rr_node_order`, `node_order`'s `k`) of its id, the first operand: its document by key in
+/// the stage's node view (`v_dir`), its numbered node's order there. A node the view does not number has none, as the
+/// host's read (`LongTexts::order_any`, through the same chunk and values) has none.
+pub(in crate::code_rule_dsl) const ARITH_NODE_ORDER: u32 = 7;
 /// A key's or a parameter's source: a slot of the binding, or a constant.
 pub(in crate::code_rule_dsl) const SLOT: u32 = 1;
 pub(in crate::code_rule_dsl) const CONST: u32 = 0;
@@ -423,7 +452,7 @@ fn program_pipe(format: u32) -> Result<Arc<rerail_accel_gpu::gpu::join::Pipe>, S
     let inline = if !host && rerail_device::device::is_metal() { "#define UKL_COLD static inline\n#define UKL_ONCE static inline\n" } else { "" };
     pipeline(&format!("joinprog{format}"), "join_run", || {
         let text = format!("{inline}#define JOIN_PROGRAM 1\n#define CLIF_BLOCKS_COHERENT 1\n{}", view_source(format));
-        if host && !rerail_ukl_rust::kernels(&text, &[]).iter().any(|(name, _)| *name == "join_run") {
+        if host && !rerail_ukl_rust::kernels(&text, &[]).is_ok_and(|k| k.iter().any(|(name, _)| *name == "join_run")) {
             panic!(
                 "join_stages.uglykl (views of format {format}) is not the text rerail_ukl_rust::join_program was written from ({:#018x}, not of JOIN_PROGRAM): bring the program to it, then its digests",
                 rerail_ukl_rust::digest(&text, &[])
@@ -1108,8 +1137,14 @@ fn bind_right(stage: &mut Stage, rel: &DevRel, index: Option<&DevIndex>) {
     (stage.v_set, stage.v_nset, stage.v_has) = rel.has.as_ref().map_or((0, 0, 0), |set| (set.buffer.buffer.device_address().expect("a has axis's set where views are read in place"), (set.len / 2) as u32, 0));
     if let Some(ix) = index {
         stage.r_index = ix.index;
-        stage.v_parent = u32::from(ix.walk == 1);
-        stage.v_has = ix.walk.saturating_sub(1);
+        // Walks of the tape (`DevIndex::walk`): a parent's children (1), a `has` climb or subtree (2, 3), a node's own
+        // row by its id (4).
+        stage.v_parent = match ix.walk {
+            1 => 1,
+            4 => 2,
+            _ => 0,
+        };
+        stage.v_has = if matches!(ix.walk, 2 | 3) { ix.walk - 1 } else { 0 };
     }
 }
 
@@ -1162,6 +1197,10 @@ struct Building {
 #[derive(Clone)]
 pub(in crate::code_rule_dsl) struct Built {
     ctl: std::sync::Arc<Words>,
+    /// Its program's last phase, its phases, and that phase's items (`Ran`'s): whether it ran to its end.
+    last: usize,
+    phases: usize,
+    items: u32,
 }
 
 impl Built {
@@ -1169,6 +1208,19 @@ impl Built {
     pub(in crate::code_rule_dsl) fn whole(&self) -> bool {
         let flags = self.ctl.get(6);
         flags & (1 | 32) == 0 && self.ctl.get(3) == 0
+    }
+
+    /// Whether the program ran to its end, its indexes built whole: `whole`, and its last phase's items all done
+    /// (`programs_done`'s reading). A chain that spent its dispatches with a phase left stops with no flag set and
+    /// launches again where it went on, its builds' later phases (the rows, after their buckets' starts) not yet run:
+    /// a batch that took one then read its buckets' starts over rows never written (2026-11-27: a walk on the CPU
+    /// device read row ids of 4e9 out of an index of 1,532,744 rows reserved 61 ms before, never marked built).
+    pub(in crate::code_rule_dsl) fn complete(&self) -> bool {
+        let want = match self.ctl.get(10 + self.phases + self.last) {
+            0 => self.items,
+            w => w,
+        };
+        self.whole() && self.ctl.get(10 + self.last) == want
     }
 }
 
@@ -1207,7 +1259,7 @@ impl Building {
             let at = self.at();
             held.retain(|f| {
                 let this = f.at == at && f.room.index == self.room.index;
-                lent |= this && f.lent;
+                lent |= this && f.lent > 0;
                 !this
             });
         }
@@ -1795,6 +1847,8 @@ pub(in crate::code_rule_dsl) struct Batch {
     atoms: Option<std::rc::Rc<DevAtoms>>,
     /// The store's one rolling cache, for the verdicts and texts its text kernels keep (decision 0478 step 2e).
     kept: Option<std::rc::Rc<DevKept>>,
+    /// The node view its text stages read nodes' texts through (`OPND_NODE`): the node reads' batch's (`node_texts`).
+    node_texts: Option<DevRel>,
     /// The relations its work writes in their blocks, each with its rows' `needed` before (decision 0463): a row
     /// its kernels could not write, past the chunks its relation holds, fails the batch, named.
     written: Vec<Written>,
@@ -1846,6 +1900,32 @@ impl Batch {
         Ok(())
     }
 
+    /// The node view (`Source::node_texts_in_place`) its text stages read nodes' texts through (`OPND_NODE`): the one
+    /// it has where that is the same directory.
+    pub(in crate::code_rule_dsl) fn node_texts(&mut self, view: crate::code_rule_dsl::facts::vtab::ViewInPlace) -> Result<(), Error> {
+        if self.node_texts.as_ref().and_then(|v| v.view.as_ref()).is_some_and(|v| v.dir == view.dir) {
+            return Ok(());
+        }
+        self.node_texts = Some(DevRel::view(0, 0, view)?);
+        Ok(())
+    }
+
+    /// A text stage (`TEXTOP`, `STRCMP`, `ROWTEXT`) with a node's text among its operands (`OPND_NODE`): the
+    /// batch's node view bound as its `v_dir`, its buffers resident. A stage of no such operand is as it was.
+    fn bind_node_texts(&mut self, stage: &mut Stage) -> Result<(), Error> {
+        if !reads_node_texts(stage) {
+            return Ok(());
+        }
+        let Some(dir) = self.node_texts.as_ref().and_then(|v| v.view.as_ref()).map(|v| v.dir) else { return Err(Error::BackendCapacity) };
+        stage.v_dir = dir;
+        stage.r_view = 0;
+        self.open()?;
+        if let (Some(pass), Some(nodes)) = (self.pass.as_ref(), self.node_texts.as_ref()) {
+            nodes.resident_in(pass);
+        }
+        Ok(())
+    }
+
     pub(in crate::code_rule_dsl) fn new() -> Result<Batch, Error> {
         rerail_accel_gpu::gpu::join::device()?;
         Batch::with_arena(ARENA_START)
@@ -1874,6 +1954,7 @@ impl Batch {
             borrowed: Vec::new(),
             atoms: None,
             kept: None,
+            node_texts: None,
             written: Vec::new(),
             places: 0,
             floor: 0,
@@ -2021,7 +2102,7 @@ impl Batch {
             let Some(whole) = b.whole.clone() else { continue };
             let view = b.view.clone();
             let mut held = b.home.ix.lock().unwrap_or_else(|e| e.into_inner());
-            held.push(crate::code_rule_dsl::facts::rows::InFlight { at: b.at(), room: b.room, done: s.flushed(), lent: false, whole: std::sync::Arc::new(move || whole.whole() && view.as_ref().is_none_or(|v| v.cache_failed() <= v.failed)) });
+            held.push(crate::code_rule_dsl::facts::rows::InFlight { at: b.at(), room: b.room, done: s.flushed(), lent: 0, whole: std::sync::Arc::new(move || whole.complete() && view.as_ref().is_none_or(|v| v.cache_failed() <= v.failed)) });
             b.queued = true;
         }
         self.committed.push(s);
@@ -2236,6 +2317,19 @@ impl Batch {
         Ok(Some(DevIndex { index: NONE, rows: rel.rows, fresh: None, built: false, walk: 1, buffer: bound(&home)?, cols: Vec::new() }))
     }
 
+    /// `rel`, the `node` or `child` view read in place, probed by its id (column 1, with any others): no index of it is
+    /// built, as a stage finds the id's document and node (`view_number`) and its one row there, the others checked on
+    /// it, as the host's probe by a node's own id (`Batch::node_hint`). `None` for any other relation or key.
+    pub(in crate::code_rule_dsl) fn by_own(&self, rel: &DevRel, cols: &[usize]) -> Result<Option<DevIndex>, Error> {
+        use crate::code_rule_dsl::facts::vtab::syntax::device_chunk::{VIEW_CHILD, VIEW_NODE};
+        let Some(v) = &rel.view else { return Ok(None) };
+        if !(v.kind == 1 + VIEW_NODE || v.kind == 1 + VIEW_CHILD) || !cols.contains(&1) || rel.is_has() {
+            return Ok(None);
+        }
+        let home = rel.home.clone().expect("a view's relation of no columns");
+        Ok(Some(DevIndex { index: NONE, rows: rel.rows, fresh: None, built: false, walk: 4, buffer: bound(&home)?, cols: Vec::new() }))
+    }
+
     /// A `has` axis probed by one of its columns (decision 0353 step 5): no index, each binding's rows walked on the
     /// tape (the kernels' `by_has`), by its node `[0]` a climb, by its ancestor `[1]` the subtree. `None` for any
     /// other relation; an error for any other probe of one, which reads it off the tape or not at all.
@@ -2301,7 +2395,19 @@ impl Batch {
         let key: Vector<u16> = cols.iter().map(|&c| c as u16).collect();
         // Another batch's build of it, taken: its index and its builder's submission, waited for below.
         let mut taken = None;
-        let room = 'room: {
+        // Room for its own build, reserved under the block's index lock (`home.ix`).
+        let reserve = || {
+            // SAFETY: the caller holds the block's index lock; the relation's rows are written (or are by this
+            // batch's work before the build, which its passes order).
+            unsafe {
+                match rel.mapped {
+                    // A live relation mapped as reached: room for its rows mapped, its buckets its bound's keys'.
+                    Some((rows, buckets)) => r.try_reserve_index_live(&home.block, &key, rel.from, rows as u32, buckets),
+                    None => r.try_reserve_index_from(&home.block, &key, rel.from, rel.rows as u32),
+                }
+            }
+        };
+        let mut room = 'room: {
             let mut held = home.ix.lock().unwrap_or_else(|e| e.into_inner());
             // A delta read in place is its rows `from..`: its index is of those, not the relation's first rows. A live
             // relation's index is built again for each round (below): none found.
@@ -2350,40 +2456,42 @@ impl Batch {
             // live relation's is this batch's own, each round's.
             let at = home.block.offset_of(std::ptr::from_ref(r));
             if let Some(f) = held.iter_mut().find(|f| f.at == at && f.room.key[..f.room.ncols] == *key && f.room.from == rel.from && f.room.rows_n as usize == rel.rows).filter(|_| !rel.live) {
-                f.lent = true;
+                f.lent += 1;
                 taken = Some((f.room, f.done.clone(), f.whole.clone()));
                 crate::code_rule_dsl::prof::count_named("device.index taken from another batch's build".into(), 4 * rel.rows);
                 break 'room None;
             }
-            // SAFETY: under the block's index lock; the relation's rows are written (or are by this batch's work
-            // before the build, which its passes order).
-            unsafe {
-                match rel.mapped {
-                    // A live relation mapped as reached: room for its rows mapped, its buckets its bound's keys'.
-                    Some((rows, buckets)) => r.try_reserve_index_live(&home.block, &key, rel.from, rows as u32, buckets),
-                    None => r.try_reserve_index_from(&home.block, &key, rel.from, rel.rows as u32),
-                }
-            }
+            reserve()
         };
         // Out of the block's lock: its builder's work done before this batch encodes a read of it. A builder the device
         // failed fails this batch too.
-        // One whose program stopped before it (`InFlight::whole`) is half written: so is this batch's read of it.
-        // One whose builder's program parked before the build (flag 128: a room or an arena's pages short, the rest of
-        // the program a later submission's) is unbuilt still, its last bucket offset `UNBUILT` (decision 0664): this
-        // batch's work is ordered after none of that submission's.
-        if let Some((room, done, whole)) = taken {
-            if !rerail_accel_gpu::gpu::join::Submitted::watching(&done).wait_ok().1 || !whole() {
+        // One whose program has not run to its end (`InFlight::whole`: stopped before it, or a chain that spent its
+        // dispatches before the build's rows, launched again later) is half written, as is one whose builder's program
+        // parked before the build (flag 128: a room or an arena's pages short, the rest of the program a later
+        // submission's), its last bucket offset `UNBUILT` (decision 0664): this batch's work is ordered after none of
+        // what is left of it. Not taken: this batch builds its own, its claim given back.
+        if let Some((t, done, whole)) = taken {
+            if !rerail_accel_gpu::gpu::join::Submitted::watching(&done).wait_ok().1 {
                 return Err(Error::BackendFailure);
             }
             // SAFETY: the builder's work is done; the room stays reserved while another batch took it (`lent`).
-            if rel.index_rows() > 0 && unsafe { home.block.base_ptr().add(last_offset(&room)).cast::<u32>().read_volatile() } == UNBUILT {
-                crate::code_rule_dsl::prof::count_named("device.index taken in flight, its builder parked before the build (its batch on the CPU)".into(), 1);
-                return Err(Error::BackendFailure);
+            let unbuilt = rel.index_rows() > 0 && unsafe { home.block.base_ptr().add(last_offset(&t)).cast::<u32>().read_volatile() } == UNBUILT;
+            if whole() && !unbuilt {
+                // Read again at this batch's finish (`borrowed`).
+                self.borrowed.push((rerail_accel_gpu::gpu::join::Submitted::watching(&done), whole));
+                return Ok(DevIndex { index: t.index as u32, rows: rel.rows, fresh: None, built: false, walk: 0, buffer: bound(&home)?, cols: Vec::new() });
             }
-            // Read again at this batch's finish (`borrowed`): its builder's program may yet stop before the build (a
-            // later chain, a park), as its control words then say.
-            self.borrowed.push((rerail_accel_gpu::gpu::join::Submitted::watching(&done), whole));
-            return Ok(DevIndex { index: room.index as u32, rows: rel.rows, fresh: None, built: false, walk: 0, buffer: bound(&home)?, cols: Vec::new() });
+            crate::code_rule_dsl::prof::count_named("device.index taken in flight, its builder's program not at its end: built again here".into(), 4 * rel.rows);
+            let at = home.block.offset_of(std::ptr::from_ref(r));
+            let mut held = home.ix.lock().unwrap_or_else(|e| e.into_inner());
+            if let Some(f) = held.iter_mut().find(|f| f.at == at && f.room.index == t.index) {
+                f.lent -= 1;
+            }
+            // Its builder's batch may have marked it built meanwhile.
+            if let Some(i) = r.find_index_from(&key, rel.from, rel.rows as u32) {
+                return Ok(DevIndex { index: i as u32, rows: rel.rows, fresh: None, built: false, walk: 0, buffer: bound(&home)?, cols: Vec::new() });
+            }
+            room = reserve();
         }
         let Some(room) = room else {
             // A live relation grows where it lies: its index has room there, or it is refused.
@@ -2491,6 +2599,9 @@ impl Batch {
         if n == 0 {
             return Ok(());
         }
+        // Its rows, by whether it is built again each round (a live relation's: a recursive stratum's own, decision
+        // 0707's 13.9 M rows) or once.
+        crate::code_rule_dsl::prof::count_named(if rel.live { "device.index rows built: a live relation's, again each round" } else { "device.index rows built: once" }.into(), n);
         assert!(cols.len() <= 8, "an index of {} columns", cols.len());
         let mut ix = IxParams { n: m as u32, ncols: cols.len() as u32 | if rel.live { IX_LIVE } else { 0 }, at: rel.at, mask: room.mask, cols: [0; 8], dir: 0, kind: 0, from: rel.from, pad: 0 };
         for (k, &c) in cols.iter().enumerate() {
@@ -2539,6 +2650,7 @@ impl Batch {
             }
             None => self.dummy.buffer.clone(),
         };
+        self.bind_node_texts(&mut stage)?;
         let fbuf = self.screen(&mut stage, screen);
         // From one binding: a thread per candidate row (`scan_count`), its rows in the relation's order.
         let from_one = left.room() == 1 && !left.placed() && stage.mode == JOIN && right.is_some();
@@ -2691,6 +2803,7 @@ impl Batch {
             }
             None => self.dummy.buffer.clone(),
         };
+        self.bind_node_texts(&mut stage)?;
         let fbuf = self.screen(&mut stage, screen);
         stage.cap_in = left.room() as u32;
         stage.cap_out = out.room() as u32;
@@ -2787,7 +2900,8 @@ impl Batch {
         let hb = match held {
             Some((r, map)) => {
                 assert!(map.places.is_power_of_two() && cols.len() == r.cols && cols.len() <= 8);
-                (d[23], d[24]) = (1, (map.places - 1) as u32);
+                // A map that grows at a park: read only, its rows placed after the gate (`set_place`).
+                (d[23], d[24]) = (if map.grows.is_some() { 2 } else { 1 }, (map.places - 1) as u32);
                 for (w, v) in [(26, r.at), (28, r.rows_at()), (30, map.at as u64)] {
                     (d[w], d[w + 1]) = (v as u32, (v >> 32) as u32);
                 }
@@ -2820,6 +2934,7 @@ impl Batch {
         let n = table.room() + 1;
         let mut job = Job::new(JobKind::Dedup, 0, Stage::default());
         job.dedup = Some(d);
+        job.dedup_map = held.and_then(|(_, m)| m.grows);
         job.reads_placed(table, &[(3, DD_CAP)]);
         job.makes_placed(out, &[(3, DD_OCAP)]);
         job.h_place = (table.placed() && key.is_none()).then_some(HPlace { block: 3, places: Some(DD_PLACES), mask: DD_MASK, arrays: 2 });
@@ -3086,6 +3201,7 @@ impl Batch {
             }
             job.p = Some(lat_bytes(&p).to_vec());
             job.lat = Some((h, true));
+            job.lat_tail = true;
             (job.count, job.clear, job.lattice) = (0, 0, [most, most / 2]);
             job.order(&[job.desc.s, job.desc.g], &[job.desc.vc]);
             job.own.push(hb);
@@ -3195,6 +3311,34 @@ impl Batch {
         job.p = Some(lat_bytes(&p).to_vec());
         (job.count, job.clear, job.lattice) = (0, 0, [map.places, n]);
         job.order(&[job.desc.s], &[job.desc.vc]);
+        job.own.push(hb);
+        self.queue(job)
+    }
+
+    /// A round's new rows placed in its set head's map after its gate (code 7 of `lat_rehash_one`): `r`'s rows past its
+    /// rows as the device holds them, as many as slot `count.0` of `count.1` holds (its items those rows', `cap` its
+    /// threads as guessed), once
+    /// `append_live` wrote them there. Its dedup read the map only (`Dedup::seen` 2), so a park before it grew the map
+    /// with every row it held; a map that grows is re-pointed here too (`LatMap::grows`, `Rooms::folds`).
+    pub(in crate::code_rule_dsl) fn set_place(&mut self, r: &DevRel, cap: usize, count: (usize, &Words), map: LatMap<'_>) -> Result<(), Error> {
+        assert!(map.places.is_power_of_two() && r.cols <= 8);
+        let p = LatParams { top: 0, n: u32::MAX, had: 0, nkeys: r.cols as u32, code: 7, after: NONE, pmask: 0, hmask: (map.places - 1) as u32, level: 0, omask: 0,
+                            counted: 0, r_at: r.at, r_rows_at: r.rows_at(), h_at: map.at as u64, h0_at: 4 * count.0 as u64 };
+        let hb = bound(map.home)?;
+        let mut job = Job::new(JobKind::Lattice, 0, Stage::default());
+        // Its relation as `append_live` writes it (its block's wrap), so it runs after that copy.
+        job.desc.s = job.reach(&r.wrap()?, 0, false)?;
+        job.desc.vc = job.reach(&hb.buffer, 0, true)?;
+        job.desc.g = job.reach(&count.1.buffer.buffer, 0, false)?;
+        for d in [&mut job.desc.l, &mut job.desc.a, &mut job.desc.totals, &mut job.desc.h, &mut job.desc.o, &mut job.desc.counters, &mut job.desc.v] {
+            *d = job.desc.s;
+        }
+        job.p = Some(lat_bytes(&p).to_vec());
+        job.lat = map.grows.map(|h| (h, false));
+        // Its items as many as the round's rows (its count's word on the device), `cap` its threads as guessed.
+        job.rows = Some((job.desc.g + 4 * count.0 as u64, 0));
+        (job.count, job.clear, job.lattice, job.set_place) = (0, 0, [0, 0], cap);
+        job.order(&[job.desc.s, job.desc.g], &[job.desc.vc]);
         job.own.push(hb);
         self.queue(job)
     }
@@ -3434,6 +3578,9 @@ impl Batch {
                 // Check `t`'s cap: after the gate's two words, three words a check, its third.
                 prog.rooms.gates.push(GateRoom { params: params.buffer.clone(), at: pat + 16 + 24 * t as u64 + 16, grow });
             }
+            if let (Some(h), Some(dat)) = (j.dedup_map.take(), at[3]) {
+                prog.rooms.dedups.push((h, params.buffer.clone(), dat));
+            }
             match j.lat.take() {
                 Some((h, false)) => prog.rooms.folds.push((h, params.buffer.clone(), pat)),
                 Some((h, true)) => prog.rooms.tail.as_mut().expect("the tail begun").grows.push((h, params.buffer.clone(), pat)),
@@ -3534,6 +3681,10 @@ impl Batch {
                 None => (pa + at[h.block].expect("its places' block") + h.mask.0, 1),
             }),
         }).collect();
+        // A tail's growth of a lattice head's map: its items as its params' `n` needs (the places of the map a park grew
+        // it to, 0 where it did not grow), not every place its map could have. A park growing one head's map ran
+        // every head's two phases at its most places, each thread finding nothing to do (`omask` all ones).
+        let tails: Vec<Option<(u64, u32)>> = jobs.iter().zip(&placed).map(|(j, at)| j.lat_tail.then(|| (pa + at[4].unwrap_or(0) + std::mem::offset_of!(LatParams, n) as u64, 0))).collect();
         let job_phase = |prog: &mut Program, kinds: &[(JobKind, u32, fn(&Job) -> usize)]| {
             let mut items = Vec::new();
             let mut segs = Vec::new();
@@ -3545,13 +3696,17 @@ impl Batch {
                         let n = if what == PK_ROW_TEXT { threads(j).div_ceil(rows_a_group).max(1) } else { groups(threads(j)) };
                         // Its items as many as its rows' count needs, where its kernel's threads past them do nothing;
                         // else all of them (`per` 0).
-                        let word = j.rows_word().filter(|_| ROWS_ITEMS.contains(&what)).or_else(|| clears[i].filter(|_| matches!(what, PK_DEDUP_CLEAR | PK_LAT_CLEAR | PK_LAT_MERGE)));
+                        let word = j.rows_word().filter(|_| ROWS_ITEMS.contains(&what)).or_else(|| clears[i].filter(|_| matches!(what, PK_DEDUP_CLEAR | PK_LAT_CLEAR | PK_LAT_MERGE))).or_else(|| tails[i].filter(|_| matches!(what, PK_LAT_HCLEAR | PK_LAT_REHASH)));
                         let (count, per, plus) = match word {
                             Some((count, plus)) => (count, rerail_accel_gpu::gpu::join::GROUP as u32, plus),
                             None => (0, 0, 0),
                         };
-                        segs.push(SegAt { first: items.len() as u32, items: n as u32, count, per, plus });
-                        items.extend((0..n).map(|g| (what, (first_job + i) as u32, g as u32)));
+                        // A segment of a count runs its first item as each group its count needs (`phase_group`): its
+                        // one item. Its groups at most were each an item before, written out: the tail's growths alone
+                        // 3.3 M a program of the points-to component, its item lists grown and copied as they were.
+                        let listed = if per == 0 { n } else { 1 };
+                        segs.push(SegAt { first: items.len() as u32, items: listed as u32, count, per, plus });
+                        items.extend((0..listed).map(|g| (what, (first_job + i) as u32, g as u32)));
                     }
                 }
             }
@@ -3666,6 +3821,7 @@ impl Batch {
         job_phase(prog, &[(JobKind::Lattice, PK_LAT_CLAIM, |j| j.count)]);
         job_phase(prog, &[(JobKind::Lattice, PK_LAT_BEST, |j| j.count)]);
         job_phase(prog, &[(JobKind::Lattice, PK_LAT_MERGE, |j| j.clear)]);
+        job_phase(prog, &[(JobKind::Lattice, PK_SET_PLACE, |j| j.set_place)]);
         // The view format its worker is compiled for: the jobs' one, else several (0).
         for j in &jobs {
             if matches!(j.kind, JobKind::Stage | JobKind::Scan | JobKind::Witness | JobKind::Copy | JobKind::Index) {
@@ -3721,7 +3877,10 @@ impl Batch {
                 // as they reach it (a park, then a remap). A test's first arena is its own, so its claims map pages as
                 // a larger one's would.
                 let floor = if self.reserve_arena && rerail_device::device::map_commits(device) { 0 } else { self.floor };
-                let room = sizes.arena.unwrap_or((2 * prog.arena).max(floor)).max(16).next_multiple_of(16);
+                // The guess at most the arena's whole: it is its first pages, and its claims map the rest as they reach
+                // it; a guess past it (a recursive component of many heads, each its bound's rows) refused the program
+                // before a claim was made. A floor or a size asked past it is a claim's, refused.
+                let room = sizes.arena.unwrap_or((2 * prog.arena).min(ARENA_MAX).max(floor)).max(16).next_multiple_of(16);
                 if room > ARENA_MAX {
                     return Err(Error::BackendCapacity);
                 }
@@ -3830,7 +3989,7 @@ impl Batch {
             // them; and told to no other batch until it launches (`Building::held`), as no submission committed before
             // then holds their work.
             for b in self.building.iter_mut().filter(|b| b.encoded && b.whole.is_none()) {
-                b.whole = Some(Built { ctl: r.ctl.clone() });
+                b.whole = Some(r.built());
                 b.held = true;
             }
             self.held.push(r);
@@ -3915,7 +4074,7 @@ impl Batch {
         // committed: that submission tells only the builders it holds, not this program's, whose work is the chain's
         // (a batch that took one waited for the submission before the chain, and read its index unbuilt).
         for b in self.building.iter_mut().filter(|b| b.encoded && b.whole.is_none()) {
-            b.whole = Some(Built { ctl: r.ctl.clone() });
+            b.whole = Some(r.built());
         }
         let kit = &r.kit;
         let pass = self.open()?;
@@ -4592,6 +4751,9 @@ struct Rooms {
     sorts: Vec<SortRoom>,
     /// Each live fold's map (its head, `LatMap::grows`), its parameters (`LatParams`) at byte `.2` of `.1`.
     folds: Vec<(usize, Buffer, u64)>,
+    /// Each dedup less a set head's map that grows (its head, `LatMap::grows`), its words (`Dedup`) at byte `.2` of
+    /// `.1`: re-pointed at the map grown.
+    dedups: Vec<(usize, Buffer, u64)>,
     /// The program's tail (`Batch::lattice_tail`): its first phase and each head's map growth's parameters.
     tail: Option<Tail>,
     /// A parameters buffer and a word's byte offset in it.
@@ -4732,21 +4894,39 @@ impl Kit {
         self.maps_grown = !maps.is_empty();
         if self.maps_grown {
             let tail = self.rooms.tail.as_ref().expect("a program whose maps grow has a tail");
-            // Each head's growth: its new map and its old, or none (`omask` all ones) where its map did not grow.
+            // Each head's growth: its new map and its old, or none (`omask` all ones) where its map did not grow. Two
+            // gates of a park may each grow it: its last map the new one, its keys those of the map it had (the
+            // first growth's old: the maps between them hold none until this tail runs).
             for (key, params, at) in &tail.grows {
-                let g = maps.iter().filter(|m| m.key == *key).max_by_key(|m| m.places);
+                let first = maps.iter().filter(|m| m.key == *key).min_by_key(|m| m.old_places).map(|m| (m.old_at, m.old_places));
+                let g = maps.iter().filter(|m| m.key == *key).max_by_key(|m| m.places).map(|m| MapGrown { key: m.key, at: m.at, places: m.places, old_at: first.expect("its first growth").0, old_places: first.expect("its first growth").1 });
                 // SAFETY: the growth's `LatParams`, within its parameters buffer; no work of the program runs.
                 unsafe {
                     let b = params.contents().cast::<u8>().add(*at as usize);
                     match g {
                         Some(g) => {
+                            // Its two phases' threads (`lat_tail`): the new map's places.
+                            b.add(std::mem::offset_of!(LatParams, n)).cast::<u32>().write_unaligned(g.places as u32);
                             b.add(std::mem::offset_of!(LatParams, hmask)).cast::<u32>().write_unaligned((g.places - 1) as u32);
                             b.add(std::mem::offset_of!(LatParams, omask)).cast::<u32>().write_unaligned((g.old_places - 1) as u32);
                             b.add(std::mem::offset_of!(LatParams, h_at)).cast::<u64>().write_unaligned(g.at);
                             b.add(std::mem::offset_of!(LatParams, h0_at)).cast::<u64>().write_unaligned(g.old_at);
                         }
-                        None => b.add(std::mem::offset_of!(LatParams, omask)).cast::<u32>().write_unaligned(u32::MAX),
+                        None => {
+                            b.add(std::mem::offset_of!(LatParams, n)).cast::<u32>().write_unaligned(0);
+                            b.add(std::mem::offset_of!(LatParams, omask)).cast::<u32>().write_unaligned(u32::MAX);
+                        }
                     }
+                }
+            }
+            // Each dedup less a set head's map grown: its map's mask (word 24) and place (words 30, 31) the new one's.
+            for (key, params, at) in &self.rooms.dedups {
+                let Some(g) = maps.iter().filter(|m| m.key == *key).max_by_key(|m| m.places) else { continue };
+                // SAFETY: the dedup's words (`Dedup`, 32 `u32`s), within its parameters buffer; no work of the program runs.
+                unsafe {
+                    let b = params.contents().cast::<u8>().add(*at as usize);
+                    b.add(4 * 24).cast::<u32>().write_unaligned((g.places - 1) as u32);
+                    b.add(4 * 30).cast::<u64>().write_unaligned(g.at);
                 }
             }
             // Each fold of a head grown: its map the new one.
@@ -4766,9 +4946,11 @@ impl Kit {
     /// A park's release once its rooms grew (`grow_rooms`), the gate's phase `p` parked: its `ctl[9]` (bit 29, the
     /// phase whose next the chain's start takes), and where a lattice head's map grew, the jump into the program's
     /// tail first (`ctl[7]`: its first phase and one), whose round's end jumps on to the phase after `p` (its
-    /// `RoundP::next`, written here; past the walk's phases, the end).
-    fn release(&self, p: u32) -> (u32, Option<u32>) {
-        match (&self.rooms.tail, self.maps_grown) {
+    /// `RoundP::next`, written here; past the walk's phases, the end). Its growth is this park's alone: a later park
+    /// (an arena's remap) runs no tail, which would empty the map and place again the keys of the one this growth
+    /// replaced.
+    fn release(&mut self, p: u32) -> (u32, Option<u32>) {
+        match (&self.rooms.tail, std::mem::take(&mut self.maps_grown)) {
             (Some(t), true) => {
                 let after = if p + 1 < self.end { p + 1 } else { TAIL_END };
                 if let Some((b, at)) = &t.jump {
@@ -4877,6 +5059,7 @@ const PK_RADIX_HIST: u32 = 3;
 const PK_RADIX_SCATTER: u32 = 4;
 /// A sorted dedup's keys (t58 increment A, `dedup_key_one`).
 const PK_DEDUP_KEY: u32 = 32;
+const PK_SET_PLACE: u32 = 33;
 
 /// `HeadKeyP`'s level's keys and its passes' parity (its size script's, `flush`'s).
 const HK_TOTAL: WordAt = WordAt::word(68);
@@ -4967,7 +5150,7 @@ const PK_IX_MARK: u32 = 31;
 /// The phases whose items are their jobs' rows' (`Job::rows_word`): each kernel's threads past its rows do nothing.
 /// Not a row's text (its SIMD groups stride its rows), an index (its sort is of every key), a clear, a fold's map or
 /// places, a scan's or a sort's tiles.
-const ROWS_ITEMS: [u32; 17] = [PK_COPY, PK_MAP, PK_DEDUP_KEY, PK_DEDUP_CLAIM, PK_STAGE_COUNT, PK_SCAN_COUNT, PK_WITNESS_COUNT, PK_DEDUP_MARK, PK_STAGE_SCATTER, PK_SCAN_SCATTER,
+const ROWS_ITEMS: [u32; 18] = [PK_SET_PLACE, PK_COPY, PK_MAP, PK_DEDUP_KEY, PK_DEDUP_CLAIM, PK_STAGE_COUNT, PK_SCAN_COUNT, PK_WITNESS_COUNT, PK_DEDUP_MARK, PK_STAGE_SCATTER, PK_SCAN_SCATTER,
                                PK_ROW_SCATTER, PK_DEDUP_SCATTER, PK_LAT_CLAIM, PK_LAT_BEST, PK_IX_KEY, PK_IX_PLACE, PK_IX_MARK];
 
 /// A job's items in a phase as many as a count on the device needs (`join_stages`' `Seg`).
@@ -5314,6 +5497,11 @@ struct Ran {
 }
 
 impl Ran {
+    /// What tells whether it built its builders' indexes (`Built`).
+    fn built(&self) -> Built {
+        Built { ctl: self.ctl.clone(), last: self.last, phases: self.phases, items: self.items }
+    }
+
     /// Its parked item (a size script's, `ctl[9]`) put back (`ctl[2]`: the next chain's start runs it alone), and its
     /// park flag cleared.
     fn put_back(&self) {
@@ -5340,13 +5528,17 @@ const PROGRAM_DISPATCHES: u32 = 1024;
 /// join programs run on the host (`on_host`, 53a8c256c2). Judged by the host's device instead, a run bound to the
 /// CPU on a Mac sized each room and each level's sort at its head's whole bound (4M rows), Metal's memory leased:
 /// python's pack split test held 1.9 GB of a 1 GB budget over a handful of small files.
+///
+/// On the host too: a room reserved whole is chunks of the run's blocks taken from their free lists, whose pages were
+/// written before (or given back, and counted again as they are taken), so its bound was real memory there as well
+/// (heads' rooms: about 900 MB of the `all` corpus's peak on the M3, 3.9-4.2 GB, 3.5-3.6 without).
 pub(in crate::code_rule_dsl) fn rooms_mapped() -> Option<usize> {
     #[cfg(any(test, feature = "test-hooks"))]
     if let Some(n) = crate::code_rule_dsl::logic::profile::var("RERAIL_ROOMS_MAPPED").ok().and_then(|v| v.parse::<usize>().ok()) {
         return Some(n);
     }
     let leased_from = rerail_accel::gpu::shared::device().or_else(|_| rerail_accel_gpu::gpu::join::device());
-    leased_from.is_ok_and(rerail_device::device::map_commits).then_some(0)
+    (leased_from.is_ok_and(rerail_device::device::map_commits) || rerail_accel::gpu::shared::is_on_host()).then_some(0)
 }
 
 /// Whether mapping a reserved arena's pages commits real memory on this run's device (Metal's do;
@@ -5540,6 +5732,9 @@ struct Job {
     presorted: bool,
     /// A lattice fold's key map's slots to empty, and its old map's to place again (0: none).
     lattice: [usize; 2],
+    /// A program's tail's growth of a lattice head's map (`Batch::lattice_tail`): its items as many as its params'
+    /// `n` needs, the places of the map a park grew it to, else 0.
+    lat_tail: bool,
     /// A copy's rows written: its destination's address, and its rows from and to.
     span: Option<(u64, usize, usize)>,
     /// A copy's or a fold's rows' count on the device, and the threads past it its grids take (`Job::rows_word`).
@@ -5574,6 +5769,10 @@ struct Job {
     live_ix: Option<(std::sync::Arc<crate::code_rule_dsl::facts::rows::Facts>, u64, usize, u32)>,
     /// A live fold of head `.0`'s map, or (`.1`) the tail's growth of it (`Rooms::folds`, `Tail::grows`).
     lat: Option<(usize, bool)>,
+    /// A dedup less head `.0`'s set map, which grows (`Rooms::dedups`).
+    dedup_map: Option<usize>,
+    /// A set head's round's rows placed in its map (`Batch::set_place`): its threads at most, its items its rows'.
+    set_place: usize,
     /// The tail's jump (`Tail::jump`).
     jump: bool,
     /// Its output placed by its level's size script at its start, its rows a word's or its input's room, not
@@ -5644,6 +5843,7 @@ impl Job {
             key_bits: 0,
             presorted: false,
             lattice: [0; 2],
+            lat_tail: false,
             span: None,
             rows: None,
             rows_from: 0,
@@ -5668,6 +5868,8 @@ impl Job {
             rooms: Vec::new(),
             live_ix: None,
             lat: None,
+            dedup_map: None,
+            set_place: 0,
             jump: false,
         }
     }
@@ -5835,6 +6037,30 @@ pub mod tests {
         b.finish().unwrap();
     }
 
+
+    /// 2026-11-27: a chain that spent its dispatches with a phase left stops with no flag set, and launches again where
+    /// it went on: its builds' later phases not yet run, its indexes are not complete (a taker builds its own), though
+    /// nothing stopped it (`whole`).
+    #[test]
+    fn a_program_with_a_phase_left_has_not_built_its_indexes() {
+        if rerail_accel_gpu::gpu::join::device().is_err() {
+            return;
+        }
+        let (phases, last, items) = (3, 2, 40);
+        let ctl = std::sync::Arc::new(Words::zeroed(10 + 2 * phases + 8).unwrap());
+        let built = Built { ctl: ctl.clone(), last, phases, items };
+        ctl.set(10 + last, 17);
+        assert!(built.whole() && !built.complete(), "17 of its last phase's 40 items: not at its end");
+        ctl.set(10 + last, items);
+        assert!(built.complete(), "every item of its last phase done");
+        // Its last phase's items as reset (its segments' groups) are what it wants.
+        ctl.set(10 + phases + last, 50);
+        assert!(!built.complete(), "40 of the 50 its last phase was reset to");
+        ctl.set(10 + last, 50);
+        assert!(built.complete());
+        ctl.set(6, 32);
+        assert!(!built.complete(), "parked");
+    }
 
     /// Decision 0491 steps 3 and 5: a device relation's block is held by its own region, which a kernel's bind pins by
     /// the kernel's declared access: a copy into a relation moves its block's version once the batch's work is done,

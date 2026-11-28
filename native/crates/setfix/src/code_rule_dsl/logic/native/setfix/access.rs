@@ -204,7 +204,7 @@ pub(super) fn prefetch(reads: &BTreeSet<String>, held: impl Fn(&str) -> Option<A
     }
     let _span = crate::code_rule_dsl::logic::profile::span(|| "index builds ahead (decision 0706)".into());
     use rayon::prelude::*;
-    let made_values: Vec<Option<usize>> = values.par_iter().map(|(s, c, k)| match k { None => s.build_value_index(*c), Some((n, k)) => s.build_value_bits(*n, *c, *k) }).collect();
+    let made_values: Vec<Option<usize>> = rerail_context::on_cores(|| values.par_iter().map(|(s, c, k)| match k { None => s.build_value_index(*c), Some((n, k)) => s.build_value_bits(*n, *c, *k) }).collect());
     if crate::code_rule_dsl::prof::on() {
         for ((_, _, k), m) in values.iter().zip(&made_values) {
             if k.is_some() {
@@ -217,7 +217,7 @@ pub(super) fn prefetch(reads: &BTreeSet<String>, held: impl Fn(&str) -> Option<A
             eprintln!("RERAIL_INDEX_TRACE built value {c} {k:?} at {:p} gen {}: {m:?}", Arc::as_ptr(s), s.value_bits_gen());
         }
     }
-    let made: Vec<Option<(usize, u64)>> = jobs
+    let made: Vec<Option<(usize, u64)>> = rerail_context::on_cores(|| jobs
         .par_iter()
         .map(|(rel, kind)| {
             let ib = rel.in_block()?;
@@ -235,7 +235,7 @@ pub(super) fn prefetch(reads: &BTreeSet<String>, held: impl Fn(&str) -> Option<A
                 _ => None,
             }
         })
-        .collect();
+        .collect());
     let rels: BTreeSet<*const InRel> = jobs.iter().zip(&made).filter(|(_, m)| m.is_some()).map(|((r, _), _)| Arc::as_ptr(r)).collect();
     for ((rel, _), _) in jobs.iter().zip(&made).filter(|(_, m)| m.is_some()) {
         rel.ahead.fetch_add(1, std::sync::atomic::Ordering::Release);
@@ -330,7 +330,7 @@ pub(super) fn build_orders(jobs: &[(&InRel, &super::Csr)]) -> usize {
     }
     let _span = crate::code_rule_dsl::logic::profile::span(|| "orders built ahead (decision 0706 E5)".into());
     use rayon::prelude::*;
-    jobs.par_iter().for_each(|(rel, ix)| {
+    rerail_context::on_cores(|| jobs.par_iter().for_each(|(rel, ix)| {
         // A one-column key's probe reads its rows by value where they are (`Csr::by_value`): that index is its order,
         // and the runs are not made for it.
         if ix.by_value_kind() && super::cands::by_value_on()
@@ -343,7 +343,7 @@ pub(super) fn build_orders(jobs: &[(&InRel, &super::Csr)]) -> usize {
         AHEAD.with(|a| a.set(true));
         let _ = ix.runs(rel);
         AHEAD.with(|a| a.set(false));
-    });
+    }));
     #[cfg(any(test, feature = "test-hooks"))]
     AHEAD_MADE.with(|a| a.set(a.get() + jobs.len()));
     let b = crate::code_rule_dsl::logic::run::local::<Built>();

@@ -399,16 +399,19 @@ pub fn held_on(conn: impl Scoped) -> Vec<(String, usize, usize, [usize; 3])> {
     out
 }
 
-pub fn held_by_name() -> Vec<(String, usize, usize, usize, usize)> {
+pub fn held_by_name() -> Vec<(String, usize, usize, usize, usize, usize, usize)> {
     let held = crate::code_rule_dsl::logic::profile::machine::<Held>();
     let conns: Vec<Arc<OnConn>> = held.0.lock().iter().filter_map(std::sync::Weak::upgrade).collect();
-    let mut by: HashMap<String, (usize, usize, usize, usize)> = HashMap::default();
+    let mut by: HashMap<String, (usize, usize, usize, usize, usize, usize)> = HashMap::default();
     let mut add = |name: String, r: &InRel| {
         let e = by.entry(name).or_default();
         e.0 += rows_held(r);
         e.1 = r.k;
         e.2 += r.held_bytes().0;
         e.3 += 1;
+        // What of its values' room is in memory, and of its indexes'.
+        e.4 += r.rows.resident_bytes();
+        e.5 += r.rows.index_resident_bytes();
     };
     for c in &conns {
         for (name, r) in c.derived.lock().iter() {
@@ -418,7 +421,7 @@ pub fn held_by_name() -> Vec<(String, usize, usize, usize, usize)> {
             add(format!("input: {}", key.sql.chars().take(80).collect::<String>()), r);
         }
     }
-    let mut out: Vec<(String, usize, usize, usize, usize)> = by.into_iter().map(|(n, (rows, k, b, runs))| (n, rows, k, b, runs)).collect();
+    let mut out: Vec<(String, usize, usize, usize, usize, usize, usize)> = by.into_iter().map(|(n, (rows, k, b, runs, res, ix))| (n, rows, k, b, runs, res, ix)).collect();
     out.sort_by_key(|o| std::cmp::Reverse(o.3));
     out
 }
@@ -2837,6 +2840,8 @@ fn open_spec_within(conn: impl Scoped, section: &Spec) -> Result<String> {
     let ordered: Vector<usize> = spec.lines.iter().find_map(|l| if let Line::Sorted(r) = l { Some(r.iter().map(|&x| x as usize).collect()) } else { None }).unwrap_or_default();
     let mut cyclic: Vector<usize> = rerail_blocks::vector::Vector::new();
     let mut kept_old = false;
+    // The own relations' columns of symbols held as atoms (`Line::Atoms`): read as texts by the device's stages.
+    let mut atom_cols: Vec<(usize, usize)> = Vec::new();
     let mut seed_specs: Vec<(usize, Join)> = Vec::new();
     // Each relation's kept rows (`Start::Base`), by index: under `wave0_changes` they are no wave's delta.
     let mut kept_n: Vector<usize> = rerail_blocks::vector::Vector::new();
@@ -2911,6 +2916,7 @@ fn open_spec_within(conn: impl Scoped, section: &Spec) -> Result<String> {
                 rels.get_mut(*rel as usize).ok_or_else(|| err(format!("lattice: no relation {rel}")))?.set_lattice(name, *keys as usize, lattice, widen.get())?;
             }
             Line::Key { rel, cols } => rels.get_mut(*rel as usize).ok_or_else(|| err(format!("key: no relation {rel}")))?.set_key(us(cols))?,
+            Line::Atoms { rel, cols } => atom_cols.extend(cols.iter().map(|&c| (*rel as usize, c as usize))),
             Line::Seed { head, join, est } => {
                 let join = bound(join);
                 let mut j = { let _j = crate::code_rule_dsl::logic::profile::span(|| "open: joins".into()); join_rule_with(conn, &join, &mut syms, !device_wanted)? };
@@ -3033,11 +3039,18 @@ fn open_spec_within(conn: impl Scoped, section: &Spec) -> Result<String> {
                 }
             }
         }
+        // The own relations' columns of symbols: read as texts where the atoms blocks hold them (a column of made
+        // texts is not one of them: `own_texts`, read in the arena).
+        let syms_of = |own_texts: &[(usize, usize)]| -> Vec<(usize, usize)> {
+            let typed = rels.iter().enumerate().flat_map(|(i, r)| r.types.iter().enumerate().filter(|&(_, &t)| t == b's').map(move |(c, _)| (i, c)));
+            typed.chain(atom_cols.iter().copied()).filter(|at| !own_texts.contains(at)).collect()
+        };
         let plans = loop {
+            let own_syms = syms_of(&own_texts);
             let plans = match &refused {
                 Some(r) => Err(r.clone()),
                 None => specs.iter().map(|(pi, text)| match &probes[*pi].body {
-                    Body::Join(j) => dev.compile_join(j, text, &own_texts, probes[*pi].head).map(|p| (*pi, p)),
+                    Body::Join(j) => dev.compile_join(j, text, &own_texts, &own_syms, probes[*pi].head).map(|p| (*pi, p)),
                     Body::Sql(_) => Err("a SQL seed".to_owned()),
                     Body::Unplanned => Err("a probe not planned yet".to_owned()),
                 }).collect::<std::result::Result<Vec<_>, String>>(),
@@ -5289,6 +5302,10 @@ impl View {
     pub fn eqs(&self) -> &[(usize, i64)] {
         &self.eqs
     }
+    /// Its columns: the source's it reads (none for `SELECT 1`, whose relation's one column is no source column).
+    pub fn arity(&self) -> usize {
+        self.cols.len()
+    }
     /// The source's column that view column `c` reads.
     pub fn column(&self, c: usize) -> usize {
         self.cols[c]
@@ -6409,13 +6426,13 @@ impl InRel {
         Arc::new(InRel { vers: Default::default(), viewed: false, keyed: None, k, n, rows: Rows::frozen(k, flat, n), view: None, base: false, types, stored: n, idx: Mutex::new(HashMap::default()), chains: Vec::new(), sorted: Default::default(), sketches: Vec::new(), serves: Vec::new(), dead: crate::code_rule_dsl::facts::rows::vector_in(None, 0), ndead: 0, summaries: Default::default(), measured: Default::default(), ranges: Default::default(), counted: Default::default(), tables: Default::default(), ahead: Default::default(), name: Default::default(), from: None, uid: Default::default(), level: crate::code_rule_dsl::facts::rows::vector_in(None, 0), stats: None })
     }
     /// `src`'s columns `cols`, filtered by `eqs` (each a column of `src` and its value), as `view` opens a
-    /// `SELECT cols ... WHERE c = v` input.
+    /// `SELECT cols ... WHERE c = v` input (`cols` empty: `SELECT 1`, a gate's, its one column no source column).
     #[cfg(any(test, feature = "test-hooks"))]
     pub fn over_filtered(src: Arc<dyn crate::code_rule_dsl::facts::vtab::Source>, cols: Vector<usize>, eqs: Vec<(usize, i64)>, types: Vec<u8>) -> Arc<InRel> {
         let k = types.len();
-        debug_assert_eq!(cols.len(), k);
+        debug_assert!(cols.len() == k || cols.is_empty());
         let view = View { src, cols, ids: Some(OnceLock::new()), eqs, of: None };
-        Arc::new(InRel { vers: Default::default(), viewed: false, keyed: None, k, n: 0, rows: Rows::new(k), view: Some(view), base: false, types, stored: 0, idx: Mutex::new(HashMap::default()), chains: Vec::new(), sorted: Default::default(), sketches: Vec::new(), serves: Vec::new(), dead: crate::code_rule_dsl::facts::rows::vector_in(None, 0), ndead: 0, summaries: Default::default(), measured: Default::default(), ranges: Default::default(), counted: Default::default(), tables: Default::default(), ahead: Default::default(), name: Default::default(), from: None, uid: Default::default(), level: crate::code_rule_dsl::facts::rows::vector_in(None, 0), stats: None })
+        Arc::new(InRel { vers: Default::default(), viewed: false, keyed: None, k, n: 0, rows: Rows::new(k), view: Some(view), base: false, types, stored: 0, idx: Mutex::new(HashMap::default()), chains: Vec::new(), sorted: Default::default(), sketches: Vec::new(), serves: Vec::new(), dead: crate::code_rule_dsl::facts::rows::vector_in(None, 0), ndead: 0, summaries: Default::default(), measured: Default::default(), counted: Default::default(), tables: Default::default(), ranges: Default::default(), ahead: Default::default(), name: Default::default(), from: None, uid: Default::default(), level: crate::code_rule_dsl::facts::rows::vector_in(None, 0), stats: None })
     }
     /// A view of `src`'s columns `cols`, read in place (`hold_view_in_place`): its rows the source's, row for row, a
     /// row found by a column the source keys (`Keyed`).
@@ -9554,8 +9571,8 @@ pub fn prefetch_device_indexes(conn: &Connection, specs: &[Join], host: bool) ->
     let mut syms = Interner::for_loading(&symbols);
     let plans: Vec<JoinPlan> = specs.iter().filter_map(|spec| {
         let j = join_rule(conn, spec, &mut syms).ok()?;
-        // No component's own texts: its head names none of them.
-        dev.compile_join(&j, &spec.to_text(), &[], usize::MAX).ok()
+        // No own texts: the plan's head is not read (`usize::MAX`).
+        dev.compile_join(&j, &spec.to_text(), &[], &[], usize::MAX).ok()
     }).collect();
     if plans.is_empty() {
         return Ok(0);
@@ -10968,7 +10985,9 @@ fn run_join_in_each_unframed(j: &JoinRule, head: usize, store: &Store, syms: &mu
                         let make = probe & PROBE_OUT == 0;
                         let syms = &cx.syms;
                         let existing = |s: &str| syms.held(s).filter(|&v| make || u32::try_from(v).is_ok());
-                        nodes.and_then(|s| s.node_atom(name, val(slots, args[0]), make, &existing))
+                        // Only where the batch's atoms are the run's symbols' arena (`Interner::atoms`).
+                        let arena = Arc::as_ptr(&syms.atoms).cast::<()>();
+                        nodes.and_then(|s| s.node_atom(name, val(slots, args[0]), make, &existing, arena))
                     } else { None };
                     if let Some(a) = atom {
                         kinds::count_term_atom_for_tests();

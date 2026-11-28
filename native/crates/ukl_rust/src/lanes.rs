@@ -589,9 +589,20 @@ where
     }
 }
 
+/// A relation's descriptor's words the chain walk reads (`rerail_blocks::relation::Relation`; `tests` holds them to
+/// it): its flags, its base's rows, its base's offset, its jump's offset and the rows below it.
+pub(crate) const REL_FLAGS: u64 = 4;
+pub(crate) const REL_BASE_ROWS: u64 = 8;
+pub(crate) const REL_BASE_OFF: u64 = 192;
+pub(crate) const REL_JUMP_OFF: u64 = 200;
+pub(crate) const REL_JUMP_ROWS: u64 = 208;
+/// A base in another block (`rerail_blocks::relation::FAR_BASE`, decision 0353 step 6).
+pub(crate) const FAR_BASE: u32 = 64;
+
 /// Each lane's row `r` of relation `d` found (a delta's, its base's under it, by the chain of blocks each lane walks
-/// to its row's; a base in another block, `FAR_BASE`, `base_off` bytes into `far`, as `clif_rel_get` reads it), for
-/// `RowAt::get` of its columns.
+/// to its row's), for `RowAt::get` of its columns. A base in another block (`FAR_BASE`) is its offset from `far`,
+/// that block's start (`clif_rel_get`'s last argument); a descriptor's jump (an ancestor in its block) is taken where
+/// the row lies below its rows, as `rerail_clif::relation::rel_get` walks.
 #[inline(always)]
 pub unsafe fn rel_at<const N: usize>(d: *const u8, r: R<N>, far: *const u8) -> RowAt<N>
 where
@@ -606,19 +617,21 @@ where
     }
     // Each lane walks from the newest block to the one its row is in: down while its row is below the block's first.
     let mut b: P<N> = Simd::splat(d);
+    let fars: P<N> = Simd::splat(far);
     let mut first;
     loop {
-        first = gather32(b.wrapping_add(Simd::splat(8)));
-        let next = gather64(b.wrapping_add(Simd::splat(192)));
-        let go = r.simd_lt(first) & next.simd_ne(s64(0)).cast::<i32>();
+        first = gather32(b.wrapping_add(Simd::splat(REL_BASE_ROWS as usize)));
+        let off = gather64(b.wrapping_add(Simd::splat(REL_BASE_OFF as usize)));
+        let go = r.simd_lt(first) & off.simd_ne(s64(0)).cast::<i32>();
         if !go.any() {
             break;
         }
-        // A base in its own block lies `next` bytes from the descriptor; a far one (`FAR_BASE`, flags at 4) that far
-        // into `far`.
-        let is_far = (gather32(b.wrapping_add(Simd::splat(4))) & s32(64)).simd_ne(s32(0));
-        let from = is_far.cast::<isize>().select(Simd::splat(far), b);
-        b = go.cast::<isize>().select(from.wrapping_add(next.cast::<usize>()), b);
+        let is_far = (gather32(b.wrapping_add(Simd::splat(REL_FLAGS as usize))) & s32(FAR_BASE)).simd_ne(s32(0));
+        let base = is_far.cast::<isize>().select(fars, b).wrapping_add(off.cast::<usize>());
+        let jump = gather64(b.wrapping_add(Simd::splat(REL_JUMP_OFF as usize)));
+        let take = jump.simd_ne(s64(0)).cast::<i32>() & r.simd_lt(gather32(b.wrapping_add(Simd::splat(REL_JUMP_ROWS as usize))));
+        let next = take.cast::<isize>().select(b.wrapping_add(jump.cast::<usize>()), base);
+        b = go.cast::<isize>().select(next, b);
     }
     let rows = b.wrapping_add(Simd::splat(40));
     let shift = gather32(rows.wrapping_add(Simd::splat(8)));

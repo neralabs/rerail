@@ -407,7 +407,7 @@ pub(super) fn build_ahead<'a>(plans: impl Iterator<Item = &'a JoinRule>) -> (usi
     }
     let _span = crate::code_rule_dsl::logic::profile::span(|| "scalar summaries built ahead (decision 0706 E3)".into());
     use rayon::prelude::*;
-    let groups: usize = jobs
+    let groups: usize = rerail_context::on_cores(|| jobs
         .par_iter()
         .map(|(rel, bag)| {
             let epoch = (rel.len(), 0, rel.len(), rel.ndead);
@@ -422,7 +422,7 @@ pub(super) fn build_ahead<'a>(plans: impl Iterator<Item = &'a JoinRule>) -> (usi
                 }
             })
         })
-        .sum();
+        .sum());
     #[cfg(any(test, feature = "test-hooks"))]
     WHOLE.fetch_add(jobs.len() as u64, std::sync::atomic::Ordering::Relaxed);
     (jobs.len(), groups)

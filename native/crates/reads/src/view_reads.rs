@@ -91,63 +91,22 @@ impl<'a> Tape<'a> {
         let after = self.end_of(i);
         if after < end { after } else { NONE }
     }
-    /// Its auxiliary index in its home (decision 0656), after its presence: the presence's bytes from its header
-    /// rounded up to 16 (`f16::presence::aux_at`), as `tape_place` finds it. `None` without a presence, or where the
-    /// bytes there are no index.
-    fn aux(&self) -> Option<crate::aux::AuxIndex<'a>> {
-        let (t, v) = match *self {
-            Tape::F16(t, v) => (t, v),
-            Tape::F16Z(z) => (z.t, z.v),
-        };
-        if v.presence == 0 {
-            return None;
-        }
-        let at = v.presence as usize;
-        let head = t.get(at..at + crate::tape::presence::HEAD)?;
-        let w = |k: usize| u32::from_le_bytes([head[4 * k], head[4 * k + 1], head[4 * k + 2], head[4 * k + 3]]) as usize;
-        let len = crate::tape::presence::HEAD + 8 * (w(0) + w(1)) * w(2) + 4 * w(3);
-        crate::aux::AuxIndex::read(t.get(crate::tape::presence::aux_at(at, at + len)..)?).ok()
-    }
-    /// Named node `node`'s place among its parent's named children (`tape_place`, `aux_index::place`): 0 for the
-    /// first, and for the root; from the last every-K-th named sibling at or before it, the siblings stepped to it,
-    /// each named one counted. `NONE` where the home holds no index.
+    /// Named node `node`'s place among its parent's named children (`tape_place`): `crate::tape::place`, the
+    /// one Rust read of it, over this tape's reads. `NONE` where the home holds no index.
     pub fn place(&self, node: u32) -> u32 {
-        use crate::aux::{K, NONE as NO_ENTRY};
-        let Some(aux) = self.aux() else { return NONE };
-        let p = self.parent(node);
-        if p == NONE {
-            return 0;
-        }
-        let (mut i, mut c) = match aux.eighth_at_or_before(p, node) {
-            (_, NO_ENTRY) => (0, p + 1),
-            (k, e) => (k * K, e),
-        };
-        while c < node {
-            i += u32::from(aux.named(self.number(c)));
-            c = self.end_of(c);
-        }
-        i
+        self.place_by(node, false)
     }
     /// Named node `node`'s place among its parent's named children that are no comment (`tape_place_past_comments`,
-    /// `aux_index::place_past_comments`: T's shape's places): as `place`, the comments before the every-K-th named
-    /// sibling taken off, and the steps after it counting no comment. `NONE` where the home holds no index.
+    /// T's shape's places), as `place`.
     pub fn place_past_comments(&self, node: u32) -> u32 {
-        use crate::aux::K;
-        let Some(aux) = self.aux() else { return NONE };
-        let p = self.parent(node);
-        if p == NONE {
-            return 0;
-        }
-        let (mut i, mut c) = match aux.eighth_past_comments(p, node) {
-            None => (0, p + 1),
-            Some((k, e, q)) => (k * K - q, e),
+        self.place_by(node, true)
+    }
+    fn place_by(&self, node: u32, past_comments: bool) -> u32 {
+        let t = match *self {
+            Tape::F16(t, _) => t,
+            Tape::F16Z(z) => z.t,
         };
-        while c < node {
-            let code = self.number(c);
-            i += u32::from(aux.named(code) && !aux.comment(code));
-            c = self.end_of(c);
-        }
-        i
+        crate::tape::place(t, self.view(), node, past_comments, |x| self.parent(x), |x| self.number(x), |x| self.end_of(x))
     }
 }
 
@@ -233,9 +192,15 @@ impl<'a> Doc<'a> {
     /// node of (`u32::MAX`: not known).
     #[inline]
     pub fn knowing(self, l: u32, x: u32, field_row: u32) -> Self {
+        self.know(l, x, field_row);
+        self
+    }
+    /// It knows numbered node `l`'s tape node `x` (a walk's step from the node in hand found it), and the `field`
+    /// view's row it is the node of (`u32::MAX`: not known): as `knowing`, in place.
+    #[inline]
+    pub fn know(&self, l: u32, x: u32, field_row: u32) {
         self.last.set(Selected { l, x, field_row });
         self.walk.set(None);
-        self
     }
     /// The tape node of `item`'s next numbered node after the last selected (tape node `x`): its walk's next, the walk
     /// made from `x` where the last select was not of `item` in order.
@@ -258,9 +223,9 @@ impl<'a> Doc<'a> {
         if s.l == l {
             return s.x;
         }
-        // The node table's entry (one load), else the number after the last selected: its node is the next numbered
-        // one past it (rows read in order: an index's keys, a copy), the walk's next; else from the sample.
         let x = match self.node_table() {
+            // The number after the last selected: its node is the next numbered one past it (rows read in order: an
+            // index's keys, a copy), the walk's next; else from the sample.
             [] if s.l != u32::MAX && l == s.l + 1 => self.next_after(0, s.x),
             [] => {
                 self.walk.set(None);
@@ -286,13 +251,13 @@ impl<'a> Doc<'a> {
     }
     /// The numbered nodes before tape node `x` (`num_rank`).
     #[inline]
-    fn rank(&self, x: u32) -> u32 {
+    pub fn rank(&self, x: u32) -> u32 {
         // SAFETY: as `tape_node`.
         unsafe { self.numbering().rank(0, x) }
     }
     /// Whether tape node `x` is numbered (`num_is`).
     #[inline]
-    fn is(&self, item: u32, x: u32) -> bool {
+    pub fn is(&self, item: u32, x: u32) -> bool {
         // SAFETY: as `tape_node`.
         unsafe { self.numbering().is(item, x) }
     }
@@ -518,6 +483,16 @@ impl<'a> Doc<'a> {
             0 => self.parent_id(1, x),
             _ => i64::from(self.items(&self.entry.names)[self.tape.number(x) as usize]),
         }
+    }
+    /// `view_doc(col)`, the document's one row: its key, its path's atom and its module's (`ViewDoc::doc_path`,
+    /// `doc_module`).
+    #[inline]
+    pub fn doc(&self, col: u32) -> i64 {
+        i64::from(match col {
+            0 => self.entry.key,
+            1 => self.entry.doc_path,
+            _ => self.entry.doc_module,
+        })
     }
     /// The numbered node of the `next_sibling` view's row `i` (a node after a numbered sibling), and its tape node.
     #[inline]

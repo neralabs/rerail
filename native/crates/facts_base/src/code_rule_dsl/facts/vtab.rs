@@ -291,8 +291,10 @@ pub trait Source: Send + Sync {
     /// Decision 0706 E1: node `n`'s text as `name` reads it, as its value, read where the text lies, no text made: the value `held` gives
     /// it (the atom it has, or a value the reader gave it), else, with `make`, its atom made (as the `text` view's reads
     /// make it). `None` where the source has no such read, or the text has no value and none is made (a reader then
-    /// reads it by `node_read`).
-    fn node_atom(&self, _name: &str, _n: i64, _make: bool, _held: &dyn Fn(&str) -> Option<i64>) -> Option<i64> { None }
+    /// reads it by `node_read`), or where the source's atoms are not `arena` (the address of the run's symbols' atom
+    /// arena, `Interner::atoms`: a batch made over another store's atoms names another table's symbols, which the run
+    /// cannot read; the reader then reads the text).
+    fn node_atom(&self, _name: &str, _n: i64, _make: bool, _held: &dyn Fn(&str) -> Option<i64>, _arena: *const ()) -> Option<i64> { None }
     /// Column `c`'s rows a value, where the source knows them without reading its rows (`docof`'s documents: each
     /// one's nodes); `None` otherwise.
     fn column_counts(&self, _c: usize) -> Option<Vec<(i64, u64)>> { None }
@@ -546,6 +548,13 @@ pub trait Source: Send + Sync {
     /// its directory. `None`: the device does not read it where it lies.
     #[cfg(any(target_os = "macos", target_os = "linux", windows))]
     fn device_view(&self) -> Option<DeviceView> {
+        None
+    }
+    /// The node reads' batch's `node` view in place (`syntax::LongTexts`'s): the directory through which a stage reads
+    /// a node's text where its source lies (`@rr_node_text_any`, the join program's `OPND_NODE`), no text made.
+    /// `None`: no node is read so.
+    #[cfg(any(target_os = "macos", target_os = "linux", windows))]
+    fn node_texts_in_place(&self) -> Option<ViewInPlace> {
         None
     }
     /// Its rows as one relation of `rerail_blocks` in one block, every source column at its own place, which the
@@ -2189,21 +2198,6 @@ fn first_from(n: usize, from: usize, below: impl Fn(usize) -> bool) -> usize {
     a
 }
 impl Source for Relation {
-    fn col_bounds(&self, column: usize) -> Option<[i64; 2]> {
-        let k = self.columns.len();
-        let b = self.bounds.get_or_init(|| {
-            let mut b = vec![[i64::MAX, i64::MIN]; k];
-            for row in 0..self.rows {
-                for (c, x) in b.iter_mut().enumerate() {
-                    let v = self.value(row, c);
-                    x[0] = x[0].min(v);
-                    x[1] = x[1].max(v);
-                }
-            }
-            b
-        });
-        b.get(column).copied()
-    }
     fn revision(&self)->Option<u64> {Some(0)}
     fn columns(&self) -> Vec<String> {
         self.columns.iter().map(|c| (*c).to_owned()).collect()

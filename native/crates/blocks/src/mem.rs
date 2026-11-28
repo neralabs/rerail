@@ -115,6 +115,37 @@ pub(crate) unsafe fn protect_read(p: *mut u8, len: usize) {
     let _ = (p, len);
 }
 
+/// The bytes of the pages of `len` bytes at `p` that are in memory now (`mincore`): on macOS the pages written and
+/// not given back (`MINCORE_MODIFIED`: a reusable page given back may still be in core, out of the footprint), elsewhere
+/// those in core. A range not mapped (its block gone meanwhile) counts none.
+pub fn resident(p: usize, len: usize) -> usize {
+    #[cfg(unix)]
+    {
+        // `mincore` reads the system's pages, which may be smaller than a block's (`PAGE`).
+        // SAFETY: a query of the system's page size.
+        let page = (unsafe { libc::sysconf(libc::_SC_PAGESIZE) }).max(1) as usize;
+        let (start, end) = (p / page * page, (p + len).next_multiple_of(page));
+        if len == 0 || p == 0 || end <= start {
+            return 0;
+        }
+        let mut v = vec![0u8; (end - start) / page];
+        // SAFETY: `v` has a byte for each page of the range; an unmapped range is an error, read as none.
+        if unsafe { libc::mincore(start as *mut libc::c_void, end - start, v.as_mut_ptr().cast()) } != 0 {
+            return 0;
+        }
+        #[cfg(target_vendor = "apple")]
+        let bit = libc::MINCORE_MODIFIED;
+        #[cfg(not(target_vendor = "apple"))]
+        let bit = 1;
+        v.iter().filter(|&&b| i32::from(b) & bit != 0).count() * page
+    }
+    #[cfg(not(unix))]
+    {
+        let _ = p;
+        len.next_multiple_of(PAGE)
+    }
+}
+
 /// Gives back the whole pages inside `len` bytes at `p` of an anonymous reservation that nothing will read or write
 /// again: on macOS as reusable (`MADV_FREE_REUSABLE`), which takes them out of the footprint at once (`MADV_FREE`
 /// leaves them counted until the OS wants them); elsewhere `MADV_FREE`. Pages the range only partly covers stay.
@@ -195,6 +226,28 @@ pub(crate) mod tests {
         // SAFETY: one page of a mapping, its disposition read into `v`.
         assert_eq!(unsafe { libc::mincore(page as *const libc::c_void, PAGE, &mut v) }, 0);
         v as u8 as i32 & libc::MINCORE_MODIFIED != 0
+    }
+
+    /// `resident` counts the pages written, not the room reserved: a reservation's one written page of four, and
+    /// none once that page is given back (on macOS; elsewhere `MADV_FREE` may leave it in core until the OS wants it).
+    #[cfg(unix)]
+    #[test]
+    fn resident_counts_the_pages_written_not_the_room_reserved() {
+        let page = crate::block::PAGE;
+        let p = super::reserve(4 * page);
+        assert_eq!(super::resident(p as usize, 4 * page), 0, "a reservation unwritten");
+        // SAFETY: the reservation's second page.
+        unsafe { p.add(page + 8).write(1) };
+        let written = super::resident(p as usize, 4 * page);
+        assert!(written > 0 && written <= page, "one page written: {written} bytes counted");
+        #[cfg(target_vendor = "apple")]
+        {
+            // SAFETY: nothing reads the page after.
+            unsafe { super::give_back(p.add(page), page) };
+            assert_eq!(super::resident(p as usize, 4 * page), 0, "given back");
+        }
+        // SAFETY: the reservation's, released once.
+        unsafe { super::release(p, 4 * page) };
     }
 
     /// Q337: `free_pages` gives back the whole pages inside its range, never the pages it only partly covers.

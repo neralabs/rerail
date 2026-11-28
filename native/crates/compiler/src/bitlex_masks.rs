@@ -2244,7 +2244,7 @@ impl Lowering {
             // each its text, and its answer and the budget it took where it was proved (none,
             // where it is known).
             type Asked = Vec<(Vec<u8>, Option<(bool, bitlex_prove::Budget)>)>;
-            let ahead: Vec<Vec<Asked>> = items
+            let ahead: Vec<Vec<Asked>> = rerail_context::on_cores(|| items
                 .par_iter()
                 .map(|xs| {
                     let mut values = Vec::new();
@@ -2276,7 +2276,7 @@ impl Lowering {
                     }
                     values
                 })
-                .collect();
+                .collect());
             for (k, (xs, values)) in items.iter().zip(ahead).enumerate() {
                 // Kept as the walk keeps them; a question the walk asks that was not proved ahead
                 // (an answer known since, that differs), proved here as the walk proves it.
@@ -2342,7 +2342,7 @@ impl Lowering {
         let tables = &self.program.tables;
         let texts: Vec<Vec<u8>> = xs.iter().map(|x| bitlex_prove::question(&ops, tables, &self.program.rounds, x.v, x.d, "plain first")).collect();
         let budgets: Vec<Option<bitlex_prove::Budget>> = texts.iter().map(|t| (!self.proofs.known.contains_key(&bitlex_prove::key_of(t))).then(|| self.proofs.work.child())).collect();
-        let found: Vec<Option<ByteSet>> = xs.par_iter().zip(&budgets).map(|(x, work)| work.as_ref().map(|w| if w.left() == 0 { [!0; 4] } else { bitlex_prove::first_bytes_in(w, &ops, tables, x.v, x.d) })).collect();
+        let found: Vec<Option<ByteSet>> = rerail_context::on_cores(|| xs.par_iter().zip(&budgets).map(|(x, work)| work.as_ref().map(|w| if w.left() == 0 { [!0; 4] } else { bitlex_prove::first_bytes_in(w, &ops, tables, x.v, x.d) })).collect());
         let mut out = Vec::with_capacity(xs.len());
         for ((text, found), work) in texts.into_iter().zip(found).zip(&budgets) {
             if let Some(w) = work {
@@ -2398,7 +2398,7 @@ impl Lowering {
         let asker = prover.asker("either never");
         let rounds = &self.program.rounds;
         let apart = &self.apart;
-        let texts: Vec<Option<(Vec<u8>, bitlex_prove::Key)>> = xs
+        let texts: Vec<Option<(Vec<u8>, bitlex_prove::Key)>> = rerail_context::on_cores(|| xs
             .par_iter()
             .map(|x| {
                 (!bitlex_prove::never_by_shape(&ops, apart, x.v)).then(|| {
@@ -2407,7 +2407,7 @@ impl Lowering {
                     (text, key)
                 })
             })
-            .collect();
+            .collect());
         let mut asked: Vec<(Vec<u8>, Val, Vec<usize>)> = Vec::new();
         let mut by_key: HashMap<bitlex_prove::Key, usize> = HashMap::default();
         for ((i, &x), made) in xs.iter().enumerate().zip(texts) {
@@ -2447,7 +2447,7 @@ impl Lowering {
         let xs: Vec<Val> = asked.iter().map(|a| a.1).collect();
         let (t1, c1) = (std::time::Instant::now(), process_cpu());
         let longest = std::sync::atomic::AtomicU64::new(0);
-        let (answers, found): (Vec<bool>, Vec<Vec<Vec<u8>>>) = {
+        let (answers, found): (Vec<bool>, Vec<Vec<Vec<u8>>>) = rerail_context::on_cores(|| {
             xs.par_iter()
                 .zip(&budgets)
                 .map(|(x, work)| {
@@ -2469,7 +2469,7 @@ impl Lowering {
                     (a, p.found().to_vec())
                 })
                 .unzip()
-        };
+        });
         if trace {
             let (w1, w2) = (t1.duration_since(t0).as_secs_f64(), t1.elapsed().as_secs_f64());
             let c2 = process_cpu();

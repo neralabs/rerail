@@ -123,6 +123,7 @@ pub const STATE: &[(&str, &str, Class, &str)] = &[
     ("crates/device_metal/src/code_rule_dsl/logic/native/setfix/device.rs", "DEPTH", Thread, "this thread's device waves and launches"),
     ("crates/device_metal/src/code_rule_dsl/logic/native/setfix/device.rs", "FLUSHED", Thread, "this thread's device waves and launches"),
     ("crates/device_metal/src/code_rule_dsl/logic/native/setfix/device.rs", "LAST", Thread, "this thread's device waves and launches"),
+    ("crates/device_metal/src/code_rule_dsl/logic/native/setfix/device.rs", "OWN_SYMS", Thread, "the slots of the rule this thread is compiling bound from an own relation's symbols (`compile`'s, as `ARENA`)"),
     ("crates/device_metal/src/code_rule_dsl/logic/native/setfix/device.rs", "SUSPENDED", Thread, "this thread's device waves and launches"),
     ("crates/plan_search/src/code_rule_dsl/logic/plan/search.rs", "OWN_PLANS", Carried, ""),
     ("crates/plan_search/src/code_rule_dsl/logic/plan/search.rs", "OWN_PLANNED", Carried, ""),

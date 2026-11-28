@@ -364,6 +364,8 @@ pub struct Blocked {
 pub struct PlacedTotal {
     pub runs: u64,
     pub on_gpu: u64,
+    /// Its runs the placement put on the device (or the CPU binding's join program), whether or not they ran there.
+    pub placed_device: u64,
     pub gpu_cheaper: u64,
     pub device: bool,
     pub forms: Vec<&'static str>,
@@ -3358,9 +3360,6 @@ pub struct Report {
     pub programs: u32,
     /// Runs again from an overflowing stage.
     pub reruns: u32,
-    /// Times it waited for the device's memory before it encoded (`gpu::shared::admit`, Q203), and the seconds.
-    pub admit_waits: u32,
-    pub admit_seconds: f64,
     pub gpu_seconds: f64,
     /// This thread's CPU: encoding (sorts' encoding included), waiting, and reading the rows back into
     /// the store.

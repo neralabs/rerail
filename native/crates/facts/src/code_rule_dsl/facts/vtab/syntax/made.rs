@@ -64,8 +64,8 @@ pub(super) fn directory(block: &Block, docs: impl Iterator<Item = (u32, Option<V
     let rows: *mut ViewRow = block.alloc_t((span as usize).max(1));
     let given: *mut Given = block.alloc_t(n.max(1));
     let homes: *mut ViewHome = block.alloc_t(HOMES * n + 2);
-    // Its documents' keys in its order (`ViewDir::keys`), which a search by key reads alone: all the batch's, in key
-    // order (`Docs::new`, `Docs::grown`), and its order's rows.
+    // Its documents' keys in its order (`ViewDir::keys`, `order`'s), which a search by key reads alone: all the batch's,
+    // in key order (`Docs::new`, `Docs::grown`), as its order is.
     let keys: *mut u32 = block.alloc_t(n.max(1));
     let order: *mut u32 = block.alloc_t(n.max(1));
     // SAFETY: `span` rows, just allocated in `block`: the numbers none of its documents has.
@@ -74,8 +74,8 @@ pub(super) fn directory(block: &Block, docs: impl Iterator<Item = (u32, Option<V
     let mut k = 0;
     for (key, counts) in docs.take(n) {
         let row = numbered[k].number - first;
-        // SAFETY: its row of the rows, its given counts and its key just allocated in `block`, and its homes, and its
-        // place in the order.
+        // SAFETY: its row of the rows, its given counts and its key just allocated in `block`, its homes, and its place
+        // in the order.
         unsafe {
             let h = (HOMES * k) as u32;
             rows.add(row as usize).write(ViewRow { key, homes: [h, h + 1, h + 2], at: k as u32, ..Default::default() });
@@ -1552,6 +1552,7 @@ pub(super) enum ColKind {
     U32,
 }
 
+
 impl Batch {
     /// Bounds of what a column of `kind` of the batch's rows holds, its documents made or not (`Source::col_bounds`).
     /// A key: the least and greatest of its documents' keys and their files' (a program's document and nodes are its
@@ -1567,10 +1568,11 @@ impl Batch {
             ColKind::Node if keys[0] > keys[1] => keys,
             ColKind::Node => rerail_blocks::located::Located::range(keys[0], keys[1]),
             ColKind::NodeOrNone if keys[0] > keys[1] => keys,
-            ColKind::NodeOrNone => [-1, (keys[1] << 32) | i64::from(u32::MAX)],
+            ColKind::NodeOrNone => [-1, rerail_blocks::located::Located::range(keys[0], keys[1])[1]],
             ColKind::Atom | ColKind::U32 => [0, i64::from(u32::MAX)],
         }
     }
+
 
     /// The rows of `want`'s documents made: those not made yet, as one group (decision 0494), which each relation goes
     /// on with in its block relation. A group is made unlocked (its prefilter and matchers run on the pool, where a

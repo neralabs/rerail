@@ -50,6 +50,14 @@ fn the_lane_reads_are_the_compiled_reads() {
     }
     w.extend(&(0..700i64).flat_map(|i| [-i - 1, 40 + i % 5]).collect::<Vec<_>>());
     freeze(&top_block, top, &spec, Some(base));
+    // A far base (decision 0353 step 6): a link in its own block, its ids below the base's rows `base`'s in
+    // `base_block`, then its own rows where they lie.
+    let link_block = Block::anon(kind::FACTS, 16 << 20);
+    let linked = Relation::create(&link_block, &spec, None);
+    RelW { block: &link_block, rel: linked, lock: &lock }.extend(&(0..900i64).flat_map(|i| [i * 3 + 1, 50 + i % 7]).collect::<Vec<_>>());
+    freeze(&link_block, linked, &spec, None);
+    let link = Relation::try_link(&link_block, &spec, Some((&base_block, base)), base.rows.len(), linked, linked.rows.len()).expect("a link");
+    assert!(link.flags.load(std::sync::atomic::Ordering::Relaxed) & rerail_blocks::relation::FAR_BASE != 0, "a far base");
 
     let one = Compiled { rel_get: rel_get_1, rel_dead: rel_dead_1, rel_group: rel_group_1, group_row: group_row_1, mix: mix_1 };
     // A frozen relation, and a delta's own rows (`base_rows` on): its keys' groups, its dead rows.
@@ -224,6 +232,10 @@ fn the_scalar_reads_layouts_are_the_blocks() {
     use std::mem::{offset_of, size_of};
     assert_eq!((ROWS_LEN, ROWS_RESERVED, ROWS_NEEDED, ROWS_NCOLS), (offset_of!(Rows, len) as u64, offset_of!(Rows, reserved) as u64, offset_of!(Rows, needed) as u64, offset_of!(Rows, ncols) as u64));
     assert_eq!((INDEX_MARKS, REL_INDEXES, INDEX_SIZE), (offset_of!(Index, marks) as u64, offset_of!(Relation, indexes) as u64, size_of::<Index>()));
+    assert_eq!(
+        (REL_FLAGS, REL_BASE_ROWS, REL_BASE_OFF, REL_JUMP_OFF, REL_JUMP_ROWS, FAR_BASE),
+        (offset_of!(Relation, flags) as u64, offset_of!(Relation, base_rows) as u64, offset_of!(Relation, base_off) as u64, offset_of!(Relation, jump_off) as u64, offset_of!(Relation, jump_rows) as u64, rerail_blocks::relation::FAR_BASE)
+    );
     assert_eq!(KEY_SEED, rerail_blocks::SEED);
     assert_eq!((a::DIR_N, a::DIR_ENTRIES), (offset_of!(AtomsDirRoot, n), offset_of!(AtomsDirRoot, entries)));
     assert_eq!(
@@ -366,6 +378,15 @@ fn the_scalar_reads_are_the_compiled_reads() {
         }
         tried += 1;
     }
+    // Each word's atoms by its hash (decision 0666's tables), the k-th of them and past them; a hash none has, a
+    // length none has.
+    let finds = words.iter().map(|w| (k_hash(w), w.len() as u32)).chain([(0x1234_5678_9abc_def0, 3), (k_hash(&words[3]), 99)]);
+    for (h, len) in finds {
+        for k in 0..3 {
+            // SAFETY: as above.
+            assert_eq!(unsafe { crate::join_program::reads::atoms_find(root, h, len, k) }, atoms_find(root, h, len, k), "atoms_find {h:#x} {len} {k}");
+        }
+    }
     assert!(tried > 3_000);
 }
 
@@ -420,4 +441,19 @@ fn col_sealed_reads_each_encoding_as_the_blocks() {
         }
     }
     assert_eq!(tags, [CONST, PACK, RUNS, LINE, GROUPS, DICT], "every encoding read");
+}
+
+/// The store's hash of a text, as the join program computes it to find a made text's atom (`store_hash`, decision
+/// 0666), is `rerail_atoms::hash_str`'s: foldhash's quality hasher at its seed, for every length to past its widest
+/// loop's (256 bytes) and its branches' bounds.
+#[test]
+fn the_store_hash_is_the_stores() {
+    use std::hash::BuildHasher;
+    let state = foldhash::quality::FixedState::with_seed(0x005E_ED71);
+    let text: String = (0..700u32).map(|i| char::from(b'!' + (i.wrapping_mul(2_654_435_761) >> 25) as u8 % 90)).collect();
+    for len in (0..=300).chain([383, 384, 385, 511, 512, 513, 700]) {
+        let s = &text[..len];
+        // SAFETY: the text's bytes, held here.
+        assert_eq!(unsafe { crate::join_program::store_hash(s.as_ptr(), len as u32) }, state.hash_one(s), "store_hash of {len} bytes");
+    }
 }

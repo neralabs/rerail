@@ -13,7 +13,7 @@ accel/src/gpu/shared.rs::BIG	stays	a test lock
 accel/src/gpu/shared.rs::EVICTORS	stays	code registered at load (the pool's evictors, hooks set once each by the crates above)
 accel/src/gpu/shared.rs::LEASE_HOOK	stays	code registered at load (a hook)
 accel/src/gpu/shared.rs::OTHER_RESERVED	stays	code registered at load (a hook)
-accel/src/gpu/shared.rs::REFUSAL_HOOK	stays	code registered at load (a hook)
+accel/src/gpu/shared.rs::OUT_OF_MEMORY_HOOK	stays	code registered at load (a hook)
 accel/src/gpu/shared.rs::SHARED	stays	the device and its one queue: the forest's, one per process (code registered at load)
 accel/src/models.rs::MODELS	stays	code registered at load (the learned models, rerail-accel-gpu's)
 accel/src/price.rs::FIRST_PRICE	stays	code registered at load (a hook)
@@ -38,12 +38,14 @@ native/crates/atoms/src/lib.rs::GIVEN	stays	a test's counter
 native/crates/atoms/src/lib.rs::SMALL_BLOCKS	stays	a test hook (`test-hooks`): the store's test binary sets it as it loads
 native/crates/blocks/src/alloc.rs::POLICY	stays	code registered at load: the one policy accel installs, the first installed staying
 native/crates/blocks/src/alloc.rs::RUN_DEVICE	stays	code a crate above registers at load
+native/crates/blocks/src/block.rs::CHUNK_HOOK	stays	code registered at load (a profiler's hook, as LEASE_HOOK)
 native/crates/blocks/src/census.rs::C	review	Native-and-GPU-strata's, unlisted there; listed in the merge, not yet classified
 native/crates/blocks/src/ledger.rs::BLOCKS	stays	the process's mapped blocks and leases by address, each with its ledger (decision 0487 R8): what memory is, not what a run has
 native/crates/blocks/src/long.rs::IN_MEMORY	review	Native-and-GPU-strata's, unlisted there; listed in the merge, not yet classified
 native/crates/blocks/src/mem.rs::RESERVED	stays	the process's own mappings, counted as the OS counts them (address space is the process's)
 native/crates/blocks/src/scratch.rs::NEXT	review	Native-and-GPU-strata's, unlisted there; listed in the merge, not yet classified
 native/crates/blocks/src/scratch.rs::RESIDENT	review	Native-and-GPU-strata's, unlisted there; listed in the merge, not yet classified
+native/crates/blocks/src/scratch.rs::USED	stays	a measure for the profile's account of a footprint, as RESIDENT
 native/crates/blocks/src/windows.rs::HANDLER	stays	code registered at load (the one fault handler a Windows process has, which commits a reservation's pages as they are touched)
 native/crates/blocks/src/windows.rs::REGIONS	stays	the process's reservations, which its one fault handler commits the pages of: the process's own address space
 native/crates/boot/src/code_rule_dsl/boot.rs::LOAD	stays	code registered at load (an init-array entry: a test binary boots the program)
@@ -185,6 +187,7 @@ native/crates/lang_ecma/src/code_rule_dsl/scope/ecma.rs::SCRIPTS	stays	computed 
 native/crates/lang_ecma/src/lib.rs::LOAD	stays	code registered at load (an init-array entry: the crate's own test binary registers what boot does)
 native/crates/lang_json/src/code_rule_dsl/transducer/packed/json_parser/simdjson.rs::DOM	stays	code registered at load
 native/crates/lang_json/src/code_rule_dsl/transducer/packed/json_parser/simdjson.rs::KINDS	stays	computed once from the engine's own files
+native/crates/lang_json/src/lib.rs::LOAD	review	the hub's (roll-up 152), unlisted there; listed in the merge, not yet classified
 native/crates/lang_php/src/code_rule_dsl/scope/php_names.rs::BUILTINS	stays	computed once from the engine's own files
 native/crates/lang_php/src/code_rule_dsl/suppress/psalm.rs::STAR_LINE	stays	a regex of a literal
 native/crates/lang_python/src/code_rule_dsl/facts/vtab/syntax/py_families.rs::STRINGS	stays	computed once from the engine's constants
@@ -260,7 +263,6 @@ native/crates/prof/src/code_rule_dsl/logic/profile/memory.rs::SAMPLED	stays	the 
 native/crates/prof/src/code_rule_dsl/logic/profile/memory.rs::SPLIT	run	the width census's split-layout bytes (RERAIL_WIDTH_CENSUS): a run's measurement, summed across the process's runs
 native/crates/prof/src/code_rule_dsl/logic/profile/memory.rs::START	stays	the process's footprint sampler (RERAIL_PROF_MEMORY_MS): it measures the process (the OS's figures for it) and the spans open on all its threads, as the heap sampler does
 native/crates/prof/src/code_rule_dsl/logic/profile/memory.rs::STARTED	stays	the process's footprint sampler (RERAIL_PROF_MEMORY_MS): it measures the process (the OS's figures for it) and the spans open on all its threads, as the heap sampler does
-native/crates/prof/src/code_rule_dsl/logic/profile/memory.rs::TOLD	stays	the process's footprint sampler's refusal reporter (Q203 (c)): it tells the first few device leases the process refuses, with the heap sampler's holdings
 native/crates/prof/src/code_rule_dsl/prof.rs::DEVICE_MEMORY	stays	code a crate above registers at load
 native/crates/prof/src/code_rule_dsl/prof.rs::RISEN	stays	the process's footprint high-water mark (RERAIL_PROF_RISES), as the OS reports it
 native/crates/prof/src/lib.rs::DROPPED	stays	the allocator's heap sampler (`RERAIL_HEAP_SAMPLE`): called inside every allocation, so it may not allocate or lock; one per process, as the global allocator is
@@ -275,6 +277,7 @@ native/crates/prof/src/lib.rs::SYSTEM_NAMES	stays	the allocator's heap sampler (
 native/crates/prof/src/lib.rs::TABLE	stays	the allocator's heap sampler (`RERAIL_HEAP_SAMPLE`): called inside every allocation, so it may not allocate or lock; one per process, as the global allocator is
 native/crates/prof/src/lib.rs::THREADS	stays	an id counter: append-only
 native/crates/prof/src/lib.rs::THREAD_NAMES	stays	the allocator's heap sampler (`RERAIL_HEAP_SAMPLE`): called inside every allocation, so it may not allocate or lock; one per process, as the global allocator is
+native/crates/python_parser/src/lib.rs::PARSER	review	the hub's (roll-up 152), unlisted there; listed in the merge, not yet classified
 native/crates/registry/src/lib.rs::CPU	stays	a zero-sized provider (the CPU device's name): a constant, registered at load
 native/crates/registry/src/lib.rs::FORMAT	stays	a test's own slot (the slot type's test)
 native/crates/registry/src/lib.rs::GPU	stays	a zero-sized provider (the GPU device's name): a constant, registered at load
@@ -314,9 +317,19 @@ native/crates/sessions_base/src/code_rule_dsl/sql_executor/maintenance.rs::TEMPO
 native/crates/sessions_base/src/code_rule_dsl/sql_executor/work_graph.rs::NEXT_GRAPH	stays	an id counter: append-only
 native/crates/setfix/src/code_rule_dsl/logic/device/solver.rs::SOLVER	stays	code registered at load (a slot a crate above fills: rerail-registry)
 native/crates/setfix/src/code_rule_dsl/logic/native/setfix.rs::ONCE	stays	a hook registered once
+native/crates/setfix/src/code_rule_dsl/logic/native/setfix/access.rs::ON	review	the hub's (roll-up 152), unlisted there; listed in the merge, not yet classified
+native/crates/setfix/src/code_rule_dsl/logic/native/setfix/access.rs::VALUES	review	the hub's (roll-up 152), unlisted there; listed in the merge, not yet classified
+native/crates/setfix/src/code_rule_dsl/logic/native/setfix/kinds.rs::FORCE	review	the hub's (roll-up 152), unlisted there; listed in the merge, not yet classified
+native/crates/setfix/src/code_rule_dsl/logic/native/setfix/kinds.rs::KEYED	review	the hub's (roll-up 152), unlisted there; listed in the merge, not yet classified
+native/crates/setfix/src/code_rule_dsl/logic/native/setfix/kinds.rs::KEYED_FORCE	review	the hub's (roll-up 152), unlisted there; listed in the merge, not yet classified
+native/crates/setfix/src/code_rule_dsl/logic/native/setfix/kinds.rs::ON	review	the hub's (roll-up 152), unlisted there; listed in the merge, not yet classified
+native/crates/setfix/src/code_rule_dsl/logic/native/setfix/kinds.rs::ROWS	review	the hub's (roll-up 152), unlisted there; listed in the merge, not yet classified
+native/crates/setfix/src/code_rule_dsl/logic/native/setfix/kinds.rs::TERMS	review	the hub's (roll-up 152), unlisted there; listed in the merge, not yet classified
 native/crates/setfix/src/code_rule_dsl/logic/native/setfix/level.rs::NEXT	stays	an id counter: append-only
 native/crates/setfix/src/code_rule_dsl/logic/native/setfix/runs.rs::ON	stays	a test's switch: whether its counter counts
 native/crates/setfix/src/code_rule_dsl/logic/native/setfix/runs.rs::READS	stays	a test's counter
+native/crates/setfix/src/code_rule_dsl/logic/native/setfix/scalars.rs::ON	review	the hub's (roll-up 152), unlisted there; listed in the merge, not yet classified
+native/crates/setfix/src/code_rule_dsl/logic/native/setfix/scalars.rs::WHOLE	review	the hub's (roll-up 152), unlisted there; listed in the merge, not yet classified
 native/crates/setfix/src/code_rule_dsl/waves/owner/database.rs::SETUP	stays	code registered at load
 native/crates/setfix/src/lib.rs::LOAD	stays	code registered at load (an init-array entry: the crate's own test binary boots the program)
 native/crates/simd8/src/lib.rs::BEST	stays	the CPU's features, detected once

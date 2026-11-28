@@ -102,7 +102,9 @@ impl Docs {
                 // Its home, `3n`: the directory names it (`ViewDir::cache`, its number + 1).
                 let n = super::HOMES * self.len();
                 let host = cache.cache.at() as u64;
-                let gpu = cache.buffer.as_ref().and_then(|b| b.device_address()).unwrap_or(0);
+                // With no process device the join programs run on the host, which reads every home where it lies: its
+                // device address its host address (`ViewsInPlace::read_on_host`).
+                let gpu = cache.buffer.as_ref().and_then(|b| b.device_address()).unwrap_or(if crate::code_rule_dsl::tape::placed::device().is_none() { host } else { 0 });
                 let dir = self.dir().cast_mut();
                 // SAFETY: the directory's home `3n` and its `cache` field, in the batch's block: the reads layer's,
                 // which no reader reads before a 16z row (written after this) names it.
@@ -147,6 +149,14 @@ impl Docs {
         if !Arc::ptr_eq(p.block(), b) {
             return Err("views.refused.block");
         }
+        // Its row names its entry, whatever else it reads: a file of no tape read still has its `doc` row, read in its
+        // entry (`view_doc`: its key, its path's and module's atoms, which `tape_rows::derive` writes there, before or
+        // after this). The entry lies in the block from the projection's making; where no tape is read, no other view
+        // has a row of it, and the reads layer has no entry (`read`: None).
+        let dir = self.dir().cast_mut();
+        // SAFETY: row `i`'s entry field, in the batch's block: the reads layer's, written only here (once, in the row's
+        // `OnceLock`); the entry is the projection's, in the same block.
+        unsafe { (&raw mut (*ViewDir::block_rows(dir).add(i)).entry).write(b.offset_of(p.entry().0.as_ptr()) as u64) };
         let nodes = p.len() > 0;
         // The `Loc` rows are the reads' where the positions are a file's own tree's or a placement in the block.
         let locs = p.extra.is_some() && (p.locs() == 0 || ViewEntry::locs(p).is_some());
@@ -204,7 +214,7 @@ impl Docs {
         if view.format == rerail_clif::view::F16Z_FORMAT {
             let cache = self.zcache(view.columns[3] as usize).ok_or("views.refused.zcache_small")?;
             (view.columns[3], view.columns[4]) = (cache.entry as u32, 1);
-            let cache_gpu = cache.buffer.as_ref().and_then(|b| b.device_address()).unwrap_or(0);
+            let cache_gpu = cache.buffer.as_ref().and_then(|b| b.device_address()).unwrap_or(if crate::code_rule_dsl::tape::placed::device().is_none() { cache.cache.at() as u64 } else { 0 });
             if cache_gpu != 0 && tape_gpu != 0 {
                 let rel = cache_gpu.wrapping_sub(tape_gpu + tape_home.at) as i64;
                 (view.side[0], view.side[1]) = (rel as u32, (rel >> 32) as u32); // bits: an offset's halves

@@ -375,6 +375,30 @@ impl Ledger {
         chunks.into_iter().map(|(at, size)| self.give_free_pages(s, at, size)).sum()
     }
 
+    /// `free_kept_split` of this block: its free chunks' bytes in pages not given back, by whether a live chunk
+    /// reaches the page.
+    fn free_kept_split(&self) -> (usize, usize) {
+        const PER: usize = PAGE / G;
+        let s = self.lock();
+        if !s.listed {
+            return (0, 0);
+        }
+        let (mut givable, mut pinned) = (0, 0);
+        for (c, l) in s.lists.iter().enumerate() {
+            let size = 1usize << (MIN_LOG as usize + c);
+            for &at in l {
+                for p in at / PAGE..(at + size).div_ceil(PAGE) {
+                    if bit(&s.given, p) {
+                        continue;
+                    }
+                    let overlap = (at + size).min((p + 1) * PAGE) - at.max(p * PAGE);
+                    if any(&s.live, p * PER, (p + 1) * PER) { pinned += overlap } else { givable += overlap }
+                }
+            }
+        }
+        (givable, pinned)
+    }
+
     /// The tail `at + keep..at + size` of a chunk just handed out is not the holder's (never written).
     pub(crate) fn untaken_tail(&self, at: usize, size: usize, keep: usize) {
         let mut s = self.lock();
@@ -639,6 +663,36 @@ fn blocks_mut() -> RwLockWriteGuard<'static, Live> {
     BLOCKS.write().unwrap_or_else(|e| e.into_inner())
 }
 
+/// The free chunks' bytes the live anonymous blocks keep in memory, split: those in pages no live chunk reaches (a give
+/// would take them: `GIVE_MIN`'s small chunks kept for the next of their class), and those in pages a live chunk
+/// shares (no give takes them: the blocks' fragmentation). A profile's measure.
+pub fn free_kept_split() -> (usize, usize) {
+    let ledgers: Vec<Arc<Ledger>> = blocks().iter().filter_map(|(_, _, l)| l.upgrade()).collect();
+    ledgers.iter().filter(|l| l.pages).map(|l| l.free_kept_split()).fold((0, 0), |(a, b), (c, d)| (a + c, b + d))
+}
+
+/// The bytes in memory of every live ledger's memory (`mem::resident`): the anonymous blocks' by their kind
+/// (`block::kind`, 0 for none set), and the rest's (pooled leases and the blocks over them, file mappings). A range
+/// inside another (a block over a lease) is counted once. A profile's measure.
+pub fn resident_split() -> ([usize; 9], usize) {
+    let ranges: Vec<(usize, usize, Option<u32>)> =
+        blocks().iter().filter_map(|(a, b, l)| l.upgrade().map(|l| (*a, *b, l.pages.then(|| l.ext.kind.load(Relaxed))))).collect();
+    let (mut anon, mut rest, mut end) = ([0; 9], 0, 0);
+    for (a, b, kind) in ranges {
+        if b <= end {
+            continue;
+        }
+        let from = a.max(end);
+        let r = crate::mem::resident(from, b - from);
+        match kind {
+            Some(k) => anon[(k as usize).min(8)] += r,
+            None => rest += r,
+        }
+        end = b;
+    }
+    (anon, rest)
+}
+
 /// Every live block's free chunks' pages to the OS (`Ledger::trim`): a run's end. The bytes given.
 pub fn trim_all() -> usize {
     let ledgers: Vec<Arc<Ledger>> = blocks().iter().filter_map(|(_, _, l)| l.upgrade()).collect();
@@ -667,13 +721,17 @@ pub struct Fence {
     /// The addresses its binds by address held already (`region::bind_address`), each with the ledger it found, or
     /// none (a buffer of no block's): a program's stack binds the same buffers at each of its thousands of
     /// dispatches (decision 0641).
-    bound: Mutex<std::collections::HashMap<usize, Option<Arc<Ledger>>>>,
+    bound: Mutex<std::collections::HashMap<usize, Option<Arc<Ledger>>, rustc_hash::FxBuildHasher>>,
+    /// The binds by address done already, by address and access (`region::bind_address`): each a bind that held its
+    /// ledger and pinned its region, so a bind of it again does nothing more. A pass binds the same buffers at each of
+    /// its launches: one lookup each, not the ledger's and the pins' (decision 0641).
+    done_binds: Mutex<std::collections::HashSet<(usize, bool), rustc_hash::FxBuildHasher>>,
     signal: Condvar,
 }
 
 impl Fence {
     pub fn new() -> Arc<Fence> {
-        Arc::new(Fence { uses: Mutex::new(Vec::new()), after: Mutex::new(Vec::new()), done: AtomicBool::new(false), committed: AtomicBool::new(false), pinned: Mutex::new(Vec::new()), bound: Mutex::new(std::collections::HashMap::new()), signal: Condvar::new() })
+        Arc::new(Fence { uses: Mutex::new(Vec::new()), after: Mutex::new(Vec::new()), done: AtomicBool::new(false), committed: AtomicBool::new(false), pinned: Mutex::new(Vec::new()), bound: Mutex::new(Default::default()), done_binds: Mutex::new(Default::default()), signal: Condvar::new() })
     }
 
     fn add(&self, ledger: &Arc<Ledger>, access: Access, chunk: Option<(usize, usize)>) {
@@ -715,6 +773,16 @@ impl Fence {
         if !known {
             self.add(l, Access::Write, None);
         }
+    }
+
+    /// Whether a bind of `addr` for this access (`write`) was done already: its ledger held and its region pinned.
+    pub(crate) fn bound_already(&self, addr: usize, write: bool) -> bool {
+        self.done_binds.lock().unwrap_or_else(|e| e.into_inner()).contains(&(addr, write))
+    }
+
+    /// A bind of `addr` for this access is done: its ledger held and its region pinned (`bound_already`).
+    pub(crate) fn note_bound(&self, addr: usize, write: bool) {
+        self.done_binds.lock().unwrap_or_else(|e| e.into_inner()).insert((addr, write));
     }
 
     /// Whether `key` (a region, with its access) is pinned on it for the first time now.
@@ -768,6 +836,7 @@ impl Fence {
             std::mem::take(&mut *uses)
         };
         self.bound.lock().unwrap_or_else(|e| e.into_inner()).clear();
+        self.done_binds.lock().unwrap_or_else(|e| e.into_inner()).clear();
         // Pins first: a region its work held may go now, its chunk freed while the block's use still holds it.
         let after = std::mem::take(&mut *self.after.lock().unwrap_or_else(|e| e.into_inner()));
         for f in after {

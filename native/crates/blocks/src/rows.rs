@@ -303,17 +303,20 @@ impl Rows {
         true
     }
 
-    /// `init` with the columns' directories at `cols` (zeroed, `widths.len()` of them, in the same block).
+    /// `init` with the columns' directories at `cols` (`widths.len()` of them, in the same block): it and they written
+    /// whole, empty but for their widths.
     ///
     /// # Safety
     /// As `init`, and `cols` as said.
     pub unsafe fn init_in(this: *mut Rows, cols: *mut ColDir, widths: &[u32], min_log: u32) {
         assert!(min_log >= MIN_LOG, "min_log {min_log} under {MIN_LOG}");
         unsafe {
+            Rows::write_empty(this);
             for (c, &w) in widths.iter().enumerate() {
                 assert!(w == 4 || w == 8);
+                // Every field written: its memory holds what was there.
+                ColDir::write_empty(cols.add(c));
                 (*cols.add(c)).width = w;
-                (*cols.add(c)).runs = 0;
             }
             (*this).min_log = min_log;
             (*this).ncols = widths.len() as u32;
@@ -329,6 +332,24 @@ impl Rows {
     #[inline]
     pub fn is_empty(&self) -> bool {
         self.len() == 0
+    }
+
+    /// The bytes of its columns' chunks made that are in memory now (`mem::resident`; a sealed chunk's piece is
+    /// not read): a profile's measure beside the room they reserve.
+    pub fn resident(&self) -> usize {
+        let n = self.nchunks.load(Acquire) as usize;
+        (0..self.ncols as usize)
+            .map(|c| {
+                let d = self.col(c);
+                (0..n.min(d.chunk.len()))
+                    .filter(|&s| d.chunk[s].load(Relaxed) & SEALED == 0)
+                    .map(|s| {
+                        let start = std::ptr::from_ref(d).cast::<u8>().wrapping_offset(d.chunk[s].load(Relaxed) as isize);
+                        crate::mem::resident(start as usize, chunk_rows(s, self.min_log) as usize * d.width as usize)
+                    })
+                    .sum::<usize>()
+            })
+            .sum()
     }
 
     /// The rows the chunks made hold.
@@ -433,7 +454,7 @@ impl Rows {
                 let d = self.col(c);
                 let bytes = rows * d.width as usize;
                 // Not zeroed: a value is read only below `len`, written before its row is claimed (0325 step 5).
-                let Some(off) = block.try_alloc_chunk_any(bytes, align(bytes)) else {
+                let Some(off) = block.try_alloc_chunk(bytes, align(bytes)) else {
                     // The chunks this round took go back (to the free list, when the block keeps one).
                     for (c2, &at) in taken.iter().enumerate().take(c.min(8)) {
                         block.free_chunk(at, rows * self.col(c2).width as usize);
@@ -520,11 +541,14 @@ impl Rows {
                 if bytes * 4 > held * 3 {
                     continue;
                 }
-                let Some(at) = block.try_alloc_chunk_any(bytes, 64) else { continue };
-                // SAFETY: a fresh piece of `bytes` in this block: the descriptor, then its words.
+                let Some((at, fresh)) = block.try_alloc_chunk_fresh(bytes, 64) else { continue };
+                // SAFETY: a piece of `bytes` in this block, just taken: the descriptor, then its words, whose bits
+                // are set as packed (clear where the piece was used before).
                 unsafe {
-                    std::ptr::write_bytes(block.ptr::<u8>(at), 0, bytes);
                     let this = block.ptr::<crate::col::IntCol>(at);
+                    crate::col::IntCol::write_empty(this);
+                    let head = std::mem::size_of::<crate::col::IntCol>();
+                    block.clear_where_used(at + head, bytes - head, fresh);
                     let words = block.ptr::<u8>(at).add(std::mem::size_of::<crate::col::IntCol>()).cast::<u64>();
                     let (data, runs) = crate::col::IntCol::lay_out_at(this, words, &choice);
                     crate::col::write(&choice, &vals, data, runs);

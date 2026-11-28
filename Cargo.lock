@@ -4441,6 +4441,7 @@ dependencies = [
  "rerail-bitlex",
  "rerail-blocks",
  "rerail-compiler",
+ "rerail-context",
  "rerail-tape-format",
  "rustc-hash",
  "sha2 0.11.1",
@@ -5075,6 +5076,7 @@ dependencies = [
  "libc",
  "metal",
  "objc",
+ "rayon",
  "rerail-ukl",
  "rerail-ukl-rust",
 ]
@@ -7555,6 +7557,7 @@ dependencies = [
  "rerail-atoms",
  "rerail-blocks",
  "rerail-compiler",
+ "rerail-context",
  "rerail-facts",
  "rerail-lang",
  "rerail-logic-core",
@@ -9954,6 +9957,7 @@ dependencies = [
 name = "rerail-ukl-rust"
 version = "0.1.0"
 dependencies = [
+ "foldhash",
  "rerail-blocks",
  "rerail-clif",
  "rerail-reads",

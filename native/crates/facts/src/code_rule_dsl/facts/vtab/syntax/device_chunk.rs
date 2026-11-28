@@ -28,6 +28,8 @@ pub const VIEW_ORDER: u32 = 12;
 /// The `op` view (`View::Op`): each numbered node's anonymous children, its id and their name atoms, read in place
 /// only (decision 0353 row 7).
 pub const VIEW_OP: u32 = 13;
+/// `doc` (`tape_rows::DocRow`): a file's row of its key and its path's and module's atoms, read in its entry.
+pub const VIEW_DOC: u32 = 14;
 
 /// The views' reads' views (`rerail_clif::view_reads::VIEWS`): a directory's document has its first row in each.
 #[cfg(any(target_os = "macos", target_os = "linux", windows))]
@@ -50,6 +52,7 @@ pub fn read_kind(view: u32) -> u32 {
         VIEW_DEPTH => 11,
         VIEW_ORDER => 12,
         VIEW_OP => 13,
+        VIEW_DOC => 14,
         _ => panic!("view {view} has no read"),
     }
 }
@@ -355,14 +358,15 @@ pub fn views_over(batch: &Batch, values: &[Arc<Batch>]) -> Option<ViewsInPlace> 
             h += sh;
         }
     }
-    // The documents' keys in its order (`ViewDir::keys`), which a search by key reads alone: the chunk's batch's first,
-    // in key order, then each values batch's, in the order admitted (t50 step 9, Metal at 512 MB: a value admitted with
-    // a key below the chunk's was never found by its parents' walk, `tp_ident` and `tp_list` 9 rows short).
+    // The documents' keys in the directory's order (`ViewDir::keys`, `order`'s), which a search by key reads alone:
+    // the chunk's batch's first, in key order, then each values batch's, in the order admitted (t50 step 9, Metal at
+    // 512 MB: a value admitted with a key below the chunk's was never found by its parents' walk, `tp_ident` and
+    // `tp_list` 9 rows short).
     let keys: *mut u32 = b.alloc_t(n.max(1));
-    for i in 0..n {
-        // SAFETY: place `i` of the order and its row, written above, and key `i` of the `n` just allocated in the
-        // chunk's block.
-        unsafe { keys.add(i).write((*rows.add(order.add(i).read() as usize)).key) };
+    for m in 0..n {
+        // SAFETY: the order's `m`th of the `n` written above, its row written, and key `m` of the `n` just allocated in
+        // the chunk's block.
+        unsafe { keys.add(m).write((*rows.add(order.add(m).read() as usize)).key) };
     }
     // SAFETY: the chunk's batch's directory, as above.
     let nbatch = unsafe { (*batch.docs.dir()).ndocs };

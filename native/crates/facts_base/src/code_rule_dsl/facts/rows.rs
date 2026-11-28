@@ -90,10 +90,13 @@ pub struct InFlight {
     pub room: rerail_blocks::relation::IndexRoom,
     /// Its builder's committed work (the lane's `Submitted::flushed`): a taker waits on it.
     pub done: std::sync::Arc<rerail_accel::gpu::shared::Flushed>,
-    /// Taken by another batch's probe, whose work reads it after its builder's: its room is never given back.
-    pub lent: bool,
+    /// The batches' probes that took it, whose work reads it after its builder's: while any has, its room is never
+    /// given back. A taker that finds it not built once `done` completed (`whole`) gives its claim back and builds its
+    /// own.
+    pub lent: u32,
     /// Whether its builder's program ran it to its end, read once `done` completed: a program stopped before it (an
-    /// arena passed, decision 0603 step 5) left it unwritten. Nor is one whose builder read its keys through a view whose
+    /// arena passed, decision 0603 step 5), or one whose chain spent its dispatches before its build's last phase (it
+    /// launches again, its build's rows still unwritten), left it unwritten. Nor is one whose builder read its keys through a view whose
     /// reads found no room in their batch's cache (`Building::misread`): its buckets hold the dead entry's keys.
     pub whole: Whole,
 }
@@ -347,19 +350,21 @@ fn open_given_back(span: u32, ty: &'static str, bytes: usize) {
     }
 }
 
-pub fn held_by_span() -> Vec<(u32, u8, usize, usize, String)> {
+pub fn held_by_span() -> Vec<(u32, u8, usize, usize, String, usize)> {
     let made = crate::code_rule_dsl::logic::profile::machine::<Made>();
     let m = made.0.lock().unwrap_or_else(|e| e.into_inner());
-    let mut by: std::collections::HashMap<(u32, u8, Option<Arc<str>>), (usize, usize)> = std::collections::HashMap::new();
+    let mut by: std::collections::HashMap<(u32, u8, Option<Arc<str>>), (usize, usize, usize)> = std::collections::HashMap::new();
     for (e, span, life, maker) in m.iter() {
         if let Some(e) = e.upgrade() {
             use std::sync::atomic::Ordering::Relaxed;
             let v = by.entry((*span, *life, maker.clone())).or_default();
             v.0 += e.top.load(Relaxed).saturating_sub(e.free.load(Relaxed));
             v.1 += 1;
+            // What of it is in memory: its used bytes count room reserved and never written.
+            v.2 += e.resident();
         }
     }
-    let mut out: Vec<(u32, u8, usize, usize, String)> = by.into_iter().map(|((s, l, w), (b, n))| (s, l, b, n, w.map_or_else(String::new, |w| w.to_string()))).collect();
+    let mut out: Vec<(u32, u8, usize, usize, String, usize)> = by.into_iter().map(|((s, l, w), (b, n, res))| (s, l, b, n, w.map_or_else(String::new, |w| w.to_string()), res)).collect();
     // What lies in the chunks' open run-life blocks, by the span whose arrays hold it (no blocks of its own).
     let used = crate::code_rule_dsl::logic::profile::machine::<OpenUse>();
     let used = used.0.lock().unwrap_or_else(|e| e.into_inner());
@@ -379,7 +384,7 @@ pub fn held_by_span() -> Vec<(u32, u8, usize, usize, String)> {
         }
         types.sort_by_key(|t| std::cmp::Reverse(t.0));
         let types: Vec<String> = types.iter().take(4).map(|(b, n, t)| format!("{} MB in {n} {t}", b >> 20)).collect();
-        out.push((s, Life::Run as u8, b, 0, format!("  in the open block of run-life arrays: held by this span's arrays ({})", types.join(", "))));
+        out.push((s, Life::Run as u8, b, 0, format!("  in the open block of run-life arrays: held by this span's arrays ({})", types.join(", ")), 0));
     }
     // What lies in the batches' blocks of sources, by relation (`made::sources_held`): the span of its first group and
     // of its latest, and the batch's documents made.
@@ -388,7 +393,7 @@ pub fn held_by_span() -> Vec<(u32, u8, usize, usize, String)> {
     for (k, (bytes, name, made, docs, first, last)) in sources.into_iter().enumerate() {
         if bytes >= 1 << 20 && k < 24 {
             let last = if last == first { String::new() } else { format!("; its latest group in {}", crate::code_rule_dsl::logic::profile::short(&rerail_prof::heap::name(last), 160)) };
-            out.push((first, Life::Source as u8, bytes, 0, format!("  in a batch's block of sources: {name}, {made} of its {docs} documents made{last}")));
+            out.push((first, Life::Source as u8, bytes, 0, format!("  in a batch's block of sources: {name}, {made} of its {docs} documents made{last}"), 0));
         } else {
             small += bytes;
             small_n += 1;
@@ -396,11 +401,11 @@ pub fn held_by_span() -> Vec<(u32, u8, usize, usize, String)> {
     }
     if n > 0 {
         let s = rerail_prof::heap::intern("the batches' relations, all of them");
-        out.push((s, Life::Source as u8, all, 0, format!("  in a batch's block of sources: {n} relations; {small_n} of them not listed, {} MB", small >> 20)));
+        out.push((s, Life::Source as u8, all, 0, format!("  in a batch's block of sources: {n} relations; {small_n} of them not listed, {} MB", small >> 20), 0));
     }
     if rest > 0 {
         let s = rerail_prof::heap::intern("the open block's arrays of spans under 1 MB each");
-        out.push((s, Life::Run as u8, rest, 0, format!("  in the open block of run-life arrays: {rest_spans} spans")));
+        out.push((s, Life::Run as u8, rest, 0, format!("  in the open block of run-life arrays: {rest_spans} spans"), 0));
     }
     out.sort_by_key(|o| std::cmp::Reverse(o.2));
     out
@@ -1286,11 +1291,18 @@ impl WaveRoom {
 
     /// `n` slots in a row, claimed for one writer: their region and its first row there.
     pub fn claim(&self, n: u32) -> (u8, u32) {
+        self.claim_room(n, n)
+    }
+
+    /// `claim`, with room reserved for the first `room` of the `n` slots alone: the writer reserves the rest as its
+    /// rows reach them (`Part::reserve_room`), within its region's block. The slots are its either way.
+    pub fn claim_room(&self, n: u32, room: u32) -> (u8, u32) {
         let mut cur = self.cursor.lock().unwrap_or_else(|e| e.into_inner());
         let r = cur.region;
         let reg = self.region(r as u8);
         let end = u64::from(reg.at) + u64::from(cur.used) + u64::from(n);
-        if end <= u64::from(u32::MAX) && reg.part.reserve(end) {
+        let reserve = u64::from(reg.at) + u64::from(cur.used) + u64::from(room.min(n));
+        if end <= u64::from(u32::MAX) && reg.part.could_hold(end) && reg.part.reserve(reserve) {
             let row = reg.at + cur.used;
             cur.used += n;
             *cur.ends.last_mut().expect("a region") = cur.used;
@@ -1300,7 +1312,9 @@ impl WaveRoom {
         assert!(r + 1 < WAVE_REGIONS, "a wave's rows past {WAVE_REGIONS} regions");
         let before: u32 = cur.ends.iter().sum();
         let rows = (n as usize).max(before as usize);
-        let part = Part::for_writes_with_room_narrow(self.k, self.narrow, rows, 8 * self.k.max(1) * rows).unwrap_or_else(|e| panic!("a wave's rows past their block: {e}"));
+        // Its block has room for all `n` slots; its first `room` reserved now.
+        let first = (room.min(n) as usize).max(before as usize).min(rows);
+        let part = Part::for_writes_with_room_narrow(self.k, self.narrow, first, 8 * self.k.max(1) * rows).unwrap_or_else(|e| panic!("a wave's rows past their block: {e}"));
         let _ = self.regions[r + 1].set(Region { part, at: 0, first: before, lent: None });
         cur.region = r + 1;
         cur.used = n;
@@ -2234,6 +2248,16 @@ impl Part {
         }
     }
 
+    /// The bytes of its chunks in memory now (`Rows::resident`).
+    fn resident_bytes(&self) -> usize {
+        self.rel().rows.resident()
+    }
+
+    /// The bytes of its indexes in memory now (`Relation::index_resident`).
+    fn index_resident_bytes(&self) -> usize {
+        self.rel().index_resident()
+    }
+
     /// The bytes its chunks hold.
     fn capacity_bytes(&self) -> usize {
         self.rel().rows.reserved() as usize * self.rel().rows.ncols as usize * 8
@@ -2522,6 +2546,16 @@ impl Rows {
     /// The bytes of the values held (the frozen segments counted whole, shared or not).
     pub fn bytes(&self) -> usize {
         self.len() * 8
+    }
+
+    /// The bytes of the chunks in memory now, the frozen segments' and the tail's: a profile's measure.
+    pub fn resident_bytes(&self) -> usize {
+        self.segs.iter().map(|(_, p)| p.resident_bytes()).sum::<usize>() + self.tail.as_ref().map_or(0, Part::resident_bytes)
+    }
+
+    /// The bytes of their indexes in memory now, the frozen segments' and the tail's: a profile's measure.
+    pub fn index_resident_bytes(&self) -> usize {
+        self.segs.iter().map(|(_, p)| p.index_resident_bytes()).sum::<usize>() + self.tail.as_ref().map_or(0, Part::index_resident_bytes)
     }
 
     /// The bytes the chunks hold: the frozen segments' and the tail's.
@@ -3223,6 +3257,26 @@ mod tests {
             assert_eq!(got, want, "held {held}: in the order laid out");
             assert_eq!(rows.to_vec(0, held, k), (0..held as i64).flat_map(|i| [i, -i, 7]).collect::<Vec<_>>(), "held {held}: the rows before kept");
         }
+    }
+
+    /// `claim_room`: a writer's `n` slots are its (the next claim comes past them), but room is reserved for its first
+    /// `room` alone, in a region's block that can hold them all; the rest are reserved as its rows reach them
+    /// (`Part::reserve_room`). A head's bound reserved whole was memory of the run's blocks (their free lists' chunks).
+    #[test]
+    fn a_claim_reserves_its_first_room_alone() {
+        let k = 2;
+        let rows = Rows::new(k);
+        let room = WaveRoom::open(&rows, k, true);
+        let n = 1u32 << 20;
+        let (r, row) = room.claim_room(n, 64);
+        let part = room.part(r);
+        let reserved = part.rel().rows.reserved();
+        assert!(reserved >= row + 64 && reserved < row + (n >> 4), "room for its first rows alone: {reserved} reserved past row {row}");
+        assert!(part.could_hold(u64::from(row + n)), "its block holds all its slots");
+        let (r2, row2) = room.claim(16);
+        assert!(room.global(r2, row2) >= room.global(r, row) + n, "the next claim past its slots");
+        assert!(part.reserve_room(u64::from(row + n)), "reserved as its rows reach them");
+        assert!(part.rel().rows.reserved() >= row + n);
     }
 
     /// `permute`: slot `t` takes the row `src[t]` held; the rest keep the other rows; each moved along its cycle.

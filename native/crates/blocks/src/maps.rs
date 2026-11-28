@@ -179,9 +179,8 @@ impl Mem {
     fn new(room: &dyn Room, bytes: usize, align: usize, name: &'static str) -> Mem {
         let bytes = bytes.max(8);
         let mut region = room.region(bytes, align, name);
+        // Not zeroed (`Room`): its structure writes each byte before it reads it, its descriptor's every field first.
         let base = region.as_mut_ptr();
-        // SAFETY: the region's `bytes`, this structure's alone: zeroed, as a chunk from a free list may not be.
-        unsafe { std::ptr::write_bytes(base, 0, bytes) };
         Mem { region, base }
     }
 
@@ -326,12 +325,15 @@ impl<K: Key, V: Pod + Copy> BlockHash<K, V> {
         let (kat, vat) = (up8(size_of::<HashDesc>()), up8(size_of::<HashDesc>()) + up8(n * size_of::<K>()));
         let mem = Mem::new(room, vat + n * size_of::<V>(), align_of::<K>().max(align_of::<V>()), "a hash map");
         let (d, keys, vals) = (mem.at::<HashDesc>(0), mem.at::<K>(kat), mem.at::<V>(vat));
-        // SAFETY: the region was just taken, zeroed, for these.
+        // SAFETY: the region was just taken for these.
         unsafe {
             for i in 0..n {
                 keys.add(i).write(K::GUARD);
             }
             (*d).log = log;
+            (*d).len = 0;
+            (*d).guard = 0;
+            (*d).pad = 0;
             (*d).kbytes = size_of::<K>() as u32;
             (*d).vbytes = size_of::<V>() as u32;
             Span::set(&raw const (*d).keys, keys.cast::<u8>(), n * size_of::<K>());
@@ -725,6 +727,7 @@ impl<K: Pod + Copy + Ord, V: Pod + Copy> BlockSorted<K, V> {
             (*d).len = len as u32;
             (*d).kbytes = size_of::<K>() as u32;
             (*d).vbytes = size_of::<V>() as u32;
+            (*d).pad = 0;
             Span::set(&raw const (*d).keys, keys.cast::<u8>(), len * size_of::<K>());
             Span::set(&raw const (*d).vals, vals.cast::<u8>(), len * size_of::<V>());
         }
@@ -891,6 +894,8 @@ impl BlockStrings {
         let d = mem.at::<StringsDesc>(0);
         // SAFETY: the region was just taken for these.
         unsafe {
+            (*d).len = 0;
+            (*d).pad = 0;
             Span::set(&raw const (*d).ends, mem.at::<u64>(eat), 0);
             Span::set(&raw const (*d).bytes, mem.at::<u8>(bat), 0);
         }
@@ -1261,7 +1266,8 @@ unsafe impl<T: Pod + Send> Send for BlockArray<T> {}
 unsafe impl<T: Pod + Sync> Sync for BlockArray<T> {}
 
 impl<T: Pod> BlockArray<T> {
-    pub fn zeroed(room: &dyn Room, n: usize) -> Self {
+    /// `n` `T`s not yet written: for `from_iter`, which writes each.
+    fn unwritten(room: &dyn Room, n: usize) -> Self {
         BlockArray { mem: Mem::new(room, n * size_of::<T>(), align_of::<T>(), "an array"), len: n, _t: PhantomData }
     }
 
@@ -1273,7 +1279,7 @@ impl<T: Pod> BlockArray<T> {
 impl<T: Pod + Copy> BlockArray<T> {
     /// The `T`s of `items` (exactly `n`).
     pub fn from_iter(room: &dyn Room, n: usize, items: impl IntoIterator<Item = T>) -> Self {
-        let mut a = BlockArray::zeroed(room, n);
+        let mut a = BlockArray::unwritten(room, n);
         let mut i = 0;
         for v in items.into_iter().take(n) {
             a[i] = v;
@@ -1287,7 +1293,7 @@ impl<T: Pod + Copy> BlockArray<T> {
 impl<T: Pod> std::ops::Deref for BlockArray<T> {
     type Target = [T];
     fn deref(&self) -> &[T] {
-        // SAFETY: `len` `T`s, zeroed or written.
+        // SAFETY: `len` `T`s, written (`from_iter`).
         unsafe { std::slice::from_raw_parts(self.mem.at::<T>(0), self.len) }
     }
 }

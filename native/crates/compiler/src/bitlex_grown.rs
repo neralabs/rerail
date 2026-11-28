@@ -124,7 +124,7 @@ impl<T: Copy> Grown<T> {
         let cap = need.max(c.cap * 2).max(64 / size_of::<T>().max(1));
         let bytes = cap * size_of::<T>();
         let block = c.block.block();
-        let at = block.try_alloc_chunk_any(bytes, 16).unwrap_or_else(|| panic!("the prover's formula block is full: {bytes} bytes more"));
+        let at = block.try_alloc_chunk(bytes, 16).unwrap_or_else(|| panic!("the prover's formula block is full: {bytes} bytes more"));
         // The class it was given: a power of two of at least 64 bytes, all of it the array's.
         let cap = bytes.next_power_of_two().max(64) / size_of::<T>();
         if c.cap > 0 {

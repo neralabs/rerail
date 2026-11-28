@@ -210,6 +210,23 @@ impl Drop for Rerun {
     }
 }
 
+/// Runs `f` outside this thread's evaluation: a job begun in the middle of another (`exec::in_job_scope`: a wait
+/// that runs the pool's jobs, a join that steals one) is not that job's work, and an evaluation it begins
+/// (`LaunchScope::enter`) is its own. The waiting one is this thread's
+/// again after, as `f` returns or unwinds. Without it a stratum that waited charged the strata its wait ran, and the
+/// strata theirs' in turn: one evaluation of 11,191 launches (m3, `all`, 2026-11-26).
+pub fn apart<R>(f: impl FnOnce() -> R) -> R {
+    struct Back(Option<Rc<RefCell<Evaluation>>>);
+    impl Drop for Back {
+        fn drop(&mut self) {
+            let waiting = self.0.take();
+            let _ = EVALUATION.try_with(|slot| *slot.borrow_mut() = waiting);
+        }
+    }
+    let _back = Back(EVALUATION.with_borrow_mut(Option::take));
+    f()
+}
+
 /// The launches a rerun may still take (the run's reruns' budget's); 0 with no evaluation.
 pub fn rerun_available() -> usize {
     EVALUATION.with_borrow(|slot| slot.as_ref().map_or(0, |evaluation| evaluation.borrow().reruns.available()))
@@ -320,6 +337,27 @@ mod tests {
 
     fn launch() {
         attempt(1, "k", [1; 3], [1; 3], false, Vec::new());
+    }
+
+    /// The work a wait runs (`apart`) is outside the waiting evaluation: what it enters is an evaluation of its own,
+    /// its launches charge none of the waiting one's, and the waiting one is the thread's again after, a panic's
+    /// unwinding too.
+    #[test]
+    fn work_run_apart_is_its_own_evaluation() {
+        let e = LaunchScope::enter();
+        launch();
+        let waiting = available();
+        apart(|| {
+            assert!(EVALUATION.with_borrow(Option::is_none), "no evaluation while apart");
+            let _own = LaunchScope::enter();
+            assert_eq!(available(), KERNEL_LAUNCH_LIMIT, "an evaluation of its own");
+            launch();
+        });
+        assert_eq!(available(), waiting, "the waiting evaluation's budget untouched");
+        let unwound = std::panic::catch_unwind(|| apart(|| panic!("a job's panic")));
+        assert!(unwound.is_err());
+        assert_eq!(available(), waiting, "the waiting evaluation back after an unwind");
+        drop(e);
     }
 
     /// A chain's dispatches are one launch (decision 0674): its first charges, the rest are recorded; a chain

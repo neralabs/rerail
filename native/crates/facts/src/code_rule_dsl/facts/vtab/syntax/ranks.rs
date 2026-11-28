@@ -169,7 +169,11 @@ impl Ranks {
         let first = a / 64;
         let n = (b.div_ceil(64).max(first) - first) as usize + 1;
         let mut count = [0u32; ITEMS];
-        let groups = Cells::build(block, n, |groups| {
+        let groups = Cells::build(block, n, |groups: &mut [[u64; WORDS]]| {
+            // The walk sets marks one by one: each group's written clear first (its memory holds what was there).
+            for g in groups.iter_mut() {
+                g[..ITEMS].fill(0);
+            }
             walk(&mut Marks { first, groups });
             for g in groups.iter_mut() {
                 for (k, c) in count.iter().enumerate() {

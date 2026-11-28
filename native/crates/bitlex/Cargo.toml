@@ -9,7 +9,7 @@ build = "../compiler/build.rs"
 
 [features]
 # The ladder's and the tests' hooks, as the front end's.
-test-hooks = ["rerail-blocks/test-hooks", "rerail-compiler/test-hooks", "rerail-tape-format/test-hooks"]
+test-hooks = ["rerail-blocks/test-hooks", "rerail-compiler/test-hooks", "rerail-tape-format/test-hooks", "rerail-context/test-hooks"]
 
 [dependencies]
 # The provers' tables in blocks (decision 0353), as the compiler's sources it mounts hold them.
@@ -27,6 +27,8 @@ sha2 = "0.11"
 foldhash = "=0.2.0"
 # A batch's questions asked in parallel on the engine's one pool (`bitlex_masks::either_never_many`).
 rayon = "=1.12.0"
+# The machine's pool those batches run on (`on_cores`, decision 0442 step 5).
+rerail-context = { path = "../context" }
 # The process's CPU time, for the proving trace (`bitlex_masks`).
 libc = "0.2.189"
 

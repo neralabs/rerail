@@ -4494,8 +4494,8 @@ fn the_views_directory_is_the_hosts_too() {
         assert_eq!(homes[row.homes[2] as usize].host + row.source, p.facts.source.as_bytes().as_ptr() as u64, "document {}'s source, where it lies", p.key());
     }
     // The homes its rows name (fixed: a row's tape in `3i`, its lines in `3i + 1`, its source in `3i + 2`), the
-    // 16z cache's where it has one, and the codes'. The device reads the directory where it reads every tape and
-    // lines; a source it does not read keeps a node's text on the host alone (`ViewsInPlace::sources`).
+    // 16z cache's where it has one, and the codes' directory's. The device reads the directory where it reads every
+    // tape and lines; a source it does not read keeps a node's text on the host alone (`ViewsInPlace::sources`).
     assert_eq!(dir.nhomes as usize, 3 * rows.len() + 2, "three homes a row, the cache's and the codes'");
     // The codes' directory's home: the binary's (decision 0697).
     assert_eq!(homes[dir.codes as usize].host, rerail_tape_format::codes_dir::bytes().as_ptr() as u64, "the codes' home is the binary's directory");
@@ -4503,7 +4503,12 @@ fn the_views_directory_is_the_hosts_too() {
     assert_eq!(views.sources, views.dir.is_some() && sources_on_device, "a node's text on the device only where it reads every source");
     let named = rows.iter().flat_map(|r| [r.homes[0], r.homes[1]]).map(|h| h as usize).chain((dir.cache != 0).then(|| dir.cache as usize - 1));
     let all_on_device = crate::code_rule_dsl::tape::placed::device().is_some() && named.into_iter().all(|h| homes[h].gpu != 0);
-    assert_eq!(views.dir.is_some(), all_on_device, "the device's address only where it reads every home its rows name");
+    assert_eq!(views.dir.is_some(), all_on_device, "the device's address only where it reads every tape, lines and cache its rows name");
+    // Its nodes' texts are read on the device only where it reaches every source too (`ViewsInPlace::sources`).
+    let sources_on_device = all_on_device && rows.iter().all(|r| homes[r.homes[2] as usize].gpu != 0);
+    assert_eq!(views.sources, sources_on_device, "the device reads the sources where it reaches every one");
+    // The host's join programs read the directory at its own address in the block (53a8c256c2), device or none.
+    assert_eq!(views.host.dir, block.base_ptr() as u64 + views.at as u64, "the host's address of the directory");
 }
 
 /// Decision 0353, step 3 on the CPU (step 3): `Viewed` reads each row through its document's directory row
@@ -4662,7 +4667,7 @@ fn the_join_programs_view_reads_are_the_jits() {
                 let place = format!("{} document {m}", format.name());
                 for k in 0..VIEWS.len() {
                     let n = firsts[m as usize + 1].rows[k] - firsts[m as usize].rows[k];
-                    let cols = [5, 3, 3, 3, 2, 2, 2, 2, 2, 4, 2, 2, 2][k];
+                    let cols = [5, 3, 3, 3, 2, 2, 2, 2, 2, 4, 2, 2, 2, 3][k];
                     for r in 0..n {
                         let found = at(doc.clone(), k as u32, r);
                         for col in 0..cols {
@@ -4700,7 +4705,8 @@ fn the_join_programs_view_reads_are_the_jits() {
             }
         });
     }
-    assert!(tried > 1000, "{tried} reads");}
+    assert!(tried > 1000, "{tried} reads");
+}
 
 /// Plan "Chunk node numbers", step 1: a growth's ids. Each document takes whole pages of 32-bit ids when it is first
 /// made in the growth, in its role's region (files from 0, code guests from 2^30, hidden documents from 1.5 × 2^30)

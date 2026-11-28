@@ -39,7 +39,7 @@ pub struct Numbered {
 impl Ids {
     /// A numbering in `block`, its page table reserved there (address space until its pages are taken).
     pub fn new(block: &Arc<Block>) -> Ids {
-        let table = block.try_alloc_chunk_any(IdPages::BYTES, 64).expect("a growth's block holds its page table");
+        let table = block.try_alloc_chunk(IdPages::BYTES, 64).expect("a growth's block holds its page table");
         // SAFETY: the table's header, just allocated in the block (not zeroed: written here, before any page is taken).
         unsafe { block.ptr::<IdPages>(table).write(IdPages::default()) };
         Ids { block: Arc::clone(block), table, numbered: Default::default() }

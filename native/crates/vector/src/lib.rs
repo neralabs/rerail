@@ -140,9 +140,9 @@ impl Region {
 }
 
 /// Where a structure lives: a region of `bytes` bytes in a block of the right life, its first byte at a multiple of
-/// `align` (at least 8). A thread's rooms and the heap's read zero (the stack's region and a large room's chunk
-/// zeroed, the heap's `alloc_zeroed`); a relation block's (`facts::rows`' `LifeRoom`, a home's room) is a chunk taken
-/// unzeroed (`try_alloc_chunk_fit`), so a structure writes each byte before it reads it.
+/// `align` (at least 8). Its bytes are whatever was there: no room zeroes a region (zeroing touched every page of
+/// it, so its whole length stayed in memory where its holder wrote a part), so a structure writes each byte before
+/// it reads it.
 pub trait Room: Send + Sync {
     fn region(&self, bytes: usize, align: usize, name: &'static str) -> Region;
 }
@@ -168,7 +168,8 @@ impl Room for HeapRoom {
     fn region(&self, bytes: usize, align: usize, _name: &'static str) -> Region {
         let layout = std::alloc::Layout::from_size_align(bytes.max(1), align.max(8)).expect("a region's layout");
         // SAFETY: a layout of at least one byte.
-        let ptr = unsafe { std::alloc::alloc_zeroed(layout) };
+        // Not zeroed, as no room's region is (`Room`).
+        let ptr = unsafe { std::alloc::alloc(layout) };
         if ptr.is_null() {
             std::alloc::handle_alloc_error(layout);
         }
