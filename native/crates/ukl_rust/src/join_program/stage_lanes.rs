@@ -216,6 +216,8 @@ where
         let s = l.st.s;
         let at = if s.r_view == 0 {
             Found::Rel(ln::rel_at(l.d, id, l.st.rf))
+        } else if let Some(rows) = vrows_one_doc(s.r_view, s.v_dir, id) {
+            Found::View(rows)
         } else {
             let mut memo = NONE;
             let first = vrow(s.r_view, s.v_dir, id[0], &mut memo);

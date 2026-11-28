@@ -267,6 +267,12 @@ impl<'a> Doc<'a> {
         }
     }
 
+    /// Its tape nodes' packed map by number (`ViewDoc::node_x`), empty where it has none.
+    #[inline(always)]
+    pub unsafe fn node_x(&self) -> &'a [u32] {
+        Self::packed(&self.e.node_x)
+    }
+
     /// Numbered node `l`'s tape node.
     #[inline]
     pub unsafe fn tape_node(&self, l: u32) -> u32 {

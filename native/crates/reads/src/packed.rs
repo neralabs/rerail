@@ -4,54 +4,51 @@
 //! number are close to their neighbours'. An entry more than `ESCAPE - 1` past its block's least is the escape: its
 //! reader asks the numbering, as it would with no map.
 //!
-//! Words: the entries, the block's shift, then a block's least value each, then the entries' bytes.
+//! Words: a block of 16 entries is five, its least value and then its entries' bytes (`BLOCK`), so an entry's
+//! read is two loads of one line and no header: an entry past the last is an escape. A lane's entry is two gathers
+//! (the join program's lanes, `lanes::packed_get`).
 
 /// The byte of an entry its block's least value does not reach: read from the numbering.
 pub const ESCAPE: u8 = 0xff;
 /// No entry (an escape, or past the last).
 pub const NONE: u32 = u32::MAX;
-/// The blocks' entries: 16, a block's least value a word.
+/// A block's entries.
 pub const SHIFT: u32 = 4;
+/// A block's words: its least value, then its 16 entries' bytes.
+pub const BLOCK: usize = 5;
 
 /// How many words `build` fills for `n` entries.
 pub fn words(n: usize) -> usize {
-    2 + n.div_ceil(1 << SHIFT) + n.div_ceil(4)
+    BLOCK * n.div_ceil(1 << SHIFT)
 }
 
 /// `vals` packed into `out` (`words(vals.len())` long); returns the words and how many entries escaped.
 pub fn build(vals: &[u32], out: &mut [u32]) -> (usize, usize) {
-    let n = vals.len();
-    let nb = n.div_ceil(1 << SHIFT);
-    out[0] = n as u32;
-    out[1] = SHIFT;
     let mut escaped = 0;
-    let (bases, bytes) = out[2..].split_at_mut(nb);
-    for (b, base) in bases.iter_mut().enumerate() {
-        let block = &vals[b << SHIFT..((b + 1) << SHIFT).min(n)];
-        *base = block.iter().copied().min().unwrap_or(0);
+    for (b, block) in vals.chunks(1 << SHIFT).enumerate() {
+        let w = &mut out[BLOCK * b..BLOCK * (b + 1)];
+        let base = block.iter().copied().min().unwrap_or(0);
+        w[0] = base;
+        let mut bytes = [ESCAPE; 16];
+        for (k, &v) in block.iter().enumerate() {
+            let d = v.wrapping_sub(base);
+            bytes[k] = if d < u32::from(ESCAPE) { d as u8 } else { ESCAPE };
+            escaped += usize::from(bytes[k] == ESCAPE);
+        }
+        for q in 0..4 {
+            w[1 + q] = u32::from_le_bytes([bytes[4 * q], bytes[4 * q + 1], bytes[4 * q + 2], bytes[4 * q + 3]]);
+        }
     }
-    for w in bytes.iter_mut() {
-        *w = 0;
-    }
-    for (i, &v) in vals.iter().enumerate() {
-        let d = v.wrapping_sub(bases[i >> SHIFT]);
-        let byte = if d < u32::from(ESCAPE) { d as u8 } else { ESCAPE };
-        escaped += usize::from(byte == ESCAPE);
-        bytes[i / 4] |= u32::from(byte) << (8 * (i % 4));
-    }
-    (words(n), escaped)
+    (words(vals.len()), escaped)
 }
 
 /// Entry `i` of packed map `p` (`build`'s words), `NONE` for an escape or past the last, or for no map.
 #[inline(always)]
 pub fn get(p: &[u32], i: u32) -> u32 {
-    let Some(&n) = p.first() else { return NONE };
-    if i >= n {
-        return NONE;
-    }
-    let nb = n.div_ceil(1 << SHIFT) as usize;
-    let byte = (p[2 + nb + (i / 4) as usize] >> (8 * (i % 4))) as u8;
-    if byte == ESCAPE { NONE } else { p[2 + (i >> SHIFT) as usize].wrapping_add(u32::from(byte)) }
+    let at = BLOCK * (i >> SHIFT) as usize;
+    let Some(w) = p.get(at..at + BLOCK) else { return NONE };
+    let byte = (w[1 + ((i >> 2) & 3) as usize] >> (8 * (i & 3))) as u8;
+    if byte == ESCAPE { NONE } else { w[0].wrapping_add(u32::from(byte)) }
 }
 
 #[cfg(test)]
@@ -72,6 +69,8 @@ mod tests {
         assert_eq!(seen, esc);
         assert!(esc > 0 && esc < 40);
         assert_eq!(super::get(&out, 1000), super::NONE);
+        assert_eq!(super::get(&out, 1008), super::NONE);
+
         assert_eq!(super::get(&[], 0), super::NONE);
     }
 }

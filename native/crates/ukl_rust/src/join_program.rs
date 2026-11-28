@@ -510,6 +510,34 @@ unsafe fn vrow_dir<'a>(kind: u32, d: *const ViewDir, r: u32, memo: &mut u32) -> 
     Row::View(doc(d, e).at(k.min(reads::LAST_VIEW), i))
 }
 
+/// `N` rows `id` of view `kind` (`node` or `child`, not placed) where they all lie in the first one's document: their
+/// tape nodes read together from its packed map (`lanes::packed_get`, two gathers), no select; an escaped lane's
+/// found alone (`Doc::at`). `None` for any other view, or rows of several documents.
+unsafe fn vrows_one_doc<'a, const N: usize>(kind: u32, d: *const ViewDir, id: rerail_simd::Simd<u32, N>) -> Option<[Row<'a>; N]>
+where
+    rerail_simd::LaneCount<N>: rerail_simd::SupportedLaneCount,
+{
+    use rerail_simd::prelude::*;
+    if kind & VIEW_PLACED != 0 || !(1..=2).contains(&kind) {
+        return None;
+    }
+    let k = kind - 1;
+    let a = ViewDir::doc_of_row(d, k, id[0], NONE);
+    let e = view_rows(d).add(a as usize);
+    let dd = doc(d, e);
+    let map = dd.node_x();
+    let first = (*e).rows[k as usize];
+    let local = id - Simd::splat(first);
+    if map.is_empty() || !local.simd_lt(Simd::splat(dd.e.nodes.saturating_sub(k))).all() {
+        return None;
+    }
+    let xs = crate::lanes::packed_get(map.as_ptr(), map.len() as u32, local + Simd::splat(k));
+    Some(core::array::from_fn(|j| {
+        let (i, x) = (local[j], xs[j]);
+        Row::View(if x == rerail_reads::packed::NONE { dd.at(k, i) } else { dd.at_node(k, i, x) })
+    }))
+}
+
 /// A row of a view or a relation, found once, so that each of its columns is read from it: a view row's document
 /// and tape node (`reads::At`), or a relation's row (`t + a0`'s row `r`, its far base's block `far`).
 #[derive(Clone, core::marker::Copy)]
