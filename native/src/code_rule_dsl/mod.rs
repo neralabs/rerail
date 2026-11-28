@@ -5174,6 +5174,9 @@ pub(crate) fn install_languages() {
     logic::strings::functions::install_py_repr(|s| {
         cpython::value::str_repr(&cpython::value::PyStr::Text(s.to_owned()))
     });
+    // `@py_parses`'s parser (Ruff's, Python's), likewise.
+    logic::strings::functions::install_py_parses(cpython::syntax::parses);
+    logic::strings::functions::install_py_consecutive_names(cpython::syntax::consecutive_names);
     // The canonical AST stage's producer (Python's CPython `ast`).
     residency::install_ast_producer(&residency::admission::relational::python_ast::PythonAst);
     // What ECMAScript's import targets resolve among (`resolution`).
@@ -5265,7 +5268,8 @@ pub(crate) fn install_languages() {
     // without a language's feature routes no file to it, so its parser is not linked.
     {
         let mut parsers: Vec<tape::ParserImpl> = Vec::new();
-        if cfg!(feature = "lang-blade") {
+        #[cfg(feature = "lang-blade")]
+        {
             parsers.push(tape::ParserImpl {
                 dialect: language::GrammarDialect::Blade,
                 name: "Forte",
@@ -5274,7 +5278,8 @@ pub(crate) fn install_languages() {
                 parser: &blade::tape::Forte,
             });
         }
-        if cfg!(feature = "lang-python") {
+        #[cfg(feature = "lang-python")]
+        {
             // The lean parser (`tape::python_lean`); a file it refuses goes to tree-sitter-python.
             parsers.push(tape::ParserImpl {
                 dialect: language::GrammarDialect::Python,
@@ -5285,7 +5290,8 @@ pub(crate) fn install_languages() {
             });
         }
         // Python's format strings (decision 0176): guests only, parsed by Ruff's parsers' ports.
-        if cfg!(feature = "lang-python") {
+        #[cfg(feature = "lang-python")]
+        {
             parsers.push(tape::ParserImpl {
                 dialect: language::GrammarDialect::PercentFormat,
                 name: "percent-format strings (Ruff's parser ported)",
@@ -5314,7 +5320,8 @@ pub(crate) fn install_languages() {
             });
         }
         // ESLint's directive comments (decision 0194): guests only, parsed by main's directive parser.
-        if cfg!(feature = "lang-typescript") {
+        #[cfg(feature = "lang-typescript")]
+        {
             parsers.push(tape::ParserImpl {
                 dialect: language::GrammarDialect::EslintDirective,
                 name: "ESLint directive comments",
@@ -5331,7 +5338,8 @@ pub(crate) fn install_languages() {
         }
         // The lean ECMAScript parser (`tape::ecma_lean`, decision 0184); a file it refuses goes to
         // the dialect's tree-sitter grammar.
-        if cfg!(feature = "lang-javascript") {
+        #[cfg(feature = "lang-javascript")]
+        {
             parsers.push(tape::ParserImpl {
                 dialect: language::GrammarDialect::JavaScript,
                 name: "lean JavaScript parser",
@@ -5340,7 +5348,8 @@ pub(crate) fn install_languages() {
                 parser: &tape::ecma_lean::JAVASCRIPT,
             });
         }
-        if cfg!(feature = "lang-typescript") {
+        #[cfg(feature = "lang-typescript")]
+        {
             parsers.push(tape::ParserImpl {
                 dialect: language::GrammarDialect::TypeScript,
                 name: "lean TypeScript parser",
@@ -5356,7 +5365,8 @@ pub(crate) fn install_languages() {
                 parser: &tape::ecma_lean::TSX,
             });
         }
-        if cfg!(feature = "lang-rust") {
+        #[cfg(feature = "lang-rust")]
+        {
             // The lean Rust parser (`tape::rust_lean`, decision 0193); a file it refuses goes to
             // tree-sitter-rust.
             parsers.push(tape::ParserImpl {
@@ -5367,7 +5377,8 @@ pub(crate) fn install_languages() {
                 parser: &tape::rust_lean::Lean,
             });
         }
-        if cfg!(feature = "lang-java") {
+        #[cfg(feature = "lang-java")]
+        {
             // The lean Java parser (`tape::java_lean`, decision 0195); a file it refuses goes to
             // tree-sitter-java.
             parsers.push(tape::ParserImpl {
@@ -5378,7 +5389,8 @@ pub(crate) fn install_languages() {
                 parser: &tape::java_lean::Lean,
             });
         }
-        if cfg!(feature = "lang-go") {
+        #[cfg(feature = "lang-go")]
+        {
             // The lean Go parser (`tape::go_lean`, decision 0314); a file it refuses goes to
             // tree-sitter-go.
             parsers.push(tape::ParserImpl {
@@ -5389,7 +5401,8 @@ pub(crate) fn install_languages() {
                 parser: &tape::go_lean::Lean,
             });
         }
-        if cfg!(feature = "lang-c") {
+        #[cfg(feature = "lang-c")]
+        {
             // The lean C parser (`tape::c_lean`, decision 0317); a file it refuses goes to
             // tree-sitter-c.
             parsers.push(tape::ParserImpl {
@@ -5400,7 +5413,8 @@ pub(crate) fn install_languages() {
                 parser: &tape::c_lean::Lean,
             });
         }
-        if cfg!(feature = "lang-cpp") {
+        #[cfg(feature = "lang-cpp")]
+        {
             // The lean C++ parser (`tape::c_lean`, decision 0317); a file it refuses goes to
             // tree-sitter-cpp.
             parsers.push(tape::ParserImpl {
@@ -5411,7 +5425,8 @@ pub(crate) fn install_languages() {
                 parser: &tape::c_lean::Lean,
             });
         }
-        if cfg!(feature = "lang-csharp") {
+        #[cfg(feature = "lang-csharp")]
+        {
             // The lean C# parser (`tape::csharp_lean`, decision 0196); a file it refuses goes to
             // tree-sitter-c-sharp.
             parsers.push(tape::ParserImpl {
@@ -5422,7 +5437,8 @@ pub(crate) fn install_languages() {
                 parser: &tape::csharp_lean::Lean,
             });
         }
-        if cfg!(feature = "lang-php") {
+        #[cfg(feature = "lang-php")]
+        {
             // The lean PHP parser (`tape::php_lean`, decision 0198); a file it refuses goes to
             // tree-sitter-php.
             parsers.push(tape::ParserImpl {
@@ -5433,7 +5449,8 @@ pub(crate) fn install_languages() {
                 parser: &tape::php_lean::Lean,
             });
         }
-        if cfg!(feature = "lang-html") {
+        #[cfg(feature = "lang-html")]
+        {
             // The lean HTML parser (`tape::html_lean`, decision 0199); a file it refuses goes to
             // tree-sitter-html.
             parsers.push(tape::ParserImpl {
@@ -5444,7 +5461,8 @@ pub(crate) fn install_languages() {
                 parser: &tape::html_lean::Lean,
             });
         }
-        if cfg!(feature = "lang-css") {
+        #[cfg(feature = "lang-css")]
+        {
             // The lean CSS parser (`tape::css_lean`, decision 0200); a file it refuses goes to
             // tree-sitter-css.
             parsers.push(tape::ParserImpl {
@@ -5455,7 +5473,8 @@ pub(crate) fn install_languages() {
                 parser: &tape::css_lean::Lean,
             });
         }
-        if cfg!(feature = "lang-markdown") {
+        #[cfg(feature = "lang-markdown")]
+        {
             // The lean Markdown parser (`tape::markdown_lean`, decision 0237); a file it refuses
             // goes to tree-sitter-md.
             parsers.push(tape::ParserImpl {
@@ -5476,7 +5495,8 @@ pub(crate) fn install_languages() {
                 parser: &tape::markdown_inline_lean::Lean,
             });
         }
-        if cfg!(feature = "lang-sql") {
+        #[cfg(feature = "lang-sql")]
+        {
             // The lean SQL parser (`tape::sql_lean`, decision 0214); a file it refuses goes to
             // tree-sitter-sql.
             parsers.push(tape::ParserImpl {
@@ -5487,7 +5507,8 @@ pub(crate) fn install_languages() {
                 parser: &tape::sql_lean::Lean,
             });
         }
-        if cfg!(feature = "lang-vue") {
+        #[cfg(feature = "lang-vue")]
+        {
             // The lean Vue parser (`tape::vue_lean`, decision 0242), whose tape the component's
             // embedded program is built from; a file it refuses goes to tree-sitter-vue.
             parsers.push(tape::ParserImpl {
@@ -5498,7 +5519,8 @@ pub(crate) fn install_languages() {
                 parser: &tape::vue_lean::Lean,
             });
         }
-        if cfg!(feature = "lang-json") {
+        #[cfg(feature = "lang-json")]
+        {
             // simdjson where it builds (not wasm: tree-sitter-json there); the Bitlex parser
             // (`json_parser::tape::Bitlex`) is not yet the product's. MSVC builds none of simdjson's
             // C++: the Bitlex parser, then tree-sitter-json, read files as simdjson's route does there
