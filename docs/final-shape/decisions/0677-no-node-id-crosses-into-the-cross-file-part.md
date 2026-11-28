@@ -1162,7 +1162,7 @@ part solves over them alone, and the outputs are keyed by them. The design was a
   and on the projects; `failed_batch_reports_each_policy_in_argument_order`.
 - **W's graph (`python/references_w.rerail`, `RERAIL_REFERENCES=rust`), by the same symbols.** It was keyed by node
   too: the engine bound each edge's two definitions by their nodes in the cross part. A definition's symbol is now
-  made by one set of rules, `python/reference-defs.rerail` (the setting's facts, `rf_def`, `rf_module`, `rf_qn`,
+  made by one set of rules, `python/references-defs.rerail` (the setting's facts, `rf_def`, `rf_module`, `rf_qn`,
   `rf_sym`, `reference_def`), which both graphs include. The engine names W's definitions the same way from W's
   summary (`w_references::symbols`: the path, `Def::name`, which rf_qn spells alike, and the file's earlier
   definitions of that name), so no node of W's graph crosses either, and `syntax::definitions`, its node lookup, is

@@ -5038,7 +5038,7 @@ fn program_srcs(paths: Vec<PathBuf>) -> Vec<(PathBuf, String)> {
 /// (`DERIVED_BY`), so its module passes the check phase 0's lowering of a module makes against the files its scope
 /// reaches (`module_statements`, `lower_planned_module`'s). It was refused there, while the whole program's check
 /// (`check_names`) allowed it: a run of a program file reading the reference graph (`all`'s) failed before it began.
-/// So do W's graph (`python/references_w.rerail`) and the definitions' symbols (`python/reference-defs.rerail`'s
+/// So do W's graph (`python/references_w.rerail`) and the definitions' symbols (`python/references-defs.rerail`'s
 /// `reference_def`). Another file deriving one is still refused, though core declares the three `extensible`
 /// (decision 0677): DERIVED_BY names who derives them.
 #[test]
@@ -5046,7 +5046,7 @@ fn a_module_derives_the_core_relation_its_file_is_named_for() {
     let lib = super::library();
     let path = |f: &str| lib.join(f).canonical().unwrap().to_string_lossy().into_owned();
     let core = path("core.rerail");
-    for file in ["python/references.rerail", "python/references_w.rerail", "python/reference-defs.rerail"] {
+    for file in ["python/references.rerail", "python/references_w.rerail", "python/references-defs.rerail"] {
         let checked = super::module_statements(&path(file), &core);
         assert!(checked.is_ok(), "{file}: {:?}", checked.err());
     }

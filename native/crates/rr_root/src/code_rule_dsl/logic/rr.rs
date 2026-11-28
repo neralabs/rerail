@@ -2599,10 +2599,11 @@ impl LibraryFile {
 /// The relations `core.rerail` declares for libraries to derive for the engine to read: the documents they load (t21 E2).
 pub const LIBRARY_DERIVED: [&str; 1] = ["load"];
 /// The relations `core.rerail` declares that one library file derives, and that file (decision 0483: the reference graph).
-/// `python/references_w.rerail` derives the graph from W's Rust graph instead, which the engine binds
-/// (`RERAIL_REFERENCES`); both take `reference_def` from `python/reference-defs.rerail`.
+/// A definition's symbol (`reference_def`) is `python/references-defs.rerail`'s, which both graphs include; the graph
+/// itself is `python/references.rerail`'s rules, or `python/references_w.rerail`'s from W's Rust graph, which the engine
+/// binds (`RERAIL_REFERENCES`).
 pub const DERIVED_BY: [(&str, &str); 5] = [
-    ("reference_def", "python/reference-defs.rerail"),
+    ("reference_def", "python/references-defs.rerail"),
     ("reference_edge", "python/references.rerail"),
     ("reference_open", "python/references.rerail"),
     ("reference_edge", REFERENCES_W),

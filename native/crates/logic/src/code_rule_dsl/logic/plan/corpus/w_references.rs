@@ -9,7 +9,7 @@
 //! on one program: each in-scope Python file summarized from the run's tape as its document is built
 //! (`calls::summarize`; no parse of its own), the summaries linked by name once every file is built
 //! (`closure::Graph::link_references`), under the program's `.references` setting. `src` and `dst` are definitions
-//! (`function_definition` or `class_definition`) of any files, by symbol, as `python/reference-defs.rerail`'s rf_sym
+//! (`function_definition` or `class_definition`) of any files, by symbol, as `python/references-defs.rerail`'s rf_sym
 //! names them (decision 0677: no node crosses into the cross-file part): the file's path, the definition's qualified
 //! name (W's `Def::name`, which rf_qn spells alike), and how many of the file's definitions of that name start before
 //! it. `via` is what made the edge, one row per way.

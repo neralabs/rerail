@@ -299,16 +299,17 @@
 // The graph is across files, so it is keyed by each definition's symbol, never its node (decision 0677): a file's
 // rules place a symbol on its own definition by reference_def.
 // reference_def(f, s): definition f (a function_definition or class_definition node) has symbol s.
-.decl reference_def(n: node, s: symbol) extensible  // a hook Python's library fills (python/reference-defs.rerail, decision 0263)
+.decl reference_def(n: node, s: symbol) extensible  // derived only by python/references-defs.rerail (`rr::DERIVED_BY`)
 // reference_edge(f, g, "self"): definition f's body refers to definition g, here as `self.g`, f and g their
 // symbols; via is how: name, bare, unqualified, self, super, field, param_type, late or sibling.
-.decl reference_edge(src: symbol, dst: symbol, via: symbol) extensible  // as reference_def
+.decl reference_edge(src: symbol, dst: symbol, via: symbol) extensible  // as reference_def, by the graph's file
 // reference_open(f): definition f refers to something no static name denotes, or f's file does not parse: what f
 // reaches is not all known.
-.decl reference_open(s: symbol) extensible  // as reference_def
-// All three are rules, not inputs (decision 0483): a program that reads them includes python/references.rerail, the
-// one file that derives the graph (or python/references_w.rerail, W's Rust graph, in its place: `rr::DERIVED_BY`),
-// and both take reference_def from python/reference-defs.rerail.
+.decl reference_open(s: symbol) extensible  // as reference_edge
+// All three are rules, not inputs (decision 0483): a program that reads them includes python/references.rerail, which
+// derives the graph, or python/references_w.rerail, W's Rust graph (`RERAIL_REFERENCES`); both include
+// python/references-defs.rerail, which derives reference_def. Those files alone may add to them (`rr::DERIVED_BY`,
+// decision 0263's exception): another file is refused.
 
 // ---- tree structure (tape arithmetic, never Datalog recursion) -------------------------------------------------
 // These answer ancestor and sibling questions from node offsets. A recursive `ancestor` relation in Datalog

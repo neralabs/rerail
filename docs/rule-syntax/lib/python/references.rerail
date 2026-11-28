@@ -40,15 +40,22 @@
 //   references_field(rename, by)              its constructor fields: field x is also @rx_replace(x, rename, by)'s
 //                                             `__init__` parameter
 #include "python/names.rerail"
-#include "python/reference-defs.rerail"
+#include "python/references-defs.rerail"
 
 // ==== per file ====================================================================================================
 
-// ---- definitions: their symbols (python/reference-defs.rerail), and their modules' names ---------------------------
+// ---- definitions --------------------------------------------------------------------------------------------------
+// Each definition, its module, qualified name and symbol: python/references-defs.rerail, which W's graph
+// (python/references_w.rerail) reads too.
+//
 // rf_doc_name(d, n): a name of document d's module in the name tables: its module, and its path's.
 .decl rf_doc_name(d: number, n: symbol)
 rf_doc_name(d, m) :- rf_module(d, m).
 rf_doc_name(d, a) :- rf_path_module(d, a).
+.decl rf_is_class(f: node)
+rf_is_class(f) :- rf_def(f, _), kind(f, "class_definition").
+.decl rf_is_function(f: node)
+rf_is_function(f) :- rf_def(f, _), kind(f, "function_definition").
 
 // ---- where a node's reference belongs -----------------------------------------------------------------------------
 // rf_body(g, b): b is function g's body.
