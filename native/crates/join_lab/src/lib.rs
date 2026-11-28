@@ -162,6 +162,13 @@ impl Wave {
         }
     }
 
+    /// Whether engine `e`'s replay is held to the capture byte for byte: the program's (its groups one after another,
+    /// in order) of a capture its own device made. A device's threads claim places in the order they come, run to run
+    /// (a Metal capture replayed on Metal differs so), so another's is held to it by what it makes (`compare`).
+    pub fn exact_on(&self, e: Engine) -> bool {
+        e == Engine::Program && self.device == Some(Engine::Program)
+    }
+
     /// Its regions placed in this process, their addresses bound again where they lie now.
     pub fn load(&self) -> io::Result<Loaded> {
         self.load_on(Engine::Program)
@@ -297,6 +304,26 @@ fn open_named(path: &Path) -> io::Result<std::fs::File> {
 fn read_named(path: &Path) -> io::Result<Vec<u8>> {
     std::fs::read(path).map_err(|e| io::Error::new(e.kind(), format!("{}: {e}", path.display())))
 }
+
+/// A made text's value (`join_program::arena_value`): its offset in the text arena's bytes and its length.
+fn made_text(v: u64) -> Option<(usize, usize)> {
+    (v >> 63 == 1).then(|| (((v >> 24) & 0x7f_ffff_ffff) as usize, (v & 0xff_ffff) as usize))
+}
+
+#[cfg(test)]
+mod made_text_tests {
+    #[test]
+    fn a_made_texts_value_names_its_offset_and_length() {
+        // `join_program::arena_value(0x961, 4)`.
+        assert_eq!(super::made_text(0x8000_0009_6100_0004), Some((0x961, 4)));
+        assert_eq!(super::made_text(0x4_0000_0001), None);
+    }
+}
+
+/// The roles of the program's memory whose bytes hang on the order its groups ran in (a device's threads claim
+/// places in the arena, its holds and its texts in the order they come), held to another engine's by what they make
+/// (the launch's relations, its texts by value) and not by their bytes.
+const ORDERED: &[&str] = &["counts", "hold", "text"];
 
 /// `relocs.zst`'s host bit on a target (`join_capture::HOST`).
 const HOST: u64 = 1 << 63;
@@ -494,13 +521,32 @@ impl Loaded {
     }
 
     /// Each region the launch may have written, held to its after-image: its runs' bytes (a buffer of its own), or
-    /// its used bytes (a block). Every region it names, compared; those equal are no `Diff` with `differ` 0.
-    pub fn compare(&self) -> io::Result<Vec<Diff>> {
+    /// its used bytes (a block). Every region it names, compared; those equal are no `Diff` with `differ` 0. Where
+    /// it is not held byte for byte (`across`: `Wave::exact_on`), the regions whose bytes hang on the order its groups ran in
+    /// (`ORDERED`) are not compared, and a made text's value is held to the engine's by its text.
+    pub fn compare(&self, across: bool) -> io::Result<Vec<Diff>> {
         let relocated = self.relocated()?;
         let mut out = Vec::new();
+        // The text arena's bytes, the replay's and the engine's (its after-image's runs), for made texts' values.
+        let text = self.wave.regions.iter().position(|r| r.role == "text");
+        let mut theirs: Vec<(usize, Vec<u8>)> = Vec::new();
+        if let (true, Some(t)) = (across, text)
+            && let Some((_, source)) = self.wave.after.iter().find(|(n, _)| *n == self.wave.regions[t].name)
+        {
+            read_runs(&self.wave.source_path(source), |at, b| theirs.push((at, b.to_vec())))?;
+        }
+        let same_text = |u: u64, w: u64| -> bool {
+            let (Some(t), Some((a, n)), Some((b, k))) = (text, made_text(u), made_text(w)) else { return false };
+            let mine = &self.mems[t];
+            let at = |o: usize| 16 + o;
+            n == k && at(a) + n <= mine.len() && theirs.iter().any(|(r, bytes)| *r <= at(b) && at(b) + k <= r + bytes.len() && mine.bytes(at(a), n) == &bytes[at(b) - r..at(b) - r + k])
+        };
         for (name, source) in &self.wave.after {
             let i = self.wave.regions.iter().position(|r| r.name == *name).ok_or_else(|| bad(format!("after: no region {name}")))?;
             let (r, m) = (&self.wave.regions[i], &self.mems[i]);
+            if across && ORDERED.contains(&r.role.as_str()) {
+                continue;
+            }
             // The words bound again hold the lab's addresses, the after-image the engine's: not compared.
             let skip: std::collections::HashSet<usize> = relocated.iter().filter(|q| q.0 == i).map(|q| q.1).collect();
             let mut d = Diff { region: name.clone(), compared: 0, differ: 0, first: None, words: Vec::new(), before: None };
@@ -511,6 +557,14 @@ impl Loaded {
                         continue;
                     }
                     if a != b {
+                        let o = (at + k) / 8 * 8;
+                        if across && o >= at && o + 8 <= at + want.len() {
+                            let g = u64::from_ne_bytes(m.bytes(o, 8).try_into().expect("8 bytes"));
+                            let w = u64::from_ne_bytes(want[o - at..o - at + 8].try_into().expect("8 bytes"));
+                            if same_text(g, w) {
+                                continue;
+                            }
+                        }
                         d.differ += 1;
                         d.first.get_or_insert(at + k);
                         let o = (at + k) / 8 * 8;
@@ -775,7 +829,9 @@ impl Loaded {
 
     /// Its regions held to `other`'s (the same launch, loaded again: its regions elsewhere): each that differs, a word
     /// counted equal where each holds an address at the same offset of the same region (an address its kernel wrote).
-    fn against(&self, other: &Loaded) -> Vec<(String, usize, Option<(usize, u64, u64)>)> {
+    /// With `across` (either not held byte for byte, `Wave::exact_on`), the regions `ORDERED` names not compared, and a made text's value held to the
+    /// other's by its text.
+    fn against(&self, other: &Loaded, across: bool) -> Vec<(String, usize, Option<(usize, u64, u64)>)> {
         // The words bound again, by the capture's relocations and the codes' homes (whose device word is each
         // engine's own: none on the host, its wrap's on the device).
         let mut relocated: std::collections::HashSet<(usize, usize)> = self.relocated().unwrap_or_default().into_iter().collect();
@@ -785,10 +841,16 @@ impl Loaded {
             }
         }
         let place = |l: &Loaded, a: u64| l.mems.iter().position(|m| (m.base() as u64) <= a && a < (m.base() + m.len()) as u64).map(|i| (i, a - l.mems[i].base() as u64));
+        let text = self.wave.regions.iter().position(|r| r.role == "text");
+        let same_text = |u: u64, v: u64| -> bool {
+            let (Some(t), Some((a, n)), Some((b, k))) = (text, made_text(u), made_text(v)) else { return false };
+            let (x, y) = (&self.mems[t], &other.mems[t]);
+            n == k && 16 + a + n <= x.len() && 16 + b + k <= y.len() && x.bytes(16 + a, n) == y.bytes(16 + b, k)
+        };
         let mut out = Vec::new();
         for (i, r) in self.wave.regions.iter().enumerate() {
             let (a, b) = (&self.mems[i], &other.mems[i]);
-            if matches!(a, Mem::Mapped(_)) {
+            if matches!(a, Mem::Mapped(_)) || (across && ORDERED.contains(&r.role.as_str())) {
                 continue;
             }
             // The pages either holds (a reservation's others read zero in both, and reading them would make them).
@@ -806,7 +868,7 @@ impl Loaded {
                     continue;
                 }
                 let (u, v) = (u64::from_ne_bytes(x.try_into().expect("8")), u64::from_ne_bytes(y.try_into().expect("8")));
-                if u == v || relocated.contains(&(i, o)) || (u > 1 << 32 && place(self, u).is_some() && place(self, u) == place(other, v)) {
+                if u == v || relocated.contains(&(i, o)) || (u > 1 << 32 && place(self, u).is_some() && place(self, u) == place(other, v)) || (across && same_text(u, v)) {
                     continue;
                 }
                 differ += 8;
@@ -834,7 +896,7 @@ pub fn first_divergence(w: &Wave, a: Engine, b: Engine) -> io::Result<Option<Div
     };
     let n = w.offsets.len();
     let (x, y) = after(n)?;
-    if x.against(&y).is_empty() {
+    if x.against(&y, !(w.exact_on(a) && w.exact_on(b))).is_empty() {
         return Ok(None);
     }
     drop((x, y));
@@ -843,7 +905,7 @@ pub fn first_divergence(w: &Wave, a: Engine, b: Engine) -> io::Result<Option<Div
     while hi - lo > 1 {
         let mid = (lo + hi) / 2;
         let (x, y) = after(mid)?;
-        if x.against(&y).is_empty() { lo = mid } else { hi = mid }
+        if x.against(&y, !(w.exact_on(a) && w.exact_on(b))).is_empty() { lo = mid } else { hi = mid }
     }
     let mut before = w.load_on(a)?;
     before.upto(lo);
@@ -859,7 +921,7 @@ pub fn first_divergence(w: &Wave, a: Engine, b: Engine) -> io::Result<Option<Div
             l.run_on(e)?;
             Ok(l)
         };
-        Ok(!run(a)?.against(&run(b)?).is_empty())
+        Ok(!run(a)?.against(&run(b)?, !(w.exact_on(a) && w.exact_on(b))).is_empty())
     };
     let (mut plo, mut phi) = (phase, w.args[2]);
     if phi > plo && ended(phi)? {
@@ -871,7 +933,7 @@ pub fn first_divergence(w: &Wave, a: Engine, b: Engine) -> io::Result<Option<Div
     let last = phi.saturating_sub(1);
     let walked = before.phase_items(last).iter().map(|i| i.0).collect::<Vec<_>>();
     let (x, y) = after(hi)?;
-    Ok(Some(Divergence { dispatch: hi, phase, kinds, last, walked: walked.into_iter().fold(Vec::new(), |mut v, k| { if v.last() != Some(&k) { v.push(k) } v }), regions: x.against(&y) }))
+    Ok(Some(Divergence { dispatch: hi, phase, kinds, last, walked: walked.into_iter().fold(Vec::new(), |mut v, k| { if v.last() != Some(&k) { v.push(k) } v }), regions: x.against(&y, !(w.exact_on(a) && w.exact_on(b))) }))
 }
 
 /// An engine a launch is replayed on: the join program's Rust (`join_run`, the CPU device's), or its kernel on the
@@ -962,7 +1024,7 @@ pub fn replay_in(w: &Wave, e: Engine, reverse: bool) -> io::Result<Replay> {
     let mut l = w.load_on(e)?;
     l.reverse = reverse;
     let ran = l.run_on(e)?;
-    let mut diffs = l.compare()?;
+    let mut diffs = l.compare(!w.exact_on(e))?;
     drop(l);
     // Each differing word as it was before the launch: where the replay's is the before's, the replay never wrote
     // it and the engine's came from its launch or another writer of the region.
@@ -1049,7 +1111,7 @@ pub fn profile(w: &Wave, e: Engine, repeat: usize, sampler: Option<(&sample::Sam
         last = Some((ran, l));
     }
     let (ran, l) = last.expect("a run");
-    let same = l.compare()?.iter().all(|d| d.differ == 0);
+    let same = l.compare(!w.exact_on(e))?.iter().all(|d| d.differ == 0);
     drop(l);
     let kinds = if e == Engine::Program { w.load()?.run_timed(true).kinds } else { ran.kinds.clone() };
     let mut sorted = times.clone();
