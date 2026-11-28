@@ -460,8 +460,12 @@ impl ProgramPass for Hide {
         // them (C408), placed at nodes no file holds (R9), where alone they found none.
         let shown = shown_columns(&rules, &v.output_names());
         let mut gone: BTreeSet<usize> = BTreeSet::new();
+        let mut facts_of: Vec<Facts> = vec![Facts::new(); rules.len()];
+        // The relations whose rules get no bound: their rows may be any document's.
+        let mut unbounded: BTreeSet<String> = BTreeSet::new();
         for (i, rule) in rules.iter().enumerate() {
             if VIEWS.contains(&rule.head.as_str()) || asking.contains(&rule.head) {
+                unbounded.insert(rule.head.clone());
                 continue;
             }
             let facts: Facts = if reaches[i] { as_read(rule, analyse(rule, &base_locations, &carried, &seeds[i]), &grammars) } else { Facts::new() };
@@ -469,7 +473,14 @@ impl ProgramPass for Hide {
                 gone.insert(i);
                 continue;
             }
-            finals[i] = bounded(v, rule, &facts, &base_locations, bound);
+            facts_of[i] = facts;
+        }
+        let host = host_columns(&rules, &facts_of, &gone, &unbounded, &base_locations);
+        for (i, rule) in rules.iter().enumerate() {
+            if VIEWS.contains(&rule.head.as_str()) || asking.contains(&rule.head) || gone.contains(&i) {
+                continue;
+            }
+            finals[i] = bounded(v, rule, &facts_of[i], &base_locations, &host, bound);
         }
         drop(bounding);
         // An aggregate's atom is its own scope: one over a base atom reads it through a bounded helper,
@@ -584,7 +595,7 @@ impl ProgramPass for Hide {
         if let Some(asked) = asked {
             b.fields().set_asked(&asked);
         }
-        self.kept = plan_rows(&reached, &made, &specialized, &asking, &carried);
+        self.kept = plan_rows(&reached, &made, &specialized, &asking, &carried, &host);
         Ok(())
     }
 
@@ -699,7 +710,15 @@ impl ProgramPass for Hide {
             if facts.values().any(|f| f.grammar.as_ref().is_some_and(|g| !g.is_empty())) {
                 return Ok(false);
             }
-            finals.push(bounded(v, w, &facts, &base_locations, self.bound));
+            // An added rule fills each shown column of its head (`host_columns`) with a shown variable, or the
+            // readers that took the column as their bound would see another document: hidden whole.
+            if let Some(cols) = plan.host.get(&w.head) {
+                let shown = shown_vars(w, &facts, &base_locations, &plan.host);
+                if !cols.iter().all(|&c| matches!(w.head_args.get(c), Some(S::Var(x)) if shown.contains(x))) {
+                    return Ok(false);
+                }
+            }
+            finals.push(bounded(v, w, &facts, &base_locations, &plan.host, self.bound));
         }
         // Each removed rule made one rule of the last output (none was copied: no head of the edit is).
         let mut gone = Vec::new();
@@ -731,13 +750,15 @@ struct Plan {
     origs: BTreeSet<String>,
     asking: BTreeSet<String>,
     carried: HashMap<String, Vec<Fact>>,
+    /// The derived relations' columns that hold shown documents' locations only (`host_columns`).
+    host: HashMap<String, BTreeSet<usize>>,
 }
 
 impl Plan {
     fn of(rows: &[Row]) -> Option<Plan> {
         let text = |x: &Value| if let Value::Str(s) = x { Some(s.to_string()) } else { None };
         let int = |x: &Value| if let Value::Int(n) = x { Some(*n) } else { None };
-        let mut p = Plan { reached: BTreeSet::new(), copies: BTreeSet::new(), origs: BTreeSet::new(), asking: BTreeSet::new(), carried: HashMap::default() };
+        let mut p = Plan { reached: BTreeSet::new(), copies: BTreeSet::new(), origs: BTreeSet::new(), asking: BTreeSet::new(), carried: HashMap::default(), host: HashMap::default() };
         let mut ran = false;
         for r in rows {
             match (text(r.first()?)?.as_str(), &r[1..]) {
@@ -749,6 +770,7 @@ impl Plan {
                     p.origs.insert(text(o)?);
                 }
                 ("asking", [x]) => drop(p.asking.insert(text(x)?)),
+                ("host", [x, c]) => drop(p.host.entry(text(x)?).or_default().insert(usize::try_from(int(c)?).ok()?)),
                 ("carried", [x, n, c, scoped, definite, g @ ..]) => {
                     let cols = p.carried.entry(text(x)?).or_insert_with(|| vec![Fact::default(); int(n).and_then(|n| usize::try_from(n).ok()).unwrap_or(0)]);
                     let f = cols.get_mut(usize::try_from(int(c)?).ok()?)?;
@@ -762,7 +784,7 @@ impl Plan {
 }
 
 /// `Hide::plan`'s rows of a run (`Plan`).
-fn plan_rows(reached: &BTreeSet<String>, made: &BTreeSet<String>, specialized: &BTreeMap<String, (String, BTreeMap<usize, String>)>, asking: &BTreeSet<String>, carried: &HashMap<String, Vec<Fact>>) -> Vec<Row> {
+fn plan_rows(reached: &BTreeSet<String>, made: &BTreeSet<String>, specialized: &BTreeMap<String, (String, BTreeMap<usize, String>)>, asking: &BTreeSet<String>, carried: &HashMap<String, Vec<Fact>>, host: &HashMap<String, BTreeSet<usize>>) -> Vec<Row> {
     let s = |x: &str| Value::Str(x.to_owned().into());
     let n = |k: i64| Value::Int(k);
     let mut rows = vec![vec![s("ran")]];
@@ -770,6 +792,9 @@ fn plan_rows(reached: &BTreeSet<String>, made: &BTreeSet<String>, specialized: &
     rows.extend(made.iter().map(|r| vec![s("made"), s(r)]));
     rows.extend(specialized.iter().map(|(x, (o, _))| vec![s("copy"), s(x), s(o)]));
     rows.extend(asking.iter().map(|r| vec![s("asking"), s(r)]));
+    let mut hosts: Vec<(&String, &BTreeSet<usize>)> = host.iter().collect();
+    hosts.sort_by_key(|(r, _)| *r);
+    rows.extend(hosts.into_iter().flat_map(|(r, cols)| cols.iter().map(move |&c| vec![s("host"), s(r), n(c as i64)])));
     let mut held: Vec<(&String, &Vec<Fact>)> = carried.iter().filter(|(_, cols)| cols.iter().any(|f| *f != Fact::default())).collect();
     held.sort_by_key(|(r, _)| *r);
     for (rel, cols) in held {
@@ -840,7 +865,7 @@ fn write_rule(b: &mut crate::code_rule_dsl::logic::program_image::Builder<'_>, v
 
 /// Hiding's last stage for one rule: its kind and field names qualified, its wildcards named, and its bounds
 /// (`bound`), by its facts (`analyse`; none where it is not reached).
-fn bounded(v: &Version, rule: &W, facts: &Facts, base_locations: &HashMap<String, Vector<usize>>, bound: u32) -> Final {
+fn bounded(v: &Version, rule: &W, facts: &Facts, base_locations: &HashMap<String, Vector<usize>>, host: &HashMap<String, BTreeSet<usize>>, bound: u32) -> Final {
     let bound_of = |doc_column: bool| if doc_column { i64::from(bound) } else { rerail_blocks::located::Located::new(bound, 0).0 };
     let src = v.rule(rule.src).expect("a rule of the input");
     let name = |s: Slot| v.text(src.var(s)).to_owned();
@@ -887,7 +912,15 @@ fn bounded(v: &Version, rule: &W, facts: &Facts, base_locations: &HashMap<String
             groups.push(vec![(x, Some(c) == doc_col)]);
         }
     }
-    // The groups joined where they share a variable; each joined group bounded by its first variable.
+    // A `nearest`'s node and its ancestor are in one document: a link that joins their groups, bounded by none of
+    // its own (the groups before `real` are atoms').
+    let real = groups.len();
+    for (_, l) in &rule.body {
+        if let L::Nearest { n, a, .. } = l {
+            groups.push(vec![(name(*n), false), (name(*a), false)]);
+        }
+    }
+    // The groups joined where they share a variable; each joined group bounded by its first atom's first variable.
     let mut of: BTreeMap<String, usize> = BTreeMap::new();
     let mut parent: Vec<usize> = (0..groups.len()).collect();
     fn root(parent: &mut [usize], mut g: usize) -> usize {
@@ -907,9 +940,27 @@ fn bounded(v: &Version, rule: &W, facts: &Facts, base_locations: &HashMap<String
             }
         }
     }
-    let mut bounds: BTreeMap<String, bool> = BTreeMap::new();
+    // A group with a variable read from a shown column of a derived relation (`host_columns`) is in a shown
+    // document already: no bound. (`rr_nearest_lscope(d, v), kind(v, k)`: `v` is a scope of `d`'s file.)
+    let shown: BTreeSet<String> = rule
+        .body
+        .iter()
+        .filter_map(|(_, l)| l.positive())
+        .filter(|a| !base_locations.contains_key(a.rel.as_str()))
+        .filter_map(|a| host.get(a.rel.as_str()).map(|cols| (a, cols)))
+        .flat_map(|(a, cols)| cols.iter().filter_map(|&c| a.args.get(c).and_then(S::var)).map(&name).collect::<Vec<_>>())
+        .collect();
+    let mut covered: BTreeSet<usize> = BTreeSet::new();
     for (g, vars) in groups.iter().enumerate() {
-        if root(&mut parent, g) == g {
+        if vars.iter().any(|(x, _)| shown.contains(x)) {
+            covered.insert(root(&mut parent, g));
+        }
+    }
+    let mut bounds: BTreeMap<String, bool> = BTreeMap::new();
+    let mut done: BTreeSet<usize> = BTreeSet::new();
+    for (g, vars) in groups[..real].iter().enumerate() {
+        let r = root(&mut parent, g);
+        if !covered.contains(&r) && done.insert(r) {
             let (x, doc) = vars[0].clone();
             bounds.insert(x, doc);
         }
@@ -1130,6 +1181,71 @@ fn reaching(rules: &[W], seeds: &[Facts]) -> Vec<bool> {
 }
 
 /// Whether `rule`'s head, by its analysis (`facts`), holds an annotation's node at a column an output shows.
+/// The variables of `rule` that hold a shown document's locations once it is bounded (`bounded`): those in an
+/// unscoped positive base atom's location columns (bounded, or in a group a shown variable covers), and those read
+/// from a shown column of a derived relation (`host`).
+fn shown_vars(rule: &W, facts: &Facts, base: &HashMap<String, Vector<usize>>, host: &HashMap<String, BTreeSet<usize>>) -> BTreeSet<Slot> {
+    let mut out = BTreeSet::new();
+    for (_, l) in &rule.body {
+        let Some(a) = l.positive() else { continue };
+        let var = |c: usize| a.args.get(c).and_then(S::var);
+        if let Some(cols) = base.get(a.rel.as_str()) {
+            if !cols.iter().any(|&c| var(c).is_some_and(|x| facts.get(&x).is_some_and(|f| f.scoped))) {
+                out.extend(cols.iter().filter_map(|&c| var(c)));
+            }
+        } else if let Some(cols) = host.get(a.rel.as_str()) {
+            out.extend(cols.iter().filter_map(|&c| var(c)));
+        }
+    }
+    // A `nearest`'s node and its ancestor are in one document.
+    let links: Vec<(Slot, Slot)> = rule.body.iter().filter_map(|(_, l)| if let L::Nearest { n, a, .. } = l { Some((*n, *a)) } else { None }).collect();
+    while links.iter().any(|&(n, a)| out.contains(&n) != out.contains(&a)) {
+        for &(n, a) in &links {
+            if out.contains(&n) || out.contains(&a) {
+                out.extend([n, a]);
+            }
+        }
+    }
+    out
+}
+
+/// The derived relations' columns that hold only shown documents' locations: those every rule of the relation fills
+/// with a variable `shown_vars` proves. Hiding bounds every unscoped location of a base atom, so a derived row's
+/// location there is a shown document's, and a reader's variable read from that column needs no bound of its own
+/// (decision 0058's bound, implied). The greatest fixpoint, every column first: a recursive rule's row is shown where
+/// the rows it reads are, by induction on its derivation. A relation with a rule hiding does not bound (a view, what
+/// the guest demand asks for: `unbounded`) or with no rule here (an input) has none; the rules that go (`gone`) are
+/// not written, so they fill nothing.
+fn host_columns(rules: &[W], facts: &[Facts], gone: &BTreeSet<usize>, unbounded: &BTreeSet<String>, base: &HashMap<String, Vector<usize>>) -> HashMap<String, BTreeSet<usize>> {
+    let live = || rules.iter().enumerate().filter(|(i, _)| !gone.contains(i));
+    let mut host: HashMap<String, BTreeSet<usize>> = HashMap::default();
+    for (_, r) in live() {
+        if !unbounded.contains(&r.head) && !base.contains_key(&r.head) {
+            host.entry(r.head.clone()).or_insert_with(|| (0..r.head_args.len()).collect());
+        }
+    }
+    loop {
+        let mut changed = false;
+        for (i, r) in live() {
+            let Some(cols) = host.get(&r.head).filter(|c| !c.is_empty()) else { continue };
+            let shown = shown_vars(r, &facts[i], base, &host);
+            let lost: Vec<usize> = cols.iter().copied().filter(|&c| !matches!(r.head_args.get(c), Some(S::Var(x)) if shown.contains(x))).collect();
+            if !lost.is_empty() {
+                let cols = host.get_mut(&r.head).expect("its columns");
+                for c in &lost {
+                    cols.remove(c);
+                }
+                changed = true;
+            }
+        }
+        if !changed {
+            break;
+        }
+    }
+    host.retain(|_, cols| !cols.is_empty());
+    host
+}
+
 fn shows_an_annotation(rule: &W, facts: &Facts, shown: &HashMap<String, BTreeSet<usize>>) -> bool {
     let Some(cols) = shown.get(rule.head.as_str()) else { return false };
     // Scoped is unbounded (`bounded`): a node that may be an annotation's is shown as one that is.

@@ -703,8 +703,8 @@ impl<'p> Encoder<'p> {
         self.from[k as usize] = src.0;
     }
 
-    /// Drops each body literal of the open rule begun at `rule_at` that is the same nodes as an earlier one: a
-    /// conjunction holds a literal once. A dropped literal's variables all appear in the earlier one, so no slot is
+    /// Drops each body literal of the open rule begun at `rule_at` that is the same nodes as an earlier one, and each
+    /// positive atom another implies: a conjunction holds a literal once. A dropped literal's variables all appear in the earlier one, so no slot is
     /// its own; a big integer it held stays in the table, unread. How many it dropped.
     pub fn dedup_body(&mut self, rule_at: usize) -> usize {
         let end = self.kind.len();
@@ -723,7 +723,30 @@ impl<'p> Encoder<'p> {
             n = next;
         }
         let same = |e: &Self, a: &std::ops::Range<usize>, b: &std::ops::Range<usize>| a.len() == b.len() && (0..a.len()).all(|k| node(e, a.start + k) == node(e, b.start + k));
-        let keep: Vec<bool> = (0..lits.len()).map(|i| !lits[..i].iter().any(|p| same(self, p, &lits[i]))).collect();
+        // A positive atom another of its relation implies (`r(x, _)` beside `r(x, y)`: each argument a wildcard or the
+        // other's term) drops too, as `simplify`'s `DropImplied` drops one: strict implication is an order, so the
+        // atoms that imply the rest stay.
+        let args = |e: &Self, r: &std::ops::Range<usize>| {
+            let mut out: Vec<std::ops::Range<usize>> = Vec::new();
+            let mut c = r.start + 1;
+            while c < r.end {
+                let next = c + (e.size.get(c) as usize).max(1);
+                out.push(c..next);
+                c = next;
+            }
+            out
+        };
+        let implies = |e: &Self, by: &std::ops::Range<usize>, a: &std::ops::Range<usize>| {
+            let kd = e.kind.get(a.start);
+            if kd & kind::MASK != kind::ATOM || kd & kind::NEG != 0 || e.kind.get(by.start) != kd || e.val.get(by.start) != e.val.get(a.start) || same(e, by, a) {
+                return false;
+            }
+            let (xs, ys) = (args(e, by), args(e, a));
+            xs.len() == ys.len() && xs.iter().zip(&ys).all(|(x, y)| (y.len() == 1 && e.kind.get(y.start) & kind::MASK == kind::WILD) || same(e, x, y))
+        };
+        let keep: Vec<bool> = (0..lits.len())
+            .map(|i| !lits[..i].iter().any(|p| same(self, p, &lits[i])) && !lits.iter().any(|b| implies(self, b, &lits[i])))
+            .collect();
         let dropped = keep.iter().filter(|k| !**k).count();
         if dropped == 0 {
             return 0;
