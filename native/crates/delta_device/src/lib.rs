@@ -83,9 +83,17 @@ impl Kernels for Gpu {
         self.domain
     }
 
-    fn bind(&self, launch: &Launch, fence: &Arc<Fence>, slots: &[u32], params: &[u8]) -> Result<Box<dyn OnDevice + '_>, String> {
+    fn bind(&self, launch: &Launch, fence: &Arc<Fence>, slots: &[u32], params: &[u8], room: &Meter) -> Result<Box<dyn OnDevice + '_>, String> {
         let t = launch.table();
         let pins = launch.pins();
+        // A slot's block wrapped up to its capacity, where its kernels claim past its used bytes (the host's own
+        // memory: a device domain of its own has the block's whole reservation).
+        if self.domain == 0 {
+            // The launch pins its slots first, in order.
+            for (k, p) in pins.iter().take(slots.len()).enumerate().filter(|(_, p)| p.writes()) {
+                p.block().device_buffer_reaching(&self.shared.device, room.capacity[k])?;
+            }
+        }
         let dt = if self.domain == 0 {
             rerail_blocks::gens::device_table(&t, &pins, &self.shared.device)?
         } else {
@@ -98,7 +106,7 @@ impl Kernels for Gpu {
         let slots_b = words(slots.len().div_ceil(2));
         let params_b = words(params.len().div_ceil(8));
         let res = words(1);
-        let room = words(MAX_SLOTS);
+        let room = words(3 * MAX_SLOTS / 2 + 1);
         let mut q = ComputeQueue::new(&self.shared.queue);
         // The kernels' arguments, written by the queue: the slots' ids and the params' bytes (not block data).
         q.enqueue_copy_from_host(&slots_b, 0, as_bytes(slots));
@@ -125,7 +133,8 @@ struct GpuBound {
     slots: Buffer,
     params: Buffer,
     res: Buffer,
-    /// Each slot's capacity, then the room an item found it needs (u32s, `MAX_SLOTS` each; `<ukl/delta/op.h>`'s `reach`).
+    /// Each slot's capacity, the room an item found it needs and its front (u32s, `MAX_SLOTS` each; `<ukl/delta/op.h>`'s
+    /// `reach` and `claim`), then the kernel's refusal (`FAULT`).
     room: Buffer,
     programs: HashMap<usize, &'static Program>,
 }
@@ -144,10 +153,13 @@ impl OnDevice for GpuBound {
         let f = program.function(name)?;
         let mut q = ComputeQueue::new(&self.shared.queue);
         q.enqueue_fill_array(&self.res, &0u64, 0, Some(1));
-        // The capacities, a word each (a block past 4 GiB is held to 4 GiB), and no need yet.
-        let mut room = [0u32; 2 * MAX_SLOTS];
+        // The capacities, a word each (a block past 4 GiB is held to 4 GiB), no need yet, and the fronts.
+        let mut room = [0u32; 3 * MAX_SLOTS + 2];
         for (r, &c) in room.iter_mut().zip(&meter.capacity) {
             *r = u32::try_from(c).unwrap_or(u32::MAX);
+        }
+        for (r, &f) in room[2 * MAX_SLOTS..].iter_mut().zip(&meter.fronts) {
+            *r = u32::try_from(f).map_err(|_| format!("{name}: a slot's front past 4 GiB"))?;
         }
         q.enqueue_copy_from_host(&self.room, 0, as_bytes(&room));
         let mut run = launch(&q, f)
@@ -162,10 +174,16 @@ impl OnDevice for GpuBound {
         }
         run.run(&[u64::from(hi - lo).div_ceil(GROUP)], &[GROUP]).map_err(|e| format!("{name}: {e}"))?;
         q.flush().await_().map_err(|e| format!("{name}: {e}"))?;
-        let needs = transfer_to_host_sync::<u64>(&self.room, MAX_SLOTS);
+        let words = transfer_to_host_sync::<u64>(&self.room, 3 * MAX_SLOTS / 2 + 1);
+        let word = |k: usize| (words[k / 2] >> (32 * (k % 2)) & 0xFFFF_FFFF) as usize;
         for (k, n) in meter.needs.iter_mut().enumerate() {
-            let w = needs[(MAX_SLOTS + k) / 2] >> (32 * ((MAX_SLOTS + k) % 2)) & 0xFFFF_FFFF;
-            *n = (*n).max(w as usize);
+            *n = (*n).max(word(MAX_SLOTS + k));
+        }
+        for (k, f) in meter.fronts.iter_mut().enumerate() {
+            *f = word(2 * MAX_SLOTS + k);
+        }
+        if word(3 * MAX_SLOTS) != 0 {
+            return Err(format!("{name}: the kernel refused the launch (why {}): one its kernels do not do", word(3 * MAX_SLOTS)));
         }
         Ok(transfer_to_host_sync::<u64>(&self.res, 1)[0])
     }

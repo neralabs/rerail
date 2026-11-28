@@ -794,17 +794,18 @@ pub trait Kernels {
     fn domain(&self) -> u32;
     /// Binds `launch` on the device: its descriptor table there (E2, `gens::device_table`), over every block the
     /// launch pins, that table's block handed to `fence` (E1); the kernels' other arguments are `slots` (the slots'
-    /// block ids, in order) and `params`. The launch's own pins are handed to `fence` after.
-    fn bind(&self, launch: &Launch, fence: &Arc<Fence>, slots: &[u32], params: &[u8]) -> Result<Box<dyn OnDevice + '_>, String>;
+    /// block ids, in order) and `params`. Each slot's block is bound up to `room.capacity` at least (its kernels claim
+    /// past its used bytes within it). The launch's own pins are handed to `fence` after.
+    fn bind(&self, launch: &Launch, fence: &Arc<Fence>, slots: &[u32], params: &[u8], room: &Meter) -> Result<Box<dyn OnDevice + '_>, String>;
 }
 
 /// A launch bound on a device (`Kernels::bind`).
 pub trait OnDevice {
     /// Runs kernel `name` of `source` on items `lo..hi`, a thread an item (item `lo + i` for thread `i`), and waits
     /// for it: the word it wrote to its result (an item count, or whether its phase runs again; 0 otherwise). Its
-    /// slots' capacities are `room.capacity` (how far each block's allocations may reach); an item that found one too
-    /// small wrote nothing past it and recorded what it needs, into `room.needs` (0686 D6: the executor grows the
-    /// block and runs it again).
+    /// slots' capacities are `room.capacity` (how far each block's allocations may reach) and their fronts
+    /// `room.fronts`, which its claims move; an item that found one too small wrote nothing past it and recorded what
+    /// it needs, into `room.needs` (0686 D6: the executor grows the block and runs it again).
     fn run(&mut self, source: &'static str, name: &str, lo: u32, hi: u32, room: &mut Meter) -> Result<u64, String>;
 }
 
@@ -990,7 +991,12 @@ fn on_device(
         fence.complete();
         r
     };
-    let bound = match d.bind(&launch, &fence, &ids, params) {
+    // Each slot's capacity, and its front: where its kernels' claims start.
+    let mut room = Meter::new(slots.iter().map(|&id| dir.capacity(id)));
+    for (f, &id) in room.fronts.iter_mut().zip(slots) {
+        *f = dir.block(id).map_or(0, |b| b.used());
+    }
+    let bound = match d.bind(&launch, &fence, &ids, params, &room) {
         Ok(b) => b,
         Err(e) => return done(Err(e)),
     };
@@ -998,8 +1004,14 @@ fn on_device(
         drop(bound);
         return done(Err(b.1));
     }
-    let room = Meter::new(slots.iter().map(|&id| dir.capacity(id)));
-    let r = done(drive(sig, v, tiling, dir, slots, &mut UklRuns { bound, source, entry, shape: v.shape, room }));
+    let mut runs = UklRuns { bound, source, entry, shape: v.shape, room };
+    let r = done(drive(sig, v, tiling, dir, slots, &mut runs));
+    // What its kernels claimed is the blocks' from now on.
+    for ((spec, &id), &front) in sig.slots.iter().zip(slots).zip(&runs.room.fronts) {
+        if let (true, Some(b)) = (spec.mode.writes(), dir.block(id)) {
+            b.claimed_to(front);
+        }
+    }
     // A device domain of its own: what the kernels wrote comes back to the host's bytes (`Region::sync_host`).
     if d.domain() != 0 {
         for (spec, &id) in sig.slots.iter().zip(slots) {

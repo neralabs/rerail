@@ -47,3 +47,22 @@ UKL_INLINE bool reach(UKL_GLOBAL uint32_t* meter, uint32_t k, uint64_t end) {
     return false;
 }
 #define REACH(k, end) reach(meter, k, end)
+
+// The launch refused, by reason `why` (not 0): it is one its kernels do not do, and the host fails it, naming it. The
+// word after the fronts (`meter[3 * MAX_SLOTS]`).
+#define FAULT(why) (meter[3u * MAX_SLOTS] = (why))
+
+// `bytes` of slot `k`'s block claimed at `align` (a power of two) from its front (`meter[2 * MAX_SLOTS + k]`): their
+// offset in the block. Past its capacity, NONE: what it needs is recorded (`reach`), and nothing is claimed. The host
+// takes the front back after the launch (`Block::claimed_to`): the claims are the block's, as `try_claim`'s are.
+UKL_INLINE uint32_t claim(UKL_GLOBAL uint32_t* meter, uint32_t k, uint32_t bytes, uint32_t align) {
+    UKL_GLOBAL uint32_t* front = &meter[2u * MAX_SLOTS + k];
+    for (uint32_t at = *front;;) {
+        uint32_t start = (at + align - 1u) & ~(align - 1u);
+        if (!reach(meter, k, (uint64_t)start + bytes)) return NONE;
+        uint32_t was = ukl_atomic_cas(front, at, start + bytes);
+        if (was == at) return start;
+        at = was;
+    }
+}
+#define CLAIM(k, bytes, align) claim(meter, k, bytes, align)

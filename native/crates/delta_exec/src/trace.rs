@@ -69,9 +69,26 @@ static PIPELINE: [Phase; 19] = {
     ]
 };
 
+/// The UKL version's shape (`ukl/trace.uglykl`): the source sorted and summed (one group), each row out's kill found
+/// (a lane each), the layer written and frozen in its block (one group, its room claimed from the block's front), each
+/// column's statistics (a lane each, claimed so too), the header last.
+pub(crate) static TRACE_UKL: [Phase; 5] = {
+    use Found::*;
+    use Output::*;
+    use Unit::*;
+    const CLAIMS: &[Bound] = &[Bound::Capacity(Over::Grow)];
+    [
+        ph("sort", Fixed, Threadgroup, Inside::Nothing, Across::Nothing, ByIndex, &[]),
+        ph("kills", Indirect, Lane, Inside::Nothing, Across::Nothing, ByIndex, &[]),
+        ph("layer", Fixed, Threadgroup, Inside::Nothing, Across::Nothing, InPlace, CLAIMS),
+        ph("sketch", Fixed, Lane, Inside::Nothing, Across::Nothing, Sketch, CLAIMS),
+        ph("seal", Fixed, Threadgroup, Inside::Nothing, Across::Nothing, InPlace, &[]),
+    ]
+};
+
 /// A launch's scratch slot over `cap` source items: `scratch_bytes(cap)` of capacity, in a reservation four times
 /// that, so a phase whose work runs out (a Dict column's distinct values, `encode`) grows it and runs again.
-fn scratch_slot(dir: &mut Directory, cap: usize) -> BlockId {
+pub(crate) fn scratch_slot(dir: &mut Directory, cap: usize) -> BlockId {
     let bytes = scratch_bytes(cap);
     dir.make_capped(kind::SCRATCH, 0, BODY_AT + bytes, 4 * (BODY_AT + bytes))
 }

@@ -16,11 +16,13 @@ use crate::semi::{CHANGE_ROWS, REPLACE_ROWS, SEMI_CHANGE};
 use rerail_blocks::block::kind;
 use rerail_blocks::gens::set_word;
 use rerail_blocks::region::pin_block;
-use crate::trace::{RollUp, Trace};
+use crate::trace::{CONSOLIDATE, MERGE, RollUp, Trace};
 use core::mem::offset_of;
 use rerail_blocks::gens::BODY_AT;
-use rerail_blocks::layer::{ColType, LayerHead, MAX_LAYERS, NONE, RunsHead, Shape, ShapeW};
-use rerail_blocks::relation::{FAR_BASE, Relation};
+use rerail_blocks::layer::{ColType, Layer, LayerHead, MAX_LAYERS, NONE, RunsHead, Shape, ShapeW};
+use rerail_blocks::relation::{ADDED_INDEXES, CONTINUES, DELTA, FAR_BASE, FROZEN, Index, MARK_REACH, Relation};
+use rerail_blocks::rows::{ColDir, Rows};
+use rerail_blocks::sketch::kept_form;
 use crate::op::{Case, Devices, Impl, Kernels, Registry, Runner, Signature, Status, Tiling};
 use rerail_delta_twins::Params;
 use rerail_delta_twins::cache::{self as cache_twin, CacheP};
@@ -42,6 +44,8 @@ struct Ukl {
     sig: &'static Signature,
     module: &'static str,
     cases: &'static [fn(&mut Directory) -> Case],
+    /// Its own phases, where they are not its twin's.
+    shape: Option<&'static [crate::op::Phase]>,
 }
 
 /// The modules' kernels, by name.
@@ -51,22 +55,25 @@ const MODULES: &[(&str, &str)] = &[
     ("semi", include_str!("../ukl/semi.uglykl")),
     ("k0", include_str!("../ukl/k0.uglykl")),
     ("intern", include_str!("../ukl/intern.uglykl")),
+    ("trace", include_str!("../ukl/trace.uglykl")),
 ];
 
 /// The operations with a UKL version.
 const VERSIONS: &[Ukl] = &[
-    Ukl { sig: &CACHE_OPEN, module: "cache", cases: &[cache_open_case] },
-    Ukl { sig: &CACHE_COMMIT, module: "cache", cases: &[cache_commit_case] },
-    Ukl { sig: &ORDER, module: "cache", cases: &[order_case] },
-    Ukl { sig: &DROP_PARTS, module: "drop", cases: &[drop_parts_case] },
-    Ukl { sig: &SEMI_CHANGE, module: "semi", cases: &[semi_change_case] },
-    Ukl { sig: &CHANGE_ROWS, module: "semi", cases: &[change_rows_case] },
-    Ukl { sig: &REPLACE_ROWS, module: "semi", cases: &[replace_rows_case] },
-    Ukl { sig: &DOCS_OF, module: "k0", cases: &[docs_of_case] },
-    Ukl { sig: &ROOM_OF, module: "k0", cases: &[room_of_case] },
-    Ukl { sig: &NAMED_BLOCKS, module: "k0", cases: &[named_blocks_case] },
-    Ukl { sig: &INTERN, module: "intern", cases: &[intern_case] },
-    Ukl { sig: &K0_PASS, module: "k0", cases: &[k0_pass_case, k0_refused_case] },
+    Ukl { sig: &CACHE_OPEN, module: "cache", cases: &[cache_open_case], shape: None },
+    Ukl { sig: &CACHE_COMMIT, module: "cache", cases: &[cache_commit_case], shape: None },
+    Ukl { sig: &ORDER, module: "cache", cases: &[order_case], shape: None },
+    Ukl { sig: &DROP_PARTS, module: "drop", cases: &[drop_parts_case], shape: None },
+    Ukl { sig: &SEMI_CHANGE, module: "semi", cases: &[semi_change_case], shape: None },
+    Ukl { sig: &CHANGE_ROWS, module: "semi", cases: &[change_rows_case], shape: None },
+    Ukl { sig: &REPLACE_ROWS, module: "semi", cases: &[replace_rows_case], shape: None },
+    Ukl { sig: &DOCS_OF, module: "k0", cases: &[docs_of_case], shape: None },
+    Ukl { sig: &ROOM_OF, module: "k0", cases: &[room_of_case], shape: None },
+    Ukl { sig: &NAMED_BLOCKS, module: "k0", cases: &[named_blocks_case], shape: None },
+    Ukl { sig: &INTERN, module: "intern", cases: &[intern_case], shape: None },
+    Ukl { sig: &K0_PASS, module: "k0", cases: &[k0_pass_case, k0_refused_case], shape: None },
+    Ukl { sig: &CONSOLIDATE, module: "trace", cases: &[consolidate_first_case, consolidate_case, consolidate_one_col_case], shape: Some(&crate::trace::TRACE_UKL) },
+    Ukl { sig: &MERGE, module: "trace", cases: &[merge_case], shape: Some(&crate::trace::TRACE_UKL) },
 ];
 
 /// Each operation's UKL version checked on `device` against its twin, at `TILINGS`, and registered as the device's
@@ -85,7 +92,7 @@ pub(crate) fn register_on(reg: &mut Registry, device: &dyn Kernels) -> Result<()
             let op = reg.find(u.sig).ok_or_else(|| format!("{}: not declared", u.sig.name))?;
             let twin = reg.reference(op).ok_or_else(|| format!("{}: no twin", u.sig.name))?;
             let name: &'static str = Box::leak(format!("{} ukl", u.sig.name).into_boxed_str());
-            let v = crate::op::Version { name, imp: Impl::Ukl { source, entry: u.sig.name }, devices: EVERY_BACKEND, status: Status::Default, ..*twin };
+            let v = crate::op::Version { name, imp: Impl::Ukl { source, entry: u.sig.name }, devices: EVERY_BACKEND, status: Status::Default, shape: u.shape.unwrap_or(twin.shape), ..*twin };
             let mut checked = None;
             for case in u.cases {
                 checked = Some(reg.check_on(&v, device, case, &TILINGS)?);
@@ -361,6 +368,97 @@ fn k0_refused_case(dir: &mut Directory) -> Case {
     k0_launch(dir, &["e(1, 2).\n", "p(x) :- e(x, _).\nn(c) :- c = count : { e(_, _) }.\n", "q(1).\n"])
 }
 
+/// `consolidate`'s launch over the run of `pairs` on `t`, as `Trace::commit` makes it: the runs, the new layer's block
+/// over the head, control, and the scratch slot.
+fn consolidate_launch(dir: &mut Directory, t: &Trace, pairs: &[(Vec<i64>, i32)]) -> Case {
+    let runs = t.open(dir, pairs.len().max(1));
+    {
+        let b = dir.block(runs).expect("just made");
+        let pin = pin_block(&b, "the run's pairs", true).expect("a write pin");
+        let w = rerail_blocks::layer::RunsW::new(&pin);
+        for (r, d) in pairs {
+            w.push(r, *d).expect("room for the pairs");
+        }
+    }
+    let n = pairs.len();
+    let out = dir.make_placed(t.shape().placement, kind::FACTS, rerail_delta_twins::trace::out_bytes(n), rerail_blocks::layer::layer_room(t.shape(), n)).expect("a layer's block");
+    if let Some(h) = t.head() {
+        dir.refer(out, h, BODY_AT).expect("the layer below referred to");
+    }
+    let ctl = dir.make(kind::CONTROL, rerail_delta_twins::trace::CONTROL_BYTES);
+    let scratch = crate::trace::scratch_slot(dir, n);
+    let below = t.head().map_or(NONE, |h| h.0);
+    Case { slots: vec![runs, out, ctl, scratch], params: params(rerail_delta_twins::trace::ConsolidateP { below, pad: 0 }) }
+}
+
+/// A trace of `(part, value)` rows partitioned on its first column, its layers `layers` committed on the CPU.
+fn trace_of(dir: &mut Directory, shape: Shape, layers: &[Vec<(Vec<i64>, i32)>]) -> Trace {
+    let cpu = Runner::new().expect("the CPU's runner");
+    let mut t = Trace::new(&shape).expect("a trace").with_roll_up(RollUp::Never);
+    for l in layers {
+        push_layer(&cpu, dir, &mut t, l).expect("a layer");
+    }
+    t
+}
+
+fn two_cols() -> Shape {
+    Shape::run(vec![ColType::I32, ColType::I64], vec![0, 1], Some(0))
+}
+
+/// A trace's first layer: rows of seven partitions, some pushed twice, some added and taken in the run (summing to
+/// none), their values labels, then past labels (each column's sketch through its few values, a label set and rank
+/// counts).
+fn consolidate_first_case(dir: &mut Directory) -> Case {
+    let t = trace_of(dir, two_cols(), &[]);
+    let mut pairs: Vec<(Vec<i64>, i32)> = (0..300).map(|i| (vec![i % 7, if i < 200 { i * 1_000_003 } else { -i * 77 }], 1)).collect();
+    pairs.extend((0..20).map(|i| (vec![3, 5_000_000_000 + i], 1)));
+    pairs.extend((0..20).map(|i| (vec![3, 5_000_000_000 + i], -1)));
+    consolidate_launch(dir, &t, &pairs)
+}
+
+/// A layer over two below: it kills rows of both (its kills by partition, ascending), adds rows of its own, and
+/// leaves one partition alone; its sketches continue the layer below's.
+fn consolidate_case(dir: &mut Directory) -> Case {
+    let first: Vec<(Vec<i64>, i32)> = (0..90).map(|i| (vec![i % 5, i], 1)).collect();
+    let second: Vec<(Vec<i64>, i32)> = (0..30).map(|i| (vec![i % 5, i], -1)).chain((100..140).map(|i| (vec![i % 5, i], 1))).collect();
+    let t = trace_of(dir, two_cols(), &[first, second]);
+    let pairs: Vec<(Vec<i64>, i32)> = [(1, 31), (1, 101), (2, 47), (2, 107), (4, 34)].iter().map(|&(p, v)| (vec![p, v], -1)).chain((200..260).map(|i| (vec![i % 4, i], 1))).collect();
+    consolidate_launch(dir, &t, &pairs)
+}
+
+/// A trace of one column, no partition: its row index is its sorted column.
+fn consolidate_one_col_case(dir: &mut Directory) -> Case {
+    let shape = Shape::run(vec![ColType::I64], vec![0], None);
+    let t = trace_of(dir, shape, &[(0..50).map(|i| (vec![3 * i], 1)).collect()]);
+    let pairs: Vec<(Vec<i64>, i32)> = (0..10).map(|i| (vec![6 * i], -1)).chain((0..25).map(|i| (vec![3 * i + 1], 1))).collect();
+    consolidate_launch(dir, &t, &pairs)
+}
+
+/// The newest two layers of three merged over the first: rows added and killed among them cancel, a row killed below
+/// stays killed.
+fn merge_case(dir: &mut Directory) -> Case {
+    let first: Vec<(Vec<i64>, i32)> = (0..60).map(|i| (vec![i % 3, i], 1)).collect();
+    let second: Vec<(Vec<i64>, i32)> = (0..10).map(|i| (vec![i % 3, i], -1)).chain((100..130).map(|i| (vec![i % 3, i], 1))).collect();
+    let third: Vec<(Vec<i64>, i32)> = (100..110).map(|i| (vec![i % 3, i], -1)).chain((10..15).map(|i| (vec![i % 3, i], -1))).chain((200..205).map(|i| (vec![i % 3, i], 1))).collect();
+    let t = trace_of(dir, two_cols(), &[first, second, third]);
+    let head = t.head().expect("a head");
+    let (rows, below) = {
+        let l = dir.read("the merged layers", &[head]).expect("a read");
+        let table = l.table();
+        let (mut rows, mut id) = (0usize, Some(head.0));
+        for _ in 0..2 {
+            let layer = Layer::new(table.block(id.expect("a layer")).expect("reached")).expect("committed");
+            rows += layer.n() + layer.kills().len();
+            id = layer.below().map(|(b, _)| b);
+        }
+        (rows, id.expect("the first layer below"))
+    };
+    let out = dir.make_placed(t.shape().placement, kind::FACTS, rerail_delta_twins::trace::out_bytes(rows), rerail_blocks::layer::layer_room(t.shape(), rows)).expect("a layer's block");
+    dir.refer(out, crate::dir::BlockId(below), BODY_AT).expect("the layer below referred to");
+    let scratch = crate::trace::scratch_slot(dir, rows);
+    Case { slots: vec![head, out, scratch], params: params(rerail_delta_twins::trace::MergeP { head: head.0, count: 2, below, pad: 0 }) }
+}
+
 /// A cache holding the sizes of documents 1, 2 and 5; 5 and 7 gone, 1 and 3 read: the room 1's and 5's take.
 fn room_of_case(dir: &mut Directory) -> Case {
     let cpu = Runner::new().expect("the CPU's runner");
@@ -426,6 +524,87 @@ pub fn layout() -> Vec<(&'static str, usize)> {
         ("REL_BASE_ROWS_AT", offset_of!(Relation, base_rows)),
         ("REL_BASE_BLOCK_AT", offset_of!(Relation, base_block)),
         ("REL_FAR_BASE", FAR_BASE as usize),
+        // A relation as its writer lays it out (`<ukl/delta/relw.h>`): its descriptor, its rows' and columns'
+        // directories, its index entries, and the flags it is frozen with.
+        ("REL_ARITY_AT", offset_of!(Relation, arity)),
+        ("REL_LIVE_AT", offset_of!(Relation, live)),
+        ("REL_OKEY_AT", offset_of!(Relation, okey)),
+        ("REL_NOKEY_AT", offset_of!(Relation, nokey)),
+        ("REL_NINDEX_AT", offset_of!(Relation, nindex)),
+        ("REL_ROWS_AT", offset_of!(Relation, rows)),
+        ("REL_KILLED_AT", offset_of!(Relation, killed)),
+        ("REL_INDEXES_AT", offset_of!(Relation, indexes)),
+        ("REL_STATS_AT", offset_of!(Relation, stats)),
+        ("REL_BASE_OFF_AT", offset_of!(Relation, base_off)),
+        ("REL_SKETCHES_AT", offset_of!(Relation, sketches)),
+        ("REL_DIRS_AT", Relation::DIRS_AT),
+        ("REL_FROZEN", FROZEN as usize),
+        ("REL_DELTA", DELTA as usize),
+        ("REL_CONTINUES", CONTINUES as usize),
+        ("REL_ADDED_INDEXES", ADDED_INDEXES),
+        ("ROWS_LEN_AT", offset_of!(Rows, len)),
+        ("ROWS_RESERVED_AT", offset_of!(Rows, reserved)),
+        ("ROWS_MIN_LOG_AT", offset_of!(Rows, min_log)),
+        ("ROWS_NCHUNKS_AT", offset_of!(Rows, nchunks)),
+        ("ROWS_NCOLS_AT", offset_of!(Rows, ncols)),
+        ("ROWS_COLS_AT", offset_of!(Rows, cols)),
+        ("ROWS_MIN_LOG", rerail_blocks::rows::MIN_LOG as usize),
+        ("ROWS_I32", rerail_blocks::rows::I32 as usize),
+        ("ROWS_SIGNED", rerail_blocks::rows::SIGNED as u32 as usize),
+        ("COLDIR_BYTES", size_of::<ColDir>()),
+        ("COLDIR_WIDTH_AT", offset_of!(ColDir, width)),
+        ("COLDIR_RUNS_AT", offset_of!(ColDir, runs)),
+        ("COLDIR_CHUNK_AT", offset_of!(ColDir, chunk)),
+        ("INDEX_BYTES", size_of::<Index>()),
+        ("INDEX_NCOLS_AT", offset_of!(Index, ncols)),
+        ("INDEX_ORDERED_AT", offset_of!(Index, ordered)),
+        ("INDEX_KEY_AT", offset_of!(Index, key)),
+        ("INDEX_MASK_AT", offset_of!(Index, mask)),
+        ("INDEX_OFFS_AT", offset_of!(Index, offs)),
+        ("INDEX_ROWS_AT", offset_of!(Index, rows)),
+        ("INDEX_MARKS_AT", offset_of!(Index, marks)),
+        ("INDEX_MARK_SAME", rerail_blocks::relation::MARK_SAME as usize),
+        ("INDEX_MARK_REACH", MARK_REACH),
+        ("KEY_SEED", rerail_blocks::SEED as usize),
+        ("BLOCK_PAGE", rerail_blocks::block::PAGE),
+        ("MAX_COLS", rerail_blocks::layer::MAX_COLS),
+        ("MAX_KEY", rerail_blocks::layer::MAX_KEY),
+        ("MAX_IX", rerail_blocks::layer::MAX_IX),
+        // A layer's header, its shape, and a run's (`rerail_delta_core::layer`, `::runs`).
+        ("LAYER_LEN_AT", BODY_AT + offset_of!(LayerHead, len)),
+        ("LAYER_MAGIC_AT", BODY_AT + offset_of!(LayerHead, magic)),
+        ("LAYER_STATE_AT", BODY_AT + offset_of!(LayerHead, state)),
+        ("LAYER_ADDED_AT", BODY_AT + offset_of!(LayerHead, added)),
+        ("LAYER_NGONE_AT", BODY_AT + offset_of!(LayerHead, ngone)),
+        ("LAYER_NPARTS_AT", BODY_AT + offset_of!(LayerHead, nparts)),
+        ("LAYER_DIGEST_AT", BODY_AT + offset_of!(LayerHead, digest)),
+        ("LAYER_BODY", rerail_blocks::layer::LAYER_BODY),
+        ("LAYER_MAGIC", rerail_blocks::layer::LAYER_MAGIC as usize),
+        ("LAYER_OPEN", rerail_blocks::layer::OPEN as usize),
+        ("LAYER_COMMITTED", rerail_blocks::layer::COMMITTED as usize),
+        ("ENC_OPEN", rerail_blocks::layer::ENC_OPEN as usize),
+        ("SHAPE_BYTES", size_of::<ShapeW>()),
+        ("SHAPE_LEVELS_AT", offset_of!(ShapeW, levels)),
+        ("SHAPE_ENCODING_AT", offset_of!(ShapeW, encoding)),
+        ("SHAPE_NIDX_AT", offset_of!(ShapeW, nidx)),
+        ("SHAPE_TYPES_AT", offset_of!(ShapeW, types)),
+        ("RUNS_SHAPE_AT", BODY_AT + offset_of!(RunsHead, shape)),
+        // `rerail_delta_twins::trace`'s control, and a column's sketch (`rerail_delta_core::sketch`'s kept form).
+        ("TRACE_CONTROL_BYTES", rerail_delta_twins::trace::CONTROL_BYTES),
+        ("TRACE_REFUSED_SUM", rerail_delta_twins::trace::REFUSED_SUM as usize),
+        ("TRACE_REFUSED_GONE", rerail_delta_twins::trace::REFUSED_GONE as usize),
+        ("TRACE_REFUSED_ADDED", rerail_delta_twins::trace::REFUSED_ADDED as usize),
+        ("SKETCH_FEW", kept_form::FEW),
+        ("SKETCH_REGISTERS", kept_form::REGISTERS),
+        ("SKETCH_BUCKETS", kept_form::BUCKETS),
+        ("SKETCH_RANKS", kept_form::RANKS),
+        ("SKETCH_DENSE_WIDTH", kept_form::DENSE_WIDTH),
+        ("SKETCH_SPARSE_LIMIT", kept_form::SPARSE_LIMIT),
+        ("SKETCH_SPARSE_SLOTS", kept_form::SPARSE_SLOTS),
+        ("SKETCH_SPARSE_FIRST", kept_form::SPARSE_FIRST),
+        ("SKETCH_FORMAT", usize::from(kept_form::SKETCH_FORMAT)),
+        ("SKETCH_LABEL_LIMIT", kept_form::LABEL_LIMIT as usize),
+        ("SKETCH_WORK", rerail_blocks::sketch::WORK_BYTES.next_multiple_of(64)),
         // `rerail_delta_twins::drop`'s parts block.
         ("PARTS_N_AT", drop_twin::N_AT),
         ("PARTS_AT", drop_twin::PARTS_AT),

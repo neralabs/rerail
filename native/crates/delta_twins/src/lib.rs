@@ -120,6 +120,10 @@ pub struct Meter {
     /// Each slot's capacity needed, when an item found it too small (0: none); the item wrote nothing past the
     /// capacity.
     pub needs: [usize; MAX_SLOTS],
+    /// Each slot's front (a device's kernels' only): where its block's next claim starts, which its kernels move
+    /// (`<ukl/delta/op.h>`'s `claim`) and its block takes back after them (`Block::claimed_to`). A twin claims through
+    /// its pin, and leaves these 0.
+    pub fronts: [usize; MAX_SLOTS],
 }
 
 impl Meter {

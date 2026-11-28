@@ -523,6 +523,8 @@ impl std::fmt::Debug for Sketch {
 pub use rerail_delta_core::sketch::Reading;
 // A sketch worked in fixed memory (an operation's scratch): the floor's, its kept bytes this module's `encode`'s.
 pub use rerail_delta_core::sketch::{SketchW, WORK_BYTES};
+/// The kept form's constants (its forms' bounds), as a device's writer of it takes them (`<ukl/delta/sketch.h>`).
+pub use rerail_delta_core::sketch as kept_form;
 
 /// A version's change, signed: each value it touched, with its rows added less those taken (decision 0678 step 10).
 /// Its size is the values the change touched, never the version's.

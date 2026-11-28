@@ -482,13 +482,20 @@ impl Block {
     /// only when the block has outgrown it).
     #[cfg(any(target_os = "macos", target_os = "linux", windows))]
     pub fn device_buffer(&self, device: &rerail_device::device::Device) -> Result<rerail_device::device::Buffer, String> {
+        self.device_buffer_reaching(device, 0)
+    }
+
+    /// `device_buffer`, its wrap reaching `reach` bytes from the block's start at least (within its reservation): a
+    /// launch whose kernels claim room past the used bytes, up to the capacity it gives them (decision 0686 D6).
+    #[cfg(any(target_os = "macos", target_os = "linux", windows))]
+    pub fn device_buffer_reaching(&self, device: &rerail_device::device::Device, reach: usize) -> Result<rerail_device::device::Buffer, String> {
         // Its descriptor's stable id, made with its first descriptor.
         let _ = self.desc_id();
         // The host's (a CPU device, `rerail_accel::gpu::shared::host_layer`): its whole reservation by its address,
         // which it never outgrows, its used pages committed
         // (decision 0353: the block's own bytes, read in place).
         if device.is_cpu() && !self.backing.as_ref().and_then(|b| b.buffer()).is_some_and(|b| matches!(b, rerail_device::device::Buffer::Cpu(_))) {
-            let used = (self.used().div_ceil(1 << 20) << 20).min(self.reserved);
+            let used = (self.used().max(reach).div_ceil(1 << 20) << 20).min(self.reserved);
             crate::mem::commit(self.base, used).map_err(|e| format!("committing a block's {used} bytes for the host: {e}"))?;
             // SAFETY: the reservation outlives the wrap: a kernel's bind is held by the block's ledger (decision 0487).
             return unsafe { rerail_device::device::wrap_host_memory(device, self.base, self.reserved) };
@@ -497,7 +504,7 @@ impl Block {
             return Ok(b);
         }
         let mut kept = self.gpu.lock().unwrap();
-        let used = self.used();
+        let used = self.used().max(reach).min(self.reserved);
         if let Some((b, len)) = kept.as_ref()
             && *len >= used
         {
@@ -702,6 +709,16 @@ impl Block {
 
     pub fn reserved(&self) -> usize {
         self.reserved
+    }
+
+    /// Its front moved to `end` at least: room a device's kernels claimed past it, in the bytes the launch bound them
+    /// (decision 0686 D6, `<ukl/delta/op.h>`'s `claim`), handed out as `try_claim` hands it out.
+    pub fn claimed_to(&self, end: usize) {
+        assert!(end <= self.reserved && self.writable, "a device's claims within a writable block's reservation");
+        let from = self.ext.top.fetch_max(end, AcqRel);
+        if end > from && self.listed {
+            self.ledger.taken_front(from, end - from);
+        }
     }
 
     /// Bytes used so far (the frozen length, once frozen).

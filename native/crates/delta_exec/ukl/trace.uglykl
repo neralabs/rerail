@@ -1,0 +1,381 @@
+// The trace's operations (`rerail_delta_twins::trace`): `consolidate`, a run's `(row, diff)` pairs into a new layer
+// over the trace's newest; `merge`, the newest layers into one over the layer below them. Both write the layer as P§12
+// has it, where it lies in its block (`<ukl/delta/relw.h>`, `<ukl/delta/sketch.h>`): its rows continuing the layer
+// below, its partitions' change and its kills by partition, each frozen with its ranges and row index, each column's
+// sketch of the state it ends, the header last.
+//
+// Five phases: `sort` (one item) sorts the source in the trace's canonical order and sums each row's diffs into the
+// rows out; `kills` (a row out an item) finds each gone row's live row below; `layer` (one item) writes the layer's
+// relations and freezes them; `sketch` (a column an item) its statistics; `seal` (one item) the header and control.
+// They write the Open encoding of a trace of no declared indexes and no levels (`layer::Shape::run`, every executor
+// trace's); a launch of another shape is refused (`FAULT`).
+#include <ukl/delta/trace.h>
+#include <ukl/delta/runs.h>
+#include <ukl/delta/relw.h>
+#include <ukl/delta/sketch.h>
+#include <ukl/delta/sort.h>
+
+#define T_OUT 1u
+#define T_CTL 2u
+
+// ---- the source -----------------------------------------------------------------------------------------------------
+
+// The rows a layer is made from: a run's δ runs (`consolidate`), or the merged layers (`merge`, newest first: each one's
+// own rows, then its kills), and the layer below the new one.
+typedef struct Src {
+    CBlk t, runs, shape;
+    uint32_t head, count, below, n;
+} Src;
+
+UKL_INLINE uint32_t layer_kills_n(Layer l) { return rel_end(l.gone) - rel_start(l.gone); }
+
+UKL_INLINE Src src_of(CBlk t, UKL_GLOBAL const uint32_t* slots, UKL_GLOBAL const uint8_t* p, bool cons) {
+    Src s;
+    s.t = t;
+    if (cons) {
+        s.runs = SLOT(0);
+        s.shape = s.runs + RUNS_SHAPE_AT;
+        s.below = PARAMS(ConsolidateP).below;
+        s.n = runs_len(s.runs);
+        s.head = NONE;
+        s.count = 0u;
+        return s;
+    }
+    MergeP q = PARAMS(MergeP);
+    s.runs = 0;
+    s.head = q.head;
+    s.count = q.count;
+    s.below = q.below;
+    s.shape = blk(t, q.head) + LAYER_SHAPE_AT;
+    s.n = 0u;
+    uint32_t k = q.head;
+    for (uint32_t j = 0u; j < q.count; j++) {
+        Layer l = layer_of(t, k);
+        s.n += l.end - l.start + layer_kills_n(l);
+        k = l.below;
+    }
+    return s;
+}
+
+UKL_INLINE uint32_t src_arity(Src s) { return U32(s.shape, SHAPE_ARITY_AT); }
+
+// Merged item `i`: its layer, and its own row's id (`*kill` false) or the id it kills.
+UKL_INLINE Layer src_item(Src s, uint32_t i, UKL_PRIVATE uint32_t* id, UKL_PRIVATE bool* kill) {
+    Layer l = layer_of(s.t, s.head);
+    for (uint32_t j = 0u;; j++) {
+        uint32_t own = l.end - l.start, kills = layer_kills_n(l);
+        if (i < own + kills || j + 1u == s.count) {
+            *kill = i >= own;
+            *id = *kill ? (uint32_t)rel_get(l.gone, rel_start(l.gone) + i - own, 1u) : l.start + i;
+            return l;
+        }
+        i -= own + kills;
+        l = layer_of(s.t, l.below);
+    }
+}
+
+UKL_INLINE int64_t src_get(Src s, uint32_t i, uint32_t c) {
+    if (s.runs != 0) return runs_get(s.runs, i, c);
+    uint32_t id;
+    bool kill;
+    Layer l = src_item(s, i, &id, &kill);
+    return kill ? state_get(s.t, s.head, id, c) : layer_get(l, id, c);
+}
+
+UKL_INLINE int32_t src_diff(Src s, uint32_t i) {
+    if (s.runs != 0) return runs_sign(s.runs, i);
+    uint32_t id;
+    bool kill;
+    src_item(s, i, &id, &kill);
+    return kill ? -1 : 1;
+}
+
+// Items `i` and `j` compared in the canonical order: -1, 0 or 1.
+UKL_INLINE int32_t src_cmp(Src s, uint32_t i, uint32_t j) {
+    for (uint32_t k = 0u, a = src_arity(s); k < a; k++) {
+        uint32_t c = s.shape[SHAPE_ORDER_AT + k];
+        int64_t x = src_get(s, i, c), y = src_get(s, j, c);
+        if (x != y) return x < y ? -1 : 1;
+    }
+    return 0;
+}
+UKL_INLINE bool src_less(Src s, uint32_t i, uint32_t j) {
+    int32_t o = src_cmp(s, i, j);
+    return o < 0 || (o == 0 && i < j);
+}
+DELTA_SORT(sort_items, Src, src_less)
+
+// Whether the kernels write the source's shape: Open, no declared index, no levels.
+UKL_INLINE bool src_written(Src s) {
+    return U32(s.shape, SHAPE_ENCODING_AT) == ENC_OPEN && U32(s.shape, SHAPE_NIDX_AT) == 0u && U32(s.shape, SHAPE_LEVELS_AT) == 0u && src_arity(s) <= MAX_KEY;
+}
+
+// ---- the work, past the header in the new block's body --------------------------------------------------------------
+
+// Its words, then its arrays of `n` (the source's items): their order, each row out's item, sign and kill, and the
+// rows added before each row out.
+#define W_NOUT 0u
+#define W_NADD 4u
+#define W_REFUSED 8u
+#define W_ROWS 16u
+
+typedef struct Work {
+    Blk b;
+    uint32_t perm, net, sgn, kid, before;
+} Work;
+
+UKL_INLINE Work work_of(Blk out, uint32_t n) {
+    Work w;
+    w.b = out + ((BODY_AT + LAYER_BODY + 63u) & ~63u);
+    w.perm = W_ROWS;
+    w.net = w.perm + 4u * n;
+    w.sgn = w.net + 4u * n;
+    w.kid = w.sgn + 4u * n;
+    w.before = w.kid + 4u * n;
+    return w;
+}
+#define W(w, f, i) U32((w).b, (w).f + 4u * (i))
+
+// The first refusal (`trace::REFUSED_*`) kept.
+UKL_INLINE void refuse(Work w, uint32_t why) { ukl_atomic_cas((UKL_GLOBAL uint32_t*)(w.b + W_REFUSED), 0u, why); }
+
+// ---- the phases -----------------------------------------------------------------------------------------------------
+
+// `sort`: the items sorted, each run of equal rows summed (a sum past ±1 refused, a zero dropped), and the rows out
+// listed: each one's item, sign, and the rows added before it.
+UKL_INLINE void phase_sort(Src s, Work w, UKL_GLOBAL uint32_t* meter) {
+    if (!src_written(s)) { FAULT(1u); return; }
+    U32(w.b, W_REFUSED) = 0u;
+    for (uint32_t i = 0u; i < s.n; i++) W(w, perm, i) = i;
+    sort_items(s, (CLIF_BLOCK_SPACE uint32_t*)(w.b + w.perm), s.n);
+    uint32_t o = 0u, added = 0u;
+    for (uint32_t i = 0u; i < s.n;) {
+        int32_t sum = 0;
+        uint32_t j = i;
+        for (; j < s.n && src_cmp(s, W(w, perm, j), W(w, perm, i)) == 0; j++) sum += src_diff(s, W(w, perm, j));
+        if (sum < -1 || sum > 1) refuse(w, TRACE_REFUSED_SUM);
+        if (sum != 0) {
+            W(w, net, o) = W(w, perm, i);
+            W(w, sgn, o) = sum > 0 ? 1u : 0xFFFFFFFFu;
+            W(w, before, o) = added;
+            added += sum > 0 ? 1u : 0u;
+            o++;
+        }
+        i = j;
+    }
+    W(w, before, o) = added;
+    U32(w.b, W_NOUT) = o;
+    U32(w.b, W_NADD) = added;
+}
+
+// The live row of the state at `head` equal to item `i` in every column, or NONE: each layer's own row of its key
+// (its row index's bucket, or its one sorted column searched), taken when no layer above kills it.
+UKL_INLINE uint32_t live_row(Src s, uint32_t head, uint32_t i) {
+    uint32_t a = src_arity(s);
+    uint64_t h = KEY_SEED;
+    for (uint32_t c = 0u; c < a; c++) h = clif_rel_key_mix((CLIF_BLOCK_SPACE const uint8_t*)0, 0u, h, (uint64_t)src_get(s, i, c));
+    for (uint32_t k = head; k != NONE;) {
+        Layer l = layer_of(s.t, k);
+        uint32_t found = NONE;
+        if (a == 1u) {
+            int64_t v = src_get(s, i, 0u);
+            uint32_t lo = l.start, hi = l.end;
+            while (lo < hi) {
+                uint32_t m = (lo + hi) / 2u;
+                if (layer_get(l, m, 0u) < v) lo = m + 1u; else hi = m;
+            }
+            found = lo < l.end && layer_get(l, lo, 0u) == v ? lo : NONE;
+        } else if (l.end > l.start) {
+            uint64_t g = clif_rel_group(l.rows, 0u, 0u, h);
+            for (uint32_t q = 0u; q < (uint32_t)g && found == NONE; q++) {
+                uint32_t id = clif_rel_group_row(l.rows, 0u, 0u, (uint32_t)(g >> 32) + q);
+                bool same = true;
+                for (uint32_t c = 0u; c < a && same; c++) same = layer_get(l, id, c) == src_get(s, i, c);
+                found = same ? id : NONE;
+            }
+        }
+        if (found != NONE && state_live(s.t, head, found)) return found;
+        k = l.below;
+    }
+    return NONE;
+}
+
+// `kills`: row out `o`'s kill, the live row below it removes; a row gone that is not live below, or a row added that
+// already is, refused.
+UKL_INLINE void phase_kill(Src s, Work w, uint32_t o) {
+    uint32_t i = W(w, net, o), live = live_row(s, s.below, i);
+    bool gone = W(w, sgn, o) != 1u;
+    if (gone && live == NONE) refuse(w, TRACE_REFUSED_GONE);
+    if (!gone && live != NONE) refuse(w, TRACE_REFUSED_ADDED);
+    W(w, kid, o) = gone ? live : NONE;
+}
+
+// Row out `o`'s partition: its item's value in the partition column (0 without one).
+UKL_INLINE int64_t part_of(Src s, Work w, uint32_t o) {
+    uint32_t pc = U32(s.shape, SHAPE_PARTITION_AT);
+    return pc == NONE ? 0 : src_get(s, W(w, net, o), pc);
+}
+
+UKL_INLINE bool u32_less(uint32_t c, uint32_t x, uint32_t y) { return x < y; }
+DELTA_SORT(sort_u32, uint32_t, u32_less)
+
+// One row's hash in a set's digest (`hash::row_digest`).
+UKL_INLINE uint64_t item_digest(Src s, uint32_t i) {
+    uint64_t h = KEY_SEED;
+    for (uint32_t c = 0u, a = src_arity(s); c < a; c++) h = clif_rel_key_mix((CLIF_BLOCK_SPACE const uint8_t*)0, 0u, h, (uint64_t)src_get(s, i, c));
+    return clif_rel_key_mix((CLIF_BLOCK_SPACE const uint8_t*)0, 0u, h, 0x5eedu);
+}
+
+// `layer`: the layer's three relations made in its block (its rows continuing the layer below), its rows added
+// written, each partition's change and its kills ascending, each column's range, the row index, each frozen; the
+// header laid out, open. Its room claimed from the block's front.
+UKL_INLINE void phase_layer(Src s, Work w, Blk out, UKL_GLOBAL uint32_t* meter) {
+    if (U32(w.b, W_REFUSED) != 0u) return;
+    uint32_t a = src_arity(s), n_out = U32(w.b, W_NOUT), n_add = U32(w.b, W_NADD), n_gone = n_out - n_add;
+    uint32_t widths[MAX_COLS];
+    for (uint32_t c = 0u; c < a; c++) widths[c] = s.shape[SHAPE_TYPES_AT + c] == 1u ? 8u : ROWS_I32;
+    const uint32_t pw[6] = {ROWS_I32, 8u, 4u, 4u, 4u, 4u}, gw[2] = {ROWS_I32, 4u};
+    uint32_t rows = rel_create(out, meter, T_OUT, widths, a, s.shape[SHAPE_ORDER_AT], n_add);
+    uint32_t parts = rel_create(out, meter, T_OUT, pw, 6u, 0u, n_out);
+    uint32_t gone = rel_create(out, meter, T_OUT, gw, 2u, 0u, n_gone);
+    if (rows == NONE || parts == NONE || gone == NONE) return;
+    if (s.below != NONE) {
+        Layer lb = layer_of(s.t, s.below);
+        rel_continue_far(out, rows, s.below, (uint32_t)U64(blk(s.t, s.below), LAYER_ROWS_AT), lb.end);
+    }
+    if (!rel_open(out, meter, T_OUT, rows, 1u, true) || !rel_open(out, meter, T_OUT, parts, 0u, false) || !rel_open(out, meter, T_OUT, gone, 0u, false)) return;
+    if (!rel_claim_rows(out, meter, T_OUT, rows, n_add) || !rel_claim_rows(out, meter, T_OUT, gone, n_gone)) return;
+    for (uint32_t o = 0u; o < n_out; o++)
+        if (W(w, sgn, o) == 1u)
+            for (uint32_t c = 0u; c < a; c++) rel_put(out, rows, W(w, before, o), c, src_get(s, W(w, net, o), c));
+    // The partitions: the rows out lie in the canonical order, the partition first, so each is a range of them.
+    uint32_t np = 0u;
+    for (uint32_t o = 0u; o < n_out; o++) np += o == 0u || part_of(s, w, o) != part_of(s, w, o - 1u) ? 1u : 0u;
+    if (!rel_claim_rows(out, meter, T_OUT, parts, np)) return;
+    for (uint32_t e = 0u, k = 0u; e < n_out; k++) {
+        uint32_t st = e;
+        int64_t part = part_of(s, w, st);
+        uint64_t digest = 0u;
+        for (; e < n_out && part_of(s, w, e) == part; e++) {
+            uint64_t d = item_digest(s, W(w, net, e));
+            digest = W(w, sgn, e) == 1u ? digest + d : digest - d;
+        }
+        uint32_t first = W(w, before, st), add = W(w, before, e) - first, kills = (e - st) - add, kills_at = st - first;
+        const int64_t row[6] = {part, (int64_t)digest, add, kills, first, kills_at};
+        for (uint32_t c = 0u; c < 6u; c++) rel_put(out, parts, k, c, row[c]);
+        // Its kills ascending (an added row's NONE last).
+        sort_u32(0u, (CLIF_BLOCK_SPACE uint32_t*)(w.b + w.kid + 4u * st), e - st);
+        for (uint32_t j = 0u; j < kills; j++) {
+            rel_put(out, gone, kills_at + j, 0u, part);
+            rel_put(out, gone, kills_at + j, 1u, W(w, kid, st + j));
+        }
+    }
+    for (uint32_t c = 0u; c < a; c++) rel_stat(out, rows, c);
+    for (uint32_t c = 0u; c < 6u; c++) rel_stat(out, parts, c);
+    for (uint32_t c = 0u; c < 2u; c++) rel_stat(out, gone, c);
+    if (!rel_row_index(out, meter, T_OUT, rows)) return;
+    rel_seal(out, rows, s.shape[SHAPE_ORDER_AT], 1u);
+    rel_seal(out, parts, 0u, 0u);
+    rel_seal(out, gone, 0u, 0u);
+    // The header, open: its relations, its shape.
+    U64(out, LAYER_LEN_AT) = LAYER_BODY;
+    U32(out, LAYER_MAGIC_AT) = LAYER_MAGIC;
+    U32(out, LAYER_STATE_AT) = LAYER_OPEN;
+    U64(out, LAYER_ROWS_AT) = rows;
+    U64(out, LAYER_PARTS_AT) = parts;
+    U64(out, LAYER_GONE_AT) = gone;
+    for (uint32_t x = LAYER_ADDED_AT; x < LAYER_SHAPE_AT; x += 4u) U32(out, x) = 0u;
+    for (uint32_t x = 0u; x < SHAPE_BYTES; x += 4u) U32(out, LAYER_SHAPE_AT + x) = U32(s.shape, x);
+}
+
+// `sketch`: column `c`'s sketch of the state the layer ends: the layer below's, its rows added and its kills taken,
+// worked in the scratch slot's region of the column, settled into the layer's block.
+UKL_INLINE void phase_sketch(Src s, Work w, Blk out, Blk scratch, uint32_t c, UKL_GLOBAL uint32_t* meter) {
+    if (U32(w.b, W_REFUSED) != 0u) return;
+    Sk k = (Sk)(scratch + ((BODY_AT + 63u) & ~63u) + c * SKETCH_WORK);
+    sk_clear(k);
+    if (s.below != NONE) {
+        CBlk bb = blk(s.t, s.below);
+        uint32_t rel = (uint32_t)U64(bb, LAYER_ROWS_AT), dir = span_at(bb, rel + REL_SKETCHES_AT, 1u);
+        if (span_len(bb, rel + REL_SKETCHES_AT) > 8u * c && span_len(bb, dir + 8u * c) > 0u) {
+            uint32_t at = span_at(bb, dir + 8u * c, 1u);
+            sk_decode(k, bb, at, at + span_len(bb, dir + 8u * c));
+        }
+    }
+    uint32_t rows = (uint32_t)U64(out, LAYER_ROWS_AT), gone = (uint32_t)U64(out, LAYER_GONE_AT);
+    for (uint32_t i = 0u, n = rel_own_len(out, rows); i < n; i++) sk_add(k, rel_own(out, rows, i, c), 1u);
+    for (uint32_t j = 0u, n = rel_own_len(out, gone); j < n; j++) sk_remove(k, state_get(s.t, s.below, (uint32_t)rel_own(out, gone, j, 1u), c), 1u);
+    uint32_t len = 0u, at = sk_settle(k, out, meter, T_OUT, &len);
+    if (at == NONE) return;
+    uint32_t dir = span_at(out, rows + REL_SKETCHES_AT, 1u);
+    span_set(out, dir + 8u * c, at, len, 1u);
+}
+
+// The newest layers due to merge after one of `size` rows and kills over `below` (`trace::due_to_merge`).
+UKL_INLINE uint64_t due_to_merge(CBlk t, uint32_t below, uint64_t size) {
+    uint64_t acc = size, k = 1u;
+    for (uint32_t id = below; id != NONE;) {
+        CBlk b = blk(t, id);
+        uint64_t n = (uint64_t)U32(b, LAYER_ADDED_AT) + U32(b, LAYER_NGONE_AT);
+        if (2u * acc <= n) break;
+        acc += n;
+        k++;
+        id = layer_of(t, id).below;
+    }
+    return k;
+}
+
+// `seal`: the header committed, its counts and digest from its relations (unless refused); consolidate's control.
+UKL_INLINE void phase_seal(Src s, Work w, Blk out, Blk ctl) {
+    uint32_t refused = U32(w.b, W_REFUSED), added = 0u, gone = 0u;
+    if (refused == 0u) {
+        uint32_t parts = (uint32_t)U64(out, LAYER_PARTS_AT), g = (uint32_t)U64(out, LAYER_GONE_AT);
+        added = rel_own_len(out, (uint32_t)U64(out, LAYER_ROWS_AT));
+        gone = rel_own_len(out, g);
+        uint64_t digest = 0u;
+        for (uint32_t k = 0u, n = rel_own_len(out, parts); k < n; k++) digest += (uint64_t)rel_own(out, parts, k, 1u);
+        U32(out, LAYER_ADDED_AT) = added;
+        U32(out, LAYER_NGONE_AT) = gone;
+        U32(out, LAYER_NPARTS_AT) = rel_own_len(out, parts);
+        U64(out, LAYER_DIGEST_AT) = digest;
+        U32(out, LAYER_STATE_AT) = LAYER_COMMITTED;
+    }
+    if (ctl == 0) return;
+    U64(ctl, BODY_AT) = TRACE_CONTROL_BYTES;
+    U64(ctl, BODY_AT + 8u) = refused;
+    U64(ctl, BODY_AT + 16u) = U32(w.b, W_NOUT);
+    U64(ctl, BODY_AT + 24u) = added;
+    U64(ctl, BODY_AT + 32u) = gone;
+    U64(ctl, BODY_AT + 40u) = refused == 0u ? due_to_merge(s.t, s.below, (uint64_t)added + gone) : 0u;
+}
+
+// ---- the kernels, of each operation ---------------------------------------------------------------------------------
+
+#define SRC src_of(t, slots, p, CONS)
+#define OUT SLOT(T_OUT)
+#define WORK work_of(SLOT(T_OUT), SRC.n)
+
+#define TRACE_KERNELS(op)                                                                                           \
+    DELTA_ONE(op##_sort) { if (i == 0u) phase_sort(SRC, WORK, meter); }                                             \
+    DELTA_KERNEL(op##_kills_items) { if (i == 0u) res[0] = U32(WORK.b, W_NOUT); }                                   \
+    DELTA_KERNEL(op##_kills) { DELTA_ITEM(o); phase_kill(SRC, WORK, o); }                                           \
+    DELTA_ONE(op##_layer) { if (i == 0u) phase_layer(SRC, WORK, OUT, meter); }                                      \
+    DELTA_KERNEL(op##_sketch_items) { if (i == 0u) res[0] = src_arity(SRC); }                                       \
+    DELTA_KERNEL(op##_sketch) { DELTA_ITEM(c); phase_sketch(SRC, WORK, OUT, SLOT(SCRATCH), c, meter); }             \
+    DELTA_ONE(op##_seal) { if (i == 0u) phase_seal(SRC, WORK, OUT, CONTROL); }
+
+#define CONS true
+#define SCRATCH 3u
+#define CONTROL SLOT(T_CTL)
+TRACE_KERNELS(consolidate)
+#undef CONS
+#undef SCRATCH
+#undef CONTROL
+
+#define CONS false
+#define SCRATCH 2u
+#define CONTROL ((Blk)0)
+TRACE_KERNELS(merge)
+#undef CONS
+#undef SCRATCH
+#undef CONTROL
