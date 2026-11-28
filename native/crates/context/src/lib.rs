@@ -477,6 +477,151 @@ pub fn cores_threads() -> usize {
     if on_a_pool() { rayon::current_num_threads() } else { machine::<Cores>().pool().current_num_threads() }
 }
 
+/// `f` over `0..n` in ranges of `grain` items (the last one shorter), on this thread and on at most `limit - 1` of the
+/// cores' threads beside it (`limit` 0: as many as the pool has): MLDB's `parallelMap`, on rayon's pool.
+///
+/// The work is not split ahead. Up to `limit - 1` workers are spawned into a scope on this thread's pool
+/// (`cores_scope`): each a loop that claims the next range from one counter until none is left, and this thread runs
+/// the same loop. A worker started after the ranges are gone claims nothing and ends: a thread that takes one is a
+/// thread that was free. Each spawn wakes at most one sleeping thread (rayon's), so a call wakes at most `limit - 1`,
+/// whatever `n` is; a range's cost may vary, as the threads take ranges as they finish theirs. Called on a pool's
+/// thread, the workers lie on its own queue, where only a thread with nothing else to do steals them, and the call
+/// waits for them as rayon's waits do, running other jobs (one of its own not yet started it pops back, and it ends at
+/// once); nested in a loop of its own, each level holds at most its `limit` of the threads. Off a pool (a device's
+/// queue thread in a run) the workers are spawned on the caller's machine's cores, carrying its run
+/// (`set_job_carrier`), and this thread waits only for those that started before the ranges ran out (`offered`): a
+/// scope would wait for every worker to run, which no pool thread may come to (they can all be waiting on this one).
+///
+/// A panic in `f` stops every loop from claiming more, and is resumed here once they have all ended.
+pub fn cores_map(n: usize, grain: usize, limit: usize, f: impl Fn(std::ops::Range<usize>) + Sync) {
+    use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
+    let grain = grain.max(1);
+    let ranges = n.div_ceil(grain);
+    let limit = if limit == 0 { usize::MAX } else { limit };
+    let workers = limit.min(ranges).min(if ranges > 1 { cores_threads() } else { 1 });
+    if workers <= 1 {
+        if n > 0 {
+            for at in (0..n).step_by(grain) {
+                f(at..(at + grain).min(n));
+            }
+        }
+        return;
+    }
+    if !on_a_pool() {
+        return offered(n, grain, workers - 1, &f);
+    }
+    let (next, stop) = (AtomicUsize::new(0), AtomicBool::new(false));
+    let claim = || {
+        // A panic in `f` stops the other loops' claims: its guard drops while the thread unwinds.
+        struct Stop<'a>(&'a AtomicBool);
+        impl Drop for Stop<'_> {
+            fn drop(&mut self) {
+                if std::thread::panicking() {
+                    self.0.store(true, Ordering::Relaxed);
+                }
+            }
+        }
+        let _stop = Stop(&stop);
+        while !stop.load(Ordering::Relaxed) {
+            let at = next.fetch_add(grain, Ordering::Relaxed);
+            if at >= n {
+                return;
+            }
+            f(at..(at + grain).min(n));
+        }
+    };
+    cores_scope(|s| {
+        for _ in 1..workers {
+            s.spawn(|_| claim());
+        }
+        claim();
+    });
+}
+
+/// `cores_map` off a pool: `beside` workers spawned on the machine's cores, each of which claims ranges only if it starts
+/// before the call is closed (once this thread's own loop finds no range left); this thread waits for those that did.
+fn offered(n: usize, grain: usize, beside: usize, f: &(dyn Fn(std::ops::Range<usize>) + Sync)) {
+    use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
+    type Panic = Box<dyn std::any::Any + Send>;
+    struct Offer {
+        next: AtomicUsize,
+        stop: AtomicBool,
+        /// Set once the caller's loop has ended: a worker that starts after it claims nothing, and never reads `f`.
+        closed: AtomicBool,
+        /// The workers in the call now (started before it closed, and not yet ended).
+        active: AtomicUsize,
+        ended: parking_lot::Mutex<Option<Panic>>,
+        bell: parking_lot::Condvar,
+        n: usize,
+        grain: usize,
+        f: *const (dyn Fn(std::ops::Range<usize>) + Sync),
+    }
+    // SAFETY: `f` is `Sync`, and is read only by a worker counted in `active` before the call closed, which the caller
+    // waits for: `f` outlives every read of it.
+    unsafe impl Send for Offer {}
+    unsafe impl Sync for Offer {}
+    impl Offer {
+        fn claim(&self) -> Result<(), Panic> {
+            // SAFETY: as `Offer`'s.
+            let f = unsafe { &*self.f };
+            std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                while !self.stop.load(Ordering::Relaxed) {
+                    let at = self.next.fetch_add(self.grain, Ordering::Relaxed);
+                    if at >= self.n {
+                        return;
+                    }
+                    f(at..(at + self.grain).min(self.n));
+                }
+            }))
+            .inspect_err(|_| self.stop.store(true, Ordering::Relaxed))
+        }
+    }
+    // SAFETY: the lifetime is erased for the workers' `'static` jobs; `Offer`'s comment says why no read outlives it.
+    let f: *const (dyn Fn(std::ops::Range<usize>) + Sync) = unsafe { std::mem::transmute(f) };
+    let offer = std::sync::Arc::new(Offer {
+        next: AtomicUsize::new(0),
+        stop: AtomicBool::new(false),
+        closed: AtomicBool::new(false),
+        active: AtomicUsize::new(0),
+        ended: parking_lot::Mutex::new(None),
+        bell: parking_lot::Condvar::new(),
+        n,
+        grain,
+        f,
+    });
+    let pool = machine::<Cores>();
+    for _ in 0..beside {
+        let o = std::sync::Arc::clone(&offer);
+        pool.pool().spawn(move || {
+            // Counted before `closed` is read, as the caller sets `closed` before it reads the count (both SeqCst):
+            // either the caller sees this worker, or this worker sees the call closed.
+            o.active.fetch_add(1, Ordering::SeqCst);
+            let r = if o.closed.load(Ordering::SeqCst) { Ok(()) } else { o.claim() };
+            let mut ended = o.ended.lock();
+            if let Err(p) = r {
+                ended.get_or_insert(p);
+            }
+            if o.active.fetch_sub(1, Ordering::SeqCst) == 1 {
+                o.bell.notify_all();
+            }
+        });
+    }
+    let mine = offer.claim();
+    offer.closed.store(true, Ordering::SeqCst);
+    let mut ended = offer.ended.lock();
+    while offer.active.load(Ordering::SeqCst) > 0 {
+        offer.bell.wait(&mut ended);
+    }
+    let theirs = ended.take();
+    drop(ended);
+    if let Err(p) = mine {
+        std::panic::resume_unwind(p);
+    }
+    if let Some(p) = theirs {
+        std::panic::resume_unwind(p);
+    }
+}
+
 /// The shared object of the run under way, if one is (for a caller that hands it on).
 pub fn shared_object() -> Option<std::sync::Arc<Shared>> {
     run_own().map(|r| std::sync::Arc::clone(r.shared()))
@@ -1053,6 +1198,79 @@ mod tests {
         let elsewhere = Shared::on(&Machine::new());
         let _other_machine = run(elsewhere);
         assert!(!is_main_thread(), "on a machine no main thread made");
+    }
+
+    /// `cores_map`: each item once, in ranges of its grain, on at most `limit` threads; nested in itself, off a pool
+    /// and on one; its workers in the caller's run; a panic stops the claims and is resumed in the caller.
+    #[test]
+    fn cores_map_runs_each_item_once_within_its_limit() {
+        use std::sync::atomic::{AtomicU32, AtomicUsize, Ordering};
+        #[derive(Default)]
+        struct Mark;
+        let object = Shared::on(&Machine::new());
+        let _run = enter(Some(std::sync::Arc::new(Bare(RunValues::default(), object))));
+        let mark = shared::<Mark>();
+        let n = 10_007;
+        let seen: Vec<AtomicU32> = (0..n).map(|_| AtomicU32::new(0)).collect();
+        let threads = parking_lot::Mutex::new(rustc_hash::FxHashSet::default());
+        let in_run = AtomicUsize::new(0);
+        cores_map(n, 7, 3, |r| {
+            assert!(r.len() <= 7 && r.start % 7 == 0, "a range of the grain: {r:?}");
+            threads.lock().insert(std::thread::current().id());
+            if std::sync::Arc::ptr_eq(&shared::<Mark>(), &mark) {
+                in_run.fetch_add(1, Ordering::Relaxed);
+            }
+            for i in r {
+                seen[i].fetch_add(1, Ordering::Relaxed);
+            }
+        });
+        assert!(seen.iter().all(|s| s.load(Ordering::Relaxed) == 1), "each item once");
+        assert!(threads.lock().len() <= 3, "at most `limit` threads: {}", threads.lock().len());
+        assert_eq!(in_run.into_inner(), n.div_ceil(7), "every range in the caller's run");
+        // Nested, off a pool and inside one (`on_cores`): each inner item once.
+        for on_pool in [false, true] {
+            let inner: Vec<AtomicU32> = (0..64 * 50).map(|_| AtomicU32::new(0)).collect();
+            let go = || cores_map(64, 1, 0, |o| cores_map(50, 4, 0, |r| r.for_each(|i| { inner[o.start * 50 + i].fetch_add(1, Ordering::Relaxed); })));
+            if on_pool { on_cores(go) } else { go() }
+            assert!(inner.iter().all(|s| s.load(Ordering::Relaxed) == 1), "nested: each item once (on a pool: {on_pool})");
+        }
+        // A panic: the other loops claim no more, and it is resumed here.
+        let ran = AtomicUsize::new(0);
+        let got = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            cores_map(1_000_000, 1, 0, |r| {
+                if ran.fetch_add(1, Ordering::Relaxed) == 10 {
+                    panic!("cores_map test: range {r:?}");
+                }
+            })
+        }));
+        assert!(got.is_err(), "the panic resumed in the caller");
+        assert!(ran.into_inner() < 1_000_000, "the claims stopped");
+        // Off a pool with every pool thread busy until the call returns (a device's queue thread whose flushers all
+        // wait on it): the caller runs every range itself, and waits for no worker that never started.
+        let threads = cores_threads();
+        let (started, release) = (std::sync::Arc::new(AtomicUsize::new(0)), std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false)));
+        for _ in 0..threads {
+            let (started, release) = (started.clone(), release.clone());
+            cores_spawn(move || {
+                started.fetch_add(1, Ordering::SeqCst);
+                while !release.load(Ordering::SeqCst) {
+                    std::thread::yield_now();
+                }
+            });
+        }
+        while started.load(Ordering::SeqCst) < threads {
+            std::thread::yield_now();
+        }
+        let alone = AtomicUsize::new(0);
+        cores_map(1_000, 10, 0, |r| {
+            alone.fetch_add(r.len(), Ordering::Relaxed);
+        });
+        release.store(true, Ordering::SeqCst);
+        assert_eq!(alone.into_inner(), 1_000, "every item, with no pool thread free");
+        // Nothing to do, and one range: on this thread alone.
+        cores_map(0, 4, 0, |_| panic!("no range of nothing"));
+        let here = std::thread::current().id();
+        cores_map(3, 4, 0, |r| assert!(r == (0..3) && std::thread::current().id() == here));
     }
 
     /// A run's last handle dropped on a thread that holds no run (a pool thread whose job carried it): what the run

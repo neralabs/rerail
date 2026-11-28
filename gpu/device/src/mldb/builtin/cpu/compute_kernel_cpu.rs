@@ -553,6 +553,10 @@ type Op = Box<dyn FnOnce(&mut Worker) -> Result<(), String> + Send>;
 struct Batch {
     ops: Vec<Op>,
     done: Arc<Done>,
+    /// Its flusher's run (`rerail_context::job_run`), which the queue's thread runs it in: a launch's groups go to that
+    /// run's machine's cores (`rerail_context::cores_map`). None where the flusher holds no run: its launches run on
+    /// the queue's thread alone.
+    run: Option<Arc<dyn rerail_context::RunOwn>>,
 }
 
 #[derive(Default)]
@@ -564,8 +568,6 @@ struct Done {
 /// The root's thread's own: the threads' stacks, kept across launches.
 struct Worker {
     stacks: Option<crate::os::Stacks>,
-    /// Its threads for a Rust launch's groups (`Helpers`), made at its first launch of many.
-    helpers: Option<Helpers>,
     page: usize,
     sched: Vec<u64>,
     /// Its work runs in its flush (`CpuQueueRoot::inline`): a host signal it waits for must have come.
@@ -573,10 +575,6 @@ struct Worker {
 }
 
 impl Worker {
-    fn helpers(&mut self) -> &Helpers {
-        self.helpers.get_or_insert_with(Helpers::new)
-    }
-
     /// Stacks for `n` threads, each `STACK_BYTES` with a guard page below it; their base and stride.
     fn stacks(&mut self, n: usize) -> (*mut u8, usize) {
         let stride = STACK_BYTES + self.page;
@@ -604,7 +602,7 @@ enum Root {
 
 impl Worker {
     fn new() -> Worker {
-        Worker { stacks: None, helpers: None, page: crate::os::page_bytes(), sched: vec![0; SCHED_BYTES / 8], inline: false }
+        Worker { stacks: None, page: crate::os::page_bytes(), sched: vec![0; SCHED_BYTES / 8], inline: false }
     }
 
     /// The ops of a batch in order, the first error stopping them, and the seconds they took.
@@ -636,6 +634,7 @@ impl CpuQueueRoot {
             .spawn(move || {
                 let mut w = Worker::new();
                 for b in rx {
+                    let _run = b.run.map(|r| rerail_context::enter(Some(r)));
                     *b.done.result.lock().unwrap() = Some(w.run(b.ops));
                     b.done.cv.notify_all();
                 }
@@ -730,7 +729,11 @@ impl CpuComputeQueue {
         }
         self.flushes.set(self.flushes.get() + 1);
         match &self.root.0 {
-            Root::Thread(tx) => tx.lock().unwrap().send(Batch { ops, done: done.clone() }).expect("the CPU queue's thread is gone"),
+            Root::Thread(tx) => {
+                // The flusher's run, where it holds one (a run's thread, or a test's): never a read outside any run.
+                let run = rerail_context::starter_object().and_then(|_| rerail_context::job_run());
+                tx.lock().unwrap().send(Batch { ops, done: done.clone(), run }).expect("the CPU queue's thread is gone")
+            }
             Root::Inline(workers) => {
                 let mut w = workers.lock().unwrap().pop().unwrap_or_else(Worker::new);
                 w.inline = true;
@@ -785,158 +788,16 @@ enum Grid {
 /// The groups a Rust launch has at least for the pool's threads to run them (`Run::Host`), and the groups a task of
 /// theirs takes at least.
 const POOL_GROUPS: u64 = 32;
-/// The groups from which an inline flush's launch (`CpuQueueRoot::inline`, the engine's CPU joins) is split across
-/// the engine's pool. Its thread is one of that pool's, beside the other strata's: a smaller launch handed to the pool
-/// wakes its idle threads, which spin before they sleep again, and gains no wall. The data layer's 57 rules over 50
-/// files, every inline launch of 32 groups or more split: 17.3-18.9 s user, 3.9-4.8 s sys; from 4096: 16.7 s, 2.6 s;
-/// none split: 16.3-16.7 s, 2.1 s; the wall the same (7.1-8.7 s against 7.2-7.5 s).
+/// The groups from which an inline flush's launch (`CpuQueueRoot::inline`, the engine's CPU joins) is offered to the
+/// engine's pool (`cores_map`). Its thread is one of that pool's, beside the other strata's: a smaller launch offered
+/// wakes idle threads for little work, and gains no wall. The data layer's 57 rules over 50 files, every inline launch
+/// of 32 groups or more split (rayon's `into_par_iter` then): 17.3-18.9 s user, 3.9-4.8 s sys; from 4096: 16.7 s, 2.6
+/// s; none split: 16.3-16.7 s, 2.1 s; the wall the same (7.1-8.7 s against 7.2-7.5 s). Offered by `cores_map`, `all`
+/// with the join program and the `.rerail` Python analysis on m3 (load 16-36), two runs each: from 32 groups 127.2,
+/// 123.0 s user and 17.2, 21.9 s sys; from 256: 127.8, 115.5 s and 14.3, 18.7 s; from 4096: 110.5, 116.2 s and 12.9,
+/// 15.2 s; never: 112.8, 119.0 s and 12.5, 13.5 s; the wall within the load's noise (29.6-41.0 s).
 const INLINE_POOL_GROUPS: u64 = 4096;
 const POOL_TASK_GROUPS: u64 = 4;
-
-/// Threads that run a Rust launch's groups beside its queue's thread (`Run::Host`, a root's thread's `Worker`):
-/// parked until a launch has tasks for them, one woken a task, parked again once its groups are all handed out. A
-/// pool whose threads spin between jobs spun through a recursive stratum's thousands of launches (the closure's
-/// profile: 12,055 samples of `swtch_pri` against about 3,000 of its kernels').
-struct Helpers {
-    shared: Arc<HelpShared>,
-    threads: Vec<std::thread::JoinHandle<()>>,
-}
-
-struct HelpShared {
-    state: Mutex<HelpState>,
-    wake: Condvar,
-    idle: Condvar,
-}
-
-struct HelpState {
-    /// The launch its threads help with, and its number (a thread takes each one once).
-    job: Option<HelpJob>,
-    seq: u64,
-    /// The threads in the job now: it ends when they are none.
-    active: usize,
-    panic: Option<String>,
-    quit: bool,
-}
-
-#[derive(Clone, Copy)]
-struct HelpJob {
-    /// The launch's group, by number; its groups, and the next one not handed out.
-    run: *const (dyn Fn(u64) + Sync),
-    groups: u64,
-    next: *const AtomicU64,
-}
-
-// SAFETY: the job's closure is `Sync`, and the launch outlives it: `Helpers::run` returns once no thread is in it.
-unsafe impl Send for HelpJob {}
-
-impl HelpJob {
-    /// Its groups' tasks, until none is left to hand out.
-    fn take(&self) {
-        // SAFETY: as `HelpJob`'s: alive while a thread is in the job.
-        let (run, next) = unsafe { (&*self.run, &*self.next) };
-        loop {
-            let i = next.fetch_add(POOL_TASK_GROUPS, Ordering::Relaxed);
-            if i >= self.groups {
-                return;
-            }
-            for g in i..(i + POOL_TASK_GROUPS).min(self.groups) {
-                run(g);
-            }
-        }
-    }
-}
-
-fn panic_text(p: &(dyn std::any::Any + Send)) -> String {
-    p.downcast_ref::<String>().cloned().or_else(|| p.downcast_ref::<&str>().map(|s| s.to_string())).unwrap_or_default()
-}
-
-impl Helpers {
-    /// As many threads as the engine's pool has, less the queue's own.
-    fn new() -> Helpers {
-        let shared = Arc::new(HelpShared { state: Mutex::new(HelpState { job: None, seq: 0, active: 0, panic: None, quit: false }), wake: Condvar::new(), idle: Condvar::new() });
-        let threads = (1..rayon::current_num_threads().max(1))
-            .map(|_| {
-                let sh = Arc::clone(&shared);
-                std::thread::Builder::new()
-                    .name("rerail-cpu-groups".into())
-                    .stack_size(8 << 20)
-                    .spawn(move || Helpers::serve(&sh))
-                    .expect("the CPU queue's group threads")
-            })
-            .collect();
-        Helpers { shared, threads }
-    }
-
-    fn serve(sh: &HelpShared) {
-        let mut seen = 0;
-        let mut s = sh.state.lock().unwrap();
-        loop {
-            if s.quit {
-                return;
-            }
-            match s.job {
-                Some(job) if s.seq != seen => {
-                    seen = s.seq;
-                    s.active += 1;
-                    drop(s);
-                    let r = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| job.take()));
-                    s = sh.state.lock().unwrap();
-                    if let Err(p) = r {
-                        s.panic.get_or_insert_with(|| panic_text(&*p));
-                    }
-                    s.active -= 1;
-                    if s.active == 0 {
-                        sh.idle.notify_all();
-                    }
-                }
-                _ => s = sh.wake.wait(s).unwrap(),
-            }
-        }
-    }
-
-    /// `run` of each of `groups` groups, on this thread and as many of its threads as its tasks keep busy; once
-    /// every group has run. A group's panic is resumed here.
-    fn run(&self, groups: u64, run: &(dyn Fn(u64) + Sync)) {
-        let next = AtomicU64::new(0);
-        // SAFETY: the job is gone and no thread is in it before this returns, so `run` and `next` outlive it.
-        let run: &'static (dyn Fn(u64) + Sync) = unsafe { std::mem::transmute::<&(dyn Fn(u64) + Sync), &'static (dyn Fn(u64) + Sync)>(run) };
-        let job = HelpJob { run, groups, next: &next };
-        {
-            let mut s = self.shared.state.lock().unwrap();
-            s.job = Some(job);
-            s.seq += 1;
-        }
-        let wake = (groups.div_ceil(POOL_TASK_GROUPS) - 1).min(self.threads.len() as u64);
-        for _ in 0..wake {
-            self.shared.wake.notify_one();
-        }
-        let mine = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| job.take()));
-        let theirs = {
-            let mut s = self.shared.state.lock().unwrap();
-            s.job = None;
-            while s.active > 0 {
-                s = self.shared.idle.wait(s).unwrap();
-            }
-            s.panic.take()
-        };
-        if let Err(p) = mine {
-            std::panic::resume_unwind(p);
-        }
-        if let Some(why) = theirs {
-            panic!("{why}");
-        }
-    }
-}
-
-impl Drop for Helpers {
-    fn drop(&mut self) {
-        self.shared.state.lock().unwrap().quit = true;
-        self.shared.wake.notify_all();
-        for t in self.threads.drain(..) {
-            let _ = t.join();
-        }
-    }
-}
 
 /// A Rust launch's arguments (`Run::Host`), read by its groups on the pool's threads: the addresses of the launch's
 /// bound rows and of the shim's two words, which the launch keeps until its last group has run.
@@ -1059,18 +920,13 @@ impl CpuBindContext<'_> {
                     let ran = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
                         // A launch of few groups on this thread: waking the pool's threads for it costs more than its
                         // groups (a recursive stratum's rounds are thousands of launches of a few groups each).
-                        if groups < POOL_GROUPS {
+                        if groups < POOL_GROUPS || (w.inline && groups < INLINE_POOL_GROUPS) {
                             (0..groups).for_each(one);
-                        } else if w.inline && groups < INLINE_POOL_GROUPS {
-                            // On the flushing thread, one of the engine's pool's: the cores are its strata's.
-                            (0..groups).for_each(one);
-                        } else if w.inline {
-                            // A launch of many groups on the flushing thread: the pool's other threads take its tasks
-                            // as they are free.
-                            use rayon::prelude::*;
-                            (0..groups as usize).into_par_iter().with_min_len(POOL_TASK_GROUPS as usize).for_each(|i| one(i as u64));
                         } else {
-                            w.helpers().run(groups, &one);
+                            // Offered to the cores (`cores_map`): the threads free take its groups' tasks as they
+                            // finish theirs, this one too; on the flushing thread (inline), the pool's it is on, else
+                            // its flusher's run's machine's.
+                            rerail_context::cores_map(groups as usize, POOL_TASK_GROUPS as usize, 0, |r| r.for_each(|i| one(i as u64)));
                         }
                     }));
                     return ran.map_err(|p| {
