@@ -2853,6 +2853,64 @@ mod pack_split_tests {
         found
     }
 
+    /// Option C (decision 0727): a relation each of whose rows is one file's, but which names its document in no
+    /// column, is the author's to place, and the split's refusal says so first. The W benchmark's `def_property_at(id,
+    /// s)` over `inventory`'s nodes, reduced from its program: the deferred join's pass rewrote it before `locate`
+    /// could place it, and its factor, its pushed part and the exports it reads were refused as nodes in the cross part,
+    /// none of them a relation the author wrote. With its document column (`def_property_at(id, d, s)`), it runs.
+    #[test]
+    fn a_relation_of_one_files_rows_with_no_document_is_named_for_its_author() {
+        let program = r#".decl dl_doc(d: number, path: symbol)
+dl_doc(d, p) :- doc(d, p, _).
+.decl start(n: node, s: number)
+.decl dl_path_module(d: number, m: symbol)
+dl_path_module(d, m) :- dl_doc(d, p), s = @rx_replace(p, "/__init__\\.py$|\\.py$", ""), m = @replace(s, "/", ".").
+.decl finding(category: symbol, symbol: symbol, n: node)
+.output finding
+.decl raw_function(f: node, name: symbol)
+.decl raw_function_class(f: node, class: symbol)
+.decl raw_class(c: node, name: symbol)
+raw_class(c, name) :- ast(d, c, {"language": "python", "syntax": "valid", "rule": {"all": [{"kind": "class_definition"}, {"has": {"pattern": "$NAME", "stopBy": "neighbor", "field": "name"}}, {"has": {"pattern": "$BODY", "stopBy": "neighbor", "field": "body"}}]}}, NAME: n), text(n, name).
+.decl inventory(id: symbol, x: node, d: number, name: symbol, kind: symbol, module: symbol, fqname: symbol)
+inventory(id, f, d, name, "method", m, fq) :- raw_function(f, name), raw_function_class(f, c), docof(f, d), dl_path_module(d, m),
+    q = @dot(c, name), id = @concat(m, "::", q), fq = @dot(m, q).
+inventory(id, c, d, name, "class", m, fq) :- raw_class(c, name), docof(c, d), dl_path_module(d, m),
+    id = @concat(m, "::", name), fq = @dot(m, name).
+.decl def_at(id: symbol, d: number, s: number, x: node)
+.decl def_property_at(id: symbol, s: number)
+def_property_at(id, s) :- inventory(id, x, _, _, _, _, _), start(x, s), property_like(x).
+.decl declarations(id: symbol, d: number, name: symbol, kind: symbol, module: symbol, fqname: symbol, s: number)
+.decl property_like(x: node)
+.decl dead_traits(id: symbol, d: number, name: symbol, kind: symbol, module: symbol, base_name: symbol, s: number)
+.decl property(id: symbol)
+property(id) :- declarations(id, d, _, _, _, _, s), def_property_at(id, s).
+.decl kept(id: symbol)
+kept(id) :- dead_traits(id, _, _, k, _, _, _), k != "class", property(id).
+.decl high_confidence(id: symbol, d: number, name: symbol, kind: symbol, s: number)
+high_confidence(id, d, n, k, s) :- dead_traits(id, d, n, k, _, _, s), !kept(id).
+.decl outside_browser(d: number)
+finding("high_confidence_functions", id, x) :- high_confidence(id, d, _, k, s), k != "class", outside_browser(d), def_at(id, d, s, x).
+"#;
+        let run = |text: &str| {
+            let dir = tempfile::tempdir().unwrap();
+            let root = dir.path().join("root");
+            std::fs::create_dir_all(&root).unwrap();
+            std::fs::write(root.join("a.py"), "class A:\n    @property\n    def f(self):\n        return 1\n").unwrap();
+            let rules = dir.path().join("rules");
+            std::fs::create_dir_all(&rules).unwrap();
+            std::fs::write(rules.join("idc.rerail"), text).unwrap();
+            super::logic_command(&[rules.display().to_string(), root.display().to_string(), dir.path().join("out").display().to_string()])
+        };
+        let refused = run(program).unwrap_err();
+        let first = refused.lines().nth(1).unwrap_or("");
+        assert!(first.starts_with("  def_property_at: one file's rows but no document: add its document column"), "{refused}");
+        let placed = program
+            .replace(".decl def_property_at(id: symbol, s: number)", ".decl def_property_at(id: symbol, d: number, s: number)")
+            .replace("def_property_at(id, s) :- inventory(id, x, _, _, _, _, _)", "def_property_at(id, d, s) :- inventory(id, x, d, _, _, _, _)")
+            .replace("declarations(id, d, _, _, _, _, s), def_property_at(id, s)", "declarations(id, d, _, _, _, _, s), def_property_at(id, d, s)");
+        assert!(!run(&placed).is_err_and(|e| e.contains("def_property_at")), "placed by its document");
+    }
+
     /// A finding no file places (a gate at a written-out path, whose body reads no file) does not take a program's
     /// findings at nodes to the cross part (decision 0727, `file_local::Locate`): `violation`'s rules that name their
     /// document are located (`violation_at`) in their files, and the gate's stays with `violation`, moved to the cross

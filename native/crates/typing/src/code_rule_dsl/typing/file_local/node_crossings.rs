@@ -419,6 +419,69 @@ pub fn node_crossings(program: &Version, f: &Fields<'_>, cross: &Version, local:
     found.into_iter().map(|(rel, why)| NodeCrossing { source: super::lowering_source_in(program, &rel, &readers), rel, why, under: None, chain: Vec::new() }).collect()
 }
 
+/// Option C (decision 0727): a relation as written that holds no node and names no document, but whose rules read
+/// nodes, kept in the cross-file part by the lowering with what it made for it (a deferred join's factor, its pushed
+/// parts) and the per-file relations it reads there (the W benchmark's `def_property_at(id, s)` over `inventory`'s
+/// nodes). Its rows are each one file's, and no column says which: `locate` cannot place them. The author's to fix,
+/// named first, with the wording the user chose; the crossings it brought stay listed after it. Not a relation
+/// declared `cross_file` (meant to span files), an output, one holding a node (that is its own crossing), or one the
+/// split's `causes` say is cross-file for a reason of its own.
+pub fn unplaced_sources(program: &std::sync::Arc<Version>, cross: &Version, local: &BTreeSet<String>, causes: &BTreeMap<String, String>, crossings: &mut Vec<NodeCrossing>) -> Result<(), String> {
+    if crossings.is_empty() {
+        return Ok(());
+    }
+    let placed = crate::code_rule_dsl::logic::plan::body::Placed::whole(std::sync::Arc::clone(program));
+    let f = placed.fields().map_err(|e| e.to_string())?;
+    let readers = readers_of(program);
+    let readers = |rel: &str| readers.get(rel).map_or_else(Vec::new, |hs| hs.iter().map(|h| (*h).to_owned()).collect());
+    let source = |rel: &str| super::lowering_source_in(program, rel, &readers).unwrap_or_else(|| rel.to_owned());
+    // Each crossing's relation as written: a helper's source, and for a per-file relation handed on, each source
+    // relation whose cross-part rule reads it.
+    let mut sources: BTreeSet<String> = BTreeSet::new();
+    for c in crossings.iter() {
+        if let Some(s) = &c.source {
+            sources.insert(s.clone());
+        } else if local.contains(&c.rel) {
+            for r in cross.rules().filter(|r| r.body().filter_map(|l| l.atom()).any(|a| cross.rel_name(a.rel()) == c.rel)) {
+                sources.insert(source(cross.rel_name(r.head().rel())));
+            }
+        }
+    }
+    let holds_node = |rel: &str| f.columns(rel).is_some_and(|cols| cols.iter().any(|(_, t)| matches!(*t, "node" | "line" | "match" | "token" | "place")));
+    let meant = |rel: &str| f.qualified(rel, super::CROSS_FILE) && !f.qualified(rel, super::MOVED_CROSS_FILE);
+    let mut first: Vec<NodeCrossing> = Vec::new();
+    for s in sources {
+        let brought: Vec<String> = crossings
+            .iter()
+            .filter(|c| c.rel != s && (c.source.as_deref() == Some(s.as_str()) || c.why.contains(&format!("(in {s} <-")) || c.why.contains(&format!(", {s} <-"))))
+            .map(|c| c.rel.clone())
+            .collect();
+        // Cross-file for a reason of its own (a join of two files' rows, `first_of(s) :- call(n, s), call(m, s), n !=
+        // m`): its rows are not one file's, and a document column would not place them.
+        let own_cause = causes.get(&s).is_some_and(|c| !c.starts_with("reads cross-file "));
+        if program.rel(&s).is_none() || !f.derives(&s) || local.contains(&s) || f.is_output(&s) || holds_node(&s) || meant(&s) || own_cause || brought.is_empty() {
+            continue;
+        }
+        // Its own entry, where the check found its rule reading a node (`reads a node: its rule reads …`), says
+        // which: kept after the wording.
+        let own = crossings.iter().position(|c| c.rel == s).map(|i| crossings.remove(i).why);
+        let read = own.map_or_else(String::new, |w| format!("; it {}", w.lines().next().unwrap_or("")));
+        first.push(NodeCrossing {
+            why: format!(
+                "one file's rows but no document: add its document column (decision 0727). Its rules read nodes, which the lowering kept with it in the cross-file part ({}){read}; with a document column, `locate` makes each row in its file",
+                brought.join(", ")
+            ),
+            rel: unprefixed(&s),
+            source: None,
+            under: None,
+            chain: Vec::new(),
+        });
+    }
+    first.append(crossings);
+    *crossings = first;
+    Ok(())
+}
+
 /// Column `c` of `rel` by its declared name, else its number.
 fn column_name(f: &Fields<'_>, rel: &str, c: usize) -> String {
     f.columns(rel).and_then(|cols| cols.get(c).map(|(n, _)| format!("{rel}.{n}"))).unwrap_or_else(|| format!("{rel}'s column {c}"))

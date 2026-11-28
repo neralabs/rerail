@@ -441,6 +441,7 @@ pub fn programs_of(version: std::sync::Arc<crate::code_rule_dsl::logic::program_
     programs.crossings = split.crossings.clone();
     programs.moved_unions = split.moved_unions.clone();
     crossings_under(&programs.program, &mut programs.nodes, &programs.causes);
+    node_crossings::unplaced_sources(&programs.program, &programs.versions.cross, &programs.file_local, &programs.causes, &mut programs.nodes)?;
     nodes_checked(&programs.nodes)?;
     Ok(programs)
 }
