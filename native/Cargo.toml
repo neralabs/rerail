@@ -112,7 +112,7 @@ rerail-clif = { path = "crates/clif" }
 rerail-rr-parser = { path = "crates/rr_parser" }
 rerail-prof = { path = "crates/prof" }
 cranelift-frontend = "=0.125.4"
-cranelift-module = "=0.125.4"
+cranelift-module = "=0.138.0"
 # The hasher of in-process maps keyed by names, nodes and terms (scope tables, a batch's facts).
 foldhash = "=0.2.0"
 hashbrown = { version = "=0.16.1", default-features = false }

@@ -15,7 +15,7 @@ ir = ["dep:cranelift-codegen", "dep:cranelift-frontend", "dep:cranelift-module",
 [dependencies]
 cranelift-codegen = { version = "=0.125.4", optional = true }
 cranelift-frontend = { version = "=0.125.4", optional = true }
-cranelift-module = { version = "=0.125.4", optional = true }
+cranelift-module = { version = "=0.138.0", optional = true }
 # The layout a relation's reads follow (`relation`, decision 0325).
 rerail-blocks = { path = "../blocks", optional = true }
 
