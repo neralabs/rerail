@@ -632,15 +632,7 @@ impl RelationW for Relation {
                 (*ix).state = DEAD;
                 return;
             }
-            let (offs, rows) = (4 * (*ix).offs.len(), index_rows_bytes((*ix).rows.len()));
-            let (o, r) = (block.offset_of((*ix).offs.as_ptr()), block.offset_of((*ix).rows.as_ptr()));
-            if self.flags.load(Acquire) & REWRITTEN != 0 {
-                block.free_chunk_resident(o, offs);
-                block.free_chunk_resident(r, rows);
-            } else {
-                block.free_chunk_fit_resident(o, block.fit_kept(offs));
-                block.free_chunk_fit_resident(r, block.fit_kept(rows));
-            }
+            give_back_spans(block, self.flags.load(Acquire) & REWRITTEN != 0, ((*ix).offs.as_ptr(), (*ix).offs.len()), ((*ix).rows.as_ptr(), (*ix).rows.len()));
             (*ix).offs.clear();
             (*ix).rows.clear();
             (*ix).marks.clear();
@@ -945,19 +937,28 @@ impl RelationW for Relation {
                 (o, r)
             } else if self.flags.load(Acquire) & REWRITTEN != 0 {
                 let o = block.try_alloc_chunk(ob, 8)?;
+                if n == 0 {
+                    // No rows, no room for them: a span of none points nowhere (`RelSpan::set_bits`), and gives none back.
+                    (o, o)
+                } else {
                 let Some(r) = block.try_alloc_chunk(rb, 8) else {
                     block.free_chunk(o, ob);
                     return None;
                 };
                 (o, r)
+                }
             } else {
                 let (o, _) = block.try_alloc_chunk_fit_zeroed(ob, 8)?;
+                if n == 0 {
+                    (o, o)
+                } else {
                 // Its rows and marks unzeroed, as a reused room's (above).
                 let Some((r, _)) = block.try_alloc_chunk_fit(rb, 8) else {
                     block.free_chunk_fit(o, block.fit_kept(ob));
                     return None;
                 };
                 (o, r)
+                }
             };
             let (offs, rows): (*mut u32, *mut u32) = (block.ptr(offs_at), block.ptr(rows_at));
             let ix = std::ptr::from_ref(&self.indexes.as_slice()[i]).cast_mut();
@@ -984,17 +985,17 @@ impl RelationW for Relation {
         let ix = std::ptr::from_ref(&self.indexes.as_slice()[index]).cast_mut();
         // SAFETY: the caller's: the entry is ours, and no reader runs.
         unsafe {
-            let (old, len) = (block.offset_of((*ix).rows.as_ptr()), index_rows_bytes((*ix).rows.len()));
-            if (n as usize) <= (*ix).rows.len() {
+            let (old, len) = (room_at(block, (*ix).rows.as_ptr()), index_rows_bytes((*ix).rows.len()));
+            if let Some(old) = old.filter(|_| (n as usize) <= (*ix).rows.len()) {
                 return Some(old);
             }
             let rb = index_rows_bytes(n as usize);
             let rewritten = self.flags.load(Acquire) & REWRITTEN != 0;
             let r = if rewritten { block.try_alloc_chunk(rb, 8)? } else { block.try_alloc_chunk_fit_zeroed(rb, 8)?.0 };
-            if rewritten {
-                block.free_chunk_resident(old, len);
-            } else {
-                block.free_chunk_fit_resident(old, block.fit_kept(len));
+            match old {
+                Some(old) if rewritten => block.free_chunk_resident(old, len),
+                Some(old) => block.free_chunk_fit_resident(old, block.fit_kept(len)),
+                None => {}
             }
             block.span(&raw const (*ix).rows, block.ptr::<u32>(r), n as usize);
             block.span(&raw const (*ix).marks, block.ptr::<u32>(r).wrapping_add(n as usize), n as usize);
@@ -1069,21 +1070,31 @@ impl RelationW for Relation {
                 }
                 continue;
             }
-            let (offs, rows) = (4 * ix.offs.len(), index_rows_bytes(ix.rows.len()));
-            let (o, r) = (block.offset_of(ix.offs.as_ptr()), block.offset_of(ix.rows.as_ptr()));
             // Left resident, as an index's room was before it went back (a few bytes a row; the next index takes it).
-            if self.flags.load(Acquire) & REWRITTEN != 0 {
-                block.free_chunk_resident(o, offs);
-                block.free_chunk_resident(r, rows);
-            } else {
-                block.free_chunk_fit_resident(o, block.fit_kept(offs));
-                block.free_chunk_fit_resident(r, block.fit_kept(rows));
-            }
+            give_back_spans(block, self.flags.load(Acquire) & REWRITTEN != 0, (ix.offs.as_ptr(), ix.offs.len()), (ix.rows.as_ptr(), ix.rows.len()));
         }
         self.nindex.store(0, Release);
     }
 }
 
+
+/// Where `p` lies in `block`, or none: a span of no items points nowhere (`RelSpan::set_bits`), and holds no room.
+fn room_at<T>(block: &Block, p: *const T) -> Option<usize> {
+    block.holds(p).then(|| block.offset_of(p))
+}
+
+/// A hashed index's buckets and rows given back to `block`, each that holds room (an index of no rows has no rows
+/// room), resident: the next index takes it.
+fn give_back_spans(block: &Block, rewritten: bool, offs: (*const u32, usize), rows: (*const u32, usize)) {
+    let spans = [(room_at(block, offs.0), 4 * offs.1), (room_at(block, rows.0), index_rows_bytes(rows.1))];
+    for (at, bytes) in spans {
+        match at {
+            Some(at) if rewritten => block.free_chunk_resident(at, bytes),
+            Some(at) => block.free_chunk_fit_resident(at, block.fit_kept(bytes)),
+            None => {}
+        }
+    }
+}
 
 /// A writer of one open relation: claims rows, writes them, kills rows. `Send`: one per thread or morsel.
 pub struct RelW<'b> {
@@ -2139,6 +2150,37 @@ mod tests {
         let free = block.free_bytes();
         unsafe { rel.release(&block) };
         assert!(block.free_bytes() >= free + 4 * n as usize + 16 * n as usize, "rows, index and directory given back");
+    }
+
+    /// An index of an empty relation holds buckets and no rows room: its rows span points nowhere (`RelSpan::set_bits`,
+    /// a span of no items). Forgotten, given back and released, it gives back its buckets and reads no address from
+    /// the empty span (`offset_of` past the block, which panicked), with and without a rewritten relation's chunks; one
+    /// made again takes the same room.
+    #[test]
+    fn an_index_of_no_rows_holds_no_rows_room_and_goes_back_cleanly() {
+        for rewritten in [false, true] {
+            let block = Block::anon(kind::FACTS, 16 << 20).with_free_list();
+            let spec = Spec { widths: vec![8, 8], sort: None, indexes: Vec::new(), min_log: crate::rows::MIN_LOG };
+            let rel = Relation::try_create(&block, &spec, None).unwrap();
+            if rewritten {
+                rel.rewritten();
+            }
+            let index = |r: &Relation| unsafe {
+                let room = r.try_reserve_index(&block, &[0], 0).expect("room");
+                r.build_index(&room);
+                r.index_built(&room);
+            };
+            index(rel);
+            let i = rel.find_index(&[0], 0).expect("built");
+            assert!(rel.group(i, crate::mix(crate::SEED, 5)).is_empty(), "no rows in any group");
+            let used = block.used();
+            unsafe { rel.forget_indexes(&block) };
+            index(rel);
+            assert_eq!(block.used(), used, "{rewritten}: made again in the buckets the last gave back");
+            let room = unsafe { rel.try_reserve_index(&block, &[1], 0) }.expect("room");
+            unsafe { rel.give_back_index(&block, &room) };
+            unsafe { rel.release(&block) };
+        }
     }
 
     /// Rows as a sorted set (each once), to compare sets.

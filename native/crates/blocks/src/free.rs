@@ -124,19 +124,20 @@ mod tests {
     }
 
     /// A block keeping pages below a size (`keeping_pages_below`, a thread's large room): a chunk freed under it keeps
-    /// its pages for the next; one at or past it gives them back, as every block's does.
+    /// its pages for the next; one at or past it gives them back, as every block's does: from `ledger::GIVE_MIN`
+    /// merged (t57 §8), so the big chunk is that size.
     #[cfg(target_vendor = "apple")]
     #[test]
     fn a_chunk_under_the_resident_size_keeps_its_pages() {
         let b = block().keeping_pages_below(4 * PAGE);
         let small = b.try_alloc_chunk(PAGE, 64).unwrap();
-        let big = b.try_alloc_chunk(8 * PAGE, 64).unwrap();
+        let big = b.try_alloc_chunk(crate::ledger::GIVE_MIN, 64).unwrap();
         drain(&b);
         unsafe { std::ptr::write_bytes(b.ptr::<u8>(small), 0xab, PAGE) };
-        unsafe { std::ptr::write_bytes(b.ptr::<u8>(big), 0xab, 8 * PAGE) };
+        unsafe { std::ptr::write_bytes(b.ptr::<u8>(big), 0xab, crate::ledger::GIVE_MIN) };
         assert_eq!(b.free_chunk(small, PAGE), 0, "nothing given to the OS");
         assert!(crate::mem::tests::modified(b.ptr::<u8>(small)), "its page kept");
-        assert!(b.free_chunk(big, 8 * PAGE) > 0, "a chunk past the size gives its pages back");
+        assert!(b.free_chunk(big, crate::ledger::GIVE_MIN) > 0, "a chunk past the size gives its pages back");
         assert!(!crate::mem::tests::modified(b.ptr::<u8>(big)));
         assert_eq!(b.try_alloc_chunk(PAGE, 64), Some(small), "the kept page taken again");
     }
