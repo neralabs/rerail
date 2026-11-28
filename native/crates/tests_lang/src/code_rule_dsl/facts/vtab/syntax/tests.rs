@@ -4333,3 +4333,66 @@ fn a_node_views_tests_of_a_chunk_are_its_probes() {
     assert!(tried > n, "{tried}");
     assert!(!node.holds_each(2, &ids[..4], 1, None, &mut ProbeCursor::default(), &mut [0; 4]), "by a column not its own: refused");
 }
+
+/// How far the numbering's two point reads walk over real documents (every Python file under `WALK_DIRS`,
+/// `:`-separated): for each node and token number, the groups `select` steps past its sample's (`select_walk`), and for
+/// each node's low the `by_slot` entries `number_of` steps over (`number_of_steps`, 9 for a bisection). Each number
+/// once: the walks are the layout's. A measurement.
+#[test]
+#[ignore]
+fn how_far_the_numberings_point_reads_walk() {
+    let dirs = std::env::var("WALK_DIRS").expect("WALK_DIRS");
+    let mut files: Vec<PathBuf> = Vec::new();
+    for dir in dirs.split(':') {
+        let mut stack = vec![PathBuf::from(dir)];
+        while let Some(d) = stack.pop() {
+            let Ok(rd) = std::fs::read_dir(&d) else { continue };
+            for e in rd.flatten() {
+                let p = e.path();
+                if p.is_dir() {
+                    stack.push(p);
+                } else if p.extension().is_some_and(|x| x == "py") {
+                    files.push(p);
+                }
+            }
+        }
+    }
+    files.sort();
+    assert!(!files.is_empty(), "no Python file under {dirs}");
+    let (mut walks, mut steps, mut misses) = ([[0u64; 10]; 2], [0u64; 10], [0u64; 10]);
+    let (mut docs, mut positions) = (0usize, 0u64);
+    for path in &files {
+        let Ok(src) = std::fs::read_to_string(path) else { continue };
+        let Ok(file) = FileInput::new(path.display().to_string(), "python".to_owned(), Arc::new(src.into()), None, None, "core") else { continue };
+        let Ok(Built::Facts(facts)) = core::build(&file) else { continue };
+        let facts = Arc::new(facts);
+        let dialect = Dialect::new(core::facts_tag(&facts)).unwrap();
+        let p = Projected::new(1, Arc::clone(&facts), Some(&dialect), Shape::Core, false, None);
+        let d = p.ranks().numbering();
+        docs += 1;
+        positions += u64::from(d.groups.len as u32) * 64;
+        // SAFETY: the projection's live descriptor; every number below its item's count.
+        unsafe {
+            for item in 0..2u32 {
+                for r in 0..d.count[item as usize] {
+                    walks[item as usize][(d.select_walk(item, r) as usize).min(9)] += 1;
+                }
+            }
+            for k in 0..d.count[0] {
+                let low = d.low_of(0, k);
+                if low != rerail_clif::ids::NONE {
+                    steps[d.number_of_steps(low) as usize] += 1;
+                    let miss = d.number_of_miss(low).unsigned_abs();
+                    misses[[0u64, 4, 8, 16, 32, 64, 128, 256, 512].iter().position(|&b| miss <= b).unwrap_or(9)] += 1;
+                }
+            }
+        }
+    }
+    let share = |h: &[u64; 10]| { let t: u64 = h.iter().sum(); h.iter().map(|&c| format!("{:.1}%", 100.0 * c as f64 / t.max(1) as f64)).collect::<Vec<_>>().join(" ") };
+    let mean = |h: &[u64; 10]| { let t: u64 = h.iter().sum(); h.iter().enumerate().map(|(i, &c)| i as f64 * c as f64).sum::<f64>() / t.max(1) as f64 };
+    eprintln!("{docs} documents, {positions} tape positions; nodes {}, tokens {}", walks[0].iter().sum::<u64>(), walks[1].iter().sum::<u64>());
+    eprintln!("select's groups past the sample's, 0..=8 and 9+ (nodes):  {} (mean {:.2})", share(&walks[0]), mean(&walks[0]));
+    eprintln!("select's groups past the sample's, 0..=8 and 9+ (tokens): {} (mean {:.2})", share(&walks[1]), mean(&walks[1]));
+    eprintln!("number_of's by_slot steps, 0..=8 and 9 a bisection:      {} (mean {:.2})", share(&steps), mean(&steps));
+    eprintln!("number_of's guess off by at most 0, 4, 8, 16, 32, 64, 128, 256, 512, more: {}", share(&misses));
+}

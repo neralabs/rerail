@@ -251,6 +251,13 @@ impl Numbering {
         }
         // SAFETY: the caller's; an item's sample of every `SAMPLE`th number, and `r` a number.
         let mut g = unsafe { Self::u32_at(&self.samples[item as usize], r >> 6) };
+        // A node's number lies in its sample's group or the next, about half each (20 M node numbers of 8,890 Python
+        // files: 49.9% and 49.9%, 0.2% further): that step taken without a branch, so the loop's first test holds.
+        // As a branch, its exit mispredicted half the time (half of `select`'s samples, with the in-byte loop gone).
+        if g + 1 < self.groups.len as u32 {
+            // SAFETY: the caller's; `g + 1` a group.
+            g += u32::from(unsafe { self.before(g + 1, item) } <= r);
+        }
         loop {
             // SAFETY: the caller's; number `r` lies in a group from its sample's on.
             let (m, before) = unsafe { (self.group(g)[item as usize], self.before(g, item)) };
@@ -260,6 +267,63 @@ impl Numbering {
             }
             g += 1;
         }
+    }
+
+    /// The groups `select(item, r)` steps past its sample's to reach number `r` (a measurement's read: the walk's length
+    /// is the layout's, not the caller's).
+    ///
+    /// # Safety
+    /// As every read's; `r` below the item's count.
+    #[cfg(feature = "test-hooks")]
+    pub unsafe fn select_walk(&self, item: u32, r: u32) -> u32 {
+        // SAFETY: the caller's.
+        unsafe {
+            let g0 = Self::u32_at(&self.samples[item as usize], r >> 6);
+            let mut g = g0;
+            while r.wrapping_sub(self.before(g, item)) >= self.group(g)[item as usize].count_ones() {
+                g += 1;
+            }
+            g - g0
+        }
+    }
+
+    /// How far `number_of(low)`'s entry lies from its guess, in entries (signed: past it positive), for a low whose
+    /// slot has an entry (a measurement's read).
+    ///
+    /// # Safety
+    /// As every read's.
+    #[cfg(feature = "test-hooks")]
+    pub unsafe fn number_of_miss(&self, low: u32) -> i64 {
+        let slot = low >> INDEX_BITS;
+        // SAFETY: the caller's.
+        let by_slot = unsafe { Self::of::<[u32; 3]>(&self.by_slot) };
+        let n = by_slot.len() as u32;
+        let guess = (((u64::from(slot) * u64::from(n)) >> SLOT_BITS) as u32).min(n.saturating_sub(1));
+        let at = bisect(0, n, |i| by_slot[i as usize][0] < slot);
+        i64::from(at) - i64::from(guess)
+    }
+
+    /// The `by_slot` entries `number_of(low)` steps over from its guess, `STEPS + 1` where it bisects instead (a
+    /// measurement's read).
+    ///
+    /// # Safety
+    /// As every read's.
+    #[cfg(feature = "test-hooks")]
+    pub unsafe fn number_of_steps(&self, low: u32) -> u32 {
+        const STEPS: u32 = 8;
+        let slot = low >> INDEX_BITS;
+        // SAFETY: the caller's.
+        let by_slot = unsafe { Self::of::<[u32; 3]>(&self.by_slot) };
+        let n = by_slot.len() as u32;
+        let mut at = (((u64::from(slot) * u64::from(n)) >> SLOT_BITS) as u32).min(n.saturating_sub(1));
+        let mut steps = 0;
+        while at < n && steps < STEPS && by_slot[at as usize][0] < slot {
+            (at, steps) = (at + 1, steps + 1);
+        }
+        while at != 0 && steps < STEPS && by_slot[at as usize - 1][0] >= slot {
+            (at, steps) = (at - 1, steps + 1);
+        }
+        if steps == STEPS { STEPS + 1 } else { steps }
     }
 
     /// The innermost granule holding `item` number `k` (0 or 1), and the last granule starting at or before it, as
@@ -400,30 +464,29 @@ impl Numbering {
 
     /// The item whose id's low 32 bits are `low`, as `(item, number)` (`num_number_of`): the slot's entry, then its
     /// index among the granule's nodes or tokens. The slots are hashes, about evenly spread: the entry is near
-    /// `slot`'s share of them, a few steps from a guess there; a run of clashes past `STEPS` is bisected.
+    /// `slot`'s share of them, found among the entries about a guess there; one further off is bisected.
     ///
     /// # Safety
     /// As every read's.
     #[inline]
     pub unsafe fn number_of(&self, low: u32) -> Option<(u32, u32)> {
-        const STEPS: u32 = 8;
         let slot = low >> INDEX_BITS;
         // SAFETY: the caller's.
         let (by_slot, nodes, tokens) = unsafe { (Self::of::<[u32; 3]>(&self.by_slot), Self::of::<u32>(&self.nodes), Self::of::<u32>(&self.tokens)) };
         let n = by_slot.len() as u32;
         // The guess: `slot`'s share of the entries, the last one at most.
-        let mut at = (((u64::from(slot) * u64::from(n)) >> SLOT_BITS) as u32).min(n.saturating_sub(1));
-        // Forward while the entry is below the slot, then back while the one before is not, `STEPS` in all.
-        let mut steps = 0;
-        while at < n && steps < STEPS && by_slot[at as usize][0] < slot {
-            (at, steps) = (at + 1, steps + 1);
-        }
-        while at != 0 && steps < STEPS && by_slot[at as usize - 1][0] >= slot {
-            (at, steps) = (at - 1, steps + 1);
-        }
-        if steps == STEPS {
-            at = bisect(0, n, |i| by_slot[i as usize][0] < slot);
-        }
+        let guess = (((u64::from(slot) * u64::from(n)) >> SLOT_BITS) as u32).min(n.saturating_sub(1));
+        // The first entry at or past the slot, in the `WINDOW` entries about the guess: the entries below the slot
+        // there counted, no branch on them. Over 8,890 Python files the entry lay within 16 of the guess for 97% of
+        // the nodes' lows (12% on it, 58% within 4); stepped to it one entry at a time, the steps' exit mispredicted (a
+        // mean of 3.45 steps, and 15% past eight bisected the whole table). Where it lies outside the window (the
+        // entries either side of it say so), the table is bisected.
+        const WINDOW: u32 = 32;
+        let lo = guess.saturating_sub(WINDOW / 2).min(n.saturating_sub(WINDOW));
+        let hi = (lo + WINDOW).min(n);
+        let below = by_slot[lo as usize..hi as usize].iter().fold(0u32, |c, e| c + u32::from(e[0] < slot));
+        let inside = (lo == 0 || by_slot[lo as usize - 1][0] < slot) && (hi == n || by_slot[hi as usize][0] >= slot);
+        let at = if inside { lo + below } else { bisect(0, n, |i| by_slot[i as usize][0] < slot) };
         let &[s, g, c] = by_slot.get(at as usize)?;
         if s != slot {
             return None;
