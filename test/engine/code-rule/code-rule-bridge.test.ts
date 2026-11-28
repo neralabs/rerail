@@ -25,6 +25,7 @@ import {
   undoTextEdits,
   unreadAfter,
 } from "../../../src/engine/code-rule/code-rule-bridge.js";
+import { NamedWrites } from "../../../src/engine/code-rule/attribution/named-writes.js";
 import { type CallPlace, MAX_FINISHED_CALLS, ToolCallWindows } from "../../../src/engine/code-rule/tool-call-windows.js";
 import { claudeCodeReportedPreimage, type ReportedPreimage } from "../../../src/engine/code-rule/tool-result/reported-preimage.js";
 import type { CodeRuleEditBatch, CodeRuleAuditor, CodeRuleResponse } from "../../../src/engine/code-rule/code-rule.js";
@@ -7947,9 +7948,10 @@ describe("CodeRuleBridge and another session's writes", () => {
   /** Two sessions open on `root` in this process, sharing its observations as the runtime does, with their baselines taken. */
   async function twoSessions(root: string) {
     const observations: SourceObservationCache = new Map();
+    const namedWrites = new NamedWrites();
     const open = async (sessionId: string) => {
       const auditGeneratedEdits = vi.fn(async (_sessionId: string, batch: CodeRuleEditBatch) => response(batch));
-      const bridge = createBridge(root, auditor(auditGeneratedEdits), { observations });
+      const bridge = createBridge(root, auditor(auditGeneratedEdits), { observations, namedWrites });
       await bridge.openWorkspace(sessionId);
       await bridge.checkpoint("turn");
       return { bridge, auditGeneratedEdits };
@@ -7988,6 +7990,62 @@ describe("CodeRuleBridge and another session's writes", () => {
     await a.bridge.finish("shell-a");
     expect(b.auditGeneratedEdits).not.toHaveBeenCalled();
     expect(a.auditGeneratedEdits.mock.calls.map(([, batch]) => batch.edits)).toEqual([[mine]]);
+  });
+
+  /** Session `a`'s edit tool writes `src/a.py` while session `b`'s command runs; `b`'s command then ends. */
+  async function writeDuringCommand(root: string, a: CodeRuleBridge, b: CodeRuleBridge, { failed = false } = {}) {
+    await b.begin("shell-b", "shell", { command: "./long.sh" });
+    await a.begin("write-a", "write", { path: "src/a.py" });
+    await appendFile(join(root, "src", "a.py"), "mine\n");
+    await a.finish("write-a", failed);
+    await awaitClockPastNow();
+    return await b.finish("shell-b");
+  }
+  const written = (calls: ReadonlyArray<readonly [string, CodeRuleEditBatch]>) => calls.flatMap(([, batch]) => batch.edits.map(edit => edit.path));
+
+  it("does not take a write another session's edit tool named for its own, though its command ran as it was made", async () => {
+    const root = await twoBranches();
+    const [a, b] = await twoSessions(root);
+    await expect(writeDuringCommand(root, a.bridge, b.bridge)).resolves.toEqual([]);
+    await b.bridge.checkpoint("turn");
+    expect(written(a.auditGeneratedEdits.mock.calls)).toEqual(["src/a.py"]);
+    expect(b.auditGeneratedEdits).not.toHaveBeenCalled();
+  });
+
+  it("does not take it either once the writer's own walk has read past the edit", async () => {
+    const root = await twoBranches();
+    const [a, b] = await twoSessions(root);
+    await b.bridge.begin("shell-b", "shell", { command: "./long.sh" });
+    await a.bridge.begin("write-a", "write", { path: "src/a.py" });
+    await appendFile(join(root, "src", "a.py"), "mine\n");
+    await a.bridge.finish("write-a");
+    await awaitClockPastNow();
+    // The writer's walk answers for its calls, so its own windows no longer hold the edit.
+    await shell(a.bridge, () => undefined);
+    await a.bridge.checkpoint("turn");
+    await b.bridge.finish("shell-b");
+    await b.bridge.checkpoint("turn");
+    expect(b.auditGeneratedEdits).not.toHaveBeenCalled();
+  });
+
+  it("takes a write for its own when the other session's edit failed, as no result of that session checked it", async () => {
+    const root = await twoBranches();
+    const [a, b] = await twoSessions(root);
+    await writeDuringCommand(root, a.bridge, b.bridge, { failed: true });
+    expect(written(b.auditGeneratedEdits.mock.calls)).toEqual(["src/a.py"]);
+  });
+
+  it("takes a write for its own when the other session's edit was interrupted, as no result of that session checked it", async () => {
+    const root = await twoBranches();
+    const [a, b] = await twoSessions(root);
+    await b.bridge.begin("shell-b", "shell", { command: "./long.sh" });
+    await a.bridge.begin("write-a", "write", { path: "src/a.py" });
+    await appendFile(join(root, "src", "a.py"), "mine\n");
+    // Its result never comes: the turn ends with the call open.
+    await a.bridge.checkpoint("turn");
+    await awaitClockPastNow();
+    await b.bridge.finish("shell-b");
+    expect(written(b.auditGeneratedEdits.mock.calls)).toEqual(["src/a.py"]);
   });
 
   it("tells nobody of a file only the other session changed, however often it changes it", async () => {

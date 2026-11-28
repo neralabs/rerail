@@ -20,6 +20,7 @@ import type { WorktreeListLearning, WorktreeRegistry } from "../catalog/reposito
 import { fileStamp } from "../file-stamp.js";
 import { gitFirstSightListing, GitReads, gitTrackedIgnoredReader, gitUnmergedReader, type HeadListing } from "../git.js";
 import { readGitHead } from "../git-head-reader.js";
+import { NamedWrites } from "./attribution/named-writes.js";
 import type { ObservedSource, ScanError, Source, SourceScan } from "./code-rule-bridge.js";
 import type { TreeWatch } from "./tree-watch.js";
 import { lookMoved, type WalkFiles, type WorktreeLook, WorktreeLooks } from "./worktree-look.js";
@@ -1341,6 +1342,11 @@ export class RepositoryWorktreeWalks {
    * a folder the catalog does not know is a repository of its own.
    */
   readonly #walks = new Map<string, WorktreeWalks>();
+  /**
+   * By repository, the edit-tool calls of its sessions (`NamedWrites`). Kept while the daemon runs, as a session's walk
+   * may ask about another session's call after the walk of the other worktrees was dropped; each holds a bounded set.
+   */
+  readonly #namedWrites = new Map<string, NamedWrites>();
 
   constructor(options: { gapMs?: number; fullWalkMs?: number; treeWatch?: TreeWatch | undefined } = {}) {
     const { treeWatch, ...walks } = options;
@@ -1366,6 +1372,13 @@ export class RepositoryWorktreeWalks {
     });
     this.#walks.set(repository, walks);
     return walks;
+  }
+
+  /** The edit-tool calls of the sessions of the repository `repository` names (its clone id), the same for every checkout of it. */
+  namedWritesOf(repository: string): NamedWrites {
+    let named = this.#namedWrites.get(repository);
+    if (named === undefined) this.#namedWrites.set(repository, (named = new NamedWrites()));
+    return named;
   }
 
   /** Releases the engine watch and every handle it holds; the sessions, closed first, have let go of their worktrees. */

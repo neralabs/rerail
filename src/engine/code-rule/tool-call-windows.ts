@@ -178,7 +178,16 @@ export class ToolCallWindows {
    * taken as that call's edit, as the session's walks take a write stamped while one of its calls ran.
    */
   namedAt(path: string, stamp: number): boolean {
-    const named = (call: RunningCall): boolean => call.unwatched && call.paths.includes(path);
+    return this.#namedBy(path, stamp, call => call.unwatched);
+  }
+
+  /** Whether a call whose tool named `path`, running or kept, ran at `stamp`. */
+  named(path: string, stamp: number): boolean {
+    return this.#namedBy(path, stamp, () => true);
+  }
+
+  #namedBy(path: string, stamp: number, counts: (call: RunningCall) => boolean): boolean {
+    const named = (call: RunningCall): boolean => counts(call) && call.paths.includes(path);
     for (const call of this.#running.values()) if (call.start <= stamp && named(call)) return true;
     return this.#finished.some(window => window.start <= stamp && window.end >= stamp && named(window));
   }

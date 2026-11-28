@@ -461,6 +461,32 @@ describe("the Claude Code hook against a daemon of this build", () => {
     }
   }, 180_000);
 
+  // Two sessions in one checkout whose calls overlap (#1028): the Write names its file, so the session whose command
+  // ran as it was made does not take it.
+  it("steers an edit tool's write only on the session that made it, though another session's command ran as it was written", async () => {
+    const writer: Session = { id: "named-write-writer", projectDir: repo };
+    const commander: Session = { id: "named-write-commander", projectDir: repo };
+    await startSession(writer);
+    await startSession(commander);
+    const file = join(repo, "src", "app", "named_write.py");
+    const command = { session_id: commander.id, cwd: repo, tool_name: "Bash", tool_use_id: "toolu_named_long", tool_input: { command: "sleep 2" } };
+    const told: string[] = [];
+    told.push(contextOf(await hook({ ...command, hook_event_name: "PreToolUse" }, repo)));
+    expectSteered(await writeTooComplex(writer, file), file);
+    told.push(contextOf(await hook({ ...command, hook_event_name: "PostToolUse", tool_response: { stdout: "", stderr: "" } }, repo)));
+    told.push(contextOf(await endTurn(commander)));
+    await endTurn(writer);
+    expect(told.join("\n")).not.toContain(`[${RULE}]`);
+    const database = new Database(join(process.env.RERAIL_HOME!, "rerail.sqlite"), { readonly: true });
+    try {
+      const recorded = database.prepare(`SELECT audit.session_id AS session, audit.mode AS mode FROM audits audit, json_each(audit.violations_json) violation
+        WHERE json_extract(violation.value, '$.ruleId') = ? AND json_extract(violation.value, '$.path') LIKE ?`).all(RULE, "%named_write.py");
+      expect(recorded).toEqual([expect.objectContaining({ session: writer.id, mode: "steer" })]);
+    } finally {
+      database.close();
+    }
+  }, 120_000);
+
   // The walk of the other worktrees runs behind the turn's end, which does not wait for it: the last write of a turn
   // there is told at the session's next answer, the next turn's first tool call.
   it("steers a shell write in a linked worktree made just before the turn ends, at the session's next tool call", async () => {
