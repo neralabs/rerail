@@ -657,6 +657,12 @@ impl Writer {
     /// at its places; then the tail, each list's parts placed by a prefix sum of their bytes a block (Z1), each block's
     /// copied there (Z2). Each phase's blocks on their own, in `order`'s order. The tape is `finish`'s byte for byte.
     pub fn finish_by_phases(&mut self, order: crate::phases::Order<'_>) -> Result<Finished, String> {
+        self.finish_by_phases_with(order, None)
+    }
+
+    /// `finish_by_phases`, 16z's LZ4 blocks by `encode` where given (a device's encoder: `lz4_greedy`), else the
+    /// writer's own.
+    pub fn finish_by_phases_with(&mut self, order: crate::phases::Order<'_>, encode: Option<&dyn Fn(&[u8]) -> Vec<u8>>) -> Result<Finished, String> {
         use crate::phases::{each, prefix};
         let why = |r: u32| format!("the writer's ops failed: {r:#x}");
         let count = (self.state.n as usize).div_ceil(Z);
@@ -696,7 +702,7 @@ impl Writer {
         // SAFETY: as above.
         unsafe { st.phases_presence(&total.2) };
         if self.z {
-            return self.zfinish_by_phases(order, f1.iter().map(|x| (x.1, x.3)).collect());
+            return self.zfinish_by_phases(order, f1.iter().map(|x| (x.1, x.3)).collect(), encode);
         }
         // The tail's room, as `finish_ops` reserves it; then its start.
         let (laid, lines) = (self.len_of(part::LAID), self.len_of(part::LINES));
@@ -755,7 +761,7 @@ impl Writer {
     /// each one's first piece of the same bytes found among the hashes like it (a segmented scan's heads), as `zpiece`'s
     /// buckets find it; ZP3 each piece's stored bytes, their prefix sum its place; ZP4 each piece stored there, each
     /// block's checkpoints at theirs; then the tail, each list's part starts by block from a prefix sum (Z1).
-    fn zfinish_by_phases(&mut self, order: crate::phases::Order<'_>, blocks: Vec<([u32; 4], bool)>) -> Result<Finished, String> {
+    fn zfinish_by_phases(&mut self, order: crate::phases::Order<'_>, blocks: Vec<([u32; 4], bool)>, encode: Option<&dyn Fn(&[u8]) -> Vec<u8>>) -> Result<Finished, String> {
         use crate::phases::{each, prefix, sort_by_key};
         use crate::writer16 as z;
         let why = |r: u32| format!("the writer's ops failed: {r:#x}");
@@ -782,6 +788,9 @@ impl Writer {
             let len = raw.len() as u64;
             let h = if len >= z::REPEAT_MIN { z::State::zhash(&raw) } else { 0 };
             let z = (len >= z::LZ4_MIN).then(|| {
+                if let Some(e) = encode {
+                    return e(&raw);
+                }
                 let mut d = vec![0u8; raw.len() + raw.len() / 255 + 16];
                 // SAFETY: `d`'s room is the compressor's bound.
                 let k = unsafe { st.zlz4(&raw, &mut d) };

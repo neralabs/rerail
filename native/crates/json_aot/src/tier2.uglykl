@@ -2992,7 +2992,43 @@ DEFINE_KERNEL2(tier2, json_t2_phases,
     r.len = lexed[UKL_LEX_LEN];
     r.n = lexed[UKL_LEX_COUNT];
     r.refused = lexed[UKL_LEX_REFUSED] != 0u || lexed[UKL_LEX_SHORT] != 0u;
+    r.z = (UKL_GLOBAL uint8_t*)0;
+    r.table = (UKL_LOCAL uint32_t*)0;
     ukl_ph_worker(&r, lane __UKL_ARGS);
+}
+
+// The program's phases of group items (16z's ZP1 and ZP4): SIMD groups, a group a threadgroup, each its LZ4 table in
+// threadgroup memory, taking an item at a time by ticket; 16z's tape at `z`.
+DEFINE_KERNEL2(tier2, json_t2_zphases,
+               ARGS,     json_t2_PArgs, args,    ,
+               ROBUFFER, uint8_t,  src,     "[len + 64]",
+               ROBUFFER, uint32_t, starts,  "[count + 3]",
+               ROBUFFER, uint32_t, lexed,   "[32]",
+               RWBUFFER, uint32_t, pool,    "[pool]",
+               RWBUFFER, uint32_t, meet,    "[trees * ms]",
+               RWBUFFER, uint32_t, arrays,  "[arrays]",
+               RWBUFFER, uint8_t,  t,       "[region]",
+               RWBUFFER, uint8_t,  z,       "[zroom]",
+               SHARED,   uint32_t, table,   UKL_LZ4E_TABLE,
+               LANE,     uint16_t, lane,    )
+{
+    UklPh r;
+    r.m = (UklPhPool)pool;
+    r.meet = meet;
+    r.phase = args.phase;
+    r.src = src;
+    r.starts = starts;
+    r.arrays = arrays;
+    r.toks = (UKL_GLOBAL const uint32_t*)0;
+    r.rets = (UKL_GLOBAL uint8_t*)0;
+    r.t = t;
+    r.f2 = (UKL_GLOBAL uint32_t*)0;
+    r.z = z;
+    r.table = table;
+    r.len = lexed[UKL_LEX_LEN];
+    r.n = lexed[UKL_LEX_COUNT];
+    r.refused = lexed[UKL_LEX_REFUSED] != 0u || lexed[UKL_LEX_SHORT] != 0u;
+    ukl_ph_worker_sg(&r, lane __UKL_ARGS);
 }
 
 // The finished tape stored as 16z where it lies (`<ukl/z16_run.h>`), its phase count: SIMD groups, a group a

@@ -1247,7 +1247,7 @@ struct T2PArgs {
 unsafe impl Pod for T2PArgs {}
 
 /// The runner's header and the program's (`<ukl/phases_run.h>`, `<ukl/t2_phases.h>`).
-const PH_H: usize = 160;
+const PH_H: usize = 200;
 const T2_H: usize = PH_H + 80;
 
 /// Tier 2 as phases on the device (`json_t2_phases`, `<ukl/t2_phases.h>`), P1 from tier 1's records on the device:
@@ -1270,9 +1270,17 @@ fn json_tier2_phases_are_the_cpus() {
     let p1 = program("json_tier1.uglykl", rerail_json_aot::TIER1_UKL).unwrap_or_else(|e| panic!("{}: {e}", crate::device::backend()));
     let p2 = program("json_tier2.uglykl", rerail_json_aot::TIER2_UKL).unwrap_or_else(|e| panic!("{}: {e}", crate::device::backend()));
     let f = p2.function("json_t2_phases").unwrap();
-    let (mut runs, mut records, mut refusals, mut events, mut tapes, mut bytes) = (0usize, 0usize, 0usize, 0usize, 0usize, 0usize);
+    let fz = p2.function("json_t2_zphases").unwrap();
+    let (mut runs, mut records, mut refusals, mut events, mut tapes, mut bytes, mut zbytes, mut repeats) = (0usize, 0usize, 0usize, 0usize, 0usize, 0usize, 0usize, 0usize);
     let lang = json_lang();
-    for (k, file) in files().into_iter().chain(nested()).enumerate() {
+    // And an array of one value 30,000 times: its blocks' pieces repeat (16z's repeats).
+    let alike = {
+        let mut v = b"[".to_vec();
+        v.extend(std::iter::repeat_n(&b"7,"[..], 30_000).flatten());
+        v.extend_from_slice(b"7]");
+        v
+    };
+    for (k, file) in files().into_iter().chain(nested()).chain([alike]).enumerate() {
         let buf = rerail_json_aot::padded(&file);
         let n = file.len();
         let lex = Lex::go(&mut q, &mut kept, p1, p2, &buf, n, LEX_BLOCKS);
@@ -1286,6 +1294,19 @@ fn json_tier2_phases_are_the_cpus() {
         let lx = rerail_json_aot::lex(&buf, n);
         let mut sw = json_writer(&lang, &file);
         let want = rerail_json_aot::parse_lexed(&buf, &lx, &mut sw).ok().map(|()| sw.finish().expect("the serial tape").tape.as_bytes().to_vec());
+        // And its 16z by the CPU's phases with the device's encoder.
+        let want_z = {
+            let order: middle::Order<'_> = &middle::in_order;
+            let mut zw = rerail_tape_format::f16::Writer::empty();
+            let doc = rerail_tape_format::f16::Document { lang: &lang, source: &file, tag: 0, z: true, blocks: true, nodes: file.len() / 2 + 16 };
+            let counted = rerail_json_aot::lex_count(&buf, n, 64, order);
+            let mut typed = None;
+            zw.begin_with(&doc, |out| typed = Some(counted.write(Some(out), order)));
+            let typed = typed.expect("lexed");
+            middle::parse_phases(&buf, &typed.lexed, &typed.types, &mut zw, 64, order)
+                .ok()
+                .map(|()| zw.finish_by_phases_with(&rerail_tape_format::phases::in_order, Some(&rerail_tape_format::f16::lz4_greedy)).expect("the 16z tape by phases").tape.as_bytes().to_vec())
+        };
         for size in [1usize, 7, 64] {
             let at = |what: &str| format!("{}: file {k}, chunks of {size}: {what}", crate::device::backend());
             // The room from the records' bound (the device's layout says what it takes).
@@ -1315,17 +1336,40 @@ fn json_tier2_phases_are_the_cpus() {
             let most_blocks = most.div_ceil(1024).max(1);
             let ms = ms.max(2 * most_blocks + 40);
             let room = room + tree(most_blocks, 5);
+            // 16z's: its pieces' trees at their bound, its arrays, its tape's room.
+            let zc = (4 * most_blocks).div_ceil(size);
+            let ms = ms.max(2 * zc + 40);
+            let room = room + 2 * (tree(zc, 256) + tree(256, 1)) + tree(zc, 2) + tree(zc, 1);
+            let aroom = aroom + 48 * most_blocks + 512;
+            let zroom = region + 9 * 4 * most_blocks + 256;
+            let zb = kept.get("phases z", zroom);
             let pb = kept.get("phases pool", 4 * room);
             let ab = kept.get("phases arrays", 4 * aroom);
-            let meet = kept.meet("phases meet", 16 * ms.max(2 * (1 + count + lex.token_nodes()).div_ceil(1024) + 40));
+            let meet = kept.meet("phases meet", 24 * ms);
             let epoch = kept.next_epoch();
             {
                 let h = words_of(&pb, T2_H);
                 h.fill(0);
                 (h[0], h[1]) = (epoch, ms as u32);
-                (h[PH_H], h[PH_H + 1], h[PH_H + 8], h[PH_H + 28]) = (size as u32, room as u32, aroom as u32, most_blocks as u32);
+                (h[PH_H], h[PH_H + 1], h[PH_H + 8], h[PH_H + 28], h[PH_H + 50]) = (size as u32, room as u32, aroom as u32, most_blocks as u32, zroom as u32);
             }
-            for phase in 0..36u32 {
+            for phase in 0..50u32 {
+                if phase == 36 || phase == 49 {
+                    launch(&mut q, fz)
+                        .value("args", &T2PArgs { phase, pad: 0 })
+                        .buffer("src", &lex.src)
+                        .buffer("starts", &lex.starts)
+                        .buffer("lexed", &lex.pool)
+                        .buffer("pool", &pb)
+                        .buffer("meet", &meet)
+                        .buffer("arrays", &ab)
+                        .buffer("t", &tb)
+                        .buffer("z", &zb)
+                        .run(&[groups()], &[crate::device::simd_width() as u64])
+                        .unwrap();
+                    q.barrier();
+                    continue;
+                }
                 launch(&mut q, f)
                     .value("args", &T2PArgs { phase, pad: 0 })
                     .buffer("src", &lex.src)
@@ -1410,9 +1454,24 @@ fn json_tier2_phases_are_the_cpus() {
             assert!(have == *want, "{}", at(&format!("the tape differs at byte {:?} of {} ({} bytes)", have.iter().zip(want).position(|(a, b)| a != b), want.len(), have.len())));
             tapes += 1;
             bytes += have.len();
+            // Z: 16z by phases on the device, the CPU phases' with the device's encoder.
+            let zend = m[PH_H + 62] as usize;
+            assert!(zend > 0 && zend <= zroom, "{}", at(&format!("16z's end {zend} in its room of {zroom}")));
+            let z = read::<u8>(&zb, zend);
+            let want_z = want_z.as_ref().expect("the 16z tape by phases");
+            let fields = |t: &[u8]| (0..7).map(|k| u32::from_le_bytes(t[88 + 4 * k..92 + 4 * k].try_into().unwrap()) as usize).collect::<Vec<_>>();
+            let kinds = |t: &[u8]| {
+                let f = fields(t);
+                let ks = &t[f[5]..f[6].min(t.len())];
+                (0..3).map(|k| ks.iter().filter(|&&x| x == k).count()).collect::<Vec<_>>()
+            };
+            assert!(z == *want_z, "{}", at(&format!("the 16z tape differs at byte {:?} of {} ({} bytes): fields {:?} against {:?}, kinds {:?} against {:?}", z.iter().zip(want_z).position(|(a, b)| a != b), want_z.len(), z.len(), fields(&z), fields(want_z), kinds(&z), kinds(want_z))));
+            zbytes += z.len();
+            repeats += kinds(&z)[2];
             runs += 1;
             records += count;
         }
     }
-    eprintln!("{}: tier 2 as phases, P1-P8, P6 and the finish on the device: {runs} runs ({refusals} refused at a chunk's place), {records} records' depths, items in level order, containers, heads and places, {events} events, their items in frame order, frames and children the CPU phases'; {tapes} tapes finished on the device, the serial walk's, {bytes} bytes", crate::device::backend());
+    assert!(repeats > 0, "{}: no piece repeated", crate::device::backend());
+    eprintln!("{}: tier 2 as phases, P1-P8, P6 and the finish on the device: {runs} runs ({refusals} refused at a chunk's place), {records} records' depths, items in level order, containers, heads and places, {events} events, their items in frame order, frames and children the CPU phases'; {tapes} tapes finished on the device, the serial walk's, {bytes} bytes; stored as 16z by phases, the CPU phases' with the device's encoder, {zbytes} bytes, {repeats} pieces repeats", crate::device::backend());
 }

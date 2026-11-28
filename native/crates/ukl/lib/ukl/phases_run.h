@@ -18,7 +18,7 @@
 
 typedef UKL_COHERENT uint32_t* UklPhPool;
 
-#define UKL_PH_H 160u
+#define UKL_PH_H 200u
 // The run's epoch (the host's, new each run, never 0): a node's two arrivals each exchange it into its word.
 #define UKL_PH_EPOCH 0u
 // The arrivals' stride: tree `t`'s node `x` at `meet[t * MS + x]`.
@@ -32,7 +32,7 @@ typedef UKL_COHERENT uint32_t* UklPhPool;
 // (two records a leaf), its width, its leaves (the host's, or a phase's before the tree's), its op.
 #define UKL_PH_TREE 72u
 #define UKL_PH_TW 5u
-#define UKL_PH_TREES 16u
+#define UKL_PH_TREES 24u
 #define UKL_PH_TURNS 100000000u
 // A tree of `n` leaves' nodes at most: its leaves and each level's half the one below, rounded up (under `2n` plus a
 // node a level), the arrivals' stride too.
@@ -169,6 +169,10 @@ UKL_INLINE UklPhPool ukl_ph_sum(UKL_PRIVATE UklPh* r, uint32_t t, uint32_t c)
 // The program's: phase `ph`'s item `c`, and its items.
 UKL_INLINE void ukl_ph_item(UKL_PRIVATE UklPh* r, uint32_t ph, uint32_t c);
 UKL_INLINE uint32_t ukl_ph_items(UKL_PRIVATE UklPh* r, uint32_t ph);
+#ifdef UKL_PH_GROUP
+// The program's group items (`UKL_PH_GROUP`): phase `ph`'s item `c`, every lane of the group on it together.
+UKL_INLINE void ukl_ph_item_sg(UKL_PRIVATE UklPh* r, uint32_t ph, uint32_t c, uint32_t lane __UKL_PARAMS);
+#endif
 
 // A worker of phase `r->phase`: a SIMD group's lanes take a group's worth of items at a time by ticket, each lane its
 // own, until none is left.
@@ -189,3 +193,22 @@ UKL_INLINE void ukl_ph_worker(UKL_PRIVATE UklPh* r, uint32_t lane __UKL_PARAMS)
         }
     }
 }
+
+#ifdef UKL_PH_GROUP
+// A worker of a phase of group items: a SIMD group takes an item at a time by ticket, its lanes on it together, until
+// none is left.
+UKL_INLINE void ukl_ph_worker_sg(UKL_PRIVATE UklPh* r, uint32_t lane __UKL_PARAMS)
+{
+    uint32_t ph = r->phase, n = ukl_ph_items(r, ph);
+    for (uint32_t turn = 0u; turn < UKL_PH_TURNS; turn++) {
+        uint32_t c = 0u;
+        if (lane == 0u)
+            c = ukl_atomic_add(&r->m[UKL_PH_TICKET + ph], 1u);
+        c = ukl_sg_broadcast(c, 0u __UKL_ARGS);
+        if (c >= n)
+            break;
+        ukl_fence_device();
+        ukl_ph_item_sg(r, ph, c, lane __UKL_ARGS);
+    }
+}
+#endif

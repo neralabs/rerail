@@ -3640,6 +3640,34 @@ mod tests {
         eprintln!("{checked} tapes finished by phases, each the finish's");
     }
 
+    /// 16z by phases with a device's encoder (`lz4_greedy`) is `z_of`'s 16z of the format 16 tape where no piece
+    /// repeats (the device's 16z is the writer's, its LZ4 blocks the device's); where pieces repeat, the two differ only
+    /// in those pieces (stored as a repeat by the writer) and the places after them.
+    #[test]
+    fn the_writers_16z_by_phases_with_the_greedy_encoder_is_z_of() {
+        let entries: Vec<Entry> = (0..600u16).map(|k| Entry { kind: if k % 37 == 5 { crate::ERROR_CODE } else { k % 300 }, field: k % 7, flags: 0, alias: None, classes: Vec::new() }).collect();
+        let table = CodeTable::new(entries);
+        let lang = lang_of(&table);
+        let (nodes, pos) = escaped_nodes();
+        let source = source_of(pos + 2);
+        let bytes = |w: &Written| match w {
+            Written::F16(t) => t.as_bytes().to_vec(),
+            Written::F16Z(t) => t.as_bytes().to_vec(),
+        };
+        let mut w = Writer::new(&lang, &source, crate::newlines::Terminators::Lf, 0, false, true, nodes.len());
+        by_ops(&mut w, &nodes, 1_000_000);
+        let t16 = bytes(&w.finish().unwrap().tape);
+        let mut w = Writer::new(&lang, &source, crate::newlines::Terminators::Lf, 0, true, true, nodes.len());
+        by_ops(&mut w, &nodes, 1_000_000);
+        let got = bytes(&w.finish_by_phases_with(&crate::phases::in_order, Some(&lz4_greedy)).unwrap().tape);
+        let word = |at: usize| u32::from_le_bytes(got[at..at + 4].try_into().unwrap()) as usize;
+        let kinds = &got[word(108)..word(112)];
+        assert!(!kinds.contains(&REPEAT), "the tree's pieces do not repeat");
+        assert!(kinds.contains(&LZ4), "some pieces are LZ4 blocks");
+        let want = z_of(&t16, &lz4_greedy).unwrap();
+        assert!(got == want, "differs at byte {:?} of {} ({} bytes)", got.iter().zip(&want).position(|(a, b)| a != b), want.len(), got.len());
+    }
+
     /// The ops write the tape `write` writes from the same nodes, in 16 and 16z (decision 0434, R5); with the nodes
     /// hinted, the format 16 tape is the writer's own room, the last block moved down and the tail appended in
     /// place (R4); the presence is the nodes' kinds and fields, each block's and the document's (R10).
