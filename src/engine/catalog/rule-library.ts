@@ -81,19 +81,31 @@ export function validateLibraryDocument(document: unknown, kind: RuleKind): Json
   return { kind, rule };
 }
 
-/** Write an already validated document; the caller owns the transaction. */
-export function writeLibraryRule(db: Queries, ruleCatalog: RuleCatalog, document: JsonRuleDocument, options: LibraryRuleWriteOptions = {}): void {
-  const id = document.rule.id;
-  // Not the stored document: a write replaces it, and one a damaged file left must not stop the write that mends it.
-  const existing = db.select({ revision: libraryRules.revision, copiedFromRuleId: libraryRules.copiedFromRuleId, createdAt: libraryRules.createdAt })
+/** What a write keeps of the library row it replaces. */
+type ExistingRow = Pick<LibraryRow, "revision" | "copiedFromRuleId" | "createdAt">;
+
+/**
+ * The library row a write of `id` replaces, without its document: the write replaces that, and one a damaged file left
+ * must not stop the write that mends it.
+ */
+function existingRow(db: Queries, id: string): ExistingRow | undefined {
+  return db.select({ revision: libraryRules.revision, copiedFromRuleId: libraryRules.copiedFromRuleId, createdAt: libraryRules.createdAt })
     .from(libraryRules).where(eq(libraryRules.ruleId, id)).get();
+}
+
+/**
+ * Locks `document`'s id to its kind (`rule_catalog_identities`) for a write, or throws: a By Rerail rule's id the library
+ * does not hold already, or an id another kind holds.
+ */
+function claimIdentity(db: Queries, ruleCatalog: RuleCatalog, document: JsonRuleDocument, write: { existing: boolean; shadowBundled: boolean }): void {
+  const id = document.rule.id;
   // A library rule written before a release bundled its id wins over that By Rerail rule, so it stays editable.
-  if (ruleCatalog.documents.has(id) && existing === undefined && options.shadowBundled !== true) {
+  if (ruleCatalog.documents.has(id) && !write.existing && !write.shadowBundled) {
     throw new Error(`rule ${id} is a By Rerail rule id; give your rule another id`);
   }
   // A database from before the library table can hold an id's kind with no library row; one of a kind this build
   // does not know (the code rule kind's old name) locks nothing, since no remove could clear it.
-  if (existing === undefined) {
+  if (!write.existing) {
     db.delete(ruleCatalogIdentities)
       .where(and(eq(ruleCatalogIdentities.ruleId, id), notInArray(ruleCatalogIdentities.kind, [...RULE_KINDS]))).run();
   }
@@ -102,28 +114,42 @@ export function writeLibraryRule(db: Queries, ruleCatalog: RuleCatalog, document
   if (identity?.kind !== document.kind) {
     throw new Error(`rule ${id} exists with kind ${identity?.kind}; remove it before storing ${document.kind}`);
   }
+}
+
+/** The revision a write stores: a code rule's own; a conversation rule's given, else one past the row it replaces. */
+function revisionOf(document: JsonRuleDocument, options: LibraryRuleWriteOptions, existing: ExistingRow | undefined): number {
+  if (document.kind === "code") return document.rule.revision;
+  return options.revision ?? (existing === undefined ? 1 : existing.revision + 1);
+}
+
+/** The rule a write's copy is of: the one `options` give, else the one the row it replaces was of, else none. */
+function copiedFromOf(options: LibraryRuleWriteOptions, existing: ExistingRow | undefined): string | null {
+  return options.copiedFromRuleId === undefined ? existing?.copiedFromRuleId ?? null : options.copiedFromRuleId;
+}
+
+/** The row a write of `document` stores, keeping the creation time of the row it replaces. */
+function storedRow(document: JsonRuleDocument, options: LibraryRuleWriteOptions, existing: ExistingRow | undefined): typeof libraryRules.$inferInsert {
   const now = options.now ?? Date.now();
-  let revision: number;
-  if (document.kind === "code") revision = document.rule.revision;
-  else revision = options.revision ?? (existing === undefined ? 1 : existing.revision + 1);
-  const payloadHash = ruleDocumentDigest(document);
-  const copiedFromRuleId = options.copiedFromRuleId === undefined ? existing?.copiedFromRuleId ?? null : options.copiedFromRuleId;
-  db.insert(libraryRules)
-    .values({
-      ruleId: id,
-      kind: document.kind,
-      document,
-      revision,
-      payloadHash,
-      copiedFromRuleId,
-      createdAt: existing?.createdAt ?? options.createdAt ?? now,
-      updatedAt: now,
-    })
-    .onConflictDoUpdate({
-      target: libraryRules.ruleId,
-      set: { kind: document.kind, document, revision, payloadHash, copiedFromRuleId, updatedAt: now },
-    })
-    .run();
+  return {
+    ruleId: document.rule.id,
+    kind: document.kind,
+    document,
+    revision: revisionOf(document, options, existing),
+    payloadHash: ruleDocumentDigest(document),
+    copiedFromRuleId: copiedFromOf(options, existing),
+    createdAt: existing?.createdAt ?? options.createdAt ?? now,
+    updatedAt: now,
+  };
+}
+
+/** Write an already validated document; the caller owns the transaction. */
+export function writeLibraryRule(db: Queries, ruleCatalog: RuleCatalog, document: JsonRuleDocument, options: LibraryRuleWriteOptions = {}): void {
+  const existing = existingRow(db, document.rule.id);
+  claimIdentity(db, ruleCatalog, document, { existing: existing !== undefined, shadowBundled: options.shadowBundled === true });
+  const row = storedRow(document, options, existing);
+  // A row written again keeps its id and creation time.
+  const { ruleId: _ruleId, createdAt: _createdAt, ...replaced } = row;
+  db.insert(libraryRules).values(row).onConflictDoUpdate({ target: libraryRules.ruleId, set: replaced }).run();
 }
 
 /** Validate, then store a library rule. Throws on an invalid body, a By Rerail id, or a kind change. */
