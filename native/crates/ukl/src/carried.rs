@@ -37,6 +37,7 @@ pub const LIBRARY: &[(&str, &str)] = &[
     ("ukl/blx64.h", include_str!("../lib/ukl/blx64.h")),
     ("ukl/writer_mid.h", include_str!("../lib/ukl/writer_mid.h")),
     ("ukl/middle.h", include_str!("../lib/ukl/middle.h")),
+    ("ukl/middle_run.h", include_str!("../lib/ukl/middle_run.h")),
     ("ukl/scan.h", include_str!("../lib/ukl/scan.h")),
     ("ukl/compact.h", include_str!("../lib/ukl/compact.h")),
     ("ukl/histogram.h", include_str!("../lib/ukl/histogram.h")),

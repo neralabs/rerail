@@ -457,6 +457,43 @@ impl Writer {
         self.bind();
     }
 
+    /// Room in the tape for its tail and its presence, laid by the device (decision 0726: a run of up to `nodes` nodes
+    /// finished where it was written, `reserve_run` first): the blocks, every block's side lists laid at most, their
+    /// part starts, the newline index, and the presence (each block's where blocks are kept) and a fault a node.
+    pub fn reserve_device_finish(&mut self, nodes: usize) {
+        let count = nodes.div_ceil(Z).max(1);
+        let (kw, fw) = self.presence_words;
+        let need = w::HEAD16 as usize
+            + count * self.state.stride as usize
+            + count * LAID_MAX
+            + 16 * (count + 1)
+            + self.len_of(part::LINES)
+            + 128
+            + super::presence::HEAD
+            + 8 * (kw + fw) * (count + 1)
+            + 4 * nodes;
+        self.reserve(part::OUT, need);
+    }
+
+    /// The tape the device finished in the writer's region (`from_device_region` first): its OUT part to the end of
+    /// its presence, as `finish` lays it, no op run on the host.
+    #[cfg(any(test, feature = "test-hooks"))]
+    pub fn finished_on_device(&mut self) -> Result<Finished, String> {
+        if self.state.bad != 0 {
+            return Err(format!("the device's writer failed: {:#x} at node {}", self.state.bad, self.state.bad_node as i32));
+        }
+        let count = (self.state.n as usize).div_ceil(Z);
+        let (kw, fw) = self.presence_words;
+        let blocks = if self.keep_blocks { count } else { 0 };
+        let end = self.len_of(part::OUT);
+        let home = super::presence::at(end) + super::presence::HEAD + 8 * (kw + fw) * (1 + blocks) + self.len_of(part::ERRORS);
+        let mut out = std::mem::take(&mut self.parts[part::OUT as usize]);
+        self.given = (out.as_ptr() as usize, out.len());
+        out.truncate(home);
+        let tape = if self.z { Written::F16Z(Tape16Z::from_bytes(out)?) } else { Written::F16(Tape16::from_bytes(out)?) };
+        Ok(Finished { tape })
+    }
+
     /// The state's address: what code that calls the ops itself passes them (`reserve_run` first).
     pub fn state_address(&mut self) -> *mut u8 {
         std::ptr::from_mut::<State>(&mut self.state).cast::<u8>()

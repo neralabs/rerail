@@ -28,7 +28,13 @@
 #define UKL_SPAN_HEAD 13u
 #define UKL_AT_HEAD 11u
 
+// Coherent memory: a value one item writes, another reads in the same dispatch (`<ukl/middle_run.h>`); the CPU's
+// memory is the host's.
+#if defined(UKL_CPU) || defined(UKL_VEC)
 typedef UKL_GLOBAL uint32_t* UklMidPool;
+#else
+typedef UKL_COHERENT uint32_t* UklMidPool;
+#endif
 
 // `n` words of the pool, or `UKL_MID_FULL` past its size.
 UKL_INLINE uint32_t ukl_mid_take(UklMidPool m, uint32_t n)
