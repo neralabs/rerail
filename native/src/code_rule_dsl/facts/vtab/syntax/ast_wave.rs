@@ -196,7 +196,8 @@ fn matched(
     let _span = crate::code_rule_dsl::logic::profile::span(|| "ast matchers on the transducer".into());
     let Some(wave) = &matchers.wave else { return Ok(Vec::new()) };
     let metal = matches!(binding, crate::code_rule_dsl::typing::file_local::Binding::Metal);
-    let at: Vec<Option<&Projected>> = tapes.iter().map(|(key, ..)| batch.docs.iter().find(|p| p.key == *key)).collect();
+    // The batch's documents are in key order, each key once (`Batch::build`): a search per tape, not a scan.
+    let at: Vec<Option<&Projected>> = tapes.iter().map(|(key, ..)| batch.docs.binary_search_by_key(key, |p| p.key).ok().map(|i| &batch.docs[i])).collect();
     let held: Vec<usize> = (0..tapes.len()).filter(|&i| at[i].is_some()).collect();
     let ran = Ran { tapes, at, held, atoms };
     let active = active(matchers, &ran);
