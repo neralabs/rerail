@@ -24,6 +24,14 @@ typedef UKL_COHERENT uint32_t* UklLexPool;
 #define UKL_LEX_COUNT 9u
 #define UKL_LEX_TYPED 10u
 #define UKL_LEX_TYPE0 11u
+// The token pass's: its tokens' nodes, summed (tier 2's room, with the records).
+#define UKL_LEX_NODES 20u
+// The run's epoch (the host's, new each run, never 0: `ukl_lex_meet`).
+#define UKL_LEX_EPOCH 21u
+// The records' room (`starts` holds it and three words more, `types` and `tokens` it), and the records a file
+// needs past it (0: it fits): then no record is written, and the host runs it again with that room.
+#define UKL_LEX_ROOM 22u
+#define UKL_LEX_SHORT 23u
 // Each phase's tickets.
 #define UKL_LEX_TICKET 24u
 

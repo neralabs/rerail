@@ -1383,15 +1383,17 @@ typedef struct {p}LArgs {{
 UKL_REFLECT_STRUCT({p}LArgs, n, phase)
 
 // Tier 1 from the bytes (`<ukl/lex_run.h>`), its phase `args.phase`: its SIMD groups take the phase's chunks by
-// ticket. The pool's header is the host's layout and what the phases say (the records, the refusal); `starts` takes
-// the records and their three words after, `types` each type's records' numbers, `tokens` each record's token none.
+// ticket. The pool's header is the host's layout and what the phases say (the records, the refusal, the room they
+// need past their room); `starts` takes the records and their three words after, `types` each type's records'
+// numbers, `tokens` each record's token none; `meet` the trees' arrivals.
 DEFINE_KERNEL2(tier1, {p}lex,
                ARGS,     {p}LArgs, args,   ,
                ROBUFFER, uint8_t,  src,    "[n + 64]",
                RWBUFFER, uint32_t, pool,   "[pool]",
-               RWBUFFER, uint32_t, starts, "[n + 4]",
-               RWBUFFER, uint32_t, types,  "[n + 1]",
-               RWBUFFER, uint32_t, tokens, "[(n + 1) * 5]",
+               RWBUFFER, uint32_t, starts, "[room + 3]",
+               RWBUFFER, uint32_t, types,  "[room]",
+               RWBUFFER, uint32_t, tokens, "[room * 5]",
+               RWBUFFER, uint32_t, meet,   "[2 * tn]",
                LANE,     uint16_t, lane,   )
 {{
     UklLex r;
@@ -1400,6 +1402,7 @@ DEFINE_KERNEL2(tier1, {p}lex,
     r.starts = starts;
     r.types = types;
     r.tokens = tokens;
+    r.meet = meet;
     r.phase = args.phase;
     ukl_lex_worker(&r, lane __UKL_ARGS);
 }}
@@ -1818,21 +1821,9 @@ UKL_INLINE {p}Stop {p}stop_err(uint32_t x) {{ return {p}stop_of(3u, 0u, 0u, 0u, 
 }} {p}TArgs;
 UKL_REFLECT_STRUCT({p}TArgs, n, count)
 
-// Stage 2: the token at record `list[j]`, read on its own (`token_at`): its end, its first node's number among the
-// primitive's alternatives, its nodes, the last one's start, or the byte it is refused at (`err`, else `NONE`). The
-// list is tier 1's types' (`<ukl/lex_run.h>`), as many as its pool says (`lexed`); the grid `args.n` threads, at
-// least that many. A record that starts no token keeps the none tier 1 wrote.
-DEFINE_KERNEL2(tier2, {p}tokens,
-               ARGS,     {p}TArgs, args,   ,
-               ROBUFFER, uint8_t,  src,    "[n + 64]",
-               ROBUFFER, uint32_t, starts, "[count + 3]",
-               ROBUFFER, uint32_t, list,   "[n]",
-               ROBUFFER, uint32_t, lexed,  "[32]",
-               RWBUFFER, uint32_t, tokens, "[count * 5]",
-               GID0,     uint32_t, j,      )
+// The token at record `list[j]` (the token pass's), written; its nodes.
+UKL_INLINE uint32_t {p}token_at(UKL_GLOBAL const uint8_t* src, UKL_GLOBAL const uint32_t* starts, UKL_GLOBAL const uint32_t* list, UKL_GLOBAL uint32_t* tokens, uint32_t j)
 {{
-    if (j >= args.n || j >= lexed[UKL_LEX_TYPED] || lexed[UKL_LEX_REFUSED] != 0u)
-        return;
     uint32_t r = list[j];
     uint32_t b = src[starts[r]];
     uint32_t t[5] = {{0u, {p}NONE, 0u, 0u, {p}NONE}};
@@ -1855,6 +1846,30 @@ DEFINE_KERNEL2(tier2, {p}tokens,
     }}
     for (uint32_t k = 0u; k < 5u; k++)
         tokens[r * 5u + k] = t[k];
+    return t[2];
+}}
+
+// Stage 2: the token at record `list[j]`, read on its own (`token_at`): its end, its first node's number among the
+// primitive's alternatives, its nodes, the last one's start, or the byte it is refused at (`err`, else `NONE`). The
+// list is tier 1's types' (`<ukl/lex_run.h>`), as many as its pool says (`lexed`); the grid `args.n` threads, at
+// least that many. A record that starts no token keeps the none tier 1 wrote. The tokens' nodes are summed in the
+// pool (`UKL_LEX_NODES`, a SIMD group's sum an add): with the records, tier 2's room for the tape's nodes.
+DEFINE_KERNEL2(tier2, {p}tokens,
+               ARGS,     {p}TArgs, args,   ,
+               ROBUFFER, uint8_t,  src,    "[n + 64]",
+               ROBUFFER, uint32_t, starts, "[count + 3]",
+               ROBUFFER, uint32_t, list,   "[n]",
+               RWBUFFER, uint32_t, lexed,  "[32]",
+               RWBUFFER, uint32_t, tokens, "[count * 5]",
+               GID0,     uint32_t, j,      ,
+               LANE,     uint16_t, lane,   )
+{{
+    // Every lane goes on to the group's sum.
+    bool mine = j < args.n && j < lexed[UKL_LEX_TYPED] && lexed[UKL_LEX_REFUSED] == 0u && lexed[UKL_LEX_SHORT] == 0u;
+    uint32_t nodes = mine ? {p}token_at(src, starts, list, tokens, j) : 0u;
+    uint32_t sum = ukl_sg_sum(nodes __UKL_ARGS);
+    if (lane == 0u && sum != 0u)
+        ukl_atomic_add(&((UklLexPool)lexed)[UKL_LEX_NODES], sum);
 }}
 
 // Pass 2 (`write_range`), chunk `c` from its state `a` (pass 3's, in the pool), through a cursor from the middle on
@@ -2059,6 +2074,7 @@ DEFINE_KERNEL2(tier2, {p}run_{name},
                RWBUFFER, uint32_t, touch,   "[(count + 1 + runs) * 2]",
                RWBUFFER, uint32_t, f2,      "[(count + 1 + runs) * 25]",
                ROBUFFER, uint32_t, lexed,   "[32]",
+               RWBUFFER, uint32_t, meet,    "[5 * tn]",
                LANE,     uint16_t, lane,    )
 {{
     UklRun r;
@@ -2071,6 +2087,7 @@ DEFINE_KERNEL2(tier2, {p}run_{name},
     r.f1 = f1;
     r.touch = touch;
     r.f2 = f2;
+    r.meet = meet;
     r.phase = args.phase;
     // The records tier 1 found (`args.count` and `args.runs` bound them: the buffers' room).
     r.count = lexed[UKL_LEX_COUNT];

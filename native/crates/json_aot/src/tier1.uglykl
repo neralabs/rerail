@@ -379,15 +379,17 @@ typedef struct json_t1_LArgs {
 UKL_REFLECT_STRUCT(json_t1_LArgs, n, phase)
 
 // Tier 1 from the bytes (`<ukl/lex_run.h>`), its phase `args.phase`: its SIMD groups take the phase's chunks by
-// ticket. The pool's header is the host's layout and what the phases say (the records, the refusal); `starts` takes
-// the records and their three words after, `types` each type's records' numbers, `tokens` each record's token none.
+// ticket. The pool's header is the host's layout and what the phases say (the records, the refusal, the room they
+// need past their room); `starts` takes the records and their three words after, `types` each type's records'
+// numbers, `tokens` each record's token none; `meet` the trees' arrivals.
 DEFINE_KERNEL2(tier1, json_t1_lex,
                ARGS,     json_t1_LArgs, args,   ,
                ROBUFFER, uint8_t,  src,    "[n + 64]",
                RWBUFFER, uint32_t, pool,   "[pool]",
-               RWBUFFER, uint32_t, starts, "[n + 4]",
-               RWBUFFER, uint32_t, types,  "[n + 1]",
-               RWBUFFER, uint32_t, tokens, "[(n + 1) * 5]",
+               RWBUFFER, uint32_t, starts, "[room + 3]",
+               RWBUFFER, uint32_t, types,  "[room]",
+               RWBUFFER, uint32_t, tokens, "[room * 5]",
+               RWBUFFER, uint32_t, meet,   "[2 * tn]",
                LANE,     uint16_t, lane,   )
 {
     UklLex r;
@@ -396,6 +398,7 @@ DEFINE_KERNEL2(tier1, json_t1_lex,
     r.starts = starts;
     r.types = types;
     r.tokens = tokens;
+    r.meet = meet;
     r.phase = args.phase;
     ukl_lex_worker(&r, lane __UKL_ARGS);
 }

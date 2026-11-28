@@ -44,6 +44,8 @@ typedef struct UklLex {
     UKL_GLOBAL uint32_t* starts;
     UKL_GLOBAL uint32_t* types;
     UKL_GLOBAL uint32_t* tokens;
+    // The trees' arrivals (`ukl_lex_meet`).
+    UKL_GLOBAL uint32_t* meet;
     uint32_t phase;
 } UklLex;
 
@@ -62,9 +64,15 @@ UKL_INLINE uint32_t ukl_lex_val(UKL_PRIVATE UklLex* r, uint32_t tr, uint32_t x, 
 {
     return r->m[tr == UKL_LEX_TM ? UKL_LEX_OM : UKL_LEX_OK] + x * ukl_lex_width(tr) + k;
 }
-UKL_INLINE uint32_t ukl_lex_cnt(UKL_PRIVATE UklLex* r, uint32_t tr, uint32_t x)
+// Node `x` of tree `tr` arrived at: whether its other child arrived first (`<ukl/middle_run.h>`'s `meet`: the run's
+// epoch exchanged into its word, which only ever holds an epoch).
+UKL_INLINE bool ukl_lex_meet(UKL_PRIVATE UklLex* r, uint32_t tr, uint32_t x)
 {
-    return r->m[tr == UKL_LEX_TM ? UKL_LEX_OM : UKL_LEX_OK] + r->m[UKL_LEX_TN] * ukl_lex_width(tr) + x;
+    uint32_t epoch = r->m[UKL_LEX_EPOCH];
+    ukl_fence_device();
+    bool last = ukl_atomic_exchange(&r->meet[tr * r->m[UKL_LEX_TN] + x], epoch) == epoch;
+    ukl_fence_device();
+    return last;
 }
 
 // The map that is `a` then `b`: lane `l` to `b`'s lane of `a`'s.
@@ -107,6 +115,11 @@ UKL_INLINE void ukl_lex_root(UKL_PRIVATE UklLex* r, uint32_t top)
     }
     m[UKL_LEX_TYPED] = typed;
     m[UKL_LEX_COUNT] = count;
+    // Past the room: what the file needs, and nothing written.
+    if (count + 3u > m[UKL_LEX_ROOM] || typed > m[UKL_LEX_ROOM]) {
+        m[UKL_LEX_SHORT] = count + 3u;
+        return;
+    }
     uint32_t n = m[UKL_LEX_LEN];
     r->starts[count] = n;
     r->starts[count + 1u] = n;
@@ -126,13 +139,8 @@ UKL_INLINE void ukl_lex_up(UKL_PRIVATE UklLex* r, uint32_t tr, uint32_t i)
         }
         uint32_t up = base + lv, p = i >> 1;
         bool two = 2u * p + 1u < lv;
-        if (two) {
-            ukl_fence_device();
-            bool last = ukl_atomic_add(&m[ukl_lex_cnt(r, tr, up + p)], 1u) == 1u;
-            ukl_fence_device();
-            if (!last)
-                return;
-        }
+        if (two && !ukl_lex_meet(r, tr, up + p))
+            return;
         ukl_lex_compose(r, tr, up + p, base + 2u * p, base + 2u * p + 1u, two);
         base = up;
         lv = (lv + 1u) >> 1;
@@ -219,10 +227,10 @@ UKL_INLINE void ukl_lex_item(UKL_PRIVATE UklLex* r, uint32_t ph, uint32_t c)
     }
 }
 
-// Phase `ph`'s items: the chunks; the writes none where the file is refused.
+// Phase `ph`'s items: the chunks; the writes none where the file is refused or past the records' room.
 UKL_INLINE uint32_t ukl_lex_items(UKL_PRIVATE UklLex* r, uint32_t ph)
 {
-    if (ph == UKL_LEX_PH_WRITE && ukl_atomic_poll(&r->m[UKL_LEX_REFUSED]) != 0u)
+    if (ph == UKL_LEX_PH_WRITE && (ukl_atomic_poll(&r->m[UKL_LEX_REFUSED]) != 0u || ukl_atomic_poll(&r->m[UKL_LEX_SHORT]) != 0u))
         return 0u;
     return r->m[UKL_LEX_CHUNKS];
 }

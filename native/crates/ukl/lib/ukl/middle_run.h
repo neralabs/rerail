@@ -81,6 +81,10 @@
 #define UKL_RUN_TAILED 31u
 // Each phase's tickets taken.
 #define UKL_RUN_TICKET 32u
+// The run's epoch (the host's, a new one each run, never 0), and the trees' stride in `meet`: a tree node's two
+// arrivals each exchange the epoch into its word, the second finding it there, so no word is set again between runs.
+#define UKL_RUN_EPOCH 60u
+#define UKL_RUN_MS 61u
 
 #define UKL_RUN_TP 0u
 #define UKL_RUN_TC 1u
@@ -130,6 +134,8 @@ typedef struct UklRun {
     UKL_GLOBAL uint32_t* f1;
     UKL_GLOBAL uint32_t* touch;
     UKL_GLOBAL uint32_t* f2;
+    // The trees' arrivals: tree `tr`'s node `x` at `tr * m[UKL_RUN_MS] + x`, only ever an epoch.
+    UKL_GLOBAL uint32_t* meet;
     // Tier 1's records, from its pool's header (`<ukl/lex_pool.h>`), and whether it refused the file (no phase then
     // has items); the runs of `size` records.
     uint32_t count, len, ntoks, size, runs, most, phase, refused;
@@ -178,7 +184,15 @@ UKL_INLINE uint32_t ukl_run_leaves(UKL_PRIVATE UklRun* r, uint32_t tr)
 // Tree `tr`'s value, state and arrival words of node `x` (its state after the file at `x` = N).
 UKL_INLINE uint32_t ukl_run_val(UKL_PRIVATE UklRun* r, uint32_t tr, uint32_t x) { return ukl_run_tree(r, tr) + x; }
 UKL_INLINE uint32_t ukl_run_st(UKL_PRIVATE UklRun* r, uint32_t tr, uint32_t x) { return ukl_run_tree(r, tr) + ukl_run_stride(r, tr) + x; }
-UKL_INLINE uint32_t ukl_run_cnt(UKL_PRIVATE UklRun* r, uint32_t tr, uint32_t x) { return ukl_run_tree(r, tr) + 2u * ukl_run_stride(r, tr) + 1u + x; }
+// Node `x` of tree `tr` arrived at: whether its other child arrived first (the epoch already in its word).
+UKL_INLINE bool ukl_run_meet(UKL_PRIVATE UklRun* r, uint32_t tr, uint32_t x)
+{
+    uint32_t epoch = r->m[UKL_RUN_EPOCH];
+    ukl_fence_device();
+    bool last = ukl_atomic_exchange(&r->meet[tr * r->m[UKL_RUN_MS] + x], epoch) == epoch;
+    ukl_fence_device();
+    return last;
+}
 
 UKL_INLINE uint32_t ukl_run_sum5(UklMidPool m, uint32_t a, uint32_t b)
 {
@@ -248,7 +262,7 @@ UKL_INLINE void ukl_run_up(UKL_PRIVATE UklRun* r, uint32_t tr, uint32_t i)
         }
         uint32_t up = base + lv, p = i >> 1;
         bool two = 2u * p + 1u < lv;
-        if (two && !ukl_run_arrive(r, ukl_run_cnt(r, tr, up + p), 2u))
+        if (two && !ukl_run_meet(r, tr, up + p))
             return;
         uint32_t a = m[ukl_run_val(r, tr, base + 2u * p)];
         m[ukl_run_val(r, tr, up + p)] = two ? ukl_run_then(m, op, a, m[ukl_run_val(r, tr, base + 2u * p + 1u)]) : a;

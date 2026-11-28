@@ -418,6 +418,12 @@ impl Writer {
         unsafe { ops::w_end_middle(desc, n as u32, prev_start) };
     }
 
+    /// Each part's bytes (its room), by its number (`writer::part`): a test's measure of the region.
+    #[cfg(any(test, feature = "test-hooks"))]
+    pub fn part_lens(&self) -> Vec<usize> {
+        self.parts.iter().map(|p| p.len()).collect()
+    }
+
     /// The writer's region as one buffer, for a test that runs cursors from the middle on the device (decision 0726): the
     /// state, then each part at a 64-byte boundary as its buffer is, each part's place its offset from the state.
     /// `from_device_region` takes it back.
@@ -439,6 +445,36 @@ impl Writer {
         // SAFETY: the state is plain integers (`repr(C)`), and the region starts with its room.
         unsafe { std::ptr::write_unaligned(bytes.as_mut_ptr().cast::<State>(), state) };
         bytes
+    }
+
+    /// `device_region`'s bytes (its length).
+    #[cfg(any(test, feature = "test-hooks"))]
+    pub fn device_region_len(&self) -> usize {
+        let mut end = size_of::<State>().next_multiple_of(64);
+        for k in 0..part::COUNT {
+            end = (end + self.parts[k].len()).next_multiple_of(64);
+        }
+        end
+    }
+
+    /// `device_region` laid in `dst` (the device's buffer, kept from file to file), its layout the same, with only what
+    /// the device reads before it writes: the state and each part's bytes in use (`len`). Each part's room past them
+    /// is left as `dst` holds it, since the writer's ops write a byte before they read it (`FRESH`'s rule). Its length.
+    #[cfg(any(test, feature = "test-hooks"))]
+    pub fn device_region_into(&self, dst: &mut [u8]) -> usize {
+        let mut state = *self.state;
+        let mut at = size_of::<State>().next_multiple_of(64);
+        for k in 0..part::COUNT {
+            let used = self.len_of(k as u32).min(self.parts[k].len());
+            assert!(at + self.parts[k].len() <= dst.len(), "the device's region is too small");
+            // copy: not block data: a test's region handed to the device (the product's parts are the device's memory).
+            dst[at..at + used].copy_from_slice(&self.parts[k][..used]);
+            self.part_mut(&mut state, k).at = at as i64;
+            at = (at + self.parts[k].len()).next_multiple_of(64);
+        }
+        // SAFETY: the state is plain integers (`repr(C)`), and `dst` starts with its room.
+        unsafe { std::ptr::write_unaligned(dst.as_mut_ptr().cast::<State>(), state) };
+        at
     }
 
     /// The region back from the device (`device_region`'s, as the device left it): each part's bytes and the state's
