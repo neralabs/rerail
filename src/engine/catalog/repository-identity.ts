@@ -939,12 +939,52 @@ export type { RemoteAddress } from "./checkouts/kept-remote.js";
  * before that, as in a process that has made no engine read, each call asks Git.
  */
 export function readRemoteAddress(root: string): RemoteAddress | undefined {
+  return readRemoteAnswer(root).remote;
+}
+
+/** A checkout's remote as {@link readRemoteAddress} reads it, and whether Git answered every question asked for it. */
+export interface RemoteAnswer {
+  readonly remote: RemoteAddress | undefined;
+  /**
+   * False where a Git asked gave no answer (it could not start, ran past its time limit, was killed or failed otherwise):
+   * `remote` is then no answer of Git's, "no remote" included, and nothing keeps it.
+   */
+  readonly answered: boolean;
+  /** True where the Git that gave no answer ran to its time limit. */
+  readonly ranToLimit: boolean;
+}
+
+/** {@link readRemoteAddress}, saying whether Git answered ({@link RemoteAnswer}); a kept answer is one Git gave. */
+export function readRemoteAnswer(root: string): RemoteAnswer {
   const source = remoteSource(root);
   const kept = keptRemote(source);
-  if (kept !== undefined) return kept.remote;
+  if (kept !== undefined) return { remote: kept.remote, answered: true, ranToLimit: false };
   const answers: GitResult[] = [];
-  for (let step = remoteStep(answers); "ask" in step; step = remoteStep(answers)) answers.push(runGit(root, step.ask));
+  // The read ends at the first ask Git gives no answer to: it is unanswered from then on, and the next ask would cost
+  // another start, or wait as long again.
+  for (let step = remoteStep(answers); "ask" in step && answers.every(answer => answer.status === 0); step = remoteStep(answers)) {
+    answers.push(runGit(root, step.ask));
+  }
   return answeredRemote(source, answers);
+}
+
+/**
+ * Whether an answer of Git's for `root`'s remote can be kept ({@link remoteSource}), as a session's open keeps one, and
+ * none is kept yet ({@link keptRemote}): false once one is, and for a clone whose remote no answer of Git's is kept for.
+ */
+export function remoteAnswerAwaited(root: string): boolean {
+  const source = remoteSource(root);
+  return source !== undefined && keptRemote(source) === undefined;
+}
+
+/** Whether `error` ended a Git that ran past its time limit, which {@link runGit} gives as `spawnSync` does: `ETIMEDOUT`. */
+function ranToLimit(error: unknown): boolean {
+  return (error as NodeJS.ErrnoException | undefined)?.code === "ETIMEDOUT";
+}
+
+/** Whether Git, asked where `location`'s folder is, ran to its time limit ({@link RepositoryIdentityLocation.unanswered}). */
+export function placementRanToLimit(location: RepositoryIdentityLocation): boolean {
+  return ranToLimit(location.unanswered?.cause);
 }
 
 /** {@link readRemoteAddress} for `root` learnt without blocking the caller's thread, unless a kept answer stands. */
@@ -988,14 +1028,16 @@ function soleRemoteStep(names: GitResult, url: GitResult | undefined): RemoteSte
 }
 
 /**
- * The remote the answers give, kept under the source's facts only when Git answered every question: a Git that failed
- * answers no remote, as before, and is asked again next time.
+ * The remote the answers give, and whether Git answered every question: each of these asks Git answers with exit 0, its
+ * "no remote" too (`ls-remote --get-url` gives the name back, `git remote` lists none). Kept under the source's facts
+ * only when Git answered: a Git that failed answers no remote, as before, says so, and is asked again next time.
  */
-function answeredRemote(source: RemoteSource | undefined, answers: readonly GitResult[]): RemoteAddress | undefined {
+function answeredRemote(source: RemoteSource | undefined, answers: readonly GitResult[]): RemoteAnswer {
   const step = remoteStep(answers);
   const remote = "remote" in step ? step.remote : undefined;
-  if (source !== undefined && answers.every(answer => answer.status === 0)) keepRemote(source, remote);
-  return remote;
+  const answered = answers.every(answer => answer.status === 0);
+  if (source !== undefined && answered) keepRemote(source, remote);
+  return { remote, answered, ranToLimit: answers.some(answer => ranToLimit(answer.error)) };
 }
 const SCHEME = /^[A-Za-z][A-Za-z0-9+.-]*:\/\//;
 const SCP_FORM = /^(?:[^@/]+@)?([^:/]+):(.*)$/;

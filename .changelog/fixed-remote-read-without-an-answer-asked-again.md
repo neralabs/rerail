@@ -1,0 +1,1 @@
+When Git gives no answer once to the daemon's read of a checkout's remote (it could not start or ran past its time limit), the next read asks Git again, so a clone of a set-up repository no longer reads as no repository on the dashboard and the status line until its Git config changes or the daemon restarts.

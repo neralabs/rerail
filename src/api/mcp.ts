@@ -4,9 +4,9 @@ import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { WebStandardStreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/webStandardStreamableHttp.js";
 import { checkoutRealpath, physicalPath } from "../engine/catalog/checkout-control.js";
 import { duplicateJsonKeyError } from "../engine/json-duplicate-keys.js";
-import { CALLER_CWD_HEADER, normalizeFolder, type ApiCaller } from "../engine/catalog/repository-model.js";
-import { repositoryIdentityLocation } from "../engine/catalog/repository-identity.js";
-import { recordedCheckoutsVersion } from "../engine/catalog/repository-registry.js";
+import { CALLER_CWD_HEADER, normalizeFolder, type ApiCaller, type CheckoutContext } from "../engine/catalog/repository-model.js";
+import { placementRanToLimit } from "../engine/catalog/repository-identity.js";
+import { locationNow, recordedCheckoutsVersion, resolverPlaced, stillPlaces, type KeptLocation } from "../engine/catalog/repository-registry.js";
 import { allowedHost, type PublicHosts } from "./http.js";
 import { ApiError, invokeOperation, operationAvailable, type Operation, type RerailApiStores } from "./operation.js";
 import { operationInputShape } from "./operations.js";
@@ -68,42 +68,92 @@ const invalidParams = (id: unknown, message: string): Response =>
 const INVALID_CALLER = `${CALLER_CWD_HEADER} must be the URI-encoded absolute path of an existing folder`;
 
 /**
- * Checkout root of each caller folder already resolved; a bridge sends the same folder on every request. Forgotten
- * whenever the recorded checkouts change, so a folder that became a recorded checkout of its own resolves to it.
+ * Each caller folder already resolved, with its location as the checkout resolver reads it ({@link locationNow}) and
+ * the checkout root that location names; a bridge sends the same folder on every request. A folder in Git serves while
+ * its location still places it ({@link stillPlaces}), so a folder made a repository of its own (`git init` in it or in
+ * a folder between it and its top level) resolves to that repository at its next request, at one lstat per folder
+ * between and with no Git process. A folder whose Git ran to its time limit serves as its own checkout until the
+ * request's checkout resolver keeps it in Git ({@link keptCaller}). All are forgotten whenever the recorded checkouts
+ * change, so a folder that became a recorded checkout of its own resolves to it.
  */
-const callerCheckouts = new Map<string, string>();
+const callerCheckouts = new Map<string, { readonly kept: KeptLocation; readonly checkout: string }>();
 const CALLER_CACHE_LIMIT = 1_024;
 let callerCacheVersion: string | undefined;
+
+/** The request's checkout lookup ({@link RerailApiStores.checkouts}). */
+type CheckoutLookup = (workspace: string) => CheckoutContext | undefined;
+
+/**
+ * The checkout root of the caller folder `real`: the kept one while it serves ({@link keptCaller}), else read afresh.
+ * As the checkout resolver does, a location in Git is kept, and a folder outside Git is read again at each request, so
+ * a later `git init` above it is seen, and so is the next answer after a Git that could not start or failed. A folder
+ * whose Git ran to its time limit is kept too, so the bridge asks that Git once.
+ */
+function callerCheckout(real: string, resolver: CheckoutLookup | undefined): string {
+  const known = keptCaller(real, resolver);
+  if (known !== undefined) return known.checkout;
+  const kept = locationNow(real);
+  return !kept.location.git && !placementRanToLimit(kept.location) ? physicalPath(kept.location.workspaceRoot) : keepCaller(real, kept).checkout;
+}
+
+/** Keeps `kept` as the caller folder `real`'s location, with the checkout root it names. */
+function keepCaller(real: string, kept: KeptLocation): { readonly kept: KeptLocation; readonly checkout: string } {
+  if (callerCheckouts.size >= CALLER_CACHE_LIMIT) callerCheckouts.clear();
+  const entry = { kept, checkout: physicalPath(kept.location.workspaceRoot) };
+  callerCheckouts.set(real, entry);
+  return entry;
+}
+
+/**
+ * The kept caller location of `real` where it serves: one in Git while it still places the folder ({@link stillPlaces});
+ * one whose Git ran to its time limit until `resolver` keeps the folder in Git ({@link resolverPlaced}), as its read
+ * for a call that names no target does once Git answers, and from then on the resolver's location, read with no Git.
+ */
+function keptCaller(real: string, resolver: CheckoutLookup | undefined): { readonly checkout: string } | undefined {
+  const known = callerCheckouts.get(real);
+  if (known === undefined) return undefined;
+  if (known.kept.location.git) return stillPlaces(known.kept) ? known : undefined;
+  const placed = resolver === undefined ? undefined : resolverPlaced(resolver, real);
+  return placed === undefined ? known : keepCaller(real, placed);
+}
+
+/** Forgets every kept caller checkout once `recordedVersion`, the recorded checkouts' version, moves. */
+function forgetOnRecordedChange(recordedVersion: string | undefined): void {
+  if (recordedVersion === undefined || recordedVersion === callerCacheVersion) return;
+  callerCheckouts.clear();
+  callerCacheVersion = recordedVersion;
+}
+
+/**
+ * The real path of the folder `header` names, URI-encoded; undefined where it is not the absolute path of an existing
+ * folder.
+ */
+function callerFolder(header: string): string | undefined {
+  try {
+    const cwd = decodeURIComponent(header);
+    if (cwd.includes("\0") || !isAbsolute(cwd)) return undefined;
+    // Spelt as the checkout is (on Windows each name's long form), or a folder sent with 8.3 short names (an account
+    // folder named `RUNNER~1`) lies outside it.
+    const real = checkoutRealpath(cwd);
+    return statSync(real).isDirectory() ? real : undefined;
+  } catch {
+    return undefined;
+  }
+}
 
 /**
  * The calling agent from {@link CALLER_CWD_HEADER}: the URI-encoded real path of the folder its bridge started in,
  * resolved to the checkout that folder is in and the folder inside it. No header is an agent with no checkout, which
- * must name its target. Returns the reason when the header is unusable.
+ * must name its target. `resolver`, the request's checkout lookup, places a folder whose Git ran to its time limit once
+ * it keeps that folder in Git ({@link keptCaller}). Returns the reason when the header is unusable.
  */
-export function callerFromHeader(header: string | null, recordedVersion?: string): ApiCaller | string {
+export function callerFromHeader(header: string | null, recordedVersion?: string, resolver?: CheckoutLookup): ApiCaller | string {
   if (header === null) return { kind: "agent", checkout: undefined, folder: "" };
-  if (recordedVersion !== undefined && recordedVersion !== callerCacheVersion) {
-    callerCheckouts.clear();
-    callerCacheVersion = recordedVersion;
-  }
-  let real: string;
+  forgetOnRecordedChange(recordedVersion);
+  const real = callerFolder(header);
+  if (real === undefined) return INVALID_CALLER;
   try {
-    const cwd = decodeURIComponent(header);
-    if (cwd.includes("\0") || !isAbsolute(cwd)) return INVALID_CALLER;
-    // Spelt as the checkout is (on Windows each name's long form), or a folder sent with 8.3 short names
-    // (`C:\Users\RUNNER~1\...`) lies outside it.
-    real = checkoutRealpath(cwd);
-    if (!statSync(real).isDirectory()) return INVALID_CALLER;
-  } catch {
-    return INVALID_CALLER;
-  }
-  try {
-    let checkout = callerCheckouts.get(real);
-    if (checkout === undefined) {
-      checkout = physicalPath(repositoryIdentityLocation(real).workspaceRoot);
-      if (callerCheckouts.size >= CALLER_CACHE_LIMIT) callerCheckouts.clear();
-      callerCheckouts.set(real, checkout);
-    }
+    const checkout = callerCheckout(real, resolver);
     const inside = within(checkout, real);
     return { kind: "agent", checkout, folder: inside === undefined ? "" : normalizeFolder(inside.split(sep).join("/")) };
   } catch {
@@ -142,7 +192,7 @@ export function createRerailMcpHandler(
     const duplicate = duplicateJsonKeyError(text, "request body");
     if (duplicate !== undefined) return invalidParams(requestId(text), duplicate);
     const header = request.headers.get(CALLER_CWD_HEADER);
-    const caller = callerFromHeader(header, header === null ? undefined : recordedCheckoutsVersion(stores.database()));
+    const caller = header === null ? callerFromHeader(null) : callerFromHeader(header, recordedCheckoutsVersion(stores.database()), stores.checkouts());
     if (typeof caller === "string") return invalidParams(requestId(text), caller);
     const server = createRerailMcpServer(stores, operations, info, caller);
     const transport = new WebStandardStreamableHTTPServerTransport({ enableJsonResponse: true });
