@@ -383,7 +383,7 @@ pub(in crate::code_rule_dsl) fn node_groups(grammar: &GrammarMatcher, names: &[S
 
 /// The text of group `name` at each of its bindings in `text`, by every regex of `groups` holding it, each range once
 /// and in the order of the ranges.
-fn group_texts(groups: &[Regex], name: &str, text: &str) -> Vec<String> {
+pub(in crate::code_rule_dsl) fn group_texts(groups: &[Regex], name: &str, text: &str) -> Vec<String> {
     let mut seen = BTreeSet::new();
     for regex in groups.iter().filter(|regex| regex.capture_names().flatten().any(|group| group == name)) {
         for found in regex.captures_iter(text) {

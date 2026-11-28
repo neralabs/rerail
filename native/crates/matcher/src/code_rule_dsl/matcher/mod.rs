@@ -1,5 +1,6 @@
 pub mod analysis;
 pub mod anchors;
+pub mod bind;
 // cratify: `p_anchors` is rerail-rules' (it mounts it: it reads the model and the admission's database), with
 // its corpus's re-exports
 pub use rerail_adapters::code_rule_dsl::matcher::arguments;

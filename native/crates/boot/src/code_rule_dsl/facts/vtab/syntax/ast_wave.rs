@@ -38,11 +38,11 @@ fn compiled(matchers: &[(String, String, Vec<String>)], demand: &[Option<rerail_
                     .clone()
             };
             let (lowered, gates, captor) = got.map_err(|why| format!("{rel}: the matcher {text} does not lower: {why}"))?;
-            let direct = field_captures(text, captures);
             let made = crate::code_rule_dsl::logic::plan::corpus::preparation::text::transformed(text);
             let texts: Vec<bool> = captures.iter().map(|c| made.contains(c)).collect();
             let grouped: Vec<String> = captures.iter().filter(|c| made.contains(*c) && !captor.grammar.transform.as_ref().is_some_and(|t| t.contains(c))).cloned().collect();
             let groups = crate::code_rule_dsl::waves::findings::node_groups(&captor.grammar, &grouped);
+            let direct = direct_captures(&captor, captures, &texts, &groups);
             Ok(Matcher { rel: rel.clone(), lowered, gates, captures: captures.clone(), captor, demanded_by: demand.get(k).cloned().flatten(), direct, texts, groups })
         })
         .collect::<Result<Vec<_>, String>>()
@@ -63,10 +63,9 @@ pub(crate) struct Matcher {
     /// The matchers (by place in the wave) whose roots hold every node this one's rows are read at
     /// (`matchers::demanded_by_roots`, decision 0459): its rows are made only there. `None`: at every root.
     pub(crate) demanded_by: Option<rerail_blocks::vector::Vector<usize>>,
-    /// Where every capture is a field child of the root, `{"has": {"field": F, "kind": K, "pattern": "$C", "stopBy":
-    /// "neighbor"}}` in the rule's top `all` (as `Absorb` writes them, decision 0106 §4): each capture's field and
-    /// kind. Its rows are then read from the tape at each root the transducer matched, not by W's matcher there.
-    pub(crate) direct: Option<Vec<(String, String)>>,
+    /// Where every capture is read from the tape at the transducer's roots, not by W's matcher there
+    /// (`direct_captures`): the nodes' paths from the root, and the regex groups' texts of the root's text.
+    pub(crate) direct: Option<Direct>,
     /// Per capture, whether it binds text, not nodes (`preparation::text::transformed`, which types its column): a
     /// name of the rule's `transform`, or a named group of its regexes that no pattern binds.
     pub(crate) texts: Vec<bool>,
@@ -75,65 +74,90 @@ pub(crate) struct Matcher {
     pub(crate) groups: Vec<regex::Regex>,
 }
 
-/// A matcher's captures as its root's field children ([`Matcher::direct`]), where its text has them so: every
-/// capture bound once, by a `has` of a field and a kind and nothing more, in the rule's top `all`; the matcher with
-/// no `transform`, `constraints` or `utils`.
-fn field_captures(text: &str, captures: &[String]) -> Option<Vec<(String, String)>> {
-    if captures.is_empty() || crate::code_rule_dsl::logic::profile::var("RERAIL_AST_DIRECT_CAPTURES").is_ok_and(|v| v == "off") {
-        return None;
-    }
-    let v: serde_json::Value = serde_json::from_str(text).ok()?;
-    let top = v.as_object()?;
-    if top.keys().any(|k| !matches!(k.as_str(), "language" | "rule" | "syntax")) {
-        return None;
-    }
-    let all = top.get("rule")?.as_object().filter(|r| r.len() == 1)?.get("all")?.as_array()?;
-    captures
-        .iter()
-        .map(|c| {
-            let name = format!("${c}");
-            let binding = |part: &serde_json::Value| -> Option<(String, String)> {
-                let has = part.as_object().filter(|p| p.len() == 1)?.get("has")?.as_object()?;
-                if has.keys().any(|k| !matches!(k.as_str(), "field" | "kind" | "pattern" | "stopBy")) || has.get("pattern")?.as_str()? != name || has.get("stopBy")?.as_str()? != "neighbor" {
-                    return None;
-                }
-                Some((has.get("field")?.as_str()?.to_owned(), has.get("kind")?.as_str()?.to_owned()))
-            };
-            let bound: Vec<(String, String)> = all.iter().filter_map(binding).collect();
-            // Bound once, and named nowhere else in the rule.
-            (bound.len() == 1 && text.matches(name.as_str()).count() == 1).then(|| bound.into_iter().next()).flatten()
-        })
-        .collect()
+/// How a [`Matcher::direct`] matcher's captures are read at a root, in the atom's order: a node by the binder's path
+/// (its place among the node captures), or a regex group's texts in the root's text.
+pub(crate) enum Slot {
+    Node(usize),
+    Group(String),
 }
 
-/// A [`Matcher::direct`] matcher's rows at the transducer's `roots` of the tape: the root and each capture's first
-/// child in its field, of its kind. A node the projection leaves out has no row, as `captured_rows`'.
-fn field_captured_rows(fields: &[(String, String)], tape: &crate::code_rule_dsl::tape::TapeDoc, p: &Projected, roots: &BTreeSet<u32>, out: &mut Relation) -> u64 {
-    let grammar = tape.grammar();
-    let Some(codes) = fields.iter().map(|(f, _)| grammar.field_code(f)).collect::<Option<Vec<u16>>>() else { return 0 };
+/// A matcher's captures read from the tape (decision 0107 §2: any means that gives W's rows): every node capture by
+/// a path derived from W's rule (`matcher::bind::Binder`), every text capture a regex group of the root's text. The
+/// matcher neither relaxed (W confirms its roots) nor with a `transform` capture; else `None`, and W binds them.
+pub(crate) struct Direct {
+    binder: Option<crate::code_rule_dsl::matcher::bind::Binder>,
+    slots: Vec<Slot>,
+}
+
+fn direct_captures(captor: &crate::code_rule_dsl::waves::policies::Captor, captures: &[String], texts: &[bool], groups: &[regex::Regex]) -> Option<Direct> {
+    if captures.is_empty() || captor.verify || crate::code_rule_dsl::logic::profile::var("RERAIL_AST_DIRECT_CAPTURES").is_ok_and(|v| v == "off") {
+        return None;
+    }
+    let grouped = |c: &str| groups.iter().any(|regex| regex.capture_names().flatten().any(|g| g == c));
+    let mut nodes = Vec::new();
+    let mut slots = Vec::with_capacity(captures.len());
+    for (c, &text) in captures.iter().zip(texts) {
+        if text {
+            // A transform's text is W's.
+            if !grouped(c) {
+                return None;
+            }
+            slots.push(Slot::Group(c.clone()));
+        } else {
+            slots.push(Slot::Node(nodes.len()));
+            nodes.push(c.clone());
+        }
+    }
+    let binder = if nodes.is_empty() { None } else { Some(crate::code_rule_dsl::matcher::bind::Binder::of(&captor.grammar.matcher, &nodes)?) };
+    Some(Direct { binder, slots })
+}
+
+/// A [`Matcher::direct`] matcher's rows at the transducer's `roots` of the tape: the root, then each capture's node
+/// (by its path) or each of its group's texts (rows the product of them, as `captured_rows`'). A root where a node
+/// capture is not bound, or its node is one the projection leaves out, has no row, as `captured_rows`'.
+fn direct_rows(m: &Matcher, d: &Direct, tape: &crate::code_rule_dsl::tape::TapeDoc, p: &Projected, roots: &BTreeSet<u32>, atoms: &dyn crate::content_store::AtomTable, out: &mut Relation) -> StoreResult<u64> {
     let global = |core: u32| {
         let local = p.local_of_node(core);
         (local != NONE).then(|| p.global(local))
     };
     let mut rows = 0;
-    let mut row = Vec::with_capacity(fields.len() + 1);
-    for &root in roots {
-        row.clear();
+    let mut nodes = Vec::new();
+    let mut product: Vec<Vec<i64>> = Vec::new();
+    'roots: for &root in roots {
         let Some(r) = global(root) else { continue };
-        row.push(r);
-        for (code, (_, kind)) in codes.iter().zip(fields) {
-            let child = tape.transducer_children(root).find(|&c| tape.transducer_field(c) == *code && grammar.kind_name(tape.transducer_kind(c)) == Some(kind.as_str()));
-            match child.and_then(global) {
-                Some(g) => row.push(g),
-                None => break,
-            }
+        if let Some(binder) = &d.binder
+            && !binder.bind(tape, root, &mut nodes)
+        {
+            continue;
         }
-        if row.len() == fields.len() + 1 {
-            out.push(&row);
+        product.clear();
+        product.push(vec![r]);
+        for slot in &d.slots {
+            let values: Vec<i64> = match slot {
+                Slot::Node(k) => match global(nodes[*k]) {
+                    Some(g) => vec![g],
+                    None => continue 'roots,
+                },
+                Slot::Group(name) => crate::code_rule_dsl::waves::findings::group_texts(&m.groups, name, tape.transducer_text_str(root))
+                    .iter()
+                    .map(|text| atoms.intern(text).map(i64::from))
+                    .collect::<Result<_, _>>()?,
+            };
+            if values.is_empty() {
+                continue 'roots;
+            }
+            product = product.drain(..).flat_map(|row| values.iter().map(move |&v| {
+                let mut row = row.clone();
+                row.push(v);
+                row
+            })).collect();
+        }
+        for row in &product {
+            out.push(row);
             rows += 1;
         }
     }
-    rows
+    Ok(rows)
 }
 
 /// A program's matchers (decision 0106) and the wave they run as: every matcher's labels and roots in one run per
@@ -412,10 +436,10 @@ fn matched(
                 rows += 1;
             }
         }
-        if let (Some(fields), false, true) = (&m.direct, m.captor.verify, over.is_empty()) {
-            let _direct = profile::span(|| "ast captures read as field children".into());
+        if let (Some(direct), true) = (&m.direct, over.is_empty()) {
+            let _direct = profile::span(|| "ast captures read from the tape (their paths from the root)".into());
             for (&i, found) in held.iter().zip(&found) {
-                rows += field_captured_rows(fields, &tapes[i].1, at[i].expect("held"), found, &mut r);
+                rows += direct_rows(m, direct, &tapes[i].1, at[i].expect("held"), found, atoms, &mut r)?;
             }
         } else if m.captures.is_empty() && !m.captor.verify {
             for (t, (&i, found)) in held.iter().zip(found).enumerate() {

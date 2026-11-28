@@ -3675,3 +3675,66 @@ fn field_captures_read_from_the_tape_are_ws() {
     assert_eq!(direct.1, [["f"], ["g"]]);
     assert_eq!(direct, by_w, "the tape's field children are W's captures");
 }
+
+/// A matcher's captures read from the tape by their paths from the root (`matcher::bind::Binder`, decision 0107 §2)
+/// are W's rows (`RERAIL_AST_DIRECT_CAPTURES=off`): an `inside` to a neighbor and through a field, a chain of
+/// relations, a `stopBy` rule among nested functions (a return's nearest function), an `any` whose arms bind the
+/// capture by different paths, a `has` to a field child where it is absent, a regex group beside a node capture, and
+/// sibling walks: a `not` of a `follows`, and a capture its nearest earlier sibling.
+#[test]
+fn captures_read_by_their_paths_are_ws() {
+    let dir = crate::code_rule_dsl::fixtures::temp().with_extension("path-captures");
+    std::fs::create_dir_all(&dir).unwrap();
+    std::fs::write(
+        dir.join("a.py"),
+        "from .pkg import y\nfrom ..up.down import z\n@dec\ndef f(a, b: int, c=1) -> str:\n    def g(d: bool):\n        return d\n    return a\n@deco\nclass K(Base, Other):\n    def m(self) -> K:\n        return self\ndef h(p, q, /, r, s):\n    pass\n",
+    )
+    .unwrap();
+    let program = r#".language python
+.decl decorated(dec: node, def: node)
+.decl annotated(type: node, owner: symbol)
+.decl returns(ret: node, owner: symbol)
+.decl param(p: symbol)
+.decl base(b: symbol, class: symbol)
+.decl from(base: symbol, module: node)
+.decl positional(p: symbol)
+.decl before(p: symbol, q: symbol)
+.output decorated, annotated, returns, param, base, from, positional, before
+decorated(r, x) :- ast(d, r, {"language":"python","rule":{"kind":"decorator","inside":{"kind":"decorated_definition","stopBy":"neighbor","has":{"pattern":"$D","any":[{"kind":"function_definition"},{"kind":"class_definition"}],"stopBy":"neighbor"}}}}, D: x).
+annotated(r, o) :- ast(d, r, {"language":"python","rule":{"kind":"type","any":[{"inside":{"field":"return_type","kind":"function_definition","stopBy":"end","has":{"field":"name","pattern":"$O","stopBy":"neighbor"}}},{"inside":{"field":"type","kind":"typed_parameter","stopBy":"end","inside":{"kind":"function_definition","stopBy":"end","has":{"field":"name","pattern":"$O","stopBy":"neighbor"}}}}]}}, O: x), text(x, o).
+returns(r, o) :- ast(d, r, {"language":"python","rule":{"kind":"return_statement","inside":{"kind":"function_definition","stopBy":{"kind":"function_definition"},"has":{"field":"name","pattern":"$F","stopBy":"neighbor"}}}}, F: x), text(x, o).
+param(t) :- ast(d, r, {"language":"python","rule":{"inside":{"kind":"parameters","stopBy":"neighbor"},"any":[{"kind":"identifier","pattern":"$P"},{"kind":"typed_parameter","has":{"kind":"identifier","pattern":"$P","stopBy":"neighbor"}},{"kind":"default_parameter","has":{"field":"name","pattern":"$P","stopBy":"neighbor"}}]}}, P: x), text(x, t).
+base(b, c) :- ast(d, r, {"language":"python","rule":{"kind":"identifier","inside":{"kind":"argument_list","stopBy":"neighbor","inside":{"kind":"class_definition","stopBy":"neighbor","has":{"field":"name","pattern":"$C","stopBy":"neighbor"}}}}}, C: x), text(r, b), text(x, c).
+from(b, x) :- ast(d, r, {"language":"python","rule":{"kind":"import_from_statement","regex":"^from (?P<BASE>\\.+)","has":{"field":"module_name","pattern":"$M","stopBy":"neighbor"}}}, BASE: b, M: x).
+positional(t) :- ast(d, r, {"language":"python","rule":{"kind":"identifier","pattern":"$P","inside":{"kind":"parameters","stopBy":"neighbor","has":{"kind":"positional_separator","stopBy":"neighbor"}},"not":{"follows":{"kind":"positional_separator","stopBy":"end"}}}}, P: x), text(x, t).
+before(t, u) :- ast(d, r, {"language":"python","rule":{"kind":"identifier","inside":{"kind":"parameters","stopBy":"neighbor","inside":{"kind":"function_definition","stopBy":"neighbor","has":{"field":"name","regex":"^h$","stopBy":"neighbor"}}},"follows":{"kind":"identifier","pattern":"$Q","stopBy":"end"}}}, Q: x), text(r, t), text(x, u).
+"#;
+    super::TEST_TAPE_CACHE.with(|p| *p.borrow_mut() = Some(dir.join("store.sqlite")));
+    let rels = ["decorated", "annotated", "returns", "param", "base", "from", "positional", "before"];
+    let run = |out: &str| {
+        let out = dir.join(out);
+        super::run_all(&[program], &dir, &out, "program", crate::code_rule_dsl::typing::file_local::Binding::Cpu, 1 << 18).unwrap_or_else(|e| panic!("{e}"));
+        rels.map(|rel| crate::code_rule_dsl::logic::plan::output::shown(&out, rel).unwrap_or_default())
+    };
+    let direct = run("direct");
+    let by_w = {
+        let _off = super::switches::set(&[("RERAIL_AST_DIRECT_CAPTURES", "off")]);
+        run("by-w")
+    };
+    super::TEST_TAPE_CACHE.with(|p| *p.borrow_mut() = None);
+    let _ = std::fs::remove_dir_all(&dir);
+    let wrong: Vec<_> = rels.iter().zip(direct.iter().zip(&by_w)).filter(|(_, (d, w))| d != w || d.is_empty()).collect();
+    assert!(wrong.is_empty(), "each relation has rows, the tape's paths W's captures (relation, (tape, W)): {wrong:?}");
+    let mut annotated: Vec<&str> = direct[1].iter().map(|row| row[1].as_str()).collect();
+    annotated.sort();
+    assert_eq!(annotated, ["f", "f", "g", "m"], "a return type's function, and a typed parameter's");
+    let mut owners: Vec<&str> = direct[2].iter().map(|row| row[1].as_str()).collect();
+    owners.sort();
+    assert_eq!(owners, ["f", "g", "m"], "each return's nearest function");
+    assert_eq!(direct[0].len(), 2, "a decorator of a function and one of a class");
+    assert_eq!(direct[3], [["a"], ["b"], ["c"], ["d"], ["p"], ["q"], ["r"], ["s"], ["self"]]);
+    assert_eq!(direct[4], [["Base", "K"], ["Other", "K"]]);
+    assert_eq!(direct[6], [["p"], ["q"]], "the parameters before the separator");
+    assert_eq!(direct[7], [["q", "p"], ["r", "q"], ["s", "r"]], "each parameter's nearest earlier one");
+    assert_eq!(direct[5].iter().map(|row| row[0].as_str()).collect::<Vec<_>>(), [".", ".."]);
+}
