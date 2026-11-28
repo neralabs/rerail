@@ -8,8 +8,8 @@
 //! starts, whether the line has a token, whether it is a block's header, the indents open). A text B reads wrongly is
 //! read serially by variant A (`Chunked::NotB`), as `lex_with` reads it.
 
-use super::{B, Masks, RB, S1, Text, Walk, classes_in};
-use super::{Variant, lex_with};
+use super::{B, Masks, RB, S1, Stack, Text, Walk, classes_in};
+use super::{Variant, b_reads, lex_with};
 use crate::lex::{Extra, Lexed, Refusal, Tok};
 
 /// The state of the strata where a chunk starts at block `from`: stratum 1's carries into block `from - 2`, variant
@@ -49,22 +49,25 @@ pub enum Chunked {
     NotB,
     /// The text is refused.
     Refused(Refusal),
+    /// A walk read past the text's end: it was entered where the serial walk does not go.
+    Past,
 }
 
-/// Blocks `from..to` of `src` lexed from `e`: their items' records after `toks` and `extras` (an item that starts in
-/// them read to its end, past them where it runs past), and the entry of the chunk at `to`. The strata are made over
-/// a window of the blocks from `from - 2` to one past `to`, and over a longer one where the walk reads past it.
-pub fn lex_chunk(src: &[u8], from: usize, to: usize, e: &Entry, toks: &mut Vec<Tok>, extras: &mut Vec<Extra>) -> Chunked {
+/// The strata over a chunk `from..to`'s window, from the carries into its first blocks (stratum 1's `s1`, B's `rb`,
+/// the depth), and `f` of the walk's masks over it: the window from block `from - 2` to one past `to`, made again
+/// twice as long while `f`'s reads go past it. `f`'s result, and the carries into the next chunk's first blocks; or why
+/// the strata do not read the chunk.
+fn over_window<R>(src: &[u8], from: usize, to: usize, s1: S1, rb: RB, depth: i8, mut f: impl FnMut(Masks<'_>) -> R) -> Result<(R, S1, RB, i8), Chunked> {
     let blocks = src.len().div_ceil(64);
     let to = to.min(blocks);
     let (c0, r0) = firsts(from);
     let (c0_next, r0_next) = firsts(to);
-    let mut r1 = (to + 1).min(blocks);
+    let mut r1 = (to + 1).min(blocks).max(r0);
     loop {
         // Stratum 1 over `c0..r1 + 1` (stratum 2 reads the block after each of its own), its carries into the next
         // chunk's first kept.
         let mut b: Vec<B> = Vec::with_capacity(r1 + 2 - c0);
-        let (mut s1, mut s1_next) = (e.s1, S1::default());
+        let (mut s1, mut s1_next) = (s1, S1::default());
         classes_in(src, c0, (r1 + 1).min(blocks), &mut s1, &mut b, c0_next, &mut s1_next);
         if c0_next >= blocks {
             s1_next = s1;
@@ -74,47 +77,67 @@ pub fn lex_chunk(src: &[u8], from: usize, to: usize, e: &Entry, toks: &mut Vec<T
         }
         let mut t = Text { src, b, first: c0 };
         // Strata 2 and 3 over `r0..r1`, their carries into the next chunk's first kept.
-        let (mut rb, mut depth) = (e.rb, e.depth);
+        let (mut rb, mut depth) = (rb, depth);
         let split = r0_next.clamp(r0, r1);
         if !t.regions_b_in(r0, split, &mut rb) {
-            return Chunked::NotB;
+            return Err(Chunked::NotB);
         }
         let rb_next = rb;
         if !t.regions_b_in(split, r1, &mut rb) {
-            return Chunked::NotB;
+            return Err(Chunked::NotB);
         }
         if r1 == blocks && (rb.t0 != 0 || rb.s0 != 0) {
-            return Chunked::NotB;
+            return Err(Chunked::NotB);
         }
-        if let Err(r) = t.depth_in(r0, split, &mut depth) {
-            return Chunked::Refused(r);
-        }
+        t.depth_in(r0, split, &mut depth).map_err(Chunked::Refused)?;
         let depth_next = depth;
-        if let Err(r) = t.depth_in(split, r1, &mut depth) {
-            return Chunked::Refused(r);
-        }
-        // The walk, over the blocks strata 2 and 3 made (and the one past the text's end, where the window reaches it).
+        t.depth_in(split, r1, &mut depth).map_err(Chunked::Refused)?;
+        // The walk's masks: the blocks strata 2 and 3 made (and the one past the text's end, where the window reaches
+        // it).
         let short = core::cell::Cell::new(false);
         let upto = if r1 == blocks { r1 + 1 } else { r1 };
-        let masks = Masks { src, b: &t.b[r0 - c0..upto - c0], first: r0, short: &short };
-        let stop = if to >= blocks { usize::MAX } else { 64 * to };
-        let mut w = Walk { t: masks, toks: Vec::new(), extras: Vec::new(), p: e.p, depth: 0, indents: e.indents.clone(), inside_interpolated_string: false, outer: None, b: true, b_wrong: false, stop, done: e.done };
-        let r = if e.done { Ok((e.open, e.header)) } else { w.module(e.open, e.header) };
+        let r = f(Masks { src, b: &t.b[r0 - c0..upto - c0], first: r0, short: &short });
         if short.get() {
-            assert!(r1 < blocks, "a read below the chunk's window: block {r0} on, from byte {}", e.p);
-            r1 = (r0 + 2 * (r1 - r0)).min(blocks);
+            if r1 == blocks {
+                // A read past the text's end: a walk from a place that is not the serial walk's.
+                return Err(Chunked::Past);
+            }
+            r1 = (r0 + 2 * (r1 - r0).max(1)).min(blocks);
             continue;
         }
-        if w.b_wrong {
-            return Chunked::NotB;
+        return Ok((r, s1_next, rb_next, depth_next));
+    }
+}
+
+/// What a walk over a chunk leaves: its records, where it stopped, its `open` and `header`, its indents, whether the
+/// text's end was read, and whether B's reading was found wrong; or its refusal.
+type Walked<S> = (Result<(bool, bool), Refusal>, Vec<Tok>, Vec<Extra>, usize, S, bool, bool);
+
+/// The walk from `p` (`open`, `header`, the indents `indents`) over masks `t` to its first item from `stop` on.
+fn walk<S: Stack>(t: Masks<'_>, p: usize, open: bool, header: bool, indents: S, done: bool, stop: usize) -> Walked<S> {
+    let mut w = Walk { t, toks: Vec::new(), extras: Vec::new(), p, depth: 0, indents, inside_interpolated_string: false, outer: None, b: true, b_wrong: false, stop, done };
+    let r = if done { Ok((open, header)) } else { w.module(open, header) };
+    (r, w.toks, w.extras, w.p, w.indents, w.done, w.b_wrong)
+}
+
+/// The walk's stop for chunk `..to`: its end's byte, none for the text's last chunk.
+fn stop_of(src: &[u8], to: usize) -> usize {
+    if to >= src.len().div_ceil(64) { usize::MAX } else { 64 * to }
+}
+
+/// Blocks `from..to` of `src` lexed from `e`: their items' records after `toks` and `extras` (an item that starts in
+/// them read to its end, past them where it runs past), and the entry of the chunk at `to`.
+pub fn lex_chunk(src: &[u8], from: usize, to: usize, e: &Entry, toks: &mut Vec<Tok>, extras: &mut Vec<Extra>) -> Chunked {
+    let stop = stop_of(src, to);
+    match over_window(src, from, to, e.s1, e.rb, e.depth, |m| walk(m, e.p, e.open, e.header, e.indents.clone(), e.done, stop)) {
+        Err(c) => c,
+        Ok(((_, _, _, _, _, _, true), ..)) => Chunked::NotB,
+        Ok(((Err(r), ..), ..)) => Chunked::Refused(r),
+        Ok(((Ok((open, header)), mut t, mut x, p, indents, done, false), s1, rb, depth)) => {
+            toks.append(&mut t);
+            extras.append(&mut x);
+            Chunked::Lexed(Entry { s1, rb, depth, p, open, header, indents, done })
         }
-        let (open, header) = match r {
-            Ok(x) => x,
-            Err(r) => return Chunked::Refused(r),
-        };
-        toks.append(&mut w.toks);
-        extras.append(&mut w.extras);
-        return Chunked::Lexed(Entry { s1: s1_next, rb: rb_next, depth: depth_next, p: w.p, open, header, indents: w.indents, done: w.done });
     }
 }
 
@@ -133,6 +156,7 @@ pub fn lex_chunked(src: &[u8], blocks: usize) -> Option<(Result<Lexed, Refusal>,
             Chunked::Lexed(x) => e = x,
             Chunked::NotB => return None,
             Chunked::Refused(r) => return Some((Err(r), entries)),
+            Chunked::Past => panic!("chunk at block {from} read past the text's end from its entry"),
         }
         if to >= n {
             return Some((Ok(Lexed { toks, extras }), entries));
@@ -232,7 +256,7 @@ pub const LANES: usize = 144;
 /// Lane `l`'s carries.
 pub(crate) fn lane_rb(l: usize) -> RB {
     let l = l as u64;
-    RB { t0: (l / 48) as u8, s0: (l / 16 % 3) as u8, ccarry: l / 8 & 1, cext_prev: l / 4 & 1, tr_taken: l & 3 }
+    RB { t0: (l / 48) as u8, s0: (l / 16 % 3) as u8, ccarry: (l / 8) & 1, cext_prev: (l / 4) & 1, tr_taken: l & 3 }
 }
 
 /// The lane of carries `c`, none where they are no lane's.
@@ -317,6 +341,393 @@ pub fn entries_in(sums: &[Summary], order: Order<'_>) -> Vec<Option<(RB, i8)>> {
         let (e, dep) = acc[c - 1][start]?;
         Some((lane_rb(usize::from(e)), dep.apply(0)?))
     })
+}
+
+/// Where the walk's first item from byte `64 * from` on is entered (`Entry::p`) and whether the text's end was read
+/// there, by the bytes and the strata below it alone, the strata made from the entry `rb`, `depth` of the chunk at
+/// block `lb` (at most `from`): none where the blocks from `lb - 1` hold no place to enter at (a run of code with no
+/// blank), so that it is asked again from further back.
+///
+/// The walk is entered at the last place below the chunk where it goes on as the serial walk does (a blank in code, a
+/// string's or a comment's start, a line continuation's end, the text's start) and walked to the chunk's start: where it goes does not
+/// depend on the layout it keeps (a layout token takes no bytes). B's code mask is not each item's end: a quote in a
+/// comment marks the comment's line end a string's.
+pub fn probe(src: &[u8], lb: usize, rb: RB, depth: i8, from: usize) -> Option<Place> {
+    if from == 0 {
+        return Some(Place::At(0, false));
+    }
+    let x = 64 * from;
+    let n = src.len();
+    let (c0, r0) = firsts(lb);
+    let r = over_window(src, lb, from, s1_at(src, c0), rb, depth, |m| {
+        let mut after = false;
+        for k in (r0..from).rev() {
+            let b = *m.blk(k);
+            let next = 64 * (k + 1);
+            let code_next = b.code >> 1 | u64::from(next < n && m.bit(next, |b| b.code)) << 63;
+            // A blank in code: an iteration from it reaches the item after it as one from the item before's end does.
+            // A string's or a comment's start (bit `i`: the start is `i + 1`), below the chunk's first byte: the
+            // serial walk comes to it through blanks or from the token it touches.
+            let blank = b.skip & b.code;
+            let starts = b.code & !code_next & if k + 1 == from { !(1u64 << 63) } else { !0 };
+            // The last such place the walk goes on from as the serial one does (from a place inside an
+            // interpolation's code it may not, where its walk refuses or finds B's reading wrong: the one before).
+            let mut places = blank | starts;
+            while places != 0 {
+                let i = 64 * k + 63 - places.leading_zeros() as usize;
+                places &= !(1u64 << (i & 63));
+                // A line continuation's `\n` ends its item: the walk goes on after it.
+                let continued = blank >> (i & 63) & 1 == 1 && src[i] == b'\n' && i >= 1 && (src[i - 1] == b'\\' || (src[i - 1] == b'\r' && i >= 2 && src[i - 2] == b'\\'));
+                let q = if starts >> (i & 63) & 1 == 1 || continued { i + 1 } else { i };
+                if q >= x {
+                    return Some(Place::At(q, false));
+                }
+                match from_place(m, q, x) {
+                    Some(Place::At(p, done)) => return Some(Place::At(p, done)),
+                    Some(Place::After) => after = true,
+                    None => {}
+                }
+            }
+        }
+        // The text's start: the walk's own.
+        match (r0 == 0).then(|| from_place(m, 0, x)).flatten() {
+            Some(e) => Some(e),
+            None => after.then_some(Place::After),
+        }
+    });
+    r.ok()?.0
+}
+
+/// Where the walk enters a chunk.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Place {
+    /// At its first item from the chunk's start on (`Entry::p`), and whether the text's end was read there.
+    At(usize, bool),
+    /// After a refusal: the walk from the place found refuses before the chunk. Either the text is refused there (the
+    /// chunk that holds it refuses it, and this chunk's entry is not needed) or the place is not one the serial walk
+    /// goes on from: the chunk is then not entered.
+    After,
+}
+
+/// The walk from place `q` to its first item from `x` on; none where B's reading is wrong.
+fn from_place(m: Masks<'_>, q: usize, x: usize) -> Option<Place> {
+    match walk::<Vec<u32>>(m, q, false, false, vec![0], false, x) {
+        (_, _, _, _, _, _, true) => None,
+        (Err(_), ..) => Some(Place::After),
+        (Ok(_), _, _, p, _, done, false) => Some(Place::At(p, done)),
+    }
+}
+
+/// A chunk's indents as its walk keeps them over an entry it does not know: the levels it opened (`own`), above the
+/// entry's levels at most `t` (each of the entry's above it closed by the chunk, a dedent each, counted where the
+/// entry is known), where the entry has no level in any of `conds` (each a read of the entry's top the walk made).
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Sym {
+    own: Vec<u32>,
+    t: i64,
+    /// The dedents the walk wrote for its entry's levels, one a filter (the entry's count is `|S > t|`).
+    phantom: usize,
+    conds: Vec<(i64, i64)>,
+}
+
+impl Sym {
+    fn new() -> Sym {
+        Sym { own: Vec::new(), t: i64::MAX, phantom: 0, conds: Vec::new() }
+    }
+
+    /// `a` then `b`, none where `b`'s reads of its entry do not hold for every entry of `a`.
+    fn then(a: &Sym, b: &Sym) -> Option<Sym> {
+        let mut conds = a.conds.clone();
+        for &(lo, hi) in &b.conds {
+            if a.own.iter().any(|&o| lo <= i64::from(o) && i64::from(o) <= hi) {
+                return None;
+            }
+            let c = (lo, hi.min(a.t));
+            if c.0 <= c.1 && !conds.contains(&c) {
+                conds.push(c);
+            }
+        }
+        let own = a.own.iter().copied().filter(|&o| i64::from(o) <= b.t).chain(b.own.iter().copied()).collect();
+        Some(Sym { own, t: a.t.min(b.t), phantom: 0, conds })
+    }
+
+    /// The indents out of the range from `s`, and the dedents it wrote for `s`'s levels; none where a read of it
+    /// does not hold.
+    fn apply(&self, s: &[u32]) -> Option<(Vec<u32>, usize)> {
+        if self.conds.iter().any(|&(lo, hi)| s.iter().any(|&x| lo <= i64::from(x) && i64::from(x) <= hi)) {
+            return None;
+        }
+        let dedents = s.iter().filter(|&&x| i64::from(x) > self.t).count();
+        let mut out: Vec<u32> = s.iter().copied().filter(|&x| i64::from(x) <= self.t).collect();
+        out.extend(&self.own);
+        Some((out, dedents))
+    }
+
+    /// The dedents the range wrote of its own levels, of `a`'s own levels `b` closes (in `a` then `b`).
+    fn closed_of(a: &Sym, b: &Sym) -> usize {
+        a.own.iter().filter(|&&o| i64::from(o) > b.t).count()
+    }
+}
+
+impl Stack for Sym {
+    fn below(&mut self, w: u32) -> bool {
+        match self.own.last() {
+            Some(&c) => c < w,
+            None => {
+                // The entry's top below `w`: none of its levels in `[w, t]`.
+                if i64::from(w) <= self.t {
+                    self.conds.push((i64::from(w), self.t));
+                }
+                true
+            }
+        }
+    }
+
+    fn pops_above(&mut self, m: i64) -> bool {
+        match self.own.last() {
+            Some(&c) => i64::from(c) > m,
+            None if m < self.t => {
+                // Each of the entry's levels above `m` closed: one filter, the dedents counted where the entry is known.
+                self.t = m;
+                self.phantom += 1;
+                true
+            }
+            None => false,
+        }
+    }
+
+    fn above(&mut self, m: i64) -> bool {
+        match self.own.last() {
+            Some(&c) => i64::from(c) > m,
+            None => {
+                // The entry's top at most `m`: none of its levels in `(m, t]`.
+                if m < self.t {
+                    self.conds.push((m + 1, self.t));
+                }
+                false
+            }
+        }
+    }
+
+    fn push(&mut self, w: u32) {
+        self.own.push(w);
+    }
+
+    fn pop(&mut self) {
+        // A level of the entry's closes by the filter (`pops_above`).
+        self.own.pop();
+    }
+}
+
+/// The walk's `open` and `header` a lane of its summary enters with (a header is a line with a token).
+const COMBOS: [(bool, bool); 3] = [(false, false), (true, false), (true, true)];
+
+fn combo(open: bool, header: bool) -> u8 {
+    if header { 2 } else { u8::from(open) }
+}
+
+/// A lane of a chunk's walk: what it does from one of `COMBOS`.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum WalkLane {
+    /// It leaves the walk at `COMBOS[exit]`, its indents `sym`, having written `toks` tokens (and the dedents of its
+    /// entry's levels) and `extras` extras.
+    Goes { exit: u8, sym: Sym, toks: usize, extras: usize },
+    /// It refuses the text, where its reads of the entry (`sym`'s) hold.
+    Refused(Refusal, Sym),
+    /// Not known: B's reading is wrong, or a read of the entry does not hold for every entry.
+    Unknown,
+}
+
+/// A chunk's walk's summary (its pass 1 once each chunk's strata entries are known): a lane for each of `COMBOS`.
+pub type WalkSummary = [WalkLane; 3];
+
+/// Pass 1 of the walk: chunk `from..to`'s walk from `p` (and `done`) over the strata from `rb` and `depth`, from each
+/// of `COMBOS` with indents it does not know.
+pub fn walk_summary(src: &[u8], from: usize, to: usize, rb: RB, depth: i8, p: usize, done: bool) -> WalkSummary {
+    let (c0, _) = firsts(from);
+    let stop = stop_of(src, to);
+    match over_window(src, from, to, s1_at(src, c0), rb, depth, |m| {
+        COMBOS.map(|(open, header)| match walk(m, p, open, header, Sym::new(), done, stop) {
+            (_, _, _, _, _, _, true) => WalkLane::Unknown,
+            (Err(r), _, _, _, sym, _, _) => WalkLane::Refused(r, sym),
+            (Ok((o, h)), toks, extras, _, sym, _, _) => WalkLane::Goes { exit: combo(o, h), toks: toks.len() - sym.phantom, extras: extras.len(), sym },
+        })
+    }) {
+        Ok((s, ..)) => s,
+        Err(_) => core::array::from_fn(|_| WalkLane::Unknown),
+    }
+}
+
+/// Walk summary `a` then `b`.
+pub fn compose_walk(a: &WalkSummary, b: &WalkSummary) -> WalkSummary {
+    core::array::from_fn(|c| match &a[c] {
+        WalkLane::Goes { exit, sym, toks, extras } => match &b[usize::from(*exit)] {
+            WalkLane::Goes { exit: e2, sym: s2, toks: t2, extras: x2 } => match Sym::then(sym, s2) {
+                Some(s) => WalkLane::Goes { exit: *e2, toks: toks + t2 + Sym::closed_of(sym, s2), extras: extras + x2, sym: s },
+                None => WalkLane::Unknown,
+            },
+            WalkLane::Refused(r, s2) => Sym::then(sym, s2).map_or(WalkLane::Unknown, |s| WalkLane::Refused(*r, s)),
+            WalkLane::Unknown => WalkLane::Unknown,
+        },
+        x => x.clone(),
+    })
+}
+
+/// A chunk's walk entry by pass 3: its `open`, `header` and indents, and the tokens and extras the chunks before it
+/// wrote.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum WalkEntry {
+    At { open: bool, header: bool, indents: Vec<u32>, toks: usize, extras: usize },
+    Refused(Refusal),
+    Unknown,
+}
+
+/// Pass 3 of the walk: each chunk's walk entry, by Hillis and Steele's scan of the summaries' compositions, each
+/// round's chunks in `order`'s order.
+pub fn walk_entries_in(sums: &[WalkSummary], order: Order<'_>) -> Vec<WalkEntry> {
+    let mut acc = sums.to_vec();
+    let mut d = 1;
+    while d < acc.len() {
+        acc = each(acc.len(), order, |c| if c < d { acc[c].clone() } else { compose_walk(&acc[c - d], &acc[c]) });
+        d *= 2;
+    }
+    each(acc.len(), order, |c| {
+        if c == 0 {
+            return WalkEntry::At { open: false, header: false, indents: vec![0], toks: 0, extras: 0 };
+        }
+        match &acc[c - 1][0] {
+            WalkLane::Goes { exit, sym, toks, extras } => match sym.apply(&[0]) {
+                Some((indents, dedents)) => {
+                    let (open, header) = COMBOS[usize::from(*exit)];
+                    WalkEntry::At { open, header, indents, toks: toks + dedents, extras: *extras }
+                }
+                None => WalkEntry::Unknown,
+            },
+            WalkLane::Refused(r, sym) => sym.apply(&[0]).map_or(WalkEntry::Unknown, |_| WalkEntry::Refused(*r)),
+            WalkLane::Unknown => WalkEntry::Unknown,
+        }
+    })
+}
+
+/// How a text lexed from the middle went: its records, or its refusal; or the chunks it could not enter (`Unknown`)
+/// and where B's reading is wrong (`NotB`).
+pub enum Middle {
+    Lexed(Lexed),
+    Refused(Refusal),
+    NotB,
+    /// The first chunk an entry was not known for, and why.
+    Unknown(usize, &'static str),
+}
+
+impl core::fmt::Debug for Middle {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        match self {
+            Middle::Lexed(l) => write!(f, "Lexed({} tokens, {} extras)", l.toks.len(), l.extras.len()),
+            Middle::Refused(r) => write!(f, "Refused({r:?})"),
+            Middle::NotB => write!(f, "NotB"),
+            Middle::Unknown(c, why) => write!(f, "Unknown(chunk {c}: {why})"),
+        }
+    }
+}
+
+/// `src` lexed from the middle in chunks of `blocks` blocks: every pass's chunks each on their own, in `order`'s order.
+/// 1. Strata 2 and 3: each chunk's summary from every lane (`summary`), and each chunk's entry by the scan
+///    (`entries_in`).
+/// 2. The walk's entry place in each chunk (`probe`).
+/// 3. The walk: each chunk's summary from every `open` and `header` with indents it does not know (`walk_summary`),
+///    and each chunk's entry by the scan (`walk_entries_in`), with the records the chunks before it wrote.
+/// 4. Each chunk's records from its entry (`lex_chunk`), placed at the counts before it.
+///
+/// Where the chunks lexed from their entries leave an entry that is not the next chunk's, that is an error (`Err`).
+pub fn lex_middle(src: &[u8], blocks: usize, order: Order<'_>) -> Result<Middle, String> {
+    let n = src.len().div_ceil(64);
+    let blocks = blocks.max(1);
+    let k = n.div_ceil(blocks).max(1);
+    let range = |c: usize| (c * blocks, (c + 1) * blocks);
+    let sums = each(k, order, |c| summary(src, range(c).0, range(c).1));
+    let strata = entries_in(&sums, order);
+    let Some(strata) = strata.into_iter().collect::<Option<Vec<_>>>() else { return Ok(Middle::NotB) };
+    // A chunk's place from its own strata entry, else from the entries of chunks further back.
+    let places = each(k, order, |c| {
+        let mut j = 1;
+        loop {
+            let lb = c.saturating_sub(j);
+            if let Some(x) = probe(src, range(lb).0, strata[lb].0, strata[lb].1, range(c).0) {
+                return Some(x);
+            }
+            if lb == 0 {
+                return None;
+            }
+            j *= 2;
+        }
+    });
+    if let Some(c) = places.iter().position(Option::is_none) {
+        return Ok(Middle::Unknown(c, "a chunk's entry place"));
+    }
+    let places: Vec<Place> = places.into_iter().flatten().collect();
+    let wsums = each(k, order, |c| match places[c] {
+        Place::At(p, done) => walk_summary(src, range(c).0, range(c).1, strata[c].0, strata[c].1, p, done),
+        Place::After => core::array::from_fn(|_| WalkLane::Unknown),
+    });
+    let walks = walk_entries_in(&wsums, order);
+    for (c, w) in walks.iter().enumerate() {
+        match w {
+            WalkEntry::Unknown => return Ok(Middle::Unknown(c, "a chunk's walk")),
+            WalkEntry::Refused(r) => return Ok(Middle::Refused(*r)),
+            WalkEntry::At { .. } => {}
+        }
+    }
+    let entry = |c: usize| {
+        let WalkEntry::At { open, header, indents, .. } = &walks[c] else { unreachable!() };
+        let Place::At(p, done) = places[c] else { unreachable!("a chunk entered after a refusal") };
+        Entry { s1: s1_at(src, firsts(range(c).0).0), rb: strata[c].0, depth: strata[c].1, p, open: *open, header: *header, indents: indents.clone(), done }
+    };
+    let lexed = each(k, order, |c| {
+        let (mut toks, mut extras) = (Vec::new(), Vec::new());
+        (lex_chunk(src, range(c).0, range(c).1, &entry(c), &mut toks, &mut extras), toks, extras)
+    });
+    let (mut toks, mut extras) = (Vec::new(), Vec::new());
+    for (c, (r, t, x)) in lexed.into_iter().enumerate() {
+        match r {
+            Chunked::Lexed(next) => {
+                if c + 1 < k && next != entry(c + 1) {
+                    return Err(format!("chunk {c}'s exit {next:?}, chunk {}'s entry {:?}", c + 1, entry(c + 1)));
+                }
+            }
+            Chunked::NotB => return Ok(Middle::NotB),
+            Chunked::Refused(r) => return Ok(Middle::Refused(r)),
+            Chunked::Past => return Err(format!("chunk {c} read past the text's end from its entry")),
+        }
+        let WalkEntry::At { toks: tc, extras: xc, .. } = &walks[c] else { unreachable!() };
+        if (toks.len(), extras.len()) != (*tc, *xc) {
+            return Err(format!("chunk {c}'s records at {:?}, the scan's counts {:?}", (toks.len(), extras.len()), (tc, xc)));
+        }
+        toks.extend(t);
+        extras.extend(x);
+    }
+    Ok(Middle::Lexed(Lexed { toks, extras }))
+}
+
+/// `lex_middle` against the serial lexer (variant B's): whether its records are the serial ones (none where B's reading
+/// is wrong), the first chunk not entered and why (`Unknown`), or what differs.
+pub fn middle_is_serial(src: &[u8], blocks: usize, order: Order<'_>) -> Result<Option<Middle>, String> {
+    let got = lex_middle(src, blocks, order)?;
+    let want = lex_with(src, Variant::B);
+    let tok = |t: &Tok| (t.kind, t.soft, t.start, t.end);
+    let ex = |e: &Extra| (e.start, e.end, e.comment);
+    match (&got, &want) {
+        (Middle::Lexed(a), Ok(b)) if a.toks.iter().map(tok).eq(b.toks.iter().map(tok)) && a.extras.iter().map(ex).eq(b.extras.iter().map(ex)) => Ok(None),
+        (Middle::Refused(_), Err(_)) => Ok(None),
+        (Middle::NotB, _) if !b_reads(src) || lex_chunked(src, blocks).is_none() => Ok(None),
+        (Middle::Unknown(..), _) => Ok(Some(got)),
+        (Middle::Lexed(a), Ok(b)) => {
+            let (x, y) = (a.text(src), b.text(src));
+            let k = x.lines().zip(y.lines()).position(|(p, q)| p != q).unwrap_or(0);
+            let around = |t: &str| t.lines().skip(k.saturating_sub(2)).take(5).collect::<Vec<_>>().join("\n");
+            Err(format!("{blocks} blocks a chunk:\n  from the middle:\n{}\n  serial:\n{}", around(&x), around(&y)))
+        }
+        (g, w) => Err(format!("{blocks} blocks a chunk: from the middle {g:?}, serial {:?}", w.as_ref().map(|l| l.toks.len()))),
+    }
 }
 
 /// Passes 1 and 3 against the chunks lexed one after another: whether every chunk's entry by the scan of the
@@ -459,5 +870,44 @@ mod tests {
                 }
             }
         }
+    }
+
+    #[test]
+    fn texts_lexed_from_the_middle_in_any_order_are_the_serial_lexer() {
+        let mut lexed = 0;
+        for (i, t) in texts().iter().enumerate() {
+            for blocks in [1, 2, 3, 16] {
+                match middle_is_serial(t.as_bytes(), blocks, &shuffled(i as u64 * 7 + blocks as u64)) {
+                    Ok(None) => lexed += 1,
+                    Ok(Some(m)) => panic!("{blocks} blocks, text {i}: {m:?}"),
+                    Err(e) => panic!("text {i}: {e}"),
+                }
+            }
+        }
+        assert_eq!(lexed, 4 * texts().len());
+        // Random texts: quotes, f-strings, comments, escapes, brackets and indents across blocks' edges. A chunk not
+        // entered is lexed after the one before it; a wrong entry or record is never given.
+        let mut x = 0x9e37_79b9_7f4a_7c15u64;
+        let (mut same, mut unknown) = (0, 0);
+        for len in [65usize, 130, 400, 1000] {
+            for k in 0..200u64 {
+                let src: Vec<u8> = (0..len)
+                    .map(|_| {
+                        x ^= x << 13;
+                        x ^= x >> 7;
+                        x ^= x << 17;
+                        b"''\\\"\"#\n\n    ab(f{}x)\n\r[]:if "[(x >> 8) as usize % 27]
+                    })
+                    .collect();
+                for blocks in [1, 2, 3] {
+                    match middle_is_serial(&src, blocks, &shuffled(k * 3 + len as u64 + blocks as u64)) {
+                        Ok(None) => same += 1,
+                        Ok(Some(_)) => unknown += 1,
+                        Err(e) => panic!("{e}: {:?}", String::from_utf8_lossy(&src)),
+                    }
+                }
+            }
+        }
+        assert!(same > unknown, "{same} the serial lexer's, {unknown} not entered");
     }
 }

@@ -734,3 +734,33 @@ statements and blocks end.
     - **As tested:** each chunk's carries and depth by the scan are those the chunks lexed one after another leave,
       on the corpus at 1, 2, 3 and 16 blocks a chunk (1632 files, 0 differ; the other 12 refused or read by A), and
       on random texts with each pass in seeded random orders.
+99. **The walk from the middle: the whole lexer by passes, each chunk on its own** (as built: `lex_middle`).
+    - **The walk's place in a chunk (`probe`)** depends neither on its layout nor its indents (a layout token takes
+      no bytes). It is found by entering the walk at the last place below the chunk where it goes on as the serial
+      walk does, and walking it to the chunk's start. Such a place is a blank in code, a string's or a comment's
+      start, a line continuation's end, or the text's start. B's code mask does not mark each item's end: a quote
+      in a comment marks the comment's line end a string's.
+    - A place inside an interpolation's code may not be one the serial walk goes on from: the walk then refuses or
+      finds B's reading wrong, and the place before it is taken. Where the chunk's own block and the one below hold
+      no place, the chunks further back are asked, at twice the distance each time.
+    - A walk from every place refuses before the chunk (an f-string nested in an interpolation, which B refuses): the
+      chunk is entered after a refusal. Either the chunk that holds the refusal refuses the text, or the chunk is not
+      entered. It is never given a wrong entry.
+    - **The walk's summary** has a lane for each of `open` and `header`'s 3 states, entered at the chunk's place
+      with indents it does not know. The indents are a symbolic stack (`Sym`): the levels the chunk opened, and a
+      filter `t` (the entry's levels above `t` closed, a dedent each, counted where the entry is known). It also
+      keeps the reads the walk made of the entry's top, each a range that holds none of the entry's levels.
+    - Two summaries compose to one: `b`'s reads are checked against `a`'s own levels and narrowed by `a`'s filter,
+      and the levels and counts follow. A read that does not hold for every entry leaves the lane not known, and the
+      chunks after it are not entered.
+    - **Pass 3 for the walk** is the same scan (Hillis and Steele, each round's chunks in any order). Applying it to
+      the text's start gives each chunk its `open`, `header` and indents, and the tokens and extras before it. Pass
+      2 lexes each chunk from its entry, and its records are placed at those counts.
+    - **The check:** each chunk's exit must be the next chunk's entry by the passes, and each chunk's records must
+      start at the scan's counts; otherwise it is an error.
+    - **As tested:** the corpus at 1, 2, 3 and 16 blocks a chunk gives 1644 of 1644 files the serial lexer's records
+      (or its refusal, or variant A), with no chunk not entered and none wrong. The test texts and random texts
+      (quotes, f-strings, comments, escapes, brackets and indents across blocks' edges) were run with each pass in
+      seeded random orders.
+    - **What these passes are, as built:** each chunk's summary runs B and the walk from every lane, one lane after
+      another; they are not yet the superposed form (all lanes at once by masks, no branches).

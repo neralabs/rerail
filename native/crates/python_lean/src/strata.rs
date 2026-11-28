@@ -1353,8 +1353,48 @@ fn operator(a: u8, b: u8, c: u8) -> Option<(T, usize)> {
     OP1[ai].map(|t| (t, 1))
 }
 
+/// The indents open, as the walk reads them: the top against a line's indent. The text's walk keeps them (a `Vec`); a
+/// chunk's summary keeps its own above an entry it does not know (`middle::Sym`).
+pub(crate) trait Stack {
+    /// Whether the top is below `w`: a header's next line indented past it opens a level.
+    fn below(&mut self, w: u32) -> bool;
+    /// Whether the top is above `m`, for a line's dedent: the layout loop pops it (`pop`) where it is.
+    fn pops_above(&mut self, m: i64) -> bool;
+    /// Whether the top is above `m`, for a line in brackets (a dedent there is refused).
+    fn above(&mut self, m: i64) -> bool;
+    fn push(&mut self, w: u32);
+    fn pop(&mut self);
+}
+
+impl Stack for Vec<u32> {
+    #[inline(always)]
+    fn below(&mut self, w: u32) -> bool {
+        *self.last().expect("an indent") < w
+    }
+
+    #[inline(always)]
+    fn pops_above(&mut self, m: i64) -> bool {
+        self.above(m)
+    }
+
+    #[inline(always)]
+    fn above(&mut self, m: i64) -> bool {
+        i64::from(*self.last().expect("an indent")) > m
+    }
+
+    #[inline(always)]
+    fn push(&mut self, w: u32) {
+        Vec::push(self, w);
+    }
+
+    #[inline(always)]
+    fn pop(&mut self) {
+        Vec::pop(self);
+    }
+}
+
 /// Stratum 4: the walk that writes the tokens.
-struct Walk<'s> {
+struct Walk<'s, S: Stack = Vec<u32>> {
     t: Masks<'s>,
     toks: Vec<Tok>,
     extras: Vec<Extra>,
@@ -1362,7 +1402,7 @@ struct Walk<'s> {
     p: usize,
     /// Interpolations nested.
     depth: u32,
-    indents: Vec<u32>,
+    indents: S,
     /// As the lean lexer's (the scanner's flag).
     inside_interpolated_string: bool,
     /// The format string being read (its quote, whether a triple), while its interiors are.
@@ -1417,7 +1457,7 @@ pub fn b_reads(src: &[u8]) -> bool {
     w.module(false, false).is_ok() || !w.b_wrong
 }
 
-impl<'s> Walk<'s> {
+impl<'s, S: Stack> Walk<'s, S> {
     #[inline(always)]
     fn at(&self, i: usize) -> u8 {
         self.t.at(i)
@@ -1549,9 +1589,8 @@ impl<'s> Walk<'s> {
                     // taken once.
                     if let Some((indent, first_comment, _)) = self.scan(self.p)? {
                         loop {
-                            let current = *self.indents.last().expect("an indent");
                             let p = self.p;
-                            if header && indent > current {
+                            if header && self.indents.below(indent) {
                                 self.indents.push(indent);
                                 self.push(T::Indent, p, p);
                                 open = false;
@@ -1561,7 +1600,7 @@ impl<'s> Walk<'s> {
                                 self.push(T::Newline, p, p);
                                 open = false;
                                 header = false;
-                            } else if indent < current && first_comment < i64::from(current) {
+                            } else if self.indents.pops_above(i64::from(indent).max(first_comment)) {
                                 self.indents.pop();
                                 self.push(T::Dedent, p, p);
                             } else {
@@ -1714,13 +1753,12 @@ impl<'s> Walk<'s> {
     }
 
     /// The lean lexer's `dedent_in_brackets`.
-    fn dedent_in_brackets(&self, p: usize) -> Result<bool, Refusal> {
+    fn dedent_in_brackets(&mut self, p: usize) -> Result<bool, Refusal> {
         if self.inside_interpolated_string || self.closer_may_follow() {
             return Ok(false);
         }
-        let current = i64::from(*self.indents.last().expect("an indent"));
         Ok(match self.scan(p)? {
-            Some((indent, first_comment, next)) => i64::from(indent) < current && first_comment < current && !matches!(self.at(next), b'\'' | b'"' | b'`'),
+            Some((indent, first_comment, next)) => !matches!(self.at(next), b'\'' | b'"' | b'`') && self.indents.above(i64::from(indent).max(first_comment)),
             None => false,
         })
     }

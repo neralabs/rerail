@@ -78,6 +78,25 @@ fn main() {
                     None => {}
                 }
             }
+            let (mut m_ok, mut m_unknown, mut m_bad) = (0, 0, 0);
+            for (p, b) in &all {
+                match strata::middle::middle_is_serial(b, blocks, &strata::middle::in_order) {
+                    Ok(None) => m_ok += 1,
+                    Ok(Some(m)) => {
+                        m_unknown += 1;
+                        if m_unknown <= 3 {
+                            println!("{} :: not entered: {m:?}", p.strip_prefix(dir).unwrap_or(p).display());
+                        }
+                    }
+                    Err(e) => {
+                        m_bad += 1;
+                        if m_bad <= 3 {
+                            println!("{} :: from the middle: {e}", p.strip_prefix(dir).unwrap_or(p).display());
+                        }
+                    }
+                }
+            }
+            println!("chunks of {blocks} blocks: from the middle, every pass on its own: {m_ok} the serial lexer's, {m_unknown} a chunk not entered, {m_bad} wrong");
             println!("chunks of {blocks} blocks: the scan of summaries gives each chunk its entry in {ok} files, not in {bad}");
             println!("chunks of {blocks} blocks: {same} the serial lexer's records, {differ} not, {not_b} read by A (B's reading wrong); {:.1} s", t0.elapsed().as_secs_f64());
         }
