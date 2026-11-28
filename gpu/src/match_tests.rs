@@ -549,6 +549,33 @@ fn lz4_with(piece: &[u8], dict: &[u8], dict_table: &[u32], at: usize, long: Opti
     out
 }
 
+/// Each of `pieces(t)`'s pieces' first node and its fixed part's bytes (a cell a node; the side bytes after them):
+/// `z_of`'s order, a block's four columns in turn, the pieces under LZ4's minimum left out as it leaves them.
+fn piece_nodes(t: &[u8]) -> Vec<(usize, usize, usize)> {
+    let p = rerail_tape_format::f16::placement(t).unwrap();
+    let z = rerail_tape_format::f16::Z;
+    let mut out = Vec::new();
+    for b in 0..p.block_count() {
+        let rows = p.rows(b);
+        for q in 0..4 {
+            let cell = if q == 0 { 1 } else { p.widths[q - 1] };
+            let all = pieces_len(t, b, q);
+            if all >= 16 {
+                out.push((b * z, rows * cell, cell));
+            }
+        }
+    }
+    out
+}
+
+/// Piece (b, q)'s bytes as `z_of` reads them: its fixed cells and its side bytes.
+fn pieces_len(t: &[u8], b: usize, q: usize) -> usize {
+    let p = rerail_tape_format::f16::placement(t).unwrap();
+    let cell = if q == 0 { 1 } else { p.widths[q - 1] };
+    let side = |k: usize| u32::from_le_bytes(t[p.parts[q] + 4 * k..p.parts[q] + 4 * k + 4].try_into().unwrap()) as usize;
+    p.rows(b) * cell + side(b + 1) - side(b)
+}
+
 /// LZ4's matching in 16z's construction on the matrix units (decision 0727): `m_lz` finds each position's nearest
 /// equal 32-byte window in the dictionary and earlier in its own piece (the lookback) for every piece at once, and an
 /// LZ4 encoder takes those matches, alone or with LZ4's 4-byte hash for the short ones. Each piece is decoded again
@@ -628,8 +655,36 @@ fn int8_lz4_matches() {
             dict_table[(u32::from_le_bytes([dict[v], dict[v + 1], dict[v + 2], dict[v + 3]]).wrapping_mul(2654435761) >> 20) as usize] = v as u32;
         }
         let dt = &dict_table;
+        // Tree-aligned queries: a position counts only where a subtree of `min` nodes or more starts (its node's
+        // cell's first byte); the side bytes are no node's.
+        let nd = nodes_of(&tape);
+        let pn = piece_nodes(&tape);
+        assert_eq!(pn.len(), ps.len());
+        let aligned = |min: u32| -> (Vec<u32>, usize) {
+            let mut l = long.clone();
+            let mut kept = 0;
+            for (k, &(node0, fixed, cell)) in pn.iter().enumerate() {
+                let s = starts[k] as usize - d;
+                for j in 0..ps[k].len() {
+                    let keep = j < fixed && j % cell == 0 && nd.size[node0 + j / cell] >= min;
+                    if keep {
+                        kept += 1;
+                    } else {
+                        l[s + j] = 0;
+                    }
+                }
+            }
+            (l, kept)
+        };
+        let side: usize = pn.iter().zip(&ps).map(|(&(_, fixed, _), p)| p.len() - fixed).sum();
+        line += &format!(" side bytes {:.1}%;", 100.0 * side as f64 / raw as f64);
+        let (inner, kin) = aligned(2);
+        let (big, kbig) = aligned(32);
+        line += &format!(" queries at inner nodes {:.1}%, at subtrees of 32+ {:.1}%;", 100.0 * kin as f64 / raw as f64, 100.0 * kbig as f64 / raw as f64);
         for (what, r) in [
             ("LZ4 fast", time(&|pc, _| lz4_dict(pc, &dict, 0))),
+            ("units at inner nodes and the hash", time(&|pc, s| lz4_with(pc, &dict, dt, s, Some(&inner), true))),
+            ("units at 32+ subtrees and the hash", time(&|pc, s| lz4_with(pc, &dict, dt, s, Some(&big), true))),
             ("LZ4 HC 12", time(&|pc, _| lz4_dict(pc, &dict, 12))),
             ("hash only", time(&|pc, s| lz4_with(pc, &dict, dt, s, None, true))),
             ("the units' matches only", time(&|pc, s| lz4_with(pc, &dict, dt, s, Some(&long), false))),
