@@ -141,11 +141,106 @@ UKL_INLINE bool state_live(CBlk t, uint32_t head, uint32_t id) {
     return true;
 }
 
-// The first live row whose column `c` is `v`, or NONE.
-UKL_INLINE uint32_t state_first(CBlk t, uint32_t head, uint32_t c, int64_t v) {
-    for (uint32_t id = 0u, end = state_end(t, head); id < end; id++)
-        if (state_live(t, head, id) && state_get(t, head, id, c) == v) return id;
+// Whether own row `id` of layer `l` (in block `own`) is live in the state at `head`: killed by no layer above it.
+UKL_INLINE bool own_live(CBlk t, uint32_t head, uint32_t own, Layer l, uint32_t id) {
+    int64_t p = layer_part_of(l, id);
+    for (uint32_t k = head; k != own;) {
+        Layer a = layer_of(t, k);
+        if (layer_kills(a, p, id)) return false;
+        k = a.below;
+    }
+    return true;
+}
+
+// The layer's rows' hashed index on column `c` alone, or NONE (`Relation::find_index` of `[c]`).
+UKL_INLINE uint32_t layer_index_on(Layer l, uint32_t c) {
+    uint32_t f = REL_INDEXES_AT, at = (uint32_t)((int64_t)(f & ~7u) + (int64_t)I32(l.rows, f) * 8);
+    for (uint32_t x = 0u, n = U32(l.rows, REL_NINDEX_AT); x < n; x++) {
+        CBlk ix = l.rows + at + x * INDEX_BYTES;
+        if (U32(ix, INDEX_NCOLS_AT) == 1u && U32(ix, INDEX_ORDERED_AT) == 0u && *(CLIF_BLOCK_SPACE const uint16_t*)(ix + INDEX_KEY_AT) == c) return x;
+    }
     return NONE;
+}
+
+// A probe of the state at `head` for the live rows whose column `c` is `v`, as `trace::ProbeIter` reads them: each
+// layer in turn, newest first, by its indexes: a range by binary search when `c` leads the canonical order (its rows
+// lie in that order), a hashed index's bucket on `c` alone, else its rows. `probe_next` gives each match once, NONE
+// past the last.
+#define PROBE_RANGE 0u
+#define PROBE_BUCKET 1u
+#define PROBE_ROWS 2u
+typedef struct Probe {
+    CBlk t;
+    Layer l;
+    int64_t v;
+    uint32_t head, own, next, c, kind, x, i, end;
+} Probe;
+
+UKL_INLINE Probe probe_of(CBlk t, uint32_t head, uint32_t c, int64_t v) {
+    Probe p;
+    p.t = t;
+    p.head = head;
+    p.own = NONE;
+    p.next = head;
+    p.c = c;
+    p.v = v;
+    p.kind = PROBE_ROWS;
+    p.x = NONE;
+    p.i = 0u;
+    p.end = 0u;
+    return p;
+}
+
+// The probe's layer `k` opened: its candidates.
+UKL_INLINE void probe_open(UKL_PRIVATE Probe* p, uint32_t k) {
+    Layer l = layer_of(p->t, k);
+    p->l = l;
+    p->own = k;
+    p->next = l.below;
+    p->i = l.start;
+    p->end = l.end;
+    p->kind = PROBE_ROWS;
+    if (l.end == l.start) return;
+    if (l.order[0] == p->c) {
+        uint32_t lo = l.start, hi = l.end;
+        while (lo < hi) {
+            uint32_t m = (lo + hi) / 2u;
+            if (layer_get(l, m, p->c) < p->v) lo = m + 1u; else hi = m;
+        }
+        p->kind = PROBE_RANGE;
+        p->i = lo;
+        return;
+    }
+    uint32_t x = layer_index_on(l, p->c);
+    if (x == NONE) return;
+    uint64_t g = clif_rel_group(l.rows, 0u, x, clif_rel_key_mix(l.rows, 0u, KEY_SEED, (uint64_t)p->v));
+    p->kind = PROBE_BUCKET;
+    p->x = x;
+    p->i = (uint32_t)(g >> 32);
+    p->end = p->i + (uint32_t)g;
+}
+
+UKL_INLINE uint32_t probe_next(UKL_PRIVATE Probe* p) {
+    for (;;) {
+        while (p->i < p->end) {
+            uint32_t id = p->kind == PROBE_BUCKET ? clif_rel_group_row(p->l.rows, 0u, p->x, p->i) : p->i;
+            p->i++;
+            if (id < p->l.start || id >= p->l.end) continue;
+            if (layer_get(p->l, id, p->c) != p->v) {
+                if (p->kind == PROBE_RANGE) p->i = p->end;
+                continue;
+            }
+            if (own_live(p->t, p->head, p->own, p->l, id)) return id;
+        }
+        if (p->next == NONE) return NONE;
+        probe_open(p, p->next);
+    }
+}
+
+// The first live row whose column `c` is `v` in the probe's order, or NONE: the row a key is taken once at.
+UKL_INLINE uint32_t state_first(CBlk t, uint32_t head, uint32_t c, int64_t v) {
+    Probe p = probe_of(t, head, c, v);
+    return probe_next(&p);
 }
 UKL_INLINE bool state_has(CBlk t, uint32_t head, uint32_t c, int64_t v) { return state_first(t, head, c, v) != NONE; }
 

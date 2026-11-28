@@ -64,9 +64,9 @@ const VERSIONS: &[Ukl] = &[
     Ukl { sig: &CACHE_COMMIT, module: "cache", cases: &[cache_commit_case], shape: None },
     Ukl { sig: &ORDER, module: "cache", cases: &[order_case], shape: None },
     Ukl { sig: &DROP_PARTS, module: "drop", cases: &[drop_parts_case], shape: None },
-    Ukl { sig: &SEMI_CHANGE, module: "semi", cases: &[semi_change_case], shape: None },
-    Ukl { sig: &CHANGE_ROWS, module: "semi", cases: &[change_rows_case], shape: None },
-    Ukl { sig: &REPLACE_ROWS, module: "semi", cases: &[replace_rows_case], shape: None },
+    Ukl { sig: &SEMI_CHANGE, module: "semi", cases: &[semi_change_case, semi_change_large_case], shape: None },
+    Ukl { sig: &CHANGE_ROWS, module: "semi", cases: &[change_rows_case, change_rows_large_case], shape: None },
+    Ukl { sig: &REPLACE_ROWS, module: "semi", cases: &[replace_rows_case, replace_rows_large_case], shape: None },
     Ukl { sig: &DOCS_OF, module: "k0", cases: &[docs_of_case], shape: None },
     Ukl { sig: &ROOM_OF, module: "k0", cases: &[room_of_case], shape: None },
     Ukl { sig: &NAMED_BLOCKS, module: "k0", cases: &[named_blocks_case], shape: None },
@@ -178,6 +178,62 @@ fn semi_traces(cpu: &Runner, dir: &mut Directory) -> (Trace, Vec<crate::dir::Blo
         bh.push(push_layer(cpu, dir, &mut b, y).expect("a layer"));
     }
     (a, ah, bh)
+}
+
+/// `semi_traces` at scale: 300 documents over three layers of `A` (edited, gone, back, new), and `B`'s wants of them
+/// over three layers (dropped, asked again): more rows than a round of the group, keys probed in every layer.
+fn semi_large_traces(cpu: &Runner, dir: &mut Directory) -> (Trace, Vec<crate::dir::BlockId>, Vec<crate::dir::BlockId>) {
+    let mut a = Trace::new(&Shape::run(vec![ColType::I32, ColType::I64], vec![0, 1], Some(0))).expect("a trace").with_roll_up(RollUp::Never);
+    let mut b = Trace::new(&crate::contract::want_shape()).expect("a trace").with_roll_up(RollUp::Never);
+    let al: [Vec<(Vec<i64>, i32)>; 3] = [
+        (0..300).map(|d| (vec![d, 10 * d], 1)).collect(),
+        (0..300).step_by(3).flat_map(|d| [(vec![d, 10 * d], -1), (vec![d, 10 * d + 1], 1)]).chain((0..300).skip(1).step_by(7).filter(|d| d % 3 != 0).map(|d| (vec![d, 10 * d], -1))).chain((300..340).map(|d| (vec![d, 10 * d], 1))).collect(),
+        (0..300).skip(1).step_by(14).map(|d| (vec![d, 10 * d + 2], 1)).chain((0..300).skip(2).step_by(5).filter(|d| d % 3 != 0 && (d - 1) % 7 != 0).map(|d| (vec![d, 10 * d], -1))).collect(),
+    ];
+    let bl: [Vec<(Vec<i64>, i32)>; 3] = [
+        (0..320).step_by(2).map(|d| (vec![0, d], 1)).collect(),
+        (0..320).step_by(6).map(|d| (vec![0, d], -1)).chain((1..340).step_by(4).map(|d| (vec![0, d], 1))).collect(),
+        (0..320).step_by(12).map(|d| (vec![0, d], 1)).chain((1..340).step_by(8).map(|d| (vec![0, d], -1))).collect(),
+    ];
+    let (mut ah, mut bh) = (vec![], vec![]);
+    for (x, y) in al.iter().zip(&bl) {
+        ah.push(push_layer(cpu, dir, &mut a, x).expect("a layer"));
+        bh.push(push_layer(cpu, dir, &mut b, y).expect("a layer"));
+    }
+    (a, ah, bh)
+}
+
+fn semi_change_large_case(dir: &mut Directory) -> Case {
+    let cpu = Runner::new().expect("the CPU's runner");
+    let (a, ah, bh) = semi_large_traces(&cpu, dir);
+    let asks = Trace::new(&crate::contract::asks_shape()).expect("a trace");
+    let (rows, parts, keys) = (a.open(dir, 1024), Parts::open(dir, 1024).expect("a parts block"), asks.open(dir, 1024));
+    Case { slots: vec![ah[2], bh[2], rows, parts, keys], params: semi_p(&ah, Some(&bh)) }
+}
+
+fn change_rows_large_case(dir: &mut Directory) -> Case {
+    let cpu = Runner::new().expect("the CPU's runner");
+    let (a, ah, _) = semi_large_traces(&cpu, dir);
+    let (rows, parts) = (a.open(dir, 1024), Parts::open(dir, 1024).expect("a parts block"));
+    Case { slots: vec![ah[2], rows, parts], params: semi_p(&ah, None) }
+}
+
+/// `replace_rows` at scale: a state of 200 keys over two layers, given 150 rows (as they are, changed, new).
+fn replace_rows_large_case(dir: &mut Directory) -> Case {
+    let cpu = Runner::new().expect("the CPU's runner");
+    let mut t = Trace::new(&Shape::run(vec![ColType::I32, ColType::I64, ColType::I64], vec![0, 1, 2], Some(0))).expect("a trace").with_roll_up(RollUp::Never);
+    push_layer(&cpu, dir, &mut t, &(0..200).map(|k| (vec![k, 10 * k, 100 * k], 1)).collect::<Vec<_>>()).expect("a layer");
+    let head = push_layer(&cpu, dir, &mut t, &(0..200).step_by(5).flat_map(|k| [(vec![k, 10 * k, 100 * k], -1), (vec![k, 10 * k + 1, 100 * k], 1)]).collect::<Vec<_>>()).expect("a layer");
+    let given = t.open(dir, 150);
+    let b = dir.block(given).expect("just made");
+    let pin = rerail_blocks::region::pin_block(&b, "given rows", true).expect("a write pin");
+    for k in (0..250).step_by(2).take(150) {
+        let r = if k % 3 == 0 { [k, 10 * k, 100 * k] } else { [k, 10 * k + 3, 100 * k] };
+        rerail_blocks::layer::RunsW::new(&pin).push(&r, 1).expect("room for the given rows");
+    }
+    drop(pin);
+    let runs = t.open(dir, 512);
+    Case { slots: vec![head, given, runs], params: params(ReplaceP { head: u64::from(head.0), arity: 3, key: 1 }) }
 }
 
 /// `semi_change`'s params: `A` and `B` each from their first layer's state to their last's.
