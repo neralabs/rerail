@@ -372,15 +372,8 @@ macro_rules! each_of {
 /// takes it there.
 #[inline(never)]
 pub(super) fn block_map(prev: &B, blk: &B, b1: &B, out: &mut BlockMap) -> bool {
-    let (exit, codes) = block_lanes(prev, blk, b1);
-    let br = blk.ob | blk.cb;
-    let mut sets = Sets { keys: [0; REPS], n: 0, of: [0; CODES], more: false };
-    // A code is live where one of its two lanes is not at `WRONG` (a lane there reads no depth).
-    let live = |c: usize| (usize::from(exit[(c / 4) * 8 + c % 4]) != WRONG) | (usize::from(exit[(c / 4) * 8 + c % 4 + 4]) != WRONG);
-    // The codes' steps written out (a loop of them may stay a loop).
-    each_of!(c in [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31, 32, 33, 34, 35, 36, 37, 38, 39, 40, 41, 42, 43, 44, 45, 46, 47, 48, 49, 50, 51, 52, 53, 54, 55, 56, 57, 58, 59, 60, 61, 62, 63, 64, 65, 66, 67, 68, 69, 70, 71] {
-        sets.step(c, live(c), codes[c] & br);
-    });
+    let (exit, codes, live) = block_lanes(prev, blk, b1);
+    let sets = Sets::of(&codes, live, blk.ob | blk.cb);
     let k = sets.keys;
     let by_set = [
         Depth::of_masks(blk.ob & k[0], blk.cb & k[0]),
@@ -394,7 +387,7 @@ pub(super) fn block_map(prev: &B, blk: &B, b1: &B, out: &mut BlockMap) -> bool {
     // Each lane's depth its set's (the set's index clamped, so no bounds check), the lanes written out.
     macro_rules! by {
         ($l:expr) => {
-            by_set[usize::from(sets.of[code_of($l)]).min(REPS - 1)]
+            by_set[(sets.of[code_of($l)] as usize).min(REPS - 1)]
         };
     }
     // Into `out` lane by lane: a map made and returned would be copied (2304 bytes).
@@ -408,39 +401,72 @@ pub(super) fn block_map(prev: &B, blk: &B, b1: &B, out: &mut BlockMap) -> bool {
 /// The most different sets of brackets in code a block's lanes share their depths among.
 const REPS: usize = 6;
 
-/// The sets of brackets in code a block's codes hold: each set's brackets (`keys`, `n` of them), each code's set,
-/// and whether there are more than `REPS`.
+/// The sets of brackets in code a block's codes hold: each set's brackets (`keys`), each code's set, and whether
+/// there are more than `REPS`.
 struct Sets {
     keys: [u64; REPS],
-    n: usize,
-    of: [u8; CODES],
+    of: [u64; CODES],
     more: bool,
 }
 
+/// Eight codes' brackets in code, a vector.
+type Keys = Simd<u64, 8>;
+
 impl Sets {
-    /// Code `c`'s brackets in code `key`: its set where one holds them, else a new set (where `live`). No branch.
+    /// The sets of the live codes' brackets in code (`codes & br`; `live` a bit for each code): each set's brackets
+    /// those of the first live code no set before holds, its codes found by one vector compare over all of them.
+    /// No branch.
     #[inline(always)]
-    fn step(&mut self, c: usize, live: bool, key: u64) {
-        let mut found = false;
-        let mut at = 0u8;
-        each_of!(j in [5usize, 4, 3, 2, 1, 0] {
-            let eq = (j < self.n) & (self.keys[j] == key);
-            found |= eq;
-            at = pick(eq, j as u8, at);
+    fn of(codes: &[u64; CODES], live: u128, br: u64) -> Sets {
+        const _: () = assert!(CODES == 72);
+        let keys: [u64; CODES] = codes.map(|c| c & br);
+        let kv: [Keys; 9] = core::array::from_fn(|v| Keys::from_array(core::array::from_fn(|i| keys[8 * v + i])));
+        let mut idx = [Keys::splat(0); 9];
+        let mut rem = live;
+        let mut out = [0u64; REPS];
+        each_of!(j in [0u64, 1, 2, 3, 4, 5] {
+            // Where none is left the set is the last code's: its codes have their set already, the same brackets.
+            let key = keys[(rem.trailing_zeros() as usize).min(CODES - 1)];
+            out[j as usize] = key;
+            let mut m = 0u128;
+            each_of!(v in [0usize, 1, 2, 3, 4, 5, 6, 7, 8] {
+                let e = kv[v].simd_eq(Keys::splat(key));
+                m |= u128::from(e.to_bitmask()) << (8 * v);
+                idx[v] = e.select(Keys::splat(j), idx[v]);
+            });
+            rem &= !m;
         });
-        let add = live & !found;
-        self.more |= add & (self.n == REPS);
-        let slot = self.n.min(REPS - 1);
-        self.keys[slot] = pick(add, key, self.keys[slot]);
-        self.of[c] = pick(found, at, slot as u8);
-        self.n = pick(add, (self.n + 1).min(REPS), self.n);
+        let mut of = [0u64; CODES];
+        each_of!(v in [0usize, 1, 2, 3, 4, 5, 6, 7, 8] {
+            of[8 * v..8 * v + 8].copy_from_slice(idx[v].as_array());
+        });
+        Sets { keys: out, of, more: rem != 0 }
     }
+}
+
+/// The strings' machine's run from start state `s` over a block whose machine from byte 2 on is `f2`
+/// (`machine` of the masks shifted down 2), with its first two bytes' quotes `ex`, `ey` and bare line ends `r`
+/// stepped one at a time: `run_from`'s planes and last state. No branch.
+#[inline(always)]
+fn run_from_2(f2: &[[u64; 2]; 3], s: u8, ex: u64, ey: u64, r: u64) -> (u64, u64, u8) {
+    // A byte's step (`machine`'s transition): from 0 a quote opens its kind; from 1 or 2 its own quote or a bare
+    // line end closes it, else it stays.
+    let step = |s: u8, i: u32| {
+        let (x, y, r) = ((ex >> i) & 1 == 1, (ey >> i) & 1 == 1, (r >> i) & 1 == 1);
+        pick(s == 0, pick(x, 1, pick(y, 2, 0)), pick(s == 1, pick(x | r, 0, 1), pick(y | r, 0, 2)))
+    };
+    let a = step(s, 0);
+    let b = step(a, 1);
+    let [lo, hi] = *pick(b == 2, &f2[2], pick(b == 1, &f2[1], &f2[0]));
+    let lo = (lo << 2) | u64::from(a == 1) | (u64::from(b == 1) << 1);
+    let hi = (hi << 2) | u64::from(a == 2) | (u64::from(b == 2) << 1);
+    (lo, hi, ((lo >> 63) | ((hi >> 63) << 1)) as u8)
 }
 
 /// `block_map` with a depth made for each code: a block whose codes hold more than `REPS` sets of brackets.
 #[inline(never)]
 fn block_map_each(prev: &B, blk: &B, b1: &B) -> BlockMap {
-    let (exit, codes) = block_lanes(prev, blk, b1);
+    let (exit, codes, _) = block_lanes(prev, blk, b1);
     let by_code: [Depth; CODES] = core::array::from_fn(|c| Depth::of_masks(blk.ob & codes[c], blk.cb & codes[c]));
     BlockMap { exit, depth: core::array::from_fn(|l| by_code[code_of(l)]) }
 }
@@ -457,7 +483,7 @@ const fn code_of(l: usize) -> usize {
 
 /// `block_map`'s layers: each lane's exit (`WRONG` where B's reading is wrong) and each code's bytes of code.
 #[inline(always)]
-fn block_lanes(prev: &B, blk: &B, b1: &B) -> ([u8; LANES], [u64; CODES]) {
+fn block_lanes(prev: &B, blk: &B, b1: &B) -> ([u8; LANES], [u64; CODES], u128) {
     let (pqs, pqd) = (prev.sq & !prev.esc, prev.dq & !prev.esc);
     let (qs, qd) = (blk.sq & !blk.esc, blk.dq & !blk.esc);
     let runs = |q: u64, nq: u64, pq: u64| {
@@ -474,6 +500,8 @@ fn block_lanes(prev: &B, blk: &B, b1: &B) -> ([u8; LANES], [u64; CODES]) {
     let x = super::win(prev.pfx, blk.pfx).reverse_bits();
     let mut exit_of = [0u8; LANES];
     let mut codes = [0u64; CODES];
+    // The codes one of whose lanes is not at `WRONG` (a lane there reads no depth): a bit each.
+    let mut live = 0u128;
     each_of!(t0 in [0u8, 1, 2] {
         let (tl, th, t1) = super::run_from(&m3, t0);
         let ta = tl | th;
@@ -481,11 +509,15 @@ fn block_lanes(prev: &B, blk: &B, b1: &B) -> ([u8; LANES], [u64; CODES]) {
         let t_close = r3 & tb & !ta;
         let t_open = r3 & !tb;
         let tr_out = (t_close >> 62 | t_close >> 63) as usize;
+        // The strings' machine from byte 2 on, once for the four values of `tr_taken` (they differ in bytes 0 and 1
+        // alone): each value's first two bytes are two steps of it, then the runs from the state they leave.
+        let tr_base = tb | ta | t_close << 1 | t_close << 2;
+        let ms2 = super::machine((qs & !tr_base) >> 2, (qd & !tr_base) >> 2, blk.bare_lf >> 2);
         each_of!(tr_taken in [0u64, 1, 2, 3] {
-            let tr = tb | ta | t_close << 1 | t_close << 2 | tr_taken;
-            let ms = super::machine(qs & !tr, qd & !tr, blk.bare_lf);
+            let tr = tr_base | tr_taken;
+            let (ex, ey) = (qs & !tr, qd & !tr);
             each_of!(s0 in [0u8, 1, 2] {
-                let (sl, sh, s1) = super::run_from(&ms, s0);
+                let (sl, sh, s1) = run_from_2(&ms2, s0, ex, ey, blk.bare_lf);
                 let sa = sl | sh;
                 let sb = sa << 1 | u64::from(s0 != 0);
                 let g = blk.hash & !tr & !sb;
@@ -497,16 +529,22 @@ fn block_lanes(prev: &B, blk: &B, b1: &B) -> ([u8; LANES], [u64; CODES]) {
                     let comment = g | (a & (y ^ a ^ g));
                     let code = !(comment | ((sb | sa) & !comment & !tr) | tr);
                     codes[usize::from(t0) * 24 + usize::from(s0) * 8 + ccarry as usize * 4 + tr_taken as usize] = code;
+                    // What both values of `cext_prev` read alike, once: the checks of no line end, the strings' openers
+                    // and the prefixes below them.
+                    let wrong_any = (t_open & (sb | comment)) | (blk.bt & !blk.esc & !tr & !sb & !comment);
+                    let s_open = (qs | qd) & !tr & !sb & !comment;
+                    let o = super::win(0, s_open | t_open);
+                    let (_, over) = x.overflowing_add((o.reverse_bits() << 1) & x);
+                    let bad_any = all_wrong | (wrong_any != 0) | over;
+                    let sb_code = sb & !tr;
                     each_of!(cext_prev in [0u64, 1] {
                         let cext = comment | (blk.eol & !blk.lf & (comment << 1 | cext_prev));
                         let lend = cext << 1 | cext_prev;
-                        let wrong = (t_open & (sb | comment)) | (blk.bare_lf & sb & !tr & !lend) | (blk.lf & blk.esc & sb & lend) | (blk.bt & !blk.esc & !tr & !sb & !comment);
-                        let s_open = (qs | qd) & !tr & !sb & !comment;
-                        let o = super::win(0, s_open | t_open);
-                        let (_, over) = x.overflowing_add((o.reverse_bits() << 1) & x);
+                        let wrong = (blk.bare_lf & sb_code & !lend) | (blk.lf & blk.esc & sb & lend);
                         let l = usize::from(t0) * 48 + usize::from(s0) * 16 + ccarry as usize * 8 + cext_prev as usize * 4 + tr_taken as usize;
                         let exit = usize::from(t1) * 48 + usize::from(s1) * 16 + cc_out * 8 + (cext >> 63) as usize * 4 + tr_out;
-                        let bad = u8::from(all_wrong | (wrong != 0) | over);
+                        let bad = u8::from(bad_any | (wrong != 0));
+                        live |= u128::from(bad == 0) << (usize::from(t0) * 24 + usize::from(s0) * 8 + ccarry as usize * 4 + tr_taken as usize);
                         // A select by mask: `WRONG` where bad.
                         let keep = bad.wrapping_sub(1);
                         exit_of[l] = (exit as u8 & keep) | (WRONG as u8 & !keep);
@@ -515,7 +553,7 @@ fn block_lanes(prev: &B, blk: &B, b1: &B) -> ([u8; LANES], [u64; CODES]) {
             });
         });
     });
-    (exit_of, codes)
+    (exit_of, codes, live)
 }
 
 /// How many different codes a block's lanes read (`block_lanes`), over a text's blocks: by the bytes of code, and by
@@ -529,7 +567,7 @@ pub fn distinct_codes(src: &[u8]) -> ([usize; CODES + 1], [usize; CODES + 1]) {
     b.push(B::default());
     let (mut by_code, mut by_brackets) = ([0; CODES + 1], [0; CODES + 1]);
     for w in b.windows(3).take(blocks) {
-        let (exit, codes) = block_lanes(&w[0], &w[1], &w[2]);
+        let (exit, codes, _) = block_lanes(&w[0], &w[1], &w[2]);
         let live: Vec<usize> = (0..CODES).filter(|&c| (0..LANES).any(|l| code_of(l) == c && usize::from(exit[l]) != WRONG)).collect();
         let mut a: Vec<u64> = live.iter().map(|&c| codes[c]).collect();
         let mut k: Vec<u64> = live.iter().map(|&c| codes[c] & (w[1].ob | w[1].cb)).collect();

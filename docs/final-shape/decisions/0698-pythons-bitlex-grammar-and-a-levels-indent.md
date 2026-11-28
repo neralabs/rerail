@@ -1103,3 +1103,21 @@ statements and blocks end.
     - **As measured** (as item 113, 16 blocks a chunk): the strata's summaries 64.5 cycles a byte, from 131.2. From
       the middle, all passes 168.8, from 235. The rest of `block_map` is its layers: the strings' machine for each
       of the triples' 12 states, and the rest for each of the 36 and 144 beneath them.
+115. **Pass 1's layers share more: the sets in vectors, the strings' machine once a triples' state** (as built:
+    `middle::Sets::of`, `run_from_2`).
+    - **Counted first:** `block_map`'s x86-64 instructions by source line put about 3500 to 4000 in choosing the
+      sets (72 codes against up to 6 keys, scalar) and about 3200 in the 13 runs of `machine`.
+    - **The sets in vectors:** the 72 codes' brackets as nine `u64x8`. A set's brackets are those of the first
+      live code left (a bit set the lanes' checks make). One compare over the nine both clears its codes from
+      those left and selects its index into theirs.
+    - **The strings' machine once for each of the triples' 3 states,** not each of their 12. `tr_taken` changes
+      only bytes 0 and 1 of the quotes it reads, so the machine is composed from byte 2 on (the masks shifted
+      down 2). Each value's first two bytes are two steps of the machine's transition, and its runs are read from
+      the state they leave (`run_from_2`).
+    - **As tested:** the 30 tests pass on AArch64 and x86-64: `superposed_is_per_lane` (B run from each lane) and
+      `shared_depths_are_each_codes` among them. From the middle is still the serial lexer's in 1644 of 1644
+      files. `block_map` has 12640 instructions a block on AArch64 (15270 before, 28831 before item 114), 0
+      conditional branches and 0 calls on both.
+    - **As measured** (as item 113, 16 blocks a chunk, the host at load 5 to 12): the strata's summaries 280
+      instructions a byte (533 before item 114) and about 55 cycles a byte. From the middle, all passes about
+      166 cycles a byte.
