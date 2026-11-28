@@ -650,3 +650,64 @@ pub(super) fn string_starts(t: &Masks<'_>, bi: usize, c: &mut StrCarry) -> (u64,
     };
     (starts as u64, rare_here)
 }
+
+/// Block `bi`'s extras' starts (a comment's `#`, a continuation's `\`), and whether the block is rare. A
+/// continuation is an extra unless the next line's first byte past its blanks starts a string's prefix and quote
+/// (the walk's reading).
+pub(super) fn extra_starts(t: &Masks<'_>, bi: usize) -> (u64, bool) {
+    let src = t.src;
+    let (b, b1) = (*t.blk(bi), *t.blk(bi + 1));
+    let m = |f: fn(&B) -> u64| w(f(&b), f(&b1));
+    // The window of the block and the one after: bit `j` is byte `64 * bi + j`.
+    let lim = src.len().saturating_sub(64 * bi).min(128) as u32;
+    let valid = ((1u128 << (lim & 127)) - 1) | 0u128.wrapping_sub(u128::from(lim >> 7));
+    let quote = m(|b| b.sq | b.dq | b.bt);
+    let blanks = m(|b| b.skip & !b.lf);
+    let (lf, cr) = (m(|b| b.lf), m(|b| b.eol & !b.lf));
+    // The bytes from which a run of prefix letters reaches a quote, and from which blanks reach one of them.
+    let string_at = reaching(quote, m(|b| b.pfx));
+    let line_string = reaching(string_at & valid, blanks);
+    let cont = m(|b| b.bs & b.code) & valid & u128::from(u64::MAX);
+    let (nl, crlf) = (cont & (lf >> 1), cont & (cr >> 1) & (lf >> 2));
+    // At the text's end a continuation needs no line end.
+    let at_end = cont & !(valid >> 1);
+    let quirk = (nl & (line_string >> 2)) | (crlf & (line_string >> 3));
+    let extras = (m(|b| b.cstart) & u128::from(u64::MAX)) | (cont & !quirk);
+    // Rare: a backslash before no line end (the walk refuses it); a next line's blanks and letters that reach the
+    // window's top.
+    let refused = cont & !(nl | crlf | at_end) != 0;
+    let after = (nl << 2) | (crlf << 3);
+    let far = fill(after, blanks | m(|b| b.pfx)) >> 127 != 0;
+    (extras as u64, refused | far)
+}
+
+/// The oracle of `extra_starts`: for each block, whether its extras' starts are the serial walk's.
+pub fn extras_are_the_walks(src: &[u8]) -> Option<(usize, usize, Option<String>)> {
+    let mut t = super::Text { src, b: super::classes(src), first: 0 };
+    if !t.regions_b() || t.depth().is_err() {
+        return None;
+    }
+    let lexed = super::lex_with(src, super::Variant::B).ok()?;
+    let short = core::cell::Cell::new(false);
+    let m = t.m(&short);
+    let n = src.len().div_ceil(64);
+    let mut want = vec![0u64; n + 1];
+    for e in &lexed.extras {
+        let s = e.start as usize;
+        want[s / 64] |= 1 << (s % 64);
+    }
+    let (mut same, mut rare, mut first) = (0, 0, None);
+    for (bi, &w) in want.iter().enumerate().take(n) {
+        let (got, r) = extra_starts(&m, bi);
+        if r {
+            rare += 1;
+        } else if got == w {
+            same += 1;
+        } else if first.is_none() {
+            let at = bi * 64;
+            let text = String::from_utf8_lossy(&src[at.saturating_sub(16)..(at + 80).min(src.len())]).into_owned();
+            first = Some(format!("block {bi}: masks {got:064b}, walk {w:064b} (bit 0 the block's first byte, the text from 16 before it: {text:?})"));
+        }
+    }
+    Some((same, rare, first))
+}

@@ -46,10 +46,14 @@ fn main() {
     let lean = |b: &[u8]| rerail_python_lean::token_count(b).unwrap_or(0);
     let strata = |b: &[u8]| strata::token_count(b).unwrap_or(0);
     let strata_b = |b: &[u8]| strata::token_count_with(b, Variant::B).unwrap_or(0);
-    if only == Some("starts") || only == Some("strings") {
+    if only == Some("starts") || only == Some("strings") || only == Some("extras") {
         // The walk's token starts by masks against the serial walk's, block by block: in code, or in strings.
         let (mut same, mut rare, mut differ, mut blocks) = (0, 0, 0, 0);
-        let oracle = if only == Some("starts") { strata::starts::starts_are_the_walks } else { strata::starts::string_starts_are_the_walks };
+        let oracle = match only {
+            Some("starts") => strata::starts::starts_are_the_walks,
+            Some("strings") => strata::starts::string_starts_are_the_walks,
+            _ => strata::starts::extras_are_the_walks,
+        };
         for (p, b) in &all {
             if let Some((s, r, first)) = oracle(b) {
                 same += s;

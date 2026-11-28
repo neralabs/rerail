@@ -878,3 +878,18 @@ statements and blocks end.
     - **As tested:** the starts in strings are the serial walk's on every block that isn't rare: the test texts,
       4000 random texts (with `!`, `:`, brackets and `f'` added) and the corpus. Rare blocks drop from 9159 to 781
       of 223857, and none differ.
+105. **The walk's extras by masks** (as built: `strata::starts::extra_starts`).
+    - **Why:** the walk's summary counts a chunk's extras as well as its tokens. Like the starts, the extras don't
+      depend on the lanes.
+    - **Comments:** stratum 2 keeps each comment's `#` (B's `cstart`), where each variant finds it: variant B from
+      its comments' generators less those a comment carries into, and variant A where its walk opens a comment.
+      Each is one extra.
+    - **Continuations:** each backslash in code is one extra, unless the next line's first byte past its blanks
+      starts a string's prefix and quote. The walk reads that case without one. Found by masks: the bytes from which
+      prefix letters reach a quote, then those from which blanks reach one of them, two and three bytes past a
+      `\` and `\n` or `\r\n`.
+    - **Rare:** a backslash before no line end (the walk refuses it); a next line's blanks and letters that reach
+      the window's top.
+    - **As tested:** the extras are the serial walk's on every block that isn't rare: the test texts, 4000 random
+      texts of comments, backslashes, line ends, prefixes and quotes, and the corpus (all 223857 blocks; none
+      rare).

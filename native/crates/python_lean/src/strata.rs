@@ -75,6 +75,8 @@ struct B {
     sstart: u64,
     /// Stratum 2: a string's closer's first byte (in variant B, of the strings in code only).
     send: u64,
+    /// Stratum 2: a comment's `#`.
+    cstart: u64,
     /// A string prefix's letters (`rRbBfFtTuU`): what the superposed pass 1 reads of the prefixes (a run of them
     /// below an opener that reaches the window's bottom is B's refusal of the reading).
     pfx: u64,
@@ -254,6 +256,7 @@ fn block(v: V, vn: V) -> B {
         depth0: 0,
         sstart: 0,
         send: 0,
+        cstart: 0,
         pfx: {
             let low = v | s(0x20);
             (low.simd_eq(s(b'f')) | low.simd_eq(s(b't')) | low.simd_eq(s(b'r')) | low.simd_eq(s(b'b')) | low.simd_eq(s(b'u'))).to_bitmask()
@@ -512,7 +515,7 @@ impl<'a> Masks<'a> {
     /// Block `bi`, at most the one past the text's end.
     #[inline(always)]
     fn blk(&self, bi: usize) -> &'a B {
-        static NONE: B = B { word: 0, space: 0, sptab: 0, skip: 0, eol: 0, lf: 0, bare_lf: 0, sq: 0, dq: 0, bt: 0, bs: 0, esc: 0, hash: 0, ob: 0, cb: 0, lb: 0, rb: 0, lbu: 0, slow: 0, code: 0, depth0: 0, sstart: 0, send: 0, pfx: 0 };
+        static NONE: B = B { word: 0, space: 0, sptab: 0, skip: 0, eol: 0, lf: 0, bare_lf: 0, sq: 0, dq: 0, bt: 0, bs: 0, esc: 0, hash: 0, ob: 0, cb: 0, lb: 0, rb: 0, lbu: 0, slow: 0, code: 0, depth0: 0, sstart: 0, send: 0, cstart: 0, pfx: 0 };
         // The whole text's blocks hold every block a read asks for (`classes` makes one for each 64 bytes and one
         // more); a window may not, and a read past it is made again over a longer one.
         match self.b.get(bi.wrapping_sub(self.first)) {
@@ -695,6 +698,7 @@ impl<'s> Text<'s> {
                     while live != 0 {
                         let c = live.trailing_zeros();
                         if b.hash >> c & 1 == 1 {
+                            self.b[bi - self.first].cstart |= 1 << c;
                             let hits = b.eol & from(c);
                             if hits == 0 {
                                 top = F::Comment;
@@ -798,6 +802,7 @@ impl<'s> Text<'s> {
                 match top {
                     F::Code => {
                         if is(b.hash) {
+                            self.b[bi - self.first].cstart |= 1 << c;
                             stack.push(top);
                             top = F::Comment;
                             open = at;
@@ -1132,9 +1137,11 @@ impl<'s> Text<'s> {
             let a = !b.eol | g;
             let (x, o1) = a.overflowing_add(g);
             let (x, o2) = x.overflowing_add(ccarry);
+            let ccarry_in = ccarry;
             ccarry = u64::from(o1 | o2);
             let carries = x ^ a ^ g;
             let comment = g | (a & carries);
+            let cstart = g & !(comment << 1 | ccarry_in);
             // A comment reaches a line end where the byte below it is the comment's (or a `'\r'` just past it).
             let cext = comment | (b.eol & !b.lf & (comment << 1 | cext_prev));
             let lend = cext << 1 | cext_prev;
@@ -1157,6 +1164,7 @@ impl<'s> Text<'s> {
             self.b[bi - self.first].code = !(comment | s_region | tr | (pre >> 64) as u64);
             self.b[bi - self.first].sstart = (starts >> 64) as u64;
             self.b[bi - self.first].send = ((qs | qd) & !tr & sb & !sa & !comment) | t_close;
+            self.b[bi - self.first].cstart = cstart;
             (t0, s0, prev) = (t1, s1, b);
         }
         *c = RB { t0, s0, ccarry, cext_prev, tr_taken };
