@@ -615,6 +615,61 @@ impl Numbering {
         unsafe { Self::of::<u32>(&self.nodes).last().copied().unwrap_or(0) as usize }
     }
 
+    /// SPIKE (id lookups, 1b): `own_place_of_near` with the slot's entry found by its bucket (`slot_buckets`): the
+    /// first entry of the slots whose high bits are the slot's, then a step past each lower slot of its bucket, no
+    /// guess and no bisection. `buckets` holds a power of two buckets and one.
+    ///
+    /// # Safety
+    /// As every read's.
+    #[inline]
+    pub unsafe fn own_place_by_buckets(&self, low: u32, buckets: &[u32]) -> Option<u32> {
+        // SAFETY: the caller's.
+        unsafe {
+            let slot = low >> INDEX_BITS;
+            let by_slot = Self::of::<[u32; 3]>(&self.by_slot);
+            let nb = buckets.len().saturating_sub(1) as u32;
+            let i = slot >> (SLOT_BITS - nb.trailing_zeros());
+            let (mut at, end) = (*buckets.get(i as usize)?, *buckets.get(i as usize + 1)?);
+            while at < end && by_slot[at as usize][0] < slot {
+                at += 1;
+            }
+            let mut hint = at;
+            let (g, item, k) = self.granule_of_low_near(low, &mut hint)?;
+            (item == 0).then(|| Self::of::<u32>(&self.nodes)[g as usize].wrapping_add(k))
+        }
+    }
+
+    /// SPIKE (id lookups, 1b): how many words `slot_buckets` fills: a power of two buckets, about two an entry of
+    /// `by_slot` (at most a slot each), and one past.
+    ///
+    /// # Safety
+    /// As every read's.
+    pub unsafe fn slot_buckets_len(&self) -> usize {
+        // SAFETY: the caller's.
+        let n = unsafe { Self::of::<[u32; 3]>(&self.by_slot).len() };
+        (2 * n.max(1)).next_power_of_two().min(1 << SLOT_BITS) + 1
+    }
+
+    /// SPIKE (id lookups, 1b): each bucket's first entry of `by_slot`, the bucket of a slot its high bits
+    /// (`own_place_by_buckets`), into `out` (`slot_buckets_len` long).
+    ///
+    /// # Safety
+    /// As every read's.
+    pub unsafe fn slot_buckets(&self, out: &mut [u32]) -> usize {
+        // SAFETY: the caller's.
+        let by_slot = unsafe { Self::of::<[u32; 3]>(&self.by_slot) };
+        let nb = out.len() - 1;
+        let shift = SLOT_BITS - (nb as u32).trailing_zeros();
+        let mut at = 0usize;
+        for (i, o) in out.iter_mut().enumerate() {
+            while at < by_slot.len() && ((by_slot[at][0] >> shift) as usize) < i {
+                at += 1;
+            }
+            *o = at as u32;
+        }
+        out.len()
+    }
+
     /// The entry of `slot` in `by_slot` (the first at or past it): a guess at its share of the entries, a few steps
     /// from there, a bisection past `steps`.
     #[inline(always)]

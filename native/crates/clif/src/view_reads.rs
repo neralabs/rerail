@@ -23,7 +23,7 @@ use cranelift_codegen::ir::{
 #[cfg(feature = "ir")]
 pub fn ukl() -> String {
     use std::mem::offset_of;
-    let fields: [(&str, &str, usize); 29] = [
+    let fields: [(&str, &str, usize); 31] = [
         ("uint32_t", "key", offset_of!(ViewDoc, key)),
         ("uint32_t", "tag", offset_of!(ViewDoc, tag)),
         ("uint32_t", "preorder", offset_of!(ViewDoc, preorder)),
@@ -53,6 +53,8 @@ pub fn ukl() -> String {
         ("uint32_t", "parented", offset_of!(ViewDoc, parented)),
         ("Run", "node_table", offset_of!(ViewDoc, node_table)),
         ("Run", "node_by_id", offset_of!(ViewDoc, node_by_id)),
+        ("Run", "slot_buckets", offset_of!(ViewDoc, slot_buckets)),
+        ("Run", "field_table", offset_of!(ViewDoc, field_table)),
     ];
     let mut s = format!(
         "#include <ukl/backend.h>\ntypedef struct ViewRow {{\n    uint64_t entry;\n    uint64_t tape;\n    uint64_t lines;\n    uint64_t source;\n    uint32_t homes[3];\n    uint32_t key;\n    uint32_t rows[{}];\n    uint32_t view[{}];\n    uint32_t bytes;\n}} ViewRow;\n\

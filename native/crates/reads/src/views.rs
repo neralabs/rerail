@@ -77,8 +77,15 @@ pub struct ViewDoc {
     /// granule order (`Numbering::own_place_of`, `own_numbers`), derived once with `node_table`: an id's local is the
     /// numbering's slot entry and then one load, not a search of the granule's children. Empty where `node_table` is.
     pub node_by_id: Run,
+    /// SPIKE (id lookups, 1b): the numbering's slot entries by bucket (`Numbering::slot_buckets`), derived once with
+    /// `node_table`: an id's slot entry is its bucket's first and a step or two (`own_place_by_buckets`). Empty: the
+    /// numbering's guess and search (`slot_entry`).
+    pub slot_buckets: Run,
+    /// SPIKE (id lookups, 2): by `field` row, the fielded node's tape node and its number (`[u32; 2]`s), derived once
+    /// with `node_table`: a field row's reads select and rank nothing. Empty: read by the numbering.
+    pub field_table: Run,
 }
-const _: () = assert!(std::mem::size_of::<ViewDoc>() == 16 + 16 * 4 + 16 + 24 + 16 * 7 + 16 + 16 + 16);
+const _: () = assert!(std::mem::size_of::<ViewDoc>() == 16 + 16 * 4 + 16 + 24 + 16 * 7 + 16 + 16 + 16 + 32);
 
 /// `ViewDoc::place`'s kinds.
 pub const PLACE_NAMED: u32 = 1;

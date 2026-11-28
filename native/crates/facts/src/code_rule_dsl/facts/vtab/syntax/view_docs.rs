@@ -110,6 +110,34 @@ impl ViewEntry {
             Cells::build(block, places.max(1), |out: &mut [u32]| unsafe { num.own_numbers(out) })
                 .expect("a batch's block holds its entries")
         });
+        // SPIKE (id lookups, 1b): the numbering's slot entries by bucket (`own_place_by_buckets`).
+        let slot_buckets = node_by_id.as_ref().map(|_| {
+            let num = p.ranks().numbering();
+            // SAFETY: the projection's numbering, read as every read of it.
+            let n = unsafe { num.slot_buckets_len() };
+            // copy: derived (each slot bucket's first entry, computed once from the numbering)
+            Cells::build(block, n, |out: &mut [u32]| unsafe { num.slot_buckets(out) }).expect("a batch's block holds its entries")
+        });
+        // SPIKE (id lookups, 2): by field row, the fielded node's tape node and number: the numbered nodes in order,
+        // those under a field (item 2) in its rank's order.
+        let field_table = node_table.as_ref().map(|t| {
+            let num = p.ranks().numbering();
+            // SAFETY: the projection's numbering, read as every read of it.
+            let fielded: Vec<[u32; 2]> = (0..t.len() as u32).filter_map(|l| {
+                let x = t[l as usize][0];
+                unsafe { num.is(2, x) }.then(|| {
+                    debug_assert_eq!(unsafe { num.rank(0, x) }, l);
+                    [x, l]
+                })
+            }).collect();
+            debug_assert!(fielded.iter().enumerate().all(|(r, e)| unsafe { num.rank(2, e[0]) } == r as u32));
+            // copy: derived (each field row's tape node and number, computed once from the numbering)
+            Cells::build(block, fielded.len().max(1), |out: &mut [[u32; 2]]| {
+                out[..fielded.len()].copy_from_slice(&fielded);
+                fielded.len()
+            })
+            .expect("a batch's block holds its entries")
+        });
         // copy: derived (an embedder's program's segments, as the reads find them: `SegmentMap::words`, written once
         // in the batch's block beside the entry)
         let segments = Self::locs(p).and_then(|x| match &x.host {
@@ -137,6 +165,12 @@ impl ViewEntry {
             }
             if let Some(t) = &node_by_id {
                 Run::set(&raw mut (*d).node_by_id, t.as_ptr(), t.len());
+            }
+            if let Some(t) = &slot_buckets {
+                Run::set(&raw mut (*d).slot_buckets, t.as_ptr(), t.len());
+            }
+            if let Some(t) = &field_table {
+                Run::set(&raw mut (*d).field_table, t.as_ptr(), t.len());
             }
             Run::set(&raw mut (*d).numbering, p.ranks().desc().cast::<rerail_clif::ids::Numbering>(), 1);
             Run::set(&raw mut (*d).kinds, kinds.as_ptr(), kinds.len());

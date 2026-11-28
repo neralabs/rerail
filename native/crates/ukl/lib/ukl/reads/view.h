@@ -81,8 +81,10 @@ typedef struct ViewDoc {
     uint32_t parented;
     Run node_table;
     Run node_by_id;
+    Run slot_buckets;
+    Run field_table;
 } ViewDoc;
-UKL_STATIC_ASSERT(sizeof(ViewDoc) == 280, "ViewDoc: size");
+UKL_STATIC_ASSERT(sizeof(ViewDoc) == 312, "ViewDoc: size");
 UKL_STATIC_ASSERT(UKL_OFFSETOF(ViewDoc, key) == 0, "ViewDoc.key");
 UKL_STATIC_ASSERT(UKL_OFFSETOF(ViewDoc, tag) == 4, "ViewDoc.tag");
 UKL_STATIC_ASSERT(UKL_OFFSETOF(ViewDoc, preorder) == 8, "ViewDoc.preorder");
@@ -112,6 +114,8 @@ UKL_STATIC_ASSERT(UKL_OFFSETOF(ViewDoc, doc_module) == 240, "ViewDoc.doc_module"
 UKL_STATIC_ASSERT(UKL_OFFSETOF(ViewDoc, parented) == 244, "ViewDoc.parented");
 UKL_STATIC_ASSERT(UKL_OFFSETOF(ViewDoc, node_table) == 248, "ViewDoc.node_table");
 UKL_STATIC_ASSERT(UKL_OFFSETOF(ViewDoc, node_by_id) == 264, "ViewDoc.node_by_id");
+UKL_STATIC_ASSERT(UKL_OFFSETOF(ViewDoc, slot_buckets) == 280, "ViewDoc.slot_buckets");
+UKL_STATIC_ASSERT(UKL_OFFSETOF(ViewDoc, field_table) == 296, "ViewDoc.field_table");
 UKL_COLD uint64_t clif_view_node(UKL_GLOBAL const uint8_t* t,uint64_t a0,UKL_GLOBAL const uint8_t* tt,CLIF_VIEW_SPACE const uint32_t* v,UKL_GLOBAL const uint8_t* ll,uint64_t la,uint32_t a4,uint32_t a5);
 UKL_COLD uint64_t clif_view_child(UKL_GLOBAL const uint8_t* t,uint64_t a0,UKL_GLOBAL const uint8_t* tt,CLIF_VIEW_SPACE const uint32_t* v,UKL_GLOBAL const uint8_t* ll,uint64_t la,uint32_t a4,uint32_t a5);
 UKL_COLD uint64_t clif_view_field(UKL_GLOBAL const uint8_t* t,uint64_t a0,UKL_GLOBAL const uint8_t* tt,CLIF_VIEW_SPACE const uint32_t* v,UKL_GLOBAL const uint8_t* ll,uint64_t la,uint32_t a4,uint32_t a5);

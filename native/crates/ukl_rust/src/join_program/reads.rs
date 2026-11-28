@@ -165,7 +165,7 @@ impl At<'_> {
         match self.k {
             0 => d.node(r, x, col),
             1 => d.child(r, x, col),
-            2 => d.field(x, col),
+            2 => d.field_at(r, x, col),
             3 => d.core(r, x, col),
             4 => d.line(r, x, col),
             5 => d.loc(Place::Line, r, col),
@@ -331,6 +331,20 @@ impl<'a> Doc<'a> {
 
     /// `field` row `i`, of the document's `i`-th node under a field, its tape node `x`: the parent's id, the field
     /// atom, the child's id.
+    /// `field` row `r`, its tape node `x`: `field`, its node's number read off its table where there is one.
+    unsafe fn field_at(&self, r: u32, x: u32, col: u32) -> u64 {
+        match self.field_table().get(r as usize) {
+            Some(&[_, l]) if col != 1 => if col == 0 { self.parent_id(l, x) } else { self.node_id(l) },
+            _ => self.field(x, col),
+        }
+    }
+
+    /// The `field` rows' table (`ViewDoc::field_table`): by row, its tape node and number; empty where none is.
+    unsafe fn field_table(&self) -> &'a [[u32; 2]] {
+        let r = &self.e.field_table;
+        if r.len == 0 { &[] } else { core::slice::from_raw_parts(items::<[u32; 2]>(r), r.len as usize) }
+    }
+
     unsafe fn field(&self, x: u32, col: u32) -> u64 {
         match col {
             0 => self.parent_id(self.n.rank(0, x), x),
@@ -574,7 +588,10 @@ impl<'a> Doc<'a> {
         let x = match k {
             0 | 3 | 4 | 9 | 10 => self.tape_node(r),
             1 => self.tape_node(r.wrapping_add(1)),
-            2 => self.n.select(2, r),
+            2 => match self.field_table().get(r as usize) {
+                Some(e) => e[0],
+                None => self.n.select(2, r),
+            },
             12 => self.n.select(OP_ITEM, r),
             _ => 0,
         };
@@ -677,7 +694,13 @@ impl<'a> Doc<'a> {
         } else if self.e.node_by_id.len != 0 {
             // Its place among the granules' own nodes, then its number there in one load (`ViewDoc::node_by_id`):
             // no search of the granule's children.
-            match self.n.own_place_of_near(low, hint) {
+            let place = if self.e.slot_buckets.len != 0 {
+                let b = core::slice::from_raw_parts(items::<u32>(&self.e.slot_buckets), self.e.slot_buckets.len as usize);
+                self.n.own_place_by_buckets(low, b)
+            } else {
+                self.n.own_place_of_near(low, hint)
+            };
+            match place {
                 Some(p) if p < self.e.node_by_id.len as u32 => *items::<u32>(&self.e.node_by_id).add(p as usize),
                 _ => NO_ROW,
             }
