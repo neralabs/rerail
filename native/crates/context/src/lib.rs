@@ -13,6 +13,7 @@
 //!
 //! Outside a run, each gives a value of its own that nothing keeps.
 
+pub mod mldb;
 pub mod work;
 
 thread_local! {
