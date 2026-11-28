@@ -2047,7 +2047,7 @@ uint32_t m = ((mb < a[1u]) ? mb : a[1u]);
 (*(out + 2u)) = (a[2u] + b[2u]);
 }
 
-UKL_INLINE void json_t2_p1_write(UKL_GLOBAL const uint8_t* src, UKL_GLOBAL const uint32_t* starts, uint32_t n, uint32_t a, uint32_t b, UKL_COHERENT const uint32_t* sum, UKL_GLOBAL uint32_t* depth, UKL_GLOBAL uint32_t* items)
+UKL_INLINE void json_t2_p1_write(UKL_GLOBAL const uint8_t* src, UKL_GLOBAL const uint32_t* starts, uint32_t n, uint32_t a, uint32_t b, UKL_COHERENT const uint32_t* sum, UKL_GLOBAL uint32_t* depth, UKL_GLOBAL uint32_t* items, UKL_GLOBAL uint32_t* head_at)
 {
 uint32_t d = sum[0u];
 uint32_t k = ((uint32_t)(sum[2u]));
@@ -2069,8 +2069,11 @@ if (((x != json_t2_NONE) && ((x % 2u) == 1u))) {
 (*(items + ((3u * k) + 2u))) = 1u;
 k += 1u;
 d += 1u;
-} else if ((x != json_t2_NONE)) {
+} else {
+(*(head_at + r)) = json_t2_NONE;
+if ((x != json_t2_NONE)) {
 d -= 1u;
+}
 }
 }
 }
@@ -2120,6 +2123,64 @@ uint32_t at = ((uint32_t)((keys[g] + (*(sum + g)))));
 }
 }
 
+UKL_INLINE bool json_t2_starts_level(UKL_GLOBAL const uint32_t* items, uint32_t x)
+{
+return ((x == 0u) || (items[(3u * (x - 1u))] != items[(3u * x)]));
+}
+
+UKL_INLINE void json_t2_last_unit(UKL_COHERENT uint32_t* out)
+{
+(*(out + 0u)) = 0u;
+(*(out + 1u)) = json_t2_NONE;
+}
+
+UKL_INLINE void json_t2_last_merge(UKL_COHERENT const uint32_t* a, UKL_COHERENT const uint32_t* b, UKL_COHERENT uint32_t* out)
+{
+if ((b[0u] != 0u)) {
+(*(out + 0u)) = b[0u];
+(*(out + 1u)) = b[1u];
+} else {
+(*(out + 0u)) = a[0u];
+(*(out + 1u)) = ((b[1u] != json_t2_NONE) ? b[1u] : a[1u]);
+}
+}
+
+UKL_INLINE void json_t2_p3_run(UKL_GLOBAL const uint32_t* items, uint32_t a, uint32_t b, UKL_COHERENT uint32_t* out)
+{
+uint32_t reset = 0u;
+uint32_t v = json_t2_NONE;
+for (uint32_t x = a; x < b; x++) {
+bool head = (items[((3u * x) + 2u)] != 0u);
+if (json_t2_starts_level(items, x)) {
+reset = 1u;
+v = json_t2_NONE;
+}
+if (head) {
+v = items[((3u * x) + 1u)];
+}
+}
+(*(out + 0u)) = reset;
+(*(out + 1u)) = v;
+}
+
+UKL_INLINE void json_t2_p3_write(UKL_GLOBAL const uint32_t* items, uint32_t a, uint32_t b, UKL_COHERENT const uint32_t* sum, UKL_GLOBAL uint32_t* container, UKL_GLOBAL uint32_t* head_at)
+{
+uint32_t v = sum[1u];
+for (uint32_t x = a; x < b; x++) {
+bool head = (items[((3u * x) + 2u)] != 0u);
+uint32_t r = ((uint32_t)(items[((3u * x) + 1u)]));
+if (json_t2_starts_level(items, x)) {
+v = json_t2_NONE;
+}
+if (head) {
+v = items[((3u * x) + 1u)];
+(*(head_at + r)) = ((uint32_t)(x));
+} else {
+(*(container + r)) = v;
+}
+}
+}
+
 UKL_INLINE void ukl_ph_merge(uint32_t op, UKL_COHERENT const uint32_t* a, UKL_COHERENT const uint32_t* b, UKL_COHERENT uint32_t* out)
 {
     if (op == UKL_T2_OP_P1)
@@ -2128,6 +2189,8 @@ UKL_INLINE void ukl_ph_merge(uint32_t op, UKL_COHERENT const uint32_t* a, UKL_CO
         json_t2_add1_merge(a, b, out);
     else if (op == UKL_T2_OP_KEYS)
         json_t2_p2_merge(a, b, out);
+    else if (op == UKL_T2_OP_LAST)
+        json_t2_last_merge(a, b, out);
 }
 UKL_INLINE void ukl_ph_unit(uint32_t op, UKL_COHERENT uint32_t* out)
 {
@@ -2137,8 +2200,12 @@ UKL_INLINE void ukl_ph_unit(uint32_t op, UKL_COHERENT uint32_t* out)
         json_t2_add1_unit(out);
     else if (op == UKL_T2_OP_KEYS)
         json_t2_p2_unit(out);
+    else if (op == UKL_T2_OP_LAST)
+        json_t2_last_unit(out);
 }
 UKL_INLINE void ukl_t2_p1_run(UKL_GLOBAL const uint8_t* src, UKL_GLOBAL const uint32_t* starts, uint32_t n, uint32_t a, uint32_t b, UKL_COHERENT uint32_t* out) { json_t2_p1_run(src, starts, n, a, b, out); }
 UKL_INLINE void ukl_t2_p2_run(UKL_GLOBAL const uint32_t* items, uint32_t a, uint32_t b, uint32_t shift, UKL_COHERENT uint32_t* out) { json_t2_p2_run(items, a, b, shift, out); }
 UKL_INLINE void ukl_t2_p2_write(UKL_GLOBAL const uint32_t* items, uint32_t a, uint32_t b, uint32_t shift, UKL_COHERENT uint32_t* sum, UKL_GLOBAL const uint32_t* keys, UKL_GLOBAL uint32_t* out) { json_t2_p2_write(items, a, b, shift, sum, keys, out); }
-UKL_INLINE void ukl_t2_p1_write(UKL_GLOBAL const uint8_t* src, UKL_GLOBAL const uint32_t* starts, uint32_t n, uint32_t a, uint32_t b, UKL_COHERENT const uint32_t* sum, UKL_GLOBAL uint32_t* depth, UKL_GLOBAL uint32_t* items) { json_t2_p1_write(src, starts, n, a, b, sum, depth, items); }
+UKL_INLINE void ukl_t2_p3_run(UKL_GLOBAL const uint32_t* items, uint32_t a, uint32_t b, UKL_COHERENT uint32_t* out) { json_t2_p3_run(items, a, b, out); }
+UKL_INLINE void ukl_t2_p3_write(UKL_GLOBAL const uint32_t* items, uint32_t a, uint32_t b, UKL_COHERENT const uint32_t* sum, UKL_GLOBAL uint32_t* container, UKL_GLOBAL uint32_t* head_at) { json_t2_p3_write(items, a, b, sum, container, head_at); }
+UKL_INLINE void ukl_t2_p1_write(UKL_GLOBAL const uint8_t* src, UKL_GLOBAL const uint32_t* starts, uint32_t n, uint32_t a, uint32_t b, UKL_COHERENT const uint32_t* sum, UKL_GLOBAL uint32_t* depth, UKL_GLOBAL uint32_t* items, UKL_GLOBAL uint32_t* head_at) { json_t2_p1_write(src, starts, n, a, b, sum, depth, items, head_at); }

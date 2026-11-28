@@ -2388,11 +2388,12 @@ pub unsafe fn p1_merge(a: &[Rec], b: &[Rec], out: *mut Rec) {
 /// P1's writes, records `a..b` from the chunk's sum `sum` (P1's prefix: the depth before it, biased, and its first
 /// item): each record's depth (biased) at `depth[r]`, and its items at `items[3k..]` (level, record, head): an
 /// opener two (its parent's level, and its own level's head), a closer one (an empty container's in its parent's
-/// level), any other record one.
+/// level), any other record one; a record that opens nothing no head item (`head_at[r]`, `NONE`: P3 writes the
+/// openers').
 ///
 /// # Safety
-/// `depth` has room for `b` words, `items` for the chunk's items from its first.
-pub unsafe fn p1_write(src: &[u8], starts: &[u32], n: usize, a: usize, b: usize, sum: &[Rec], depth: *mut u32, items: *mut u32) {
+/// `depth` and `head_at` have room for `b` words, `items` for the chunk's items from its first.
+pub unsafe fn p1_write(src: &[u8], starts: &[u32], n: usize, a: usize, b: usize, sum: &[Rec], depth: *mut u32, items: *mut u32, head_at: *mut u32) {
     let mut d = sum[0];
     let mut k = sum[2] as usize;
     for r in a..b {
@@ -2413,8 +2414,11 @@ pub unsafe fn p1_write(src: &[u8], starts: &[u32], n: usize, a: usize, b: usize,
             unsafe { *items.add(3 * k + 2) = 1 };
             k += 1;
             d += 1;
-        } else if x != NONE {
-            d -= 1;
+        } else {
+            unsafe { *head_at.add(r) = NONE };
+            if x != NONE {
+                d -= 1;
+            }
         }
     }
 }
@@ -2487,6 +2491,79 @@ pub unsafe fn p2_write(items: &[u32], a: usize, b: usize, shift: u32, sum: *mut 
     }
 }
 
+/// Whether item `x` of the level order starts its level (`items`, three words each): a read of its neighbour.
+pub fn starts_level(items: &[u32], x: usize) -> bool {
+    x == 0 || items[3 * (x - 1)] != items[3 * x]
+}
+
+/// A segmented last-value's unit (`Last`'s: no reset, no value), two words.
+///
+/// # Safety
+/// `out` has room for two words.
+pub unsafe fn last_unit(out: *mut Rec) {
+    unsafe { *out.add(0) = 0 };
+    unsafe { *out.add(1) = NONE };
+}
+
+/// `Last::merge` in words: `b` where it resets, else `a`'s reset and `b`'s value where it has one, else `a`'s.
+///
+/// # Safety
+/// `a` and `b` hold two words each, `out` has room for two.
+pub unsafe fn last_merge(a: &[Rec], b: &[Rec], out: *mut Rec) {
+    if b[0] != 0 {
+        unsafe { *out.add(0) = b[0] };
+        unsafe { *out.add(1) = b[1] };
+    } else {
+        unsafe { *out.add(0) = a[0] };
+        unsafe { *out.add(1) = if b[1] != NONE { b[1] } else { a[1] } };
+    }
+}
+
+/// P3 (and P8a), items `a..b` in level order: the segmented last-value of the heads' records (a level's first item
+/// resets it), at `out[0..2]`.
+///
+/// # Safety
+/// `items` holds the chunk's items, `out` has room for two words.
+pub unsafe fn p3_run(items: &[u32], a: usize, b: usize, out: *mut Rec) {
+    let mut reset = 0;
+    let mut v = NONE;
+    for x in a..b {
+        let head = items[3 * x + 2] != 0;
+        if starts_level(items, x) {
+            reset = 1;
+            v = NONE;
+        }
+        if head {
+            v = items[3 * x + 1];
+        }
+    }
+    unsafe { *out.add(0) = reset };
+    unsafe { *out.add(1) = v };
+}
+
+/// P3's writes, items `a..b` from the chunk's sum: each record's container (the head before its item in its level,
+/// `NONE` for the root's level) at `container[record]` for a record's item that is no head, and each head's place
+/// at `head_at[record]`.
+///
+/// # Safety
+/// `container` and `head_at` have room for every record.
+pub unsafe fn p3_write(items: &[u32], a: usize, b: usize, sum: &[Rec], container: *mut u32, head_at: *mut u32) {
+    let mut v = sum[1];
+    for x in a..b {
+        let head = items[3 * x + 2] != 0;
+        let r = items[3 * x + 1] as usize;
+        if starts_level(items, x) {
+            v = NONE;
+        }
+        if head {
+            v = items[3 * x + 1];
+            unsafe { *head_at.add(r) = x as u32 };
+        } else {
+            unsafe { *container.add(r) = v };
+        }
+    }
+}
+
 /// A record's bracket, by its first byte (`n`: the file's end, none).
 fn bracket_of(src: &[u8], lx: &crate::tier1::Lexed, r: usize) -> Option<(u8, bool)> {
     if r < lx.count { bracket(src[lx.starts[r] as usize]) } else { None }
@@ -2525,39 +2602,43 @@ impl Phases {
         let p1: Vec<Depth> = words.iter().map(|w| Depth { d: i64::from(w[0]) - i64::from(D0), m: i64::from(w[1]) - i64::from(D0), items: w[2] }).collect();
         let mut dw = vec![0u32; n + 1];
         let mut iw = vec![0u32; 3 * total[2] as usize];
-        let (dp, ip) = (dw.as_mut_ptr(), iw.as_mut_ptr());
+        let mut head_at = vec![0u32; n + 1];
+        let (dp, ip, hp) = (dw.as_mut_ptr(), iw.as_mut_ptr(), head_at.as_mut_ptr());
         each(rc.len(), order, |c| {
-            // SAFETY: each chunk its own records' depths and its own items, at its sum.
-            unsafe { p1_write(src, st, n, rc[c].0, rc[c].1, &at3[c], dp, ip) };
+            // SAFETY: each chunk its own records' depths and heads, and its own items, at its sum.
+            unsafe { p1_write(src, st, n, rc[c].0, rc[c].1, &at3[c], dp, ip, hp) };
         });
         let depth: Vec<i64> = dw.iter().map(|&d| i64::from(d) - i64::from(D0)).collect();
         let items: Vec<Item> = iw.chunks_exact(3).map(|w| Item { level: w[0], record: w[1], head: w[2] != 0 }).collect();
         // P2: the level sort, two 8-bit digits, each a phase of keyed counts over chunks of items. Within a level the
         // items keep their order: by record, an opener's head after its item in its parent's level.
         let items = sort_by_level(items, size, order);
+        // P3: each record's container and each head's place, a segmented last-value of the heads over the items in
+        // level order (`p3_run`, `last_merge`, `p3_write`).
         let ic = chunks_of(items.len(), size);
-        let mut head_at = vec![NO; n + 1];
-        for c in order(ic.len()) {
-            for x in ic[c].0..ic[c].1 {
-                if items[x].head {
-                    head_at[items[x].record as usize] = x as u32;
-                }
-            }
-        }
-        // P3a: each item's container, a segmented last-value of the heads.
-        let one = |x: usize| Last { reset: level_start(&items, x), v: if items[x].head { items[x].record } else { NO } };
-        let p3a: Vec<Last> = each(ic.len(), order, |c| (ic[c].0..ic[c].1).fold(Last::UNIT, |s, x| Last::merge(&s, &one(x))));
-        let p3a_at = prefix(&p3a, Last::UNIT, order, Last::merge);
+        let iw: Vec<u32> = items.iter().flat_map(|x| [x.level, x.record, u32::from(x.head)]).collect();
+        let lasts: Vec<[u32; 2]> = each(ic.len(), order, |c| {
+            let mut w = [0u32; 2];
+            // SAFETY: two words; the chunk's items.
+            unsafe { p3_run(&iw, ic[c].0, ic[c].1, w.as_mut_ptr()) };
+            w
+        });
+        let merge2 = |a: &[u32; 2], b: &[u32; 2]| {
+            let mut w = [0u32; 2];
+            // SAFETY: two words each.
+            unsafe { last_merge(a, b, w.as_mut_ptr()) };
+            w
+        };
+        let mut unit2 = [0u32; 2];
+        // SAFETY: two words.
+        unsafe { last_unit(unit2.as_mut_ptr()) };
+        let p3_at = prefix(&lasts, unit2, order, merge2);
         let mut container = vec![NO; n + 1];
-        for c in order(ic.len()) {
-            let mut s = p3a_at[c];
-            for x in ic[c].0..ic[c].1 {
-                s = Last::merge(&s, &one(x));
-                if !items[x].head {
-                    container[items[x].record as usize] = s.v;
-                }
-            }
-        }
+        let (cp, hp) = (container.as_mut_ptr(), head_at.as_mut_ptr());
+        each(ic.len(), order, |c| {
+            // SAFETY: each record's item in one chunk only; its head in one.
+            unsafe { p3_write(&iw, ic[c].0, ic[c].1, &p3_at[c], cp, hp) };
+        });
         let mut ph = Phases { n, size, depth, p1, items, head_at, container, place: Vec::new(), refused: None, shapes: Vec::new(), shape_at: Vec::new(), events: Vec::new(), eitems: Vec::new(), frame_of: Vec::new(), kids: Vec::new() };
         // P4: each chunk's place map, its pops below its start reading its containers' return places.
         let maps: Vec<Places> = each(rc.len(), order, |c| {
