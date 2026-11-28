@@ -2614,8 +2614,19 @@ use rerail_blocks::vector::Vector;
     /// neither column alone (whole), its rows are uploaded as before. `inside` and `nearest` are walked the same way
     /// (their set tested at the ancestor, `nearest`'s climb its first member and its subtree less what lies below a
     /// nearer one), and each by both columns: the node's climb, each ancestor checked against the bound one.
+    /// On the process's device where it has one, and the join program's Rust on the host (`on_host`) wherever it
+    /// runs (uglykl's 83a75d2a24).
     #[test]
     fn a_has_axis_on_the_device_is_walked_on_the_tape() {
+        if crate::code_rule_dsl::transducer::packed::metal_join::available() {
+            has_axes_walked_on_the_tape();
+        }
+        let _host = rerail_accel::gpu::shared::on_host();
+        has_axes_walked_on_the_tape();
+    }
+
+    /// `a_has_axis_on_the_device_is_walked_on_the_tape`'s run, on the device the run has.
+    fn has_axes_walked_on_the_tape() {
         use crate::code_rule_dsl::facts::core::{self, Built};
         use crate::code_rule_dsl::facts::nearest::Binding;
         use crate::code_rule_dsl::facts::vtab::Source as _;
@@ -2623,9 +2634,6 @@ use rerail_blocks::vector::Vector;
         use crate::code_rule_dsl::facts::vtab::syntax::{Document, sources};
         use crate::code_rule_dsl::model::FileInput;
         use std::sync::Arc;
-        if !crate::code_rule_dsl::transducer::packed::metal_join::available() {
-            return;
-        }
         crate::test_languages();
         let texts = ["import os\nx = f(1, y=[2, g(3)])\n", "class C(B):\n    def m(self, a, *b):\n        return [a for a in b if a]\n", "", "@d\ndef g():\n    try:\n        h(1)\n    except E as e:\n        raise\n"];
         let docs: Vec<Document> = texts.iter().enumerate().map(|(at, source)| {
@@ -2896,17 +2904,25 @@ use rerail_blocks::vector::Vector;
     /// the device with no pair made or indexed: by its node, the node's numbered ancestors; by its ancestor, its
     /// subtree; by both, the node's climb, each ancestor checked against the bound one. The rows are the CPU's, and
     /// the CPU's the host's lookups; the pairs probed by both are the true ones and as many false ones (each reversed).
+    /// On the process's device where it has one, and the join program's Rust on the host (`on_host`) wherever it
+    /// runs (uglykl's 83a75d2a24).
     #[test]
     fn containment_on_the_device_is_walked_on_the_tape() {
+        if crate::code_rule_dsl::transducer::packed::metal_join::available() {
+            containment_walked_on_the_tape();
+        }
+        let _host = rerail_accel::gpu::shared::on_host();
+        containment_walked_on_the_tape();
+    }
+
+    /// `containment_on_the_device_is_walked_on_the_tape`'s run, on the device the run has.
+    fn containment_walked_on_the_tape() {
         use crate::code_rule_dsl::facts::core::{self, Built};
         use crate::code_rule_dsl::facts::vtab::Source as _;
         use crate::code_rule_dsl::facts::vtab::syntax::within::{Mode, Within};
         use crate::code_rule_dsl::facts::vtab::syntax::{Document, sources};
         use crate::code_rule_dsl::model::FileInput;
         use std::sync::Arc;
-        if !crate::code_rule_dsl::transducer::packed::metal_join::available() {
-            return;
-        }
         crate::test_languages();
         let texts = ["import os\nx = f(1, y=[2, g(3)])\n", "class C(B):\n    def m(self, a, *b):\n        return [a for a in b if a]\n", "", "@d\ndef g():\n    try:\n        h(1)\n    except E as e:\n        raise\n"];
         let docs: Vec<Document> = texts.iter().enumerate().map(|(at, source)| {

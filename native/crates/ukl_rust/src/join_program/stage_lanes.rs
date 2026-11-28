@@ -209,23 +209,34 @@ impl<const N: usize> Row<N>
 where
     LaneCount<N>: SupportedLaneCount,
 {
-    /// The lanes' rows `id` of the stage's relation (`l.d`), or of its view: each lane's found once, a lane whose
-    /// row repeats the one before's (consecutive candidates of one row) taking it.
+    /// A walk's row, filled for each step (`fill`): one a walk, not one a step (a step's of 8 lanes is over a
+    /// kilobyte, copied out of each construction).
     #[inline(always)]
-    unsafe fn new(l: &Lanes, id: R<N>) -> Self {
-        let s = l.st.s;
-        let at = if s.r_view == 0 {
-            Found::Rel(ln::rel_at(l.d, id, l.st.rf))
+    fn empty(l: &Lanes) -> Self {
+        let at = if l.st.s.r_view == 0 {
+            Found::Rel(ln::RowAt::none())
         } else {
-            let mut memo = NONE;
-            let first = vrow(s.r_view, s.v_dir, id[0], &mut memo);
-            let mut rows = [first; N];
-            for j in 1..N {
-                rows[j] = if id[j] == id[j - 1] { rows[j - 1] } else { vrow(s.r_view, s.v_dir, id[j], &mut memo) };
-            }
-            Found::View(rows)
+            Found::View([super::Row::Rel(core::ptr::null(), 0, 0, core::ptr::null()); N])
         };
         Row { at, have: Cell::new(0), v: UnsafeCell::new([MaybeUninit::uninit(); 16]) }
+    }
+
+    /// The lanes' rows `id` of the stage's relation (`l.d`), or of its view: each lane's found once, a lane whose
+    /// row repeats the one before's (consecutive candidates of one row) taking it. No column read yet.
+    #[inline(always)]
+    unsafe fn fill(&mut self, l: &Lanes, id: R<N>) {
+        let s = l.st.s;
+        self.have.set(0);
+        match &mut self.at {
+            Found::Rel(at) => *at = ln::rel_at(l.d, id, l.st.rf),
+            Found::View(rows) => {
+                let memo = &mut { NONE };
+                rows[0] = vrow(s.r_view, s.v_dir, id[0], memo);
+                for j in 1..N {
+                    rows[j] = if id[j] == id[j - 1] { rows[j - 1] } else { vrow(s.r_view, s.v_dir, id[j], memo) };
+                }
+            }
+        }
     }
 
     /// Column `c` of each lane's row.
@@ -445,6 +456,7 @@ impl Lanes<'_> {
         let (mut first, mut len) = ([0u32; TILE + SLACK], [0u32; TILE + SLACK]);
         let (mut cb, mut cq) = ([0u32; CANDS + SLACK], [0u32; CANDS + SLACK]);
         let (mut sk, mut ek) = ([0u32; TILE + SLACK], [0u32; TILE + SLACK]);
+        let mut row = Row::empty(self);
         let mut ta = t0;
         while ta < t1 {
             let nt = (t1 - ta).min(TILE as u32);
@@ -499,7 +511,7 @@ impl Lanes<'_> {
                     } else {
                         ln::rel_group_row(self.d, s.r_index, q)
                     };
-                    let row = Row::new(self, id);
+                    row.fill(self, id);
                     let mut m = valid.cast::<i64>();
                     if s.r_dead != 0 {
                         m &= !ln::rel_dead(self.dead, id).cast::<i64>();
@@ -850,6 +862,7 @@ impl Lanes<'_> {
         let s = self.st.s;
         let iota = lane::<N>();
         let (mut cb, mut cq) = ([0u32; CANDS + SLACK], [0u32; CANDS + SLACK]);
+        let mut row = Row::empty(self);
         let mut i = 0u32;
         while i < nt {
             // The rows out of bindings from `i`, while a chunk has room for another's `FINDS_MAX`.
@@ -880,7 +893,8 @@ impl Lanes<'_> {
                 } else {
                     ln::rel_group_row(self.d, s.r_index, q)
                 };
-                v.put(self, &b, &Row::new(self, id), valid.cast::<i64>());
+                row.fill(self, id);
+                v.put(self, &b, &row, valid.cast::<i64>());
                 k += N as u32;
             }
         }

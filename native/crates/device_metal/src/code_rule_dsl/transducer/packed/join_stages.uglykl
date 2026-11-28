@@ -323,6 +323,21 @@ UKL_INLINE void by_parent(StageP s, int64_t key, UKL_PRIVATE uint32_t* lo, UKL_P
 // token, a span), its id column 0.
 UKL_INLINE bool loc_view(uint32_t k) { return k >= 5u && k <= 8u; }
 
+// The stage's key of relation column `col` (its first), `found` whether it has one. Each key is read at a constant
+// index: an index into the private keys computed at run time moves them to the stack, which the M1's back end
+// miscompiled (the has and child walks read nothing; uglykl's `walk_key`, 3641382bdd).
+UKL_INLINE int64_t key_of_col(StageP s, UKL_PRIVATE const int64_t* kv, uint32_t col, UKL_PRIVATE bool* found) {
+    int64_t key = 0;
+    bool f = false;
+    for (uint32_t i = 0u; i < 8u; i++) {
+        bool hit = !f && i < s->nkeys && s->key_rcol[i] == col;
+        key = hit ? kv[i] : key;
+        f = f || hit;
+    }
+    *found = f;
+    return key;
+}
+
 // The `node` or `child` view probed by its id (`Stage::v_parent` 2, `join_program::St::by_own`): the id's document and
 // numbered node (`clif_view_number`), its id checked (as a parent's, `by_parent`), and its one row there; none where no
 // node has the id (a `child` row: the root has none). A `Loc` view's (`docof`'s): the id's position
@@ -331,12 +346,9 @@ UKL_INLINE void by_own(StageP s, UKL_PRIVATE const int64_t* kv, UKL_PRIVATE uint
     UKL_GLOBAL const ViewDir* d = s->v_dir;
     *lo = 0u; *hi = 0u;
     uint32_t k = s->r_view - 1u;
-    uint32_t own = loc_view(k) ? 0u : 1u;
-    uint32_t i = 0u;
-    while (i < s->nkeys && i < 8u && s->key_rcol[i] != own) i++;
-    if (i >= s->nkeys || i >= 8u) return;
-    int64_t key = kv[i];
-    if (key < 0 || d->ndocs == 0u) return;
+    bool has_key = false;
+    int64_t key = key_of_col(s, kv, loc_view(k) ? 0u : 1u, &has_key);
+    if (!has_key || key < 0 || d->ndocs == 0u) return;
     uint32_t a = clif_dir_doc_of_key(view_block(d), d->at, (uint32_t)((uint64_t)key >> 32), NONE);
     if (a == NONE) return;
     UKL_GLOBAL const ViewRow* e = &view_rows(d)[a];
@@ -401,16 +413,16 @@ UKL_INLINE bool has_admits(StageP s, uint32_t r) {
 }
 
 // The key a `has` stage's walk starts from: the node's (relation column 0) for a climb (`v_has` 1), the ancestor's
-// (1) for a subtree. Probed by both columns, the other is checked on each candidate (`has_other`, `matches`).
-UKL_INLINE uint32_t has_key(StageP s) {
-    uint32_t want = s->v_has == 1u ? 0u : 1u;
-    for (uint32_t i = 0u; i < s->nkeys && i < 8u; i++) if (s->key_rcol[i] == want) return i;
-    return 0u;
+// (1) for a subtree, else the first key. Probed by both columns, the other is checked on each candidate
+// (`has_other`, `matches`). Read at constant indexes (`key_of_col`).
+UKL_INLINE int64_t has_key(StageP s, UKL_PRIVATE const int64_t* kv) {
+    bool found = false;
+    int64_t key = key_of_col(s, kv, s->v_has == 1u ? 0u : 1u, &found);
+    return found ? key : kv[0];
 }
-UKL_INLINE uint32_t has_other(StageP s) {
-    uint32_t k = has_key(s);
-    for (uint32_t i = 0u; i < s->nkeys && i < 8u; i++) if (i != k) return i;
-    return NONE;
+// The other column's key, `found` whether the stage has one.
+UKL_INLINE int64_t has_other(StageP s, UKL_PRIVATE const int64_t* kv, UKL_PRIVATE bool* found) {
+    return key_of_col(s, kv, s->v_has == 1u ? 1u : 0u, found);
 }
 
 // The candidates of node `key`: its document by the directory's search on its key (`clif_dir_doc_of_key`), its
@@ -477,10 +489,9 @@ UKL_INLINE UKL_GLOBAL const KindTable* kind_table(StageP s) { return (UKL_GLOBAL
 // Kind `key`'s candidates: none for a kind the directory has no node of.
 UKL_INLINE void by_kind(StageP s, UKL_PRIVATE const int64_t* kv, UKL_PRIVATE uint32_t* lo, UKL_PRIVATE uint32_t* hi) {
     *lo = 0u; *hi = 0u;
-    uint32_t i = 0u;
-    while (i < s->nkeys && i < 8u && s->key_rcol[i] != 2u) i++;
-    if (i >= s->nkeys || i >= 8u) return;
-    int64_t key = kv[i];
+    bool has_key = false;
+    int64_t key = key_of_col(s, kv, 2u, &has_key);
+    if (!has_key) return;
     UKL_GLOBAL const uint8_t* c = view_block(s->v_dir);
     UKL_GLOBAL const KindTable* t = kind_table(s);
     UKL_GLOBAL const int64_t* kinds = (UKL_GLOBAL const int64_t*)(c + t->kinds);
@@ -522,7 +533,7 @@ UKL_INLINE uint32_t stage_rows(StageP s, RelB R) {
 UKL_INLINE void probe(StageP s, RelB R, UKL_PRIVATE const int64_t* kv, UKL_PRIVATE uint32_t* lo, UKL_PRIVATE uint32_t* hi,
                       UKL_PRIVATE uint32_t* how) {
     if (s->nkeys == 0) { *lo = s->r_from; *hi = s->r_from + stage_rows(s, R); *how = 0u; return; }
-    if (s->v_has != 0u) { by_has(s, kv[has_key(s)], lo, hi, how); return; }
+    if (s->v_has != 0u) { by_has(s, has_key(s, kv), lo, hi, how); return; }
     if (s->v_parent == 2u) { by_own(s, kv, lo, hi); *how = 0u; return; }
     if (s->v_parent == 3u) { by_kind(s, kv, lo, hi); *how = 5u; return; }
     if (s->v_parent != 0u) { by_parent(s, kv[0], lo, hi, how); return; }
@@ -576,8 +587,10 @@ UKL_SHARED bool matches(StageP s, RelB R, uint32_t r, UKL_PRIVATE const int64_t*
     // Its two columns are never one node (an ancestor is strict), so a test of them holds for no row.
     // Probed by both columns: the node's climb, each ancestor checked against the bound one (`has_other`).
     if (s->v_has != 0u) {
-        uint32_t o = has_other(s), memo = NONE;
-        return s->ntests == 0u && has_admits(s, r) && (o == NONE || vread(1u, s->v_dir, r, 1u, &memo) == kv[o]);
+        uint32_t memo = NONE;
+        bool other = false;
+        int64_t o = has_other(s, kv, &other);
+        return s->ntests == 0u && has_admits(s, r) && (!other || vread(1u, s->v_dir, r, 1u, &memo) == o);
     }
     return row_live(s, R, r) && keys_are(s, R, r, kv) && row_passes(s, R, r);
 }
@@ -1006,7 +1019,8 @@ UKL_INLINE int64_t strcmp_value(StageP s, Longs L, uint32_t t, JSPACE const uint
 
 // A join's binding's finds (`V`, a word of two halves): its candidates' first place and a bit a candidate, set where
 // it is a row out (bit `q - lo` for place `q`), where its candidates are at most 32 consecutive places (an index's
-// group, or rows, not a view's walk); else `FINDS_WALK`, and its scatter walks its candidates again.
+// group, or rows); a view walk's (a `has`, a parent's children, an own id) its first row out and a bit a row from it,
+// where its rows out lie within 32 rows of it; else `FINDS_WALK`, and its scatter walks its candidates again.
 #define FINDS_MAX 32u
 #define FINDS_WALK ((int64_t)NONE)
 
@@ -1043,6 +1057,9 @@ UKL_INLINE void stage_count_one(Longs L, Longs R_rows, JSPACE const uint8_t* R_f
     for (uint32_t m = 0; m < 16; m++) q_counts[m] = 0;
     bool found = false;
     bool kept = s->mode == 0 && s->v_has == 0u && s->v_parent == 0u && how <= 1u && hi - lo <= FINDS_MAX;
+    bool as_rows = s->mode == 0 && (s->v_has != 0u || s->v_parent != 0u);
+    uint32_t first = NONE;
+    bool over = false;
     uint32_t finds = 0u;
     Walked wk = {0u, 3u};
     for (uint32_t q = lo; q < hi; q = cand_next(s, how, q)) {
@@ -1055,10 +1072,19 @@ UKL_INLINE void stage_count_one(Longs L, Longs R_rows, JSPACE const uint8_t* R_f
         for (uint32_t m = 0; m < s->npassed && m < 16; m++) q_counts[m] += s->passed[m] == NONE ? (uint32_t)ok : (uint32_t)(ok && out_bit(s, v, s->passed[m]));
         if (!ok || (s->last != NONE && !out_bit(s, v, s->last))) continue;
         if (kept) finds |= 1u << (q - lo);
+        else if (as_rows) {
+            first = first == NONE ? r : first;
+            uint32_t d = r - first;
+            // In the walk's order: past every row kept before it.
+            if (d < FINDS_MAX && (d == 0u || (finds >> d) == 0u)) finds |= 1u << d; else over = true;
+        }
         c++;
     }
     if (exists) c = (uint32_t)(found != (s->mode == 2));
-    else if (s->mode == 0) V[t] = kept ? (int64_t)((uint64_t)lo | ((uint64_t)finds << 32)) : FINDS_WALK;
+    else if (s->mode == 0) {
+        V[t] = kept ? (int64_t)((uint64_t)lo | ((uint64_t)finds << 32))
+            : (as_rows && !over) ? (int64_t)((uint64_t)(first == NONE ? 0u : first) | ((uint64_t)finds << 32)) : FINDS_WALK;
+    }
     counts[t] = c;
     if (!exists && s->counter != NONE) {
         if (p0 > 0) ukl_atomic_add(&counters[s->counter], p0);
@@ -1123,9 +1149,10 @@ UKL_INLINE void stage_scatter_one(Longs L, Longs R_rows, JSPACE const uint8_t* R
     uint64_t found = s->mode == 0 ? (uint64_t)V[t] : (uint64_t)NONE;
     if ((uint32_t)found != NONE) {
         uint32_t first = (uint32_t)found, bits = (uint32_t)(found >> 32);
+        bool rows = s->nkeys == 0u || s->v_has != 0u || s->v_parent != 0u;
         for (; bits != 0u && at < s->cap_out; bits &= bits - 1u) {
             uint32_t q = first + ukl_ctz32(bits);
-            write_row(s, L, t, R, s->nkeys == 0u ? q : group_row(s, R, q), O, at);
+            write_row(s, L, t, R, rows ? q : group_row(s, R, q), O, at);
             at++;
         }
         return;
@@ -2410,14 +2437,15 @@ UKL_INLINE void ix_offs_one(JSPACE const uint8_t* B, JSPACE const uint32_t* keys
 // it, holds its key. Its marks lie after its rows' room, `n` of them.
 #define MARK_REACH 8u
 // Each row's tag is its key pass's (`ix_key_one`, `tags` by row from `eb`): no row is read again for its hash, only a
-// pair's whose tags agree, for their keys.
+// pair's whose tags agree, for their keys. A view's keys are not compared, as the host's `build_index_hashed`: no
+// place of it is `MARK_SAME`, and a probe compares its keys.
 UKL_INLINE void ix_mark_one(JSPACE const uint8_t* B, JSPACE const uint32_t* keys, JSPACE const uint32_t* offs, JSPACE uint32_t* rows,
                             JSPACE const uint32_t* tags, JSPACE const IxP* p, JSPACE const uint8_t* B_far, uint32_t kb, uint32_t eb, uint32_t t)
 {
     if (t >= ix_rows(B, p)) return;
     uint32_t lo = offs[keys[eb + t] - kb], rt = rows[t] - p->from, tag = tags[eb + rt];
     uint32_t same = 0u;
-    for (uint32_t u = t; u > lo && t - u < MARK_REACH;) {
+    for (uint32_t u = t; p->kind == 0ul && u > lo && t - u < MARK_REACH;) {
         u--;
         uint32_t ru = rows[u] - p->from;
         if (tags[eb + ru] != tag) continue;

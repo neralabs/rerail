@@ -148,6 +148,8 @@ pub struct At<'a> {
     k: u32,
     r: u32,
     x: u32,
+    /// Its node's id's low bits where its walk read them (`at_node_low`), else `NO_ROW`: read by the numbering.
+    low: u32,
 }
 
 impl At<'_> {
@@ -156,6 +158,7 @@ impl At<'_> {
     pub unsafe fn col(&self, col: u32) -> u64 {
         let (d, r, x) = (&self.d, self.r, self.x);
         match self.k {
+            0 if col == 1 && self.low != NO_ROW => u64::from(d.e.key) << 32 | u64::from(self.low),
             0 => d.node(r, x, col),
             1 => d.child(r, x, col),
             2 => d.field(x, col),
@@ -188,7 +191,7 @@ impl<'a> Rows<'a> {
     #[inline]
     pub unsafe fn next(&mut self) -> At<'a> {
         let x = self.nodes.as_mut().map_or(0, |n| n.next());
-        let at = At { d: self.d, k: self.k, r: self.r, x };
+        let at = At { d: self.d, k: self.k, r: self.r, x, low: NO_ROW };
         self.r = self.r.wrapping_add(1);
         at
     }
@@ -242,6 +245,13 @@ impl<'a> Doc<'a> {
     #[inline]
     pub unsafe fn tape_node(&self, l: u32) -> u32 {
         self.n.select(0, l)
+    }
+
+    /// Numbered node `l`'s id's low bits, its granule found from `hint` (`Numbering::low_of_near`): a walk's, whose
+    /// nodes lie in one granule or its parents, the granules not searched again for each.
+    #[inline]
+    pub unsafe fn low_near(&self, l: u32, hint: &mut u32) -> u32 {
+        if self.local() { l } else { self.n.low_of_near(0, l, hint) }
     }
 
     /// Numbered node `l`'s id: the document's key, then its low bits (`l` itself where ids are local ids).
@@ -552,14 +562,21 @@ impl<'a> Doc<'a> {
             12 => self.n.select(OP_ITEM, r),
             _ => 0,
         };
-        At { d: self, k, r, x }
+        At { d: self, k, r, x, low: NO_ROW }
     }
 
     /// View `k`'s row `r` whose tape node `x` its walk holds (a parent's next child, a node's next numbered ancestor):
     /// no node selected.
     #[inline]
     pub fn at_node(self, k: u32, r: u32, x: u32) -> At<'a> {
-        At { d: self, k, r, x }
+        At { d: self, k, r, x, low: NO_ROW }
+    }
+
+    /// `node` row `r`, of tape node `x` and id low bits `low`, as its walk read them (a climb's ancestor, a
+    /// subtree's node): neither selected nor its granule searched.
+    #[inline]
+    pub fn at_node_low(self, r: u32, x: u32, low: u32) -> At<'a> {
+        At { d: self, k: 0, r, x, low }
     }
 
     /// View `k`'s rows from `r` on, in order (`Rows`): each one's tape node the next of its numbering's (`Nodes`),

@@ -477,10 +477,11 @@ fn binds(d: &mut mj::Stage, f: &rowcode::Fused, filter: bool) {
 /// whole (no keys), the CPU makes them all too, and the device takes it.
 fn readable(rel: &InRel, keys: usize) -> Result<(), String> {
     match &rel.view {
+        // A walked axis (`has`, `inside`, `nearest`, containment) probed by either key or both is read off the tape
+        // (decision 0353 step 5, `resident`): nothing is made. Asked first: `complete_rows` chooses the batch's solve.
+        Some(v) if (1..=2).contains(&keys) && rel.ndead == 0 && v.src.has_walk().is_some() => Ok(()),
         // A kind-set axis or containment is made whole by the batch's solve, and read so (decision 0277).
-        // A walked axis probed by either key or both is read off the tape (decision 0353 step 5, `resident`): nothing
-        // is made.
-        Some(v) if keys > 0 && v.src.made_on_lookup() && !v.src.complete_rows() && !(keys <= 2 && rel.ndead == 0 && v.src.has_walk().is_some()) => Err("an atom read by keys over a relation made on lookup".into()),
+        Some(v) if keys > 0 && v.src.made_on_lookup() && !v.src.complete_rows() => Err("an atom read by keys over a relation made on lookup".into()),
         _ => Ok(()),
     }
 }

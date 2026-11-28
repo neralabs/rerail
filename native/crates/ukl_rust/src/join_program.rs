@@ -832,7 +832,8 @@ impl St<'_> {
     }
 
     /// The candidates of keys `kv`: [lo, hi) and how they are walked (0 rows, 1 an index's entries, 2 a parent's
-    /// children by their next siblings, 3 a node's numbered ancestors).
+    /// children by their next siblings, 3 a node's numbered ancestors, 4 `nearest`'s subtree (past a nearer member's),
+    /// 6 a node's subtree, rows [lo, hi) of one document walked on its tape).
     unsafe fn probe(&self, kv: &[i64; 8]) -> Walk {
         let s = self.s;
         if s.nkeys == 0 {
@@ -862,7 +863,8 @@ impl St<'_> {
             if matches!(axis, 1 | 2) && !self.has_member(first.wrapping_add(l)) {
                 return none;
             }
-            let how = if axis == 2 { 4 } else { 0 };
+            // The subtree walked on the tape (6, `walk_subtree`), or `nearest`'s with its skips (4).
+            let how = if axis == 2 { 4 } else { 6 };
             return Walk { lo: first.wrapping_add(l).wrapping_add(1), hi: first.wrapping_add(doc(d, e).end(l)), how, tag: 0 };
         }
         if s.v_parent == 2 {
@@ -968,9 +970,13 @@ impl St<'_> {
         // (`clif_view_child_next`).
         let parent = if how == 2 { dd.tape.parent(x) } else { 0 };
         let end = if how == 2 && parent != rerail_reads::views::NO_ROW { dd.tape.end_of(parent) } else { 0 };
+        // A climb's ancestors' ids, their granules found from the last one's (`Doc::low_near`): one granule or its
+        // parents, not each bisected again.
+        let mut hint = 0u32;
         loop {
             let r = first.wrapping_add(i);
-            self.last.set((r, Some(Row::View(dd.at_node(k, i, x)))));
+            let at = if how == 3 { dd.at_node_low(i, x, dd.low_near(i, &mut hint)) } else { dd.at_node(k, i, x) };
+            self.last.set((r, Some(Row::View(at))));
             if !f(r) {
                 return;
             }
@@ -991,6 +997,30 @@ impl St<'_> {
         }
     }
 
+    /// A subtree's walk (`how` 6, a `has` or `inside` axis's or containment's by its ancestor, `probe`; `nearest`'s
+    /// is 4, which skips a nearer member's subtree): `node` rows [lo, hi) of
+    /// one document, each candidate's row given to `f` until it returns false: its document found once, each tape
+    /// node the numbering's next (`Numbering::nodes_from`, one select for the walk), each id's granule from the last
+    /// one's (`Doc::low_near`), and each row kept as the stage's last (`row`), so its reads select nothing.
+    unsafe fn walk_subtree(&self, lo: u32, hi: u32, mut f: impl FnMut(u32) -> bool) {
+        let d = self.s.v_dir;
+        let a = dir_doc_of_row(view_block(d), (*d).at, 0, lo, self.doc.get());
+        self.doc.set(a);
+        let e = view_rows(d).add(a as usize);
+        let first = (*e).rows[0];
+        let dd = doc(d, e);
+        let mut nodes = dd.n.nodes_from(0, lo.wrapping_sub(first));
+        let mut hint = 0u32;
+        for r in lo..hi {
+            let i = r.wrapping_sub(first);
+            let x = nodes.next();
+            self.last.set((r, Some(Row::View(dd.at_node_low(i, x, dd.low_near(i, &mut hint))))));
+            if !f(r) {
+                return;
+            }
+        }
+    }
+
     /// The candidates of keys `kv`, in their walk's order: each one's row, place, and whether its keys are known to
     /// be `kv`. An index group's (decision 0671): only the places whose mark's tag is the key's, each one's key known
     /// by the walk's previous place of the tag where its mark says `MARK_SAME` (that place is the walk's last of the
@@ -1000,6 +1030,12 @@ impl St<'_> {
         let known = self.parent_known(w.how);
         if (w.how == 2 || w.how == 3) && q != NONE {
             self.walk_tape(w.how, q, |r| f(r, r, known));
+            return;
+        }
+        if w.how == 6 {
+            if q < w.hi {
+                self.walk_subtree(q, w.hi, |r| f(r, r, known));
+            }
             return;
         }
         // The walk's last place of the tag: none (0), its key `kv` (1), another (2).
@@ -1115,7 +1151,8 @@ impl St<'_> {
 }
 
 /// A join's binding's finds (`join_stages.uglykl`'s): its candidates' first place and a bit a candidate, where they
-/// are at most `FINDS_MAX` consecutive places; else `FINDS_WALK`.
+/// are at most `FINDS_MAX` consecutive places, or a view walk's first row out and a bit a row from it, where its rows
+/// out lie within `FINDS_MAX` rows of it; else `FINDS_WALK`.
 const FINDS_MAX: u32 = 32;
 const FINDS_WALK: i64 = NONE as i64;
 
@@ -1759,6 +1796,11 @@ unsafe fn stage_count_one(st: &St, j: &Job, b: &Bufs, t: u32, acc: &mut [u32; 17
     let passed = s.npassed.min(16) as usize;
     // A join's finds (`V`): a bit a candidate of at most `FINDS_MAX` consecutive places, set where it is a row out.
     let kept = s.mode == 0 && s.v_has == 0 && s.v_parent == 0 && w.how <= 1 && w.hi.wrapping_sub(w.lo) <= FINDS_MAX;
+    // A view walk's (a `has`, a parent's children, an own id): its rows out kept as rows, a bit a row from its first,
+    // while they lie within `FINDS_MAX` rows of it in ascending order (the walk's, which the scatter keeps); else its
+    // scatter walks again.
+    let as_rows = s.mode == 0 && (s.v_has != 0 || s.v_parent != 0);
+    let (mut first, mut over) = (NONE, false);
     let mut finds = 0u32;
     st.each(w, &kv, |r, q, key| {
         if if s.mode == 3 { !st.row_live(r) } else { !st.matches(r, &kv, key) } {
@@ -1777,6 +1819,17 @@ unsafe fn stage_count_one(st: &St, j: &Job, b: &Bufs, t: u32, acc: &mut [u32; 17
         if ok && (s.last == NONE || st.out_bit(v, s.last)) {
             if kept {
                 finds |= 1 << (q.wrapping_sub(w.lo) & 31);
+            } else if as_rows {
+                if first == NONE {
+                    first = r;
+                }
+                // In the walk's order: past every row kept before it.
+                let d = r.wrapping_sub(first);
+                if d < FINDS_MAX && (d == 0 || finds >> d == 0) {
+                    finds |= 1 << d;
+                } else {
+                    over = true;
+                }
             }
             c += 1;
         }
@@ -1785,7 +1838,13 @@ unsafe fn stage_count_one(st: &St, j: &Job, b: &Bufs, t: u32, acc: &mut [u32; 17
     if exists {
         c = (found != (s.mode == 2)) as u32;
     } else if s.mode == 0 {
-        *b.v.add(t as usize) = if kept { (u64::from(w.lo) | u64::from(finds) << 32) as i64 } else { FINDS_WALK };
+        *b.v.add(t as usize) = if kept {
+            (u64::from(w.lo) | u64::from(finds) << 32) as i64
+        } else if as_rows && !over {
+            (u64::from(if first == NONE { 0 } else { first }) | u64::from(finds) << 32) as i64
+        } else {
+            FINDS_WALK
+        };
     }
     *counts.add(t as usize) = c;
     if !exists {
@@ -1841,12 +1900,14 @@ unsafe fn stage_scatter_one(st: &St, j: &Job, b: &Bufs, t: u32) {
             }
         }
         0 if *b.v.add(t as usize) as u32 != NONE => {
-            // Its finds (`stage_count_one`'s): its rows out, each found once, none walked again.
+            // Its finds (`stage_count_one`'s): its rows out, each found once, none walked again; a view walk's are
+            // rows, an index's its group's places.
             let found = *b.v.add(t as usize) as u64;
             let (first, mut bits) = (found as u32, (found >> 32) as u32);
+            let rows = s.nkeys == 0 || s.v_has != 0 || s.v_parent != 0;
             while bits != 0 && a < s.cap_out {
                 let q = first + bits.trailing_zeros();
-                st.write_row(t, if s.nkeys == 0 { q } else { st.cand_row(1, q) }, o, a);
+                st.write_row(t, if rows { q } else { st.cand_row(1, q) }, o, a);
                 bits &= bits - 1;
                 a += 1;
             }
@@ -2001,7 +2062,9 @@ impl St<'_> {
     }
 }
 
-unsafe fn scan_count_one(st: &St, j: &Job, b: &Bufs, kv: &[i64; 8], cands: &ScanCands, r: u32) {
+/// A scan's candidate `r`'s count, its stage's counters added to the range's `acc` (`stage_count_range`'s: once a
+/// range, not an atomic add a row).
+unsafe fn scan_count_one(st: &St, b: &Bufs, kv: &[i64; 8], cands: &ScanCands, r: u32, acc: &mut [u32; 17]) {
     let s = st.s;
     let counts = b.c;
     if r > s.nr {
@@ -2015,11 +2078,9 @@ unsafe fn scan_count_one(st: &St, j: &Job, b: &Bufs, kv: &[i64; 8], cands: &Scan
     if st.matches(id, kv, false) {
         let v = if s.nops > 0 { st.eval(0, id) } else { 0 };
         if s.counter != NONE {
-            at(j.counters.add(s.counter as usize)).fetch_add(1, SeqCst);
+            acc[0] += 1;
             for m in 0..s.npassed.min(16) as usize {
-                if s.passed[m] == NONE || st.out_bit(v, s.passed[m]) {
-                    at(j.counters.add(s.counter as usize + 1 + m)).fetch_add(1, SeqCst);
-                }
+                acc[1 + m] += u32::from(s.passed[m] == NONE || st.out_bit(v, s.passed[m]));
             }
         }
         c = (s.last == NONE || st.out_bit(v, s.last)) as u32;
@@ -2077,31 +2138,49 @@ unsafe fn ix_key_tag(bb: *const u8, bf: *const u8, out: *mut u32, tags: *mut u32
 /// `MARK_REACH` (decision 0671): the places before one a builder looks back over for its tag.
 const MARK_REACH: u32 = 8;
 
+/// Places a tile of `ix_mark_range`'s takes at once: their tags gathered in place order first.
+const MARK_TILE: u32 = 256;
+
 /// `join_stages`' `ix_mark_one` of places `t0..t1`: each one's key's tag (`tags`, by row from `eb`, its key pass's),
-/// and `MARK_SAME` where its bucket's previous place of the tag, among the `MARK_REACH` before it, holds its key. Its
-/// marks after its rows' room (`n`).
+/// and `MARK_SAME` where its bucket's previous place of the tag, among the `MARK_REACH` before it, holds its key; a
+/// view's none (its keys are not compared, as the host's `build_index_hashed`: a probe compares them). Its marks after
+/// its rows' room (`n`).
+///
+/// As the host's `fill_marks`: a tile's places' tags gathered once, in place order (each place's row's, at the
+/// level's `eb` + its row), with the `MARK_REACH` places before the tile, and each place's look back read there, not
+/// gathered again row by row.
 unsafe fn ix_mark_range(bb: *const u8, keys: *const u32, offs: *const u32, rows: *mut u32, tags: *const u32, p: &IxP, bf: *const u8, kb: u32, eb: u32, t0: u32, t1: u32) {
     let t1 = t1.min(ix_rows(bb, p));
     let row = |u: u32| (*rows.add(u as usize)).wrapping_sub(p.from);
-    // Place `u`'s tag, its row's as its key's pass wrote it (`ix_key_tag`, at the level's `eb` + its row): no row is
-    // read again for its hash, only a pair's whose tags agree, for their keys.
     let tag = |u: u32| *tags.add((eb + row(u)) as usize);
-    for t in t0..t1 {
-        let lo = *offs.add((*keys.add((eb + t) as usize)).wrapping_sub(kb) as usize);
-        let rt = row(t);
-        let tg = tag(t);
-        let mut same = false;
-        for u in (lo.max(t.saturating_sub(MARK_REACH))..t).rev() {
-            let ru = row(u);
-            if tag(u) != tg {
-                continue;
-            }
-            let (mut mu, mut mt) = (NONE, NONE);
-            let (a, b) = (ix_row(bb, bf, p, ru, &mut mu), ix_row(bb, bf, p, rt, &mut mt));
-            same = (0..(p.ncols & !IX_LIVE).min(8) as usize).all(|i| a.get(p.cols[i]) == b.get(p.cols[i]));
-            break;
+    let view = p.kind != 0;
+    let mut tg = [core::mem::MaybeUninit::<u32>::uninit(); (MARK_TILE + MARK_REACH) as usize];
+    let mut a = t0;
+    while a < t1 {
+        let z = a.saturating_add(MARK_TILE).min(t1);
+        let base = if view { a } else { a.saturating_sub(MARK_REACH) };
+        for u in base..z {
+            tg[(u - base) as usize].write(tag(u));
         }
-        *rows.add((p.n + t) as usize) = tg | u32::from(same);
+        let at = |u: u32| tg[(u - base) as usize].assume_init();
+        for t in a..z {
+            let me = at(t);
+            let mut same = false;
+            if !view {
+                let lo = *offs.add((*keys.add((eb + t) as usize)).wrapping_sub(kb) as usize);
+                for u in (lo.max(t.saturating_sub(MARK_REACH))..t).rev() {
+                    if at(u) != me {
+                        continue;
+                    }
+                    let (mut mu, mut mt) = (NONE, NONE);
+                    let (x, y) = (ix_row(bb, bf, p, row(u), &mut mu), ix_row(bb, bf, p, row(t), &mut mt));
+                    same = (0..(p.ncols & !IX_LIVE).min(8) as usize).all(|i| x.get(p.cols[i]) == y.get(p.cols[i]));
+                    break;
+                }
+            }
+            *rows.add((p.n + t) as usize) = me | u32::from(same);
+        }
+        a = z;
     }
 }
 
@@ -2554,8 +2633,14 @@ unsafe fn scan_count_range(st: &St, j: &Job, b: &Bufs, t0: u32, t1: u32) {
     }
     let (kv, cands) = st.scan_cands(j);
     fill_u32(b.c, t0.max(cands.n), t1, 0);
+    let mut acc = [0u32; 17];
     for r in t0..t1.min(cands.n) {
-        scan_count_one(st, j, b, &kv, &cands, r);
+        scan_count_one(st, b, &kv, &cands, r, &mut acc);
+    }
+    if s.counter != NONE {
+        for (m, &a) in acc.iter().enumerate().filter(|(_, a)| **a > 0) {
+            at(j.counters.add(s.counter as usize + m)).fetch_add(a, SeqCst);
+        }
     }
 }
 
