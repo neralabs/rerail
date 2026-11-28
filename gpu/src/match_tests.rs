@@ -133,6 +133,122 @@ fn sa_dictionary(ps: &[Vec<u8>], size: usize) -> Vec<u8> {
     chosen.concat()
 }
 
+/// A dictionary of `size` bytes by zstd's cover (fastCover's segments), its counts exact from the pieces' suffix array
+/// and sensitive to where they lie:
+/// - each d-mer (the suffixes that share their first `d` bytes, a run of the LCP array at `d` or more) counts the
+///   pieces it is in, once each: within a piece LZ4 matches its repeats itself;
+/// - a segment of `k` bytes scores the counts of the distinct d-mers in it; the best of each epoch (the pieces cut into
+///   `size / k / 4` runs, taken in turn) is taken, and its d-mers' counts zeroed, so an overlap is never counted twice;
+/// - the dictionary fills from its end, the first taken nearest the pieces (LZ4's window is 64 KB back).
+fn cover_dictionary(ps: &[Vec<u8>], size: usize, d: usize, k: usize) -> Vec<u8> {
+    let text: Vec<u8> = ps.concat();
+    let n = text.len();
+    let mut piece = vec![0u32; n];
+    let mut at = 0;
+    for (q, p) in ps.iter().enumerate() {
+        piece[at..at + p.len()].fill(q as u32);
+        at += p.len();
+    }
+    let (sa, lcp, _, _) = suffix_array(&text);
+    // Each position's d-mer (its group in the array), and each group's pieces; none where fewer than d bytes are left
+    // in the position's piece.
+    let fits = |p: usize| p + d <= n && piece[p + d - 1] == piece[p];
+    let mut group = vec![u32::MAX; n];
+    let mut freq: Vec<u32> = Vec::new();
+    let mut r = 0;
+    while r < n {
+        let mut e = r + 1;
+        while e < n && lcp[e] as usize >= d {
+            e += 1;
+        }
+        if fits(sa[r] as usize) {
+            let g = freq.len() as u32;
+            let mut seen = std::collections::HashSet::new();
+            for &p in &sa[r..e] {
+                if fits(p as usize) {
+                    group[p as usize] = g;
+                    seen.insert(piece[p as usize]);
+                }
+            }
+            freq.push(if seen.len() > 1 { seen.len() as u32 } else { 0 });
+        }
+        r = e;
+    }
+    let epochs = (size / k / 4).max(1);
+    let span = n / epochs;
+    let mut dict = vec![0u8; size];
+    let mut tail = size;
+    let mut in_seg = vec![0u16; freq.len()];
+    let mut stale = 0;
+    let mut e = 0;
+    while tail > 0 && stale < epochs {
+        let (b, end) = (e * span, ((e + 1) * span).min(n));
+        e = (e + 1) % epochs;
+        // The best segment of the epoch by its distinct d-mers' counts (fastCover's sliding window).
+        let (mut best, mut score, mut s0) = ((0usize, 0usize, 0u64), 0u64, b);
+        for p in b..end {
+            let g = group[p];
+            if g != u32::MAX {
+                if in_seg[g as usize] == 0 {
+                    score += freq[g as usize] as u64;
+                }
+                in_seg[g as usize] += 1;
+            }
+            if p + 1 - s0 > k - d + 1 {
+                let h = group[s0];
+                if h != u32::MAX {
+                    in_seg[h as usize] -= 1;
+                    if in_seg[h as usize] == 0 {
+                        score -= freq[h as usize] as u64;
+                    }
+                }
+                s0 += 1;
+            }
+            if score > best.2 {
+                best = (s0, p + 1, score);
+            }
+        }
+        for p in s0..end {
+            if group[p] != u32::MAX {
+                in_seg[group[p] as usize] -= 1;
+            }
+        }
+        if best.2 == 0 {
+            stale += 1;
+            continue;
+        }
+        stale = 0;
+        for p in best.0..best.1 {
+            if group[p] != u32::MAX {
+                freq[group[p] as usize] = 0;
+            }
+        }
+        // The segment's bytes, its last d-mer's whole, at the dictionary's tail.
+        let seg = &text[best.0..(best.1 + d - 1).min(n)];
+        let take = seg.len().min(tail);
+        dict[tail - take..tail].copy_from_slice(&seg[seg.len() - take..]);
+        tail -= take;
+    }
+    dict[tail..].to_vec()
+}
+
+/// `cover_dictionary` at the d and k that make the pieces' 16z the smallest (zstd's search of its cover's parameters,
+/// by LZ4's own output here), dictionary counted: the dictionary and its (d, k).
+fn best_cover(t: &[u8], ps: &[Vec<u8>], size: usize, level: i32) -> (Vec<u8>, usize, usize) {
+    let mut best: Option<(usize, Vec<u8>, usize, usize)> = None;
+    for d in [6usize, 8] {
+        for k in [16usize, 32, 64, 128, 256] {
+            let dict = cover_dictionary(ps, size, d, k);
+            let z = rerail_tape_format::f16::z_of(t, &|s: &[u8]| lz4_dict(s, &dict, level)).unwrap().len() + dict.len();
+            if best.as_ref().is_none_or(|b| z < b.0) {
+                best = Some((z, dict, d, k));
+            }
+        }
+    }
+    let (_, dict, d, k) = best.unwrap();
+    (dict, d, k)
+}
+
 /// zstd's dictionary trainer (fastCover) over the pieces, its content only (no entropy tables: LZ4 reads bytes).
 fn zstd_dictionary(ps: &[Vec<u8>], size: usize) -> Vec<u8> {
     let d = zstd::dict::from_samples(ps, size + 1024).expect("a zstd dictionary");
@@ -180,7 +296,7 @@ fn z16_dictionaries() {
         let plain = |level: i32| rerail_tape_format::f16::z_of(&t, &|s: &[u8]| lz4_dict(s, &[], level)).unwrap().len();
         let whole = lz4_dict(&t, &[], 12).len();
         eprintln!("{name}: {} bytes of JSON, a tape of {} bytes, {} pieces encoded; 16z {} (fast), {} (HC 12); one stream {} (HC 12)", f.len(), t.len(), ps.len(), plain(0), plain(12), whole);
-        for size in [4usize << 10, 16 << 10, 32 << 10, 64 << 10] {
+        for size in [4usize << 10, 8 << 10, 16 << 10, 32 << 10] {
             let prefix: Vec<u8> = ps.concat().into_iter().take(size).collect();
             let t0 = std::time::Instant::now();
             let zd = zstd_dictionary(&ps, size);
@@ -188,8 +304,15 @@ fn z16_dictionaries() {
             let t0 = std::time::Instant::now();
             let sd = sa_dictionary(&ps, size);
             let s_sa = t0.elapsed();
+            let t0 = std::time::Instant::now();
+            let (cd, cdd, cdk) = best_cover(&t, &ps, size, 12);
+            let s_cover = t0.elapsed();
+            let t0 = std::time::Instant::now();
+            let one = cover_dictionary(&ps, size, cdd, cdk);
+            let s_one = t0.elapsed();
+            assert!(one == cd);
             let mut line = format!("  {:>2} KB:", size >> 10);
-            for (dn, d, took) in [("first bytes", &prefix, None), ("zstd", &zd, Some(s_zstd)), ("suffix array", &sd, Some(s_sa))] {
+            for (dn, d, took) in [("first bytes", &prefix, None), ("zstd", &zd, Some(s_zstd)), ("repeats", &sd, Some(s_sa)), ("cover", &cd, Some(s_one))] {
                 for level in [0, 12] {
                     let z = rerail_tape_format::f16::z_of(&t, &|s: &[u8]| {
                         let z = lz4_dict(s, d, level);
@@ -204,7 +327,7 @@ fn z16_dictionaries() {
                     line += &format!(" built in {took:.1?};");
                 }
             }
-            eprintln!("{line}");
+            eprintln!("{line} cover's d {cdd}, k {cdk}, its search {s_cover:.1?}");
         }
     }
 }
