@@ -48,22 +48,97 @@ UKL_INLINE int32_t semi_key(CBlk t, Bi b, uint32_t c, uint32_t id, UKL_PRIVATE i
     return semi_flipped(t, b, c, false, id, k) ? -1 : 0;
 }
 
+// A change's candidates (`rerail_delta_core::trace`'s new ranges and flips, the twin's walk): the ids past `before`'s
+// end, which the layers above it own, then each layer above's kills of rows below that end; each row the change holds
+// is one of them, once. Where `before` is no layer of `after`'s state (∅ before, a cold run's, among them), every id
+// of either: then the change is read whole.
+typedef struct Cands {
+    uint32_t before, after, lo, hi, n;
+    bool full;
+} Cands;
+
+UKL_INLINE Cands cands_of(CBlk t, Bi s) {
+    Cands c;
+    c.before = s.before;
+    c.after = s.after;
+    c.lo = state_end(t, s.before);
+    c.hi = state_end(t, s.after);
+    uint32_t k = s.after, kills = 0u;
+    while (k != NONE && k != s.before) {
+        Layer l = layer_of(t, k);
+        kills += rel_end(l.gone) - rel_start(l.gone);
+        k = l.below;
+    }
+    c.full = s.before == NONE || k != s.before;
+    c.n = c.full ? (c.lo > c.hi ? c.lo : c.hi) : c.hi - c.lo + kills;
+    return c;
+}
+
+// Candidate `i`'s id, or NONE (a kill of a row past `before`'s end, which is a candidate as a new id).
+UKL_INLINE uint32_t cand_id(CBlk t, Cands c, uint32_t i) {
+    if (c.full) return i;
+    if (i < c.hi - c.lo) return c.lo + i;
+    i -= c.hi - c.lo;
+    for (uint32_t k = c.after; k != c.before && k != NONE;) {
+        Layer l = layer_of(t, k);
+        uint32_t g = rel_start(l.gone), ng = rel_end(l.gone) - g;
+        if (i < ng) {
+            uint32_t id = (uint32_t)rel_get(l.gone, g + i, 1u);
+            return id < c.lo ? id : NONE;
+        }
+        i -= ng;
+        k = l.below;
+    }
+    return NONE;
+}
+
+// `B`'s candidate `i`'s key change (`semi_key`), its key into `k`; 0 for none.
+UKL_INLINE int32_t cand_key(CBlk t, Cands cb, Bi b, uint32_t c, uint32_t i, UKL_PRIVATE int64_t* k) {
+    uint32_t id = i < cb.n ? cand_id(t, cb, i) : NONE;
+    return id == NONE ? 0 : semi_key(t, b, c, id, k);
+}
+
+// `A`'s kept rows of key `k` (by a probe of its after state on `ac`), which a key `B`'s change made held (`up`) or
+// no longer held come into or go from the change: written from `at` of `r` with their sign when `r` is set, and those
+// of sign `psign` into `ps` from `pat`; how many.
+UKL_INLINE uint32_t kept_of(CBlk t, Bi a, uint32_t ac, uint32_t arity, int64_t k, int32_t sign, Blk r, uint32_t at, Blk ps, uint32_t pat, uint32_t psign) {
+    Probe p = probe_of(t, a.after, ac, k);
+    uint32_t n = 0u;
+    for (uint32_t id = probe_next(&p); id != NONE; id = probe_next(&p)) {
+        if (!bi_kept(t, a, id)) continue;
+        if (r != (Blk)0) {
+            for (uint32_t c = 0u; c < arity; c++) runs_set(r, at + n, c, state_get(t, a.after, id, c));
+            runs_diff(r, at + n, sign);
+        }
+        if (ps != (Blk)0 && (uint32_t)sign == psign) parts_put(ps, pat + n, k);
+        n++;
+    }
+    return n;
+}
+
 // The change's rows into `r` and the keys of those of sign `psign` into the parts block `ps` (sealed); with `with_b`
-// and `ks` set, `B`'s change projected on its key into `ks`. Every thread of the group calls it.
+// and `ks` set, `B`'s change projected on its key into `ks`. Every thread of the group calls it. The rows walked are
+// the change's candidates (`Cands`): `A`'s gone and added rows, then, with `B`, `A`'s kept rows of each key `B`'s
+// change flipped; a change read whole (`full`) finds its kept rows among its own (`semi_row`).
 UKL_INLINE void semi_group(CBlk t, UKL_GLOBAL const SemiP* q, bool with_b, Blk r, Blk ps, Blk ks, uint32_t lid, uint32_t lsz,
                            UKL_LOCAL uint32_t* scratch, UKL_LOCAL uint32_t* sh __UKL_PARAMS) {
     Bi a = side_a(q), b = side_b(q);
     bool rows = a.after != NONE && (!with_b || b.after != NONE), keys = ks != (Blk)0 && b.after != NONE;
-    uint32_t end = rows ? state_end(t, a.after) : 0u, bb = state_end(t, b.before), ba = state_end(t, b.after);
-    uint32_t kend = keys ? (ba > bb ? ba : bb) : 0u, psign = (uint32_t)q->parts_sign;
-    uint32_t n = 0u, nk = 0u;
-    for (uint32_t id = lid; id < end; id += lsz) {
-        uint32_t from;
-        n += semi_row(t, q, with_b, id, &from) != 0 ? 1u : 0u;
+    Cands ca = cands_of(t, a), cb = cands_of(t, b);
+    uint32_t na = rows ? ca.n : 0u, nb = with_b && (keys || (rows && !ca.full)) ? cb.n : 0u;
+    // A's kept rows by `B`'s flipped keys: only where `A`'s change is walked by its candidates.
+    bool flips = rows && with_b && !ca.full;
+    uint32_t psign = (uint32_t)q->parts_sign, n = 0u, nk = 0u;
+    for (uint32_t i = lid; i < na; i += lsz) {
+        uint32_t from, id = cand_id(t, ca, i);
+        n += id != NONE && semi_row(t, q, with_b, id, &from) != 0 ? 1u : 0u;
     }
-    for (uint32_t id = lid; id < kend; id += lsz) {
+    for (uint32_t i = lid; i < nb; i += lsz) {
         int64_t k;
-        nk += semi_key(t, b, q->b_col, id, &k) != 0 ? 1u : 0u;
+        int32_t s = cand_key(t, cb, b, q->b_col, i, &k);
+        if (s == 0) continue;
+        nk += keys ? 1u : 0u;
+        if (flips) n += kept_of(t, a, q->a_col, q->a_arity, k, 0, (Blk)0, 0u, (Blk)0, 0u, psign);
     }
     n = ukl_tg_sum(n, lid, lsz, scratch __UKL_ARGS);
     nk = ukl_tg_sum(nk, lid, lsz, scratch __UKL_ARGS);
@@ -73,9 +148,9 @@ UKL_INLINE void semi_group(CBlk t, UKL_GLOBAL const SemiP* q, bool with_b, Blk r
     }
     ukl_tg_barrier();
     uint32_t at = sh[0], kat = sh[1], run = 0u, prun = 0u, krun = 0u;
-    for (uint32_t base = 0u; base < end; base += lsz) {
-        uint32_t id = base + lid, from = NONE;
-        int32_t s = id < end ? semi_row(t, q, with_b, id, &from) : 0;
+    for (uint32_t base = 0u; base < na; base += lsz) {
+        uint32_t i = base + lid, from = NONE, id = i < na ? cand_id(t, ca, i) : NONE;
+        int32_t s = id != NONE ? semi_row(t, q, with_b, id, &from) : 0;
         UklScan e = ukl_tg_exclusive_sum(s != 0 ? 1u : 0u, lid, lsz, scratch __UKL_ARGS);
         UklScan pe = ukl_tg_exclusive_sum(s != 0 && (uint32_t)s == psign ? 1u : 0u, lid, lsz, scratch __UKL_ARGS);
         if (s != 0 && at != NONE) {
@@ -86,16 +161,23 @@ UKL_INLINE void semi_group(CBlk t, UKL_GLOBAL const SemiP* q, bool with_b, Blk r
         run += e.total;
         prun += pe.total;
     }
-    for (uint32_t base = 0u; base < kend; base += lsz) {
-        uint32_t id = base + lid;
+    for (uint32_t base = 0u; base < nb; base += lsz) {
         int64_t k = 0;
-        int32_t s = id < kend ? semi_key(t, b, q->b_col, id, &k) : 0;
-        UklScan e = ukl_tg_exclusive_sum(s != 0 ? 1u : 0u, lid, lsz, scratch __UKL_ARGS);
-        if (s != 0 && kat != NONE) {
+        int32_t s = cand_key(t, cb, b, q->b_col, base + lid, &k);
+        // The kept rows' sign: they come into `A ⋉ B` with a key it came to hold (go from `A ▷ B`), the reverse.
+        int32_t sign = (s == 1) != (q->neg != 0u) ? 1 : -1;
+        uint32_t m = flips && s != 0 ? kept_of(t, a, q->a_col, q->a_arity, k, sign, (Blk)0, 0u, (Blk)0, 0u, psign) : 0u;
+        UklScan e = ukl_tg_exclusive_sum(keys && s != 0 ? 1u : 0u, lid, lsz, scratch __UKL_ARGS);
+        UklScan re = ukl_tg_exclusive_sum(m, lid, lsz, scratch __UKL_ARGS);
+        UklScan pe = ukl_tg_exclusive_sum((uint32_t)sign == psign ? m : 0u, lid, lsz, scratch __UKL_ARGS);
+        if (keys && s != 0 && kat != NONE) {
             runs_set(ks, kat + krun + e.exclusive, 0u, k);
             runs_diff(ks, kat + krun + e.exclusive, s);
         }
+        if (m != 0u) kept_of(t, a, q->a_col, q->a_arity, k, sign, at != NONE ? r : (Blk)0, at + run + re.exclusive, ps, prun + pe.exclusive, psign);
         krun += e.total;
+        run += re.total;
+        prun += pe.total;
     }
     ukl_tg_barrier_device();
     if (lid == 0u) parts_seal(ps, prun);
