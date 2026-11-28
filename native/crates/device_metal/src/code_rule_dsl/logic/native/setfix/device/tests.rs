@@ -1431,6 +1431,13 @@ use rerail_blocks::vector::Vector;
             format!("pos {m} v0\npos {n} v1 v2\ncat v3 v0 {}\nfunc str_between v4 v1 v3 {}\nhead v4 v2", sym("b"), sym("")),
             format!("pos {n} v0 v1\nfunc head v2 v0\nfunc str_between v3 v0 v2 {}\nhead v3 v1", sym("")),
             format!("pos {m} v0\npos {n} v1 v2\nfunc str_concat v3 {} v0\nfunc str_between v4 v1 {} v3\nhead v4 v2", sym("_"), sym("")),
+            // Two texts joined by a separator, an empty one left out (the empty name, a made empty `head`): names and
+            // constants, a made part (a dotted name less its last part, a name's head), and a join of a join, as
+            // `@join_nonempty(".", prefix, rest, item)` folds.
+            format!("pos {n} v0 v1\nfunc join_nonempty v2 {} v0 {}\nhead v2 v1", sym("."), sym("x")),
+            format!("pos {n} v0 v1\nfunc join_nonempty v2 {} {} v0\nhead v2 v1", sym("::"), sym("")),
+            format!("pos {n} v0 v1\nfunc pkg_up v2 v0 i:1\nfunc join_nonempty v3 {} v2 v0\nhead v3 v1", sym(".")),
+            format!("pos {n} v0 v1\nfunc head v2 v0\nfunc pkg_up v3 v0 i:1\nfunc join_nonempty v4 {} v3 v2\nfunc join_nonempty v5 {} v4 {}\nhead v5 v1", sym("."), sym("."), sym("y")),
         ];
         let lowered = [format!("pos {n} v0 v1\nfunc lower v2 v0\nhead v2 v1")];
         // A made text as one of an atom's keys (as `ann_private` looks a name up): the names already lower case, and

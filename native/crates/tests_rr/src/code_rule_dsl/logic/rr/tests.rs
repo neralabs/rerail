@@ -710,6 +710,15 @@ empty(r,k) :- selected(r,k), !member(r,k,_).
     }
 }
 
+/// `.rerail`'s arithmetic takes two arguments, but t17's `@sub` any number (`a − b − c`, folded); another count is
+/// refused by name.
+#[test]
+fn arithmetic_of_another_count_is_refused() {
+    let e = parse(".decl a(x: number)\n.output a\na(x) :- x = @add(3, 2, 1).").unwrap_err().to_string();
+    assert!(e.contains("@add takes two arguments, not 3"), "{e}");
+    parse(".decl a(x: number)\n.output a\na(x) :- x = @sub(3, 2, 1).").unwrap();
+}
+
 /// What is not lowered yet says so by name. A `must` head needs its relation declared `must, may`; a `.violation`
 /// at a span or loc whose values can be spans the engine does not make lowers (such a row has no `docof`, and so no
 /// finding).

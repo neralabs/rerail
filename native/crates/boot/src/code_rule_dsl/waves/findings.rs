@@ -319,23 +319,16 @@ fn metavariable(
 }
 
 /// Where each of `names` binds in W's match of `grammar` at `node` of `root`'s tape (an `ast` atom's captures,
-/// decision 0107): per name, its nodes as tape preorder ids, a single capture's node or a multi-capture's every node.
-/// A name of the rule's `transform` binds its text instead (`Capture::Text`). `None` where W does not match there or a
-/// name binds nothing; `Err` with the limit W's matcher hit within `work` visits.
-pub(in crate::code_rule_dsl) fn captured(
-    grammar: &GrammarMatcher,
-    root: &AstGrep<crate::code_rule_dsl::tape::TapeDoc>,
-    node: u32,
-    names: &[String],
-    work: usize,
-) -> Result<Option<Vec<Capture>>, String> {
-    captured_counted(grammar, root, node, names, work).0
-}
-
-/// [`captured`], and the steps W's matcher took (its utility steps: `work` less what was left), which price W's
-/// matcher against the transducer (decision 0334).
+/// decision 0107), and the steps W's matcher took (its utility steps: `work` less what was left), which price W's
+/// matcher against the transducer (decision 0334). Per name: its nodes as tape preorder ids, a single capture's node or
+/// a multi-capture's every node. A name of the rule's `transform` binds its text instead (`Capture::Text`), and so
+/// does a named group of `groups`, the rule's regexes of the node itself that hold a group no pattern binds
+/// ([`node_groups`]): the group's text at each of its bindings in the node's text, as the data layer's
+/// `capture.NAME` and `each` read a group. `None` where W does not match there or a name binds nothing; `Err` with
+/// the limit W's matcher hit within `work` visits.
 pub(in crate::code_rule_dsl) fn captured_counted(
     grammar: &GrammarMatcher,
+    groups: &[Regex],
     root: &AstGrep<crate::code_rule_dsl::tape::TapeDoc>,
     node: u32,
     names: &[String],
@@ -362,7 +355,11 @@ pub(in crate::code_rule_dsl) fn captured_counted(
             .iter()
             .map(|name| {
                 if let Some(text) = env.get_transformed(name) {
-                    return Some(Capture::Text(String::from_utf8_lossy(text).into_owned()));
+                    return Some(Capture::Text(vec![String::from_utf8_lossy(text).into_owned()]));
+                }
+                if groups.iter().any(|regex| regex.capture_names().flatten().any(|group| group == name)) {
+                    let texts = group_texts(groups, name, &node_at(root, node).text());
+                    return (!texts.is_empty()).then_some(Capture::Text(texts));
                 }
                 let nodes: Vector<u32> = match env.get_match(name) {
                     Some(node) => rerail_blocks::vector![node.node_id() as u32],
@@ -375,11 +372,34 @@ pub(in crate::code_rule_dsl) fn captured_counted(
     (result, used)
 }
 
-/// What a name of an `ast` atom binds at a match (`captured`): nodes (a multi-capture's every node), or the text a
-/// rule's `transform` makes.
+/// The regexes of `grammar`'s rule that test the matched node itself and hold a named group of `names` (the captures
+/// that bind text but are no `transform`'s): the groups an `ast` atom's captures name ([`captured_counted`]).
+pub(in crate::code_rule_dsl) fn node_groups(grammar: &GrammarMatcher, names: &[String]) -> Vec<Regex> {
+    crate::code_rule_dsl::violations::witness_regexes(&grammar.matcher, &grammar.utils)
+        .into_iter()
+        .filter(|regex| regex.capture_names().flatten().any(|group| names.iter().any(|name| name == group)))
+        .collect()
+}
+
+/// The text of group `name` at each of its bindings in `text`, by every regex of `groups` holding it, each range once
+/// and in the order of the ranges.
+fn group_texts(groups: &[Regex], name: &str, text: &str) -> Vec<String> {
+    let mut seen = BTreeSet::new();
+    for regex in groups.iter().filter(|regex| regex.capture_names().flatten().any(|group| group == name)) {
+        for found in regex.captures_iter(text) {
+            if let Some(group) = found.name(name) {
+                seen.insert((group.start(), group.end()));
+            }
+        }
+    }
+    seen.into_iter().map(|(start, end)| text[start..end].to_owned()).collect()
+}
+
+/// What a name of an `ast` atom binds at a match (`captured_counted`): nodes (a multi-capture's every node), or texts:
+/// the one a rule's `transform` makes, or a regex group's at each of its bindings.
 pub(in crate::code_rule_dsl) enum Capture {
     Nodes(Vector<u32>),
-    Text(String),
+    Text(Vec<String>),
 }
 
 pub struct Layer {

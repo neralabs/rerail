@@ -159,6 +159,8 @@ pub(in crate::code_rule_dsl) const TEXTFN_PKG_UP: u32 = 13;
 /// `rx_group(x, re, name)`: the range of X that regex `re`'s group `name` captures, by its program (the stage's
 /// automaton, `text::table::GroupProgram`, decision 0688); no row where `re` does not match or the group took no part.
 pub(in crate::code_rule_dsl) const TEXTFN_RX_GROUP: u32 = 14;
+/// `join_nonempty(s, y, z)`: Y (key 2) and Z (key 4) joined by X, the separator; the other alone where one is empty.
+pub(in crate::code_rule_dsl) const TEXTFN_JOIN_NONEMPTY: u32 = 15;
 pub(in crate::code_rule_dsl) const TEXTFN_HOST: u32 = 2;
 /// A `ROW_VERDICT` stage met a symbol the atoms directory does not hold: the stratum runs on the host.
 pub(in crate::code_rule_dsl) const TEXTFN_UNHELD: u32 = 4;

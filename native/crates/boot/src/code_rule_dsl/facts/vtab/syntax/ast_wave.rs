@@ -39,7 +39,11 @@ fn compiled(matchers: &[(String, String, Vec<String>)], demand: &[Option<rerail_
             };
             let (lowered, gates, captor) = got.map_err(|why| format!("{rel}: the matcher {text} does not lower: {why}"))?;
             let direct = field_captures(text, captures);
-            Ok(Matcher { rel: rel.clone(), lowered, gates, captures: captures.clone(), captor, demanded_by: demand.get(k).cloned().flatten(), direct })
+            let made = crate::code_rule_dsl::logic::plan::corpus::preparation::text::transformed(text);
+            let texts: Vec<bool> = captures.iter().map(|c| made.contains(c)).collect();
+            let grouped: Vec<String> = captures.iter().filter(|c| made.contains(*c) && !captor.grammar.transform.as_ref().is_some_and(|t| t.contains(c))).cloned().collect();
+            let groups = crate::code_rule_dsl::waves::findings::node_groups(&captor.grammar, &grouped);
+            Ok(Matcher { rel: rel.clone(), lowered, gates, captures: captures.clone(), captor, demanded_by: demand.get(k).cloned().flatten(), direct, texts, groups })
         })
         .collect::<Result<Vec<_>, String>>()
         .and_then(Wave::new)
@@ -63,6 +67,12 @@ pub(crate) struct Matcher {
     /// "neighbor"}}` in the rule's top `all` (as `Absorb` writes them, decision 0106 §4): each capture's field and
     /// kind. Its rows are then read from the tape at each root the transducer matched, not by W's matcher there.
     pub(crate) direct: Option<Vec<(String, String)>>,
+    /// Per capture, whether it binds text, not nodes (`preparation::text::transformed`, which types its column): a
+    /// name of the rule's `transform`, or a named group of its regexes that no pattern binds.
+    pub(crate) texts: Vec<bool>,
+    /// The rule's regexes of the root node itself that hold a group a text capture names (`findings::node_groups`):
+    /// such a capture binds the group's text at each of its bindings.
+    pub(crate) groups: Vec<regex::Regex>,
 }
 
 /// A matcher's captures as its root's field children ([`Matcher::direct`]), where its text has them so: every
@@ -164,10 +174,7 @@ impl AstWave for Wave {
     fn node_columns(&self) -> Vec<(String, Vec<usize>)> {
         self.list
             .iter()
-            .map(|m| {
-                let transformed = |name: &str| m.captor.grammar.transform.as_ref().is_some_and(|t| t.contains(name));
-                (m.rel.clone(), m.captures.iter().enumerate().filter(|(_, c)| !transformed(c)).map(|(i, _)| i + 1).collect())
-            })
+            .map(|m| (m.rel.clone(), m.texts.iter().enumerate().filter(|(_, text)| !**text).map(|(i, _)| i + 1).collect()))
             .collect()
     }
 }
@@ -500,7 +507,7 @@ fn captured_rows(
                 };
                 for &n in roots {
                     let Some(n_global) = global(n) else { continue };
-                    let (names, used) = crate::code_rule_dsl::waves::findings::captured_counted(&m.captor.grammar, &root, n, &m.captures, work);
+                    let (names, used) = crate::code_rule_dsl::waves::findings::captured_counted(&m.captor.grammar, &m.groups, &root, n, &m.captures, work);
                     if measure {
                         steps += used as u64;
                         nodes += u64::from(tape.transducer_descendants(n).end.saturating_sub(n).max(1));
@@ -518,7 +525,7 @@ fn captured_rows(
                         // A transform's text is a symbol, the store's atom, as the program's constants are.
                         let nodes: Vector<i64> = match capture {
                             Capture::Nodes(nodes) => nodes.into_iter().filter_map(global).collect(),
-                            Capture::Text(text) => rerail_blocks::vector![i64::from(atoms.intern(&text)?)],
+                            Capture::Text(texts) => texts.iter().map(|text| atoms.intern(text).map(i64::from)).collect::<Result<_, _>>()?,
                         };
                         product = product.into_iter().flat_map(|row| nodes.iter().map(move |&x| {
                             let mut row = row.clone();

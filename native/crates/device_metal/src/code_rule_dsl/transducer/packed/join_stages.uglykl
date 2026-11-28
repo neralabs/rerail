@@ -1536,6 +1536,13 @@ UKL_INLINE void row_text_one(Longs L, JSPACE uint32_t* A, JSPACE const uint32_t*
             from = 0;
             to = cut;
             len = cut;
+        } else if (f == 15) {
+            // join_nonempty(x, y, z): y and z (keys 2, 4, each of its kind as str_between's) joined by the separator
+            // x; the other alone where one is empty.
+            y = txt_of(s, L, row, D, A, 2, (s->agg[1] >> 4) & 15, &unheld);
+            z = txt_of(s, L, row, D, A, 4, (s->agg[1] >> 8) & 15, &unheld);
+            dot = txt_len(y) > 0 && txt_len(z) > 0 ? lx : 0;
+            len = txt_len(y) + dot + txt_len(z);
         } else if (f == 14) {
             // rx_group(x, re, name): the group's range of x by its program G (`rx_group_range`); no row where the
             // regex does not match x or the group took no part, as on the CPU.
@@ -1573,6 +1580,10 @@ UKL_INLINE void row_text_one(Longs L, JSPACE uint32_t* A, JSPACE const uint32_t*
             if (op == 2) rx_replace_txt(G, x, y, true, o, fs, lane __UKL_ARGS);
             else if (op <= 1) for (uint32_t i = lane; i < len; i += SGW) o[i] = i < lx ? txt_byte(x, i) : (i < lx + dot ? (uint8_t)'.' : txt_byte(y, i - lx - dot));
             else if (f == 6) lit_replace_txt(x, y, z, true, o, lane __UKL_ARGS);
+            else if (f == 15) {
+                uint32_t ly = txt_len(y);
+                for (uint32_t i = lane; i < len; i += SGW) o[i] = i < ly ? txt_byte(y, i) : (i < ly + dot ? txt_byte(x, i - ly) : txt_byte(z, i - ly - dot));
+            }
             else if (f == 5 || f == 11) {
                 uint32_t sign = neg ? 1 : 0;
                 for (uint32_t i = lane; i < len; i += SGW) {

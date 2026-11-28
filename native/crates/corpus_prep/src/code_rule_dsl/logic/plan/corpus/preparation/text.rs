@@ -325,12 +325,29 @@ fn relation(k: usize, m: usize) -> String {
     if m == 0 { format!("{PREFIX}{k}") } else { format!("{PREFIX}{k}_{m}") }
 }
 
-/// The names an `ast` literal's matcher text makes in its `transform`: they bind text, not nodes.
-fn transformed(text: &str) -> BTreeSet<String> {
-    serde_json::from_str::<serde_json::Value>(text)
-        .ok()
-        .and_then(|v| v.get("transform")?.as_object().map(|t| t.keys().cloned().collect()))
-        .unwrap_or_default()
+/// The names an `ast` literal's matcher text binds to text, not nodes: the names its `transform` makes, and the named
+/// groups of its regexes that no pattern binds as a metavariable (a group binds its text, as the data layer's
+/// `capture.NAME` reads it; a metavariable of the same name wins). The matcher wave binds them so (`ast_wave`).
+pub fn transformed(text: &str) -> BTreeSet<String> {
+    let Ok(v) = serde_json::from_str::<serde_json::Value>(text) else { return BTreeSet::new() };
+    let mut made: BTreeSet<String> = v.get("transform").and_then(|t| t.as_object()).map(|t| t.keys().cloned().collect()).unwrap_or_default();
+    fn strings<'v>(v: &'v serde_json::Value, key: Option<&'v str>, out: &mut Vec<(Option<&'v str>, &'v str)>) {
+        match v {
+            serde_json::Value::Object(o) => o.iter().for_each(|(k, x)| strings(x, Some(k), out)),
+            serde_json::Value::Array(a) => a.iter().for_each(|x| strings(x, key, out)),
+            serde_json::Value::String(s) => out.push((key, s)),
+            _ => {}
+        }
+    }
+    let mut all = Vec::new();
+    strings(&v, None, &mut all);
+    let metavariable = |name: &str| all.iter().any(|(key, s)| *key != Some("regex") && regex::Regex::new(&format!(r"\$(?:\$\$)?{name}\b")).is_ok_and(|r| r.is_match(s)));
+    for (_, s) in all.iter().filter(|(key, _)| *key == Some("regex")) {
+        if let Ok(regex) = regex::Regex::new(s) {
+            made.extend(regex.capture_names().flatten().filter(|name| !metavariable(name)).map(str::to_owned));
+        }
+    }
+    made
 }
 
 impl RulePass for MatcherRelations {
@@ -395,7 +412,7 @@ impl RulePass for MatcherRelations {
         let before = inputs.len();
         for (k, (text, names)) in self.texts.iter().enumerate() {
             let rel = relation(k, names.len());
-            // A name of the rule's `transform` binds text (a symbol); every other name, and the root, a node.
+            // A name of the rule's `transform` or a regex group binds text (a symbol); every other name, and the root, a node.
             let made = transformed(text);
             let types = std::iter::once("node").chain(names.iter().map(|n| if made.contains(n) { "sym" } else { "node" }));
             let cols: Vec<(&str, &str)> = columns(&rel).iter().copied().zip(types).collect();

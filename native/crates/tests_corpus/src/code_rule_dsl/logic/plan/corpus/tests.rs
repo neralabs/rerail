@@ -3599,6 +3599,53 @@ fn a_kept_texts_modules_stand_while_it_and_its_files_are_as_kept() {
     let _ = std::fs::remove_dir_all(&dir);
 }
 
+/// t17's catalogue builtins of internal-dead-code's relative imports, as its SQL computes them: `@sub` of three
+/// (`length(base) - length(ltrim(base, '.')) - 1`), `@drop_components` (the package less its last parts) and
+/// `@join_nonempty` (the non-empty parts joined).
+#[test]
+fn the_relative_import_builtins_are_the_sqls() {
+    let dir = crate::code_rule_dsl::fixtures::temp().with_extension("import-builtins");
+    std::fs::create_dir_all(&dir).unwrap();
+    std::fs::write(dir.join("a.py"), "x = 1\n").unwrap();
+    let program = ".language python\n.decl base(b: symbol)\n.decl target(b: symbol, up: number, t: symbol)\n.output target\n\
+                   base(\"..sub\"). base(\".\"). base(\"...\").\n\
+                   target(b, up, t) :- base(b), up = @sub(@length(b), @length(@ltrim(b, \".\")), 1),\n\
+                       prefix = @drop_components(\"p.q.r\", up), t = @join_nonempty(\".\", prefix, @ltrim(b, \".\"), \"x\").\n";
+    super::TEST_TAPE_CACHE.with(|p| *p.borrow_mut() = Some(dir.join("store.sqlite")));
+    let out = dir.join("out");
+    let ran = super::run_all(&[program], &dir, &out, "program", crate::code_rule_dsl::typing::file_local::Binding::Cpu, 1 << 18);
+    let got = crate::code_rule_dsl::logic::plan::output::shown(&out, "target").unwrap_or_default();
+    super::TEST_TAPE_CACHE.with(|p| *p.borrow_mut() = None);
+    let _ = std::fs::remove_dir_all(&dir);
+    ran.unwrap_or_else(|e| panic!("{e}"));
+    assert_eq!(got, [[".", "0", "p.q.r.x"], ["...", "2", "p.x"], ["..sub", "1", "p.q.sub.x"]]);
+}
+
+/// An `ast` atom's capture naming a group of a regex on the root node binds the group's text, as the data layer's
+/// `capture.BASE` reads it: none where the group takes no part (`import z`), one row per binding under `each`
+/// (`ENTRY` twice in one module), and a name W binds stays W's.
+#[test]
+fn a_capture_naming_a_regex_group_binds_its_text() {
+    let dir = crate::code_rule_dsl::fixtures::temp().with_extension("group-captures");
+    std::fs::create_dir_all(&dir).unwrap();
+    std::fs::write(dir.join("a.py"), "from .pkg import y\nimport z\nimportlib.import_module('p').q\nimportlib.import_module(\"r\").s\n").unwrap();
+    let program = ".language python\n.decl base(b: symbol)\n.decl entry(e: symbol)\n.decl top(k: symbol)\n.output base, entry, top\n\
+                   base(b) :- ast(d, i, {\"language\":\"python\",\"rule\":{\"all\":[{\"any\":[{\"kind\":\"import_from_statement\"},{\"kind\":\"import_statement\"}]},{\"regex\":\"(?s)^(?:from\\\\s+(?P<BASE>[^\\\\s]+)\\\\s+)?import\\\\s+(?P<ITEMS>.*)$\"}]}}, BASE: b).\n\
+                   entry(e) :- ast(d, x, {\"language\":\"python\",\"rule\":{\"all\":[{\"kind\":\"module\"},{\"regex\":\"(?P<ENTRY>\\\\bimport_module\\\\(\\\\s*['\\\"](?P<module>[^'\\\"]+)['\\\"]\\\\s*\\\\)\\\\.(?P<attr>[A-Za-z_]\\\\w*))\"}]}}, ENTRY: e).\n\
+                   top(k) :- ast(d, i, {\"language\":\"python\",\"rule\":{\"all\":[{\"kind\":\"import_statement\"},{\"pattern\":\"$ENTRY\"},{\"regex\":\"(?P<ENTRY>z)\"}]}}, ENTRY: n), kind(n, k).\n";
+    super::TEST_TAPE_CACHE.with(|p| *p.borrow_mut() = Some(dir.join("store.sqlite")));
+    let out = dir.join("out");
+    let ran = super::run_all(&[program], &dir, &out, "program", crate::code_rule_dsl::typing::file_local::Binding::Cpu, 1 << 18);
+    let read = |rel: &str| crate::code_rule_dsl::logic::plan::output::shown(&out, rel).unwrap_or_default();
+    let got = (read("base"), read("entry"), read("top"));
+    super::TEST_TAPE_CACHE.with(|p| *p.borrow_mut() = None);
+    let _ = std::fs::remove_dir_all(&dir);
+    ran.unwrap_or_else(|e| panic!("{e}"));
+    assert_eq!(got.0, [[".pkg"]], "BASE binds in `from .pkg import y` alone");
+    assert_eq!(got.1, [["import_module(\"r\").s"], ["import_module('p').q"]], "ENTRY binds at each of its bindings");
+    assert_eq!(got.2, [["import_statement"]], "a name a pattern binds is W's node");
+}
+
 /// A matcher whose captures are its root's field children (as `Absorb` writes them, decision 0106 §4) has its rows
 /// read from the tape at the transducer's roots (`ast_wave::field_captures`, t50 step 6): the same rows as W's matcher
 /// at each root (`RERAIL_AST_DIRECT_CAPTURES=off`), a capture in a field holding two kinds and a root with none.

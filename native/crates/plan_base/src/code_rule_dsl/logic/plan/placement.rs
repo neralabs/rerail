@@ -337,9 +337,10 @@ fn is_text_fn_of_rows(v: &Version, t: TermRef<'_>) -> bool {
             let constants = device_fn(f) != Some(DeviceFn::RegexReplace) || args[1..].iter().all(|a| !matches!(a, TermRef::Var(_)));
             // Its numbers may be row code (`substr(s, 1, strlen(s) - 2)`: a name's characters, arithmetic), bound
             // by stages before it; its other texts are variables or constants, but `str_between`'s, which may be cats
-            // (a cat compared with a bound text inverts to `n = str_between(c, cat(l, "/"), "")`).
+            // (a cat compared with a bound text inverts to `n = str_between(c, cat(l, "/"), "")`), and
+            // `join_nonempty`'s parts (`caps::TextFn::reads_made_texts`).
             let (texts, between) = match device_fn(f) {
-                Some(DeviceFn::Text { texts, f: tf, .. }) => (texts, tf == caps::TextFn::StrBetween),
+                Some(DeviceFn::Text { texts, f: tf, .. }) => (texts, tf.reads_made_texts()),
                 _ => (args.len(), false),
             };
             constants

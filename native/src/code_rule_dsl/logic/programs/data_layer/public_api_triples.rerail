@@ -125,14 +125,14 @@ import_package(i, m, pkg) :- raw_import_base(i, _), docof(i, d), doc(d, p), path
 import_candidate(i, m, a, o, "module") :- import_item(i, x, o), !raw_import_base(i, _), docof(i, d), path_module(d, m), import_alias(x, a).
 import_candidate(i, m, n, o, "module") :- import_item(i, x, o), !raw_import_base(i, _), docof(i, d), path_module(d, m), !import_alias(x, _),
     n = @rx_extract(o, "^[^.]+", 0).
-import_candidate(i, m, n, t, "symbol") :- import_item(i, x, o), raw_import_base(i, b), @substr(b, 1, 1) != ".", docof(i, d), path_module(d, m),
+import_candidate(i, m, n, t, "symbol") :- import_item(i, x, o), raw_import_base(i, b), @substr(b, 0, 1) != ".", docof(i, d), path_module(d, m),
     t = @dot(b, o), import_alias(x, n).
-import_candidate(i, m, o, t, "symbol") :- import_item(i, x, o), raw_import_base(i, b), @substr(b, 1, 1) != ".", docof(i, d), path_module(d, m),
+import_candidate(i, m, o, t, "symbol") :- import_item(i, x, o), raw_import_base(i, b), @substr(b, 0, 1) != ".", docof(i, d), path_module(d, m),
     t = @dot(b, o), !import_alias(x, _).
-import_candidate(i, m, n, t, "symbol") :- import_item(i, x, o), raw_import_base(i, b), @substr(b, 1, 1) = ".", import_package(i, m, pkg),
+import_candidate(i, m, n, t, "symbol") :- import_item(i, x, o), raw_import_base(i, b), @substr(b, 0, 1) = ".", import_package(i, m, pkg),
     up = @sub(@length(b), @length(@ltrim(b, ".")), 1), prefix = @drop_components(pkg, up), t = @join_nonempty(".", prefix, @ltrim(b, "."), o),
     import_alias(x, n).
-import_candidate(i, m, o, t, "symbol") :- import_item(i, x, o), raw_import_base(i, b), @substr(b, 1, 1) = ".", import_package(i, m, pkg),
+import_candidate(i, m, o, t, "symbol") :- import_item(i, x, o), raw_import_base(i, b), @substr(b, 0, 1) = ".", import_package(i, m, pkg),
     up = @sub(@length(b), @length(@ltrim(b, ".")), 1), prefix = @drop_components(pkg, up), t = @join_nonempty(".", prefix, @ltrim(b, "."), o),
     !import_alias(x, _).
 // row_number() OVER (PARTITION BY module, name, base IS NULL ORDER BY ordinal DESC) = 1: the last import of a name.

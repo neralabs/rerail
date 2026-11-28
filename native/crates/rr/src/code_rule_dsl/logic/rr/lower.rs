@@ -5967,6 +5967,23 @@ impl Lowerer {
                 if name == "concat" && terms.len() > 2 {
                     return Ok(concat(self, terms));
                 }
+                // t17's catalogue: `@sub(a, b, c)` is `a − b − c`, `@sub(@sub(a, b), c)`; `@join_nonempty(s, a, b, c)` is
+                // `@join_nonempty(s, @join_nonempty(s, a, b), c)`, which drops empty parts as each join does.
+                if name == "sub" && terms.len() > 2 {
+                    let mut terms = terms.into_iter();
+                    let first = terms.next().expect("three or more");
+                    return Ok(terms.fold(first, |acc, t| call(self, "sub", vec![acc, t])));
+                }
+                if name == "join_nonempty" && terms.len() > 3 {
+                    let mut terms = terms.into_iter();
+                    let sep = terms.next().expect("four or more");
+                    let first = terms.next().expect("four or more");
+                    return Ok(terms.fold(first, |acc, t| call(self, "join_nonempty", vec![sep.clone(), acc, t])));
+                }
+                // Arithmetic takes two arguments (`@sub` more, above): a call of another count is refused, not read.
+                if matches!(name.as_str(), "add" | "sub" | "mul" | "div" | "max" | "min") && terms.len() != 2 {
+                    return Err(Error::Syntax(format!("@{name} takes two arguments, not {}", terms.len())));
+                }
                 call(self, if name == "dot" { "cat" } else { &name }, terms)
             }
             T::Call { name, functor: false, args } => {

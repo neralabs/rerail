@@ -31,6 +31,9 @@ use Kind::{Number, Text};
 const FUNCTIONS: &[(&str, &[Kind], Kind)] = &[
     ("qname", &[Text, Text], Text),
     ("pkg_up", &[Text, Number], Text),
+    // t17's `@join_nonempty(sep, a, b)`: `a` and `b` joined with `sep`, an empty one left out (more parts fold,
+    // `rr::lower`).
+    ("join_nonempty", &[Text, Text, Text], Text),
     ("head", &[Text], Text),
     ("dir", &[Text], Text),
     ("join", &[Text, Text], Text),
@@ -179,6 +182,8 @@ pub fn catalogue(f: &str, n: usize) -> Option<(&'static str, bool)> {
         ("char", 1) => ("sql_char", false),
         ("substr_bytes", 3) => ("sql_substr_bytes", false),
         ("rx_matches", 2) => ("rx", false),
+        // `@drop_components(q, k)`: `q` without its last `k` dotted parts, `pkg_up`'s meaning.
+        ("drop_components", 2) => ("pkg_up", false),
         _ => return None,
     })
 }
@@ -318,6 +323,11 @@ pub fn eval(name: &str, text: &[&str], numbers: &[i64]) -> Value {
     let out = match name {
         "qname" => Some(format!("{}#{}", t(0), t(1))),
         "pkg_up" => Some(pkg_up(t(0), numbers[0])),
+        "join_nonempty" => Some(match (t(1).is_empty(), t(2).is_empty()) {
+            (true, _) => t(2).to_owned(),
+            (_, true) => t(1).to_owned(),
+            _ => format!("{}{}{}", t(1), t(0), t(2)),
+        }),
         "head" => Some(t(0).split('.').next().unwrap_or("").to_owned()),
         "str_between" => t(0).strip_prefix(t(1)).and_then(|rest| rest.strip_suffix(t(2))).map(str::to_owned),
         "dir" => Some(t(0).rsplit_once('/').map_or("", |(d, _)| d).to_owned()),

@@ -213,6 +213,11 @@ fn is_arena(x: usize) -> bool {
     ARENA.with_borrow(|a| a.contains(&x))
 }
 
+/// Whether function `name` may read texts the rule made after its first (`caps::TextFn::reads_made_texts`).
+fn reads_made_texts(name: &str) -> bool {
+    matches!(caps::device_fn(name), Some(caps::DeviceFn::Text { f, .. }) if f.reads_made_texts())
+}
+
 /// A text function the device makes (`mj::TEXTFN_*`), its text arguments then its numbers (`caps`' table).
 fn text_function(name: &str) -> Option<(u32, usize, usize)> {
     use caps::TextFn::*;
@@ -232,6 +237,7 @@ fn text_function(name: &str) -> Option<(u32, usize, usize)> {
         PkgUp => mj::TEXTFN_PKG_UP,
         RxGroup => mj::TEXTFN_RX_GROUP,
         Replace => mj::TEXTFN_REPLACE,
+        JoinNonempty => mj::TEXTFN_JOIN_NONEMPTY,
     };
     Some((f, texts, nums))
 }
@@ -871,7 +877,7 @@ pub(in crate::code_rule_dsl) fn compile(j: &JoinRule, spec: &str, own_texts: &[(
                         || matches!(s, Step::Test { op, .. } if literal_test(op).is_some())
                         || matches!(s, Step::Test { p, matcher: rerail_section::ArchivedOption::Some(_), .. } if !matches!(p, Key::Slot(x) if *x == out))
                         || matches!(s, Step::Func { name, bind: true, .. } if matches!(name.as_str(), "replace_all" | "rx_replace") && arena_reader(s, out))
-                        || matches!(s, Step::Func { name, args, bind: true, .. } if name.as_str() == "str_between" && args.len() == 3 && arena_reader(s, out) && !matches!(args[0], Key::Slot(x) if x == out))
+                        || matches!(s, Step::Func { name, args, bind: true, .. } if reads_made_texts(name) && args.len() == 3 && arena_reader(s, out) && !matches!(args[0], Key::Slot(x) if x == out))
                         || joined(s).is_some_and(|(o, ..)| o != out)
                 };
                 if made && !bind {
@@ -1048,8 +1054,9 @@ pub(in crate::code_rule_dsl) fn compile(j: &JoinRule, spec: &str, own_texts: &[(
                         }
                     }
                     // A made prefix or suffix (`str_between` of a cat, as a cat compared with a bound text inverts to:
-                    // `n = str_between(c, cat(l, "/"), "")`); another function's pattern or replacement is a name.
-                    if f != mj::TEXTFN_STR_BETWEEN && kinds[1..].iter().any(|&k| k != mj::OPND_SYM) {
+                    // `n = str_between(c, cat(l, "/"), "")`) or a made part (`join_nonempty`'s); another function's
+                    // pattern or replacement is a name.
+                    if !reads_made_texts(name) && kinds[1..].iter().any(|&k| k != mj::OPND_SYM) {
                         return Err(format!("the function {name}'s pattern or replacement made by the rule has no device form"));
                     }
                     text_keys(&mut d, &keys, &origin, &known, &format!("the function {name}"))?
@@ -1307,8 +1314,8 @@ fn arena_reader(step: &Step, x: usize) -> bool {
         Step::Func { name, args, bind: true, .. } if caps::device_fn(name) == Some(caps::DeviceFn::RegexReplace) => args.len() == 3 && me(&args[0]) && !args[1..].iter().any(me),
         // An atom keyed by it (one key of several), compared with the column as texts.
         Step::Atom { neg: false, keys, binds, .. } => keys.iter().any(|(_, k)| me(k)) && keys.len() > 1 && !binds.iter().any(|&(_, s)| s == x),
-        // `str_between`'s prefix or suffix (each read of its own kind), its value bound.
-        Step::Func { name, args, out, bind: true, .. } if name.as_str() == "str_between" && args.len() == 3 && *out != x && args[1..].iter().any(me) => true,
+        // `str_between`'s prefix or suffix, `join_nonempty`'s parts (each read of its own kind), its value bound.
+        Step::Func { name, args, out, bind: true, .. } if reads_made_texts(name) && args.len() == 3 && *out != x && args[1..].iter().any(me) => true,
         // A text function of it, bound or compared with a bound slot; or compared with it (as texts).
         Step::Func { name, args, out, bind, .. } => {
             text_function(name).is_some_and(|(_, nt, _)| nt > 0) && (me(&args[0]) && !args[1..].iter().any(me) || !*bind && *out == x && !args.iter().any(me))

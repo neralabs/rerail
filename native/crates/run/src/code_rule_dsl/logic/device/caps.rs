@@ -49,6 +49,16 @@ pub enum TextFn {
     PkgUp,
     /// A regex's capture group (`rx_group`): the text, then a constant regex and a constant group name.
     RxGroup,
+    /// Two texts joined by a separator, an empty one left out (`join_nonempty`: the separator first).
+    JoinNonempty,
+}
+
+impl TextFn {
+    /// Whether its texts after the first may be made by the rule (a cat, another function's text), each read of its
+    /// own kind: `str_between`'s prefix and suffix, `join_nonempty`'s parts.
+    pub fn reads_made_texts(self) -> bool {
+        matches!(self, TextFn::StrBetween | TextFn::JoinNonempty)
+    }
 }
 
 /// What a device computes a function with.
@@ -112,6 +122,7 @@ pub fn device_fn(name: &str) -> Option<DeviceFn> {
         "sql_replace" => text(TextFn::Replace, 3, 0),
         "str_between" => text(TextFn::StrBetween, 3, 0),
         "pkg_up" => text(TextFn::PkgUp, 1, 1),
+        "join_nonempty" => text(TextFn::JoinNonempty, 3, 0),
         "rx_group" => text(TextFn::RxGroup, 3, 0),
         "replace_all" | "rx_replace" => RegexReplace,
         _ => return None,
@@ -132,7 +143,7 @@ mod tests {
             assert!(device_fn(native(rr)).is_some(), "{rr}");
         }
         for name in ["rr_add", "rr_sub", "rr_mul", "rr_div", "mod", "rr_max", "rr_min", "rr_strlen", "lower", "sql_lower", "sql_upper", "head", "dir",
-                     "rr_substr", "sql_substr", "slice", "rr_to_string", "zero_pad", "sql_replace", "str_between", "pkg_up", "replace_all", "rx_replace", "str_cmp",
+                     "rr_substr", "sql_substr", "slice", "rr_to_string", "zero_pad", "sql_replace", "str_between", "pkg_up", "join_nonempty", "replace_all", "rx_replace", "str_cmp",
                      "rx_group"] {
             let f = device_fn(name).expect(name);
             if let Some((_, kinds, _)) = crate::code_rule_dsl::logic::strings::functions::signature(name) {
