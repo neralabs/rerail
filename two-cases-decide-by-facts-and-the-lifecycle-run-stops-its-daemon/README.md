@@ -1,6 +1,6 @@
 # Two cases decide by facts; the lifecycle run stops its daemon
 
-For [pull request #1217](https://github.com/neralabs/rerail/pull/1217), head 040dcb8381. [report.html](report.html) is the same report as one page: download it and open it.
+For [pull request #1217](https://github.com/neralabs/rerail/pull/1217), head 3fe1ce6f10. [report.html](report.html) is the same report as one page: download it and open it.
 
 ## 1. The decision
 
@@ -10,7 +10,7 @@ For [pull request #1217](https://github.com/neralabs/rerail/pull/1217), head 040
 
 | Size | Risk and review | Waits on | Not verified |
 |---|---|---|---|
-| 102 lines in 3 files: 0 ship, 102 are the tests it changes, 0 are other tests and text | Fast. No high-risk path; no product source. | Nothing. CI on GitHub runs at this head. | 3 |
+| 189 lines in 4 files: 0 ship, 189 are the tests it changes, 0 are other tests and text | Fast. No high-risk path; no product source. | Nothing. CI on GitHub runs at this head. | 3 |
 
 ## 2. Intent, and the gap
 
@@ -34,11 +34,12 @@ Found on 28 November 2026: two CI failures with nothing wrong, and runs on a Lin
 
 ## 3. Where to look
 
-<img src="map.png" width="544" alt="The changed files as bars sized by changed lines, grouped by change and coloured by risk. Code to read: A, Pack cases get their own homes, low risk, 28 lines; B, Status line cases await the pass, low risk, 47 lines; C, The lifecycle run stops its daemon, low risk, 27 lines. Read first: installed-packs.test.ts, daemon.test.ts, host-lifecycle.ts. To skim: 0 lines of tests and 0 lines of no release note: nothing core ships changes..">
+<img src="map.png" width="544" alt="The changed files as bars sized by changed lines, grouped by change and coloured by risk. Code to read: A, Pack cases get their own homes, low risk, 28 lines; B, Status line cases await the pass, low risk, 47 lines; C, The lifecycle run stops its daemon, low risk, 114 lines. Read first: installed-packs.test.ts, daemon.test.ts, host-lifecycle.ts. To skim: 0 lines of tests and 0 lines of no release note: nothing core ships changes..">
 
 1. **Read first**, 2 min: `installed-packs.test.ts`: `installBroken` and the relational rule case. Does every case that links a copy of one pack at one install path read a home of its own?
 2. **Read first**, 3 min: `daemon.test.ts`: `statusKeeper` and the two status line cases. Does each awaited pass start after the change it reads, and is the steer's wait the only clock left?
-3. **Read first**, 2 min: `host-lifecycle.ts`: `leave`, `main`. Does a failed run stop the daemon too, and does Pi's run stop nothing?
+3. **Read first**, 2 min: `host-lifecycle.ts`: `leave`, `stopRunDaemon`, `main`. Does a stop that fails leave the run's error and report, and does Pi's run stop nothing?
+4. 1 min: `parity-harness.test.ts`: the lifecycle run's end.
 
 **Then skim**, 1 min: Nothing more: the change has no product source and no release note.
 
@@ -55,7 +56,7 @@ Three changes, all low risk and none in product source: start at A, the case the
 | A. own home | independent review | No review by a second reader has read this head yet. |
 | B. status pass | independent review | No review by a second reader has read this head yet. |
 | C. run's daemon | independent review | No review by a second reader has read this head yet. |
-| C. run's daemon | Windows 11: no new failure | Windows read, not run: there the left daemon holds the home open, so the removal fails and the run ends without its report. |
+| C. run's daemon | Windows 11: no new failure | Windows read, not run: there a daemon left running holds the home open, so the removal fails and the run ends with that error. |
 | A to C | CI at this head | CI on GitHub runs at this head; its real-session job is the only run of the changed script with a model. |
 
 </details>
@@ -86,11 +87,11 @@ Three changes, all low risk and none in product source: start at A, the case the
 
 - **Problem:** Each `npm run test:e2e:lifecycle` run left the OMP session's daemon running in the folder the run removed, out of reach of `rerail daemon stop`.
 - **Who meets it:** A developer who runs the lifecycle run: 3 of 3 runs, each about 318 MB at its start.
-- **What it does:** `leave` stops the daemon in `<project>/.rerail-home` with `stopDaemon` before the removal, on every way out of `main()`; a kept run stops it too.
+- **What it does:** `leave` stops the daemon in `<project>/.rerail-home` with `stopDaemon` before the removal, on every way out of `main()`; a stop that throws goes to stderr, and a kept run's line says what the stop did.
 - **Risk:** Low: a development script; Pi's run is unchanged.
-- **Check:** That a failed run stops the daemon too, and that a stop's own failure still removes the project.
+- **Check:** That a stop that fails keeps the run's own error or report, and that Pi's run stops nothing.
 - **Picture:** Three lifecycle runs on Linux x64 with the pinned OMP host and no provider key: main's script left 3 daemons running 30 s later; this one left 0.
-- **Method:** Three runs of each script with the pinned OMP host and no provider key or model, processes counted by their Rerail home at once and 30 s later, on Linux x64, at the third commit, whose script this head keeps.
+- **Method:** Three runs of each script with the pinned OMP host and no provider key or model, processes counted by their Rerail home at once and 30 s later, on Linux x64, at the third commit and again at this head.
 
 </details>
 
@@ -124,16 +125,16 @@ Three changes, all low risk and none in product source: start at A, the case the
 
 <details><summary><b>7. How it fits</b></summary>
 
-Nothing has to merge first: four commits on `main` 4e22417229; the fourth undoes the first's catalog change, so no product source changes. No open pull request edits these files, nor does the draft #1152.
+Nothing has to merge first: six commits on `main` 4e22417229; the fourth undoes the first's catalog change, so no product source changes. The draft #1197 edits `test/scripts/parity-harness.test.ts` too, and Git cannot merge the two there: the second to land keeps both sets of imports and cases.
 
-This change stands on main 4e22417229, which holds #1209. Git merges it alone with main, with each of our open pull requests and with the draft #1152.
+This change stands on main 4e22417229, which holds #1209. Git merges it alone with main and with each of our open pull requests. The draft #1197 edits one of its test files too, and Git cannot merge the two there: the second to land keeps both sets of imports and cases.
 
 </details>
 
 <details><summary><b>8. What is not covered</b>: 3 not verified, 1 smaller gap, 1 limit that stays</summary>
 
 1. **The real-session job** runs the changed script with a model and provider keys; only GitHub's CI on this pull request runs it.
-2. **Windows, change C** read, not run: the removal fails there while the daemon holds the home, which the stop now prevents.
+2. **Windows, change C** read, not run: the removal fails there while a daemon holds the home, which the stop prevents; after a stop that fails, it fails as on `main`.
 3. **macOS** never ran.
 
 **Smaller gaps**
@@ -159,9 +160,10 @@ The description on GitHub is the record: "How you tested it" holds the runs.
 | Linux x64, Windows 11 | `main`'s installed-pack test file and this one, every link's stamped files given one time | `main`'s failed 3 of 33 cases on both systems, the issue's failure among them; this one passed 33 of 33 on both. |
 | Linux x64, Windows 11 | `main`'s status line case and this one, each draw held 1.1 s from the steer on | `main` failed at the close on both systems; this case passed on both. |
 | Linux x64 | Three lifecycle runs with the pinned OMP host and no provider key, `main`'s script and this one | `main`'s left 3 of 3 daemons, about 318 MB each; this one left 0 of 3, and a kept run left none. |
-| Windows 11 | Each changed test file, 30 rounds beside its CI shard neighbours | 30 of 30 for each. |
-| Linux x64, Windows 11 | The two test files that import the lifecycle script, at the third commit and over `main` | Both pass on both systems. |
+| Linux x64 | The lifecycle run's end with a stop that throws or gives each answer | The run's own error or evidence stands, the project goes, and each kept line says what the stop did; each case fails at 040dcb8381 but the one whose line was already true. |
+| Linux x64, Windows 11 | Each changed test file, 30 rounds beside its CI shard neighbours | 30 of 30 for each. |
+| Linux x64, Windows 11 | The two test files that import the lifecycle script, at this head, at 040dcb8381 and over `main` | Both pass on both systems. |
 
-**Sources.** The branch at 040dcb8381 and its diff against `main` 4e22417229, read on 28 November 2026; runs on Linux x64 and Windows 11 x64 machines.
+**Sources.** The branch at 3fe1ce6f10 and its diff against `main` 4e22417229, read on 28 November 2026; runs on Linux x64 and Windows 11 x64 machines.
 
 </details>
