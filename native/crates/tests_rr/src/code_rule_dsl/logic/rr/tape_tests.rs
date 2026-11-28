@@ -230,6 +230,37 @@ fn a_rule_about_rules_runs_over_rule_files() {
     assert!(found[0].0.ends_with("a.rerail") && found[1].0.ends_with("c.rerail"), "{found:?}");
 }
 
+/// `packs/rr/rr-substr-sql-numbering.rerail` flags an `@substr` written with SQL's numbering: a start of 1 (RR102), a
+/// start of `@length(h) + 1` or `@add(@length(h), 1)` (RR103), two arguments (RR104); a start of 0 or of `@length(h)`
+/// is fine.
+#[test]
+fn a_substr_with_sql_numbering_is_found() {
+    let root = crate::code_rule_dsl::fixtures::temp().with_extension("rr-substr");
+    std::fs::create_dir_all(&root).unwrap();
+    let lines = [
+        "a(n) :- b(n), @substr(n, 1, 1) != \"_\".",
+        "a(n) :- b(n), @substr(n, 0, 1) != \"_\".",
+        "c(t, q) :- d(t, h), q = @substr(t, @length(h) + 1, @length(t)).",
+        "c(t, q) :- d(t, h), q = @substr(t, @add(@length(h), 1), @length(t)).",
+        "c(t, q) :- d(t, h), q = @substr(t, @length(h), @length(t)).",
+        "e(p, q) :- f(p), q = @substr(p, 5).",
+    ];
+    let src = format!(".decl a(n: symbol)\n.decl b(n: symbol)\n.decl c(t: symbol, q: symbol)\n.decl d(t: symbol, h: symbol)\n.decl e(p: symbol, q: symbol)\n.decl f(p: symbol)\n{}\n", lines.join("\n"));
+    std::fs::write(root.join("a.rerail"), &src).unwrap();
+    let rule = crate::source_tree::native().join("../docs/rule-syntax/packs/rr/rr-substr-sql-numbering.rerail");
+    let report = crate::code_rule_dsl::tools::run_rr(&rule, &root, &root.join("out"), &serde_json::Value::Null).unwrap();
+    let mut found: Vec<(i64, String)> = report["diagnostics"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|d| (d["line"].as_i64().or(d["start"]["line"].as_i64()).unwrap_or(-1), d["code"].as_str().or(d["rule"].as_str()).unwrap_or("").to_owned()))
+        .collect();
+    found.sort();
+    let _ = std::fs::remove_dir_all(&root);
+    let want: Vec<(i64, String)> = [(7, "RR102"), (9, "RR103"), (10, "RR103"), (12, "RR104")].iter().map(|(l, c)| (*l, (*c).to_owned())).collect();
+    assert_eq!(found, want, "{report:#}");
+}
+
 /// The text facts of a `.rerail` tape: `name` of identifiers and variables, `str` and `value` of strings, numbers and
 /// backtick literals, `op` of anonymous tokens, `comment`, and `syntax_error` with the message running it gives.
 #[test]

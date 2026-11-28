@@ -1,0 +1,39 @@
+.policy "rr-substr-sql-numbering" revision 1
+.description "An @substr call written with SQL's numbering: Rerail's start counts from 0 and the length is always given."
+.language rr
+.mode steer
+.scope include "**/*.rerail"
+// `@substr(s, i, n)` is SQLite's `substr(s, i + 1, n)`: its start counts from 0, and it takes three arguments. A rule
+// ported from SQL keeps SQL's numbering too easily, and nothing then fails: the call reads one character later.
+//   @substr(n, 0, 1) = "_"              the first character: fine
+//   @substr(n, 1, 1) = "_"              SQL's first character, Rerail's second           RR102
+//   @substr(t, @length(h) + 1, k)       the text after a prefix h starts at @length(h)    RR103
+//   @substr(t, @add(@length(h), 1), k)  the same                                         RR103
+//   @substr(p, 5)                       SQL's two-argument form, refused when lowered    RR104
+// RR102 also flags a deliberate second character; write it as `@substr(n, 1, 1)` only with a comment saying so, or
+// suppress the finding there.
+.violation substr_from_one(at: node) code "RR102" "@substr counts from 0: a start of 1 is the second character (SQL's substr(s, 1, n) is @substr(s, 0, n))"
+.violation substr_after_length(at: node) code "RR103" "@substr counts from 0: the text after a prefix h starts at @length(h), not @length(h) + 1"
+.violation substr_two_arguments(at: node) code "RR104" "@substr takes three arguments (a text, a start counted from 0, a length)"
+
+// substr_arg(c, a, i): the i-th argument a (from 0) of an @substr call c.
+.decl substr_call(c: node, l: node)
+substr_call(c, l) :- node(_, c, "functor_call", _, _), field(c, "function", f), name(f, "substr"), field(c, "arguments", l).
+.decl substr_arg(c: node, a: node, i: number)
+substr_arg(c, a, i) :- substr_call(c, l), field(l, "argument", a), child(l, a, j), i = count : { field(l, "argument", b), child(l, b, k), k < j }.
+
+// A number literal 1.
+.decl one(n: node)
+one(n) :- node(_, n, "number", _, _), value(n, "1").
+// An @length call.
+.decl length_call(n: node)
+length_call(n) :- node(_, n, "functor_call", _, _), field(n, "function", f), name(f, "length").
+
+substr_from_one(c) :- substr_arg(c, a, 1), one(a).
+
+substr_after_length(c) :- substr_arg(c, a, 1), node(_, a, "binary_expression", _, _), field(a, "left", x), length_call(x),
+    op(a, "+"), field(a, "right", y), one(y).
+substr_after_length(c) :- substr_arg(c, a, 1), node(_, a, "functor_call", _, _), field(a, "function", f), name(f, "add"),
+    field(a, "arguments", l), field(l, "argument", x), length_call(x), field(l, "argument", y), one(y).
+
+substr_two_arguments(c) :- substr_call(c, _), n = count : { substr_arg(c, _, _) }, n = 2.
