@@ -607,6 +607,30 @@ impl<'a> Doc<'a> {
         self.numbered_from(self.tape.first_child(x), self.tape.end_of(x))
     }
 
+    /// Numbered node `l`'s `field` row, or `NO_ROW` where it is under no field (`view_field_row`).
+    pub unsafe fn field_row(&self, l: u32) -> u32 {
+        let x = self.tape_node(l);
+        if self.n.is(2, x) { self.n.rank(2, x) } else { NO_ROW }
+    }
+
+    /// The `field` row of the first fielded node from tape node `c` on, `c` and each sibling after it within `end`,
+    /// or `NO_ROW` (`view_field_first`, `view_field_next`).
+    pub unsafe fn fielded_from(&self, mut c: u32, end: u32) -> u32 {
+        while c != NO_ROW {
+            if self.n.is(2, c) {
+                return self.n.rank(2, c);
+            }
+            c = self.tape.next_in(c, end);
+        }
+        NO_ROW
+    }
+
+    /// The `field` row of numbered node `l`'s first fielded tape child, or `NO_ROW` (`view_field_first`).
+    pub unsafe fn field_first(&self, l: u32) -> u32 {
+        let x = self.tape_node(l);
+        self.fielded_from(self.tape.first_child(x), self.tape.end_of(x))
+    }
+
     /// Numbered node `l`'s nearest numbered strict tape ancestor, or `NO_ROW` (`view_up`).
     pub unsafe fn up(&self, l: u32) -> u32 {
         let mut p = self.tape.parent(self.tape_node(l));

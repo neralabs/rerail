@@ -2277,15 +2277,18 @@ impl Batch {
         Ok(std::mem::take(&mut self.done))
     }
 
-    /// `rel`, the `child` view read in place, probed by its parent (its column 0): no index of it is built, as a
-    /// stage reads the parent's children off the tape (decision 0353 step 4c; the kernels' `by_parent`). `None` for
-    /// any other relation or key.
+    /// `rel`, the `child` or `field` view read in place, probed by its parent (its column 0): no index of it is
+    /// built, as a stage reads the parent's children off the tape (decision 0353 step 4c; the kernels' `by_parent`),
+    /// a `field`'s its fielded tape children (`view_field_first`, walk 6). `None` for any other relation or key, and
+    /// where the probe names the child too (column 1 of `child`, 2 of `field`: its one row, `by_own`).
     pub(in crate::code_rule_dsl) fn by_parent(&self, rel: &DevRel, cols: &[usize]) -> Result<Option<DevIndex>, Error> {
-        use crate::code_rule_dsl::facts::vtab::syntax::device_chunk::VIEW_CHILD;
+        use crate::code_rule_dsl::facts::vtab::syntax::device_chunk::{VIEW_CHILD, VIEW_FIELD};
         let Some(v) = &rel.view else { return Ok(None) };
-        // By its parent first, and any other columns (`child(p, c, i)` by `p` and `i`): its children walked, the
-        // others checked on each (`matches`), as by the parent alone; no index of the view.
-        if v.kind != 1 + VIEW_CHILD || cols.first() != Some(&0) {
+        // By its parent first, and any other columns (`child(p, c, i)` by `p` and `i`, `field(p, f, c)` by `p` and
+        // `f`): its children walked, the others checked on each (`matches`), as by the parent alone; no index of the
+        // view.
+        let own = if v.kind == 1 + VIEW_FIELD { 2 } else { 1 };
+        if !(v.kind == 1 + VIEW_CHILD || v.kind == 1 + VIEW_FIELD) || cols.first() != Some(&0) || cols.contains(&own) {
             return Ok(None);
         }
         let home = rel.home.clone().expect("a view's relation of no columns");
@@ -2298,11 +2301,12 @@ impl Batch {
     /// `docof`) by its id (column 0): the id's position (`view_loc_number`), its one row (decision 0706 step 0: `docof`
     /// by `n`, or by `n` and `d`, is `d = file(n)`, read). `None` for any other relation or key.
     pub(in crate::code_rule_dsl) fn by_own(&self, rel: &DevRel, cols: &[usize]) -> Result<Option<DevIndex>, Error> {
-        use crate::code_rule_dsl::facts::vtab::syntax::device_chunk::{VIEW_CHILD, VIEW_LOC_DOCOF, VIEW_LOC_LINE, VIEW_NODE};
+        use crate::code_rule_dsl::facts::vtab::syntax::device_chunk::{VIEW_CHILD, VIEW_FIELD, VIEW_LOC_DOCOF, VIEW_LOC_LINE, VIEW_NODE};
         let Some(v) = &rel.view else { return Ok(None) };
         let loc = (1 + VIEW_LOC_LINE..=1 + VIEW_LOC_DOCOF).contains(&v.kind);
-        let own = if loc { 0 } else { 1 };
-        if !(v.kind == 1 + VIEW_NODE || v.kind == 1 + VIEW_CHILD || loc) || !cols.contains(&own) || rel.is_has() {
+        // A `field` row's own id is its child's (column 2): its one row (`view_field_row`).
+        let own = if loc { 0 } else if v.kind == 1 + VIEW_FIELD { 2 } else { 1 };
+        if !(v.kind == 1 + VIEW_NODE || v.kind == 1 + VIEW_CHILD || v.kind == 1 + VIEW_FIELD || loc) || !cols.contains(&own) || rel.is_has() {
             return Ok(None);
         }
         let home = rel.home.clone().expect("a view's relation of no columns");

@@ -557,13 +557,16 @@ struct St<'a> {
     doc: core::cell::Cell<u32>,
     /// The slot entry of the id last numbered (`Doc::number_near`'s hint): a walk's next ids are mostly in its slot.
     slot: core::cell::Cell<u32>,
+    /// The relation column the walk under way holds as its key by its making (`each`): a parent's children's parent
+    /// (walks 2 and 6), a node's own row's id (`by_own`); `NONE` for none. `keys_are` does not read it again.
+    known: core::cell::Cell<u32>,
 }
 
 impl<'a> St<'a> {
     /// Stage `s` over bindings `l` and relation `r`, its far base in `rf` (none: `r`'s own block, `rel_b`).
     fn new(s: &'a Stage, l: *const i64, r: *const i64, rf: *const u8) -> Self {
         let rf = if rf.is_null() { r as *const u8 } else { rf };
-        St { s, l, r, rf, last: core::cell::Cell::new((NONE, None)), doc: core::cell::Cell::new(NONE), slot: core::cell::Cell::new(NONE) }
+        St { s, l, r, rf, last: core::cell::Cell::new((NONE, None)), doc: core::cell::Cell::new(NONE), slot: core::cell::Cell::new(NONE), known: core::cell::Cell::new(NONE) }
     }
 }
 
@@ -791,12 +794,27 @@ impl St<'_> {
     /// Whether a walk's candidates hold the binding's only key by their making: a parent's children (walk 2, a
     /// `v_parent` probe's), whose parent column (`child`'s 0) is the parent's id, checked once by the probe.
     fn parent_known(&self, how: u32) -> bool {
-        how == 2 && self.s.nkeys == 1 && self.s.key_rcol[0] == 0
+        (how == 2 || how == 6) && self.s.nkeys == 1 && self.s.key_rcol[0] == 0
     }
 
     /// Whether row `r`'s keys are `kv`.
     unsafe fn keys_are(&self, r: u32, kv: &[i64; 8]) -> bool {
-        (0..self.s.nkeys.min(8) as usize).all(|i| self.rget(r, self.s.key_rcol[i]) == kv[i])
+        let known = self.known.get();
+        (0..self.s.nkeys.min(8) as usize).all(|i| self.s.key_rcol[i] == known || self.rget(r, self.s.key_rcol[i]) == kv[i])
+    }
+
+    /// The key column walk `how`'s candidates hold by their making (`known`): the parent's (column 0) for a parent's
+    /// children (walks 2 and 6, its parent's id checked by the probe), the id's for a node's own row (`by_own`).
+    fn known_col(&self, how: u32) -> u32 {
+        let s = self.s;
+        match (how, s.v_parent) {
+            (2 | 6, 1) => 0,
+            (0, 2) if s.v_has == 0 => {
+                let k = s.r_view.wrapping_sub(1);
+                if (5..=8).contains(&k) { 0 } else if k == 2 { 2 } else { 1 }
+            }
+            _ => NONE,
+        }
     }
 
     /// A parent's children (`by_parent`) or a node's walk of `has` (`by_has`): its document, its numbered node.
@@ -829,13 +847,24 @@ impl St<'_> {
         let none = Walk { lo: 0, hi: 0, how: 0, tag: 0 };
         let k = s.r_view - 1;
         let loc = (5..=8).contains(&k);
-        let own = if loc { 0 } else { 1 };
+        // A `field` row's own id is its child's (column 2).
+        let own = if loc { 0 } else if k == 2 { 2 } else { 1 };
         let Some(i) = (0..s.nkeys.min(8) as usize).find(|&i| s.key_rcol[i] == own) else { return none };
         if loc {
             return self.by_own_loc(k, kv[i]);
         }
         let Some((e, l)) = self.doc_node(kv[i]) else { return none };
         let d = doc(s.v_dir, e);
+        // A `field` row by its child: the child's one field row, where it is under a field (`view_field_row`).
+        if k == 2 {
+            let f = d.field_row(l);
+            if f == NONE {
+                return none;
+            }
+            let r = (*e).rows[2].wrapping_add(f);
+            self.last.set((r, Some(Row::View(d.at_node(2, f, d.tape_node(l))))));
+            return Walk { lo: r, hi: r.wrapping_add(1), how: 0, tag: 0 };
+        }
         // The number is the id's (`number_near` is `node_id`'s inverse, in the key's document): no check of it again.
         if k == 1 && l == 0 {
             return none;
@@ -933,6 +962,23 @@ impl St<'_> {
         }
         if s.v_parent == 3 {
             return self.by_kind(kv);
+        }
+        if s.v_parent != 0 && s.r_view == 3 {
+            // `field` by its parent: its fielded tape children's rows (`view_field_first`, walk 6); the root's, its
+            // document's rows, each checked (its rows' parent column is the root's for a node under an unnumbered one).
+            let Some((e, l)) = self.doc_node(kv[0]) else { return none };
+            let first = (*e).rows[2];
+            if l == 0 {
+                let a = e.offset_from(view_rows(d)) as u32;
+                let hi = if a + 1 < (*d).ndocs { (*view_rows(d).add(a as usize + 1)).rows[2] } else { s.nr };
+                return Walk { lo: first, hi, how: 0, tag: 0 };
+            }
+            let dd = doc(d, e);
+            if dd.node_id(l) != kv[0] as u64 {
+                return none;
+            }
+            let f = dd.field_first(l);
+            return if f == NONE { none } else { Walk { lo: first.wrapping_add(f), hi: NONE, how: 6, tag: 0 } };
         }
         if s.v_parent != 0 {
             let Some((e, l)) = self.doc_node(kv[0]) else { return none };
@@ -1054,13 +1100,54 @@ impl St<'_> {
         }
     }
 
+    /// A walk of a parent's field rows (`how` 6, `field` by its parent) from `field` row `q`: each next fielded tape
+    /// sibling's (`view_field_next`), each kept as the stage's last with its node, as `walk_tape`'s children.
+    unsafe fn walk_field(&self, q: u32, mut f: impl FnMut(u32) -> bool) {
+        let d = self.s.v_dir;
+        let a = dir_doc_of_row(view_block(d), (*d).at, 2, q, self.doc.get());
+        self.doc.set(a);
+        let e = view_rows(d).add(a as usize);
+        let first = (*e).rows[2];
+        let dd = doc(d, e);
+        let mut i = q.wrapping_sub(first);
+        let mut x = dd.n.select(2, i);
+        let parent = dd.tape.parent(x);
+        let end = if parent != rerail_reads::views::NO_ROW { dd.tape.end_of(parent) } else { 0 };
+        loop {
+            let r = first.wrapping_add(i);
+            self.last.set((r, Some(Row::View(dd.at_node(2, i, x)))));
+            if !f(r) || parent == rerail_reads::views::NO_ROW {
+                return;
+            }
+            let mut c = dd.tape.next_in(x, end);
+            while c != rerail_reads::views::NO_ROW && !dd.n.is(2, c) {
+                c = dd.tape.next_in(c, end);
+            }
+            if c == rerail_reads::views::NO_ROW {
+                return;
+            }
+            x = c;
+            i = dd.n.rank(2, c);
+        }
+    }
+
     /// The candidates of keys `kv`, in their walk's order: each one's row, place, and whether its keys are known to
     /// be `kv`. An index group's (decision 0671): only the places whose mark's tag is the key's, each one's key known
     /// by the walk's previous place of the tag where its mark says `MARK_SAME` (that place is the walk's last of the
     /// tag: it walks its places in order), else compared.
-    unsafe fn each(&self, w: Walk, kv: &[i64; 8], mut f: impl FnMut(u32, u32, bool) -> bool) {
+    unsafe fn each(&self, w: Walk, kv: &[i64; 8], f: impl FnMut(u32, u32, bool) -> bool) {
+        self.known.set(self.known_col(w.how));
+        self.each_in(w, kv, f);
+        self.known.set(NONE);
+    }
+
+    unsafe fn each_in(&self, w: Walk, kv: &[i64; 8], mut f: impl FnMut(u32, u32, bool) -> bool) {
         let mut q = w.lo;
         let known = self.parent_known(w.how);
+        if w.how == 6 && q != NONE {
+            self.walk_field(q, |r| f(r, r, known));
+            return;
+        }
         if (w.how == 2 || w.how == 3) && q != NONE {
             let x0 = if w.how == 3 && w.tag != 0 { w.tag - 1 } else { NONE };
             self.walk_tape(w.how, q, x0, |r| f(r, r, known));

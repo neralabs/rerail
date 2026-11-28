@@ -769,6 +769,13 @@ impl B<'_, '_> {
     /// `end` (`tape_next_in`), or `NO_ROW`: numbered node `l`'s row is `l - 1`. The loop ends: each sibling is past
     /// the last, and `tape_next_in` gives none at `end` (decision 0463's reads stay within the tape).
     fn numbered_from(&mut self, c: Value, end: Value) -> Value {
+        self.ranked_from(c, end, 0, 1)
+    }
+
+    /// `numbered_from` for numbering item `item`: the rank, less `less`, of the first node of the item from tape
+    /// node `c` on, `c` and each sibling after it within `end`, or `NO_ROW` (item 2, the fielded nodes: a `field`
+    /// row, `view_field_first`).
+    fn ranked_from(&mut self, c: Value, end: Value, item: i64, less: i64) -> Value {
         let (head, test, step, found, done) = (self.f.create_block(), self.f.create_block(), self.f.create_block(), self.f.create_block(), self.f.create_block());
         self.f.append_block_param(head, I32);
         self.f.append_block_param(done, I32);
@@ -780,15 +787,15 @@ impl B<'_, '_> {
         self.f.ins().brif(none, done, &[no.into()], test, &[]);
         self.f.switch_to_block(test);
         let numbering = self.follow(self.tape, at::NUMBERING);
-        let node = self.c32(0);
+        let node = self.c32(item);
         let is = self.call_at("num_is", numbering, &[node, c]);
         let numbered = self.f.ins().icmp_imm(IntCC::NotEqual, is, 0);
         self.f.ins().brif(numbered, found, &[], step, &[]);
         self.f.switch_to_block(found);
         let numbering = self.follow(self.tape, at::NUMBERING);
-        let node = self.c32(0);
+        let node = self.c32(item);
         let l = self.call_at("num_rank", numbering, &[node, c]);
-        let row = self.f.ins().iadd_imm(l, -1);
+        let row = self.f.ins().iadd_imm(l, -less);
         self.f.ins().jump(done, &[row.into()]);
         self.f.switch_to_block(step);
         let next = self.call_tape("tape_next_in", &[c, end]);
@@ -825,6 +832,53 @@ pub fn child_next(b: &mut B<'_, '_>) -> Value {
         let end = b.call_tape("tape_end_of", &[p]);
         let c = b.call_tape("tape_next_in", &[x, end]);
         b.numbered_from(c, end)
+    })
+}
+
+/// `view_field_row(l)`: numbered node `l`'s `field` row (its rank among the fielded nodes), or `NO_ROW` where it is
+/// under no field: `field` probed by its child, its one row, with no index of the view (decision 0353).
+#[cfg(feature = "ir")]
+pub fn field_row(b: &mut B<'_, '_>) -> Value {
+    let l = b.arg(0);
+    let x = b.tape_node(l);
+    let numbering = b.follow(b.tape, at::NUMBERING);
+    let fielded = b.c32(2);
+    let is = b.call_at("num_is", numbering, &[fielded, x]);
+    let is = b.f.ins().icmp_imm(IntCC::NotEqual, is, 0);
+    b.either(I32, is, |b| {
+        let numbering = b.follow(b.tape, at::NUMBERING);
+        let fielded = b.c32(2);
+        b.call_at("num_rank", numbering, &[fielded, x])
+    }, |b| b.c32(i64::from(NO_ROW)))
+}
+
+/// `view_field_first(l)`: the `field` row of numbered node `l`'s first fielded tape child, or `NO_ROW`: `field`
+/// probed by its parent, off the tape, as `view_child_first`. A field row's parent column is its node's tape parent
+/// where that is numbered (`parent_id`), so a node's field rows are its fielded tape children's (the root's also
+/// those under unnumbered nodes: a probe of the root scans its document's rows instead).
+#[cfg(feature = "ir")]
+pub fn field_first(b: &mut B<'_, '_>) -> Value {
+    let l = b.arg(0);
+    let x = b.tape_node(l);
+    let end = b.call_tape("tape_end_of", &[x]);
+    let c = b.call_tape("tape_first_child", &[x]);
+    b.ranked_from(c, end, 2, 0)
+}
+
+/// `view_field_next(f)`: the `field` row of the next fielded tape sibling of `field` row `f`'s node, within its
+/// tape parent, or `NO_ROW` (`view_field_first`).
+#[cfg(feature = "ir")]
+pub fn field_next(b: &mut B<'_, '_>) -> Value {
+    let f = b.arg(0);
+    let numbering = b.follow(b.tape, at::NUMBERING);
+    let fielded = b.c32(2);
+    let x = b.call_at("num_select", numbering, &[fielded, f]);
+    let p = b.call_tape("tape_parent", &[x]);
+    let root = b.f.ins().icmp_imm(IntCC::Equal, p, i64::from(NO_ROW));
+    b.either(I32, root, |b| b.c32(i64::from(NO_ROW)), |b| {
+        let end = b.call_tape("tape_end_of", &[p]);
+        let c = b.call_tape("tape_next_in", &[x, end]);
+        b.ranked_from(c, end, 2, 0)
     })
 }
 

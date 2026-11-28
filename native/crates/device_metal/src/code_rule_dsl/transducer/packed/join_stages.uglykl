@@ -308,6 +308,17 @@ UKL_INLINE void by_parent(StageP s, int64_t key, UKL_PRIVATE uint32_t* lo, UKL_P
     uint64_t la = e->lines;
     uint32_t l = clif_view_number(ch, e->entry, t, e->view, ls, la, (uint32_t)((uint64_t)key & 0xfffffffful));
     if (l == NONE) return;
+    // `field` by its parent (`join_program::St::probe`): its fielded tape children's rows (`clif_view_field_first`,
+    // walk 6); the root's, its document's rows, each tested (a node under an unnumbered one is the root's).
+    if (s->r_view == 3u) {
+        uint32_t f0 = e->rows[2];
+        if (l == 0u) { *lo = f0; *hi = a + 1u < d->ndocs ? view_rows(d)[a + 1u].rows[2] : s->nr; return; }
+        if ((int64_t)clif_view_order(ch, e->entry, t, e->view, ls, la, l, 0u) != key) return;
+        uint32_t f = clif_view_field_first(ch, e->entry, t, e->view, ls, la, l);
+        if (f == NONE) return;
+        *lo = f0 + f; *hi = NONE; *how = 6u;
+        return;
+    }
     uint32_t first = e->rows[1];
     // The root's children where a numbered node's parent is left out (`ViewDoc::parented` 0): its document's rows,
     // which `matches` tests; else its numbered tape children, as any parent's.
@@ -331,7 +342,8 @@ UKL_INLINE void by_own(StageP s, UKL_PRIVATE const int64_t* kv, UKL_PRIVATE uint
     UKL_GLOBAL const ViewDir* d = s->v_dir;
     *lo = 0u; *hi = 0u;
     uint32_t k = s->r_view - 1u;
-    uint32_t own = loc_view(k) ? 0u : 1u;
+    // A `field` row's own id is its child's (column 2).
+    uint32_t own = loc_view(k) ? 0u : (k == 2u ? 2u : 1u);
     uint32_t i = 0u;
     while (i < s->nkeys && i < 8u && s->key_rcol[i] != own) i++;
     if (i >= s->nkeys || i >= 8u) return;
@@ -355,11 +367,27 @@ UKL_INLINE void by_own(StageP s, UKL_PRIVATE const int64_t* kv, UKL_PRIVATE uint
     uint32_t l = clif_view_number(ch, e->entry, t, e->view, ls, la, (uint32_t)((uint64_t)key & 0xfffffffful));
     if (l == NONE) return;
     if ((int64_t)clif_view_order(ch, e->entry, t, e->view, ls, la, l, 0u) != key || (k == 1u && l == 0u)) return;
+    // A `field` row by its child: the child's one field row, where it is under a field (`clif_view_field_row`).
+    if (k == 2u) {
+        uint32_t f = clif_view_field_row(ch, e->entry, t, e->view, ls, la, l);
+        if (f == NONE) return;
+        *lo = e->rows[2] + f;
+        *hi = *lo + 1u;
+        return;
+    }
     *lo = e->rows[k] + l - k;
     *hi = *lo + 1u;
 }
 
 // The next sibling's row of `child` row `r`, or `NONE`: its document as `vread` finds it, then the read.
+// `field` by its parent (walk 6): field row `r`'s next fielded tape sibling's row, or `NONE` (`clif_view_field_next`).
+UKL_INLINE uint32_t field_next(StageP s, uint32_t r) {
+    UKL_GLOBAL const ViewDir* d = s->v_dir;
+    UKL_GLOBAL const ViewRow* e = &view_rows(d)[clif_dir_doc_of_row(view_block(d), d->at, 2u, r, NONE)];
+    uint32_t n = clif_view_field_next(view_block(d), e->entry, view_tape(d, e), e->view, view_lines_base(d, e), e->lines, r - e->rows[2]);
+    return n == NONE ? NONE : e->rows[2] + n;
+}
+
 UKL_INLINE uint32_t child_next(StageP s, uint32_t r) {
     UKL_GLOBAL const ViewDir* d = s->v_dir;
     UKL_GLOBAL const ViewRow* e = &view_rows(d)[clif_dir_doc_of_row(view_block(d), d->at, 1u, r, NONE)];
@@ -508,7 +536,7 @@ UKL_INLINE uint32_t cand_row(StageP s, RelB R, uint32_t how, uint32_t q) {
     return how == 1u ? group_row(s, R, q) : (how == 5u ? kind_row(s, q) : q);
 }
 UKL_INLINE uint32_t cand_next(StageP s, uint32_t how, uint32_t q) {
-    return how == 2u ? child_next(s, q) : (how == 3u ? has_up(s, q) : (how == 4u && has_member(s, q) ? has_skip(s, q) : q + 1u));
+    return how == 2u ? child_next(s, q) : how == 6u ? field_next(s, q) : (how == 3u ? has_up(s, q) : (how == 4u && has_member(s, q) ? has_skip(s, q) : q + 1u));
 }
 
 // R's rows from `r_from`: `nr`, or its length on the device past `r_from` (`r_len`), at most `nr`.
@@ -566,8 +594,14 @@ UKL_INLINE bool row_passes(StageP s, RelB R, uint32_t r) {
 
 // Whether a walk's candidates hold the binding's only key by their making: a parent's children (walk 2, `by_parent`),
 // whose parent column (`child`'s 0) is the parent's id, checked once by the probe.
+UKL_INLINE uint32_t known_col(StageP s, uint32_t how) {
+    if ((how == 2u || how == 6u) && s->v_parent == 1u) return 0u;
+    if (how == 0u && s->v_parent == 2u && s->v_has == 0u) { uint32_t k = s->r_view - 1u; return loc_view(k) ? 0u : (k == 2u ? 2u : 1u); }
+    return NONE;
+}
+
 UKL_INLINE bool parent_known(StageP s, uint32_t how) {
-    return how == 2u && s->nkeys == 1u && s->key_rcol[0] == 0u;
+    return (how == 2u || how == 6u) && s->nkeys == 1u && s->key_rcol[0] == 0u;
 }
 
 // Whether row r matches the binding's keys and the relation's column tests.
@@ -593,6 +627,14 @@ typedef struct Walked { uint32_t tag, head; } Walked;
 UKL_SHARED bool cand_matches(StageP s, RelB R, uint32_t how, uint32_t q, uint32_t r, UKL_PRIVATE const int64_t* kv,
                              UKL_PRIVATE Walked* w) {
     if (parent_known(s, how)) return row_passes(s, R, r);
+    // The key column the walk holds by its making (`join_program::St::known_col`): a parent's children's parent
+    // (walks 2 and 6), a node's own row's id (`by_own`); the others compared.
+    uint32_t kc = known_col(s, how);
+    if (kc != NONE) {
+        if (!row_passes(s, R, r)) return false;
+        for (uint32_t i = 0; i < s->nkeys && i < 8; i++) if (s->key_rcol[i] != kc && rget(s, R, r, s->key_rcol[i]) != kv[i]) return false;
+        return true;
+    }
     if (how != 1u) return matches(s, R, r, kv);
     if (w->head == 3u) { w->tag = (uint32_t)(key_hash(kv, s->nkeys) >> 32) & ~MARK_SAME; w->head = 0u; }
     uint32_t m = clif_rel_group_mark((JSPACE const uint8_t*)R.p, s->r_at, s->r_index, q);

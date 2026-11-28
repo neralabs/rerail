@@ -159,6 +159,9 @@ pub const READS: &[Read] = &[
     // `has` probed off the tape (decision 0353 step 5): a node's numbered ancestors by a climb, its numbered
     // descendants as a range of numbers.
     Read { family: Family::View, name: "view_up", params: &[I32], ret: I32, hot: false, body: crate::view_reads::up },
+    Read { family: Family::View, name: "view_field_row", params: &[I32], ret: I32, hot: false, body: crate::view_reads::field_row },
+    Read { family: Family::View, name: "view_field_first", params: &[I32], ret: I32, hot: false, body: crate::view_reads::field_first },
+    Read { family: Family::View, name: "view_field_next", params: &[I32], ret: I32, hot: false, body: crate::view_reads::field_next },
     Read { family: Family::View, name: "view_end", params: &[I32], ret: I32, hot: false, body: crate::view_reads::end },
     // `tape`, `ast_depth` and `node_order` read in place (decision 0353 step 6: they were uploaded from the host).
     Read { family: Family::View, name: "view_tape", params: &[I32, I32], ret: I64, hot: true, body: crate::view_reads::tape },

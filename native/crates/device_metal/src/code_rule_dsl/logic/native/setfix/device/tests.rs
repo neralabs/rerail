@@ -3248,6 +3248,87 @@ use rerail_blocks::vector::Vector;
         }
     }
 
+    /// `field` probed by its parent and its field (`field(p, f, c)` by `p` and `f`) walks the parent's fielded tape
+    /// children (walk 6, `view_field_first`, `view_field_next`), the field checked on each; by its child and its field,
+    /// the child's one field row (`view_field_row`). Neither builds an index of the view (7.6 M rows each on `all`);
+    /// the device's rows are the CPU's, every asked pair's and none else.
+    #[test]
+    fn a_field_probed_by_its_parent_or_child_is_walked_not_indexed() {
+        use crate::code_rule_dsl::facts::core::{self, Built};
+        use crate::code_rule_dsl::facts::nearest::Binding;
+        use crate::code_rule_dsl::facts::vtab::syntax::{Document, Grower, Matchers, Projection};
+        use crate::code_rule_dsl::model::FileInput;
+        use std::collections::HashMap;
+        use std::sync::Arc;
+        if !crate::code_rule_dsl::transducer::packed::metal_join::available() {
+            return;
+        }
+        crate::test_languages();
+        let doc = |key: u32, source: &str| {
+            let path = format!("d{key}.py");
+            let file = FileInput::new(path.clone(), "python".to_owned(), Arc::new(source.to_owned().into()), None, None, "core").unwrap();
+            let facts = match core::build(&file).unwrap() { Built::Facts(f) => Arc::new(f), Built::Unparsed => panic!("{path}") };
+            Document { key, core: format!("/w#core:{path}"), digest: core::digest(&facts), path, facts, tape: None, guest: None, module: None, unpackaged: false }
+        };
+        let nonce = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_nanos();
+        let content = crate::content_store::ContentStore::open(&std::env::temp_dir().join(format!("rerail-field-walk-{}-{nonce}.sqlite", std::process::id()))).unwrap();
+        let tests = Arc::new(crate::code_rule_dsl::logic::strings::Vocabulary::default());
+        let chunk = vec![doc(20, "import os\nx = f(1, y=[2, g(3)])\nz = a.b(c=d)\n"), doc(23, "class C(B):\n    def m(self, a, *b):\n        return [a for a in b if a.k]\n")];
+        let (sources, _) = Grower::start(&content, chunk, &[], &Matchers::default(), &tests, Binding::Cpu, &Projection::core(), &HashMap::new()).unwrap();
+        let field = sources.iter().find(|(n, _)| n == "field").expect("the chunk's field view").1.clone();
+        assert!(field.device_view().is_some(), "the field view read in place");
+        let rows: Vec<(i64, i64, i64)> = (0..field.len()).map(|r| (field.value(r, 0), field.value(r, 1), field.value(r, 2))).collect();
+        assert!(rows.len() > 10, "{rows:x?}");
+        let store = crate::code_rule_dsl::fixtures::temp();
+        drop(crate::content_store::ContentStore::open(&store).unwrap());
+        let db = Connection::open(&store).unwrap();
+        crate::code_rule_dsl::logic::native::register(&db).unwrap();
+        crate::code_rule_dsl::logic::native::register_symbols(&db).unwrap();
+        super::super::hold_source(&db, "field_t", Arc::clone(&field), b"iii".to_vec());
+        let f = format!("r:{}", hex("field_t"));
+        // Every row's pair asked, and pairs of no row: a parent with another field, a child with another field.
+        db.execute_batch("CREATE TEMP TABLE q (c0, c1);").unwrap();
+        for (i, r) in rows.iter().enumerate() {
+            let other = rows[(i + 1) % rows.len()].1;
+            for (by, f) in [(r.0, r.1), (r.2, r.1), (r.0, other), (r.2, other)] {
+                db.execute("INSERT INTO q VALUES (?1, ?2)", [by, f]).unwrap();
+            }
+        }
+        let q = format!("t:x:{}:{}:ii", hex("temp.q"), hex("c0, c1"));
+        for (name, rule, want) in [
+            // h0(p, f, c) :- q(p, f), field(p, f, c): by the parent and the field.
+            ("by_parent", format!("pos {q} v0 v1\npos {f} v0 v1 v2\nhead v0 v1 v2"), rows.clone()),
+            // h0(p, f, c) :- q(c, f), field(p, f, c): by the child and the field.
+            ("by_child", format!("pos {q} v2 v1\npos {f} v0 v1 v2\nhead v0 v1 v2"), rows.clone()),
+        ] {
+            let mut want = want;
+            want.sort_unstable();
+            want.dedup();
+            for device in [false, true] {
+                db.execute_batch("DROP TABLE IF EXISTS temp.h0; CREATE TEMP TABLE h0 (c0, c1, c2);").unwrap();
+                let mut spec = vec![format!("name field_{name}")];
+                if device {
+                    spec.push("device".into());
+                }
+                spec.push("rel h0 iii empty".into());
+                spec.push(format!("seed 0 {}", hex(&rule)));
+                super::super::open(&db, &spec.join("\n")).unwrap();
+                super::super::run(&db, &format!("field_{name}"), 0).unwrap();
+                let report = super::take_report();
+                super::super::close(&db, &format!("field_{name}")).unwrap();
+                if device {
+                    let r = report.as_ref().expect("a device run");
+                    assert!(r.refused.is_none(), "{name}: on the device: {r:?}");
+                    assert_eq!(r.sorts, 0, "{name}: no index of the view built: {r:?}");
+                }
+                let mut got: Vec<(i64, i64, i64)> = db.prepare("SELECT c0, c1, c2 FROM temp.h0").unwrap().query_map([], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?))).unwrap().map(Result::unwrap).collect();
+                got.sort_unstable();
+                got.dedup();
+                assert_eq!(got, want, "{name}, device {device}: each asked pair's rows");
+            }
+        }
+    }
+
     /// A view chosen by a constant (`child … WHERE idx = 0`) is its source read in place, the constant a key of the
     /// stage's (decision 0353 step 6, `reads_source`): nothing uploaded, scanned (an index of the constant's column)
     /// or probed by its parent (its children walked on the tape, each checked against it), the CPU's rows.
