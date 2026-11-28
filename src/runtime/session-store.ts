@@ -13,6 +13,7 @@ import { isWorktreePack, WORKTREE_PACK_ID, worktreeRuleCatalog } from "../engine
 import { LazyReadonlyRerailDatabase, openRerailDatabase, type RerailDatabase } from "../engine/storage/database.js";
 import { decodeCursor, encodeCursor } from "../engine/storage/page-cursor.js";
 import { flushRecordWrites, openRecordWriter, type RecordWrite, type RecordWriter } from "../engine/storage/record-writes.js";
+import { nameOnce, type StoredListLog } from "../engine/storage/stored-list.js";
 import { listRepositoryRules, ruleConfigurationSignature } from "../engine/catalog/rule-configuration.js";
 import type { RuleCatalog } from "../engine/catalog/repository-model.js";
 import { awaitingApprovalOf } from "../engine/catalog/rule-approval.js";
@@ -371,6 +372,144 @@ function parsedRow(payloadJson: string): unknown {
   } catch {
     return null;
   }
+}
+
+/** Where a reader of stored session events reads them, and where the line that names one it leaves out goes. */
+export interface EventSource {
+  readonly database: RerailDatabase;
+  readonly log: StoredListLog;
+}
+
+/** A stored event's id and text, as a reader that parses the text itself selects it. */
+interface StoredEvent {
+  readonly eventId: string;
+  readonly payloadJson: string;
+}
+
+/**
+ * Writes the line that names event `eventId` of session `sessionId`, which a reader took as one with no payload, to the
+ * log once in this process for each event of each database file (`nameOnce`), as the violation history names an audit
+ * it cannot read.
+ */
+export function sayLeftOut({ database, log }: EventSource, sessionId: string, eventId: string): void {
+  const file = database.$client.name;
+  // The column name the schema gives, so the line names the place a person mends.
+  nameOnce(log, { file, place: `session ${sessionId} event ${eventId}` }, `rerail: ${file}: event ${eventId} of session ${sessionId} `
+    + `reads with no payload, and each figure that counts it leaves it out: the ${events.payloadJson.name} of its row is no JSON `
+    + "of the shape Rerail writes there, which only a damaged file or a hand edit leaves.\n");
+}
+
+/** Names once each event of `leftOut`, a JSON array of `[session, event]` pairs as `json_group_array` makes it. */
+function sayEachLeftOut(source: EventSource, leftOut: string): void {
+  for (const [sessionId, eventId] of JSON.parse(leftOut) as Array<[string, string]>) sayLeftOut(source, sessionId, eventId);
+}
+
+/**
+ * The payload of session `sessionId`'s stored event `row` as `schema` reads it; undefined for no row, and for one whose
+ * text is no JSON or JSON of another shape, which reads as an event with no payload and is named once (`sayLeftOut`).
+ */
+function storedPayload<T>(source: EventSource, sessionId: string, row: StoredEvent | undefined, schema: z.ZodType<T>): T | undefined {
+  if (row === undefined) return undefined;
+  const payload = schema.safeParse(parsedRow(row.payloadJson));
+  if (payload.success) return payload.data;
+  sayLeftOut(source, sessionId, row.eventId);
+  return undefined;
+}
+
+/**
+ * The rule ids the stored steer receipt text `payloadJson` names (`steerEvent`): the strings of its `ruleIds` list, none
+ * where it has no such list; undefined where the text is no JSON, which the readers of receipts leave out.
+ */
+export function storedReceiptRuleIds(payloadJson: string): string[] | undefined {
+  const receipt = parsedRow(payloadJson);
+  if (receipt === null) return undefined;
+  const ruleIds = typeof receipt === "object" && "ruleIds" in receipt ? receipt.ruleIds : undefined;
+  return Array.isArray(ruleIds) ? ruleIds.filter((id): id is string => typeof id === "string") : [];
+}
+
+/** A rule coverage event's payload (`RuleCoverage`) as `hud` reads it: coverage written before a field existed has none of it. */
+const coveragePayloadSchema = z.object({
+  repositoryId: z.string().nullish(),
+  ownerCheckoutPaths: z.array(z.string()).nullish(),
+  activeRuleCount: z.number().nullish(),
+  ruleSignature: z.string().nullish(),
+});
+type CoveragePayload = z.infer<typeof coveragePayloadSchema>;
+
+/** Coverage written with repository configuration: the fields that can make it current (`currentCoverage`). */
+const configuredCoverageSchema = z.object({
+  repositoryId: z.string(),
+  ownerCheckoutPaths: z.array(z.string()),
+  activeRuleCount: z.number().nullish(),
+  ruleSignature: z.string(),
+});
+
+/** A session's rule coverage while the repository's rule configuration still has the signature it was counted at. */
+interface CurrentCoverage {
+  readonly repositoryId: string;
+  readonly owners: readonly string[];
+  readonly activeRuleCount: number | null;
+  readonly ruleSignature: string;
+}
+
+/** A `hud-tracking-start` event's payload (`startHudTracking`). */
+const hudTrackingPayloadSchema = z.object({ complete: z.boolean().optional() });
+
+/** The newest rule coverage of session `sessionId`; undefined when it has none, or that event reads with no payload. */
+function hudCoverage(source: EventSource, sessionId: string): CoveragePayload | undefined {
+  const row = source.database.select({ eventId: events.eventId, payloadJson: events.payloadJson }).from(events)
+    .where(and(eq(events.sessionId, sessionId), eq(events.kind, "rule-coverage"))).orderBy(desc(events.sequence)).limit(1).get();
+  return storedPayload(source, sessionId, row, coveragePayloadSchema);
+}
+
+/**
+ * `coverage` while it is current: coverage written before repository configuration has no rule signature and is never
+ * current, and the signature is that of the rules of its owners, the first of which `catalog` holds the rules of.
+ */
+function currentCoverage(database: RerailDatabase, catalog: RuleCatalog, coverage: CoveragePayload | undefined): CurrentCoverage | undefined {
+  const configured = configuredCoverageSchema.safeParse(coverage);
+  if (!configured.success) return undefined;
+  const { repositoryId, ownerCheckoutPaths: owners, activeRuleCount, ruleSignature } = configured.data;
+  const current = ruleSignature === ruleConfigurationSignature(database, catalog, repositoryId, owners);
+  return current ? { repositoryId, owners, activeRuleCount: activeRuleCount ?? null, ruleSignature } : undefined;
+}
+
+/**
+ * What the HUD of session `sessionId` reads from its newest rule coverage: the checkouts it names (`owners`), the rule
+ * catalog of the first, the checkout it was recorded in, whose own rules are in it, and the coverage while current.
+ */
+function hudRules(source: EventSource, sessionId: string): { owners: readonly string[] | null; catalog: RuleCatalog; current: CurrentCoverage | undefined } {
+  const coverage = hudCoverage(source, sessionId);
+  const owners = coverage?.ownerCheckoutPaths ?? null;
+  const catalog = owners?.[0] === undefined ? loadRuleCatalog() : worktreeRuleCatalog(loadRuleCatalog(), owners[0]);
+  return { owners, catalog, current: currentCoverage(source.database, catalog, coverage) };
+}
+
+/** Whether the HUD has tracked session `sessionId` from its start (`startHudTracking`), so its steered count is whole. */
+function trackedFromStart(source: EventSource, sessionId: string): boolean {
+  const row = source.database.select({ eventId: events.eventId, payloadJson: events.payloadJson }).from(events).where(and(
+    eq(events.sessionId, sessionId), eq(events.eventId, "hud-tracking-start"), eq(events.kind, "hud-tracking-start"),
+  )).get();
+  return storedPayload(source, sessionId, row, hudTrackingPayloadSchema)?.complete === true;
+}
+
+/**
+ * The steers session `sessionId` was given, per rule, not per hook output (plan D5): the person counts the steer lines
+ * they saw, and one edit can steer two rules. A receipt naming no rules still delivered one steer, as does one whose
+ * `ruleIds` is no list. A receipt whose text is no JSON, where `json_array_length` would raise for the whole query, is
+ * not counted, and is named once. `json_valid` is the one test a row takes: the call after it reads SQLite's parse of
+ * the same text, where a test of the field's type costs the query about half its time again over a long session.
+ */
+function steeringCount(source: EventSource, sessionId: string): number {
+  const valid = sql`json_valid(${events.payloadJson})`;
+  const row = source.database.get<{ total: number; leftOut: string }>(sql`
+    SELECT
+      coalesce(sum(CASE WHEN ${valid} THEN max(1, coalesce(json_array_length(${events.payloadJson}, '$.ruleIds'), 0)) ELSE 0 END), 0) AS total,
+      json_group_array(json_array(${events.sessionId}, ${events.eventId})) FILTER (WHERE NOT ${valid}) AS leftOut
+    FROM ${events} WHERE ${events.sessionId} = ${sessionId} AND ${events.kind} = 'steering-delivered'
+  `);
+  sayEachLeftOut(source, row.leftOut);
+  return row.total;
 }
 
 /**
@@ -837,10 +976,13 @@ export class SqliteSessionReader {
    * covers every setting, approval and rule document the count reads, so it is counted once per change, not per poll.
    */
   readonly #awaitingApproval = new Map<string, number>();
+  readonly #log: StoredListLog;
 
-  constructor(path: string, { repositoryId }: RepositoryScope = {}) {
+  /** `log`: where the line that names an event whose stored text does not read goes (`sayLeftOut`). */
+  constructor(path: string, { repositoryId, log = process.stderr }: RepositoryScope & { log?: StoredListLog } = {}) {
     this.path = path;
     this.#repositoryIds = repositoryId;
+    this.#log = log;
     this.#database = new LazyReadonlyRerailDatabase(path);
   }
 
@@ -880,39 +1022,16 @@ export class SqliteSessionReader {
   hud(sessionId: string): SessionHud {
     const database = this.#database.open();
     if (database === undefined) return { activeRuleCount: null, steeringCount: null, overlays: [], awaitingApproval: null };
+    const source = { database, log: this.#log };
     // Read coverage, lifetime totals, and the catalog signature from one snapshot.
     return database.transaction(() => {
-      const baseline = database.select({
-        complete: sql<number | null>`json_extract(${events.payloadJson}, '$.complete')`,
-      }).from(events).where(and(
-        eq(events.sessionId, sessionId), eq(events.eventId, "hud-tracking-start"), eq(events.kind, "hud-tracking-start"),
-      )).get();
-      const coverage = database.select({
-        repositoryId: sql<string | null>`json_extract(${events.payloadJson}, '$.repositoryId')`,
-        ownerCheckoutPaths: sql<string | null>`json_extract(${events.payloadJson}, '$.ownerCheckoutPaths')`,
-        activeRuleCount: sql<number | null>`json_extract(${events.payloadJson}, '$.activeRuleCount')`,
-        ruleSignature: sql<string | null>`json_extract(${events.payloadJson}, '$.ruleSignature')`,
-      }).from(events).where(and(eq(events.sessionId, sessionId), eq(events.kind, "rule-coverage")))
-        .orderBy(desc(events.sequence)).limit(1).get();
-      // Coverage written before repository configuration has no rule signature and is never current. Its first owner
-      // is the checkout it was recorded in, whose own rules are in its catalog.
-      const owners = coverage?.ownerCheckoutPaths == null ? null : JSON.parse(coverage.ownerCheckoutPaths) as string[];
-      const catalog = owners?.[0] === undefined ? loadRuleCatalog() : worktreeRuleCatalog(loadRuleCatalog(), owners[0]);
-      const current = coverage?.repositoryId != null && coverage.ruleSignature !== null && owners !== null
-        && coverage.ruleSignature === ruleConfigurationSignature(database, catalog, coverage.repositoryId, owners);
-      // Per rule, not per hook output (plan D5): the person counts the steer lines they saw, and one edit can steer two
-      // rules. A receipt naming no rules still delivered one steer.
-      const steeringCount = baseline?.complete === 1
-        ? database.select({
-          total: sql<number>`coalesce(sum(max(1, coalesce(json_array_length(${events.payloadJson}, '$.ruleIds'), 0))), 0)`,
-        }).from(events)
-          .where(and(eq(events.sessionId, sessionId), eq(events.kind, "steering-delivered"))).get()!.total
-        : null;
+      const { owners, catalog, current } = hudRules(source, sessionId);
       return {
-        activeRuleCount: current ? coverage.activeRuleCount : null,
-        steeringCount,
-        overlays: current && isWorktreePack(catalog.packs.get(WORKTREE_PACK_ID)) ? [WORKTREE_PACK_ID] : [],
-        awaitingApproval: current ? this.#awaitingApprovalIn(database, catalog, coverage.repositoryId!, owners, coverage.ruleSignature!) : null,
+        activeRuleCount: current === undefined ? null : current.activeRuleCount,
+        steeringCount: trackedFromStart(source, sessionId) ? steeringCount(source, sessionId) : null,
+        overlays: current !== undefined && isWorktreePack(catalog.packs.get(WORKTREE_PACK_ID)) ? [WORKTREE_PACK_ID] : [],
+        awaitingApproval: current === undefined ? null
+          : this.#awaitingApprovalIn(database, catalog, current.repositoryId, current.owners, current.ruleSignature),
         ...sessionConflictFooter(database, sessionId, owners),
       };
     });
@@ -934,15 +1053,22 @@ export class SqliteSessionReader {
    * never delivered (`events-dropped` counts), events whose rows a power cut took (`events-lost` counts), boundaries
    * that answered before the shell-write check finished or before code rules were running, tool edits of files Git
    * ignores, changes to Git's ignore rules, and what the shell-write check could not check, the record that says it
-   * met more of those than the record takes counted apart (`MORE_DISCOVERY_GAPS_EVENT`). Indexed by session and kind.
+   * met more of those than the record takes counted apart (`MORE_DISCOVERY_GAPS_EVENT`). Indexed by session and kind. A
+   * record of dropped or lost events whose text is no JSON, or whose `count` is no whole number, counts none, and is
+   * named once: `json_extract` raises on text that is no JSON for the whole query, and a `count` of text would make the
+   * sum a fraction.
    */
   gaps(sessionId: string): SessionGaps {
     const database = this.#database.open();
     if (database === undefined) return { ...NO_GAPS };
-    const row = database.all<Omit<SessionGaps, "discoveryGapsMore"> & { discoveryGapsMore: number }>(sql`
+    const readable = sql`(json_valid(${events.payloadJson}) AND typeof(json_extract(${events.payloadJson}, '$.count')) IN ('integer', 'null'))`;
+    const counted = (kind: string): SQL => sql`CASE WHEN ${events.kind} = ${kind} AND ${readable} THEN coalesce(json_extract(${events.payloadJson}, '$.count'), 0) END`;
+    const row = database.all<Omit<SessionGaps, "discoveryGapsMore"> & { discoveryGapsMore: number; leftOut: string }>(sql`
       SELECT
-        coalesce(sum(CASE WHEN ${events.kind} = 'events-dropped' THEN coalesce(json_extract(${events.payloadJson}, '$.count'), 0) END), 0) AS droppedEvents,
-        coalesce(sum(CASE WHEN ${events.kind} = 'events-lost' THEN coalesce(json_extract(${events.payloadJson}, '$.count'), 0) END), 0) AS lostEvents,
+        coalesce(sum(${counted("events-dropped")}), 0) AS droppedEvents,
+        coalesce(sum(${counted(LOST_EVENTS_KIND)}), 0) AS lostEvents,
+        json_group_array(json_array(${events.sessionId}, ${events.eventId}))
+          FILTER (WHERE ${events.kind} IN ('events-dropped', ${LOST_EVENTS_KIND}) AND NOT ${readable}) AS leftOut,
         count(*) FILTER (WHERE ${events.kind} = 'source-discovery-pending') AS uncheckedBoundaries,
         count(*) FILTER (WHERE ${events.kind} = 'code-rules-pending') AS codeRulesPendingBoundaries,
         count(*) FILTER (WHERE ${events.kind} = 'ignored-edit') AS ignoredEdits,
@@ -953,7 +1079,10 @@ export class SqliteSessionReader {
       WHERE ${events.sessionId} = ${sessionId}
         AND ${events.kind} IN ('events-dropped', 'events-lost', 'source-discovery-pending', 'code-rules-pending', 'ignored-edit', 'ignore-rules-changed', 'source-discovery-gap')
     `)[0];
-    return row === undefined ? { ...NO_GAPS } : { ...row, discoveryGapsMore: row.discoveryGapsMore > 0 };
+    if (row === undefined) return { ...NO_GAPS };
+    const { leftOut, discoveryGapsMore, ...counts } = row;
+    sayEachLeftOut({ database, log: this.#log }, leftOut);
+    return { ...counts, discoveryGapsMore: discoveryGapsMore > 0 };
   }
 
   /** The first `limit` places the session's walks could not check, in the order the session met them; no record that says they met more. */
@@ -1102,7 +1231,8 @@ export class SqliteSessionReader {
 
   /**
    * Steers per rule: steers in range, counted against each rule the delivery
-   * named. A delivery that named no rule contributes to nothing.
+   * named: the strings of its `ruleIds` list. A delivery that named no rule contributes to nothing, nor does one whose
+   * text is no JSON, where `json_each` would raise for the whole query, which is named once.
    */
   steersByRule(since: number, repositoryIds: readonly string[] | undefined = undefined): Map<string, number> {
     const database = this.#database.open();
@@ -1111,13 +1241,21 @@ export class SqliteSessionReader {
     const repository = scope === undefined
       ? sql``
       : sql`AND event.session_id IN (${sessionsOfRepository(scope)})`;
-    const rows = database.all<{ ruleId: string; deliveries: number }>(sql`
-      SELECT rule.value AS ruleId, count(DISTINCT event.sequence) AS deliveries
-      FROM ${events} event, json_each(json_extract(event.payload_json, '$.ruleIds')) rule
+    // A receipt whose text is no JSON reads as the list `[null]`, so the one pass that counts the receipts also lists
+    // those in the group of no rule; one whose list holds a null is in that group too, and its text reads. `->` gives the
+    // field as JSON, so `ruleIds` that is a string is one item with no index, never text `json_each` would raise on.
+    const rows = database.all<{ ruleId: string | null; deliveries: number; leftOut: string }>(sql`
+      SELECT rule.value AS ruleId, count(DISTINCT event.sequence) AS deliveries,
+        json_group_array(json_array(event.session_id, event.event_id))
+          FILTER (WHERE rule.type = 'null' AND NOT json_valid(event.payload_json)) AS leftOut
+      FROM ${events} event,
+        json_each(CASE WHEN json_valid(event.payload_json) THEN event.payload_json -> '$.ruleIds' ELSE '[null]' END) rule
       WHERE event.kind = 'steering-delivered' AND event.observed_at >= ${since} ${repository}
+        AND typeof(rule.key) = 'integer' AND rule.type IN ('text', 'null')
       GROUP BY rule.value
     `);
-    return new Map(rows.map(row => [row.ruleId, row.deliveries]));
+    for (const row of rows) sayEachLeftOut({ database, log: this.#log }, row.leftOut);
+    return new Map(rows.flatMap(row => (row.ruleId === null ? [] : [[row.ruleId, row.deliveries] as const])));
   }
 
   close(): void {
