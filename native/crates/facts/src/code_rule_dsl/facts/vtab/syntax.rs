@@ -2941,6 +2941,14 @@ impl FieldRows {
     }
 }
 
+/// Whether no node of its dialect's grammar holds field atom `f` (`field_atom(tag, code)`) twice
+/// (`language::field_repeats`): its tag's dialect, its code's name in the tag's table.
+fn single_by_grammar(f: i64) -> bool {
+    let (Ok(tag), Ok(code)) = (u8::try_from(f >> 16), u16::try_from(f & 0xffff)) else { return false };
+    let Some(name) = rerail_tape_format::f16::lang(tag).and_then(|l| l.names().field_name(code)) else { return false };
+    from_tape_tag(tag).and_then(|lang| crate::code_rule_dsl::language::field_repeats(lang, name)) == Some(false)
+}
+
 /// `items`, written once into `block`: an index made where it is computed (decision 0353: an index in its block).
 fn in_block<T: cells::Cell>(block: &Arc<Block>, items: &[T]) -> Cells<T> {
     Cells::build(block, items.len(), |cells| {
@@ -5638,13 +5646,16 @@ impl Source for Viewed {
         column == self.own()
     }
     /// A child by its parent and place (a parent's place is one child); a field's child by its parent and a field no
-    /// parent of the batch holds twice (`FieldRows::single`, the index built if it was not).
+    /// node of its dialect's grammar holds twice (`language::field_repeats`: by the shape), else one no parent of the
+    /// batch holds twice (`FieldRows::single`, the index built if it was not: by its rows).
     fn names_one_row(&self, keyed: &[(usize, Option<i64>)]) -> crate::code_rule_dsl::facts::vtab::OneRow {
         use crate::code_rule_dsl::facts::vtab::OneRow;
         let has = |c: usize| keyed.iter().any(|&(k, _)| k == c);
+        let field = keyed.iter().find_map(|&(k, v)| (k == 1).then_some(v).flatten());
         match self.view {
             View::Child if has(0) && has(2) => OneRow::Shape,
-            View::Field if has(0) && keyed.iter().any(|&(k, v)| k == 1 && v.is_some_and(|f| self.batch.fields.get_or_init(|| FieldRows::new(&self.batch)).single(f))) => OneRow::Rows,
+            View::Field if has(0) && field.is_some_and(single_by_grammar) => OneRow::Shape,
+            View::Field if has(0) && field.is_some_and(|f| self.batch.fields.get_or_init(|| FieldRows::new(&self.batch)).single(f)) => OneRow::Rows,
             _ => OneRow::No,
         }
     }

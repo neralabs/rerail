@@ -655,6 +655,15 @@ pub fn label_named(name: &str) -> Option<&'static str> {
         .map(|dialect| dialect.label)
 }
 
+include!(concat!(env!("OUT_DIR"), "/repeated_fields.rs"));
+
+/// Whether a node of `lang`'s grammar may hold field `name` more than once (`node-types.json`'s `multiple`, any
+/// node's: `if_statement`'s `alternative`), from its grammar (`tape::field_multiplicity`); `None` where the dialect has
+/// no such list (a token grammar's, or one not understood). A field that repeats nowhere names one child of a parent.
+pub fn field_repeats(lang: GrammarDialect, name: &str) -> Option<bool> {
+    repeated_fields(lang).map(|fields| fields.binary_search_by(|f| (*f).cmp(name)).is_ok())
+}
+
 /// A dialect's persisted tape tag.
 pub fn tape_tag(lang: GrammarDialect) -> Option<u8> {
     let tag = dialect(lang).map(|dialect| dialect.tape_tag);

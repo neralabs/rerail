@@ -1887,6 +1887,88 @@ named_copy(b, k) :- fn(f), child(f, b, _), kids(b, c, 0), kind(c, k).
     let _ = std::fs::remove_dir_all(&dir);
 }
 
+/// The grammar's repeated fields (`language::field_repeats`, the build's reading of grammar.json) hold every field a
+/// node holds twice in a Python file of many forms: a field the list calls single names one child of each parent,
+/// as the lookups that read it by its parent need (`Source::names_one_row`'s shape claim).
+#[test]
+fn a_field_the_grammar_calls_single_is_never_held_twice() {
+    let dir = corpus("fields-twice", &[("f.py", FORMS)]);
+    let program = r#"
+.decl twice(f: symbol)
+twice(f) :- field(p, f, a), field(p, f, b), a != b.
+.decl held(f: symbol)
+held(f) :- field(_, f, _).
+.output twice, held
+"#;
+    let got = run(&dir, program, &["twice", "held"]);
+    let name = |r: &Vec<String>| r[0].trim_matches('"').to_owned();
+    let twice: Vec<String> = got[0].iter().map(name).collect();
+    let held: Vec<String> = got[1].iter().map(name).collect();
+    let repeats = |f: &str| crate::code_rule_dsl::language::field_repeats(crate::code_rule_dsl::language::GrammarDialect::Python, f);
+    assert!(twice.iter().any(|f| f == "alternative") && held.iter().any(|f| f == "parameters"), "twice {twice:?}, held {held:?}");
+    for f in &twice {
+        assert_eq!(repeats(f), Some(true), "{f} is held twice by a node: the grammar must call it repeated");
+    }
+    assert!(held.iter().any(|f| repeats(f) == Some(false)), "some field held is single: {held:?}");
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// Python of many forms: imports, decorators, parameters of every kind, `global`, `if`/`elif`/`else`, `try` and its
+/// clauses, `with` of two items, chained comparisons, `print`, subscripts and slices, comprehensions, a lambda, an
+/// f-string, `del`, `assert`, `match` and its patterns, a class with bases, `async` forms.
+const FORMS: &str = r#"import os, sys as system
+from a.b import c, d as e, f
+@dec
+@other(1, 2)
+def g(x, y: int = 1, *args, z, **kw) -> int:
+    global q, r
+    if x:
+        pass
+    elif y:
+        pass
+    elif z:
+        pass
+    else:
+        pass
+    try:
+        pass
+    except (A, B) as err:
+        raise C from err
+    except D:
+        pass
+    else:
+        pass
+    finally:
+        pass
+    with open(a) as f1, open(b) as f2:
+        pass
+    for i, j in pairs:
+        continue
+    while x < y <= z != w:
+        break
+    print(a, b, c)
+    t = a[1, 2:3, ::4]
+    u = {k: v for k, v in items if k if v}
+    w = [m for m in ms for n in ns]
+    l = lambda p, q=1: p + q
+    s = f"{a!r:>10} {b}"
+    del a, b
+    assert x, "msg"
+    match cmd:
+        case [1, 2] | {"k": v} if v:
+            pass
+        case Point(x=0, y=1):
+            pass
+    return x if y else z
+class K(Base, metaclass=M):
+    def m(self, *, k): ...
+async def h():
+    async with a as b, c as d:
+        await e
+    async for x in y:
+        yield x
+"#;
+
 /// A lookup (`setfix::lookups`: a node's own facts by its id, `kind(n, k)` binding `k`) after a fused atom is read
 /// with the chunk's other rows, its values computed columns (`rowcode::ViewTest::looks`, one `read_own_batch` a
 /// chunk): no probe a row. A lookup keyed by another's value (`child(g, p, _)` then `kind(g, k)`) reads it. Its rows
