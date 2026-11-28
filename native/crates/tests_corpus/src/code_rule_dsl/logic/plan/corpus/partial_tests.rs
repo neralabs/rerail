@@ -34,8 +34,8 @@ const FILES: &[(&str, &str)] = &[
     ("c.py", "def lone():\n    try:\n        assert lone\n    except Exception:\n        pass\n    return other(3)\n\ndef helper(z):\n    return z\n"),
 ];
 
-/// A cross-file rule (`at`) reads `col` of the nodes an export (`called`) names, joined with another file's export
-/// (`defined`); a file-local rule (`flagged`) is the one edited, its body testing `kind`. `both` pairs the files that
+/// A cross-file rule (`at`) joins each file's calls' columns (`call_col`, made in the call's own file: no node
+/// crosses, decision 0727) with the names another file defines (`def_name`); a file-local rule (`flagged`) is the one edited, its body testing `kind`. `both` pairs the files that
 /// define a name (by their document keys: no node crosses, decision 0677). `both` and `doubled` are
 /// read by a later stratum (`many` reads `doubled`), so a cold run hands `both` off once `doubled` has read it, which
 /// its hand-off asserts (Q206; the counting supports, gone with decision 0364, were the relations it handed before).
@@ -46,8 +46,12 @@ fn program(kind: &str) -> String {
 called(c, x) :- kind(c, "call"), field(c, "function", f), text(f, x).
 .decl defined(d: node, x: symbol)
 defined(d, x) :- kind(d, "function_definition"), field(d, "name", n), text(n, x).
+.decl call_col(x: symbol, k: number)
+call_col(x, k) :- called(c, x), node_start_column(c, k).
+.decl def_name(x: symbol)
+def_name(x) :- defined(_, x).
 .decl at(x: symbol, k: number) cross_file
-at(x, k) :- called(c, x), defined(_, x), node_start_column(c, k).
+at(x, k) :- call_col(x, k), def_name(x).
 .decl def_in(a: number, x: symbol)
 def_in(a, x) :- defined(d, x), docof(d, a).
 .decl both(a: number, b: number, x: symbol) cross_file
@@ -252,9 +256,10 @@ const COMMENTED: &[(&str, &str)] = &[
 ];
 
 /// File-local exports of spans the edit leaves (`noted`: Python's comments, which no node holds; `said`: the
-/// source's lines), and cross-file rules (`remark`, `spoken`) reading their `line` and `col`. A span's base rows are
-/// made only where its relation is, so a partial hit's must come from its entry: its chunk makes only what the
-/// edited rule reads.
+/// source's lines), their lines and columns read in their own files (`noted_at`, `said_at`: no node crosses, decision
+/// 0727), and cross-file rules (`remark`, `spoken`) joining them with the names defined. A span's rows are made only
+/// where its relation is, so a partial hit's must come from its entry: its chunk makes only what the edited rule
+/// reads.
 fn spans_program(kind: &str) -> String {
     format!(
         r#"
@@ -262,12 +267,18 @@ fn spans_program(kind: &str) -> String {
 defined(d, x) :- kind(d, "function_definition"), field(d, "name", n), text(n, x).
 .decl noted(c: node, x: symbol)
 noted(c, x) :- comment(c, x).
+.decl def_name(x: symbol)
+def_name(x) :- defined(_, x).
+.decl noted_at(x: symbol, l: number, k: number)
+noted_at(x, l, k) :- noted(c, x), node_line_number(c, l), node_start_column(c, k).
 .decl remark(x: symbol, l: number, k: number) cross_file
-remark(x, l, k) :- noted(c, x), defined(_, x), node_line_number(c, l), node_start_column(c, k).
+remark(x, l, k) :- noted_at(x, l, k), def_name(x).
 .decl said(sp: place, x: symbol)
 said(sp, x) :- document_line(_, sp), place_text(sp, x).
+.decl said_at(x: symbol, l: number, k: number)
+said_at(x, l, k) :- said(sp, x), place_line_number(sp, l), place_start_column(sp, k).
 .decl spoken(x: symbol, l: number, k: number) cross_file
-spoken(x, l, k) :- said(sp, x), defined(_, x), place_line_number(sp, l), place_start_column(sp, k).
+spoken(x, l, k) :- said_at(x, l, k), def_name(x).
 .decl flagged(n: node)
 flagged(n) :- kind(n, "assert_statement"), !kind(n, "{kind}").
 .decl flag_col(k: number, l: number)

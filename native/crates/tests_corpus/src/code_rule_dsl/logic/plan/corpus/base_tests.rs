@@ -790,15 +790,8 @@ fn comments_are_ws_comment_nodes() {
     let python = "#!/usr/bin/env python\r\n# noqa: E501\nimport os  # type: ignore\ndef f():\n    #\n    return 1  #   trailing   \nx = \"# not a comment\"  # é\n";
     let dir = corpus("comments", &[("a.py", python)]);
     let program = r#"
-.decl comment(n: node, s: symbol)
-.decl line(n: place, l: number)
-.decl end_line(n: place, l: number)
-.decl col(n: place, c: number)
-.decl node_text(n: node, s: symbol)
-.decl text(n: place, s: symbol)
-.input comment, line, end_line, col, node_text, text
 .decl comments(l: number, e: number, c: number, t: symbol, s: symbol)
-comments(l, e, c, t, s) :- comment(n, s), node_line_number(n, l), node_end_line_number(n, e), node_start_column(n, c), node_text(n, t), text(n, t).
+comments(l, e, c, t, s) :- comment(n, s), node_line_number(n, l), node_end_line_number(n, e), node_start_column(n, c), node_text(n, t).
 .output comments
 "#;
     let got = run(&dir, program, &["comments"]);
@@ -809,13 +802,6 @@ comments(l, e, c, t, s) :- comment(n, s), node_line_number(n, l), node_end_line_
     let rust = "//! crate doc\n/// item doc\nfn f() { /* block */ let x = 1; // tail\n}\n/** outer block doc */\nfn g() {}\n";
     let dir = corpus("rust-comments", &[("src/lib.rs", rust)]);
     let program = r#"
-.decl node(d: number, n: node, kind: symbol, start: number, end: number)
-.decl comment(n: node, s: symbol)
-.decl line(n: place, l: number)
-.decl end_line(n: place, l: number)
-.decl col(n: place, c: number)
-.decl node_text(n: node, s: symbol)
-.input node, comment, line, end_line, col, node_text
 .decl comments(l: number, e: number, c: number, t: symbol, s: symbol)
 comments(l, e, c, t, s) :- comment(n, s), node(_, n, _, _, _), node_line_number(n, l), node_end_line_number(n, e), node_start_column(n, c), node_text(n, t).
 .output comments
@@ -1722,8 +1708,8 @@ calls(@ast_dump(n)) :- node(_, n, "call", _, _).
 fn a_text_test_reads_node_text_answered_on_request() {
     let dir = corpus("node-text-contains", &[("a.py", "class SqlAdminQuery:\n    pass\n"), ("b.py", "x = 1\n")]);
     let program = r#"
-.decl node(d: node, n: node, k: symbol, s: number, e: number)
-.decl doc(d: node, p: symbol, m: symbol)
+.decl node(d: number, n: node, k: symbol, s: number, e: number)
+.decl doc(d: number, p: symbol, m: symbol)
 .decl node_text(n: node, s: symbol)
 .input node, doc, node_text
 .decl gate(p: symbol)
@@ -1744,7 +1730,7 @@ pre(p) :- node(d, m, "module", _, _), doc(d, p, _), node_text(m, s), prefix("cla
 #[test]
 fn str_answered_on_request_holds_the_eager_rows() {
     let dir = corpus("str-on-request", &[("a.py", "x = 'a'\ny = b\"by\"\nz = r'\\\\d'\nw = f'k{x}'\nv = f'plain'\nu = 'p' 'q'\nt = \"\"\"doc\"\"\"\n")]);
-    let decls = ".decl node(d: node, n: node, k: symbol, s: number, e: number)\n.decl str(n: node, s: symbol)\n.input node, str\n.decl out(s: symbol)\n.output out\n";
+    let decls = ".decl node(d: number, n: node, k: symbol, s: number, e: number)\n.decl str(n: node, s: symbol)\n.input node, str\n.decl out(s: symbol)\n.output out\n";
     let asked = format!("{decls}out(s) :- node(_, n, \"string\", _, _), str(n, s).\n");
     let lowered = crate::code_rule_dsl::logic::rr::parse_version(&asked).unwrap();
     let inputs = crate::code_rule_dsl::logic::program_image::fields::ProgramFields::input_names(&*lowered);

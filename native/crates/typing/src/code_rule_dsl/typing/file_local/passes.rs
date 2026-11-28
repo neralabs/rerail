@@ -101,14 +101,14 @@ enum Doc {
     Var(Slot),
     /// One it leaves unnamed: body literal `.0`'s column `.1`, which then names it.
     Unnamed(usize, usize),
-    /// Through a node it binds: by `docof` (`true`) or `node`.
-    Through(Slot, bool),
+    /// Through a node it binds, by `docof`.
+    Through(Slot),
     /// Through a file's path it binds or writes out (decision 0665): body literal `.0`'s column `.1`, by
     /// `doc(d, p, …)` of `.2` columns.
     ByPath(usize, usize, usize),
     /// Through a node it leaves unnamed (decision 0680): body literal `.0`'s node column `.1`, `_`, named and read by
-    /// `docof` (`.2`) or `node`.
-    Wild(usize, usize, bool),
+    /// `docof`.
+    Wild(usize, usize),
     /// Through a relation of values it reads (decision 0680): body literal `.0`, read from that relation's located
     /// twin at the document.
     Twin(usize),
@@ -153,7 +153,10 @@ impl ProgramPass for Locate {
         // (`crossing`'s `projected`): such a view is left, not blocked.
         let view_targets: BTreeSet<String> = split.relayed_views.iter().filter(|q| local.contains(q.as_str()) && !targets.contains(*q)).cloned().collect();
         let targets: BTreeSet<String> = targets.into_iter().chain(view_targets.iter().cloned()).collect();
-        let docof = f.is_input("docof");
+        // A node places its row by `docof`, a base relation of every program that answers every id (a node, a line, a
+        // comment no node is, a match), made an input where the program does not read it (`needs_docof`). `node`
+        // holds nodes alone: a comment's row placed through it was dropped.
+        let docof_read = f.is_input("docof");
         // `doc`'s width, where it is an input: a path key's row names its document through it (decision 0665).
         let doc_width = f.columns("doc").filter(|_| f.is_input("doc")).map(|c| c.len());
         // The columns a row's document is found through, by `doc(d, p, …)`: `doc`'s path, and the path keys that hold a
@@ -165,7 +168,6 @@ impl ProgramPass for Locate {
                 _ => split.paths.get(rel).cloned().unwrap_or_default(),
             }
         };
-        let node_declared = f.declared("node");
         let node_typed = |rel: &str, c: usize| f.column_type(rel, c) == Some("node");
         let doc_type = f.column_type("node", 0).unwrap_or("int");
         // How many rules of a file-local head read each relation (not their own): a target read so is blocked.
@@ -247,13 +249,12 @@ impl ProgramPass for Locate {
             if let Some((i, c)) = positive().find_map(|(i, a)| document(v.rel_name(a.rel())).filter(|&c| matches!(a.args().nth(c), Some(TermRef::Wild))).map(|c| (i, c))) {
                 return Some(Doc::Unnamed(i, c));
             }
-            let nodes = docof || node_declared;
             // A node that places its read's row: a node column of an input, or of a derived relation located by the
             // split. A node a relation of values holds, one with no location column (`spot(s)`, a place of any path),
             // is no document of its row: its row's is its located form's (`Doc::Twin`, decision 0680).
             let places = |rel: &str, c: usize| node_typed(rel, c) && (!f.derives(rel) || locations.get(rel).is_some_and(|cs| !cs.is_empty()));
-            if nodes && let Some(n) = positive().find_map(|(_, a)| a.args().enumerate().find_map(|(c, t)| t.var().filter(|_| places(v.rel_name(a.rel()), c)))) {
-                return Some(Doc::Through(n, docof));
+            if let Some(n) = positive().find_map(|(_, a)| a.args().enumerate().find_map(|(c, t)| t.var().filter(|_| places(v.rel_name(a.rel()), c)))) {
+                return Some(Doc::Through(n));
             }
             if let Some(w) = doc_width
                 && let Some((i, c)) = positive().find_map(|(i, a)| path_keys(v.rel_name(a.rel())).into_iter().find(|&c| matches!(a.args().nth(c), Some(TermRef::Var(_) | TermRef::Str(_)))).map(|c| (i, c)))
@@ -261,8 +262,8 @@ impl ProgramPass for Locate {
                 return Some(Doc::ByPath(i, c, w));
             }
             // A node left unnamed: each row of its relation is its node's document's (decision 0680).
-            if nodes && let Some((i, c)) = positive().find_map(|(i, a)| a.args().enumerate().find(|(c, t)| matches!(t, TermRef::Wild) && node_typed(v.rel_name(a.rel()), *c)).map(|(c, _)| (i, c))) {
-                return Some(Doc::Wild(i, c, docof));
+            if let Some((i, c)) = positive().find_map(|(i, a)| a.args().enumerate().find(|(c, t)| matches!(t, TermRef::Wild) && node_typed(v.rel_name(a.rel()), *c)).map(|(c, _)| (i, c))) {
+                return Some(Doc::Wild(i, c));
             }
             positive().find_map(|(i, a)| twin_ok.contains(v.rel_name(a.rel())).then_some(Doc::Twin(i)))
         };
@@ -432,7 +433,14 @@ impl ProgramPass for Locate {
             return Ok(());
         }
         let input = w.input().clone();
+        let needs_docof = !docof_read && items.iter().any(|i| matches!(i, Item::Made { doc: Doc::Through(..) | Doc::Wild(..), .. }));
         let b = w.derive()?;
+        if needs_docof {
+            if !f.declared("docof") {
+                b.fields().declare("docof", &[("n", "node"), ("d", "int")]);
+            }
+            b.fields().add_input("docof");
+        }
         for (at, cols) in &ats {
             let cols: Vec<(&str, &str)> = cols.iter().map(|(n, t)| (n.as_str(), t.as_str())).collect();
             b.fields().declare(at, &cols);
@@ -492,7 +500,7 @@ impl ProgramPass for Locate {
                                 let args: Vec<T<'_>> = a.args().enumerate().map(|(k, t)| if k == c { T::Var(D) } else { t_of(&input, rule, t) }).collect();
                                 rb.atom_with(a.rel(), &args, a.neg(), a.gated())
                             }
-                            (Doc::Wild(j, c, _), L::Atom(a)) if j == i => {
+                            (Doc::Wild(j, c), L::Atom(a)) if j == i => {
                                 let args: Vec<T<'_>> = a.args().enumerate().map(|(k, t)| if k == c { T::Var(N) } else { t_of(&input, rule, t) }).collect();
                                 rb.atom_with(a.rel(), &args, a.neg(), a.gated())
                             }
@@ -510,12 +518,11 @@ impl ProgramPass for Locate {
                         args.extend((2..width).map(|_| T::Wild));
                         rb = rb.atom("doc", &args);
                     }
-                    if let Doc::Wild(_, _, docof) = doc {
-                        rb = if docof { rb.atom("docof", &[T::Var(N), T::Var(D)]) } else { rb.atom("node", &[T::Var(D), T::Var(N), T::Wild, T::Wild, T::Wild]) };
+                    if let Doc::Wild(..) = doc {
+                        rb = rb.atom("docof", &[T::Var(N), T::Var(D)]);
                     }
-                    if let Doc::Through(n, docof) = doc {
-                        let n = T::VarAtom(rule.var(n));
-                        rb = if docof { rb.atom("docof", &[n, T::Var(D)]) } else { rb.atom("node", &[T::Var(D), n, T::Wild, T::Wild, T::Wild]) };
+                    if let Doc::Through(n) = doc {
+                        rb = rb.atom("docof", &[T::VarAtom(rule.var(n)), T::Var(D)]);
                     }
                     rb.finish()?;
                 }

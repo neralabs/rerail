@@ -50,15 +50,22 @@ pub(super) const OWN_NODES: &[(&str, &[usize])] = &[("parsed", &[2])];
 
 /// Host place `at` (`Guest::at`, `TapePlace::at`: a located id, `host`'s key and its low bits, as it is kept across
 /// rounds and chunks) as the chunk's id of that node or span, which its rows hold (plan "Chunk node numbers"): its
-/// local id in the host, plus the host's base. As it is where the host is no document the chunk has made.
+/// local id in the host, plus the host's base. A host the batch's documents do not hold (a tape value admitted in an
+/// earlier batch of the growth, the host of a string annotation nested in it) is found by the growth's numbering
+/// (`Numbering::of_located`). As it is where the host is no document the chunk has made.
 fn at_id(docs: &dyn Hosts, host: u32, at: i64) -> i64 {
     let low = rerail_blocks::located::Located(at).low();
-    docs.host(host).filter(|h| h.is_numbered()).and_then(|h| h.local_of(low).map(|l| h.global(l))).unwrap_or(at)
+    docs.host(host).filter(|h| h.is_numbered()).and_then(|h| h.local_of(low).map(|l| h.global(l))).or_else(|| docs.of_located(at)).unwrap_or(at)
 }
 
 pub(super) trait Hosts {
     /// The projection of the document of key `key`.
     fn host(&self, key: u32) -> Option<&Projected>;
+    /// The chunk id of location `at` in any document the growth has numbered.
+    fn of_located(&self, at: i64) -> Option<i64> {
+        let _ = at;
+        None
+    }
 }
 
 impl Hosts for super::made::Docs {
@@ -76,6 +83,10 @@ pub(super) struct HostsOf<'a> {
 impl Hosts for HostsOf<'_> {
     fn host(&self, key: u32) -> Option<&Projected> {
         self.docs.host(key).or_else(|| self.outer?.host(key))
+    }
+    fn of_located(&self, at: i64) -> Option<i64> {
+        use rerail_facts_base::code_rule_dsl::facts::numbering::Numbering as _;
+        self.docs.ids().of_located(at)
     }
 }
 
