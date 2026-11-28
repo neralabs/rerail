@@ -3745,8 +3745,9 @@ fn run_observed_within(
             .map(|r| {
                 // Why the split put the rule's relation in the cross part, as it records (`RERAIL_SPLIT_DUMP`'s causes).
                 let head = cross_run.rel_name(r.head().rel());
+                let chain: String = crate::code_rule_dsl::typing::file_local::crossing_chain(head, &split.causes).iter().skip(1).map(|l| format!("\n      cross-file because {l}")).collect();
                 match split.causes.get(head) {
-                    Some(why) => format!("  {}   ({head}: {why})", cross_run.show_rule(r)),
+                    Some(why) => format!("  {}   ({head}: {why}){chain}", cross_run.show_rule(r)),
                     None => format!("  {}", cross_run.show_rule(r)),
                 }
             })

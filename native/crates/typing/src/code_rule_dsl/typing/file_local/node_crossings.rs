@@ -280,7 +280,7 @@ pub fn crossings_under(program: &Version, crossings: &mut [NodeCrossing], causes
 
 /// The split's causes read down from `rel` (`crossing_under`'s path): each relation on it with the first line of its
 /// cause, to the first relation cross-file for a reason of its own.
-pub(super) fn crossing_chain(rel: &str, causes: &BTreeMap<String, String>) -> Vec<String> {
+pub fn crossing_chain(rel: &str, causes: &BTreeMap<String, String>) -> Vec<String> {
     let mut at = rel.to_owned();
     let mut out = Vec::new();
     let mut seen: BTreeSet<String> = BTreeSet::new();

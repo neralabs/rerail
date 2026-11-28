@@ -189,7 +189,7 @@ mod on_version;
 pub use on_version::{FLAG_COPY, FileLocal, LastFlags, flag_copy};
 pub use on_version::reads_a_node;
 mod node_crossings;
-pub use node_crossings::{MAKES_A_NODE, NodeColumns, NodeCrossing, crossings_under, node_crossings, nodes_checked, regex_group_only};
+pub use node_crossings::{MAKES_A_NODE, NodeColumns, NodeCrossing, crossing_chain, crossings_under, node_crossings, nodes_checked, regex_group_only};
 mod passes;
 pub use passes::{FactorCaches, FactorizeExports, Locate, MoveCrossFile, PushLocalJoins, RequestsFileLocal, factorize_intermediates, locate_all};
 #[cfg(any(test, feature = "test-hooks"))]
