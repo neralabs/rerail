@@ -134,6 +134,14 @@ export function setupPacks(list: string | undefined, answer: string | undefined)
 
 export type DashboardPage = "rules";
 
+/**
+ * Which running daemon a dashboard link keeps. `active`: only the active install's, as set-up ends: one from another
+ * package is replaced. `running`: whichever runs, as `rerail start` ends in a repository set up before, in both its
+ * forms: the daemon serves every repository and session of the home, and a coding agent's next hook replaces one from
+ * another package anyway. Both start the active install's where none runs.
+ */
+export type DashboardDaemon = "active" | "running";
+
 /** What set-up needs from the machine; the CLI builds it (`setupEnvironment`), tests fake it. */
 export interface SetupEnvironment {
   /** Coding agents installed on this computer. */
@@ -155,9 +163,9 @@ export interface SetupEnvironment {
   /**
    * A dashboard page scoped to `scope`'s repository and checkout; the link is always returned. `open`: try a
    * browser (E6 says why none opened). False when an earlier run already opened it, so a re-run shows the link alone,
-   * and whenever a coding agent runs set-up (the agent lane and `--json`).
+   * and whenever a coding agent runs set-up (the agent lane and `--json`). `daemon`: which running daemon it keeps.
    */
-  dashboard(scope: RulesDashboardScope, page: DashboardPage, open: boolean): Promise<DashboardLink>;
+  dashboard(scope: RulesDashboardScope, page: DashboardPage, open: boolean, daemon: DashboardDaemon): Promise<DashboardLink>;
   /** Where rule packs are fetched from and installed to: npm, into the Rerail home. */
   readonly packs: PackStore;
 }
@@ -543,7 +551,7 @@ async function summary(run: Run, repository: Repository, firstStart: boolean, ag
       notRun: checkout === undefined ? [] : checkoutRulesNotRun(database, checkout),
     };
   }) ?? { packNames: [], ruleCount: 0, others: [], notRun: [] };
-  const dashboard = await run.request.environment.dashboard(scope, "rules", open);
+  const dashboard = await run.request.environment.dashboard(scope, "rules", open, "active");
   say(run.io, renderSummary({
     repoName: repository.name,
     packNames,
@@ -1022,7 +1030,10 @@ const rulesNoun = (count: number): string => `${count} ${count === 1 ? "rule is"
 
 /**
  * Start Rerail in the checkout `workspace` is in and the checkouts inside it, or with `repository` in every
- * checkout of its repository. A repository that is not set up runs set-up's questions first.
+ * checkout of its repository. A repository that is not set up runs set-up's questions first, which end on the
+ * dashboard's link; one set up before ends on it too, shown without opening a browser: the running daemon's, of
+ * whichever package, or the active install's started for it (`running`, {@link DashboardDaemon}), and where none could
+ * be had, why. Both forms of `rerail start` end here, so `--json` changes only the form of the answer.
  */
 export async function startRerail(workspace: string, io: RepositorySetupIo, options: RepositorySetupOptions): Promise<RepositoryStartReport> {
   const databasePath = options.databasePath ?? defaultRerailDatabasePath();
@@ -1032,11 +1043,13 @@ export async function startRerail(workspace: string, io: RepositorySetupIo, opti
   const database = openRerailDatabase(databasePath);
   let previous: RepositoryStartState;
   let ruleCount: number;
+  let scope: RulesDashboardScope;
   try {
     const checkout = recordCheckout(database, workspace);
     previous = stateOf(checkoutStatus(database, checkout));
     setStarted(database, checkout, true, wholeRepository);
     ruleCount = onRuleCount(database, checkout);
+    scope = { repositoryKey: checkout.repositoryKey, checkoutPath: checkout.checkoutPath };
   } finally {
     database.$client.close();
   }
@@ -1044,6 +1057,10 @@ export async function startRerail(workspace: string, io: RepositorySetupIo, opti
   io.say(previous === "started"
     ? `● Rerail is already on in ${name}. ${rulesNoun(ruleCount)}.`
     : `● Rerail is on in ${name}. ${rulesNoun(ruleCount)}, as you left them.`);
+  const link = await options.environment.dashboard(scope, "rules", false, "running");
+  io.say(`  ${link.url}`);
+  // A link shown without opening a browser carries a reason only where no daemon could be had for it.
+  if (link.noBrowserReason !== undefined) io.say(`  △ ${link.noBrowserReason}`);
   return { previous, setUpRan: false, repositoryName: name, ruleCount, cancelled: false, status: "started" };
 }
 
@@ -1072,23 +1089,9 @@ export function runSetupStep(request: SetupRequest): Promise<SetupStep> {
 }
 
 /**
- * `rerail start --json`: the set-up's step where the repository is not set up. Otherwise `done` with one line and
- * the rules dashboard's link, as the text path ends, shown without opening a browser.
+ * `rerail start --json`: the set-up's step where the repository is not set up. Otherwise `done` with what the text
+ * path says, {@link startRerail}'s line and the rules dashboard's link.
  */
 export function startRerailStep(workspace: string, options: RepositorySetupOptions): Promise<SetupStep> {
-  return collectStep(async (io, onQuestion) => {
-    const report = await startRerail(workspace, io, { ...options, onQuestion });
-    if (report.setUpRan) return report.status;
-    const database = openRerailDatabase(options.databasePath ?? defaultRerailDatabasePath(), { readonly: true });
-    let checkout: CheckoutContext | undefined;
-    try {
-      checkout = lookupCheckout(database, workspace);
-    } finally {
-      database.$client.close();
-    }
-    if (checkout === undefined) throw new Error(`Rerail has not recorded ${workspace}.`);
-    const scope = { repositoryKey: checkout.repositoryKey, checkoutPath: checkout.checkoutPath };
-    io.say(`  ${(await options.environment.dashboard(scope, "rules", false)).url}`);
-    return report.status;
-  });
+  return collectStep(async (io, onQuestion) => (await startRerail(workspace, io, { ...options, onQuestion })).status);
 }

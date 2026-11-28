@@ -799,7 +799,9 @@ there too. `rerail status` says whether the daemon is running.
 
 The daemon reuses the port in `~/.rerail/daemon-port.json`: 4737 at first, or the one `rerail daemon start --port <n>`
 named. Only when another program holds that port and 4737 does it take a free port, and keep it, so old links stop
-working. A taken `--port` fails the start instead (below).
+working. A taken `--port` fails the start instead (below). A daemon an OMP or Pi session starts takes a free port and
+does not keep it; one that replaces a running daemon of another Rerail version tries that daemon's port first, and
+takes a free one where another program holds it.
 
 </details>
 

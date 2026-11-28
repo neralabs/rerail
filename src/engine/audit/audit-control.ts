@@ -304,18 +304,24 @@ export class SqliteAuditControlStore {
    * The row saved under `workspaceRoot`, the canonical key, else the one Rerail 0.1.4 and earlier saved for the same
    * folder under the key `spelt.cwd` (the folder as the session or caller spelt it) gave it on Windows. An older Rerail
    * sharing the database goes on writing that row, so it is read where it is rather than copied. Both keys are read in
-   * one statement, prepared once per store, so a folder with no row under either costs no more than a read of the
-   * canonical key alone.
+   * one statement, prepared once for this store's own connection while a save on another connection prepares its own
+   * ({@link #underEither}), so a folder with no row under either costs no more than a read of the canonical key alone.
    */
-  #settingsRow(workspaceRoot: string, spelt: SpeltFolder): typeof auditSettings.$inferSelect | undefined {
+  #settingsRow(workspaceRoot: string, spelt: SpeltFolder, database = this.#database): typeof auditSettings.$inferSelect | undefined {
     const earlier = this.#earlierKey(workspaceRoot, spelt.cwd);
-    if (earlier === workspaceRoot) return this.#database.select().from(auditSettings).where(eq(auditSettings.workspaceRoot, workspaceRoot)).get();
-    this.#settingsUnderEither ??= settingsUnderEither(this.#database);
-    const rows = this.#settingsUnderEither.all({ stored: workspaceRoot, earlier });
+    if (earlier === workspaceRoot) return database.select().from(auditSettings).where(eq(auditSettings.workspaceRoot, workspaceRoot)).get();
+    const rows = this.#underEither(database).all({ stored: workspaceRoot, earlier });
     return rows.find(row => row.workspaceRoot === workspaceRoot) ?? rows.find(row => this.#savedHere(row, spelt));
   }
 
   #settingsUnderEither: ReturnType<typeof settingsUnderEither> | undefined;
+
+  /** {@link settingsUnderEither} on `database`: kept for this store's own connection; a save on another prepares its own. */
+  #underEither(database: RerailDatabase): ReturnType<typeof settingsUnderEither> {
+    if (database !== this.#database) return settingsUnderEither(database);
+    this.#settingsUnderEither ??= settingsUnderEither(database);
+    return this.#settingsUnderEither;
+  }
 
   /**
    * Whether the row Rerail 0.1.4 saved under the spelling `spelt.cwd` was saved for this folder. A letter or 8.3 name
@@ -379,21 +385,34 @@ export class SqliteAuditControlStore {
     const session = requireSession(this.#database, sessionId);
     return this.#settings(canonicalWorkspace(session.cwd), session) !== undefined;
   }
-  updateSettings(sessionId: string, patch: z.input<typeof auditSettingsPatchSchema>): AuditControls {
+  /**
+   * Saves `patch` over the settings of the session's checkout ({@link #saveSettings}) where {@link #savedOn} makes it,
+   * and returns the settings saved.
+   */
+  updateSettings(sessionId: string, patch: z.input<typeof auditSettingsPatchSchema>, database?: RerailDatabase): AuditSettings {
     const parsed = auditSettingsPatchSchema.parse(patch);
-    this.#transactionApart(() => {
-      const session = requireSession(this.#database, sessionId);
-      this.#saveSettings(canonicalWorkspace(session.cwd), parsed, session);
+    return this.#savedOn(database, on => {
+      const session = requireSession(on, sessionId);
+      return this.#saveSettings(canonicalWorkspace(session.cwd), parsed, session, on);
     });
-    return this.getSettings(sessionId);
   }
   /**
    * `updateSettings` for a checkout by its folder, before any session there exists: what its sessions start with. The
    * change starts from the settings {@link getWorkspaceSettings} reads for the folder as spelt here.
    */
-  updateWorkspaceSettings(workspaceRoot: string, patch: z.input<typeof auditSettingsPatchSchema>): AuditSettings {
+  updateWorkspaceSettings(workspaceRoot: string, patch: z.input<typeof auditSettingsPatchSchema>, database?: RerailDatabase): AuditSettings {
     const parsed = auditSettingsPatchSchema.parse(patch);
-    return this.#transactionApart(() => this.#saveSettings(canonicalWorkspace(workspaceRoot), parsed, { cwd: workspaceRoot }));
+    return this.#savedOn(database, on => this.#saveSettings(canonicalWorkspace(workspaceRoot), parsed, { cwd: workspaceRoot }, on));
+  }
+  /**
+   * `save`, which reads the saved settings before it writes, on `database` inside its caller's write transaction when
+   * one is given: the daemon gives its record writer's, through `writtenWhenFree`, so the save waits for another
+   * process's write lock off the thread that answers hooks and merges over the row as it is once that lock is free.
+   * Without one, on this store's own connection in {@link #transactionApart}, where another connection's lock fails
+   * it at once.
+   */
+  #savedOn<T>(database: RerailDatabase | undefined, save: (database: RerailDatabase) => T): T {
+    return database === undefined ? this.#transactionApart(() => save(this.#database)) : save(database);
   }
   /**
    * Merges `patch` over the checkout's saved settings, else the defaults, and saves the result under the canonical key.
@@ -402,12 +421,12 @@ export class SqliteAuditControlStore {
    * row, as rows read before the key existed, so a release that reads `{ scope, mode }` strictly still reads every row
    * that does not opt into an experimental strategy.
    */
-  #saveSettings(workspaceRoot: string, patch: AuditSettingsPatch, spelt: SpeltFolder = { cwd: workspaceRoot }): AuditSettings {
-    const previous = this.#settingsRow(workspaceRoot, spelt);
+  #saveSettings(workspaceRoot: string, patch: AuditSettingsPatch, spelt: SpeltFolder, database: RerailDatabase): AuditSettings {
+    const previous = this.#settingsRow(workspaceRoot, spelt, database);
     const settings = auditSettingsSchema.parse({ ...DEFAULT_AUDIT_SETTINGS, ...(previous === undefined ? {} : parseSettings(previous.settings)), ...patch });
     const { steerStrategy, ...saved } = settings;
     const row = steerStrategy === "message" ? saved : settings;
-    this.#database.insert(auditSettings).values({ workspaceRoot, settings: row, updatedAt: Date.now() })
+    database.insert(auditSettings).values({ workspaceRoot, settings: row, updatedAt: Date.now() })
       .onConflictDoUpdate({ target: auditSettings.workspaceRoot, set: { settings: row, updatedAt: Date.now() } }).run();
     return settings;
   }
