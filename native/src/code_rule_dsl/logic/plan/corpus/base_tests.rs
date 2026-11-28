@@ -1551,7 +1551,6 @@ files(p) :- doc(_, p, _).
 
 /// The guest parse memo keeps a parse for what it holds, its tree and tape too, not its text alone
 /// (`guests::test_kept_parse_budget`): run here, where the languages are registered.
-#[cfg(feature = "test-hooks")]
 #[test]
 fn guest_parses_are_kept_for_what_they_hold() {
     super::guests::test_kept_parse_budget();
