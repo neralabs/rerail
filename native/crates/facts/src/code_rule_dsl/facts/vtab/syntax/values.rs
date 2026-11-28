@@ -1562,6 +1562,14 @@ impl Source for Layered {
         }
         self.values.whole(&self.name).filter(|w| w.len() == self.len()).and_then(|w| w.in_block())
     }
+    // A chunk's rows alone are its base's, which the device reads whole (`MadeRows` makes them).
+    #[cfg(any(target_os = "macos", target_os = "linux", windows))]
+    fn in_block_whole(&self) -> Option<crate::code_rule_dsl::facts::rows::InBlock> {
+        if !self.has_parts() {
+            return self.base.in_block_whole();
+        }
+        self.in_block()
+    }
     #[cfg(any(target_os = "macos", target_os = "linux", windows))]
     fn device_view(&self) -> Option<DeviceView> {
         if !self.has_parts() {

@@ -240,7 +240,7 @@ impl Lowerer {
 pub fn declare_core(prog: &mut (impl crate::code_rule_dsl::logic::program_image::fields::FieldsMut + ?Sized), read: &BTreeSet<(String, usize)>, docof_of_locs: &mut bool) -> Result<(), Error> {
     use crate::code_rule_dsl::logic::program_facts::Field;
     for (rel, arity) in read {
-        if prog.declares(rel) || is_axis(rel) {
+        if prog.declares(rel) || is_axis(rel) || crate::code_rule_dsl::logic::front::near_child(rel).is_some() {
             continue;
         }
         let Some(cols) = DECLS.get(rel) else { continue };

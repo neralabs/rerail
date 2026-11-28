@@ -5820,6 +5820,8 @@ pub fn vtab_indexes(rel: &str) -> Vec<Vec<String>> {
         "rr_token_named" => &[&["p", "i"], &["c"], &["start"]],
         "path_part" | "file_name" => &[&["d"], &["s", "d"]],
         // The transducer's `nearest` rows (`facts::vtab::syntax::with_nearest`), looked up either way.
+        // A `nearest` with the child, by its node (one row a node).
+        rel if crate::code_rule_dsl::logic::front::near_child(rel).is_some() => &[&["n"]],
         rel if crate::code_rule_dsl::logic::front::is_transduced(rel) => &[&["n"], &["a"]],
         // A text test's symbols (decision 0037, `preparation::text::TextRelations`).
         rel if rel.starts_with(super::super::strings::RELATION) => &[&["s"]],

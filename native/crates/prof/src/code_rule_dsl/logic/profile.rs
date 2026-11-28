@@ -154,6 +154,9 @@ pub struct State {
     /// (`setfix::SHAPES`: calls and candidates walked by call site, calls by candidates' kind, calls by candidates
     /// walked), where the engine counted them.
     pub native_shapes: BTreeMap<(String, String), Vec<Vec<u64>>>,
+    /// By join shape (`rerail_join_shapes::Shape::name`): its form, the strata and heads it ran for, and per stage the
+    /// rows into it and out of it, summed over its runs (the join program's, `setfix::device::counted`).
+    pub join_shapes: BTreeMap<String, ShapeTotal>,
     pub notes: BTreeMap<String, String>,
     pub join_rows: BTreeMap<String, (usize, usize)>,
     /// Run-level decisions by (topic, text): how many times made, or stated by a reused version that made them
@@ -236,6 +239,9 @@ impl State {
         }
         for (k, t) in o.native_shapes {
             add_shapes(self.native_shapes.entry(k).or_default(), &t);
+        }
+        for (k, t) in o.join_shapes {
+            self.join_shapes.entry(k).or_default().add(t);
         }
         for (k, t) in o.notes {
             self.notes.entry(k).or_insert(t);
@@ -2199,6 +2205,55 @@ pub fn plan_work(steps: &[(u64, u64)]) -> u64 {
     steps.iter().map(|(a, _)| a).sum::<u64>() + steps.last().map_or(0, |s| s.1)
 }
 
+/// A join shape's totals over a run (`State::join_shapes`).
+#[derive(Clone, Default)]
+pub struct ShapeTotal {
+    /// Its form as `shapes.yaml` writes it (`rerail_join_shapes::Shape::yaml`).
+    pub form: String,
+    /// The joins it ran for, by (span path, head): the waves each ran.
+    pub instances: BTreeMap<(String, String), u64>,
+    /// Per stage, the rows into it and out of it.
+    pub stages: Vec<[u64; 2]>,
+    pub runs: u64,
+}
+
+impl ShapeTotal {
+    fn add(&mut self, o: ShapeTotal) {
+        if self.form.is_empty() {
+            self.form = o.form;
+        }
+        for (k, n) in o.instances {
+            *self.instances.entry(k).or_default() += n;
+        }
+        add_rows(&mut self.stages, &o.stages);
+        self.runs += o.runs;
+    }
+}
+
+fn add_rows(to: &mut Vec<[u64; 2]>, add: &[[u64; 2]]) {
+    if to.len() < add.len() {
+        to.resize(add.len(), [0; 2]);
+    }
+    for (t, a) in to.iter_mut().zip(add) {
+        t[0] += a[0];
+        t[1] += a[1];
+    }
+}
+
+/// Adds a run of join shape `name` for `head` to the current span: its form (made only the first time the run sees
+/// the shape) and its stages' rows in and out.
+pub fn join_shape(name: String, form: impl FnOnce() -> String, head: &str, stages: &[[u64; 2]]) {
+    let path = current();
+    let mut state = state();
+    let t = state.join_shapes.entry(name).or_default();
+    if t.form.is_empty() {
+        t.form = form();
+    }
+    *t.instances.entry((path, head.to_owned())).or_default() += 1;
+    add_rows(&mut t.stages, stages);
+    t.runs += 1;
+}
+
 /// Adds `add`'s per-step counts to `to`'s.
 fn add_shapes(to: &mut Vec<Vec<u64>>, add: &[Vec<u64>]) {
     if to.len() < add.len() {
@@ -2409,6 +2464,14 @@ pub fn decisions() -> BTreeMap<(String, String), u64> {
 }
 
 /// The decisions made so far, taken: the next call returns those made after this one (a measurement's steps).
+/// The join shapes counted so far, every thread's (`merged`), taken: as `shapes.yaml` writes them.
+pub fn take_join_shapes() -> BTreeMap<String, ShapeTotal> {
+    if !on() {
+        return BTreeMap::new();
+    }
+    std::mem::take(&mut merged().join_shapes)
+}
+
 pub fn take_decisions() -> BTreeMap<(String, String), u64> {
     if !on() {
         return BTreeMap::new();

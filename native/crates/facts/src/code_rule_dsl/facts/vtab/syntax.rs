@@ -7473,6 +7473,11 @@ fn finish(mut out: Vec<(String, Arc<dyn Source>)>, batch: &Arc<Batch>, sets: &[(
     // once, and an `inside` whose set nests nowhere is its `nearest`.
     let mut solves: Vec<(BTreeSet<i64>, Arc<within::Solves>)> = Vec::new();
     for (name, members) in sets {
+        // `nearest(n, a, set, c)`'s rows: its own solve of the batch's tapes (`within::NearestChild`).
+        if crate::code_rule_dsl::logic::front::ast::near_child(name).is_some() {
+            out.push((name.clone(), Arc::new(within::NearestChild::new(Arc::clone(&batch), members, binding))));
+            continue;
+        }
         let axis = if name.starts_with(DESCENDANTS) {
             within::Axis::Has
         } else if name.starts_with(AXIS) {

@@ -59,7 +59,7 @@ fn a_refused_seeds_count_reads_its_inputs_index() {
     let mut syms = Interner::for_loading(&shared);
     let mut j = join_rule_with(&db, &spec, &mut syms, false).unwrap();
     j.indexed();
-    let store = Store { rels: Vec::new(), syms: shared };
+    let store = Store { rels: Vec::new(), syms: shared, stratum: 0 };
     let Step::Scalar { src: src @ Src::In(rel, ix), keys, kind: ScalarKind::Count, .. } = &j.steps[1] else { panic!("a count of an input") };
     let (rel, ix) = j.src_in(rel, ix);
     assert!(Arc::ptr_eq(rel, &r_rel));

@@ -5128,12 +5128,15 @@ dependencies = [
  "rerail-device",
  "rerail-device-metal",
  "rerail-facts",
+ "rerail-join-lab",
+ "rerail-join-shapes",
  "rerail-lang",
  "rerail-lang-python",
  "rerail-logic",
  "rerail-metal",
  "rerail-metal-programs",
  "rerail-prof",
+ "rerail-reads",
  "rerail-rr",
  "rerail-rr-parser",
  "rerail-rr-root",
@@ -5518,6 +5521,31 @@ dependencies = [
  "rerail-tape-format",
  "unicode-ident",
 ]
+
+[[package]]
+name = "rerail-join-lab"
+version = "0.1.0"
+dependencies = [
+ "libc",
+ "rerail-accel-gpu",
+ "rerail-blocks",
+ "rerail-context",
+ "rerail-device",
+ "rerail-device-metal",
+ "rerail-engine",
+ "rerail-join-lab",
+ "rerail-join-shapes",
+ "rerail-reads",
+ "rerail-setfix",
+ "rerail-tape-format",
+ "rerail-ukl-rust",
+ "rustc-hash",
+ "zstd",
+]
+
+[[package]]
+name = "rerail-join-shapes"
+version = "0.1.0"
 
 [[package]]
 name = "rerail-json-aot"

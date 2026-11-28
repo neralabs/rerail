@@ -1278,7 +1278,7 @@ impl ProgramPass for DeclareAxes {
             for l in r.body() {
                 let (L::Atom(a) | L::Agg { atom: a, .. }) = l.view() else { continue };
                 let rel = v.rel_name(a.rel());
-                if crate::code_rule_dsl::logic::front::is_axis(rel) && !v.declares(rel) && !axes.contains(&rel) {
+                if (crate::code_rule_dsl::logic::front::is_axis(rel) || crate::code_rule_dsl::logic::front::near_child(rel).is_some()) && !v.declares(rel) && !axes.contains(&rel) {
                     axes.push(rel);
                 }
             }
@@ -1286,7 +1286,13 @@ impl ProgramPass for DeclareAxes {
         if !axes.is_empty() {
             let b = w.on()?;
             for rel in axes {
-                b.fields().declare(rel, &[("n", "node"), ("a", "node")]);
+                let near = crate::code_rule_dsl::logic::front::near_child(rel).is_some();
+                let cols: Vec<(&str, &str)> = crate::code_rule_dsl::logic::front::transduced_columns(rel)
+                    .iter()
+                    .enumerate()
+                    .map(|(i, &c)| (c, if near { crate::code_rule_dsl::logic::front::NEAR_CHILD_TYPES[i] } else { "node" }))
+                    .collect();
+                b.fields().declare(rel, &cols);
                 b.fields().add_input(rel);
             }
         }

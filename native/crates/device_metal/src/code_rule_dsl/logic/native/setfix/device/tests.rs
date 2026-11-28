@@ -116,6 +116,60 @@ use rerail_blocks::vector::Vector;
         }
     }
 
+    /// The join lab's catalogue (`shape_of`, `shapes.yaml`): two joins of the same steps over relations of other names
+    /// are one shape, a join with a negation after them another, and each shape's rows per stage are the program's.
+    #[test]
+    fn joins_of_the_same_steps_over_other_relations_are_one_shape() {
+        if !crate::code_rule_dsl::transducer::packed::metal_join::available() {
+            return;
+        }
+        let store = crate::code_rule_dsl::fixtures::temp();
+        drop(crate::content_store::ContentStore::open(&store).unwrap());
+        let db = Connection::open(&store).unwrap();
+        crate::code_rule_dsl::logic::native::register(&db).unwrap();
+        crate::code_rule_dsl::logic::native::register_symbols(&db).unwrap();
+        db.execute_batch("CREATE TEMP TABLE sa (c0, c1); CREATE TEMP TABLE sb (c0, c1); CREATE TEMP TABLE sc (c0, c1); CREATE TEMP TABLE sd (c0, c1); CREATE TEMP TABLE sn (c0);").unwrap();
+        for v in 0..400i64 {
+            db.execute("INSERT INTO sa VALUES (?1, ?2)", [v, v % 37]).unwrap();
+            db.execute("INSERT INTO sb VALUES (?1, ?2)", [v % 41, v + 1000]).unwrap();
+            db.execute("INSERT INTO sc VALUES (?1, ?2)", [v * 3, v % 29]).unwrap();
+            db.execute("INSERT INTO sd VALUES (?1, ?2)", [v % 31, v + 5000]).unwrap();
+        }
+        for v in 0..100i64 {
+            db.execute("INSERT INTO sn VALUES (?1)", [v + 1000]).unwrap();
+        }
+        let src = |t: &str, cols: &str, types: &str| format!("t:x:{}:{}:{types}", hex(&format!("temp.{t}")), hex(cols));
+        let (sa, sb, sc, sd, sn) = (src("sa", "c0, c1", "ii"), src("sb", "c0, c1", "ii"), src("sc", "c0, c1", "ii"), src("sd", "c0, c1", "ii"), src("sn", "c0", "i"));
+        let rules = [
+            format!("pos {sa} v0 v1\npos {sb} v1 v2\nhead v0 v2"),
+            format!("pos {sc} v0 v1\npos {sd} v1 v2\nhead v0 v2"),
+            format!("pos {sa} v0 v1\npos {sb} v1 v2\nneg {sn} v2\nhead v0 v2"),
+        ];
+        let joined = |l: &str, r: &str| -> u64 { db.query_row(&format!("SELECT count(*) FROM temp.{l} JOIN temp.{r} ON {l}.c1 = {r}.c0"), [], |r| r.get::<_, i64>(0)).unwrap() as u64 };
+        let (ab, cd) = (joined("sa", "sb"), joined("sc", "sd"));
+        // The run's records (`profile::merged`) this test's, so it reads them after the stratum's run.
+        let _run = crate::code_rule_dsl::logic::profile::test_run();
+        crate::code_rule_dsl::logic::profile::set(true);
+        db.execute_batch("CREATE TEMP TABLE sh (c0, c1);").unwrap();
+        let mut spec = vec!["name dev_shapes".to_owned(), "device".into(), "rel sh ii empty".into()];
+        spec.extend(rules.iter().map(|r| format!("seed 0 {}", hex(r))));
+        super::super::open(&db, &spec.join("\n")).unwrap();
+        super::super::run(&db, "dev_shapes", 0).unwrap();
+        let report = super::take_report();
+        super::super::close(&db, "dev_shapes").unwrap();
+        let shapes = crate::code_rule_dsl::logic::profile::take_join_shapes();
+        crate::code_rule_dsl::logic::profile::set(false);
+        assert!(report.as_ref().is_some_and(|r| r.refused.is_none()), "{report:?}");
+        // Other tests' shapes may be counted beside these: ours are those whose last stage made `ab` and `cd` rows.
+        let last = |t: &crate::code_rule_dsl::logic::profile::ShapeTotal| t.stages.last().map_or(0, |r| r[1]);
+        let two = shapes.iter().find(|(_, t)| t.runs == 2 && last(t) == ab + cd);
+        let (name, t) = two.unwrap_or_else(|| panic!("no shape run twice making {} rows: {:?}", ab + cd, shapes.iter().map(|(n, t)| (n, t.runs, last(t))).collect::<Vec<_>>()));
+        assert_eq!(t.instances.len(), 2, "two joins, one shape: {name}");
+        assert!(t.form.contains("kind: derived, arity: 2"), "its inputs are derived relations: {}", t.form);
+        let negated = shapes.iter().filter(|(n, t)| *n != name && t.runs == 1 && t.form.contains("mode: anti")).count();
+        assert_eq!(negated, 1, "the negated join is another shape: {:?}", shapes.keys().collect::<Vec<_>>());
+    }
+
     /// Heads whose sorted dedups' keys are each a full 64 bits (a 16-bit tag and two columns of 24 bits each), four in
     /// one stratum: each sorts its keys in a level of its own, for no rank fits above them (t58 increment A's wide
     /// sort), and the stratum runs on the device, in one program, its rows the CPU's.
@@ -797,8 +851,9 @@ use rerail_blocks::vector::Vector;
     /// Decision 0661: a string join on the device. Each group's parts are joined in their order by a number, with a
     /// separator, into the canonical arena; a group of no parts has "". The joins are copied along alias edges, a
     /// recursive set head's text column. Clean, the component runs on the device; with a group of more parts than a
-    /// SIMD group's lanes, two names at one place and a part twice, those are the host's. Either way its rows are the
-    /// CPU's, each once.
+    /// SIMD group's lanes, those are the host's; two names at one place are ordered by their bytes, a part twice kept
+    /// once. Ordered by one number, by none (the names alone), by a symbol, and by a number then a symbol (each a
+    /// number by value, a symbol by its name's bytes). Either way its rows are the CPU's, each once.
     #[test]
     fn a_string_join_on_the_device_is_the_cpus() {
         if !crate::code_rule_dsl::transducer::packed::metal_join::available() {
@@ -836,8 +891,9 @@ use rerail_blocks::vector::Vector;
             let g = format!("t:x:{}:{}:i", hex("temp.g"), hex("c0"));
             let pv = format!("t:x:{}:{}:iis", hex("temp.p"), hex("c0, c1, c2"));
             let a = format!("t:x:{}:{}:ii", hex("temp.a"), hex("c0, c1"));
+            for by in ["1:0", "-", "2:1", "1:0,2:1"] {
             // q(e, v) :- g(e), v = join s by i sep ", " : { p(e, i, s) }.  q(y, v) :- q(x, v), a(x, y).
-            let join = format!("pos {g} v0\nstrjoin {pv} v0 _ _ 2:1 1:0 x:{} v1\nhead v0 v1", hex(", "));
+            let join = format!("pos {g} v0\nstrjoin {pv} v0 _ _ 2:1 {by} x:{} v1\nhead v0 v1", hex(", "));
             let alias = format!("pos d0 v0 v1\npos {a} v0 v2\nhead v2 v1");
             let mut got = Vec::new();
             for device in [false, true] {
@@ -852,7 +908,7 @@ use rerail_blocks::vector::Vector;
                 super::super::run(&db, &name, 0).unwrap();
                 if device {
                     let r = super::take_report().expect("a device report");
-                    assert!(r.refused.is_none(), "dirty {dirty}: a string join has a device form: {r:?}");
+                    assert!(r.refused.is_none(), "dirty {dirty}, by {by}: a string join has a device form: {r:?}");
                     if !dirty {
                         assert!(!r.handed && r.rounds >= 2, "the component on the device: {r:?}");
                     }
@@ -867,8 +923,99 @@ use rerail_blocks::vector::Vector;
             }
             assert!(got[0].len() > 2 * groups as usize, "the CPU's rows: {}", got[0].len());
             assert!(got[0].contains(&(0, String::new())), "a group of no parts has \"\"");
-            assert_eq!(got[1], got[0], "dirty {dirty}: the device's joins are the CPU's");
+            assert_eq!(got[1], got[0], "dirty {dirty}, by {by}: the device's joins are the CPU's");
+            }
         }
+    }
+
+    /// The join lab's captures (`join_capture`): a stratum's launch on the device written as what it reads, each
+    /// block it reaches once, its own buffers before and after it, its labels the shapes it runs and their stratum;
+    /// finished ("done"). The run is recorded (`run.txt`), and what the stratum made (`strata.txt`, `setfix::replay`):
+    /// its relation's rows, by the identity its labels name.
+    #[test]
+    fn a_launch_captured_names_its_shapes_and_regions() {
+        if !crate::code_rule_dsl::transducer::packed::metal_join::available() {
+            return;
+        }
+        let store = crate::code_rule_dsl::fixtures::temp();
+        drop(crate::content_store::ContentStore::open(&store).unwrap());
+        let db = Connection::open(&store).unwrap();
+        crate::code_rule_dsl::logic::native::register(&db).unwrap();
+        crate::code_rule_dsl::logic::native::register_symbols(&db).unwrap();
+        db.execute_batch("CREATE TEMP TABLE g (c0); CREATE TEMP TABLE a (c0, c1); CREATE TEMP TABLE q (c0, c1);").unwrap();
+        for e in 0..300i64 {
+            db.execute("INSERT INTO g VALUES (?1)", [e]).unwrap();
+            db.execute("INSERT INTO a VALUES (?1, ?2)", [e, 300 + e]).unwrap();
+        }
+        let dir = std::env::temp_dir().join(format!("rerail-join-capture-{}", std::process::id()));
+        crate::code_rule_dsl::transducer::packed::join_capture::capture_to(dir.clone());
+        let g = format!("t:x:{}:{}:i", hex("temp.g"), hex("c0"));
+        let a = format!("t:x:{}:{}:ii", hex("temp.a"), hex("c0, c1"));
+        // q(x, y) :- g(x), a(x, y).  q(y, z) :- q(x, z), a(x, y).
+        let seed = format!("pos {g} v0\npos {a} v0 v1\nhead v0 v1");
+        let step = format!("pos d0 v0 v1\npos {a} v0 v2\nhead v2 v1");
+        let spec = ["name captured".to_owned(), "device".into(), "rel q is empty".into(), format!("seed 0 {}", hex(&seed)), format!("join 0 0 {}", hex(&step))].join("\n");
+        super::super::open(&db, &spec).unwrap();
+        super::super::run(&db, "captured", 0).unwrap();
+        let r = super::take_report().expect("a device report");
+        assert!(r.refused.is_none(), "on the device: {r:?}");
+        super::super::close(&db, "captured").unwrap();
+        let waves: Vec<_> = std::fs::read_dir(dir.join("w")).expect("a capture's launches").map(|e| e.unwrap().path()).collect();
+        assert!(!waves.is_empty(), "a launch captured");
+        for w in &waves {
+            let wave = std::fs::read_to_string(w.join("wave.txt")).unwrap();
+            assert!(wave.lines().any(|l| l.starts_with("label ")), "its shapes named: {wave}");
+            assert!(wave.lines().last() == Some("done"), "its outputs written: {wave}");
+            for role in ["descs", "items", "phases", "ctl", "counts"] {
+                assert!(wave.lines().any(|l| l.starts_with(&format!("region {role} {role} "))), "its {role}: {wave}");
+                assert!(w.join(format!("{role}.zst")).exists() && w.join(format!("{role}.after.zst")).exists(), "{role} before and after");
+            }
+            let relocs = zstd::bulk::decompress(&std::fs::read(w.join("relocs.zst")).unwrap(), 1 << 30).unwrap();
+            assert!(!relocs.is_empty() && relocs.len() % 32 == 0, "its addresses as (region, offset, region, offset)");
+            for l in wave.lines().filter(|l| l.starts_with("region ")) {
+                let source = l.rsplit(' ').next().unwrap();
+                if let Some(b) = source.strip_prefix("blocks/") {
+                    assert!(dir.join("blocks").join(b).exists(), "a block it reaches written: {l}");
+                }
+            }
+        }
+        // The join lab's replay of each: its chain run through the join program's Rust apart from the engine, what it
+        // leaves what the engine's launch left.
+        for w in rerail_join_lab::Wave::all(&dir).unwrap() {
+            assert_eq!(w.unresolved, 0, "every address its regions hold is in a region it names: {}", w.dir.display());
+            assert_eq!(w.unbound, 0, "every address its encoding wrote is named: {}", w.dir.display());
+            let mut l = w.load().unwrap();
+            assert!(l.relocations > 0, "its addresses bound again");
+            let ran = l.run();
+            assert!(ran.dispatches > 0 && ran.groups > 0, "it ran: {ran:?}");
+            for d in l.compare(!w.exact_on(rerail_join_lab::Engine::Program)).unwrap() {
+                assert!(d.compared > 0 && d.differ == 0, "{}: the replay leaves what the launch left: {d:?}", w.dir.display());
+            }
+            // Its runs' stratum, and what that stratum made: q's 300 seed rows and the 300 its step adds.
+            let strata = crate::code_rule_dsl::logic::native::setfix::replay::records(&std::fs::read_to_string(dir.join("strata.txt")).expect("the strata's records"));
+            for label in &w.labels {
+                assert_ne!(label.stratum, 0, "a run's stratum named: {label:?}");
+                let r = strata.get(&label.stratum).unwrap_or_else(|| panic!("a record of the stratum {label:?} names: {strata:?}"));
+                assert_eq!(r.name, "captured");
+                assert!(r.rels.iter().any(|(t, n, _)| t == "q" && *n == 600), "q's rows: {r:?}");
+            }
+        }
+        let run = std::fs::read_to_string(dir.join("run.txt")).expect("the run recorded");
+        assert!(run.lines().next().is_some_and(|l| l.starts_with("cwd ")) && run.lines().any(|l| l.starts_with("arg ")), "its directory and arguments: {run}");
+        // The join lab's scalar engine (`join_lab::scalar`): the stratum run again on the scalar joins under a replay
+        // of the capture is known there by the same identity, and makes the same rows: its record is the capture's.
+        use crate::code_rule_dsl::logic::native::setfix::replay;
+        let captured = replay::records(&std::fs::read_to_string(dir.join("strata.txt")).unwrap());
+        let want = captured.values().find(|r| r.name == "captured").expect("the stratum recorded").clone();
+        replay::replay_to(&dir, dir.join("replay.txt"));
+        let scalar = spec.lines().filter(|l| *l != "device").collect::<Vec<_>>().join("\n");
+        super::super::open(&db, &scalar).unwrap();
+        super::super::run(&db, "captured", 0).unwrap();
+        super::super::close(&db, "captured").unwrap();
+        let got = replay::records(&std::fs::read_to_string(dir.join("replay.txt")).expect("the replay's records"));
+        let got = got.get(&want.stratum).unwrap_or_else(|| panic!("the stratum known again by its identity {:016x}: {got:?}", want.stratum));
+        assert_eq!(want.differs(got), None, "the scalar joins make the program's rows");
+        let _ = std::fs::remove_dir_all(&dir);
     }
 
     /// Decision 0603's test: a stratum is one launch and its budget's relaunches, whatever its rules and rounds. The
@@ -1232,16 +1379,20 @@ use rerail_blocks::vector::Vector;
                 assert!(report.as_ref().is_some_and(|r| r.made > 1000), "texts made on the device: {report:?}");
             }
             let counts = super::super::step_counts(&db, "dev_text").unwrap();
+            let ranged = super::super::step_ranged(&db, "dev_text").unwrap();
             super::super::close(&db, "dev_text").unwrap();
             let mut rows: Vec<(i64, i64)> = db.prepare("SELECT c0, c1 FROM temp.h0").unwrap().query_map([], |r| Ok((r.get(0)?, r.get(1)?))).unwrap().map(Result::unwrap).collect();
             rows.sort_unstable();
-            got.push((rows, counts));
+            got.push((rows, counts, ranged));
         }
         assert!(got[0].0.len() > 500, "{} rows", got[0].0.len());
         let longest: i64 = db.query_row("SELECT max(length(CAST(c0 AS BLOB))) FROM temp.n", [], |r| r.get(0)).unwrap();
         assert!(longest > 64, "a name past two chunks: {longest} bytes");
         assert_eq!(got[1].0, got[0].0, "the device's text tests are the CPU's");
-        assert_eq!(got[1].1, got[0].1, "the device's counts per step are the CPU's");
+        // The device's counts per step are the CPU's, but where the CPU read an atom as a range (`counts_agree`).
+        if let Err(e) = counts_agree(&got[1].1, &got[0].1, &got[1].2) {
+            panic!("the device's counts per step are the CPU's: {e}");
+        }
     }
 
     /// Decision 0478 R3: a text test on the device reads and keeps its verdicts in the store's one rolling cache, the
@@ -1726,7 +1877,7 @@ use rerail_blocks::vector::Vector;
             x = x.wrapping_mul(6364136223846793005).wrapping_add(1442695040888963407);
             (x >> 33) % m
         };
-        let parts = ["foo", "Bar", "SRC", "src/lib", "a.b", "_", ".ts", "αβ", "x9", "TODO", "a_b", "/", "é"];
+        let parts = ["foo", "Bar", "SRC", "src/lib", "a.b", "_", ".ts", "αβ", "x9", "TODO", "a_b", "/", "é", " ", " _ "];
         db.execute_batch("CREATE TEMP TABLE n (c0, c1); CREATE TEMP TABLE m (c0); CREATE TEMP TABLE a (c0, c1);").unwrap();
         for k in 0..2000 {
             let len = 1 + next(if k % 50 == 0 { 30 } else { 6 });
@@ -1797,11 +1948,31 @@ use rerail_blocks::vector::Vector;
             // cat(l, "/"), "")`): a prefix that is a cat of a name, of a constant, a text function's value; a suffix
             // that is a cat.
             format!("pos {m} v0\npos {n} v1 v2\nfunc str_concat v3 v0 {}\nfunc str_between v4 v1 v3 {}\nhead v4 v2", sym("/"), sym("")),
+            // A cat as `str_between`'s suffix, its value compared with a bound name (not bound): made into a slot of
+            // its own, then compared as texts (`inventory`'s rules on `all`).
+            format!("pos {m} v0\npos {n} v1 v2\nfunc str_concat v3 v1 {}\nfunc str_between v0 v1 {} v3\nhead v1 v2", sym("x9"), sym("")),
+            format!("pos {m} v0\npos {n} v1 v2\nfunc head v4 v1\nfunc str_concat v3 v4 {}\nfunc str_between v0 v1 {} v3\nhead v1 v2", sym("/"), sym("")),
             format!("pos {m} v0\npos {n} v1 v2\ncat v3 v0 {}\nfunc str_between v4 v1 v3 {}\nhead v4 v2", sym("b"), sym("")),
             format!("pos {n} v0 v1\nfunc head v2 v0\nfunc str_between v3 v0 v2 {}\nhead v3 v1", sym("")),
             format!("pos {m} v0\npos {n} v1 v2\nfunc str_concat v3 {} v0\nfunc str_between v4 v1 {} v3\nhead v4 v2", sym("_"), sym("")),
+            // SQL's `instr` (in characters from 1, 0 where it is not; of a made text too), `length`, an ASCII lower,
+            // and its trims: of spaces, and of a set of characters at both ends, the start, the end.
+            format!("pos {n} v0 v1\nfunc sql_instr v2 v0 {}\nhead v0 v2", sym("b")),
+            format!("pos {n} v0 v1\nfunc sql_instr v2 v0 {}\nlt i:0 v2\nhead v0 v1", sym("x9")),
+            format!("pos {n} v0 v1\nfunc sql_lower v3 v0\nfunc sql_instr v2 v3 {}\nhead v0 v2", sym("src")),
+            format!("pos {n} v0 v1\nfunc sql_length v2 v0\nhead v0 v2"),
+            format!("pos {n} v0 v1\nfunc ascii_lower v2 v0\nhead v2 v1"),
+            format!("pos {n} v0 v1\nfunc sql_trim v2 v0\nhead v2 v1"),
+            format!("pos {n} v0 v1\nfunc sql_ltrim v2 v0\nhead v2 v1"),
+            format!("pos {n} v0 v1\nfunc sql_trim2 v2 v0 {}\nhead v2 v1", sym("_. ")),
+            format!("pos {n} v0 v1\nfunc sql_ltrim2 v2 v0 {}\nhead v2 v1", sym("fo")),
+            format!("pos {n} v0 v1\nfunc sql_rtrim2 v2 v0 {}\nhead v2 v1", sym("9x/")),
+            // `rx_extract`: a group by its number, 0 the whole match; no row where the regex does not match.
+            format!("pos {n} v0 v1\nfunc rx_extract v2 v0 {} i:0\nhead v2 v1", sym("^[^.]+")),
+            format!("pos {n} v0 v1\nfunc rx_extract v2 v0 {} i:1\nhead v2 v1", sym("^_?\\s*([^\\s(]+)")),
         ];
-        let lowered = [format!("pos {n} v0 v1\nfunc lower v2 v0\nhead v2 v1")];
+        // A trim of characters past ASCII is the host's (its characters, not its bytes).
+        let lowered = [format!("pos {n} v0 v1\nfunc lower v2 v0\nhead v2 v1"), format!("pos {n} v0 v1\nfunc sql_trim2 v2 v0 {}\nhead v2 v1", sym("é"))];
         // A made text as one of an atom's keys (as `ann_private` looks a name up): the names already lower case, and
         // a range of a name that is a name. Its value is the atom the text is, found by the store's hash in the atoms
         // directory (`ROW_FIND`, decision 0666), and the row is dropped at the function where none is, as the CPU drops
@@ -1844,6 +2015,7 @@ use rerail_blocks::vector::Vector;
                     }
                 }
                 let counts = super::super::step_counts(&db, "dev_fn").unwrap();
+                let ranged = super::super::step_ranged(&db, "dev_fn").unwrap();
                 super::super::close(&db, "dev_fn").unwrap();
                 let mut rows: Vec<(String, i64)> = db
                     .prepare("SELECT sym_text(c0), c1 FROM temp.h0")
@@ -1853,11 +2025,14 @@ use rerail_blocks::vector::Vector;
                     .map(Result::unwrap)
                     .collect();
                 rows.sort_unstable();
-                got.push((rows, counts));
+                got.push((rows, counts, ranged));
             }
             assert!(got[0].0.len() > 100, "{case}: {} rows", got[0].0.len());
             assert_eq!(got[1].0, got[0].0, "{case}: the device's text functions are the CPU's");
-            assert_eq!(got[1].1, got[0].1, "{case}: the device's counts per step are the CPU's");
+            // The device's counts per step are the CPU's, but where the CPU read an atom as a range (`counts_agree`).
+            if let Err(e) = counts_agree(&got[1].1, &got[0].1, &got[1].2) {
+                panic!("{case}: the device's counts per step are the CPU's: {e}");
+            }
         }
     }
 

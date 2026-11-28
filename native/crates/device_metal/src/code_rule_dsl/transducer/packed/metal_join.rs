@@ -77,6 +77,8 @@ pub(in crate::code_rule_dsl) const AGG_MAX: u32 = 3;
 pub(in crate::code_rule_dsl) const STRCMP: u32 = 6;
 pub(in crate::code_rule_dsl) const NAMES_CMP: u32 = 0;
 pub(in crate::code_rule_dsl) const NAMES_LEN: u32 = 1;
+/// `sql_instr`: where the second name first is in the first, in characters from 1, else 0.
+pub(in crate::code_rule_dsl) const NAMES_INSTR: u32 = 2;
 /// A literal text test of a pattern and a subject (keys 0 and 1, 2 and 3), each a symbol or a cat's text never made
 /// (`OPND_*`, `agg[1]`: the pattern's kind, the subject's << 4): `agg[0]` is the want (bit 0), the test (`TEXT_*`
 /// << 1), `TEXT_SPLIT` when it is a text test (whose pattern a set separator would split), and `TEXT_BOUND` when its
@@ -130,6 +132,8 @@ pub(in crate::code_rule_dsl) const ROW_VERDICT: u32 = 5;
 /// A string join (decision 0661): each binding's matching rows of the stage's relation, their names (column
 /// `col_idx[0]`) ordered by a number (`col_idx[1]`) and joined by the separator `par_const[0]` into the arena.
 pub(in crate::code_rule_dsl) const ROW_STRJOIN: u32 = 6;
+/// The most columns a string join reads: its x and its `by` columns (`agg[1]` a bit each, whether it holds symbols).
+pub(in crate::code_rule_dsl) const STRJOIN_COLS: usize = 8;
 /// With a text function (`ROW_MAP`, `ROW_REPLACE`) of constant arguments of a symbol, or a chain of them: its text kept
 /// in the one rolling cache (decision 0478 step 2e) by the functions' id (`P[5]`) and the source symbol (key 7). A
 /// kept text is copied into the arena; one made is kept, up to `atoms::TEXT_MOST` bytes.
@@ -167,6 +171,13 @@ pub(in crate::code_rule_dsl) const TEXTFN_RX_GROUP: u32 = 14;
 /// node the directory does not hold (another batch's, a comment span) sets `TEXTFN_UNHELD`: the stratum on the host.
 pub(in crate::code_rule_dsl) const TEXTFN_NODE_TEXT_ANY: u32 = 15;
 pub(in crate::code_rule_dsl) const TEXTFN_NODE_TEXT: u32 = 16;
+/// SQL's trims (`sql_trim`, `sql_ltrim`: spaces; `sql_trim2`, `sql_ltrim2`, `sql_rtrim2`: the characters of key 2's
+/// text, a set past ASCII the host's, `TEXTFN_HOST`): x less them at both ends, its start, its end.
+pub(in crate::code_rule_dsl) const TEXTFN_TRIM: u32 = 17;
+pub(in crate::code_rule_dsl) const TEXTFN_LTRIM: u32 = 18;
+pub(in crate::code_rule_dsl) const TEXTFN_TRIM_SET: u32 = 19;
+pub(in crate::code_rule_dsl) const TEXTFN_LTRIM_SET: u32 = 20;
+pub(in crate::code_rule_dsl) const TEXTFN_RTRIM_SET: u32 = 21;
 // `row_text_one`'s bound for `TEXTFN_NODE_TEXT` (its `256u`) is `text`'s inline bound.
 const _: () = assert!(crate::code_rule_dsl::facts::vtab::syntax::core_rr::TEXT_INLINE == 256);
 pub(in crate::code_rule_dsl) const TEXTFN_HOST: u32 = 2;
@@ -462,6 +473,12 @@ fn program_pipe(format: u32) -> Result<Arc<rerail_accel_gpu::gpu::join::Pipe>, S
     })
 }
 
+/// The program's kernel for views of `format` (`program_pipe`), as `launch` chains it: the join lab's, which replays a
+/// captured launch's chain on the device (`rerail-join-lab`'s `metal` engine).
+pub fn join_program_pipe(format: u32) -> Result<Arc<rerail_accel_gpu::gpu::join::Pipe>, String> {
+    program_pipe(format)
+}
+
 /// The tape format of the views `rels` read (`ViewInPlace::format`), one for them all: a relation reads none, and with
 /// no view the run's format is taken, whose kernels are made already.
 fn views_format<'a>(rels: impl IntoIterator<Item = &'a DevRel>) -> u32 {
@@ -668,6 +685,16 @@ pub(in crate::code_rule_dsl) struct DevRel {
 }
 
 impl DevRel {
+    /// Whether it is a `has` axis read off the tape (`DevRel::has`): a join shape's input kind (`setfix::device`).
+    pub(in crate::code_rule_dsl) fn is_axis(&self) -> bool {
+        self.has.is_some()
+    }
+
+    /// Whether its rows are its length as the device claims it (`live`): a join shape's input kind.
+    pub(in crate::code_rule_dsl) fn is_live(&self) -> bool {
+        self.live
+    }
+
     /// `self`, its descriptor's arity and base rows noted as they are now (`made`).
     fn noted(mut self) -> DevRel {
         if self.home.is_some() {
@@ -1092,6 +1119,11 @@ pub(in crate::code_rule_dsl) struct DevIndex {
 }
 
 impl DevIndex {
+    /// How it is read: 0 an index, 1 `child` by its parent, 2 a `has` axis by its node, 3 by its ancestor (`walk`).
+    pub(in crate::code_rule_dsl) fn walk(&self) -> u32 {
+        self.walk
+    }
+
     /// The relation its probes read: `rel`, or a view's new relation of no values it was built on.
     pub(in crate::code_rule_dsl) fn of<'a>(&'a self, rel: &'a DevRel) -> &'a DevRel {
         self.fresh.as_deref().unwrap_or(rel)
@@ -1882,6 +1914,8 @@ pub(in crate::code_rule_dsl) struct Batch {
     /// Whether the host reads its arena's placed tables (`arena_reserved`'s): on Metal a wrapped arena then.
     host_reads: bool,
     reserved: Option<std::sync::Arc<Reservation>>,
+    /// Where its launches are captured for the join lab, and what selects them (`join_capture`, read once a batch).
+    capture: Option<super::join_capture::Config>,
 }
 
 /// A relation a batch's kernels write (`Batch::written`).
@@ -1979,7 +2013,18 @@ impl Batch {
             reserve_arena: false,
             host_reads: false,
             reserved: None,
+            capture: super::join_capture::Config::from_env(),
         })
+    }
+
+    /// Whether its launches may be captured (`join_capture`): its runs' labels are wanted.
+    pub(in crate::code_rule_dsl) fn capturing(&self) -> bool {
+        self.capture.is_some()
+    }
+
+    /// A run encoded into its open program, named on the launch that runs it (`join_capture::Label`).
+    pub(in crate::code_rule_dsl) fn label(&mut self, l: super::join_capture::Label) {
+        self.program.labels.push(l);
     }
 
     /// A table of `slots` columns its program places in its arena (decision 0603 step 5): its rows' room the device's,
@@ -2630,6 +2675,9 @@ impl Batch {
         }
         rel.resident_in(self.open()?);
         let mut job = Job::new(JobKind::Index, views_format([rel]), Stage::default());
+        if ix.dir != 0 {
+            job.names(ix.dir);
+        }
         job.p = Some(ix.bytes().to_vec());
         // It reads the relation and writes its index's room in the block, which no queued job reads.
         job.desc.l = job.reach(&buffer.buffer, 0, true)?;
@@ -3073,6 +3121,9 @@ impl Batch {
         }
         // Queued in the batch's level, whose copies launch first, all in one launch (`flush`).
         let mut job = Job::new(JobKind::Copy, format, Stage::default());
+        if p.v_dir != 0 {
+            job.names(p.v_dir);
+        }
         job.p = Some(bytes.to_vec());
         // A placed source: its rows' room the device's, its threads its own at most.
         let src_key = match src {
@@ -3122,12 +3173,12 @@ impl Batch {
         let mut job = Job::new(JobKind::Sum, 0, Stage::default());
         let oa = job.reach(&offs.buffer, 0, true)?;
         let ta = job.reach(&total.0.buffer.buffer, 0, true)?;
-        let mut p: Vec<u64> = vec![srcs.len() as u64, ta + 4 * total.1 as u64];
+        let mut p: Vec<u64> = vec![srcs.len() as u64, job.names(ta + 4 * total.1 as u64)];
         let mut reads = Vec::new();
         for (i, (_, _, w, slot, _)) in srcs.iter().enumerate() {
             let wa = job.reach(&w.buffer.buffer, 0, false)?;
             reads.push(wa);
-            p.extend([wa + 4 * *slot as u64, oa + 4 * i as u64]);
+            p.extend([job.names(wa + 4 * *slot as u64), job.names(oa + 4 * i as u64)]);
         }
         job.p = Some(as_bytes(&p).to_vec());
         job.count = 1;
@@ -3289,7 +3340,7 @@ impl Batch {
             p.extend([to, from, u64::from(code) | (n as u64) << 32]);
         }
         // The arena's top emptied: a round's counts are its own (decision 0603 step 5).
-        let top = self.program.top()?;
+        let top = job.names(self.program.top()?);
         p.extend([top, 0, 2 | 1 << 32]);
         p[1] += 1;
         writes.push(top);
@@ -3586,6 +3637,7 @@ impl Batch {
         }
         let params = self.block(&params)?;
         let pa = address(&params.buffer)?;
+        let capturing = self.capture.is_some();
         let prog = &mut self.program;
         prog.uses.push((params.buffer.clone(), false));
         prog.rooms.relocs.extend(relocs.into_iter().map(|o| (params.buffer.clone(), o)));
@@ -3853,6 +3905,17 @@ impl Batch {
         }
         // What the jobs reach by address: resident at the launch; their own buffers, and the sort's, held to it.
         for mut j in jobs {
+            if capturing {
+                // copy: not block data (the addresses its jobs reach, which a capture binds again: `join_capture`)
+                prog.reached.extend_from_slice(&j.reached);
+                // Its stage's addresses of what it reads where it lies (a view's directory, a `has` axis's set),
+                // which its encoding copied from the relation, not reached.
+                prog.reached.extend([j.stage.v_dir, j.stage.v_set].into_iter().filter(|&a| a != 0));
+                // A witness's probes' too: each probe is a stage of its own, bound to what it reads (`witness`).
+                if let Some(probes) = &j.probes {
+                    prog.reached.extend(probes.iter().flat_map(|p| [p.v_dir, p.v_set]).filter(|&a| a != 0));
+                }
+            }
             prog.uses.append(&mut j.uses);
             prog.hold.append(&mut j.own);
         }
@@ -3990,7 +4053,7 @@ impl Batch {
         }
         let kit = Kit { held, resident, descs, items, phases, segs, scans: scan_levels, sorts, script, top, counts, reserved: self.reserve_arena.then(|| self.reserved.clone()).flatten(), phase_items: prog.phases, dispatches, format, uses: prog.uses, hold: prog.hold, rooms: std::mem::take(&mut prog.rooms), maps_grown: false,
                         rebase: Rebase { ca, ops, scans: arena_scans, at: (da, sa, xa), ta: self.arena.as_ref().map_or(Ok(0), |a| address(&a.buffer()))?, tt: self.arena.as_ref().and_then(|a| a.canon_buffer()).map_or(Ok(0), |b| address(&b))? },
-                        end };
+                        end, labels: std::mem::take(&mut prog.labels), reached: std::mem::take(&mut prog.reached) };
         // What its jobs reach, held while the program lives (`Ran::holds`).
         let holds = rerail_blocks::ledger::Fence::new();
         for b in kit.uses.iter().map(|(b, _)| b).chain(kit.resident.iter().map(|(b, _)| b)) {
@@ -3998,7 +4061,7 @@ impl Batch {
         }
         let ctl = Words::zeroed(10 + 2 * kit.phase_items.len() + 4 * (kit.dispatches as usize + 2))?;
         let last = kit.end as usize - 1;
-        let r = Ran { ctl: std::sync::Arc::new(ctl), last, phases: kit.phase_items.len(), items: kit.phase_items[last][1], kit, holds };
+        let r = Ran { ctl: std::sync::Arc::new(ctl), last, phases: kit.phase_items.len(), items: kit.phase_items[last][1], kit, holds, capture: None };
         // One that goes on from a program that may still launch again (a park, a chain's budget spent: `finish`) is held until
         // every program before it is whole: launched now, it would read that one's tables and counts before its later
         // phases wrote them, and nothing would run it again (decision 0679: a waved stratum's heads, cut from its
@@ -4096,6 +4159,60 @@ impl Batch {
             b.whole = Some(r.built());
         }
         let kit = &r.kit;
+        let offsets: Vec<u64> = (0..=dispatches).map(|d| 4 * (slot as u64 + 4 * d)).collect();
+        // The join lab's capture (`join_capture`): what it reads as it is about to run, the work before it done.
+        let capture = match &self.capture {
+            Some(cfg) if !kit.labels.is_empty() => {
+                for s in &self.committed {
+                    s.watch().wait();
+                }
+                let mut uses: Vec<(&Buffer, bool)> = kit.uses.iter().map(|(b, w)| (b, *w)).collect();
+                uses.extend(kit.resident.iter().map(|(b, r)| (b, !matches!(r, Reach::Read))));
+                uses.extend(kit.rooms.folds.iter().chain(&kit.rooms.dedups).map(|(_, b, _)| (b, true)));
+                uses.extend(kit.rooms.relocs.iter().map(|(b, _)| (b, true)));
+                // The words of its own buffers that hold addresses, by their structures: each descriptor's first
+                // words (`readdress`'s), each scan level's data and sums, each sort pass's buffers, each size script
+                // op's words, each segment's count.
+                let mut typed: Vec<(&'static str, u64)> = Vec::new();
+                let each = |b: &Held, size: usize, fields: &[usize], role: &'static str, typed: &mut Vec<(&'static str, u64)>| {
+                    for i in 0..b.buffer.length() as usize / size {
+                        typed.extend(fields.iter().map(|f| (role, (i * size + f) as u64)));
+                    }
+                };
+                let desc_words: Vec<usize> = (0..std::mem::offset_of!(JobDesc, at) / 8).map(|k| 8 * k).collect();
+                each(&kit.descs, std::mem::size_of::<JobDesc>(), &desc_words, "descs", &mut typed);
+                each(&kit.scans, std::mem::size_of::<ScanLevel>(), &[std::mem::offset_of!(ScanLevel, data), std::mem::offset_of!(ScanLevel, sums)], "scans", &mut typed);
+                use std::mem::offset_of as of;
+                each(&kit.sorts, std::mem::size_of::<SortPass>(), &[of!(SortPass, keys), of!(SortPass, values), of!(SortPass, hist), of!(SortPass, out_keys), of!(SortPass, out_values)], "sorts", &mut typed);
+                // A size op's `w` is an address where it has one; its `c` where it is a word of the program's (a
+                // descriptor's, a scan level's, a sort pass's, the arena's), and a constant otherwise (`Late::Abs`).
+                for (i, o) in kit.rebase.ops.iter().enumerate() {
+                    let at = (i * std::mem::size_of::<SizeOp>()) as u64;
+                    if !matches!(o.w, Late::Zero) {
+                        typed.push(("script", at + of!(SizeOp, w) as u64));
+                    }
+                    if matches!(o.c, Late::Desc(..) | Late::Scan(..) | Late::Sort(..) | Late::Arena(_)) {
+                        typed.push(("script", at + of!(SizeOp, c) as u64));
+                    }
+                }
+                each(&kit.segs, std::mem::size_of::<SegAt>(), &[of!(SegAt, count)], "segs", &mut typed);
+                let reached = super::join_capture::Reached {
+                    typed,
+                    reached: &kit.reached,
+                    binds: [("descs", &kit.descs.buffer), ("items", &kit.items.buffer), ("phases", &kit.phases.buffer), ("segs", &kit.segs.buffer), ("scans", &kit.scans.buffer), ("sorts", &kit.sorts.buffer), ("script", &kit.script.buffer), ("ctl", &r.ctl.buffer.buffer), ("counts", &kit.counts.buffer)],
+                    top: kit.top.as_ref().map(|t| &t.buffer.buffer),
+                    holds: kit.hold.iter().map(|h| &h.buffer).collect(),
+                    text: text.as_ref(),
+                    table: table.as_ref(),
+                    uses,
+                    format: kit.format,
+                    args: [nphases as u32, kit.dispatches, kit.end, 0],
+                    offsets: offsets.clone(),
+                };
+                super::join_capture::before(cfg, &kit.labels, &reached)
+            }
+            _ => None,
+        };
         let pass = self.open()?;
         // What its jobs reach by address, and its own buffers: resident for the launch.
         let mut seen = std::collections::HashSet::new();
@@ -4118,7 +4235,6 @@ impl Batch {
         if let Some(t) = &kit.top {
             pass.use_read_write(&t.buffer.buffer);
         }
-        let offsets: Vec<u64> = (0..=dispatches).map(|d| 4 * (slot as u64 + 4 * d)).collect();
         pass.chain_at(
             &pipe,
             &[(&kit.descs.buffer, 0), (&kit.items.buffer, 0), (&kit.phases.buffer, 0), (&kit.segs.buffer, 0), (&kit.scans.buffer, 0), (&kit.sorts.buffer, 0), (&kit.script.buffer, 0), (&r.ctl.buffer.buffer, 0), (&kit.counts.buffer, 0)],
@@ -4126,6 +4242,7 @@ impl Batch {
             &r.ctl.buffer.buffer,
             &offsets,
         );
+        r.capture = capture;
         self.programs.push(r);
         // Committed now: the next launch's chain is its own submission too.
         self.submit_open()
@@ -4139,6 +4256,9 @@ impl Batch {
         let mut whole = true;
         let mut again = Vec::new();
         for mut r in std::mem::take(&mut self.programs) {
+            if let Some(c) = r.capture.take() {
+                c.after();
+            }
             let flags = r.ctl.get(6);
             let done = r.ctl.get(10 + r.last);
             // Its last phase's items as reset: its segments' groups (0: all of them).
@@ -4733,6 +4853,10 @@ struct Kit {
     resident: Vec<(Buffer, Reach)>,
     /// The phases its walk takes (`ProgP::end`): those before its tail (`Batch::lattice_tail`).
     end: u32,
+    /// Its runs, where its batch captures (`join_capture`).
+    labels: Vec<super::join_capture::Label>,
+    /// The addresses its jobs reach, where its batch captures (`Program::reached`).
+    reached: Vec<u64>,
 }
 
 /// What a gate's room grew to (`RoomGrow`): its check's new cap, and the live relations grown with it (their block,
@@ -5222,6 +5346,11 @@ struct Program {
     hold: Vec<Held>,
     /// Its rooms mapped as its rows reach them (`Kit::rooms`).
     rooms: Rooms,
+    /// Its runs, where its batch captures (`Batch::label`).
+    labels: Vec<super::join_capture::Label>,
+    /// The addresses its jobs reach (`Job::reach`), where its batch captures: the words of its parameters that hold
+    /// one are bound again where a replay places what they reach, as `Kit::grow_rooms` re-points them.
+    reached: Vec<u64>,
 }
 
 impl Program {
@@ -5513,6 +5642,8 @@ struct Ran {
     /// meanwhile (a stage's parameters, a table's lease) would go back to its pool while a chain still reads it. A
     /// fence never committed ends its uses when dropped.
     holds: std::sync::Arc<rerail_blocks::ledger::Fence>,
+    /// Its launch as captured (`join_capture`), finished once its work is done (`programs_done`).
+    capture: Option<super::join_capture::Pending>,
 }
 
 impl Ran {
@@ -5920,6 +6051,13 @@ impl Job {
             // copy: not block data: the words of its parameter blocks its size script writes.
             self.d_caps.extend_from_slice(caps);
         }
+    }
+
+    /// An address the job's parameters hold (`a`, inside a buffer it reaches): named, as `reach`'s are, so the words
+    /// that hold it are found again (`Kit::grow_rooms`, a capture's relocations).
+    fn names(&mut self, a: u64) -> u64 {
+        self.reached.push(a);
+        a
     }
 
     /// `b`'s address `at` bytes in, which the job reaches (and writes, when `write`).

@@ -308,16 +308,19 @@ fn machine_slow<T: Default + Send + Sync + 'static>() -> std::sync::Arc<T> {
     v
 }
 
-/// The most threads a machine's pool has: `RERAIL_THREADS`, a whole number of at least 1; else the cores the machine
-/// offers. The process's environment, read once: every machine of the process is the same machine.
+/// The most threads a machine's pool has: `RERAIL_THREADS`, a whole number of at least 1; else one in a run that
+/// captures join launches (`RERAIL_JOIN_CAPTURE`: other threads write the blocks a launch shares while it runs, which
+/// its after-images would hold as its own); else the cores the machine offers. The process's environment, read once:
+/// every machine of the process is the same machine.
 pub fn threads() -> usize {
     static N: std::sync::OnceLock<usize> = std::sync::OnceLock::new();
     *N.get_or_init(|| {
+        let capturing = std::env::var_os("RERAIL_JOIN_CAPTURE").is_some_and(|d| !d.is_empty());
         std::env::var("RERAIL_THREADS")
             .ok()
             .and_then(|v| v.trim().parse::<usize>().ok())
             .filter(|&n| n >= 1)
-            .unwrap_or_else(|| std::thread::available_parallelism().map_or(1, |n| n.get()))
+            .unwrap_or_else(|| if capturing { 1 } else { std::thread::available_parallelism().map_or(1, |n| n.get()) })
     })
 }
 

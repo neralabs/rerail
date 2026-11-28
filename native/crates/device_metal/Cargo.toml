@@ -91,6 +91,8 @@ zstd = "=0.14.4"
 tempfile = { version = "=3.27.0", optional = true }
 rerail-clif = { path = "../clif", default-features = false }
 rerail-tape-format = { path = "../tape_format" }
+# The views' directory a join capture follows to its homes (`join_capture`).
+rerail-reads = { path = "../reads" }
 rerail-facts = { path = "../facts", default-features = false }
 rerail-lang = { path = "../lang", default-features = false }
 rerail-prof = { path = "../prof" }
@@ -104,6 +106,8 @@ rerail-accel = { path = "../../../accel" }
 rerail-accel-gpu = { path = "../../../accel/gpu" }
 # The join program's Rust on the host, and the texts it was written from (`program_pipe`: another is fatal).
 rerail-ukl-rust = { path = "../ukl_rust" }
+# A join's shape for the join lab's catalogue (`setfix::device::shape_of`).
+rerail-join-shapes = { path = "../join_shapes" }
 # The device layer's buffers and host-memory wraps, which the joins' and row programs' kernels bind (decision 0440).
 rerail-device = { path = "../../../gpu/device" }
 rerail-compiler = { path = "../compiler" }
@@ -145,6 +149,8 @@ metal = "0.33.0"
 rerail-lang-python = { path = "../lang_python" }
 
 [dev-dependencies]
+# The join lab's replay of a launch captured (`join_capture`'s test).
+rerail-join-lab = { path = "../join_lab", features = ["test-hooks"] }
 rerail-logic = { path = "../logic", default-features = false, features = ["test-hooks"] }
 # This crate's own test build turns on its test hooks, as the engine's does (`test-hooks`).
 rerail-device-metal = { path = ".", features = ["test-hooks"] }

@@ -82,7 +82,7 @@ pub(crate) unsafe fn release_mapping(p: *mut u8, len: usize) {
 ///
 /// # Safety
 /// `p` and `len` are a reservation's (a mapping's), and nothing reads it after.
-pub(crate) unsafe fn release(p: *mut u8, len: usize) {
+pub unsafe fn release(p: *mut u8, len: usize) {
     RESERVED.fetch_sub(len, Relaxed);
     #[cfg(unix)]
     unsafe {
@@ -143,6 +143,72 @@ pub fn resident(p: usize, len: usize) -> usize {
     {
         let _ = p;
         len.next_multiple_of(PAGE)
+    }
+}
+
+/// Whether each page of `start..end` (whole pages) holds bytes: one the process touched, in memory or not. On macOS
+/// a page resident, modified or paged out (`mincore`: a page the compressor took reads paged out, and once brought
+/// back its modified bit may be clear); on Linux a page present or swapped (`/proc/self/pagemap`), else resident
+/// (`mincore`). A page only read is the zero page: held, its bytes zeros. A range not mapped holds none.
+#[cfg(unix)]
+fn held_pages(start: usize, end: usize, page: usize) -> Vec<bool> {
+    let n = (end - start) / page;
+    #[cfg(target_os = "linux")]
+    {
+        use std::os::unix::fs::FileExt;
+        if let Ok(f) = std::fs::File::open("/proc/self/pagemap") {
+            let mut e = vec![0u8; 8 * n];
+            if f.read_exact_at(&mut e, (start / page * 8) as u64).is_ok() {
+                // Bit 63: present; bit 62: swapped.
+                return e.chunks_exact(8).map(|w| u64::from_ne_bytes(w.try_into().expect("8 bytes")) >> 62 != 0).collect();
+            }
+        }
+    }
+    let mut v = vec![0u8; n];
+    // SAFETY: `v` has a byte for each page of the range; an unmapped range is an error, read as none.
+    if unsafe { libc::mincore(start as *mut libc::c_void, end - start, v.as_mut_ptr().cast()) } != 0 {
+        return vec![false; n];
+    }
+    // `<sys/mman.h>`'s `MINCORE_PAGED_OUT`, which the libc crate does not name.
+    #[cfg(target_vendor = "apple")]
+    const MINCORE_PAGED_OUT: i32 = 0x20;
+    #[cfg(target_vendor = "apple")]
+    let bits = libc::MINCORE_INCORE | libc::MINCORE_MODIFIED | MINCORE_PAGED_OUT;
+    #[cfg(not(target_vendor = "apple"))]
+    let bits = 1;
+    v.iter().map(|&b| i32::from(b) & bits != 0).collect()
+}
+
+/// The runs of written pages (`held_pages`') in `len` bytes at `p`, as (offset from `p`, bytes), clipped to the range:
+/// what a join capture keeps of a reservation mostly never touched (an arena of 4 GB, a room of 16). A range not
+/// mapped holds none; off Unix, the whole range is one run.
+pub fn written_runs(p: usize, len: usize) -> Vec<(usize, usize)> {
+    #[cfg(unix)]
+    {
+        // SAFETY: a query of the system's page size.
+        let page = (unsafe { libc::sysconf(libc::_SC_PAGESIZE) }).max(1) as usize;
+        let (start, end) = (p / page * page, (p + len).next_multiple_of(page));
+        if len == 0 || p == 0 || end <= start {
+            return Vec::new();
+        }
+        let held = held_pages(start, end, page);
+        let mut runs: Vec<(usize, usize)> = Vec::new();
+        for (i, b) in held.iter().enumerate() {
+            if !*b {
+                continue;
+            }
+            let (a, z) = ((start + i * page).max(p), (start + (i + 1) * page).min(p + len));
+            match runs.last_mut() {
+                Some(last) if last.0 + last.1 == a - p => last.1 += z - a,
+                _ => runs.push((a - p, z - a)),
+            }
+        }
+        runs
+    }
+    #[cfg(not(unix))]
+    {
+        let _ = p;
+        if len == 0 { Vec::new() } else { vec![(0, len)] }
     }
 }
 
@@ -246,6 +312,25 @@ pub(crate) mod tests {
             unsafe { super::give_back(p.add(page), page) };
             assert_eq!(super::resident(p as usize, 4 * page), 0, "given back");
         }
+        // SAFETY: the reservation's, released once.
+        unsafe { super::release(p, 4 * page) };
+    }
+
+    /// `written_runs` finds the runs of written pages, clipped to its range: a reservation's second and third pages
+    /// written are one run, its fourth unwritten none; a range starting inside a written page starts the run there.
+    #[cfg(unix)]
+    #[test]
+    fn written_runs_are_the_pages_written_clipped_to_the_range() {
+        let page = crate::block::PAGE;
+        let p = super::reserve(4 * page);
+        assert!(super::written_runs(p as usize, 4 * page).is_empty(), "a reservation unwritten");
+        // SAFETY: the reservation's second and third pages, whole (each a whole number of the system's pages: 16 KB
+        // on macOS, 4 KB on Linux).
+        unsafe { std::ptr::write_bytes(p.add(page), 1, 2 * page) };
+        let runs = super::written_runs(p as usize, 4 * page);
+        assert_eq!(runs, vec![(page, 2 * page)], "one run, the pages written");
+        let inside = super::written_runs(p as usize + page + 4, 2 * page);
+        assert!(inside[0].0 == 0 && inside.iter().map(|r| r.1).sum::<usize>() <= 2 * page, "{inside:?}");
         // SAFETY: the reservation's, released once.
         unsafe { super::release(p, 4 * page) };
     }

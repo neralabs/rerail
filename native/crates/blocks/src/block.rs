@@ -114,6 +114,8 @@ pub struct Extent {
     pub base: AtomicUsize,
     /// Its block's kind (`kind`), set as its header is: what a profile groups blocks' memory by.
     pub kind: std::sync::atomic::AtomicU32,
+    /// The file it is mapped from (`Block::map_file`): what a join capture names in place of copying its bytes.
+    pub path: std::sync::OnceLock<std::path::PathBuf>,
 }
 
 impl Extent {
@@ -121,6 +123,21 @@ impl Extent {
     pub fn resident(&self) -> usize {
         crate::mem::resident(self.base.load(Relaxed), self.top.load(Relaxed))
     }
+}
+
+/// A copy of a block's bytes made a frozen block's (a join capture's `blocks/<digest>.blk`): its header's length the
+/// copy's, its state `FROZEN`, so `Block::map_file` maps it. Bytes too short for a header, or not a block's, are left.
+pub fn freeze_copy(bytes: &mut [u8]) {
+    if bytes.len() < size_of::<Header>() || bytes[..8] != MAGIC.to_le_bytes() {
+        return;
+    }
+    let n = bytes.len() as u64;
+    let len = std::mem::offset_of!(Header, length);
+    // copy: derived (the copy's header field, written once here)
+    bytes[len..len + 8].copy_from_slice(&n.to_ne_bytes());
+    let state = std::mem::offset_of!(Header, state);
+    // copy: derived (the copy's header field, written once here)
+    bytes[state..state + 4].copy_from_slice(&FROZEN.to_ne_bytes());
 }
 
 pub struct Block {
@@ -810,6 +827,7 @@ impl Block {
             std::io::Read::read_exact(&mut f, unsafe { std::slice::from_raw_parts_mut(p, len) })?;
             Block::make(p, reserved, len, None, writable, None)
         };
+        let _ = b.ext.path.set(path.to_path_buf());
         let h = b.header();
         if h.magic != MAGIC || h.kind != kind {
             return Err(invalid(format!("not a block of kind {kind}")));
@@ -1096,6 +1114,31 @@ pub fn frame(kind: u32, root_len: usize) -> (Vec<u8>, Vec<u8>) {
 #[cfg(all(test, unix))]
 mod tests {
     use super::*;
+
+    /// A join capture's view of blocks (`ledger::placed_at`, `freeze_copy`): an anonymous block found by an address
+    /// inside it, its used bytes copied and frozen, mapped back from the copy's file, which the mapping names.
+    #[test]
+    fn a_captured_blocks_copy_maps_and_names_its_file() {
+        let b = Block::anon(kind::SCRATCH, 1 << 20);
+        let at = b.alloc(4096, 8);
+        let base = b.bytes(0, b.used()).as_ptr() as usize;
+        let p = crate::ledger::placed_at(base + at + 100).expect("the block is found by an address inside it");
+        assert_eq!((p.start, p.kind, p.top, p.anon, p.path.is_none()), (base, kind::SCRATCH, b.used(), true, true));
+        let mut copy = b.bytes(0, b.used()).to_vec();
+        freeze_copy(&mut copy);
+        let dir = std::env::temp_dir().join(format!("rerail-block-capture-{}", std::process::id()));
+        crate::mapped::make_folder(&dir).unwrap();
+        let path = dir.join("copy.blk");
+        std::fs::write(&path, &copy).unwrap();
+        let m = Block::map_file(&path, kind::SCRATCH, false).expect("the copy maps as a block");
+        assert_eq!(m.header().state, FROZEN);
+        assert_eq!(m.header().length as usize, copy.len());
+        let mbase = m.bytes(0, 8).as_ptr() as usize;
+        let q = crate::ledger::placed_at(mbase + 16).expect("the mapped copy is found");
+        assert_eq!((q.start, q.anon, q.path.as_deref()), (mbase, false, Some(path.as_path())));
+        drop(m);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
 
     /// The descriptors this process has open.
     fn open_descriptors() -> usize {

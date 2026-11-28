@@ -111,6 +111,8 @@ fn base_domain(rel: &str, col: usize) -> Option<Domain> {
     match (rel, col) {
         ("node", 2) => Some(Domain::Kind),
         ("field", 1) => Some(Domain::Field),
+        // `nearest_in_field`'s field (`rr_near_child_<set>(n, a, c, f)`).
+        (rel, 3) if crate::code_rule_dsl::logic::front::near_child(rel).is_some() => Some(Domain::Field),
         _ => None,
     }
 }

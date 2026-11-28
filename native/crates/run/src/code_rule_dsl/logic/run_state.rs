@@ -46,6 +46,7 @@ use Class::*;
 /// Every thread-local outside the tests: `(file under native/, name, class, why)` (Carried ones need no why: they
 /// are carried).
 pub const STATE: &[(&str, &str, Class, &str)] = &[
+    ("crates/setfix/src/code_rule_dsl/logic/native/setfix/replay.rs", "WATCH", Thread, "the join lab's watch of a replay's strata run on this thread (a measuring aid: its sampler and counters), set and told on that one thread"),
     ("crates/blocks/src/census.rs", "ID", Thread, "this thread's number in the anonymous room's census (a measuring aid, off by default)"),
     ("crates/blocks/src/census.rs", "N", Thread, "the census's next thread number, read once by `ID`'s first use on a thread"),
     ("crates/blocks/src/maps.rs", "STACK", Thread, "this thread's handle on its stack's room (`scratch::StackRoom`): the same on any thread"),
@@ -103,6 +104,7 @@ pub const STATE: &[(&str, &str, Class, &str)] = &[
     ("crates/context/src/lib.rs", "RUN", Carried, ""),
     ("crates/context/src/lib.rs", "CONTEXT", Carried, ""),
     ("crates/context/src/lib.rs", "HEAP_SPAN", Carried, ""),
+    ("crates/context/src/work.rs", "MINE", Carried, ""),
     ("crates/facts_base/src/code_rule_dsl/facts/rows.rs", "GIVEN", Thread, "the bytes this thread's chunk scopes gave their chunks: the thread's own allocation counts, read against its jemalloc net"),
     ("crates/facts_base/src/code_rule_dsl/facts/rows.rs", "NET", Thread, "inside rows.rs's tests module (a test build only): a test's stand-in for the allocator's net counter"),
     ("crates/facts_base/src/code_rule_dsl/facts/rows.rs", "PEAK", Thread, "this thread's innermost chunk scope's heap peak so far: the thread's own allocation counts (decision 0469)"),
@@ -124,6 +126,7 @@ pub const STATE: &[(&str, &str, Class, &str)] = &[
     ("crates/device_metal/src/code_rule_dsl/logic/native/setfix/device.rs", "FLUSHED", Thread, "this thread's device waves and launches"),
     ("crates/device_metal/src/code_rule_dsl/logic/native/setfix/device.rs", "LAST", Thread, "this thread's device waves and launches"),
     ("crates/device_metal/src/code_rule_dsl/logic/native/setfix/device.rs", "OWN_SYMS", Thread, "the slots of the rule this thread is compiling bound from an own relation's symbols (`compile`'s, as `ARENA`)"),
+    ("crates/device_metal/src/code_rule_dsl/logic/native/setfix/device.rs", "NODE_TEXT_OF", Thread, "the arena slots of the rule this thread is compiling that hold a node's text, each with its node's slot (`compile`'s, as `ARENA`)"),
     ("crates/device_metal/src/code_rule_dsl/logic/native/setfix/device.rs", "SUSPENDED", Thread, "this thread's device waves and launches"),
     ("crates/plan_search/src/code_rule_dsl/logic/plan/search.rs", "OWN_PLANS", Carried, ""),
     ("crates/plan_search/src/code_rule_dsl/logic/plan/search.rs", "OWN_PLANNED", Carried, ""),

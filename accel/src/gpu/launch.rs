@@ -214,7 +214,8 @@ impl Drop for Rerun {
 /// that runs the pool's jobs, a join that steals one) is not that job's work, and an evaluation it begins
 /// (`LaunchScope::enter`) is its own. The waiting one is this thread's
 /// again after, as `f` returns or unwinds. Without it a stratum that waited charged the strata its wait ran, and the
-/// strata theirs' in turn: one evaluation of 11,191 launches (m3, `all`, 2026-11-26).
+/// strata theirs' in turn: one evaluation of 11,191 launches (m3, `all`, 2026-11-26); a CPU kernel's lanes that steal
+/// a chunk's job charged its launches to the outer stratum, 24,000 on `all` (decision 0386).
 pub fn apart<R>(f: impl FnOnce() -> R) -> R {
     struct Back(Option<Rc<RefCell<Evaluation>>>);
     impl Drop for Back {
@@ -383,6 +384,34 @@ mod tests {
             Ok(()) => None,
             Err(p) => Some(p.downcast::<crate::exec::OverBudget>().expect("the launch budget's failure").0),
         }
+    }
+
+    /// Decision 0386: a job that starts on a thread inside another's evaluation (a CPU kernel's lanes that steal a
+    /// pool job, a wait that helps) launches in evaluations of its own; the outer one's ledger keeps its own launches,
+    /// and is the thread's again when the job ends, also when it panics.
+    #[test]
+    fn a_job_started_inside_an_evaluation_launches_in_its_own() {
+        let outer = LaunchScope::enter();
+        launch();
+        let mine = available();
+        for _ in 0..3 {
+            crate::exec::in_job_scope(|| {
+                assert_eq!(available(), 0, "the job starts in no evaluation");
+                let _stratum = LaunchScope::enter();
+                for _ in 0..150 {
+                    launch();
+                }
+            });
+            assert_eq!(available(), mine, "the outer evaluation's launches are its own");
+        }
+        assert!(over(|| crate::exec::in_job_scope(|| {
+            let _stratum = LaunchScope::enter();
+            for _ in 0..=KERNEL_LAUNCH_LIMIT {
+                launch();
+            }
+        })).is_some(), "the job's own budget holds");
+        assert_eq!(available(), mine, "restored after the job's panic");
+        assert_eq!(outer.snapshot().len(), 1, "the outer ledger records its one launch");
     }
 
     #[test]

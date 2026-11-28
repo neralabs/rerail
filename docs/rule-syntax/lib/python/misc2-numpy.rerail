@@ -46,6 +46,6 @@ npy_guarded(e, new) :- npy_ref(e, q), npy_replacement(q, new), ast_name(e, x), l
     kind(i2, "import_from_statement").
 // npy_in_handler(n, t): t is the innermost try statement around n, and n is in one of its except clauses.
 .decl npy_in_handler(n: node, t: node)
-npy_in_handler(n, t) :- nearest(n, t, "try_statement"), exc_handler(t, x), within(n, x).
+npy_in_handler(n, t) :- nearest(n, t, "try_statement", x), exc_handler(t, x).
 .decl npy_catches(t: node, x: symbol)  // some handler of try t names the builtin exception x
 npy_catches(t, x) :- exc_handler(t, h), exc_type(h, e), ruff_qual(e, q), split_dot(q, "builtins", x).

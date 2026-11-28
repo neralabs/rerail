@@ -1,0 +1,6 @@
+[package]
+name = "rerail-join-shapes"
+version = "0.1.0"
+edition = "2024"
+publish = false
+description = "Join shapes (the join lab, 2026-11-27): a join as the join program encodes it with its names and constants taken out, its stable key, and its entry in shapes.yaml. No dependencies: the engine's device layer fills a shape, the join lab reads it."

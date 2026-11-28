@@ -1624,13 +1624,9 @@ impl P {
             }
         }
     }
-    /// An element's `with M` and `without M`, after its choices of kinds and words.
-    fn with_marks(&mut self, c: Vec<TokenElem>) -> R<Vec<TokenElem>> {
-        self.marked(c, false)
-    }
-
-    /// `with_marks`, where `on_not` also after a `~` (a run's: `(~(A | B) without M)*`, each other token without `M`).
-    fn marked(&mut self, mut c: Vec<TokenElem>, on_not: bool) -> R<Vec<TokenElem>> {
+    /// An element's `with M` and `without M`, after its choices of kinds and words, or after a `~` of them (a run's:
+    /// `(~(A | B) without M)*`, each other token without `M`).
+    fn with_marks(&mut self, mut c: Vec<TokenElem>) -> R<Vec<TokenElem>> {
         let plain = |x: &TokenElem| matches!(x, TokenElem::Kind(_) | TokenElem::Word(_) | TokenElem::Without(_) | TokenElem::With(_));
         loop {
             let with = if self.eat_kw("without") {
@@ -1642,7 +1638,7 @@ impl P {
             };
             // A run's `~(…)` takes them too (`(~("def") without newline)*`).
             let first_not = matches!(c.first(), Some(TokenElem::Not(_)));
-            if !c.iter().enumerate().all(|(i, x)| matches!(x, TokenElem::Kind(_) | TokenElem::Word(_) | TokenElem::Without(_) | TokenElem::With(_)) || (i == 0 && first_not)) {
+            if !c.iter().enumerate().all(|(i, x)| plain(x) || (i == 0 && first_not)) {
                 return self.err("`with` or `without` after an element of kinds and words");
             }
             let m = self.ident()?;

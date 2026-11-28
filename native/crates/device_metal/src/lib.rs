@@ -465,6 +465,8 @@ pub mod code_rule_dsl {
             #[cfg(any(target_os = "macos", target_os = "linux", windows))]
             pub mod metal_join;
             #[cfg(any(target_os = "macos", target_os = "linux", windows))]
+            pub mod join_capture;
+            #[cfg(any(target_os = "macos", target_os = "linux", windows))]
             pub mod metal_program_backend;
             #[cfg(any(target_os = "macos", target_os = "linux", windows))]
             pub mod metal_rows;

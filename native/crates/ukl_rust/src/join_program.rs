@@ -1495,7 +1495,27 @@ unsafe fn strcmp_value(st: &St, t: u32, d: *const u8, a: *const u32, unheld: &mu
         return x.chars() as i64;
     }
     let y = st.txt_of(t, d, a, 2, s.agg[1] >> 4, unheld);
+    if s.agg[0] == 2 {
+        // `instr`: where y first is in x, in characters from 1 (as `str::find`); 0 where it is not.
+        let (lx, ly) = (x.len(), y.len());
+        let mut at = 0;
+        while at + ly <= lx {
+            if x.same(at, &y, 0, ly) {
+                return (0..at).filter(|&i| x.byte(i) & 0xc0 != 0x80).count() as i64 + 1;
+            }
+            at += 1;
+        }
+        return 0;
+    }
     x.cmp(&y) as i64
+}
+
+/// Whether a trim takes byte `c`: a space (`spaces`), else one of `y`'s bytes.
+unsafe fn trim_has(y: &Txt, spaces: bool, c: u8) -> bool {
+    if spaces {
+        return c == b' ';
+    }
+    (0..y.len()).any(|i| y.byte(i) == c)
 }
 
 /// An automaton's table (`text::table::Table`): its 256 byte classes, then its transitions, `s` states of `c` classes,
@@ -3749,6 +3769,27 @@ unsafe fn row_text(st: &St, j: &Job, b: &Bufs, ctl: *mut u32, sg: u32) {
                 continue;
             }
             (Make::Range(0), lx)
+        } else if (17..=21).contains(&f) {
+            // The trims: spaces (17 both ends, 18 its start) or the characters of y (19 both ends, 20 its start, 21 its
+            // end), a byte at a time; a set past ASCII is the host's (its characters, not its bytes).
+            if f >= 19 && (0..y.len()).any(|i| y.byte(i) >= 0x80) {
+                counter(2);
+                *vv.add(r as usize) = -1;
+                *counts.add(r as usize) = 1;
+                continue;
+            }
+            let (mut a0, mut b0) = (0, lx);
+            if f != 21 {
+                while a0 < b0 && trim_has(&y, f < 19, x.byte(a0)) {
+                    a0 += 1;
+                }
+            }
+            if matches!(f, 17 | 19 | 21) {
+                while b0 > a0 && trim_has(&y, f < 19, x.byte(b0 - 1)) {
+                    b0 -= 1;
+                }
+            }
+            (Make::Range(a0), b0 - a0)
         } else if f == 6 {
             let y = st.txt_of(r, d, a, 2, 0, &mut unheld);
             let z = st.txt_of(r, d, a, 4, 0, &mut unheld);
@@ -3824,11 +3865,33 @@ unsafe fn row_text(st: &St, j: &Job, b: &Bufs, ctl: *mut u32, sg: u32) {
     }
 }
 
+/// A string join's order of rows `a` and `b` (`strjoin_cmp`): by its `by` columns (`col_idx[1..ncols]`), then x
+/// (`col_idx[0]`), each a number by value or, where `agg[1]` has its bit, a symbol by its name's bytes (as the host's
+/// `Sortable`). A symbol not held: `unheld`.
+unsafe fn strjoin_cmp(st: &St, d: *const u8, a: u32, b: u32, unheld: &mut bool) -> core::cmp::Ordering {
+    use core::cmp::Ordering::*;
+    let s = st.s;
+    let nc = s.ncols;
+    for i in 1..=nc {
+        let c = if i < nc { i } else { 0 };
+        let (va, vb) = (st.rget(a, s.col_idx[c as usize]), st.rget(b, s.col_idx[c as usize]));
+        if va == vb {
+            continue;
+        }
+        if (s.agg[1] >> c) & 1 == 0 {
+            return va.cmp(&vb);
+        }
+        let ((ta, la), (tb, lb)) = (sym_text(d, va, unheld), sym_text(d, vb, unheld));
+        let o = core::slice::from_raw_parts(ta, la as usize).cmp(core::slice::from_raw_parts(tb, lb as usize));
+        return if o == Equal { va.cmp(&vb) } else { o };
+    }
+    Equal
+}
+
 /// A string join's rows of SIMD group `sg` (`ROW_STRJOIN`, decision 0661, `row_strjoin`): each binding's matching
-/// rows (its candidates, as an aggregate's), their distinct (by, x) ordered by `by` (column `col_idx[1]`, a number)
-/// then x (column `col_idx[0]`, a symbol), their x's names joined by the separator's (`par_const[0]`) into the arena;
-/// "" for none. More matches than a SIMD group's lanes, or two names at one `by` (ordered by their bytes, which their
-/// ids are not): the counter's bit 2, and the stratum runs on the host.
+/// rows (its candidates, as an aggregate's), their distinct (by..., x) ordered by `strjoin_cmp`, their x's names joined
+/// by the separator's (`par_const[0]`) into the arena; "" for none. More matches than a SIMD group's lanes: the
+/// counter's bit 2, and the stratum runs on the host.
 unsafe fn row_strjoin(st: &St, j: &Job, b: &Bufs, ctl: *mut u32, sg: u32) {
     let s = st.s;
     let (counts, vv, p, a, d) = (b.c, b.v, j.p, j.a, j.d);
@@ -3852,7 +3915,7 @@ unsafe fn row_strjoin(st: &St, j: &Job, b: &Bufs, ctl: *mut u32, sg: u32) {
         let mut kv = [0i64; 8];
         let w = st.candidates(r, j.f, &mut kv);
         // The matches, a lane's each on a GPU: past its lanes, `over`.
-        let mut m: [(i64, i64); SGW as usize] = [(0, 0); SGW as usize];
+        let mut m = [0u32; SGW as usize];
         let (mut k, mut over) = (0usize, false);
         st.each(w, &kv, |q, _, key| {
             if !st.matches(q, &kv, key) {
@@ -3862,29 +3925,29 @@ unsafe fn row_strjoin(st: &St, j: &Job, b: &Bufs, ctl: *mut u32, sg: u32) {
                 over = true;
                 return false;
             }
-            m[k] = (st.rget(q, s.col_idx[1]), st.rget(q, s.col_idx[0]));
+            m[k] = q;
             k += 1;
             true
         });
         let m = &mut m[..k];
-        m.sort_unstable();
-        let tie = m.windows(2).any(|w| w[0].0 == w[1].0 && w[0].1 != w[1].1);
-        // The kept names (a pair once), each its bytes; whether each is held.
+        let mut cu = false;
+        m.sort_unstable_by(|&a, &b| strjoin_cmp(st, d, a, b, &mut cu));
+        // The kept names (equal rows once), each its bytes; whether each is held.
         let mut names: [(*const u8, u32); SGW as usize] = [(d, 0); SGW as usize];
-        let (mut kept, mut held, mut first_held) = (0usize, true, true);
-        for (i, &(by, x)) in m.iter().enumerate() {
-            if i > 0 && m[i - 1] == (by, x) {
+        let (mut kept, mut held, mut first_held) = (0usize, !cu, !cu);
+        for i in 0..m.len() {
+            if i > 0 && strjoin_cmp(st, d, m[i - 1], m[i], &mut cu) == core::cmp::Ordering::Equal {
                 continue;
             }
             let mut u = false;
-            names[kept] = sym_text(d, x, &mut u);
+            names[kept] = sym_text(d, st.rget(m[i], s.col_idx[0]), &mut u);
             held &= !u;
             if kept == 0 {
-                first_held = !u;
+                first_held &= !u;
             }
             kept += 1;
         }
-        if over || tie || !held || unheld {
+        if over || !held || unheld {
             // Its counter's bit as the group's first lane finds it: 2 where its own name and the separator are held.
             if s.counter != NONE {
                 at(j.counters.add(s.counter as usize)).fetch_or(if first_held && !unheld { 2 } else { 4 }, SeqCst);
@@ -4013,9 +4076,79 @@ struct Prog {
     ctl: *mut u32,
     counts: *mut u32,
     a: ProgP,
+    /// Its items' time by kind (`join_run_timed`, the join lab's), none for the kernel's own run.
+    clock: *mut ItemClock,
+}
+
+/// A replay's items by kind (`join_run_timed`, the join lab's profile): each kind's items run and their nanoseconds.
+/// Indexed by the item's kind (`Item::what`'s top byte, `PK_*`), named by `item_kind_name`.
+#[derive(Clone, Debug)]
+pub struct ItemClock {
+    pub nanos: [u64; 64],
+    pub items: [u64; 64],
+}
+
+impl Default for ItemClock {
+    fn default() -> ItemClock {
+        ItemClock { nanos: [0; 64], items: [0; 64] }
+    }
+}
+
+/// An item kind's name (`PK_*`, lower case), `?` for one the program has not.
+pub fn item_kind_name(kind: usize) -> &'static str {
+    match kind as u32 {
+        PK_COPY => "copy",
+        PK_IX_KEY => "ix_key",
+        PK_RADIX_HIST => "radix_hist",
+        PK_RADIX_SCATTER => "radix_scatter",
+        PK_IX_PLACE => "ix_place",
+        PK_IX_OFFS => "ix_offs",
+        PK_IX_MARK => "ix_mark",
+        PK_DEDUP_KEY => "dedup_key",
+        PK_SET_PLACE => "set_place",
+        PK_DEDUP_CLEAR => "dedup_clear",
+        PK_DEDUP_CLAIM => "dedup_claim",
+        PK_MAP => "map",
+        PK_STAGE_COUNT => "stage_count",
+        PK_SCAN_COUNT => "scan_count",
+        PK_WITNESS_COUNT => "witness_count",
+        PK_ROW_TEXT => "row_text",
+        PK_DEDUP_MARK => "dedup_mark",
+        PK_SCAN_SUMS => "scan_sums",
+        PK_SCAN_TILES => "scan_tiles",
+        PK_STAGE_SCATTER => "stage_scatter",
+        PK_SCAN_SCATTER => "scan_scatter",
+        PK_ROW_SCATTER => "row_scatter",
+        PK_DEDUP_SCATTER => "dedup_scatter",
+        PK_LAT_HCLEAR => "lat_hclear",
+        PK_LAT_REHASH => "lat_rehash",
+        PK_LAT_CLEAR => "lat_clear",
+        PK_LAT_CLAIM => "lat_claim",
+        PK_LAT_BEST => "lat_best",
+        PK_LAT_MERGE => "lat_merge",
+        PK_SUM => "sum",
+        PK_GATE => "gate",
+        PK_ROUND => "round",
+        PK_SIZE => "size",
+        _ => "?",
+    }
 }
 
 impl Prog {
+    /// `item`, its time added to its kind's where the run keeps a clock (`join_run_timed`).
+    unsafe fn timed(&self, it: Item) -> bool {
+        if self.clock.is_null() {
+            return self.item(it);
+        }
+        let t = std::time::Instant::now();
+        let whole = self.item(it);
+        let c = &mut *self.clock;
+        let k = (it.what >> 24) as usize & 63;
+        c.nanos[k] += t.elapsed().as_nanos() as u64;
+        c.items[k] += 1;
+        whole
+    }
+
     unsafe fn ctl(&self, i: usize) -> &AtomicU32 {
         at(self.ctl.add(i))
     }
@@ -4436,7 +4569,7 @@ impl Prog {
             let whole = item == NONE || {
                 let mut it = *self.items.add(item as usize);
                 it.group = group;
-                self.item(it)
+                self.timed(it)
             };
             let q = self.finish(p, item, whole, back, d, ph + 1 < JOIN_INLINE);
             let (next, groups) = if q != 0 {
@@ -4506,6 +4639,15 @@ impl Prog {
 /// `argv` holds the kernel's arguments (each the address of its bytes: a buffer's address, the `ProgP`'s bytes), its
 /// buffers as the host made them.
 pub unsafe fn join_run(argv: *const *const u8, l: &Launch) {
+    join_run_timed(argv, l, core::ptr::null_mut());
+}
+
+/// `join_run`, each item's time added to its kind's in `clock` (the join lab's profile; none: `join_run`).
+///
+/// # Safety
+///
+/// As `join_run`'s; `clock` is null or an `ItemClock` of the caller's, which only this group's run writes.
+pub unsafe fn join_run_timed(argv: *const *const u8, l: &Launch, clock: *mut ItemClock) {
     let threads = l.block[0] * l.block[1] * l.block[2];
     assert!(threads == TG, "join_run: a group of {TG} threads, not {threads}");
     let buf = |i: usize| (*argv.add(i) as *const *mut u8).read_unaligned();
@@ -4521,6 +4663,7 @@ pub unsafe fn join_run(argv: *const *const u8, l: &Launch) {
         ctl: buf(7) as *mut u32,
         counts: buf(8) as *mut u32,
         a,
+        clock,
     };
     // Its groups run one after another on one thread (the CPU device's), each as the kernel's group.
     prog.group(l.group[0]);

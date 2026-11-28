@@ -24,8 +24,10 @@ pub enum Arith {
 pub enum Names {
     /// The order of two names (`str_cmp`).
     Cmp,
-    /// A name's characters (`rr_strlen`).
+    /// A name's characters (`rr_strlen`, `sql_length`).
     Len,
+    /// Where the second name first is in the first, in characters from 1; 0 where it is not (`sql_instr`).
+    Instr,
 }
 
 /// A text the device makes into its text arena.
@@ -53,6 +55,15 @@ pub enum TextFn {
     NodeText,
     /// A regex's capture group (`rx_group`): the text, then a constant regex and a constant group name.
     RxGroup,
+    /// A regex's capture group by its number (`rx_extract`): the text and a constant regex, then the group's number.
+    RxExtract,
+    /// SQL's `trim(x)` and `ltrim(x)`: x less its spaces at both ends, or at its start.
+    Trim,
+    LTrim,
+    /// SQL's `trim(x, y)`, `ltrim(x, y)`, `rtrim(x, y)`: x less the characters of y at both ends, its start, its end.
+    TrimSet,
+    LTrimSet,
+    RTrimSet,
 }
 
 /// What a device computes a function with.
@@ -106,9 +117,10 @@ pub fn device_fn(name: &str) -> Option<DeviceFn> {
         "rr_max" | "max" => Arith(self::Arith::Max),
         "rr_min" | "min" => Arith(self::Arith::Min),
         "str_cmp" => Names { f: self::Names::Cmp, texts: 2 },
-        "rr_strlen" => Names { f: self::Names::Len, texts: 1 },
+        "rr_strlen" | "sql_length" => Names { f: self::Names::Len, texts: 1 },
+        "sql_instr" => Names { f: self::Names::Instr, texts: 2 },
         "lower" => text(TextFn::Lower, 1, 0),
-        "sql_lower" => text(TextFn::AsciiLower, 1, 0),
+        "sql_lower" | "ascii_lower" => text(TextFn::AsciiLower, 1, 0),
         "sql_upper" => text(TextFn::AsciiUpper, 1, 0),
         "head" => text(TextFn::Head, 1, 0),
         "dir" => text(TextFn::Dir, 1, 0),
@@ -123,6 +135,12 @@ pub fn device_fn(name: &str) -> Option<DeviceFn> {
         "rr_node_text_any" => text(TextFn::NodeTextAny, 0, 1),
         "rr_node_text" => text(TextFn::NodeText, 0, 1),
         "rx_group" => text(TextFn::RxGroup, 3, 0),
+        "rx_extract" => text(TextFn::RxExtract, 2, 1),
+        "sql_trim" => text(TextFn::Trim, 1, 0),
+        "sql_ltrim" => text(TextFn::LTrim, 1, 0),
+        "sql_trim2" => text(TextFn::TrimSet, 2, 0),
+        "sql_ltrim2" => text(TextFn::LTrimSet, 2, 0),
+        "sql_rtrim2" => text(TextFn::RTrimSet, 2, 0),
         "rr_node_order" => NodeOrder,
         "replace_all" | "rx_replace" => RegexReplace,
         _ => return None,
@@ -144,7 +162,8 @@ mod tests {
         }
         for name in ["rr_add", "rr_sub", "rr_mul", "rr_div", "mod", "rr_max", "rr_min", "rr_strlen", "lower", "sql_lower", "sql_upper", "head", "dir",
                      "rr_substr", "sql_substr", "slice", "rr_to_string", "zero_pad", "sql_replace", "str_between", "pkg_up", "replace_all", "rx_replace", "str_cmp",
-                     "rx_group", "rr_node_text_any", "rr_node_text", "rr_node_order"] {
+                     "rx_group", "rr_node_text_any", "rr_node_text", "rr_node_order", "sql_length", "sql_instr", "ascii_lower", "rx_extract", "sql_trim",
+                     "sql_ltrim", "sql_trim2", "sql_ltrim2", "sql_rtrim2"] {
             let f = device_fn(name).expect(name);
             if let Some((_, kinds, _)) = crate::code_rule_dsl::logic::strings::functions::signature(name) {
                 assert_eq!(kinds.len(), f.arity(), "{name}");
