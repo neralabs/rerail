@@ -621,7 +621,7 @@ impl Rows {
         if lo >= hi {
             return lo;
         }
-        if self.col(c).has_runs() && (0..1 << 63).contains(&key) {
+        if self.col(c).has_runs() {
             return self.lower_bound_in_runs(c, lo, hi, key);
         }
         let ml = self.min_log;
@@ -665,21 +665,24 @@ impl Rows {
     /// the runs searched for `key`'s high bits once, then the low bits of that run's rows alone. A search by `get`
     /// searched the runs again for every row it read: `text(n, s)` by `n` at about 230 ns a probe of 17 k rows.
     fn lower_bound_in_runs(&self, c: usize, lo: u32, hi: u32, key: i64) -> u32 {
+        #[cfg(test)]
+        RUN_SEARCHES.with(|n| n.set(n.get() + 1));
         let d = self.col(c);
         let (kh, kl) = ((key >> 32) as u32, key as u32);
         // SAFETY: the column has runs; run `m`'s first row is at `2 + 2m`, its high bits at `3 + 2m`.
         let (t, count) = unsafe { d.runs_table() };
         let first = |m: u32| unsafe { *t.add(2 + 2 * m as usize) };
         let high = |m: u32| unsafe { *t.add(3 + 2 * m as usize) };
-        // The column sorted over `lo..hi`: its runs' high bits nondecreasing there. The first run of `key`'s high bits
-        // or above, and the first above them.
+        // The column sorted over `lo..hi`: its runs' high bits nondecreasing there, as the values order them (an
+        // `i64`'s high half is signed). The first run of `key`'s high bits or above, and the first above them.
+        let above = |h: u32, k: u32| (h as i32) > (k as i32);
         let (mut a, mut b) = (0u32, count);
         while a < b {
             let m = a + (b - a) / 2;
-            if high(m) < kh { a = m + 1 } else { b = m }
+            if above(kh, high(m)) { a = m + 1 } else { b = m }
         }
         let start = if a < count { first(a).max(lo) } else { hi };
-        if a == count || high(a) > kh || start >= hi {
+        if a == count || above(high(a), kh) || start >= hi {
             return start.min(hi);
         }
         let mut e = a + 1;
@@ -742,6 +745,12 @@ impl Rows {
         }
         l
     }
+}
+
+#[cfg(test)]
+thread_local! {
+    /// The searches that took a column's runs (`lower_bound_in_runs`), on this thread.
+    static RUN_SEARCHES: std::cell::Cell<u32> = const { std::cell::Cell::new(0) };
 }
 
 #[cfg(test)]
@@ -908,9 +917,10 @@ mod tests {
         let lock = Mutex::new(());
         let rows: &Rows = unsafe { &*block.alloc_t::<Rows>(1) };
         unsafe { Rows::init(rows as *const Rows as *mut Rows, &block, &[4, 4], MIN_LOG) };
-        // Documents of uneven rows (one of a single row), keys ascending, past a u32 once shifted.
+        // Documents of uneven rows (one of a single row), keys ascending as the values order them: a key past an i32,
+        // its values negative, first.
         let firsts = [0u32, 1, 2_900, 2_901, 7_000, 19_999];
-        let keys = [3u32, 9, 10, 4_000_000, 4_000_001, u32::MAX];
+        let keys = [u32::MAX, 3, 9, 10, 4_000_000, 4_000_001];
         let t = alloc_runs(&block, firsts.len());
         for (k, (&f, &key)) in firsts.iter().zip(&keys).enumerate() {
             unsafe { put_run(t, k, f, key) };
@@ -938,6 +948,7 @@ mod tests {
         // last low bits, and below and past every row.
         let keys = [vals[0] - 1, vals[0], vals[1], vals[2_899] + 1, vals[2_900] - 1, vals[2_901], vals[12_345], vals[12_345] + 1, vals[19_998] + 2, vals[19_999], 5 << 32, i64::MAX];
         let search = |what: &str| {
+            let before = RUN_SEARCHES.with(|n| n.get());
             for key in keys {
                 for (lo, hi) in [(0, n), (17, n - 5), (4_000, 4_100), (2_899, 2_902), (2_901, 2_901)] {
                     let want_lo = lo + vals[lo as usize..hi as usize].partition_point(|&v| v < key) as u32;
@@ -946,13 +957,14 @@ mod tests {
                     assert_eq!(rows.upper_from(0, want_lo, hi, key), want_hi, "{what}: upper {key:#x} in {lo}..{hi}");
                 }
             }
+            assert!(RUN_SEARCHES.with(|n| n.get()) > before, "{what}: the searches took the runs");
         };
         search("raw");
         let (_, sealed) = unsafe { rows.seal(&block) };
         assert!(sealed > 0 && (0..rows.nchunks.load(Relaxed) as usize).any(|k| rows.col(0).sealed(k).is_some()), "some chunk of the runs column sealed");
         search("sealed");
-        // Row 1's run is key 9's: a value of another document's key is refused.
-        let refused = std::panic::catch_unwind(|| unsafe { rows.put(1, 0, 3 << 32 | 7) });
+        // Row 1's run is key 3's: a value of another document's key is refused.
+        let refused = std::panic::catch_unwind(|| unsafe { rows.put(1, 0, 9 << 32 | 7) });
         assert!(refused.is_err(), "a value under another run's high bits");
     }
 }
