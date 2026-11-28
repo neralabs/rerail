@@ -15,8 +15,8 @@ import { randomUUID } from "node:crypto";
 import { readFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join, win32 } from "node:path";
-import { promisify } from "node:util";
-import { execFile, execFileSync } from "../child-process.js";
+import { execFileSync } from "../child-process.js";
+import { execFileInThread } from "../git-starter/exec-in-thread.js";
 import { windowsPowerShell, windowsSystemProgram } from "../system-programs.js";
 
 const SYSTEM_SID = "S-1-5-18";
@@ -232,14 +232,13 @@ function ownerOnlyArguments(path: string, folder: boolean): string[] {
   ];
 }
 
-const icaclsLater = promisify(execFile);
-
 /**
- * Runs `icacls` with `args`, holding no thread, cut at its time limit like every `icacls` here but those that change a
- * records folder's own ACL ({@link icaclsPassingOn}); a refusal's error message carries what `icacls` said on stderr.
+ * Runs `icacls` with `args`, holding no thread, its start made in a starter thread in the daemon
+ * (`git-starter/exec-in-thread.ts`), cut at its time limit like every `icacls` here but those that change a records
+ * folder's own ACL ({@link icaclsPassingOn}); a refusal's error message carries what `icacls` said on stderr.
  */
 async function icacls(args: readonly string[]): Promise<string> {
-  const { stdout } = await icaclsLater(windowsSystemProgram("icacls.exe"), args, { encoding: "utf8", timeout: 30_000 });
+  const { stdout } = await execFileInThread(windowsSystemProgram("icacls.exe"), args, 30_000);
   return stdout;
 }
 
@@ -249,7 +248,7 @@ async function icacls(args: readonly string[]): Promise<string> {
  * in the folder, in time in step with what is there.
  */
 async function icaclsPassingOn(args: readonly string[]): Promise<void> {
-  await icaclsLater(windowsSystemProgram("icacls.exe"), args, { encoding: "utf8" });
+  await execFileInThread(windowsSystemProgram("icacls.exe"), args);
 }
 
 /**

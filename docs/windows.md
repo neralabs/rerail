@@ -136,8 +136,8 @@ dashboard.
 <summary>Where each absolute path comes from</summary>
 
 - **Programs Windows ships**: `windowsSystemProgram(name)` and `windowsPowerShell()` (`src/engine/system-programs.ts`),
-  under `%SystemRoot%\System32`: PowerShell, `rundll32.exe` (run from the home folder), `taskkill.exe`, `icacls.exe`,
-  `whoami.exe`.
+  under `%SystemRoot%\System32`: PowerShell, `rundll32.exe` (run from the home folder), `taskkill.exe` (run from that
+  folder), `icacls.exe`, `whoami.exe`.
 - **Node, npm and Pi**: `programOnPath` (also in `src/engine/system-programs.ts`), the one lookup of a program on
   `PATH`. On Windows it takes only a `.exe` or `.com`, in `PATHEXT`'s order, from an absolute `PATH` entry: Node
   cannot spawn a version manager's `node.cmd` without a shell (`EINVAL`). Under Node, Rerail's children run under
@@ -204,6 +204,19 @@ Rerail runs Git for Windows' own `git.exe`, not its launcher, and reads Git's gl
   existed, and the next hook or command looks for Git afresh at its first call. A process cannot end while a question
   to the disk is pending, so a look on a share that does not answer would keep a hook alive after its answer until
   Windows gives up on the server, about 21 s, where a hook or a command lives a second or less.
+- Node makes a child process on the thread that asks for it, and on Windows it returns only once Windows has made the
+  process: a second or more each on a busy machine where every process start stalls. The daemon starts each Git that
+  does not block, and each `icacls` it does not wait for, in a starter thread (`src/engine/git-starter/git-thread.ts`), up to four
+  at once, so its own thread goes on answering hooks, `rerail status` and health probes while those starts wait. A Git
+  that blocks, such as the worktree list or a clone's remote where the daemon keeps no answer for it, and the `icacls`
+  that makes a new session records folder outside the profile folder private before its first record, still start on
+  the daemon's thread. Git's two asks that name the config files the engine's own Git reads take start as the daemon
+  starts, as Git that does not block, so a session's first hooks wait for neither, however slowly Git starts or
+  answers; until Git answers, the reads through the engine's opener (below) take no system file Git named. A read's
+  time limit counts from its Git's start, not from its wait for a thread, and a read stopped while its start waits
+  never starts its Git. A starter thread that fails before it runs is replaced; after two such failures in a row the
+  daemon makes no more, and starts Git on its own thread while no starter thread runs. `daemon.log` gets a line for
+  each starter thread lost and one when the daemon makes no more.
 - Anyone can put a `cmd\git.exe` or `bin\git.exe` on `PATH`, so Rerail goes behind one only into a Git for Windows
   install: `<Git>\cmd\git.exe` runs, and `<Git>\etc\gitconfig` or the build's `share\git` is there. The `git.exe` it
   then runs must pass the checks every `PATH` entry gets (`trustedFolder`): outside every `node_modules`, and outside
@@ -222,9 +235,9 @@ Rerail runs Git for Windows' own `git.exe`, not its launcher, and reads Git's gl
   folder, as Git for Windows does. So Rerail reads and watches the `~/.gitconfig` and `core.excludesFile` that Git
   reads.
 - The engine reads repositories in process for the ignore rules and the code-rule store's view of a checkout, through
-  one opener (`native/src/git_access/`). At its first such read a process asks the Git Rerail runs which system config file it
-  reads (`src/engine/native/git-access.ts`: `git var GIT_CONFIG_SYSTEM` and its config listing outside any
-  repository), so the engine takes Git for Windows' `core.autocrlf=true` from that Git's `etc\gitconfig` and
+  one opener (`native/src/git_access/`). At its first such read a process asks the Git Rerail runs which system config
+  file it reads (the daemon asks as it starts, above; `src/engine/native/git-access.ts`: `git var GIT_CONFIG_SYSTEM`
+  and its config listing outside any repository), so the engine takes Git for Windows' `core.autocrlf=true` from that Git's `etc\gitconfig` and
   starts no `git.exe` of its own. Before, the Git library the engine links found the system file by running the first
   `git.exe` on `PATH`, once per process, past the checks above. Three reads of the code rules still open the
   repository that way (`@git_tracked`, `@git_commit`, `@git_has` and `git_rev`, a base revision's files, a `HEAD`

@@ -11,6 +11,7 @@
  * On Windows it also refuses a program named by anything but a path from a drive or a server (`assertProgramPath`).
  */
 import * as childProcess from "node:child_process";
+import { win32 } from "node:path";
 import { promisify } from "node:util";
 import { isFullyQualifiedWindowsPath, windowsSystemProgram } from "./system-programs.js";
 
@@ -109,12 +110,15 @@ function taskkillTree(pid: number, failed: () => void): void {
 }
 
 /**
- * `taskkill /T /F /PID pid`, started; undefined when spawn threw or answered with no child. Node's spawn always answers
- * with one, so the return type admits what a stand-in for it can do.
+ * `taskkill /T /F /PID pid`, started in the system folder; undefined when spawn threw or answered with no child. Node's
+ * spawn always answers with one, so the return type admits what a stand-in for it can do. Nothing waits for taskkill,
+ * and on Windows a running process holds the folder it runs in: started in this process's folder (a checkout, a
+ * test's folder), it would hold that folder for a moment after the tree it ended has gone.
  */
 function startTaskkill(pid: number): childProcess.ChildProcess | undefined {
+  const taskkill = windowsSystemProgram("taskkill.exe");
   try {
-    return spawn(windowsSystemProgram("taskkill.exe"), ["/T", "/F", "/PID", String(pid)], { stdio: "ignore" });
+    return spawn(taskkill, ["/T", "/F", "/PID", String(pid)], { stdio: "ignore", cwd: win32.dirname(taskkill) });
   } catch {
     return undefined;
   }

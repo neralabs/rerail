@@ -37,6 +37,7 @@ import { nativeTreeWatch, type TreeWatch } from "../engine/code-rule/tree-watch.
 import { RepositoryWorktreeWalks } from "../engine/code-rule/worktree-walks.js";
 import { NO_UNTAKEN_EVENTS, untakenEventTaker, type UntakenEventTaker, type UntakenPass } from "../engine/storage/untaken-events.js";
 import { GitIgnoreMatchers } from "../engine/native/git-ignore-matchers.js";
+import { askGitWithoutBlocking, gitAsksEnded } from "../engine/native/git-access.js";
 import {
   endSuspendedSessions, failQueuedScans, type IngestOptions, RerailRuntime, type RerailRuntimeOptions, type SessionSuspension, type SuspendedSessions,
 } from "./runtime.js";
@@ -1411,6 +1412,14 @@ export async function startEngineService(options: EngineServiceOptions): Promise
   const databasePath = resolvePath(options.databasePath ?? defaultRerailDatabasePath());
   // Before any runtime registers an owner: every row this service's runtimes write names it.
   const ownerLock = holdOwnerLock(databasePath);
+  // Git's answer for the engine's in-process reads, asked now without holding the start: the server listens at once,
+  // and a session's first events wait for no Git ask. The close ends the asks still running (`endGitAsks`).
+  const gitAsks = new AbortController();
+  askGitWithoutBlocking(gitAsks.signal);
+  const endGitAsks = async (): Promise<void> => {
+    gitAsks.abort();
+    await gitAsksEnded();
+  };
   const routing: EngineRoutingState = {
     runtimes: new Map(),
     runtimeKeysBySession: new Map(),
@@ -1486,6 +1495,9 @@ export async function startEngineService(options: EngineServiceOptions): Promise
         for (const writer of routing.receiptWriters.values()) writer.close();
         routing.receiptWriters.clear();
       } finally {
+        // No reader is left to take an answer, also when the server's or a runtime's close failed: ending the asks waits
+        // for their Git to exit, never for Git to answer, and never fails.
+        await endGitAsks();
         // Also when the server's or a runtime's close failed: a suspended session left open would read as live with no
         // daemon. Its lock goes once its sessions have ended, and its file stays, so a later sweep ends any session a
         // failed close left open (`OwnerLock.release`). The engine's watch thread and its handles go however the sessions'
@@ -1514,6 +1526,8 @@ export async function startEngineService(options: EngineServiceOptions): Promise
     try {
       await Promise.all([...routing.runtimes.values()].map(runtime => runtime.dispose()));
     } finally {
+      // First, as it never fails: what follows may.
+      await endGitAsks();
       closeWalks();
       ownerLock.release();
     }

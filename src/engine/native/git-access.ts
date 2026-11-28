@@ -49,11 +49,17 @@ export function readGitInstallation(run: typeof runGit = runGit): GitInstallatio
 
 /**
  * {@link readGitInstallation} with its two asks run as Git processes no thread waits on, one after the other; undefined
- * once `options.signal` is aborted, whose asks did not run to their end. Rejects where Git is missing.
+ * once `options.signal` is aborted, whose asks did not run to their end. Where Git is missing it reports so, settled, as
+ * {@link readGitInstallation} does.
  */
 async function readGitInstallationWithoutBlocking(options: GitReadOptions): Promise<GitInstallationReport | undefined> {
   const folder = tmpdir();
-  const system = await runGitAsync(folder, SYSTEM_ASK, { ...ASK, ...options });
+  let system: GitResult;
+  try {
+    system = await runGitAsync(folder, SYSTEM_ASK, { ...ASK, ...options });
+  } catch (error) {
+    return withoutGit(error);
+  }
   const listing = await runGitAsync(folder, LISTING_ASK, { ...ASK, ...options });
   return options.signal?.aborted === true ? undefined : installationReport(system, listing);
 }
@@ -88,15 +94,22 @@ interface GitAccessKeeper {
   standing(): NativeGitAccess | undefined;
   /** The owner for `report`: the one kept while the answer is the same, else a new one. */
   take(report: GitInstallationReport): NativeGitAccess;
+  /**
+   * The owner a read takes while Git's asks run without blocking ({@link learnGitAccess}): the one kept, else one that
+   * reads no system file Git named, as after an ask that did not finish. It does not stand, so the asks' answer replaces it.
+   */
+  meanwhile(): NativeGitAccess;
 }
 
 function gitAccessKeeper(binding: NativeBinding, now: () => number): GitAccessKeeper {
   let owner: NativeGitAccess | undefined;
+  let fallback: NativeGitAccess | undefined;
   let answer = "";
   let askAgainAt = Number.POSITIVE_INFINITY;
   const tell = fallbackNotice();
   return {
     standing: () => (owner !== undefined && now() < askAgainAt ? owner : undefined),
+    meanwhile: () => owner ?? (fallback ??= new binding.GitAccess({})),
     take: ({ installation, settled, problem }) => {
       const asked = JSON.stringify([installation.systemConfig ?? null, installation.configOrigins ?? null]);
       if (owner === undefined || asked !== answer) {
@@ -137,11 +150,43 @@ let processOwner: GitAccessKeeper | undefined;
 /**
  * The process's one owner of the engine's in-process Git reads (the ignore matcher, the workspace's Git discovery), made
  * at the first need ({@link gitAccessOwner}): every read in the process then takes the config files Rerail's Git reads,
- * and the engine starts no Git of its own to find them.
+ * and the engine starts no Git of its own to find them. In a daemon that asks Git without blocking
+ * ({@link askGitWithoutBlocking}), a read before Git's answer takes the owner there is meanwhile and waits for no Git.
  */
 export function nativeGitAccess(binding: NativeBinding = loadNativeBinding()): NativeGitAccess {
   processOwner ??= gitAccessKeeper(binding, Date.now);
-  return processOwner.standing() ?? processOwner.take(readGitInstallation());
+  const standing = processOwner.standing();
+  if (standing !== undefined) return standing;
+  const daemon = [...withoutBlocking][0];
+  if (daemon === undefined) return processOwner.take(readGitInstallation());
+  // An ask that did not finish is due again: in a daemon it runs off the thread too.
+  if (learning.size === 0) void learnGitAccess({ signal: daemon });
+  return processOwner.meanwhile();
+}
+
+/** The signals of the daemons asking Git without blocking ({@link askGitWithoutBlocking}), each until it is aborted. */
+const withoutBlocking = new Set<AbortSignal>();
+
+/**
+ * From now until `signal` is aborted, every ask of Git's installation runs as Git processes no thread waits on, and a
+ * read meanwhile takes the owner there is ({@link nativeGitAccess}): the daemon's engine service asks as it starts, so
+ * neither its start nor a session's first events wait for Git's two asks, however slowly Git answers.
+ */
+export function askGitWithoutBlocking(signal: AbortSignal): void {
+  if (signal.aborted) return;
+  withoutBlocking.add(signal);
+  signal.addEventListener("abort", () => withoutBlocking.delete(signal), { once: true });
+  void learnGitAccess({ signal });
+}
+
+/** Whether a daemon asks Git without blocking ({@link askGitWithoutBlocking}): a session's open then waits for no ask. */
+export function askingGitWithoutBlocking(): boolean {
+  return withoutBlocking.size > 0;
+}
+
+/** Resolves once the ask under way without blocking, where one runs, has ended: a closed daemon leaves no Git running. */
+export async function gitAsksEnded(): Promise<void> {
+  await learning.get("installation")?.answer;
 }
 
 /**
@@ -159,11 +204,22 @@ const learning = new Map<"installation", SharedRead<void>>();
  * Makes the process's owner ({@link nativeGitAccess}) unless its answer stands, from asks run as Git processes no thread
  * waits on, so {@link standingGitAccess} gives it after. Callers meanwhile share one ask; where another caller's signal
  * stopped it, a caller whose own signal is live asks again, and a caller whose own signal is aborted returns without
- * waiting for it. It never fails: where no engine loads, Git is missing or `options.signal` is aborted, it makes nothing.
+ * waiting for it. Where Git is missing it makes the owner {@link readGitInstallation} makes there. It never fails: where
+ * `options.signal` is aborted it makes nothing, and any other failure is {@link askFailed}.
  */
 export async function learnGitAccess(options: GitReadOptions = {}): Promise<void> {
   if (standingGitAccess() !== undefined) return;
-  await sharedRead(learning, "installation", options, async () => await learnedGitAccess(options).catch(() => undefined));
+  await sharedRead(learning, "installation", options, async () => await learnedGitAccess(options).catch(askFailed));
+}
+
+/**
+ * An ask of Git's installation failed other than for no Git (no engine loads, the engine refused Git's answer): stderr,
+ * the daemon's log, says why, and an owner made takes the fallback as after an ask Git did not answer, so a read asks
+ * again only once {@link GIT_ASK_AGAIN_MS} has passed, not at each read. No fact says sooner that a new ask would answer.
+ */
+function askFailed(error: unknown): void {
+  process.stderr.write(`rerail: could not learn which config files Rerail's Git reads: ${error instanceof Error ? error.message : String(error)}\n`);
+  if (processOwner?.standing() === undefined) processOwner?.take({ installation: {}, settled: false });
 }
 
 /**
@@ -172,10 +228,10 @@ export async function learnGitAccess(options: GitReadOptions = {}): Promise<void
  */
 async function learnedGitAccess(options: GitReadOptions): Promise<void> {
   if (standingGitAccess() !== undefined) return;
-  const binding = loadNativeBinding();
+  // Made before the asks, so an ask that fails has an owner take the fallback ({@link askFailed}).
+  processOwner ??= gitAccessKeeper(loadNativeBinding(), Date.now);
   const report = await readGitInstallationWithoutBlocking(options);
   if (report === undefined) return;
-  processOwner ??= gitAccessKeeper(binding, Date.now);
   // A blocking ask that answered meanwhile stands: its owner stays, and the readers that opened under it.
   if (processOwner.standing() === undefined) processOwner.take(report);
 }

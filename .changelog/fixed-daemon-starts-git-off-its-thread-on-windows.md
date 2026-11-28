@@ -1,0 +1,1 @@
+On Windows the daemon starts non-blocking Git reads, and `icacls` runs it does not wait for, in up to four threads, so hooks, `rerail status` and health checks do not wait for those starts while the threads run. A session's first hooks no longer wait for the daemon's two questions to Git about config files.
