@@ -46,11 +46,12 @@ fn main() {
     let lean = |b: &[u8]| rerail_python_lean::token_count(b).unwrap_or(0);
     let strata = |b: &[u8]| strata::token_count(b).unwrap_or(0);
     let strata_b = |b: &[u8]| strata::token_count_with(b, Variant::B).unwrap_or(0);
-    if only == Some("starts") {
-        // The walk's token starts by masks against the serial walk's, block by block.
+    if only == Some("starts") || only == Some("strings") {
+        // The walk's token starts by masks against the serial walk's, block by block: in code, or in strings.
         let (mut same, mut rare, mut differ, mut blocks) = (0, 0, 0, 0);
+        let oracle = if only == Some("starts") { strata::starts::starts_are_the_walks } else { strata::starts::string_starts_are_the_walks };
         for (p, b) in &all {
-            if let Some((s, r, first)) = strata::starts::starts_are_the_walks(b) {
+            if let Some((s, r, first)) = oracle(b) {
                 same += s;
                 rare += r;
                 blocks += b.len().div_ceil(64);
@@ -62,7 +63,7 @@ fn main() {
                 }
             }
         }
-        println!("token starts by masks: {blocks} blocks, {same} the walk's, {rare} rare, {differ} files with a block that differs");
+        println!("token starts by masks ({}): {blocks} blocks, {same} the walk's, {rare} rare, {differ} files with a block that differs", only.unwrap_or_default());
         return;
     }
     if only == Some("chunked") {

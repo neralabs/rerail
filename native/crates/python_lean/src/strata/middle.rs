@@ -1169,4 +1169,34 @@ mod tests {
         }
         assert!(blocks > 100, "{blocks}");
     }
+
+    #[test]
+    fn string_starts_by_masks_are_the_walks() {
+        let mut blocks = 0;
+        let mut x = 0x2545_f491_4f6c_dd1du64;
+        let mut random: Vec<Vec<u8>> = Vec::new();
+        for len in [65usize, 130, 400, 1000] {
+            for _ in 0..1000 {
+                random.push(
+                    (0..len)
+                        .map(|_| {
+                            x ^= x << 13;
+                            x ^= x >> 7;
+                            x ^= x << 17;
+                            b"ab'\"\\\\nx41{}{}rbf u N \n#=(1)U\r0'\\"[(x >> 8) as usize % 33]
+                        })
+                        .collect(),
+                );
+            }
+        }
+        for t in texts().iter().map(|t| t.as_bytes()).chain(random.iter().map(Vec::as_slice)) {
+            if let Some((same, _, first)) = super::super::starts::string_starts_are_the_walks(t) {
+                blocks += same;
+                if let Some(e) = first {
+                    panic!("{e}: {:?}", String::from_utf8_lossy(t));
+                }
+            }
+        }
+        assert!(blocks > 100, "{blocks}");
+    }
 }

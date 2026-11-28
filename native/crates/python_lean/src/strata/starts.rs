@@ -318,3 +318,222 @@ pub fn starts_are_the_walks(src: &[u8]) -> Option<(usize, usize, Option<String>)
     }
     Some((same, rare, first))
 }
+
+/// The oracle of `string_starts`: for each block, whether its starts in strings are the serial walk's (blocks
+/// that agree, blocks rare, the first that differs).
+pub fn string_starts_are_the_walks(src: &[u8]) -> Option<(usize, usize, Option<String>)> {
+    let mut t = super::Text { src, b: super::classes(src), first: 0 };
+    if !t.regions_b() || t.depth().is_err() {
+        return None;
+    }
+    let lexed = super::lex_with(src, super::Variant::B).ok()?;
+    let short = core::cell::Cell::new(false);
+    let m = t.m(&short);
+    let n = src.len().div_ceil(64);
+    let mut want = vec![0u64; n + 1];
+    for tok in &lexed.toks {
+        let s = tok.start as usize;
+        if tok.end > tok.start && s < src.len() && !m.bit(s, |b| b.code) {
+            want[s / 64] |= 1 << (s % 64);
+        }
+    }
+    let (mut same, mut rare, mut first) = (0, 0, None);
+    let mut c = StrCarry::default();
+    for (bi, &w) in want.iter().enumerate().take(n) {
+        let in_code = m.blk(bi).code;
+        let (got, r) = string_starts(&m, bi, &mut c);
+        let got = got & !in_code;
+        if r {
+            rare += 1;
+        } else if got == w {
+            same += 1;
+        } else if first.is_none() {
+            let at = bi * 64;
+            let text = String::from_utf8_lossy(&src[at.saturating_sub(16)..(at + 80).min(src.len())]).into_owned();
+            first = Some(format!("block {bi}: masks {got:064b}, walk {w:064b} (bit 0 the block's first byte, the text from 16 before it: {text:?})"));
+        }
+    }
+    Some((same, rare, first))
+}
+
+/// A string's byte classes the string starts read, of the byte at `at`.
+#[derive(Clone, Copy, Default)]
+struct SBytes {
+    r: u64,
+    b: u64,
+    f: u64,
+    pfx: u64,
+    sq: u64,
+    dq: u64,
+    u: u64,
+    big_u: u64,
+    x: u64,
+    big_n: u64,
+    digit: u64,
+    hex: u64,
+    cr: u64,
+    lf: u64,
+    lbrace: u64,
+    rbrace: u64,
+    /// The bytes an escape of two is (`\n`, `\'`, `\\` and the like).
+    simple: u64,
+}
+
+#[inline(always)]
+fn sclasses(src: &[u8], at: usize) -> SBytes {
+    let v = bytes_from(src, at);
+    let s = V::splat;
+    let eq = |x: u8| v.simd_eq(s(x)).to_bitmask();
+    let low = v | s(0x20);
+    let leq = |x: u8| low.simd_eq(s(x)).to_bitmask();
+    let mut simple = 0;
+    for c in *b"\n'\"abfrntv\\" {
+        simple |= eq(c);
+    }
+    SBytes {
+        r: leq(b'r'),
+        b: leq(b'b'),
+        f: leq(b'f') | leq(b't'),
+        pfx: leq(b'r') | leq(b'b') | leq(b'f') | leq(b't') | leq(b'u'),
+        sq: eq(b'\''),
+        dq: eq(b'"'),
+        u: eq(b'u'),
+        big_u: eq(b'U'),
+        x: eq(b'x'),
+        big_n: eq(b'N'),
+        digit: (v - s(b'0')).simd_lt(s(10)).to_bitmask(),
+        hex: (v - s(b'0')).simd_lt(s(10)).to_bitmask() | (low - s(b'a')).simd_lt(s(6)).to_bitmask(),
+        cr: eq(b'\r'),
+        lf: eq(b'\n'),
+        lbrace: eq(b'{'),
+        rbrace: eq(b'}'),
+        simple,
+    }
+}
+
+/// What a string's starts carry from a block to the next: whether a string is open (and its kinds), the bytes of an
+/// escape or a brace pair that reach into it, whether its first byte follows a string's text, the `}` runs' parity,
+/// and whether the open string is one its masks do not read (rare until it closes).
+#[derive(Clone, Copy, Default, Debug, PartialEq, Eq)]
+pub(super) struct StrCarry {
+    /// The quotes after prefixes of the block before, and their kinds; the openers' ends past it, and theirs.
+    q: u64,
+    q_raw: u64,
+    q_bytes: u64,
+    q_fmt: u64,
+    oe: u64,
+    oe_raw: u64,
+    oe_bytes: u64,
+    oe_fmt: u64,
+    open: bool,
+    raw: bool,
+    bytes: bool,
+    format: bool,
+    covered: u64,
+    text: bool,
+    rb: u64,
+    rare: bool,
+}
+
+/// From each of `seeds` forward through `through` (each seed in it): the run to its end.
+#[inline(always)]
+fn fill(seeds: u128, through: u128) -> u128 {
+    let s = seeds & through;
+    s | ((through.wrapping_add(s) ^ through) & through)
+}
+
+/// Block `bi`'s token starts in its strings (a string's start, its text, escapes and brace pairs, its end) from the
+/// carry `c` into it (left as the carry out), and whether the block is rare.
+pub(super) fn string_starts(t: &Masks<'_>, bi: usize, c: &mut StrCarry) -> (u64, bool) {
+    let src = t.src;
+    let b = *t.blk(bi);
+    let at = 64 * bi;
+    let n: [SBytes; 6] = core::array::from_fn(|d| sclasses(src, at + d));
+    let hi = |x: u64| u128::from(x);
+    let bool128 = |x: bool| u128::from(x);
+    // The strings that start in the block, the quote after each prefix (the prefix's letters read into the block
+    // after), and the opener's end.
+    let up_n = sclasses(src, at + 64);
+    let s = hi(b.sstart);
+    let pfx = w(n[0].pfx, up_n.pfx);
+    let pre = fill(s & pfx, pfx);
+    let q0 = run_ends(s, pfx);
+    let kind = |letter: u128| q0 & run_ends(letter & pre, pfx);
+    // With the quotes the block before's prefixes reach.
+    let q = q0 | hi(c.q);
+    let (raw_q, bytes_q, fmt_q) = (kind(w(n[0].r, up_n.r)) | hi(c.q_raw), kind(w(n[0].b, up_n.b)) | hi(c.q_bytes), kind(w(n[0].f, up_n.f)) | hi(c.q_fmt));
+    let triple = q & ((hi(n[0].sq & n[1].sq & n[2].sq)) | hi(n[0].dq & n[1].dq & n[2].dq));
+    let to_oe = |x: u128| ((x & !triple) << 1) | ((x & triple) << 3);
+    // With the openers' ends the block before's openers reach.
+    let oe = to_oe(q) | hi(c.oe);
+    // A string's interior: from its opener's end (or the block's start, where one is open) to its closer.
+    let closer = hi(b.send);
+    let through = !closer;
+    let interior = fill(oe | bool128(c.open), through);
+    let kind_in = |k_q: u128, k_oe: u64, k: bool| fill(to_oe(k_q) | hi(k_oe) | bool128(c.open & k), through);
+    let (iraw, ibytes, ifmt) = (kind_in(raw_q, c.oe_raw, c.raw), kind_in(bytes_q, c.oe_bytes, c.bytes), kind_in(fmt_q, c.oe_fmt, c.format));
+    let mask = (1u128 << 64) - 1;
+    let inner = interior & mask;
+    // Escapes: each backslash no odd run escapes, in a string not raw; in a bytes string `\N`, `\u`, `\U` are its
+    // text.
+    let e0 = hi(b.bs & !b.esc) & inner & !iraw;
+    let e = e0 & !(ibytes & hi(n[1].big_n | n[1].u | n[1].big_u));
+    let u_ok = hi(n[1].u & n[2].hex & n[3].hex & n[4].hex & n[5].hex);
+    let x_ok = hi(n[1].x & n[2].hex & n[3].hex);
+    let d = hi(n[1].digit);
+    let (d2, d3) = (hi(n[2].digit), hi(n[3].digit));
+    let cr = hi(n[1].cr);
+    let lf2 = hi(n[2].lf);
+    let l2 = e & (u_ok | x_ok | d | cr | hi(n[1].simple));
+    let l3 = e & (u_ok | x_ok | (d & d2) | (cr & lf2));
+    let l4 = e & (u_ok | x_ok | (d & d2 & d3));
+    let l5 = e & u_ok;
+    let covered_e = e | (l2 << 1) | (l3 << 2) | (l4 << 3) | (l5 << 4) | (l5 << 5);
+    // An f-string's braces: a pair of `{` or of `}` is one token; a `{` no `{` pairs with is an interpolation (rare),
+    // a lone `}` a refusal (rare).
+    let fint = inner & ifmt & !covered_e & !hi(c.covered);
+    let lb = hi(b.lb) & fint;
+    let rb = hi(b.rb) & fint;
+    let lb_pair = lb & hi(b.lbu) & hi(n[1].lbrace);
+    let interp = lb & hi(b.lbu) & !hi(n[1].lbrace);
+    let rbu = rb & !hi(super::escaped(rb as u64, &mut c.rb));
+    let rb_pair = rbu & hi(n[1].rbrace);
+    let lone_rb = rbu & !hi(n[1].rbrace);
+    let covered = covered_e | lb_pair | (lb_pair << 1) | rb_pair | (rb_pair << 1) | hi(c.covered);
+    // A string's text: the bytes of its interior no token above takes, nor a format string's brace.
+    let text = inner & !covered & !lb & !rb & !closer;
+    let text_starts = text & !((text << 1) | bool128(c.text));
+    let starts = s | text_starts | e | lb_pair | rb_pair | (closer & mask);
+    // Rare: a prefix that leaves the block; `\U` or `\N{` (long escapes); an interpolation or a lone `}`; a raw
+    // string's backslash where its text has not begun, or a raw f-string's (the walk's quirks there); a string the
+    // carry says is rare.
+    let long = e & hi(n[1].big_u | (n[1].big_n & n[2].lbrace)) != 0;
+    let raw_first = oe | (bool128(c.open & !c.text) & !hi(c.covered) & 1);
+    let raw_quirk = (hi(b.bs) & inner & iraw & (raw_first | ifmt)) != 0;
+    let rare_here = c.rare | long | (interp != 0) | (lone_rb != 0) | raw_quirk;
+    // The carry out.
+    let open = interior >> 64 & 1 == 1;
+    // A quote past the block is the next block's to read (its opener's end too); an opener's end past it, of a
+    // quote in it, is carried.
+    let up = |x: u128| (x >> 64) as u64;
+    let end_up = |x: u128| up(to_oe(x & mask));
+    *c = StrCarry {
+        q: up(q0),
+        q_raw: up(raw_q),
+        q_bytes: up(bytes_q),
+        q_fmt: up(fmt_q),
+        oe: end_up(q),
+        oe_raw: end_up(raw_q),
+        oe_bytes: end_up(bytes_q),
+        oe_fmt: end_up(fmt_q),
+        open,
+        raw: iraw >> 64 & 1 == 1,
+        bytes: ibytes >> 64 & 1 == 1,
+        format: ifmt >> 64 & 1 == 1,
+        covered: (covered >> 64) as u64,
+        text: text >> 63 & 1 == 1,
+        rb: c.rb,
+        rare: open & (c.rare | (interp != 0)),
+    };
+    (starts as u64, rare_here)
+}

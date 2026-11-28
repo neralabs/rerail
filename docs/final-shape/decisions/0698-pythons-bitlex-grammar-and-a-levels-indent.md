@@ -832,3 +832,28 @@ statements and blocks end.
     - **As tested:** the starts in code are the serial walk's on every block that isn't rare: the test texts, 4000
       random texts of names, numbers and operators, and the corpus (223461 of 223857 blocks; 396 rare, 0
       differ).
+103. **The walk's token starts in strings by masks** (as built: `strata::starts::string_starts`; the walk's pass 1
+    does not read it yet).
+    - **Why:** the strings' tokens count toward a chunk's records as its code's do (item 102).
+    - **What it makes, from stratum 2's string starts and closers:**
+      - a string's start, at its prefix;
+      - its interior, from the opener's end (one quote or three, after the prefix's run of letters) to its closer;
+      - its kinds (raw, bytes, format) from the prefix's letters, filled through the interior;
+      - its escapes, at each backslash no odd run escapes, in a string not raw. In a bytes string `\N`, `\u` and
+        `\U` are text. Each escape's length is `lex::escape_at`'s, from masks of the bytes after it (four hex
+        digits, two, up to three digits, `\r\n`, the bytes of two);
+      - a format string's brace pairs, `{{` and `}}`, by the odd-run trick over each run of braces from its first;
+      - its text's runs: the interior's bytes that no token above takes;
+      - its end, at the closer.
+    - **The carry from a block to the next:** the open string and its kinds, an opener whose quote or end lies past
+      the block (a prefix's letters are read into the next block), the bytes an escape or a pair takes past it,
+      whether its last byte was text, and the `}` runs' parity.
+    - **Rare** (its chunk waits for the one before it):
+      - `\U` and `\N{` (escapes of more bytes);
+      - an interpolation, and the rest of its string's blocks;
+      - a `}` no `}` pairs with (the walk refuses it);
+      - a raw string's backslash where its text has not begun, and any backslash of a raw format string (the walk
+        reads these by tokens of their own).
+    - **As tested:** the starts in strings are the serial walk's on every block that isn't rare: the test texts,
+      4000 random texts of quotes, prefixes, escapes, braces and line ends, and the corpus (214698 of 223857 blocks;
+      9159 rare, 0 differ). Most rare blocks hold an interpolation, which the next layer reads.
