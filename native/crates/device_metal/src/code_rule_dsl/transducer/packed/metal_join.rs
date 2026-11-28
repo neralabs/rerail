@@ -2630,6 +2630,9 @@ impl Batch {
         }
         rel.resident_in(self.open()?);
         let mut job = Job::new(JobKind::Index, views_format([rel]), Stage::default());
+        if ix.dir != 0 {
+            job.names(ix.dir);
+        }
         job.p = Some(ix.bytes().to_vec());
         // It reads the relation and writes its index's room in the block, which no queued job reads.
         job.desc.l = job.reach(&buffer.buffer, 0, true)?;
@@ -3072,6 +3075,9 @@ impl Batch {
         }
         // Queued in the batch's level, whose copies launch first, all in one launch (`flush`).
         let mut job = Job::new(JobKind::Copy, format, Stage::default());
+        if p.v_dir != 0 {
+            job.names(p.v_dir);
+        }
         job.p = Some(bytes.to_vec());
         // A placed source: its rows' room the device's, its threads its own at most.
         let src_key = match src {
@@ -3856,6 +3862,9 @@ impl Batch {
             if capturing {
                 // copy: not block data (the addresses its jobs reach, which a capture binds again: `join_capture`)
                 prog.reached.extend_from_slice(&j.reached);
+                // Its stage's addresses of what it reads where it lies (a view's directory, a `has` axis's set),
+                // which its encoding copied from the relation, not reached.
+                prog.reached.extend([j.stage.v_dir, j.stage.v_set].into_iter().filter(|&a| a != 0));
             }
             prog.uses.append(&mut j.uses);
             prog.hold.append(&mut j.own);

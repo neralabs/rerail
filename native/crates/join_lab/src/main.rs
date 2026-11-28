@@ -90,6 +90,42 @@ fn main() {
                 std::process::exit(1);
             }
         }
+        "words" => {
+            // join-lab words <capture> --only <launch> <lo> <hi>: the words of its regions (as loaded) in lo..hi.
+            let hex = |i: usize| args.get(i).and_then(|h| u64::from_str_radix(h.trim_start_matches("0x"), 16).ok()).unwrap_or_else(|| usage());
+            let (lo, hi) = (hex(args.len() - 2), hex(args.len() - 1));
+            for w in waves(target, only) {
+                let name = w.name();
+                match w.load() {
+                    Ok(l) => {
+                        if let Some(of) = flag(&args, "--relocs") {
+                            for r in l.relocations().unwrap_or_default() {
+                                if of.split(',').any(|n| r.starts_with(&format!("{n} "))) {
+                                    println!("{name} reloc {r}");
+                                }
+                            }
+                        }
+                        match l.views() {
+                            Ok(v) => {
+                                for b in v {
+                                    println!("{name} views: {b}");
+                                }
+                            }
+                            Err(e) => println!("{name} views FAILED {e}"),
+                        }
+                        for (r, b, n) in l.placed() {
+                            if (b as u64) < hi + (1 << 30) && (b + n) as u64 + (1 << 30) > lo {
+                                println!("{name} placed {r} at {b:#x} len {n:#x} (to {:#x})", b + n);
+                            }
+                        }
+                        for (r, o, v) in l.words_in(lo, hi) {
+                            println!("{name} {r} {o} {v:#x}");
+                        }
+                    }
+                    Err(e) => println!("{name} FAILED {e}"),
+                }
+            }
+        }
         "page" => {
             let out = flag(&args, "-o").unwrap_or("page.html");
             let html = std::fs::read_to_string(target).map_err(|e| e.to_string()).and_then(|t| rerail_join_lab::page::write(&t));

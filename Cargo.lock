@@ -4374,6 +4374,7 @@ dependencies = [
  "libc",
  "rerail-blocks",
  "rerail-join-lab",
+ "rerail-reads",
  "rerail-tape-format",
  "rerail-ukl-rust",
  "rustc-hash",

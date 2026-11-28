@@ -189,9 +189,12 @@ impl Wave {
             let v = |i: usize| u64::from_le_bytes(q[8 * i..8 * i + 8].try_into().expect("8 bytes"));
             // The target's host bit (a view's home's host word): on the program's Rust, the host's address is the
             // device's.
-            let (i, o, t, off) = (v(0) as usize, v(1) as usize, (v(2) & !HOST) as usize, v(3) as usize);
+            let (i, o, t, off) = (v(0) as usize, v(1) as usize, (v(2) & !(HOST | RELATIVE)) as usize, v(3) as usize);
             let to = mems.get(t).ok_or_else(|| bad(format!("a relocation into region {t} of {}", mems.len())))?.base() + off;
-            mems.get(i).ok_or_else(|| bad(format!("a relocation in region {i}")))?.write(o, &(to as u64).to_ne_bytes());
+            let m = mems.get(i).ok_or_else(|| bad(format!("a relocation in region {i}")))?;
+            // A relative word (an atoms directory's span): the target's address less the word's own.
+            let value = if v(2) & RELATIVE != 0 { (to as u64).wrapping_sub((m.base() + o) as u64) } else { to as u64 };
+            m.write(o, &value.to_ne_bytes());
             bound += 1;
         }
         let cd = rerail_tape_format::codes_dir::bytes();
@@ -215,6 +218,9 @@ impl Wave {
 
 /// `relocs.zst`'s host bit on a target (`join_capture::HOST`).
 const HOST: u64 = 1 << 63;
+
+/// `relocs.zst`'s relative bit on a target (`join_capture::RELATIVE`).
+const RELATIVE: u64 = 1 << 62;
 
 /// `join_capture`'s digest of bytes (FxHash, and the length).
 fn capture_digest(bytes: &[u8]) -> u64 {
@@ -403,6 +409,97 @@ impl Loaded {
 
     /// The words the lab bound again (`relocs.zst`), as (region, offset): where an after-image holds the engine's
     /// address and the replay the lab's.
+    /// Its words (each region of at most 64 MB, as loaded and bound) whose values lie in `lo..hi`: each its region,
+    /// offset and value (`join-lab words`: which word holds an address a replay faults at).
+    pub fn words_in(&self, lo: u64, hi: u64) -> Vec<(String, usize, u64)> {
+        let mut out = Vec::new();
+        for (r, m) in self.wave.regions.iter().zip(&self.mems).filter(|(_, m)| m.len() <= 64 << 20 || matches!(m, Mem::Mapped(_))) {
+            for (i, q) in m.bytes(0, m.len() / 8 * 8).chunks_exact(8).enumerate() {
+                let v = u64::from_ne_bytes(q.try_into().expect("8 bytes"));
+                if lo <= v && v < hi {
+                    out.push((r.name.clone(), 8 * i, v));
+                }
+            }
+        }
+        out
+    }
+
+    /// The views' directories its bound words reach, each checked as the program's reads take it (`join_program`'s
+    /// `reads::doc`): its rows in its block, and each document's homes' host addresses, its tape's, lines' and
+    /// source's bytes inside a region the lab placed. Each what it found wrong, the first few of each directory.
+    pub fn views(&self) -> io::Result<Vec<String>> {
+        use rerail_reads::views::{ViewDir, ViewHome, ViewRow};
+        let inside = |a: usize, n: usize| self.mems.iter().position(|m| m.base() <= a && a + n <= m.base() + m.len());
+        let mut out = Vec::new();
+        let mut seen = std::collections::HashSet::new();
+        for (i, o) in self.relocated()? {
+            let a = u64::from_ne_bytes(self.mems[i].bytes(o, 8).try_into().expect("8 bytes")) as usize;
+            let Some(t) = inside(a, std::mem::size_of::<ViewDir>()).filter(|&t| self.wave.regions[t].role == "block") else { continue };
+            let off = a - self.mems[t].base();
+            // SAFETY: inside region `t`'s placed bytes, read unaligned.
+            let vd: ViewDir = unsafe { std::ptr::read_unaligned(a as *const ViewDir) };
+            if vd.at as usize != off || !seen.insert(a) {
+                continue;
+            }
+            let name = format!("the view directory at {} {off} (from {} {o})", self.wave.regions[t].name, self.wave.regions[i].name);
+            let (base, len) = (self.mems[t].base(), self.mems[t].len());
+            let mut bad = Vec::new();
+            let span = vd.span.max(vd.ndocs) as usize;
+            if vd.rows as usize + span * std::mem::size_of::<ViewRow>() > len || vd.homes as usize + 16 * vd.nhomes as usize > len || vd.keys as usize + 4 * vd.ndocs as usize > len || vd.order as usize + 4 * vd.ndocs as usize > len {
+                bad.push(format!("{span} rows at {}, {} homes at {}, {} keys at {} or their order at {} past its block's {len} bytes", vd.rows, vd.nhomes, vd.homes, vd.ndocs, vd.keys, vd.order));
+            } else {
+                // SAFETY: the order inside the block, checked above.
+                let order = |m: usize| unsafe { std::ptr::read_unaligned((base + vd.order as usize + 4 * m) as *const u32) };
+                if let Some(m) = (0..vd.ndocs as usize).find(|&m| order(m) as usize >= span) {
+                    bad.push(format!("document {m}'s row {} past its {span} rows", order(m)));
+                }
+                // SAFETY: the homes inside the block, checked above.
+                let home = |h: u32| unsafe { std::ptr::read_unaligned((base + vd.homes as usize + 16 * h as usize) as *const ViewHome) }.host as usize;
+                for m in 0..span {
+                    // SAFETY: the rows inside the block, checked above.
+                    let r: ViewRow = unsafe { std::ptr::read_unaligned((base + vd.rows as usize + m * std::mem::size_of::<ViewRow>()) as *const ViewRow) };
+                    if r.key == rerail_reads::views::NO_DOC {
+                        continue;
+                    }
+                    for (part, h, at, n) in [("tape", 0, r.tape, r.bytes as usize), ("lines", 1, r.lines, 8), ("source", 2, r.source, 1)] {
+                        let hh = r.homes[h];
+                        if hh >= vd.nhomes {
+                            bad.push(format!("document {m}'s {part} home {hh} of {}", vd.nhomes));
+                        } else if inside(home(hh).wrapping_add(at as usize), n).is_none() {
+                            bad.push(format!("document {m}'s {part} (home {hh}: {:#x}, at {at}, {n} bytes) in no region", home(hh)));
+                        }
+                    }
+                    if bad.len() >= 4 {
+                        break;
+                    }
+                }
+            }
+            if bad.is_empty() {
+                bad.push(format!("sound: {} documents, {} rows, {} homes", vd.ndocs, vd.span, vd.nhomes));
+            }
+            out.extend(bad.into_iter().map(|b| format!("{name}: {b}")));
+        }
+        Ok(out)
+    }
+
+    /// Its relocations (`relocs.zst`), each its word's region and offset, its target's region (the host bit's
+    /// `host`), its offset there, and the word as bound (`join-lab words`).
+    pub fn relocations(&self) -> io::Result<Vec<String>> {
+        let relocs = zstd::stream::decode_all(std::fs::File::open(self.wave.dir.join("relocs.zst"))?)?;
+        Ok(relocs.chunks_exact(32).map(|q| {
+            let v = |i: usize| u64::from_le_bytes(q[8 * i..8 * i + 8].try_into().expect("8 bytes"));
+            let (i, o, t, off) = (v(0) as usize, v(1) as usize, v(2), v(3));
+            let now = u64::from_ne_bytes(self.mems[i].bytes(o, 8).try_into().expect("8 bytes"));
+            let name = |r: usize| self.wave.regions.get(r).map_or("?", |r| r.name.as_str());
+            format!("{} {o} -> {}{}{} {off} = {now:#x}", name(i), name((t & !(HOST | RELATIVE)) as usize), if t & HOST != 0 { " host" } else { "" }, if t & RELATIVE != 0 { " relative" } else { "" })
+        }).collect())
+    }
+
+    /// Each region where the lab placed it: its name, the lab's address and its length (`join-lab words`).
+    pub fn placed(&self) -> Vec<(String, usize, usize)> {
+        self.wave.regions.iter().zip(&self.mems).map(|(r, m)| (r.name.clone(), m.base(), m.len())).collect()
+    }
+
     pub fn relocated(&self) -> io::Result<Vec<(usize, usize)>> {
         let relocs = zstd::stream::decode_all(std::fs::File::open(self.wave.dir.join("relocs.zst"))?)?;
         Ok(relocs.chunks_exact(32).map(|q| (u64::from_le_bytes(q[..8].try_into().expect("8")) as usize, u64::from_le_bytes(q[8..16].try_into().expect("8")) as usize)).collect())

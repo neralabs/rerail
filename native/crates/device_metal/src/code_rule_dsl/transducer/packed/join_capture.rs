@@ -230,6 +230,15 @@ pub(in crate::code_rule_dsl) fn before(cfg: &Config, labels: &[Label], reach: &R
 /// `host`), not the device's.
 const HOST: u64 = 1 << 63;
 
+/// A relocation's relative bit: the word holds the target's address less its own (an atoms directory's span into
+/// a run's block, `rerail_blocks::atoms::DirEntry`), in the reader's address space.
+const RELATIVE: u64 = 1 << 62;
+
+/// An atoms directory's entry's bytes, and its spans' offsets in it with their targets' element sizes: `ends`,
+/// `strings`, `table` (`rerail_blocks::atoms::DirEntry`, each span an `off: i64` then a `len: u64`).
+const DIR_ENTRY: usize = 64;
+const DIR_SPANS: [(usize, usize); 3] = [(16, 8), (32, 1), (48, 8)];
+
 /// The block or lease `p` holds (its device address `dev`) as region `r<n>`: a lease's written pages as its own runs,
 /// a block mapped from a file by its path, any other block's used bytes as a block file (counted in `written`).
 fn place(cfg: &Config, p: &rerail_blocks::ledger::Placed, dev: usize, w: bool, n: usize, written: &mut u64) -> std::io::Result<Region> {
@@ -237,7 +246,10 @@ fn place(cfg: &Config, p: &rerail_blocks::ledger::Placed, dev: usize, w: bool, n
     if p.kind == 0 {
         return Ok(Region { source: format!("{name}.zst"), name, role: "lease", base: p.start, dev, len: p.end - p.start, kind: 0, written: w });
     }
-    let len = if p.top > 0 { p.top.min(p.end - p.start) } else { p.end - p.start };
+    // Its used bytes: its top, or past it where it was laid out by its own writes, not bumped (an atoms block's
+    // directory and atoms: its top its header's), to its last written page.
+    let written_to = if p.path.is_none() { rerail_blocks::mem::written_runs(p.start, p.end - p.start).last().map_or(0, |&(at, n)| at + n) } else { 0 };
+    let len = if p.top > 0 { p.top.max(written_to).min(p.end - p.start) } else { p.end - p.start };
     let source = match &p.path {
         Some(path) => format!("file:{}", path.display()),
         None => {
@@ -335,6 +347,8 @@ fn write_before(cfg: &Config, id: u64, labels: &[Label], reach: &Reached<'_>) ->
     // and their homes: each tape's, lines' and source's memory, the 16z cache's (which the reads write), each placed
     // where it lies; the binary's codes' directory, named (`codes`), which a replay binds to its own.
     let mut homes: Vec<(usize, usize, bool)> = Vec::new();
+    // An atoms directory's spans whose targets no region holds, or past it.
+    let mut unresolved_atoms = 0u64;
     let mut codes: Vec<(usize, usize)> = Vec::new();
     let mut dirs = std::collections::HashSet::new();
     for &(i, o) in &refs.clone() {
@@ -375,13 +389,65 @@ fn write_before(cfg: &Config, id: u64, labels: &[Label], reach: &Reached<'_>) ->
             }
         }
     }
+    // The atoms directories its words reach (each found by its structure: a root in an atoms block whose entries'
+    // span is in its own block, as many as its count, their runs in order): each entry's spans into its run's block
+    // bound again as relative words; the spans within the directory's block move with it.
+    let mut relative: Vec<(usize, usize, usize, usize)> = Vec::new();
+    let mut roots = std::collections::HashSet::new();
+    for a in refs.iter().map(|&(i, o)| word(&regions[i], o)).collect::<Vec<_>>() {
+        let Some(i) = at_dev(&regions, a).filter(|&i| regions[i].role == "block" && regions[i].kind == rerail_blocks::block::kind::ATOMS) else { continue };
+        let ro = a - regions[i].dev;
+        if !roots.insert((i, ro)) || ro + 24 > regions[i].len {
+            continue;
+        }
+        let (n, eoff, elen) = (word(&regions[i], ro), word(&regions[i], ro + 8) as i64, word(&regions[i], ro + 16));
+        let eo = (ro as i64 + 8).wrapping_add(eoff);
+        if n == 0 || n != elen || eo < 0 || eo as usize + n * DIR_ENTRY > regions[i].len {
+            continue;
+        }
+        let eo = eo as usize;
+        // SAFETY: inside the region's used bytes (checked above), read unaligned.
+        let u32_at = |o: usize| unsafe { std::ptr::read_unaligned((regions[i].base + o) as *const u32) };
+        if (0..n).any(|k| u32_at(eo + k * DIR_ENTRY) > u32_at(eo + k * DIR_ENTRY + 4)) {
+            continue;
+        }
+        for k in 0..n {
+            for (at, size) in DIR_SPANS {
+                let so = eo + k * DIR_ENTRY + at;
+                let (off, len) = (word(&regions[i], so) as i64, word(&regions[i], so + 8));
+                let target = (regions[i].dev as i64 + so as i64).wrapping_add(off) as usize;
+                let t = match at_dev(&regions, target) {
+                    Some(t) => Some(t),
+                    None if identity => match rerail_blocks::ledger::placed_at(target) {
+                        Some(p) => {
+                            let r = place(cfg, &p, p.start, false, regions.len(), &mut written)?;
+                            regions.push(r);
+                            Some(regions.len() - 1)
+                        }
+                        None => None,
+                    },
+                    None => None,
+                };
+                match t.filter(|&t| target - regions[t].dev + len * size <= regions[t].len) {
+                    Some(t) => relative.push((i, so, t, target - regions[t].dev)),
+                    None => unresolved_atoms += 1,
+                }
+            }
+        }
+    }
     // The sparse regions' runs, and each address word as (region, offset, region it points into, offset there).
     for r in regions.iter().filter(|r| r.sparse()) {
         written += write_runs(&dir.join(&r.source), r, &r.runs())?;
     }
     let mut relocs: Vec<u8> = Vec::new();
     // Address words no region holds: memory no ledger knew (a replay that reads one fails there).
-    let mut unresolved = 0u64;
+    let mut unresolved = unresolved_atoms;
+    for &(i, o, t, off) in &relative {
+        for v in [i as u64, o as u64, t as u64 | RELATIVE, off as u64] {
+            // copy: not block data (a capture's relocation list, for the lab alone)
+            relocs.extend_from_slice(&v.to_le_bytes());
+        }
+    }
     let mut unresolved_in: Vec<(usize, u64, Vec<(usize, usize)>)> = Vec::new();
     for &(i, o, host) in refs.iter().map(|&(i, o)| (i, o, false)).chain(homes.iter().copied()).collect::<Vec<_>>().iter() {
         let a = word(&regions[i], o);
