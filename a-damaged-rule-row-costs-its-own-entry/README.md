@@ -1,6 +1,6 @@
 # A damaged library rule or rule setting costs only itself
 
-For [pull request #1222](https://github.com/neralabs/rerail/pull/1222), head 7a2cdf4ac1. [report.html](report.html) is the same report as one page: download it and open it.
+For [pull request #1222](https://github.com/neralabs/rerail/pull/1222), head 93e37df463. [report.html](report.html) is the same report as one page: download it and open it.
 
 ## 1. The decision
 
@@ -10,7 +10,7 @@ For [pull request #1222](https://github.com/neralabs/rerail/pull/1222), head 7a2
 
 | Size | Risk and review | Waits on | Not verified |
 |---|---|---|---|
-| 850 lines in 17 files: 575 ship, 275 are tests and text | Automated. No high-risk path in `REVIEW.md`; the reviewer may approve. | Nothing. No CI run at this head yet: not pushed. | 4 |
+| 878 lines in 17 files: 577 ship, 301 are tests and text | Automated. No high-risk path in `REVIEW.md`; the reviewer may approve. | Nothing. No CI run at this head yet: not pushed. | 4 |
 
 ## 2. Intent, and the gap
 
@@ -33,7 +33,7 @@ Found on 28 November 2026 through the built CLI, a real daemon and the Claude Co
 1. **Read first**, 10 min: `rule-configuration.ts`: `readSettings`, `#unreadOptionsOf`, `optionsText`, `readRows`. Can a configuration that reads get another rule set or signature than at `main`?
 2. 10 min: `rule-library.ts`, `rule-quarantine.ts`, `rule-bootstrap.ts`, `packs-calibrate.ts`, `repository-operations.ts`, `show-me.ts`, `rule-approval-cli.ts`: the other readers.
 
-**Then skim**, 8 min: Twelve cases change one stored text by a byte and read through each reader: the library, the configuration, the export, approve, calibrate, the Rules page, show-me.
+**Then skim**, 8 min: Fourteen cases change one stored text by a byte and read through each reader: the library, the configuration, the export, approve, calibrate, the Rules page, show-me.
 
 ## 4. Risk against verification
 
@@ -78,7 +78,7 @@ One change, low risk: a mistake quarantines one more row, or names one twice. St
 | A `configError`, the setting's other fields kept **(chosen)** | The Rules page says why; every other rule runs. | That rule steers nothing until a person sets its options. | Nothing a person had at `main`: no rule ran there. |
 | Run it with its default options, now or after any setting change | It keeps steering. | Not as the person set it. | Options that narrowed the rule are lost silently. |
 
-**Evidence.** The configuration cases: the damaged setting's rule carries the reason, keeps its mode, and runs again once its options are written. The settings API case: a mode change keeps the options as stored; `config: null` writes them and the rule runs.
+**Evidence.** The configuration cases: the damaged setting's rule carries the reason, keeps its mode, and runs again once its options are written. The settings API cases: a mode change keeps the options as stored, through `repository_settings_set` and through `repository_attachments_set` in a repository set up or not yet; `config: null` writes them and the rule runs.
 
 </details>
 
