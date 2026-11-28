@@ -755,9 +755,37 @@ pub fn stage(v: &std::sync::Arc<Version>, options: &serde_json::Value) -> Result
     // A read the probes key: of a staged relation, or of an earlier phase's export the program does not derive.
     let probed = |rel: &str| staging.staged.contains(rel) || (crate::code_rule_dsl::logic::plan::phased::is_probed(rel) && !v.rules().any(|q| v.rel_name(q.head().rel()) == rel));
     let (mut probes, mut whole): (Vec<(String, String, Vec<usize>)>, BTreeSet<String>) = Default::default();
+    // The relations below the staged ones that the program still reaches: from its outputs and the rules the stage does
+    // not take, through the rules below. The others are the stage's alone: their rules and qualifiers go with it. Left
+    // in, a relation of a form (`reach`) whose readers were all staged kept its form with no rule (preparation drops
+    // rules no output reads), and the form was refused ("no rule reads it").
+    let still_read: BTreeSet<&str> = {
+        let d = crate::code_rule_dsl::logic::program_image::manager::analysis::<crate::code_rule_dsl::logic::plan::fields::FieldsData>(v).map_err(Error::Plan)?;
+        let f = crate::code_rule_dsl::logic::plan::fields::Fields::over(v, &d);
+        let mut set: BTreeSet<&str> = f.outputs().filter_map(|o| v.rel(o).map(|r| v.rel_name(r))).collect();
+        set.extend(v.rules().filter(|r| !below.contains(v.rel_name(r.head().rel()))).flat_map(|r| r.reads().map(|a| v.rel_name(a.rel()))));
+        loop {
+            let before = set.len();
+            for r in v.rules().filter(|r| set.contains(v.rel_name(r.head().rel())) && !staging.staged.contains(v.rel_name(r.head().rel()))).collect::<Vec<_>>() {
+                set.extend(r.reads().map(|a| v.rel_name(a.rel())));
+            }
+            if set.len() == before {
+                break set;
+            }
+        }
+    };
+    let stage_alone = |rel: &str| below.contains(rel) && !staging.staged.contains(rel) && !still_read.contains(rel);
     let left = {
         let mut b = Builder::on(v);
-        b.retain(|r| !staging.staged.contains(v.rel_name(r.head().rel())) && !reads_staged(r));
+        b.retain(|r| !staging.staged.contains(v.rel_name(r.head().rel())) && !reads_staged(r) && !stage_alone(v.rel_name(r.head().rel())));
+        let qualifiers = v.qualifier_map().map_err(Error::Plan)?;
+        if qualifiers.keys().any(|rel| stage_alone(rel)) {
+            let words: Vec<(String, String)> = qualifiers.into_iter()
+                .filter(|(rel, _)| !stage_alone(rel))
+                .flat_map(|(rel, ws)| ws.into_iter().map(move |w| (rel.clone(), w)))
+                .collect();
+            b.fields().set_qualifiers(&words);
+        }
         for e in &exports {
             let cols = v.columns_of(e).ok_or_else(|| Error::Plan(format!("stage {name}: {e} is not declared")))?;
             let cols: Vec<(&str, &str)> = cols.iter().map(|(c, t)| (c.as_str(), t.as_str())).collect();

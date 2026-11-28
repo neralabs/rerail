@@ -457,10 +457,15 @@ fn python_type_relations_agree_with_the_runtime() {
 fn rules_read_the_python_program_through_lib_calls() {
     let project = PathBuf::from(crate::code_rule_dsl::fixtures::fixtures_dir!()).join("python/calls/project");
     // The program's rows are keyed by node paths (decisions 0677, 0722), the rule's by its own nodes; both read a
-    // target's definition by its symbol (`pt_def`). An edge pairs two files' nodes: this test's own output.
+    // target's definition by its symbol (`pt_def`). An edge pairs two files' places: each file gives its calls' and its
+    // definitions' places by the target's symbol, and the cross part joins them (it reads no base relation, 0727).
     let direct_keyed = "
 .decl edge(cp: symbol, cs: number, fp: symbol, fs: number) cross_file
-edge(cp, cs, fp, fs) :- kind(c, \"call\"), t = @node_path(c), call_target(t, f), pt_def(g, f), node(d, c, _, cs, _), doc(d, cp, _), node(h, g, _, fs, _), doc(h, fp, _).
+.decl edge_call(t: node_path, cp: symbol, cs: number)
+edge_call(t, cp, cs) :- kind(c, \"call\"), t = @node_path(c), node(d, c, _, cs, _), doc(d, cp, _).
+.decl edge_def(f: symbol, fp: symbol, fs: number)
+edge_def(f, fp, fs) :- pt_def(g, f), node(h, g, _, fs, _), doc(h, fp, _).
+edge(cp, cs, fp, fs) :- edge_call(t, cp, cs), call_target(t, f), edge_def(f, fp, fs).
 .decl proven(np: symbol, ns: number, ne: number, t: symbol)
 proven(np, ns, ne, u) :- pt_vpos(n), t = @node_path(n), proven_type(t, u), node(d, n, _, ns, ne), doc(d, np, _).
 .decl unknown(cp: symbol, cs: number)
@@ -469,7 +474,11 @@ unknown(cp, cs) :- kind(c, \"call\"), t = @node_path(c), call_open(t), node(d, c
 ";
     let keyed = "
 .decl edge(cp: symbol, cs: number, fp: symbol, fs: number) cross_file
-edge(cp, cs, fp, fs) :- call_target(c, f), pt_def(g, f), node(d, c, _, cs, _), doc(d, cp, _), node(h, g, _, fs, _), doc(h, fp, _).
+.decl edge_from(f: symbol, cp: symbol, cs: number)
+edge_from(f, cp, cs) :- call_target(c, f), node(d, c, _, cs, _), doc(d, cp, _).
+.decl edge_def(f: symbol, fp: symbol, fs: number)
+edge_def(f, fp, fs) :- pt_def(g, f), node(h, g, _, fs, _), doc(h, fp, _).
+edge(cp, cs, fp, fs) :- edge_from(f, cp, cs), edge_def(f, fp, fs).
 .decl proven(np: symbol, ns: number, ne: number, t: symbol)
 proven(np, ns, ne, t) :- proven_type(n, t), node(d, n, _, ns, ne), doc(d, np, _).
 .decl unknown(cp: symbol, cs: number)

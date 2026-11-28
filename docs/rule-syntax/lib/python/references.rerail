@@ -821,10 +821,14 @@ rf_open_name(q) :- rf_hit(q, p, _, _), !rf_aliased(p), !rf_any_named(p), !rf_opa
 rf_open_name(q) :- rf_link_via(q, t, _), rf_open_name(t).
 // A chain of aliases past W's 16 hops (an import of the module's own name, a cycle of re-exports).
 rf_open_name(q) :- rf_link_via(q, _, 16).
+// rf_sym_open(s): the definition of symbol s is in a file whose tree has an error: read in that file's own part (the
+// cross part reads no base relation, decision 0727).
+.decl rf_sym_open(s: symbol)
+rf_sym_open(s) :- rf_sym(t, s), docof(t, d), rf_file_open(d).
 // rf_open(t): definition t (its symbol) is open: its file has an error, or one of its references names something
 // open.
 .decl rf_open(t: symbol)
-rf_open(s) :- rf_sym(t, s), docof(t, d), rf_file_open(d).
+rf_open(s) :- rf_sym_open(s).
 rf_open(t) :- rf_ref_sym(_, t, "name", q, _, _), rf_open_name(q).
 rf_open(t) :- rf_sib_sym(t, q), rf_open_name(q).
 rf_open(t) :- rf_ref_sym(_, t, "bare", m, x, _), rf_declared(m, x, q), rf_open_name(q).

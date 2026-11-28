@@ -3727,6 +3727,47 @@ fn run_observed_within(
         }
         stored.push((rel.clone(), named.iter().map(|c| (*c).to_owned()).collect()));
     }
+    // Decision 0727: the cross part reads no base relation. A document's own facts (`doc`, `kind`, `text`, ...) are
+    // read in its file's rules, and what crosses is derived from them there; the corpus batch is never the cross
+    // part's input. Refused whatever made the read: a rule as written, or a pass of the split's.
+    if !stored.is_empty() {
+        // The long-text nodes' binding is listed for a node read (`@rr_node_text(n)`, `syntax::NODE_READS`), which no
+        // atom names: such a rule is shown by its call.
+        let node_read = stored.iter().any(|(s, _)| s == crate::code_rule_dsl::facts::vtab::syntax::LONG_TEXT_NODES);
+        let reading: Vec<String> = cross_run
+            .rules()
+            .filter(|r| {
+                r.body().any(|l| match l.view() {
+                    crate::code_rule_dsl::logic::program_image::Lit::Atom(a) | crate::code_rule_dsl::logic::program_image::Lit::Agg { atom: a, .. } => stored.iter().any(|(s, _)| s == cross_run.rel_name(a.rel())),
+                    _ => false,
+                }) || (node_read && crate::code_rule_dsl::typing::file_local::reads_a_node(&cross_run, *r))
+            })
+            .map(|r| {
+                // Why the split put the rule's relation in the cross part, as it records (`RERAIL_SPLIT_DUMP`'s causes).
+                let head = cross_run.rel_name(r.head().rel());
+                match split.causes.get(head) {
+                    Some(why) => format!("  {}   ({head}: {why})", cross_run.show_rule(r)),
+                    None => format!("  {}", cross_run.show_rule(r)),
+                }
+            })
+            .chain(
+                // A node read the split saw in the program's own form, before the passes the cross part's rules went
+                // through (as `file_local::crossing` lists the binding).
+                split
+                    .program
+                    .rules()
+                    .filter(|r| node_read && !split.file_local.contains(split.program.rel_name(r.head().rel())) && crate::code_rule_dsl::typing::file_local::reads_a_node(&split.program, *r))
+                    .map(|r| format!("  {}   (a node read, in the program's own form)", split.program.show_rule(r))),
+            )
+            .collect();
+        return Err(Error::Plan(format!(
+            "the cross-file part reads the base relation(s) {} (decision 0727). Read a document's facts in its file's own rules and \
+             hand on what they derive (a relation of module names, or of document keys): `mod_doc(d, m) :- doc(d, _, m).`, then \
+             `dep(a, b) :- dep_from(a, m), mod_doc(b, m).`. The cross-file rules reading them:\n{}",
+            stored.iter().map(|(r, _)| format!("`{r}`")).collect::<Vec<_>>().join(", "),
+            reading.join("\n")
+        )));
+    }
     // No measure's key (decision 0364 R6's `ast_depth`, `node_order`) is bound in the cross part: it holds no node
     // (decision 0727), so no component of it is ordered by one.
     // Decide after projection planning: the split's base list can still contain unused inputs.
@@ -4414,7 +4455,7 @@ fn run_observed_within(
             let _s = crate::code_rule_dsl::logic::profile::span(|| "the base relations' table and statistics (decision 0458)".into());
             let counted: Vec<String> = stored.iter().map(|(r, _)| r.clone()).collect();
             let stats = retain::base_stats(store, kept_strata::space(root), binds, &counted)?;
-            let table = retain::base_documents(store, kept_strata::space(root), binds, table_tag)?;
+            let table = retain::base_documents(store, kept_strata::space(root), binds)?;
             // Its memo plan, for `same_docs` and the table's write (below).
             if let Some(t) = &table {
                 base_table_plan.set(Some(t.plan));
@@ -9218,7 +9259,7 @@ fn run_observed_within(
                                     let docs: Option<&[retain::PlacedDocument]> = match (&base_table, base_table_plan.get()) {
                                         (Some(docs), _) => Some(docs),
                                         (None, None) => {
-                                            read = kept.bound_space().map(|b| retain::base_documents_in(store, b, binds, plan_now)).transpose()?.flatten();
+                                            read = kept.bound_space().map(|b| retain::base_documents_in(store, b, binds)).transpose()?.flatten();
                                             if let Some(t) = &read {
                                                 base_table_plan.set(Some(t.plan));
                                             }
@@ -9895,9 +9936,10 @@ fn run_observed_within(
                             // Written with the digests it is the documents of: when one changed (or none was kept). With
                             // no digest-only input, when the table kept under this plan names other documents.
                             let unchanged = if digest_only.is_empty() {
-                                let kept = was.bound().and_then(|b| retain::base_documents_in(store, b, binds, plan).ok().flatten());
+                                let kept = was.bound().and_then(|b| retain::base_documents_in(store, b, binds).ok().flatten());
                                 kept.is_some_and(|t| {
-                                    t.docs.len() == table.len()
+                                    t.plan == Some(plan)
+                                        && t.docs.len() == table.len()
                                         && t.docs.iter().zip(&table).all(|(((p, k, c), _), (q, l, d))| p == q && keptstats::same((*c, *k), (*d, *l)))
                                 })
                             } else {

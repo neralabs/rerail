@@ -811,3 +811,186 @@ fn ruff_ruf013_finds_an_implicit_optional() {
     let lines: Vector<u64> = report["diagnostics"].as_array().unwrap().iter().map(|d| d["line"].as_u64().unwrap_or(0)).collect();
     assert_eq!(lines, [3], "{report:#}");
 }
+
+/// Decision 0727 checked with rules (`packs/rr/rr-cross-part-reads-a-base-relation.rerail`): the findings of `rule`
+/// over `root`, each `file:line relation reads base` (its relative path, its line, the rule's head and the base
+/// relation read).
+fn cross_base_reads(root: &std::path::Path, out: &std::path::Path) -> Vec<String> {
+    let rule = crate::source_tree::native().join("../docs/rule-syntax/packs/rr/rr-cross-part-reads-a-base-relation.rerail");
+    let report = crate::code_rule_dsl::tools::run_rr(&rule, root, out, &serde_json::Value::Null).unwrap();
+    let mut found: Vec<String> = report["diagnostics"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|d| {
+            let file = d["file"].as_str().or(d["path"].as_str()).unwrap_or("");
+            let line = d["line"].as_i64().or(d["start"]["line"].as_i64()).unwrap_or(-1);
+            let p = &d["parameters"];
+            format!("{file}:{line} {} reads {}", p["h"].as_str().unwrap_or("?"), p["r"].as_str().unwrap_or("?"))
+        })
+        .collect();
+    found.sort();
+    found.dedup();
+    found
+}
+
+/// A root holding the library's core.rerail (`lib/core.rerail`, which names the base relations) and `files`.
+fn cross_base_root(name: &str, files: &[(&str, &str)]) -> std::path::PathBuf {
+    let root = crate::code_rule_dsl::fixtures::temp().with_extension(name);
+    let _ = std::fs::remove_dir_all(&root);
+    std::fs::create_dir_all(root.join("lib")).unwrap();
+    std::fs::copy(crate::source_tree::native().join("../docs/rule-syntax/lib/core.rerail"), root.join("lib/core.rerail")).unwrap();
+    for (path, text) in files {
+        std::fs::create_dir_all(root.join(path).parent().unwrap()).unwrap();
+        std::fs::write(root.join(path), text).unwrap();
+    }
+    root
+}
+
+/// A cross-file relation's rule reading `doc` is found; one reading what the files derive from it is not, nor a
+/// per-file rule reading a staged relation of names (`CYC` over `closes`), whose own rule's read is found.
+#[test]
+fn a_cross_part_read_of_a_base_relation_is_found() {
+    let bad = r#".decl dep_from(a: number, m: symbol)
+dep_from(a, m) :- impmod(i, m), docof(i, a).
+.decl dep(a: number, b: number) cross_file
+dep(a, b) :- dep_from(a, m), doc(b, _, m).
+.decl reach(a: number, b: number)
+reach(a, b) :- dep(a, b).
+.decl closes(ma: symbol, m: symbol)
+closes(ma, m) :- dep_from(a, m), doc(a, _, ma), reach(_, a).
+.violation CYC(at: node) code "CYC" "x"
+CYC(i) :- impmod(i, m), docof(i, a), doc(a, _, ma), closes(ma, m).
+"#;
+    let good = r#".decl dep_from(a: number, m: symbol)
+dep_from(a, m) :- impmod(i, m), docof(i, a).
+.decl mod_doc(d: number, m: symbol)
+mod_doc(d, m) :- doc(d, _, m).
+.decl dep(a: number, b: number) cross_file
+dep(a, b) :- dep_from(a, m), mod_doc(b, m).
+"#;
+    let root = cross_base_root("rr-cross-base", &[("bad.rerail", bad), ("good.rerail", good)]);
+    let found = cross_base_reads(&root, &root.with_extension("out"));
+    let _ = std::fs::remove_dir_all(&root);
+    let _ = std::fs::remove_dir_all(root.with_extension("out"));
+    assert_eq!(found, ["bad.rerail:4 dep reads doc", "bad.rerail:8 closes reads doc"]);
+}
+
+/// No rule file of the repository reads a base relation in its cross part: the rule over every `.rerail` file under
+/// the root (the library, the packs, the engine's own programs).
+#[test]
+fn no_rule_file_reads_a_base_relation_in_its_cross_part() {
+    let root = crate::source_tree::native().join("..");
+    let out = crate::code_rule_dsl::fixtures::temp().with_extension("rr-cross-base-shipped");
+    // `packs/data-layer/upstream` is another repository's rule files, copied as it has them: not ours to rewrite.
+    let found: Vec<String> = cross_base_reads(&root, &out).into_iter().filter(|f| !f.starts_with("packs/data-layer/upstream/") && !f.starts_with("tmp/") && !f.contains("/tmp/")).collect();
+    let _ = std::fs::remove_dir_all(&out);
+    assert!(found.is_empty(), "{} cross-file rules read a base relation (decision 0727):\n{}", found.len(), found.join("\n"));
+}
+
+/// No program a test runs reads a base relation in its cross part: each string of the tests' sources that holds a
+/// `.decl`, as a rule file of its own beside the library. Not the split's own unit tests (`typing/file_local`, the
+/// preparation's passes, the demand), whose programs cross files on purpose to test what the split moves and
+/// refuses, and run no cross part: the engine's check is the run's (`corpus.rs`). Nor the programs of `NOT_RUN`.
+#[test]
+fn no_test_program_reads_a_base_relation_in_its_cross_part() {
+    let crates = crate::source_tree::native().join("crates");
+    let analysis_only = |p: &std::path::Path| {
+        let p = p.to_string_lossy();
+        ["/typing/file_local/", "/plan/corpus/preparation/", "/plan/demand/"].iter().any(|d| p.contains(d))
+    };
+    let mut files: Vec<(String, String)> = Vec::new();
+    let mut origin: std::collections::BTreeMap<String, String> = std::collections::BTreeMap::new();
+    let mut stack = vec![crates];
+    while let Some(dir) = stack.pop() {
+        for e in std::fs::read_dir(&dir).unwrap().flatten() {
+            let p = e.path();
+            if p.is_dir() {
+                stack.push(p);
+            } else if p.extension().is_some_and(|x| x == "rs") && !p.ends_with("tests_rr/src/code_rule_dsl/logic/rr/tape_tests.rs") && !analysis_only(&p) {
+                // Not this file: its programs are the rule's examples, the bad among them.
+                let src = std::fs::read_to_string(&p).unwrap_or_default();
+                let rel = p.strip_prefix(crate::source_tree::native()).unwrap().to_string_lossy().replace(['/', '.'], "_");
+                for (i, s) in rust_strings(&src).into_iter().filter(|s| s.contains(".decl ")).enumerate() {
+                    let name = format!("t/{rel}_{i}.rerail");
+                    origin.insert(name.clone(), p.strip_prefix(crate::source_tree::native()).unwrap().to_string_lossy().into_owned());
+                    files.push((name, s));
+                }
+            }
+        }
+    }
+    let text: std::collections::BTreeMap<&str, &str> = files.iter().map(|(p, s)| (p.as_str(), s.as_str())).collect();
+    let files: Vec<(&str, &str)> = files.iter().map(|(p, s)| (p.as_str(), s.as_str())).collect();
+    let root = cross_base_root("rr-cross-base-tests", &files);
+    // Each finding with the test source its program is in, and its rule's line.
+    let found: Vec<String> = cross_base_reads(&root, &root.with_extension("out"))
+        .into_iter()
+        .map(|f| {
+            let (at, _) = f.split_once(' ').unwrap_or((&f, ""));
+            let (file, line) = at.rsplit_once(':').unwrap_or((at, "0"));
+            let rule = text.get(file).and_then(|t| t.lines().nth(line.parse::<usize>().unwrap_or(1).saturating_sub(1))).unwrap_or("").trim();
+            format!("{} | {f} | {rule}", origin.get(file).map_or("?", String::as_str))
+        })
+        .filter(|f| !NOT_RUN.iter().any(|(src, head, _)| f.starts_with(&format!("{src} | ")) && f.contains(&format!(" {head} reads "))))
+        .collect();
+    let _ = std::fs::remove_dir_all(&root);
+    let _ = std::fs::remove_dir_all(root.with_extension("out"));
+    assert!(found.is_empty(), "{} cross-file rules of the tests' programs read a base relation (decision 0727):\n{}", found.len(), found.join("\n"));
+}
+
+/// The tests' programs no run reads, by source and head, and why: the input of a rewrite or of an analysis, whose
+/// cross-file rule is its subject.
+const NOT_RUN: &[(&str, &str, &str)] = &[
+    ("crates/json_rules/src/code_rule_dsl/logic/json_rules/engine_dialect.rs", "h_eq", "the input of `host_reads_by_text`, whose output declares no crossing"),
+    ("crates/json_rules/src/code_rule_dsl/logic/json_rules/engine_dialect.rs", "F", "the input of `host_reads_by_text`, whose output declares no crossing"),
+    ("crates/tests_lang/src/code_rule_dsl/facts/vtab/syntax/tests.rs", "call", "`text_rows_kept`'s input: the reason a cross-file node's text is rows"),
+    ("crates/tests_lang/src/code_rule_dsl/facts/vtab/syntax/tests.rs", "out", "`text_rows_kept`'s input: the reason a cross-file node's text is rows"),
+];
+
+/// The string literals of Rust source `src`: raw (`r#"…"#`) as written, plain ones with `\n`, `\"` and `\\` read.
+fn rust_strings(src: &str) -> Vec<String> {
+    let b = src.as_bytes();
+    let (mut out, mut i) = (Vec::new(), 0);
+    while i < b.len() {
+        if b[i] == b'r' && b.get(i + 1) == Some(&b'#') && b.get(i + 2) == Some(&b'"') {
+            let start = i + 3;
+            let Some(end) = src[start..].find("\"#") else { break };
+            out.push(src[start..start + end].to_owned());
+            i = start + end + 2;
+        } else if b[i] == b'"' && (i == 0 || b[i - 1] != b'\'') {
+            let mut s = String::new();
+            let mut j = i + 1;
+            while j < b.len() && b[j] != b'"' {
+                if b[j] == b'\\' && j + 1 < b.len() {
+                    match b[j + 1] {
+                        b'n' => s.push('\n'),
+                        b'"' => s.push('"'),
+                        b'\\' => s.push('\\'),
+                        b'\n' => {
+                            j += 2;
+                            while j < b.len() && (b[j] == b' ' || b[j] == b'\n') {
+                                j += 1;
+                            }
+                            continue;
+                        }
+                        c => {
+                            s.push('\\');
+                            s.push(c as char);
+                        }
+                    }
+                    j += 2;
+                } else {
+                    s.push(b[j] as char);
+                    j += 1;
+                }
+            }
+            out.push(s);
+            i = j + 1;
+        } else if b[i] == b'/' && b.get(i + 1) == Some(&b'/') {
+            i = src[i..].find('\n').map_or(b.len(), |n| i + n);
+        } else {
+            i += 1;
+        }
+    }
+    out
+}

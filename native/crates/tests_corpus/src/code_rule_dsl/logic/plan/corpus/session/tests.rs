@@ -135,8 +135,8 @@ fn a_session_runs_the_cross_file_strata_an_edit_changed() {
         assert_eq!(got, full(), "after editing {path}, the session's findings are a full run's");
         let (ran, _) = report.cross_strata.expect("a session's run");
         assert!(ran <= all, "{path}: {ran} of {all}");
-        eprintln!("{path}: {ran} of {all} strata run, {} maintained from deltas ({} recursive); {} findings", report.cross_maintained.0, report.cross_maintained.1, got.len());
-        maintained += report.cross_maintained.0;
+        eprintln!("{path}: {ran} of {all} strata run, {} maintained from deltas ({} recursive); {} findings", maintained_of(&report).0, maintained_of(&report).1, got.len());
+        maintained += maintained_of(&report).0;
     }
     assert!(maintained > 0, "an edit's strata are maintained from deltas (stage 2)");
     drop(session);
@@ -156,7 +156,7 @@ fn a_session_keeps_its_cross_part_across_a_file_local_edit() {
     std::fs::write(src.join("b.py"), "from a import helper, other\n\ndef main():\n    assert True\n    helper(1)\n    other(2)\n").unwrap();
     // `at` is the cross-file part; `flagged`, file-local, is the rule edited.
     let program = |kind: &str| format!(
-        "#include \"core.rerail\"\n.decl called(c: node, x: symbol)\ncalled(c, x) :- kind(c, \"call\"), field(c, \"function\", f), text(f, x).\n.decl defined(d: node, x: symbol)\ndefined(d, x) :- kind(d, \"function_definition\"), field(d, \"name\", n), text(n, x).\n.decl at(x: symbol, k: number) cross_file\nat(x, k) :- called(c, x), defined(_, x), node_start_column(c, k).\n.decl flagged(n: node)\nflagged(n) :- kind(n, \"assert_statement\"), !kind(n, \"{kind}\").\n.decl flag_line(l: number)\nflag_line(l) :- flagged(n), node_line_number(n, l).\n.output at, flag_line\n"
+        "#include \"core.rerail\"\n.decl called(c: node, x: symbol)\ncalled(c, x) :- kind(c, \"call\"), field(c, \"function\", f), text(f, x).\n.decl defined(d: node, x: symbol)\ndefined(d, x) :- kind(d, \"function_definition\"), field(d, \"name\", n), text(n, x).\n.decl call_col(x: symbol, k: number)\ncall_col(x, k) :- called(c, x), node_start_column(c, k).\n.decl def_name(x: symbol)\ndef_name(x) :- defined(_, x).\n.decl at(x: symbol, k: number) cross_file\nat(x, k) :- call_col(x, k), def_name(x).\n.decl flagged(n: node)\nflagged(n) :- kind(n, \"assert_statement\"), !kind(n, \"{kind}\").\n.decl flag_line(l: number)\nflag_line(l) :- flagged(n), node_line_number(n, l).\n.output at, flag_line\n"
     );
     let program = |kind: &str| crate::code_rule_dsl::logic::rr::print_version(&crate::code_rule_dsl::logic::rr::parse_version(&program(kind)).unwrap()).unwrap();
     let run = |text: &str| super::super::run(text, &src, None, &out, "program", Binding::Cpu, 1 << 18).unwrap();
@@ -187,6 +187,34 @@ fn a_session_maintains_a_recursive_cross_file_stratum() {
     assert!(ran.recursive > 0, "the recursive stratum is maintained");
 }
 
+/// A run's cross parts, its own and its stages' (as `corpus::tests::maintained_with_stages` counts them): a finding is made in its node's own file, reading a relation of names
+/// staged before the program (decision 0727), so the cross part it is derived from runs in the stage's run.
+fn runs(report: &super::super::Report) -> impl Iterator<Item = &super::super::Report> {
+    let staged = report.phase_runs.iter().filter(|p| p.name.starts_with(crate::code_rule_dsl::logic::plan::phased::STAGE));
+    std::iter::once(report).chain(staged.map(|p| &p.report))
+}
+
+/// The strata a run's cross parts maintained (`cross_maintained`), summed.
+fn maintained_of(report: &super::super::Report) -> (usize, usize, usize) {
+    runs(report).fold((0, 0, 0), |a, r| (a.0 + r.cross_maintained.0, a.1 + r.cross_maintained.1, a.2 + r.cross_maintained.2))
+}
+
+/// The strata a run's cross parts passed on as quiet (`cross_quiet`), summed.
+fn quiet_of(report: &super::super::Report) -> (usize, usize) {
+    runs(report).fold((0, 0), |a, r| (a.0 + r.cross_quiet.0, a.1 + r.cross_quiet.1))
+}
+
+/// Why a run's cross parts derived strata again (`cross_again`), summed.
+fn again_of(report: &super::super::Report) -> std::collections::BTreeMap<&'static str, usize> {
+    let mut all = std::collections::BTreeMap::new();
+    for r in runs(report) {
+        for (k, n) in &r.cross_again {
+            *all.entry(*k).or_insert(0) += n;
+        }
+    }
+    all
+}
+
 /// What a session's edits did with their cross-file strata, summed over the edits.
 #[derive(Default)]
 struct Ran {
@@ -202,12 +230,13 @@ struct Ran {
 
 impl Ran {
     fn add(&mut self, report: &super::super::Report) {
-        self.mode += report.cross_maintained.0;
-        self.recursive += report.cross_maintained.1;
-        self.third += report.cross_maintained.2;
-        self.past_theta += report.cross_again.get(crate::code_rule_dsl::logic::plan::corpus::maintain::reason_class(crate::code_rule_dsl::logic::plan::corpus::maintain::THRESHOLD)).copied().unwrap_or(0);
-        if !report.cross_again.is_empty() {
-            self.again.push(format!("{:?}", report.cross_again));
+        let (m, again) = (maintained_of(report), again_of(report));
+        self.mode += m.0;
+        self.recursive += m.1;
+        self.third += m.2;
+        self.past_theta += again.get(crate::code_rule_dsl::logic::plan::corpus::maintain::reason_class(crate::code_rule_dsl::logic::plan::corpus::maintain::THRESHOLD)).copied().unwrap_or(0);
+        if !again.is_empty() {
+            self.again.push(format!("{again:?}"));
         }
     }
 }
@@ -228,12 +257,16 @@ fn recursive_cross_file_stratum() -> Ran {
 .decl dep(a: number, b: number) cross_file
 .decl dep_from(a: number, m: symbol)
 dep_from(a, m) :- impmod(i, m), docof(i, a).
-dep(a, b) :- dep_from(a, m), doc(b, _, m).
+.decl mod_doc(d: number, m: symbol)
+mod_doc(d, m) :- doc(d, _, m).
+dep(a, b) :- dep_from(a, m), mod_doc(b, m).
 .decl reach(a: number, b: number) no_reach
 reach(a, b) :- dep(a, b).
 reach(a, c) :- reach(a, b), dep(b, c).
 .violation CYC(at: node) code "CYC" "This import closes a cycle of imports."
-CYC(i) :- impmod(i, m), docof(i, a), doc(b, _, m), reach(b, a).
+.decl closes(ma: symbol, m: symbol)
+closes(ma, m) :- dep_from(a, m), mod_doc(a, ma), mod_doc(b, m), reach(b, a).
+CYC(i) :- impmod(i, m), docof(i, a), doc(a, _, ma), closes(ma, m).
 "#,
     )
     .unwrap();
@@ -267,7 +300,7 @@ CYC(i) :- impmod(i, m), docof(i, a), doc(b, _, m), reach(b, a).
         let report = run();
         let got = findings();
         assert_eq!(got, full(), "after editing {path}, the session's findings are a full run's");
-        eprintln!("{path}: {:?} strata run, {:?} maintained (recursive); {} findings", report.cross_strata, report.cross_maintained, got.len());
+        eprintln!("{path}: {:?} strata run, {:?} maintained (recursive); {} findings", report.cross_strata, maintained_of(&report), got.len());
         ran.add(&report);
     }
     drop(session);
@@ -295,13 +328,17 @@ fn a_session_passes_on_a_quiet_stratum() {
 .decl dep(a: number, b: number) cross_file
 .decl dep_from(a: number, m: symbol)
 dep_from(a, m) :- impmod(i, m), docof(i, a).
-dep(a, b) :- dep_from(a, m), doc(b, _, m).
+.decl mod_doc(d: number, m: symbol)
+mod_doc(d, m) :- doc(d, _, m).
+dep(a, b) :- dep_from(a, m), mod_doc(b, m).
 .decl via_h(a: number)
-via_h(a) :- dep(a, b), doc(b, _, "h").
+via_h(a) :- dep(a, b), mod_doc(b, "h").
 .decl seen(a: number)
 seen(a) :- via_h(a).
 .violation IMP(at: node) code "IMP" "An import in a file that imports h."
-IMP(i) :- impmod(i, _), docof(i, a), seen(a).
+.decl seen_mod(ma: symbol)
+seen_mod(ma) :- seen(a), mod_doc(a, ma).
+IMP(i) :- impmod(i, _), docof(i, a), doc(a, _, ma), seen_mod(ma).
 "#,
     )
     .unwrap();
@@ -325,9 +362,9 @@ IMP(i) :- impmod(i, _), docof(i, a), seen(a).
     assert_eq!(findings().len(), 1, "a.py's import of h: {:?}", findings());
     std::fs::write(src.join("a.py"), "from h import x\nfrom d import y\n").unwrap();
     let report = run();
-    let (quiet, unmeasured) = report.cross_quiet;
+    let (quiet, unmeasured) = quiet_of(&report);
     let got = findings();
-    eprintln!("{:?} strata run, {:?} maintained; {quiet} quiet; {} findings", report.cross_strata, report.cross_maintained, got.len());
+    eprintln!("{:?} strata run, {:?} maintained; {quiet} quiet; {} findings", report.cross_strata, maintained_of(&report), got.len());
     assert_eq!(got, full(), "the session's findings are a full run's");
     assert_eq!(got.len(), 2, "both of a.py's imports: {got:?}");
     assert!(quiet > 0, "`seen`'s stratum is quiet: nothing deleted, nothing to derive");
@@ -366,7 +403,11 @@ wh_in(d) :- wh(n), node(d, n, _, _, _).
 .decl pair(a: number, b: number) cross_file
 pair(a, b) :- wh_in(a), wh_in(b), a != b.
 .violation W(at: node) code "W" "A while loop in a file, where another file has one too."
-W(n) :- wh(n), node(a, n, _, _, _), pair(a, _).
+.decl paired(ma: symbol)
+.decl mod_doc(d: number, m: symbol)
+mod_doc(d, m) :- doc(d, _, m).
+paired(ma) :- pair(a, _), mod_doc(a, ma).
+W(n) :- wh(n), node(a, n, _, _, _), doc(a, _, ma), paired(ma).
 "#,
     )
     .unwrap();
@@ -504,11 +545,15 @@ fn a_session_keeps_its_part_around_an_inlined_relation() {
 .decl dep(a: number, b: number) cross_file
 .decl dep_from(a: number, m: symbol)
 dep_from(a, m) :- impmod(i, m), docof(i, a).
-dep(a, b) :- dep_from(a, m), doc(b, _, m).
+.decl mod_doc(d: number, m: symbol)
+mod_doc(d, m) :- doc(d, _, m).
+dep(a, b) :- dep_from(a, m), mod_doc(b, m).
 .decl back(a: number, b: number) inline
 back(a, b) :- dep(b, a).
 .violation BACK(at: node) code "BACK" "This import's module imports this one."
-BACK(i) :- impmod(i, m), docof(i, a), doc(b, _, m), back(a, b).
+.decl back_mod(ma: symbol, m: symbol)
+back_mod(ma, m) :- back(a, b), mod_doc(a, ma), mod_doc(b, m).
+BACK(i) :- impmod(i, m), docof(i, a), doc(a, _, ma), back_mod(ma, m).
 "#,
     )
     .unwrap();
@@ -562,12 +607,16 @@ fn a_session_inserts_only_rows_new_against_the_survivors() {
 .decl dep(a: number, b: number) cross_file
 .decl dep_from(a: number, m: symbol)
 dep_from(a, m) :- impmod(i, m), docof(i, a).
-dep(a, b) :- dep_from(a, m), doc(b, _, m).
+.decl mod_doc(d: number, m: symbol)
+mod_doc(d, m) :- doc(d, _, m).
+dep(a, b) :- dep_from(a, m), mod_doc(b, m).
 .decl reach(a: number, b: number) no_reach
 reach(a, b) :- dep(a, b).
 reach(a, c) :- reach(a, b), dep(b, c).
 .violation CYC(at: node) code "CYC" "This import closes a cycle of imports."
-CYC(i) :- impmod(i, m), docof(i, a), doc(b, _, m), reach(b, a).
+.decl closes(ma: symbol, m: symbol)
+closes(ma, m) :- dep_from(a, m), mod_doc(a, ma), mod_doc(b, m), reach(b, a).
+CYC(i) :- impmod(i, m), docof(i, a), doc(a, _, ma), closes(ma, m).
 "#,
     )
     .unwrap();
@@ -589,7 +638,7 @@ CYC(i) :- impmod(i, m), docof(i, a), doc(b, _, m), reach(b, a).
     full(run);
     drop(session);
     let _ = std::fs::remove_dir_all(&base);
-    assert!(report.cross_maintained.1 > 0, "the recursive stratum is maintained: {:?}", report.cross_maintained);
+    assert!(maintained_of(&report).1 > 0, "the recursive stratum is maintained: {:?}", maintained_of(&report));
     assert_eq!(got, findings(), "the session's findings after the edge a -> c are a full run's");
 }
 
@@ -664,7 +713,7 @@ fn wave0_session(tag: &str, rules: &str, files: &[(&str, &str)], edits: &[(&str,
     let (src, out) = (base.join("src"), base.join("out"));
     std::fs::create_dir_all(&src).unwrap();
     let rule = base.join("w0.rerail");
-    let head = ".policy \"test-wave0\" revision 1\n.description \"A maintained stratum's first wave.\"\n.language python\n.mode steer\n.scope include \"**/*.py\"\n#include \"python/names.rerail\"\n.decl dep(a: number, b: number) cross_file\n.decl dep_from(a: number, m: symbol)\ndep_from(a, m) :- impmod(i, m), docof(i, a).\ndep(a, b) :- dep_from(a, m), doc(b, _, m).\n";
+    let head = ".policy \"test-wave0\" revision 1\n.description \"A maintained stratum's first wave.\"\n.language python\n.mode steer\n.scope include \"**/*.py\"\n#include \"python/names.rerail\"\n.decl dep(a: number, b: number) cross_file\n.decl dep_from(a: number, m: symbol)\ndep_from(a, m) :- impmod(i, m), docof(i, a).\n.decl mod_doc(d: number, m: symbol)\nmod_doc(d, m) :- doc(d, _, m).\ndep(a, b) :- dep_from(a, m), mod_doc(b, m).\n";
     std::fs::write(&rule, format!("{head}{rules}")).unwrap();
     for (path, text) in files {
         std::fs::write(src.join(path), text).unwrap();
@@ -683,7 +732,7 @@ fn wave0_session(tag: &str, rules: &str, files: &[(&str, &str)], edits: &[(&str,
         let switched = super::super::switches::set(&[("RERAIL_CROSS_K4", "off"), ("RERAIL_KEPT_PART", "off"), ("RERAIL_WAVE0", "kept")]);
         let report = full(run);
         drop(switched);
-        assert_eq!((report.cross_maintained.0, report.cross_maintained.1), (0, 0), "{tag}: the oracle maintains nothing");
+        assert_eq!((maintained_of(&report).0, maintained_of(&report).1), (0, 0), "{tag}: the oracle maintains nothing");
         findings()
     };
     let session = start(&base.join("session")).unwrap();
@@ -697,8 +746,8 @@ fn wave0_session(tag: &str, rules: &str, files: &[(&str, &str)], edits: &[(&str,
         let report = run();
         let got = findings();
         assert_eq!(got, full(), "{tag}: after editing {path}, the session's findings are a full run's");
-        eprintln!("{tag} {path}: {:?} strata run, {:?} maintained; {} findings {got:?}", report.cross_strata, report.cross_maintained, got.len());
-        recursive += report.cross_maintained.1;
+        eprintln!("{tag} {path}: {:?} strata run, {:?} maintained; {} findings {got:?}", report.cross_strata, maintained_of(&report), got.len());
+        recursive += maintained_of(&report).1;
         counts.insert(got.len());
     }
     drop(session);
@@ -714,7 +763,7 @@ fn wave0_session(tag: &str, rules: &str, files: &[(&str, &str)], edits: &[(&str,
 fn wave0_an_aggregate_inside_recursion() {
     wave0_case(
         "agg",
-        ".decl reach(a: number, b: number)\nreach(a, b) :- dep(a, b).\nreach(a, c) :- reach(a, b), dep(b, c), n = count : { dep(_, b) }, n >= 2.\n.violation FAR(at: node) code \"FAR\" \"A module that reaches one it does not import.\"\nFAR(i) :- impmod(i, _), docof(i, a), reach(a, c), !dep(a, c).\n",
+        ".decl reach(a: number, b: number)\nreach(a, b) :- dep(a, b).\nreach(a, c) :- reach(a, b), dep(b, c), n = count : { dep(_, b) }, n >= 2.\n.violation FAR(at: node) code \"FAR\" \"A module that reaches one it does not import.\"\n.decl far_mod(ma: symbol)\nfar_mod(ma) :- reach(a, c), !dep(a, c), mod_doc(a, ma).\nFAR(i) :- impmod(i, _), docof(i, a), doc(a, _, ma), far_mod(ma).\n",
         &[("a.py", "from b import x\n"), ("b.py", "from c import y\n"), ("c.py", "from d import z\n"), ("d.py", "x = 1\n"), ("e.py", "x = 1\n")],
         &[("e.py", "from b import q\n"), ("e.py", "x = 2\n"), ("e.py", "from b import q\n")],
     );
@@ -726,7 +775,7 @@ fn wave0_an_aggregate_inside_recursion() {
 fn wave0_a_negation_gain_inside_recursion() {
     wave0_case(
         "neg",
-        ".decl blocked(b: number)\nblocked(b) :- dep(b, s), doc(s, _, \"stop\").\n.decl reach(a: number, b: number)\nreach(a, b) :- dep(a, b), !blocked(b).\nreach(a, c) :- reach(a, b), dep(b, c), !blocked(c).\n.violation FAR(at: node) code \"FAR\" \"A module that reaches one it does not import.\"\nFAR(i) :- impmod(i, _), docof(i, a), reach(a, c), !dep(a, c).\n",
+        ".decl blocked(b: number)\nblocked(b) :- dep(b, s), mod_doc(s, \"stop\").\n.decl reach(a: number, b: number)\nreach(a, b) :- dep(a, b), !blocked(b).\nreach(a, c) :- reach(a, b), dep(b, c), !blocked(c).\n.violation FAR(at: node) code \"FAR\" \"A module that reaches one it does not import.\"\n.decl far_mod(ma: symbol)\nfar_mod(ma) :- reach(a, c), !dep(a, c), mod_doc(a, ma).\nFAR(i) :- impmod(i, _), docof(i, a), doc(a, _, ma), far_mod(ma).\n",
         &[("a.py", "from b import x\n"), ("b.py", "from c import y\n"), ("c.py", "from stop import q\nfrom d import z\n"), ("d.py", "from e import w\n"), ("e.py", "x = 1\n"), ("stop.py", "q = 1\n")],
         &[("c.py", "from d import z\n"), ("c.py", "from stop import q\nfrom d import z\n"), ("c.py", "from d import z\n")],
     );
@@ -738,7 +787,7 @@ fn wave0_a_negation_gain_inside_recursion() {
 fn wave0_a_row_derived_again_from_survivors() {
     wave0_case(
         "diamond",
-        ".decl reach(a: number, b: number) no_reach\nreach(a, b) :- dep(a, b).\nreach(a, c) :- reach(a, b), dep(b, c).\n.violation FAR(at: node) code \"FAR\" \"A module that reaches one it does not import.\"\nFAR(i) :- impmod(i, _), docof(i, a), reach(a, c), !dep(a, c).\n",
+        ".decl reach(a: number, b: number) no_reach\nreach(a, b) :- dep(a, b).\nreach(a, c) :- reach(a, b), dep(b, c).\n.violation FAR(at: node) code \"FAR\" \"A module that reaches one it does not import.\"\n.decl far_mod(ma: symbol)\nfar_mod(ma) :- reach(a, c), !dep(a, c), mod_doc(a, ma).\nFAR(i) :- impmod(i, _), docof(i, a), doc(a, _, ma), far_mod(ma).\n",
         &[("a.py", "from b import x\nfrom c import y\n"), ("b.py", "from d import z\n"), ("c.py", "from d import z\n"), ("d.py", "from e import w\n"), ("e.py", "x = 1\n")],
         &[("a.py", "from c import y\n"), ("c.py", "x = 2\n"), ("c.py", "from d import z\n"), ("a.py", "from b import x\nfrom c import y\n")],
     );
@@ -752,7 +801,7 @@ fn wave0_a_compacted_start() {
     let files: Vec<(&str, &str)> = chain.iter().map(|(p, t)| (p.as_str(), t.as_str())).collect();
     wave0_case(
         "compact",
-        ".decl reach(a: number, b: number) no_reach\nreach(a, b) :- dep(a, b).\nreach(a, c) :- reach(a, b), dep(b, c).\n.violation FAR(at: node) code \"FAR\" \"A module that reaches one it does not import.\"\nFAR(i) :- impmod(i, _), docof(i, a), reach(a, c), !dep(a, c).\n",
+        ".decl reach(a: number, b: number) no_reach\nreach(a, b) :- dep(a, b).\nreach(a, c) :- reach(a, b), dep(b, c).\n.violation FAR(at: node) code \"FAR\" \"A module that reaches one it does not import.\"\n.decl far_mod(ma: symbol)\nfar_mod(ma) :- reach(a, c), !dep(a, c), mod_doc(a, ma).\nFAR(i) :- impmod(i, _), docof(i, a), doc(a, _, ma), far_mod(ma).\n",
         &files,
         &[("m2.py", "x = 2\n"), ("m2.py", "from m3 import x\n")],
     );
@@ -774,15 +823,21 @@ fn cross_file_aggregate() -> Ran {
 .decl dep(a: number, b: number) cross_file
 .decl dep_from(a: number, m: symbol)
 dep_from(a, m) :- impmod(i, m), docof(i, a).
-dep(a, b) :- dep_from(a, m), doc(b, _, m).
+.decl mod_doc(d: number, m: symbol)
+mod_doc(d, m) :- doc(d, _, m).
+dep(a, b) :- dep_from(a, m), mod_doc(b, m).
 .decl fan(b: number, n: number)
-fan(b, n) :- doc(b, _, _), n = count : { dep(_, b) }.
+fan(b, n) :- mod_doc(b, _), n = count : { dep(_, b) }.
 .decl leaf(b: number)
-leaf(b) :- doc(b, _, _), count : { dep(b, _) } = 0.
+leaf(b) :- mod_doc(b, _), count : { dep(b, _) } = 0.
 .violation HUB(at: node) code "HUB" "An import of a module two or more files import."
-HUB(i) :- impmod(i, m), doc(b, _, m), fan(b, n), n >= 2.
+.decl fan_mod(m: symbol, n: number)
+fan_mod(m, n) :- fan(b, n), mod_doc(b, m).
+HUB(i) :- impmod(i, m), fan_mod(m, n), n >= 2.
 .violation LEAF(at: node) code "LEAF" "An import of a module that imports nothing."
-LEAF(i) :- impmod(i, m), doc(b, _, m), leaf(b).
+.decl leaf_mod(m: symbol)
+leaf_mod(m) :- leaf(b), mod_doc(b, m).
+LEAF(i) :- impmod(i, m), leaf_mod(m).
 "#,
     )
     .unwrap();
@@ -816,7 +871,7 @@ LEAF(i) :- impmod(i, m), doc(b, _, m), leaf(b).
         let report = run();
         let got = findings();
         assert_eq!(got, full(), "after editing {path}, the session's findings are a full run's");
-        eprintln!("{path}: {:?} strata run, {:?} maintained (recursive, derived again); {} findings", report.cross_strata, report.cross_maintained, got.len());
+        eprintln!("{path}: {:?} strata run, {:?} maintained (recursive, derived again); {} findings", report.cross_strata, maintained_of(&report), got.len());
         ran.add(&report);
     }
     drop(session);
@@ -843,9 +898,13 @@ fn a_session_keeps_a_negation_that_still_fails() {
 .decl dep(a: number, b: number) cross_file
 .decl dep_from(a: number, m: symbol)
 dep_from(a, m) :- impmod(i, m), docof(i, a).
-dep(a, b) :- dep_from(a, m), doc(b, _, m).
+.decl mod_doc(d: number, m: symbol)
+mod_doc(d, m) :- doc(d, _, m).
+dep(a, b) :- dep_from(a, m), mod_doc(b, m).
 .violation LONE(at: node) code "LONE" "An import of no file, in a file that imports none."
-LONE(i) :- impmod(i, m), docof(i, a), !dep(a, _).
+.decl importer(ma: symbol)
+importer(ma) :- dep(a, _), mod_doc(a, ma).
+LONE(i) :- impmod(i, m), docof(i, a), doc(a, _, ma), !importer(ma).
 "#,
     )
     .unwrap();
@@ -871,7 +930,7 @@ LONE(i) :- impmod(i, m), docof(i, a), !dep(a, _).
         std::fs::write(src.join(path), text).unwrap();
         let report = run();
         assert_eq!(findings(), full(), "after editing {path} to {text:?}, the session's findings are a full run's");
-        maintained += report.cross_maintained.0;
+        maintained += maintained_of(&report).0;
     }
     assert!(maintained > 0, "the negation's stratum is maintained");
     drop(session);
@@ -900,16 +959,22 @@ fn session_costs() {
 .decl dep(a: number, b: number) cross_file
 .decl dep_from(a: number, m: symbol)
 dep_from(a, m) :- impmod(i, m), docof(i, a).
-dep(a, b) :- dep_from(a, m), doc(b, _, m).
+.decl mod_doc(d: number, m: symbol)
+mod_doc(d, m) :- doc(d, _, m).
+dep(a, b) :- dep_from(a, m), mod_doc(b, m).
 .decl reach(a: number, b: number)
 reach(a, b) :- dep(a, b).
 reach(a, c) :- reach(a, b), dep(b, c).
 .decl fan(b: number, n: number)
-fan(b, n) :- doc(b, _, _), n = count : { dep(_, b) }.
+fan(b, n) :- mod_doc(b, _), n = count : { dep(_, b) }.
 .violation CYC(at: node) code "CYC" "An import that closes a cycle."
-CYC(i) :- impmod(i, m), docof(i, a), doc(b, _, m), reach(b, a).
+.decl closes(ma: symbol, m: symbol)
+closes(ma, m) :- dep_from(a, m), mod_doc(a, ma), mod_doc(b, m), reach(b, a).
+CYC(i) :- impmod(i, m), docof(i, a), doc(a, _, ma), closes(ma, m).
 .violation HUB(at: node) code "HUB" "An import of a module four or more files import."
-HUB(i) :- impmod(i, m), doc(b, _, m), fan(b, k), k >= 4.
+.decl fan_mod(m: symbol, n: number)
+fan_mod(m, n) :- fan(b, n), mod_doc(b, m).
+HUB(i) :- impmod(i, m), fan_mod(m, k), k >= 4.
 "#,
     )
     .unwrap();
@@ -925,7 +990,7 @@ HUB(i) :- impmod(i, m), doc(b, _, m), fan(b, k), k >= 4.
     let show = |what: &str, report: &super::super::Report| {
         let spans = crate::code_rule_dsl::logic::profile::spans();
         let cross: f64 = spans.iter().filter(|(p, _)| p.ends_with("/cross") || p.as_str() == "cross").map(|(_, t)| t.total).sum();
-        eprintln!("{what}: strata {:?}, maintained {:?}; cross {cross:.3} s CPU", report.cross_strata, report.cross_maintained);
+        eprintln!("{what}: strata {:?}, maintained {:?}; cross {cross:.3} s CPU", report.cross_strata, maintained_of(&report));
         for (path, t) in spans.iter().filter(|(p, _)| p.split_once("session/").is_some_and(|(_, rest)| !rest.contains('/'))) {
             eprintln!("    {:>7.3} s  {path}", t.total);
         }
@@ -1012,7 +1077,7 @@ fn cache_boundary_edits_explain_the_current_snapshot() {
         .decl lhs(a:number,k:number)\n.decl rhs(b:number,k:number)\n.decl wide(a:number,b:number)\n\
         .decl lefts(a:number)\n.decl rights(b:number)\n.output lefts, rights\n\
         wide(a,b) :- lhs(a,k), rhs(b,k).\nlefts(a) :- wide(a,_).\nrights(b) :- wide(_,b).\n\
-        lhs(64,0) :- doc(_, \"extra.py\", _).\n");
+        .decl extra()\nextra() :- doc(_, \"extra.py\", _).\nlhs(64,0) :- extra().\n");
     for i in 0..64 { src.push_str(&format!("lhs({i},0). rhs({i},0).\n")); }
     // Only the first lefts clause reads wide. Its explanation must point to that clause.
     src.push_str("lefts(a) :- lhs(a,999).\n");
@@ -1151,18 +1216,24 @@ fn a_session_derives_nothing_again_that_no_change_reaches() {
 .decl dep(a: number, b: number) cross_file
 .decl dep_from(a: number, m: symbol)
 dep_from(a, m) :- impmod(i, m), docof(i, a).
-dep(a, b) :- dep_from(a, m), doc(b, _, m).
+.decl mod_doc(d: number, m: symbol)
+mod_doc(d, m) :- doc(d, _, m).
+dep(a, b) :- dep_from(a, m), mod_doc(b, m).
 .decl reach(a: number, b: number) no_reach
 reach(a, b) :- dep(a, b).
 reach(a, c) :- reach(a, b), dep(b, c).
 .violation CYC(at: node) code "CYC" "This import closes a cycle of imports."
-CYC(i) :- impmod(i, m), docof(i, a), doc(b, _, m), reach(b, a).
+.decl closes(ma: symbol, m: symbol)
+closes(ma, m) :- dep_from(a, m), mod_doc(a, ma), mod_doc(b, m), reach(b, a).
+CYC(i) :- impmod(i, m), docof(i, a), doc(a, _, ma), closes(ma, m).
 .decl defines(d: number)
 defines(d) :- kind(n, "function_definition"), docof(n, d).
 .decl imports_definer(a: number, m: symbol) cross_file   // a imports m, a module that defines a function (decision 0677)
-imports_definer(a, m) :- dep_from(a, m), doc(b, _, m), defines(b).
+imports_definer(a, m) :- dep_from(a, m), mod_doc(b, m), defines(b).
 .violation SHADOW(at: node) code "SHADOW" "A module that defines a function imports one that does too."
-SHADOW(i) :- impmod(i, m), docof(i, a), imports_definer(a, m), defines(a).
+.decl shadows(ma: symbol, m: symbol)
+shadows(ma, m) :- imports_definer(a, m), mod_doc(a, ma).
+SHADOW(i) :- impmod(i, m), docof(i, a), doc(a, _, ma), shadows(ma, m), defines(a).
 "#,
     )
     .unwrap();
@@ -1180,6 +1251,6 @@ SHADOW(i) :- impmod(i, m), docof(i, a), imports_definer(a, m), defines(a).
     drop(session);
     let _ = std::fs::remove_dir_all(&base);
     assert_eq!((findings(&unchanged), findings(&edited)), (findings(&first), findings(&first)), "a full run's findings");
-    assert!(unchanged.cross_again.is_empty(), "nothing changed, nothing derived again: {:?}", unchanged.cross_again);
-    assert!(edited.cross_again.is_empty(), "an edit that reaches no import derives nothing again: {:?}", edited.cross_again);
+    assert!(again_of(&unchanged).is_empty(), "nothing changed, nothing derived again: {:?}", again_of(&unchanged));
+    assert!(again_of(&edited).is_empty(), "an edit that reaches no import derives nothing again: {:?}", again_of(&edited));
 }

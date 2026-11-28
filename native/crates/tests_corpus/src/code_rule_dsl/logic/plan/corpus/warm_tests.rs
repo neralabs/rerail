@@ -14,14 +14,16 @@ use crate::code_rule_dsl::typing::file_local::Binding;
 use std::collections::BTreeSet;
 use std::path::PathBuf;
 
-/// Cross-file: identifiers of two files joined on their text. Each side's `kind`, `text` and `docof` go into its
-/// file's chunk (the push's attributes, 7ff884a7aa), so the cross part reads no base relation: every file's document
+/// Cross-file: identifiers of two files joined on their text. Each file gives its identifiers' texts with its document
+/// (`ident_in`), so the cross part reads no base relation (decision 0727): every file's document
 /// is in phase 1's corpus batch (`sources.rerail` reads `doc`), which `Ran::corpus` counts with the run's. (A
 /// cross-file `finding` would be decoded off the run's own batch, but its stratum runs again on a warm run by design,
 /// `kept_strata::Part`: the hosted tests below read it.)
 const PROGRAM: &str = r#"
+.decl ident_in(t: symbol, d: number)
+ident_in(t, d) :- kind(a, "identifier"), text(a, t), docof(a, d).
 .decl named(t: symbol) cross_file
-named(t) :- kind(a, "identifier"), text(a, t), docof(a, d), kind(b, "identifier"), text(b, t), docof(b, e), d < e, contains("o", t).
+named(t) :- ident_in(t, d), ident_in(t, e), d < e, contains("o", t).
 .output named
 "#;
 

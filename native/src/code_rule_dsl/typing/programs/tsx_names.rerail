@@ -84,7 +84,11 @@ asked(t, y) :- asked(m, x), fwd(m, x, t, y), module(t).
 asked(t, x) :- asked(m, x), star_of(m, t), x != "default", module(t).
 // ask_in(p, x): the file at path p, module m's, is asked for x. The rounds hand it back as tsx_names__ask_in.
 .decl ask_in(p: symbol, x: symbol)
-ask_in(p, x) :- asked(m, x), ts_module(d, m), doc(d, p, _).
+ask_in(p, x) :- asked(m, x), ts_module_path(p, m).
+// ts_module_path(p, m): the file at path p is module m: its own rows, read in its own part (the cross part reads no
+// base relation, decision 0727).
+.decl ts_module_path(p: symbol, m: symbol)
+ts_module_path(p, m) :- ts_module(d, m), doc(d, p, _).
 .decl tsx_names__ask_in(p: symbol, x: symbol)
 // fwd(m, x, t, y): module m re-exports its target t's y as x (`export { y as x } from "s"`); star_of(m, t): m has
 // `export * from "s"`, which names t. Each file's own, made whatever is asked.

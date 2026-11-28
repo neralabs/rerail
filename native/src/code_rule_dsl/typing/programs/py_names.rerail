@@ -100,13 +100,17 @@ spelled_at(p, k) :- qn(n, k), docof(n, d), doc(d, p, _).
 // asked of no file, so it makes no row. The forwards are each file's own, made whatever is asked (`fwd`, `star_of`),
 // so round 1 follows every ask through every re-export, and round 2 only answers: a cold run takes two rounds, not
 // one more for each re-export an ask passes.
+// py_module_path(m, p): the file at path p is module m's: its own row, read in its own part (the cross part reads no
+// base relation, decision 0727).
+.decl py_module_path(m: symbol, p: symbol)
+py_module_path(m, p) :- doc(_, p, m).
 .decl asked(m: symbol, x: symbol) cross_file
-asked(m, x) :- spelled_at(_, k), split_dot(k, m, x), doc(_, _, m).
-asked(m2, x) :- asked(m, l), fwd(m, l, m2, x), doc(_, _, m2).
-asked(m2, x) :- asked(m, x), star_of(m, m2), doc(_, _, m2).
+asked(m, x) :- spelled_at(_, k), split_dot(k, m, x), py_module_path(m, _).
+asked(m2, x) :- asked(m, l), fwd(m, l, m2, x), py_module_path(m2, _).
+asked(m2, x) :- asked(m, x), star_of(m, m2), py_module_path(m2, _).
 // ask_in(p, x): the file at path p, module m's, is asked for x. The rounds hand it back as py_names__ask_in.
 .decl ask_in(p: symbol, x: symbol)
-ask_in(p, x) :- asked(m, x), doc(_, p, m).
+ask_in(p, x) :- asked(m, x), py_module_path(m, p).
 .decl py_names__ask_in(p: symbol, x: symbol)
 // The asked file's answers, in its own part: read at its own path, so each is per-file. python/imports' three rules
 // of exports and exported, for the asked names alone.
@@ -177,7 +181,7 @@ above(q, m) :- above(q, m1), m = @pkg_up(m1, 1), m != "".
 // named_module(p, m): workspace module m is one the file at p names, or one above or below one it names: a name
 // through an import (`pkg.core.App` after `import pkg`) is resolved in the module its last dot ends.
 .decl named_module(p: symbol, m: symbol)
-named_module(p, m) :- doc(_, p, m).
+named_module(p, m) :- py_module_path(m, p).
 named_module(p, q) :- imported(p, q), workspace_module(q).
 named_module(p, m) :- imported(p, q), above(q, m), workspace_module(m).
 named_module(p, m) :- imported(p, q), pkg_above(m, q).

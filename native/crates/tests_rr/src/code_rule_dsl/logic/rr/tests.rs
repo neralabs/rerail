@@ -2352,7 +2352,7 @@ g(d)
 comma(l, c) :- kind(n, "argument_list"), node_regex_match(",", n, m), place_line_number(m, l), place_start_column(m, c).
 .decl in_node(t: symbol, k: number)
 in_node(t, k) :- kind(n, "argument_list"), text(n, t), k = count : { node_regex_match(",", n, _) }.
-.decl in_text(t: symbol, k: number) cross_file   // texts and counts: values of the corpus (decision 0652)
+.decl in_text(t: symbol, k: number)   // texts and counts: each file's values
 in_text(t, k) :- kind(n, "argument_list"), text(n, t), k = count : { match_all(",", t, _, _, _) }.
 .output comma, in_node, in_text
 "#).unwrap();
@@ -3085,8 +3085,8 @@ objects(x, l, c) :- sqlstr(s), parsed(s, "sql", r), within(n, r), kind(n, "objec
 unscoped(k) :- node(_, _, k, _, _).
 .decl qualified(x: symbol)
 qualified(x) :- kind(n, "sql:object_reference"), text(n, x).
-.decl counted(c: number) cross_file   // the corpus's count (decision 0652)
-counted(c) :- c = count : { kind(_, "sql:object_reference") }.
+.decl counted(d: number, c: number)   // each file's count
+counted(d, c) :- doc(d, _, _), c = count : { kind(n, "sql:object_reference"), docof(n, d) }.
 .output sqlkinds, docs, objects, unscoped, qualified, counted
 "#;
     let names = ["sqlkinds", "objects", "unscoped", "qualified", "counted"];
@@ -3105,7 +3105,7 @@ counted(c) :- c = count : { kind(_, "sql:object_reference") }.
     assert!(!unscoped.contains(&shown_row(&["object_reference"])), "SQL nodes are hidden: {unscoped:?}");
     assert!(qualified.is_empty(), "{qualified:?}");
     // An aggregate's atom is bounded too.
-    assert!(counted.iter().all(|c| c == &["0"]), "{counted:?}");
+    assert!(!counted.is_empty() && counted.iter().all(|c| c.last().is_some_and(|n| n == "0")), "{counted:?}");
 }
 
 /// 0597 rung 5.3: an f-string in a language's grammar is its template, a text root whose holes are a marker
@@ -5054,28 +5054,30 @@ fn a_cone_is_taken_without_the_attributes_requests() {
     assert!(asks.len() == 1 && asks[0].ends_with(":- x($n)"), "`y`'s nodes are asked for, by `x`: {asks:?}");
 }
 
-/// Decision 0174 §6: an attribute a cross-file reader asks for stays eager. `@rr_node_value` reads the node's document
-/// from the chunk's batch, which the cross-file part does not hold: answered there, every reader of `value` saw no
-/// value, the file-local ones too (`vals`), as the Python pack's `__all__` and `exports` readers made it.
+/// Decision 0174 §6, under 0727: `value` is each file's. `@rr_node_value` reads the node's document from the chunk's
+/// batch, which the cross-file part does not hold; the cross part reads no base relation, so the values cross as each
+/// file gives them (`int_at`), and every reader of `value` sees its file's: the cross-file one (`cv`) and the
+/// file-local one (`vals`), as the Python pack's `__all__` and `exports` readers made it.
 #[test]
-fn an_attribute_a_cross_file_reader_asks_for_is_eager() {
+fn a_value_crosses_as_its_file_gives_it() {
     let rule = r#"
 .policy "t:values" revision 1
-.decl pick(n: node) cross_file   // a node with its twin in another document (decision 0652)
-pick(n) :- kind(n, "integer"), kind(m, "integer"), docof(n, d), docof(m, e), d != e.
-.decl cv(n: node, v: symbol)
-cv(n, v) :- pick(n), value(n, v).
+.decl int_at(v: symbol, d: number)
+int_at(v, d) :- kind(n, "integer"), docof(n, d), value(n, v).
+.decl twin(d: number) cross_file   // a document with an integer, and another document with one too
+twin(d) :- int_at(_, d), int_at(_, e), d != e.
+.decl cv(v: symbol, d: number) cross_file
+cv(v, d) :- int_at(v, d), twin(d).
 .decl vals(v: symbol)
 vals(v) :- kind(n, "integer"), value(n, v).
 .decl ends(l: number)
 ends(l) :- kind(n, "expression_statement"), node_to_last_token(n, t), token_line_number(t, l).
-// `pick` and `cv` are findings: a node in the cross-file part is a finding's place, or refused (decision 0677).
-.output pick, cv, vals, ends
+.output cv, vals, ends
 "#;
     let [cv, vals, ends] = <[Vec<String>; 3]>::try_from(joined(guests_run("cross-value", &[("a.py", "x = 1\n"), ("b.py", "x = 2\n")], rule, &["cv", "vals", "ends"])).into_iter().map(|mut rows| { rows.sort(); rows }).collect::<Vec<_>>()).unwrap();
     assert_eq!(vals, ["1", "2"], "the file-local reader's values");
-    // `cv(n, v)`: each row's value, its last column.
-    let mut cv: Vec<&str> = cv.iter().map(|r| r.rsplit('\t').next().unwrap_or_default()).collect();
+    // `cv(v, d)`: each row's value, its first column.
+    let mut cv: Vec<&str> = cv.iter().map(|r| r.split('\t').next().unwrap_or_default()).collect();
     cv.sort();
     assert_eq!(cv, ["1", "2"], "the cross-file reader's values");
     // With `value`'s round undone the program still has core.rerail's shape: its token leaves are made.

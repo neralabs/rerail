@@ -1,0 +1,154 @@
+.policy "rr-cross-part-reads-a-base-relation" revision 1
+.description "A cross-file relation's rule reads a base relation: the cross part reads none (decision 0727)."
+.language rr
+.mode steer
+.scope include "**/*.rerail"
+
+// Decision 0727: no node, line, match or token crosses into the cross part, and the cross part reads no base
+// relation. A document's own facts (`doc`, `kind`, `text`, `tape_of`, ...) are read in its file's rules; what crosses
+// is what those rules derive from them: a relation of module names, of paths, of document keys.
+//
+//   .decl dep(a: number, b: number) cross_file
+//   dep(a, b) :- dep_from(a, m), doc(b, _, m).        ← RR301 at doc: dep is cross-file
+//
+//   .decl mod_doc(d: number, m: symbol)
+//   mod_doc(d, m) :- doc(d, _, m).                    each file's own row
+//   dep(a, b) :- dep_from(a, m), mod_doc(b, m).       fine: the cross part reads what the files derived
+//
+// The engine refuses such a program when it runs it (`corpus.rs`, "the cross-file part reads the base
+// relation(s)"); this finds the rules without running them. What is cross-file is read from the rules as the split
+// reads them: a relation declared `cross_file`, and one whose rule reads a cross-file relation that is not staged. A
+// relation of names (every column a `symbol`, `sym` or `node_path`, neither declared `cross_file` nor an output) is
+// staged before the program (decision 0709), so a per-file rule reading one stays per file. It is an approximation of
+// the split: a pass may still move a rule (a pushed join's part), which the engine's check alone sees.
+//
+// Each library file (`lib/`) is one program, the library, whose relations every other file sees; each other file is
+// a program of its own beside it. What this rule hands from file to file is relations of names alone.
+
+// ---- each file's program ---------------------------------------------------------------------------------------
+
+// xb_lib(p): p is a library file: the library is one program.
+.decl xb_lib(p: symbol)
+xb_lib(p) :- doc(_, p, _), match("(?:.*/)?lib/.*", p).
+
+// xb_key(d, k): document d's rules are program k's: "lib" for the library, else its own path.
+.decl xb_key(d: number, k: symbol)
+xb_key(d, "lib") :- doc(d, p, _), xb_lib(p).
+xb_key(d, p) :- doc(d, p, _), !xb_lib(p).
+
+// ---- what each program declares -------------------------------------------------------------------------------
+
+// xb_declared(k, r): program k declares r (a `.decl`).
+.decl xb_declared(k: symbol, r: symbol)
+xb_declared(k, r) :- kind(x, "declaration"), field(x, "name", n), text(n, r), docof(x, d), xb_key(d, k).
+
+// xb_decl_cross(k, r): program k declares r `cross_file`.
+.decl xb_decl_cross(k: symbol, r: symbol)
+xb_decl_cross(k, r) :- kind(x, "declaration"), field(x, "name", n), text(n, r), field(x, "modifier", w),
+    text(w, "cross_file"), docof(x, d), xb_key(d, k).
+
+// xb_unstaged(k, r): program k's r is not a relation of names: a column of another type, declared `cross_file`, or
+// an output.
+.decl xb_unstaged(k: symbol, r: symbol)
+xb_unstaged(k, r) :- kind(x, "declaration"), field(x, "name", n), text(n, r), field(x, "columns", cl),
+    child(cl, col, _), field(col, "type", ty), field(ty, "name", tn), text(tn, t), !xb_name_type(t), docof(x, d),
+    xb_key(d, k).
+xb_unstaged(k, r) :- xb_decl_cross(k, r).
+xb_unstaged(k, r) :- kind(io, "io_directive"), text(io, s), match("\\.output.*", s), field(io, "relation", ir),
+    field(ir, "name", n), text(n, r), docof(io, d), xb_key(d, k).
+
+.decl xb_name_type(t: symbol)
+xb_name_type("symbol").
+xb_name_type("sym").
+xb_name_type("node_path").
+
+// xb_staged(k, r): program k's r is staged (decision 0709): a relation of names.
+.decl xb_staged(k: symbol, r: symbol)
+xb_staged(k, r) :- xb_declared(k, r), !xb_unstaged(k, r).
+
+// ---- the base relations ----------------------------------------------------------------------------------------
+
+// xb_base(r): a document's own facts: what core.rerail lists as `.input`, but the repository's facts and the
+// functions of strings (`parse_of`, `split_dot`), which are no document's.
+.decl xb_base(r: symbol)
+xb_base(r) :- kind(io, "io_directive"), text(io, s), match("\\.input.*", s), field(io, "relation", ir),
+    field(ir, "name", n), text(n, r), docof(io, d), doc(d, p, _), match("(?:.*/)?lib/core\\.rerail", p),
+    !xb_repository(r).
+
+.decl xb_repository(r: symbol)
+xb_repository("git_root_repo").
+xb_repository("git_root_view").
+xb_repository("git_repository").
+xb_repository("git_source_tree").
+xb_repository("git_source_commit").
+xb_repository("git_rev").
+xb_repository("source_grammar_suffix").
+xb_repository("source_grammar_registry").
+xb_repository("source_tape_version").
+xb_repository("file").
+xb_repository("package").
+xb_repository("package_export").
+xb_repository("package_for").
+xb_repository("package_field").
+xb_repository("tsconfig").
+xb_repository("tsconfig_for").
+xb_repository("tsconfig_path").
+xb_repository("option").
+xb_repository("option_item").
+xb_repository("signed_list").
+xb_repository("input_error").
+xb_repository("parse_of").
+xb_repository("unparse_of").
+xb_repository("splice_of").
+xb_repository("split_dot").
+
+// ---- what is cross-file ----------------------------------------------------------------------------------------
+
+// xb_reads(k, h, r): a rule of program k with head h reads r (an atom of its body: positive, negated or in an
+// aggregate) at a variable. An atom of none (`allowed(_)`, `!broken()`) asks whether any file has such a row: it is
+// read from a relation of what it fixes, staged (decision 0709 §1), and its reader stays per file.
+.decl xb_reads(k: symbol, h: symbol, r: symbol)
+xb_reads(k, h, r) :- kind(c, "clause"), field(c, "head", hd), field(hd, "relation", hn), text(hn, h),
+    field(c, "body", b), kind(a, "atom"), within(a, b), xb_has_var(a), field(a, "relation", an), text(an, r),
+    docof(c, d), xb_key(d, k).
+
+// xb_has_var(a): atom a has a variable among its arguments.
+.decl xb_has_var(a: node)
+xb_has_var(a) :- kind(a, "atom"), field(a, "arguments", al), child(al, v, _), kind(v, "variable").
+
+// xb_prog(k): k is a program.
+.decl xb_prog(k: symbol)
+xb_prog(k) :- xb_key(_, k).
+
+// xb_staged_in(k, r): r as program k reads it is staged: its own declaration's, else the library's.
+.decl xb_staged_in(k: symbol, r: symbol)
+xb_staged_in(k, r) :- xb_staged(k, r).
+xb_staged_in(k, r) :- xb_prog(k), xb_staged("lib", r), !xb_declared(k, r).
+
+// xb_cross(k, r): program k's r is cross-file: declared so, or read by a rule from a cross-file relation not staged.
+// A staged relation is derived in its stage, whose own split places it: one reading a cross-file relation is the
+// stage's cross part's (`named_module` over `imported`), though its readers in the program stay per file. The
+// library's are every program's that does not declare its own.
+.decl xb_cross(k: symbol, r: symbol)
+xb_cross(k, r) :- xb_decl_cross(k, r).
+xb_cross(k, h) :- xb_reads(k, h, r), xb_cross(k, r), !xb_staged_in(k, r).
+xb_cross(k, h) :- xb_reads_staged_cross(k, h), xb_staged_in(k, h).
+xb_cross(k, h) :- xb_reads(k, h, r), xb_cross("lib", r), xb_prog(k), !xb_declared(k, r), !xb_staged_in(k, r).
+
+// xb_reads_staged_cross(k, h): a rule of program k with head h reads a cross-file relation that is staged, its own or
+// the library's.
+.decl xb_reads_staged_cross(k: symbol, h: symbol)
+xb_reads_staged_cross(k, h) :- xb_reads(k, h, r), xb_cross(k, r), xb_staged_in(k, r).
+xb_reads_staged_cross(k, h) :- xb_reads(k, h, r), xb_cross("lib", r), !xb_declared(k, r), xb_staged_in(k, r).
+
+// ---- the finding -----------------------------------------------------------------------------------------------
+
+// xb_base_read(a, k, h, r): atom a, of base relation r, is in the body of a rule of program k with head h.
+.decl xb_base_read(a: node, k: symbol, h: symbol, r: symbol)
+xb_base_read(a, k, h, r) :- kind(c, "clause"), field(c, "head", hd), field(hd, "relation", hn), text(hn, h),
+    field(c, "body", b), kind(a, "atom"), within(a, b), field(a, "relation", an), text(an, r), docof(c, d),
+    xb_key(d, k), xb_base(r).
+
+.violation cross_base_read(at: node, h: symbol, r: symbol) code "RR301"
+    "A cross-file relation's rule reads this base relation: the cross part reads none (decision 0727). Read the document's facts in its file's own rules and join what they derive (a relation of names or of document keys)"
+cross_base_read(a, h, r) :- xb_base_read(a, k, h, r), xb_cross(k, h).

@@ -52,11 +52,16 @@ load(p, m, g) :- doc_key(p, _, g, _, _, _), doc_module(p, m).
 // A loaded file of the run's own tree is the workspace's module: an import of it loads nothing.
 py_own(m) :- doc_module(_, m).
 
+// Each document's tape, by its path and module: read in the document's own rules, which alone read its base
+// relations (decision 0727). The loads' results below join it by those names.
+.decl tape_at(f: symbol, m: symbol, t: tape)
+tape_at(f, m, t) :- doc(d, f, m), tape_of(d, t).
+
 // The result: the loaded document's tape.
 .decl doc_tape(p: symbol, t: tape)
 doc_tape(p, t) :-
     doc_key(p, _, g, _, _, _), doc_module(p, m), observer__source_path(p, f),
-    loaded(f, m, g), doc(d, f, m), tape_of(d, t).
+    loaded(f, m, g), tape_at(f, m, t).
 .cache doc_tape by doc_key
 
 // What a later phase takes: each source file that is a document, with its grammar and content.
@@ -73,7 +78,7 @@ library_key(q, f, c, parser, format, "tape-2") :-
 // `loaded` names that document by its canonical path, not by `f` as the resolution reached it (a setting's
 // directory, `../ts`, is relative to the root): it is joined by its module.
 .decl library_tape(q: symbol, f: symbol, t: tape)
-library_tape(q, f, t) :- library_key(q, f, _, _, _, _), loaded(l, q, "python"), doc(d, l, q), tape_of(d, t).
+library_tape(q, f, t) :- library_key(q, f, _, _, _, _), loaded(l, q, "python"), tape_at(l, q, t).
 .cache library_tape by library_key
 
 // What a later phase that reads the libraries takes as its documents: each library document, by its canonical path,
@@ -115,7 +120,7 @@ header_key(f, c, g, "tape-1") :- c_reach(_, f), !doc_module(f, _), c_run_grammar
 load(f, f, g) :- header_key(f, _, g, _).
 // The result: the loaded document's tape.
 .decl header_tape(f: symbol, t: tape)
-header_tape(f, t) :- header_key(f, _, g, _), loaded(x, f, g), doc(d, x, f), tape_of(d, t).
+header_tape(f, t) :- header_key(f, _, g, _), loaded(x, f, g), tape_at(x, f, t).
 .cache header_tape by header_key
 // Handed on as a library document is: by its canonical path, its module its path as reached.
 library(x, f, g, c) :- header_key(f, c, g, _), header_tape(f, _), loaded(x, f, g).

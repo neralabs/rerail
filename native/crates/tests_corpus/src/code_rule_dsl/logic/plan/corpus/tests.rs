@@ -87,8 +87,10 @@ fn a_runs_chunks_normalize_the_program_once() {
     std::fs::write(&rule, r#"
 .decl def(n: node, x: symbol)
 def(n, x) :- kind(n, "function_definition"), field(n, "name", c), text(c, x).
-.decl calls(n: node, x: symbol) cross_file
-calls(n, x) :- kind(n, "call"), field(n, "function", c), text(c, x), def(_, x).
+.decl def_name(x: symbol)
+def_name(x) :- def(_, x).
+.decl calls(n: node, x: symbol)
+calls(n, x) :- kind(n, "call"), field(n, "function", c), text(c, x), def_name(x).
 .output calls
 "#).unwrap();
     let program = crate::code_rule_dsl::logic::rr::print_version(&crate::code_rule_dsl::logic::rr::parse_file_version(&rule).unwrap()).unwrap();
@@ -142,14 +144,16 @@ fn a_program_reading_the_import_closure_has_its_rules() {
         r#"
 #include "core.rerail"
 .decl seen(p: symbol, q: symbol) cross_file
-seen(p, q) :- rr_cx_reach(d, e), d != e, doc(d, p, _), doc(e, q, _).
+.decl doc_path(d: number, p: symbol)
+doc_path(d, p) :- doc(d, p, _).
+seen(p, q) :- rr_cx_reach(d, e), d != e, doc_path(d, p), doc_path(e, q).
 .output seen
 "#,
     )
     .unwrap();
     run(&text).unwrap();
     assert_eq!(crate::code_rule_dsl::logic::plan::output::shown(&out, "seen").unwrap(), [["b.py", "a.py"]]);
-    let err = program(".pragma \"cross-memo\" \"seen\"\n.decl seen(p: symbol) cross_file\nseen(p) :- doc(_, p, _).\n.output seen\n").err().map(|e| format!("{e:?}")).unwrap_or_default();
+    let err = program(".pragma \"cross-memo\" \"seen\"\n.decl seen(p: symbol)\nseen(p) :- doc(_, p, _).\n.output seen\n").err().map(|e| format!("{e:?}")).unwrap_or_default();
     assert!(err.contains("cross-memo") && err.contains("removed"), "{err}");
     let _ = std::fs::remove_dir_all(&dir);
 }
@@ -284,7 +288,7 @@ fn the_cross_file_part_is_maintained_from_its_frames_in_a_new_process() {
     let edit = |texts: &[&str], src: &std::path::Path, edits: &[(&str, &str)]| {
         scenario.set(scenario.get() + 1);
         let (first, expected) = run(texts, src, true);
-        let (ran, all) = first.cross_kept.expect("a run with a store keeps its cross-file part");
+        let (ran, all) = kept_with_stages(&first).0.expect("a run with a store keeps its cross-file part");
         assert_eq!(ran, all, "the first run evaluates every stratum");
         // Its states: the first run's, then each edit's (`fresh_tier`).
         if super::fresh_tier::compared(0, edits.len() + 1) {
@@ -298,9 +302,10 @@ fn the_cross_file_part_is_maintained_from_its_frames_in_a_new_process() {
                 let (_, want) = run(texts, src, false);
                 assert_eq!(got, want, "after editing {path}, the findings are those of a run with an empty store");
             }
-            eprintln!("{path}: {:?} strata, {:?} maintained (recursive, derived again; {:?}); {} findings", report.cross_kept, report.cross_maintained, report.cross_again, got.len());
-            maintained += report.cross_maintained.0;
-            recursive += report.cross_maintained.1;
+            let (kept, m) = kept_with_stages(&report);
+            eprintln!("{path}: {kept:?} strata, {m:?} maintained (recursive, derived again; {:?}); {} findings", report.cross_again, got.len());
+            maintained += m.0;
+            recursive += m.1;
         }
         (maintained, recursive)
     };
@@ -334,9 +339,9 @@ fn the_cross_file_part_is_maintained_from_its_frames_in_a_new_process() {
     std::fs::write(
         &rule,
         ".policy \"test-import-cycle\" revision 1\n.description \"An import that closes a cycle of imports.\"\n.language python\n.mode steer\n\
-         .scope include \"**/*.py\"\n#include \"python/names.rerail\"\n.decl dep(a: number, b: number) cross_file\n.decl dep_from(a: number, m: symbol)\ndep_from(a, m) :- impmod(i, m), docof(i, a).\ndep(a, b) :- dep_from(a, m), doc(b, _, m).\n\
+         .scope include \"**/*.py\"\n#include \"python/names.rerail\"\n.decl dep(a: number, b: number) cross_file\n.decl dep_from(a: number, m: symbol)\ndep_from(a, m) :- impmod(i, m), docof(i, a).\n.decl mod_doc(d: number, m: symbol)\nmod_doc(d, m) :- doc(d, _, m).\ndep(a, b) :- dep_from(a, m), mod_doc(b, m).\n\
          .decl reach(a: number, b: number) no_reach\nreach(a, b) :- dep(a, b).\nreach(a, c) :- reach(a, b), dep(b, c).\n\
-         .violation CYC(at: node) code \"CYC\" \"This import closes a cycle of imports.\"\nCYC(i) :- impmod(i, m), docof(i, a), doc(b, _, m), reach(b, a).\n",
+         .violation CYC(at: node) code \"CYC\" \"This import closes a cycle of imports.\"\n.decl closes(ma: symbol, m: symbol)\ncloses(ma, m) :- dep_from(a, m), mod_doc(a, ma), mod_doc(b, m), reach(b, a).\nCYC(i) :- impmod(i, m), docof(i, a), doc(a, _, ma), closes(ma, m).\n",
     )
     .unwrap();
     let program = crate::code_rule_dsl::logic::settings::program_text(&rule).unwrap();
@@ -362,7 +367,9 @@ pub(super) const REACH_RULE: &str = r#".policy "test-reach-index" revision 1
 .decl dep(a: number, b: number) cross_file
 .decl dep_from(a: number, m: symbol)
 dep_from(a, m) :- impmod(i, m), docof(i, a).
-dep(a, b) :- dep_from(a, m), doc(b, _, m).
+.decl mod_doc(d: number, m: symbol)
+mod_doc(d, m) :- doc(d, _, m).
+dep(a, b) :- dep_from(a, m), mod_doc(b, m).
 .decl own(a: number)
 own(a) :- doc(a, _, _).
 .decl reach(a: number, b: number) reach
@@ -375,19 +382,29 @@ sees(a, q) :- reach(a, e), modof(e, q).
 .decl cyclic(a: number) no_inline
 cyclic(a) :- reach(a, b), reach(b, a), a != b.
 .decl reachesf(a: number) no_inline
-reachesf(a) :- reach(a, f), doc(f, _, "f").
+reachesf(a) :- reach(a, f), mod_doc(f, "f").
 .decl seese(a: number) no_inline
 seese(a) :- sees(a, "e").
 .violation CYC(at: node) code "CYC" "This import closes a cycle of imports."
-CYC(i) :- impmod(i, m), docof(i, a), doc(b, _, m), reach(b, a).
+.decl closes(ma: symbol, m: symbol)
+closes(ma, m) :- dep_from(a, m), mod_doc(a, ma), mod_doc(b, m), reach(b, a).
+CYC(i) :- impmod(i, m), docof(i, a), doc(a, _, ma), closes(ma, m).
 .violation INCYC(at: node) code "INCYC" "This import is in a document on a cycle."
-INCYC(i) :- impmod(i, _), docof(i, a), cyclic(a).
+.decl cyclic_mod(ma: symbol)
+cyclic_mod(ma) :- cyclic(a), mod_doc(a, ma).
+INCYC(i) :- impmod(i, _), docof(i, a), doc(a, _, ma), cyclic_mod(ma).
 .violation TOF(at: node) code "TOF" "This import is in a document that reaches f."
-TOF(i) :- impmod(i, _), docof(i, a), reachesf(a).
+.decl reachesf_mod(ma: symbol)
+reachesf_mod(ma) :- reachesf(a), mod_doc(a, ma).
+TOF(i) :- impmod(i, _), docof(i, a), doc(a, _, ma), reachesf_mod(ma).
 .violation SEESE(at: node) code "SEESE" "This import is in a document that can see module e."
-SEESE(i) :- impmod(i, _), docof(i, a), seese(a).
-.violation DIRECT(at: node) code "DIRECT" "This import is in a document that reaches f, read in place."
-DIRECT(i) :- impmod(i, _), docof(i, a), reach(a, f), doc(f, _, "f"), sees(a, "e").
+.decl seese_mod(ma: symbol)
+seese_mod(ma) :- seese(a), mod_doc(a, ma).
+SEESE(i) :- impmod(i, _), docof(i, a), doc(a, _, ma), seese_mod(ma).
+.violation DIRECT(at: node) code "DIRECT" "This import is in a document that reaches f and sees e."
+.decl direct_mod(ma: symbol)
+direct_mod(ma) :- reach(a, f), mod_doc(f, "f"), sees(a, "e"), mod_doc(a, ma).
+DIRECT(i) :- impmod(i, _), docof(i, a), doc(a, _, ma), direct_mod(ma).
 "#;
 
 /// Two import components (a cycle `a b c`, a chain `d e`) and a lone `f`, then edits that connect them, close a
@@ -566,7 +583,7 @@ imp(n, @dot(m, x)) :- kind(n, "import_from_statement"), field(n, "module_name", 
 def_at(d, q) :- def(f, q), docof(f, d).
 .decl imp_at(d: number, q: symbol)
 imp_at(d, q) :- imp(n, q), docof(n, d).
-.decl used(q: symbol) cross_file
+.decl used(q: symbol)
 used(q) :- imp_at(_, q), def_at(_, q).
 .decl finding(category: symbol, q: symbol, n: node)
 finding("unused", q, f) :- def(f, q), !used(q).
@@ -887,8 +904,22 @@ active(t, p, e) :- c_pp_active(t, _, p, _, e).
 /// relation of names a per-file rule reads is staged before the program (decision 0709), its rows the stage's cross
 /// part's, so a program of `used(q) :- uses(_, q)` maintains them there.
 fn maintained_with_stages(report: &super::Report) -> usize {
+    with_stages(report).map(|r| r.cross_maintained.0).sum()
+}
+
+/// A run's report and its stages' (`maintained_with_stages`).
+fn with_stages(report: &super::Report) -> impl Iterator<Item = &super::Report> {
     let staged = report.phase_runs.iter().filter(|p| p.name.starts_with(crate::code_rule_dsl::logic::plan::phased::STAGE));
-    report.cross_maintained.0 + staged.map(|p| p.report.cross_maintained.0).sum::<usize>()
+    std::iter::once(report).chain(staged.map(|p| &p.report))
+}
+
+/// The strata a run's cross parts and its stages' kept and ran (`cross_kept`, summed), and of those maintained
+/// (`cross_maintained`, summed): a finding reads a relation of names staged before the program (decision 0727), so the
+/// strata it is derived from are the stage's.
+fn kept_with_stages(report: &super::Report) -> (Option<(usize, usize)>, (usize, usize, usize)) {
+    let kept = with_stages(report).filter_map(|r| r.cross_kept).reduce(|a, b| (a.0 + b.0, a.1 + b.1));
+    let maintained = with_stages(report).fold((0, 0, 0), |a, r| (a.0 + r.cross_maintained.0, a.1 + r.cross_maintained.1, a.2 + r.cross_maintained.2));
+    (kept, maintained)
 }
 
 /// t32 4.1: a new process maintains its cross-file part from the rows the last process kept, as a session does.
@@ -1163,7 +1194,11 @@ fanout(q, n) :- def_at(_, q), n = count : { uses(_, q) }.
 .decl most(m: number)
 most(m) :- fanout(_, _), m = max x : { fanout(_, x) }.
 .decl named(n: node, q: symbol)
-named(n, @dot(q, q)) :- imp(n, q), docof(n, a), uses(a, q).
+.decl uses_mod(ma: symbol, q: symbol)
+.decl mod_doc(d: number, m: symbol)
+mod_doc(d, m) :- doc(d, _, m).
+uses_mod(ma, q) :- uses(a, q), mod_doc(a, ma).
+named(n, @dot(q, q)) :- imp(n, q), docof(n, a), doc(a, _, ma), uses_mod(ma, q).
 .output fanout
 .output most
 .output named
@@ -1354,7 +1389,7 @@ fn mf_def_is_the_climb_through_classes() {
         gap(\"old\", k, l, lf) :- odef(n, f), !mf_def(n, f), kind(n, k), node_line_number(n, l), node_line_number(f, lf).\n\
         gap(\"new up\", k, l, lf) :- mf_up(n, f), !oup(n, f), kind(n, k), node_line_number(n, l), node_line_number(f, lf).\n\
         gap(\"old up\", k, l, lf) :- oup(n, f), !mf_up(n, f), kind(n, k), node_line_number(n, l), node_line_number(f, lf).\n.output gap\n\
-        .decl rows(k: number) cross_file\nrows(k) :- k = count : { mf_def(_, _) }.\n.output rows\n\
+        .decl mf_paths(n: node_path, f: node_path)\nmf_paths(pn, pf) :- mf_def(n, f), pn = @node_path(n), pf = @node_path(f).\n.decl rows(k: number) cross_file\nrows(k) :- k = count : { mf_paths(_, _) }.\n.output rows\n\
         .decl decorated(l: number, lf: number)\n\
         decorated(l, lf) :- mf_def(n, f), kind(n, \"identifier\"), text(n, x), (x = \"w\" ; x = \"v\" ; x = \"arg\" ; x = \"q\" ; x = \"p\" ; x = \"c\"), node_line_number(n, l), node_line_number(f, lf).\n.output decorated\n";
     let py = "@top(lambda q: q)\ndef f(a=lambda: 1):\n    class B:\n        x = 1\n        @staticmethod\n        def m(self):\n            def g():\n                return h(1)\n            return g\n        @deco(arg(2))\n        class Inner:\n            y = 2\n    return B\n@cls_deco(z)\nclass C:\n    def n(self):\n        @wrap(w)\n        class D:\n            @d2(v)\n            class E:\n                pass\n        return D\nu = 3\ndef outer():\n    @wrap2(p)\n    def inner():\n        return p2\n    if p:\n        @a\n        @b(c)\n        def k(): pass\n    return inner\n";
@@ -1451,15 +1486,15 @@ fn alone_and_together(name: &str, file: (&str, &str), first: &str, other: &str, 
 /// `unparen`, whose demand comes from `same_pair`, which negates `same_leaf`, which reads `value`: the demand leaves
 /// `same_pair` out to stay stratified, and then joins the compared nodes by a child's position only, across files. Its
 /// answer was cross-file once preparation applied the demand, after combining had judged it file-local, and the run
-/// was refused ("`value` is answered on request in the cross-file part"). Beside a reader of `value` across files it
-/// ran, `value` eager. Alone it runs too, and finds what it finds there.
+/// was refused ("`value` is answered on request in the cross-file part"). Beside another program reading `value` (each
+/// file's, whose values cross: decision 0727) it ran, `value` eager. Alone it runs too, and finds what it finds there.
 #[test]
 fn an_answer_the_programs_demand_puts_across_files_is_eager_alone_as_in_a_pack() {
     let same = ".language python\n#include \"python/compare.rerail\"\n.decl same(l: number)\nsame(l) :- branches(e, a, b), cmp_same(a, b), node_line_number(e, l).\n\
                 .decl branches(e: node, a: node, b: node)\nbranches(e, a, b) :- kind(e, \"conditional_expression\"), child(e, a, 0), child(e, b, 2).\n\
                 cmp_same_ask(a, b) :- branches(_, a, b).\n.output same\n";
-    let across = ".language python\n.decl twin(v: symbol) cross_file\n\
-                  twin(v) :- kind(n, \"integer\"), kind(m, \"integer\"), docof(n, d), docof(m, e), d != e, value(n, v), value(m, v).\n.output twin\n";
+    let across = ".language python\n.decl int_in(v: symbol, d: number)\nint_in(v, d) :- kind(n, \"integer\"), docof(n, d), value(n, v).\n\
+                  .decl twin(v: symbol) cross_file\ntwin(v) :- int_in(v, d), int_in(v, e), d != e.\n.output twin\n";
     let py = "x = 1 if f else 1\ny = 1 if f else 0\nz = 0x10 if f else 16\nw = (2) if f else 2.0\n";
     let (alone, together) = alone_and_together("demand-across-files", ("a.py", py), same, across, "same");
     assert_eq!(together, [["1"], ["3"]], "the same branches, literals by value");
@@ -2128,11 +2163,10 @@ fn programs_hidden_alone_keep_their_attribute_copies_declared() {
     ran.unwrap();
 }
 
-/// A text test over `node_text` that a cross-file relation reads (`passes` reads `uses`, which joins two files) gives
-/// a run's outputs with an empty store after each edit, and no cross-file stratum made natively is derived again.
-/// The request for the text is narrowed to the node's own document (0286), so the text is answered, and tested, in
-/// the chunk that holds it; a text test left in the cross-file part is maintained as a filter of its input's strings
-/// (`maintain::rewrite_over`'s `L::Test`).
+/// A text test over `node_text` whose rule reads what the cross-file part gives (`passes` reads `used`, the names of
+/// `uses`, which joins two files) gives a run's outputs with an empty store after each edit, and no cross-file stratum
+/// made natively is derived again. The cross part reads no base relation (decision 0727): it hands on the used names,
+/// a relation of names, and each file tests its own definitions' texts.
 #[test]
 fn a_cross_file_text_test_is_maintained_as_a_filter() {
     let marker = format!("# {:?}\n", std::time::SystemTime::now());
@@ -2154,8 +2188,10 @@ def_at(d, q) :- def(f, q), docof(f, d).
 imp_at(d, q) :- imp(n, q), docof(n, d).
 .decl uses(a: number, q: symbol) cross_file
 uses(a, q) :- imp_at(a, q), def_at(_, q).
+.decl used(q: symbol)
+used(q) :- uses(_, q).
 .decl passes(f: node)
-passes(f) :- def(f, q), uses(_, q), node_text(f, t), contains("pass", t).
+passes(f) :- def(f, q), used(q), node_text(f, t), contains("pass", t).
 .output passes
 "#).unwrap();
     let text = crate::code_rule_dsl::logic::rr::print_version(&crate::code_rule_dsl::logic::rr::parse_file_version(&rule).unwrap()).unwrap();
@@ -2245,8 +2281,10 @@ def_at(d, q) :- def(f, q), docof(f, d).
 imp_at(d, q) :- imp(n, q), docof(n, d).
 .decl uses(a: number, q: symbol) cross_file
 uses(a, q) :- imp_at(a, q), def_at(_, q).
+.decl used(q: symbol)
+used(q) :- uses(_, q).
 .decl passes(f: node)
-passes(f) :- def(f, q), uses(_, q), node_text(f, t), contains("pass", t).
+passes(f) :- def(f, q), used(q), node_text(f, t), contains("pass", t).
 .output passes
 "#).unwrap();
     let text = crate::code_rule_dsl::logic::rr::print_version(&crate::code_rule_dsl::logic::rr::parse_file_version(&rule).unwrap()).unwrap();
@@ -2519,8 +2557,9 @@ names(x) :- string_annotation(n), parsed(n, "annotation", r), within(m, r), kind
 
 /// Decision 0431 R7's program: a cross-file rule (`refers`) joins an annotation's identifier (a node of its tape value,
 /// `guest_of`) in one file with a class of that name in another, by the name and the class's file (no node crosses,
-/// decision 0677), and `shown` reads the identifier's facts in the cross part: its text, and its place in its file
-/// through the string (`guest_place`).
+/// decision 0677). The identifier's facts are its file's: each file gives its annotations' names and lines through the
+/// string (`ann_line`, by `guest_place`) and its path (`doc_path`), and `shown` joins them with `refers`, so the cross
+/// part reads no base relation (decision 0727).
 const CROSS_FILE_VALUES: &str = r#"
 .decl ann_node(m: node, x: symbol)
 ann_node(m, x) :- string_annotation(n), parsed(n, "annotation", _), guest_of(m, n), kind(m, "identifier"), text(m, x).
@@ -2532,8 +2571,12 @@ ann_at(x, a) :- ann_node(m, x), docof(m, a).
 cls_at(x, d) :- cls(c, x), docof(c, d).
 .decl refers(x: symbol, d: number) cross_file
 refers(x, d) :- ann_at(x, _), cls_at(x, d).
+.decl ann_line(x: symbol, l: number)
+ann_line(x, l) :- ann_node(m, x), guest_place(m, _, l, _).
+.decl doc_path(d: number, p: symbol)
+doc_path(d, p) :- doc(d, p, _).
 .decl shown(x: symbol, p: symbol, l: number)
-shown(x, p, l) :- ann_node(m, x), refers(x, d), text(m, x), guest_place(m, _, l, _), doc(d, p, _).
+shown(x, p, l) :- ann_line(x, l), refers(x, d), doc_path(d, p).
 .output shown
 "#;
 
@@ -2550,8 +2593,8 @@ fn cross_file_values_run(dir: &std::path::Path) -> (super::Report, Vec<Vec<Strin
 }
 
 /// Decision 0431 R7: a file read from the memo has its tape values for a cross-file rule. `a.py` is not edited, so
-/// the second run reads it from the memo; its annotation's node, which `shown` reads across files, is still there,
-/// and the rows are a fresh run's.
+/// the second run reads it from the memo; its annotation's line, which its file's tape value gave (`ann_line`), is
+/// still there, and the rows are a fresh run's.
 #[test]
 fn a_file_read_from_the_memo_has_its_tape_values_for_a_cross_file_rule() {
     let files = [("a.py", "x: \"Foo\" = 1\n"), ("b.py", "class Foo:\n    pass\n")];
@@ -2876,43 +2919,47 @@ called(n, p, x) :- kind(n, "call"), field(n, "function", f), text(f, x), def(_, 
     let _ = std::fs::remove_dir_all(&dir);
 }
 
-/// Decision 0686: a flag over every file that only gates per-file work is applied last. `docin(d)` holds the files
-/// defining a name another file defines too, else, when there is none, every file (pure-lazy-runtime-purity's
-/// `plp_docin`). Each file derives `inrec`, `checked` and `unchecked` under both of the flag's values, per-file (the
-/// run's split, `RERAIL_SPLIT_DUMP`, names no copy), and the cross-file part takes each row from its document's value.
-/// An edit that turns the flag over for every file (b.py no longer shares `f`) gives every file's rows under the other
-/// value, and the rows are a fresh run's. `named_in(x, d)` is placed by a document's id, and the cross-file part reads
-/// it at an open location (`both`, as pure-lazy's walk reads `plp_id_in`): its choice reads the flag at that id, not at
-/// a node's document (decision 0693).
+/// Decision 0686 under 0727: a flag over every file that only gates per-file work is a relation of names, staged
+/// before the program (decision 0709), and each file reads it. `docin(p)` holds the files defining a name another file
+/// defines too, else, when there is none, every file (pure-lazy-runtime-purity's `plp_docin`). Each file derives
+/// `inrec`, `checked` and `unchecked` against it in its own part (the run's split, `RERAIL_SPLIT_DUMP`, names none of
+/// them cross-file). An edit that turns the flag over for every file (b.py no longer shares `f`) gives every file's
+/// rows under the other value, and the rows are a fresh run's. `named_in(x, d)` is placed by a document's id, and the
+/// cross-file part reads it (`named`, then `both`), as pure-lazy's walk reads `plp_id_in`.
 ///
-/// No node crosses into the cross-file part (decision 0677): `shared` holds a definition's document and name, a name
-/// defined in another file too, and each file's rules relate its own definitions to it.
+/// No node crosses into the cross-file part (decision 0677), and it reads no base relation (0727): `shared` holds a
+/// definition's path and name, a name defined in another file too, and each file's rules relate its own definitions
+/// to it.
 #[test]
 fn a_flag_over_every_file_is_applied_last() {
     const PROGRAM: &str = r#"
 .decl def(n: node, x: symbol)
 def(n, x) :- kind(n, "function_definition"), field(n, "name", i), text(i, x).
-.decl def_at(d: number, x: symbol)
-def_at(d, x) :- def(n, x), docof(n, d).
-.decl shared(d: number, x: symbol) cross_file
-shared(d, x) :- def_at(d, x), def_at(e, x), d != e.
-.decl cand(d: number)
-cand(d) :- shared(d, _).
+.decl def_path(p: symbol, x: symbol)
+def_path(p, x) :- def(n, x), docof(n, d), doc(d, p, _).
+.decl shared(p: symbol, x: symbol)
+shared(p, x) :- def_path(p, x), def_path(q, x), p != q.
+.decl cand(p: symbol)
+cand(p) :- shared(p, _).
 .decl any()
 any() :- cand(_).
-.decl docin(d: number)
-docin(d) :- cand(d).
-docin(d) :- doc(d, _, _), !any().
+.decl file_path(p: symbol)
+file_path(p) :- doc(_, p, _).
+.decl docin(p: symbol)
+docin(p) :- cand(p).
+docin(p) :- file_path(p), !any().
 .decl inrec(n: node)
-inrec(n) :- def(n, _), docof(n, d), docin(d).
+inrec(n) :- def(n, _), docof(n, d), doc(d, p, _), docin(p).
 .decl checked(n: node, p: symbol, x: symbol)
 checked(n, p, x) :- inrec(n), def(n, x), docof(n, d), doc(d, p, _).
 .decl unchecked(n: node, p: symbol, x: symbol)
 unchecked(n, p, x) :- def(n, x), !inrec(n), docof(n, d), doc(d, p, _).
 .decl named_in(x: symbol, d: number)
 named_in(x, d) :- inrec(n), def(n, x), docof(n, d).
-.decl both(m: node, p: symbol, x: symbol)
-both(m, p, x) :- named_in(x, _), def(m, x), docof(m, d), shared(d, x), doc(d, p, _).
+.decl named(x: symbol) cross_file
+named(x) :- named_in(x, _).
+.decl both(c: number, p: symbol, x: symbol)
+both(0, p, x) :- named(x), shared(p, x).
 .output checked, unchecked, both
 "#;
     let files = [("a.py", "def f():\n    pass\n\ndef h():\n    pass\n"), ("b.py", "def f():\n    pass\n"), ("c.py", "def g():\n    pass\n")];
@@ -2945,7 +2992,7 @@ both(m, p, x) :- named_in(x, _), def(m, x), docof(m, d), shared(d, x), doc(d, p,
     let dir = make("flag-last", &[]);
     let rows = run(&dir);
     assert_eq!(rows, [row("both", "a.py", "f"), row("both", "b.py", "f"), row("checked", "a.py", "f"), row("checked", "a.py", "h"), row("checked", "b.py", "f"), row("unchecked", "c.py", "g")], "{rows:?}");
-    // The run's split: no copy of the gated relations is cross-file.
+    // The run's split: none of the gated relations is cross-file.
     let causes: String = std::fs::read_dir(&dir)
         .unwrap()
         .map(|e| e.unwrap().path())
@@ -2953,21 +3000,8 @@ both(m, p, x) :- named_in(x, _), def(m, x), docof(m, d), shared(d, x), doc(d, p,
         .map(|p| std::fs::read_to_string(p).unwrap())
         .collect();
     assert!(!causes.is_empty(), "no split dumped");
-    let local: String = std::fs::read_dir(&dir)
-        .unwrap()
-        .map(|e| e.unwrap().path())
-        .filter(|p| p.to_string_lossy().ends_with(".local.rerail"))
-        .map(|p| std::fs::read_to_string(p).unwrap())
-        .collect();
-    for r in ["inrec", "checked"] {
-        let copy = crate::code_rule_dsl::typing::file_local::flag_copy(r, true);
-        assert!(local.contains(&format!("{copy}(")), "{copy} is derived in the files' part:\n{local}");
-    }
     for r in ["inrec", "checked", "unchecked"] {
-        for b in [false, true] {
-            let copy = crate::code_rule_dsl::typing::file_local::flag_copy(r, b);
-            assert!(!causes.lines().any(|l| l.split('\t').next() == Some(copy.as_str())), "{copy} is cross-file:\n{causes}");
-        }
+        assert!(!causes.lines().any(|l| l.split('\t').next().is_some_and(|h| h == r || h.ends_with(&format!("_{r}")))), "{r} is cross-file:\n{causes}");
     }
     std::fs::write(dir.join("ws").join(edit.0), edit.1).unwrap();
     let rows = run(&dir);
@@ -3236,10 +3270,14 @@ lib(p, q, b) :- class_lib_anc(c, b), class_def(c, q), docof(c, d), doc(d, p, _).
 /// classes).
 const PY_CLASSES_OLD: &str = r#"
 .decl old_anc(p: symbol, q: symbol, b: symbol) cross_file
-old_anc(p, q, b) :- class_def(c, q), subclass(q, b), docof(c, d), doc(d, p, _).
+.decl class_at(p: symbol, q: symbol)
+class_at(p, q) :- class_def(c, q), docof(c, d), doc(d, p, _).
+.decl class_name(q: symbol)
+class_name(q) :- class_def(_, q).
+old_anc(p, q, b) :- class_at(p, q), subclass(q, b).
 .output old_anc
 .decl old_lib(p: symbol, q: symbol, b: symbol) cross_file
-old_lib(p, q, b) :- class_def(c, q), subclass(q, b), !class_def(_, b), docof(c, d), doc(d, p, _).
+old_lib(p, q, b) :- class_at(p, q), subclass(q, b), !class_name(b).
 .output old_lib
 "#;
 
@@ -4944,4 +4982,165 @@ fn field_captures_read_from_the_tape_are_ws() {
     assert_eq!(direct.0, [["b"], ["c"], ["m"], ["y"], ["z"]]);
     assert_eq!(direct.1, [["f"], ["g"]]);
     assert_eq!(direct, by_w, "the tape's field children are W's captures");
+}
+
+// ---- Minimal reproductions (2026-11-28): each the smallest program and edits that show one fault. ----
+
+/// The import-cycle program in 0727's form: the cross part reads the files' exports alone (`dep_from`, `mod_doc`),
+/// never a base relation; the finding is made in its import's own file, reading a relation of module names.
+const REPRO_CYCLE: &str = r#".policy "repro-cycle" revision 1
+.language python
+.mode steer
+.scope include "**/*.py"
+.decl impmod(i: node, m: symbol)
+impmod(i, m) :- kind(i, "import_from_statement"), field(i, "module_name", n), text(n, m).
+.decl dep_from(a: number, m: symbol)
+dep_from(a, m) :- impmod(i, m), docof(i, a).
+.decl mod_doc(d: number, m: symbol)
+mod_doc(d, m) :- doc(d, _, m).
+.decl dep(a: number, b: number) cross_file
+dep(a, b) :- dep_from(a, m), mod_doc(b, m).
+.decl reach(a: number, b: number) no_reach
+reach(a, b) :- dep(a, b).
+reach(a, c) :- reach(a, b), dep(b, c).
+.decl closes(ma: symbol, m: symbol)
+closes(ma, m) :- dep_from(a, m), mod_doc(a, ma), mod_doc(b, m), reach(b, a).
+.violation CYC(at: node) code "CYC" "This import closes a cycle of imports."
+CYC(i) :- impmod(i, m), docof(i, a), mod_doc(a, ma), closes(ma, m).
+"#;
+
+/// `program` over `files`, then each edit in turn, every run on one kept store; each run's findings beside a run's
+/// over an empty store, and its report.
+fn repro_runs(name: &str, program: &str, files: &[(&str, &str)], edits: &[(&str, &str)]) -> Vec<(super::Report, Vec<Vec<String>>, Vec<Vec<String>>)> {
+    let base = crate::code_rule_dsl::fixtures::temp().with_extension(name);
+    let _ = std::fs::remove_dir_all(&base);
+    let (src, out) = (base.join("src"), base.join("out"));
+    std::fs::create_dir_all(&src).unwrap();
+    for (path, text) in files {
+        std::fs::write(src.join(path), text).unwrap();
+    }
+    let rule = base.join("rule.rerail");
+    std::fs::write(&rule, program).unwrap();
+    let program = crate::code_rule_dsl::logic::rr::print_version(&crate::code_rule_dsl::logic::rr::parse_file_version(&rule).unwrap()).unwrap();
+    let fresh = std::cell::Cell::new(0);
+    let run = |store: std::path::PathBuf| {
+        super::TEST_TAPE_CACHE.with(|p| *p.borrow_mut() = Some(store));
+        let report = super::run(&program, &src, None, &out, "program", crate::code_rule_dsl::typing::file_local::Binding::Cpu, 1 << 18).unwrap();
+        let mut rows: Vec<Vec<String>> = crate::code_rule_dsl::logic::plan::output::shown(&out, "violation").unwrap_or_default();
+        rows.sort();
+        (report, rows)
+    };
+    let mut runs = Vec::new();
+    for edit in std::iter::once(None).chain(edits.iter().map(Some)) {
+        if let Some((path, text)) = edit {
+            std::fs::write(src.join(path), text).unwrap();
+        }
+        let (report, kept) = run(base.join("kept.sqlite"));
+        fresh.set(fresh.get() + 1);
+        let (_, want) = run(base.join(format!("fresh{}.sqlite", fresh.get())));
+        runs.push((report, kept, want));
+    }
+    let _ = std::fs::remove_dir_all(&base);
+    runs
+}
+
+/// The files of the module named in each row (`[policy, code, code, path, line, col]`), for a short message.
+fn paths_of(rows: &[Vec<String>]) -> Vec<&str> {
+    rows.iter().map(|r| r[3].as_str()).collect()
+}
+
+/// Repro 1 (the documents' table under a moving tag): an edit undone. `b.py` drops its import and takes it back; the
+/// last state is the first, and the kept run's findings must be a fresh run's. Keyed by a tag of the phases' settings
+/// rows, the table the last run read was the first run's, against kept inputs written by the edit between: every
+/// document was taken as unchanged, and `b.py`'s import, back again, was never read.
+#[test]
+fn repro_an_edit_undone_gives_a_fresh_runs_findings() {
+    let runs = repro_runs("repro-undone", REPRO_CYCLE, &[("a.py", "from b import x\n"), ("b.py", "from a import y\n")], &[("b.py", "y = 2\n"), ("b.py", "from a import y\n")]);
+    for (i, (_, kept, want)) in runs.iter().enumerate() {
+        assert_eq!(kept, want, "state {i}: kept {:?}, fresh {:?}", paths_of(kept), paths_of(want));
+    }
+    assert_eq!(paths_of(&runs[2].1), ["a.py", "b.py"]);
+}
+
+/// Repro 2 (a cycle closed by an edit): `a -> b -> c -> d`, and `d.py`'s edit imports `a`. Every import then closes a
+/// cycle of four. The kept run found the two imports whose `reach` back to their importer held before the edit's
+/// rows were joined (`a.py`, `b.py`), not `c.py`'s and `d.py`'s.
+#[test]
+fn repro_an_edit_closing_a_cycle_finds_every_import_on_it() {
+    let files = [("a.py", "from b import x\n"), ("b.py", "from c import y\n"), ("c.py", "from d import z\n"), ("d.py", "x = 1\n")];
+    let runs = repro_runs("repro-closed", REPRO_CYCLE, &files, &[("d.py", "from a import w\n")]);
+    let (_, kept, want) = &runs[1];
+    assert_eq!(paths_of(want), ["a.py", "b.py", "c.py", "d.py"], "a fresh run finds the cycle's four imports");
+    assert_eq!(kept, want, "kept {:?}, fresh {:?}", paths_of(kept), paths_of(want));
+}
+
+/// Repro 3 (an aggregate over a cross-file relation, derived again): a module's importers counted, one importer
+/// added. The count's stratum is maintained by its changed group (decision 0077 §3), not derived again ("a read
+/// changed without a version"), and its findings are a fresh run's.
+#[test]
+fn repro_a_cross_file_count_is_maintained_by_its_group() {
+    const PROGRAM: &str = r#".policy "repro-count" revision 1
+.language python
+.mode steer
+.scope include "**/*.py"
+.decl impmod(i: node, m: symbol)
+impmod(i, m) :- kind(i, "import_from_statement"), field(i, "module_name", n), text(n, m).
+.decl dep_from(a: number, m: symbol)
+dep_from(a, m) :- impmod(i, m), docof(i, a).
+.decl fan(m: symbol, n: number) cross_file
+fan(m, n) :- dep_from(_, m), n = count : { dep_from(_, m) }.
+.decl hub(m: symbol)
+hub(m) :- fan(m, n), n >= 2.
+.violation HUB(at: node) code "HUB" "An import of a module two or more files import."
+HUB(i) :- impmod(i, m), hub(m).
+"#;
+    let files = [("a.py", "from c import x\n"), ("b.py", "y = 1\n"), ("c.py", "z = 1\n")];
+    let runs = repro_runs("repro-count", PROGRAM, &files, &[("b.py", "from c import y\n")]);
+    let (report, kept, want) = &runs[1];
+    assert_eq!(paths_of(want), ["a.py", "b.py"]);
+    assert_eq!(kept, want);
+    let again: Vec<_> = with_stages(report).flat_map(|r| r.cross_again.iter().map(|(k, n)| (k.clone(), *n))).collect();
+    assert!(again.is_empty(), "no stratum is derived again: {again:?}");
+    assert!(with_stages(report).map(|r| r.cross_maintained.0).sum::<usize>() > 0, "the count is maintained");
+}
+
+/// Repro 4 (a context's first run): a quoted annotation's root (`x: "Foo"`) is parsed as Python (`.context`), and
+/// its identifiers resolve against the names every file defines (`.from python defined`). `Foo` is a class of the
+/// file: the first run, over an empty store, has its row.
+#[test]
+fn repro_a_contexts_first_run_has_its_rows() {
+    let base = crate::code_rule_dsl::fixtures::temp().with_extension("repro-context");
+    let _ = std::fs::remove_dir_all(&base);
+    let (src, out) = (base.join("src"), base.join("out"));
+    std::fs::create_dir_all(&src).unwrap();
+    let rule = base.join("context.rerail");
+    std::fs::write(
+        &rule,
+        r#".policy "repro-context" revision 1
+.language python
+.mode steer
+.scope include "**/*.py"
+#include "python/ast.rerail"
+.decl defined(x: symbol)
+defined(x) :- kind(c, "class_definition"), field(c, "name", n), text(n, x).
+.decl quoted_root(r: node)
+quoted_root(r) :- string_annotation(s), parsed(s, "annotation", r).
+.decl resolved(x: symbol)
+resolved(x) :- kind(i, "identifier"), text(i, x), defined(x).
+.decl quoted_resolved(x: symbol)
+quoted_resolved(x) :- res(x).
+.output quoted_resolved
+.context quoted of python roots quoted_root exports resolved
+.from python defined for quoted
+.from quoted resolved as res
+"#,
+    )
+    .unwrap();
+    std::fs::write(src.join("a.py"), "class Foo: ...\nx: \"Foo\" = 1\n").unwrap();
+    let program = crate::code_rule_dsl::logic::rr::print_version(&crate::code_rule_dsl::logic::rr::parse_file_version(&rule).unwrap()).unwrap();
+    super::TEST_TAPE_CACHE.with(|p| *p.borrow_mut() = Some(base.join("store.sqlite")));
+    super::run(&program, &src, None, &out, "program", crate::code_rule_dsl::typing::file_local::Binding::Cpu, 1 << 18).unwrap();
+    let rows = crate::code_rule_dsl::logic::plan::output::shown(&out, "quoted_resolved").unwrap_or_default();
+    let _ = std::fs::remove_dir_all(&base);
+    assert_eq!(rows, [["Foo"]]);
 }

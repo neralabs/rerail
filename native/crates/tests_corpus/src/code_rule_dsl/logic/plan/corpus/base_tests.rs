@@ -309,7 +309,7 @@ invalid(p) :- doc(d, p, _), syntax_error(d).
 
 /// A base relation a program reads is an input though its `.input` leaves it out, as in an authored file: `text`
 /// over spans only (the program port-21 reported failing with "no such column: n in SELECT n, s FROM text"), in
-/// rules run per chunk and in rules run once over every file.
+/// rules run per chunk and in a cross-file rule over what they give (the cross part reads no base relation, 0727).
 #[test]
 fn base_relations_read_are_inputs() {
     let files = [("graphql/bad.py", "def f(:\n    ServerPlan\n"), ("graphql/ok.py", "x = 1\n")];
@@ -324,8 +324,10 @@ fn base_relations_read_are_inputs() {
 hit(p) :- doc(d, p, _), syntax_error(d), document_source(d, sp), place_text(sp, s), contains("ServerPlan", s).
 .decl plain(p: symbol)
 plain(p) :- doc(d, p, _), !syntax_error(d), document_source(d, sp), place_text(sp, s), contains("x = 1", s).
+.decl source_text(p: symbol, s: symbol)
+source_text(p, s) :- doc(d, p, _), document_source(d, sp), place_text(sp, s).
 .decl same(p: symbol, q: symbol) cross_file
-same(p, q) :- doc(d, p, _), document_source(d, sp), place_text(sp, s), doc(e, q, _), document_source(e, sq), place_text(sq, s).
+same(p, q) :- source_text(p, s), source_text(q, s).
 .output hit, plain, same
 "#;
     let got = run(&dir, program, &["hit", "plain", "same"]);
@@ -473,8 +475,10 @@ fn a_computed_pattern_is_matched_per_row() {
     let dir = corpus("computed-pattern", &[("a.py", source)]);
     let program = r#"
 .decl name(n: node, s: symbol)
-.decl twin(s: symbol, t: symbol)
-twin(s, t) :- name(_, s), name(_, t), x = cat(s, "_[a-z]+"), match(x, t).
+.decl named(s: symbol)
+named(s) :- name(_, s).
+.decl twin(s: symbol, t: symbol) cross_file
+twin(s, t) :- named(s), named(t), x = cat(s, "_[a-z]+"), match(x, t).
 .decl lone(s: symbol)
 lone(s) :- name(_, s), x = cat(s, "_[a-z]+"), !match(x, "load_async").
 .output twin, lone
@@ -886,7 +890,7 @@ fn docof_and_unset() {
     let files = [TREE, ("pkg/b.py", "k(1)\n")];
     let dir = corpus("docof", &files);
     let program = r#"
-.decl empty(x: node)
+.decl empty(x: number)
 empty(x) :- unset(x).
 .decl nodes_unset(n: node)
 nodes_unset(n) :- node(_, n, _, _, _), unset(n).
