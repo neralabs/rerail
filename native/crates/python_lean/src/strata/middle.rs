@@ -1554,6 +1554,8 @@ struct WalkAcc {
     k: u64,
     /// The byte classes the last block carries to this one (`starts::cls_next`).
     cls: super::starts::ClsCarry,
+    /// The last block's operators' scan in code (`starts::code_starts_c`).
+    ops: super::starts::Ops,
 }
 
 /// One block of the walk's pass 1 by masks, from its reads `r`, in the chunk's range `lo..hi` (and its eof's `n`):
@@ -1568,7 +1570,7 @@ fn walk_block<const S: bool, const INTERP: bool>(r: &Win<'_, S>, lo: usize, hi: 
     let range = mk(hi.saturating_sub(64 * bi)) & !mk(lo.saturating_sub(64 * bi));
     // The block's byte classes once, for its starts in code and in interpolations' code.
     let cl = super::starts::cls_next(r, &mut acc.cls);
-    let (cs, r1) = super::starts::code_starts_c(r, &cl);
+    let (cs, r1) = super::starts::code_starts_c(r, &cl, &mut acc.ops);
     let (ss, r2) = super::starts::string_starts_c::<S, INTERP>(r, &cl, &mut acc.carry);
     let (xs, r3) = super::starts::extra_starts_w(r);
     let some = range != 0;
@@ -1624,6 +1626,7 @@ pub fn walk_summary_masks(src: &[u8], from: usize, to: usize, rb: RB, depth: i8,
             rest: 0,
             k: 0,
             cls: super::starts::ClsCarry::default(),
+            ops: [[0; 2]],
         };
         // Each block's first content past its window, from the right: the first its windows above read in their
         // upper halves (to the chunk's last and the walk's), then the chunks' after it (`after`).
@@ -1652,9 +1655,15 @@ pub fn walk_summary_masks(src: &[u8], from: usize, to: usize, rb: RB, depth: i8,
                 }
             }};
         }
-        // The byte classes into the first block: no block before it in the chunk was read.
         let first = b0.min(nb.saturating_sub(1));
-        acc.cls = if n < 64 { super::starts::cls_first(&m.win::<true>(first)) } else { super::starts::cls_first(&m.win::<false>(first)) };
+        // The byte classes and the operators' scan into the first block: no block before it in the chunk was read.
+        macro_rules! firsts {
+            ($r:expr) => {{
+                let r = $r;
+                (super::starts::cls_first(&r), super::starts::ops_first(&r, &super::starts::cls(&r)))
+            }};
+        }
+        (acc.cls, acc.ops) = if n < 64 { firsts!(m.win::<true>(first)) } else { firsts!(m.win::<false>(first)) };
         for bi in b0..=b1 {
             let far = fars[bi - b0];
             if n < 64 {

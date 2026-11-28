@@ -283,6 +283,49 @@ fn ks3(mut f: [[u128; 2]; 3]) -> [[u128; 2]; 3] {
     f
 }
 
+/// `ks3` over one block's 64 bytes, from each start state at its first byte: six rounds.
+#[inline(always)]
+fn ks3_64(mut f: [[u64; 2]; 3]) -> [[u64; 2]; 3] {
+    macro_rules! round {
+        ($d:expr) => {{
+            let low = !(!0u64 << $d);
+            let mut g = [[0u64; 2]; 3];
+            for (s, gs) in g.iter_mut().enumerate() {
+                let wl = (f[s][0] << $d) | if s == 1 { low } else { 0 };
+                let wh = (f[s][1] << $d) | if s == 2 { low } else { 0 };
+                let wc = !(wl | wh);
+                for k in 0..2 {
+                    gs[k] = (wc & f[0][k]) | (wl & f[1][k]) | (wh & f[2][k]);
+                }
+            }
+            f = g;
+        }};
+    }
+    round!(1);
+    round!(2);
+    round!(4);
+    round!(8);
+    round!(16);
+    round!(32);
+    f
+}
+
+/// A block's operators' machine in code from state 0 at its first byte (`ks3_64`'s first row): what the starts in
+/// code carry to the next block, whose window's lower half it is.
+pub(super) type Ops = [[u64; 2]; 1];
+
+/// The window's operators' machine (`ks3`'s from state 0 at its first byte) from the lower block's scan `lo0` and
+/// the block's machine `f` (its bytes' functions): the block's own scan from each state, its row from the state the
+/// lower block leaves. With it the block's own scan from state 0, the next block's `lo0`.
+#[inline(always)]
+fn ops_window(lo0: [u64; 2], f: [[u64; 2]; 3]) -> ([u128; 2], [u64; 2]) {
+    let up = ks3_64(f);
+    // The state after the lower block's last byte: plane 0 is state 1, plane 1 state 2.
+    let (e1, e2) = (lo0[0] >> 63 != 0, lo0[1] >> 63 != 0);
+    let row = |k: usize| pick(e1, up[1][k], pick(e2, up[2][k], up[0][k]));
+    ([w(lo0[0], row(0)), w(lo0[1], row(1))], up[0])
+}
+
 /// The ends of the runs of `x` from each of `starts` (a start not in `x` is its own end): one addition.
 #[inline(always)]
 fn run_ends(starts: u128, x: u128) -> u128 {
@@ -307,13 +350,30 @@ pub(super) fn code_starts(t: &Masks<'_>, bi: usize) -> (u64, u32) {
 /// `code_starts` from the block's reads.
 #[inline(always)]
 pub(super) fn code_starts_w<const S: bool>(r: &Win<'_, S>) -> (u64, u32) {
-    code_starts_c(r, &cls(r))
+    let cl = cls(r);
+    let mut ops = ops_first(r, &cl);
+    code_starts_c(r, &cl, &mut ops)
 }
 
-/// `code_starts_w` from the block's classes.
+/// The operators' scan into block `r.bi` (of the block below it, `Ops`) where no block before it was read.
 #[inline(always)]
-pub(super) fn code_starts_c<const S: bool>(r: &Win<'_, S>, cl: &Cls) -> (u64, u32) {
-    starts_in(r, cl, w(r.pb.code, r.b.code), false)
+pub(super) fn ops_first<const S: bool>(r: &Win<'_, S>, cl: &Cls) -> Ops {
+    let (op, len2, len3) = ops_in(r, cl, w(r.pb.code, r.b.code));
+    let lo = |x: u128| x as u64;
+    [ks3_64([[lo(len2), lo(len3)], [0, 0], [lo(op), 0]])[0]]
+}
+
+/// `code_starts_w` from the block's classes and `ops`, the operators' scan of the block below (each block's
+/// operators scanned once); `ops` left the block's, for the block after.
+#[inline(always)]
+pub(super) fn code_starts_c<const S: bool>(r: &Win<'_, S>, cl: &Cls, ops: &mut Ops) -> (u64, u32) {
+    // The tests' builds: the scan carried is the block below's as read afresh.
+    if cfg!(debug_assertions) {
+        assert!(ops_first(r, cl) == *ops, "block {}'s operators' scan carried is not the block below's", r.bi);
+    }
+    let (starts, rare, up) = starts_in::<S, true>(r, cl, w(r.pb.code, r.b.code), false, ops[0]);
+    *ops = [up];
+    (starts, rare)
 }
 
 /// What the numbers read: the classes at a byte and the bytes after it, the digits' runs, the `.`s that start a
@@ -385,11 +445,31 @@ fn numbers_from(cx: &NumCx, ds: u128) -> (u128, u128, u128, u128, u128) {
     (ends, frac, dot_starts, e_sign, taken)
 }
 
+/// The bytes of operators in `code` (the window of the block below and the block), and those an operator of two
+/// and of three bytes may start at: the operators' machine's input.
+#[inline(always)]
+fn ops_in<const S: bool>(r: &Win<'_, S>, cl: &Cls, code: u128) -> (u128, u128, u128) {
+    let (src, bi) = (r.src, r.bi);
+    let (pb, b) = (r.pb, r.b);
+    let keep = 0u64.wrapping_sub(u64::from(bi > 0));
+    let [lo, mid, _] = &cl.b;
+    let m = |f: fn(&B) -> u64| w(f(&pb), f(&b));
+    let k = |f: fn(&Bytes) -> u64| w(f(lo) & keep, f(mid));
+    let lim = (src.len() + 64).saturating_sub(64 * bi).min(128) as u32;
+    let valid = ((1u128 << (lim & 127)) - 1) | 0u128.wrapping_sub(u128::from(lim >> 7));
+    let nb = code & m(|b| !b.skip & !b.eol & !b.bs) & valid;
+    let word = m(|b| b.word) & nb;
+    let high = k(|c| c.high) & nb;
+    let op = nb & !word & !high;
+    (op, k(|c| c.len2) & op, k(|c| c.len3) & op)
+}
+
 /// Block `bi`'s token starts in the bytes of `code` (the window of the block below and the block), and whether the
 /// block is rare. In an interpolation (`one_by_one`) the walk reads a token at a time, so a number's rest of a word
-/// run is always a name.
+/// run is always a name. `lo0`: the operators' scan of the block below where `CARRIED` (else the window's scanned
+/// whole, `lo0` unread); with the starts, the block's own scan (`Ops`'s).
 #[inline(always)]
-fn starts_in<const S: bool>(r: &Win<'_, S>, cl: &Cls, code: u128, one_by_one: bool) -> (u64, u32) {
+fn starts_in<const S: bool, const CARRIED: bool>(r: &Win<'_, S>, cl: &Cls, code: u128, one_by_one: bool, lo0: [u64; 2]) -> (u64, u32, [u64; 2]) {
     let (src, bi) = (r.src, r.bi);
     // The block below (none below the text's start: masked).
     let (pb, b) = (r.pb, r.b);
@@ -424,9 +504,16 @@ fn starts_in<const S: bool>(r: &Win<'_, S>, cl: &Cls, code: u128, one_by_one: bo
     // A byte of code with no operator: the walk refuses it.
     let refused = op & !(len1 | len2 | len3);
     // Operators: from "a token starts here", the state after the byte is its length less one; from "one more
-    // byte", a token starts after it; from "two more", one more after it.
-    let f = ks3([[len2, len3], [0, 0], [op, 0]]);
-    let after0 = !(f[0][0] | f[0][1]);
+    // byte", a token starts after it; from "two more", one more after it. Each block's bytes scanned on their own,
+    // the block's from the state the block below leaves (the block below's scan carried, where it is).
+    let hi = |x: u128| (x >> 64) as u64;
+    let lo = |x: u128| x as u64;
+    let lo0 = if CARRIED { lo0 } else { ks3_64([[lo(len2), lo(len3)], [0, 0], [lo(op), 0]])[0] };
+    let (f0, up) = ops_window(lo0, [[hi(len2), hi(len3)], [0, 0], [hi(op), 0]]);
+    if cfg!(debug_assertions) {
+        assert!(ks3([[len2, len3], [0, 0], [op, 0]])[0] == f0, "block {bi}'s operators by blocks are not the window's");
+    }
+    let after0 = !(f0[0] | f0[1]);
     let at0 = (after0 << 1) | 1;
     let op_starts = op & at0;
     // Numbers. A digit's run: digits with single underscores between and after them.
@@ -492,7 +579,7 @@ fn starts_in<const S: bool>(r: &Win<'_, S>, cl: &Cls, code: u128, one_by_one: bo
         | why(rest_far, CODE_REST_FAR)
         | why(dot_edge, CODE_DOT_EDGE)
         | why(frac_dots, CODE_FRAC_DOTS);
-    ((starts >> 64) as u64, rare)
+    ((starts >> 64) as u64, rare, up)
 }
 
 /// Why a block's starts in code are rare (bits; none: known): a byte the walk refuses; a byte past ASCII; the run of
@@ -927,7 +1014,12 @@ pub(super) fn string_starts_c<const S: bool, const INTERP: bool>(win: &Win<'_, S
     let more = r.reg;
     let ibytes_all = hi(r.bytes);
     // The interpolations' code's starts (none in the window without `INTERP`).
-    let (rcode, rare_code) = if INTERP { starts_in(win, cl, w(c.rcode, icode), true) } else { (0, 0) };
+    let (rcode, rare_code) = if INTERP {
+        let (s, r, _) = starts_in::<S, false>(win, cl, w(c.rcode, icode), true, [0; 2]);
+        (s, r)
+    } else {
+        (0, 0)
+    };
     let lb_pair = lb & !ibytes_all & hi(b.lbu) & hi(n[1].lbrace);
     let rb_t = rb & !ibytes_all;
     let rbu = rb_t & !hi(super::escaped(rb_t as u64, &mut c.rb));

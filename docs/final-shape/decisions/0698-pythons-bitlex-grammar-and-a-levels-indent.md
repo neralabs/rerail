@@ -1246,3 +1246,21 @@ statements and blocks end.
       before) and 8284 to 10779 on x86-64. All have 0 conditional branches and 0 calls.
     - **As measured** (3 passes, 16 blocks a chunk, on the M1 Max at load 5, two runs): the walk's summaries
       1271M and 1246M cycles (1290M before), 6561M and 6325M instructions (6650M).
+122. **The operators' machine in code scanned a block at a time, the block below's scan carried** (as built:
+    `starts::ks3_64`, `ops_window`, `Ops`, `ops_first`).
+    - **Before:** the starts in code ran the operators' machine (`ks3`, seven rounds over 128 bits) over the
+      window of the block below and the block. So each block's bytes were scanned twice, once in each window.
+    - **The carry:** each block's 64 bytes are scanned on their own, from each of the 3 start states (six rounds
+      over 64 bits). The window's scan from state 0 is the block below's scan from state 0, then the block's
+      row from the state the block below leaves at its last byte: a selection of 2 masks. The block's own scan
+      from state 0 is what it carries to the next block. The loop over blocks scans the block below a chunk's
+      first block (`ops_first`). The interpolations' code reads other bytes as code than the code's, so its
+      starts scan both halves of their window, as before.
+    - **Checked:** the tests' builds assert that each block's carried scan is the block below's as read afresh,
+      and that the window's scan by blocks is `ks3`'s over the window.
+    - **As tested:** the 30 tests pass on AArch64 and x86-64. From the middle is still the serial lexer's in
+      1644 of 1644 files. `walk_block`'s instances have 6448 to 8960 instructions on AArch64 (6704 to 9248
+      before) and 7868 to 10252 on x86-64. All have 0 conditional branches and 0 calls.
+    - **As measured** (Time Profiler, M1 Max, 16 blocks a chunk; the load was 12 to 15, too high for totals of
+      cycles): the operators' machine's samples went from 551 to 306, and the walk's share of the run's samples
+      from 47.4% to 45.8%.
