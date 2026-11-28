@@ -82,7 +82,7 @@ pub(crate) unsafe fn release_mapping(p: *mut u8, len: usize) {
 ///
 /// # Safety
 /// `p` and `len` are a reservation's (a mapping's), and nothing reads it after.
-pub(crate) unsafe fn release(p: *mut u8, len: usize) {
+pub unsafe fn release(p: *mut u8, len: usize) {
     RESERVED.fetch_sub(len, Relaxed);
     #[cfg(unix)]
     unsafe {

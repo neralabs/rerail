@@ -1,0 +1,370 @@
+//! The join lab: a launch of the join program the engine captured (`join_capture`, under `RERAIL_JOIN_CAPTURE`),
+//! replayed apart from the engine. A capture's directory holds `blocks/` (each block its launches reached, frozen)
+//! and `w/<launch>/` (`wave.txt`, its own buffers' written pages, its relocations, their after-images); `Wave::read`
+//! reads one launch, `Wave::load` places each region in this process (a block mapped from its file, or read where
+//! the launch wrote it; a buffer of the program's own in a reservation, its written pages put back), then binds its
+//! addresses again where the regions now lie. `Loaded::run` runs its chain through the join program's Rust
+//! (`join_run`), each dispatch's groups as the phase before it set them, as the CPU device runs it; `Loaded::compare`
+//! holds what it left to what the engine's launch left.
+
+use rerail_blocks::block::{Block, PAGE};
+use std::io::{self, Read as _};
+use std::path::{Path, PathBuf};
+
+/// A run its launch encoded: its shape (`s-<key>`, shapes.yaml's), its rule, the rows into its stages' inputs.
+#[derive(Clone, Debug)]
+pub struct Label {
+    pub shape: String,
+    pub rule: String,
+    pub work: u64,
+}
+
+/// A region a launch reached (`region` lines): its name, its role (one of `join_run`'s binds, `top`, `hold`, `text`,
+/// `table`, `lease`, `block`), where it lay in the engine, its bytes, its block's kind, and its bytes' source.
+#[derive(Clone, Debug)]
+pub struct Region {
+    pub name: String,
+    pub role: String,
+    pub base: u64,
+    pub len: usize,
+    pub kind: u32,
+    pub source: String,
+}
+
+impl Region {
+    /// Its bytes are runs of written pages (`<name>.zst`): a buffer of the program's own, or a lease.
+    pub fn sparse(&self) -> bool {
+        self.source.ends_with(".zst")
+    }
+}
+
+/// One captured launch (`wave.txt`).
+#[derive(Clone, Debug)]
+pub struct Wave {
+    pub dir: PathBuf,
+    /// The capture's directory (its `blocks/`).
+    pub root: PathBuf,
+    pub format: u32,
+    /// The program's `ProgP`: its phases, its chain's dispatches, the phases its walk takes, 0.
+    pub args: [u32; 4],
+    /// Each dispatch's groups' three words, as byte offsets into its control words.
+    pub offsets: Vec<u64>,
+    /// `join_run`'s nine buffers, by role.
+    pub binds: Vec<String>,
+    pub labels: Vec<Label>,
+    pub regions: Vec<Region>,
+    /// Each region the launch may have written, and its after-image's source.
+    pub after: Vec<(String, String)>,
+    /// Words of its regions past 4 GB that no region holds (data that looks like an address, or memory no ledger
+    /// knew: a replay that reads one fails there).
+    pub unresolved: u64,
+    /// Words inside a small region that look like an address and are not bound again (`join_capture`'s check): an
+    /// address its encoding wrote without naming it. A replay of one with any may read the engine's memory.
+    pub unbound: u64,
+    /// Its after-images written: the engine's launch done.
+    pub done: bool,
+}
+
+fn bad(what: String) -> io::Error {
+    io::Error::new(io::ErrorKind::InvalidData, what)
+}
+
+impl Wave {
+    /// The launch captured in `dir` (`<capture>/w/<launch>`).
+    pub fn read(dir: &Path) -> io::Result<Wave> {
+        let text = std::fs::read_to_string(dir.join("wave.txt"))?;
+        let root = dir.parent().and_then(Path::parent).ok_or_else(|| bad(format!("{}: not in a capture's w/", dir.display())))?.to_path_buf();
+        let mut w = Wave { dir: dir.to_path_buf(), root, format: 0, args: [0; 4], offsets: Vec::new(), binds: Vec::new(), labels: Vec::new(), regions: Vec::new(), after: Vec::new(), unresolved: 0, unbound: 0, done: false };
+        let num = |s: &str| s.parse::<u64>().map_err(|e| bad(format!("{}: {s}: {e}", dir.display())));
+        for line in text.lines() {
+            let (key, rest) = line.split_once(' ').unwrap_or((line, ""));
+            match key {
+                "capture" => {}
+                "format" => w.format = num(rest)? as u32,
+                "args" => {
+                    for (i, a) in rest.split(' ').enumerate().take(4) {
+                        w.args[i] = num(a)? as u32;
+                    }
+                }
+                "offsets" => w.offsets = rest.split(' ').filter(|s| !s.is_empty()).map(num).collect::<io::Result<_>>()?,
+                "binds" => w.binds = rest.split(' ').map(str::to_owned).collect(),
+                "unresolved" => w.unresolved = num(rest)?,
+                "unbound" => w.unbound = num(rest)?,
+                // Where they lie, and a few of them: what a capture's reader looks into.
+                "unresolved_in" => {}
+                "label" => {
+                    let mut p = rest.rsplitn(3, ' ');
+                    let (work, rule, shape) = (p.next(), p.next(), p.next());
+                    let (Some(work), Some(rule), Some(shape)) = (work, rule, shape) else { return Err(bad(format!("label: {line}"))) };
+                    w.labels.push(Label { shape: shape.to_owned(), rule: rule.replace('_', " "), work: num(work)? });
+                }
+                "region" => {
+                    let f: Vec<&str> = rest.splitn(6, ' ').collect();
+                    let [name, role, base, len, kind, source] = f[..] else { return Err(bad(format!("region: {line}"))) };
+                    let base = u64::from_str_radix(base.trim_start_matches("0x"), 16).map_err(|e| bad(format!("region: {line}: {e}")))?;
+                    w.regions.push(Region { name: name.to_owned(), role: role.to_owned(), base, len: num(len)? as usize, kind: num(kind)? as u32, source: source.to_owned() });
+                }
+                "after" => {
+                    let (name, source) = rest.split_once(' ').ok_or_else(|| bad(format!("after: {line}")))?;
+                    w.after.push((name.to_owned(), source.to_owned()));
+                }
+                "done" => w.done = true,
+                _ => return Err(bad(format!("{}: an unknown line: {line}", dir.display()))),
+            }
+        }
+        if w.binds.len() != 9 {
+            return Err(bad(format!("{}: {} binds, not join_run's 9", dir.display(), w.binds.len())));
+        }
+        Ok(w)
+    }
+
+    /// Every launch captured under `capture` (its `w/`), in its directory names' order.
+    pub fn all(capture: &Path) -> io::Result<Vec<Wave>> {
+        let mut dirs: Vec<PathBuf> = std::fs::read_dir(capture.join("w"))?.filter_map(|e| e.ok().map(|e| e.path())).filter(|p| p.join("wave.txt").exists()).collect();
+        dirs.sort();
+        dirs.iter().map(|d| Wave::read(d)).collect()
+    }
+
+    fn source_path(&self, source: &str) -> PathBuf {
+        match source.strip_prefix("file:") {
+            Some(p) => PathBuf::from(p),
+            None if source.starts_with("blocks/") => self.root.join(source),
+            None => self.dir.join(source),
+        }
+    }
+
+    /// Its regions placed in this process, their addresses bound again where they lie now.
+    pub fn load(&self) -> io::Result<Loaded> {
+        let written: std::collections::HashSet<&str> = self.after.iter().map(|(n, _)| n.as_str()).collect();
+        let mut mems = Vec::with_capacity(self.regions.len());
+        for r in &self.regions {
+            let path = self.source_path(&r.source);
+            let mem = if r.sparse() {
+                let m = Mem::reserve(r.len);
+                read_runs(&path, |at, bytes| m.write(at, bytes))?;
+                m
+            } else if !written.contains(r.name.as_str()) {
+                // A block the launch only reads: mapped from its file, read-only.
+                let b = Block::map_file(&path, r.kind, false).map_err(|e| bad(format!("{}: {e}", r.name)))?;
+                Mem::Mapped(b)
+            } else {
+                // One it writes: its bytes read into memory of the lab's (its file is the capture's).
+                let m = Mem::reserve(r.len);
+                let mut f = std::fs::File::open(&path)?;
+                let mut at = 0;
+                let mut buf = vec![0u8; 1 << 20];
+                while at < r.len {
+                    let n = f.read(&mut buf[..(r.len - at).min(1 << 20)])?;
+                    if n == 0 {
+                        break;
+                    }
+                    m.write(at, &buf[..n]);
+                    at += n;
+                }
+                m
+            };
+            mems.push(mem);
+        }
+        let relocs = zstd::stream::decode_all(std::fs::File::open(self.dir.join("relocs.zst"))?)?;
+        let mut bound = 0;
+        for q in relocs.chunks_exact(32) {
+            let v = |i: usize| u64::from_le_bytes(q[8 * i..8 * i + 8].try_into().expect("8 bytes"));
+            let (i, o, t, off) = (v(0) as usize, v(1) as usize, v(2) as usize, v(3) as usize);
+            let to = mems.get(t).ok_or_else(|| bad(format!("a relocation into region {t} of {}", mems.len())))?.base() + off;
+            mems.get(i).ok_or_else(|| bad(format!("a relocation in region {i}")))?.write(o, &(to as u64).to_ne_bytes());
+            bound += 1;
+        }
+        let mut binds = [0u64; 9];
+        for (k, role) in self.binds.iter().enumerate() {
+            let i = self.regions.iter().position(|r| r.role == *role).ok_or_else(|| bad(format!("no region for the bind {role}")))?;
+            binds[k] = mems[i].base() as u64;
+        }
+        Ok(Loaded { wave: self.clone(), mems, binds, relocations: bound })
+    }
+}
+
+/// A region's runs (`join_capture`'s `<name>.zst`: each its offset and length, u64s, then its bytes), each given to
+/// `put`.
+fn read_runs(path: &Path, mut put: impl FnMut(usize, &[u8])) -> io::Result<()> {
+    let mut z = zstd::stream::read::Decoder::new(std::fs::File::open(path)?)?;
+    let mut head = [0u8; 16];
+    let mut buf = Vec::new();
+    loop {
+        match z.read_exact(&mut head) {
+            Ok(()) => {}
+            Err(e) if e.kind() == io::ErrorKind::UnexpectedEof => return Ok(()),
+            Err(e) => return Err(e),
+        }
+        let at = u64::from_le_bytes(head[..8].try_into().expect("8 bytes")) as usize;
+        let n = u64::from_le_bytes(head[8..].try_into().expect("8 bytes")) as usize;
+        buf.resize(n, 0);
+        z.read_exact(&mut buf)?;
+        put(at, &buf);
+    }
+}
+
+/// A region's memory in the lab: a reservation of its own (fresh pages read as zero), or a block mapped from a file.
+pub enum Mem {
+    Reserved { p: *mut u8, len: usize },
+    Mapped(Block),
+}
+
+impl Mem {
+    fn reserve(len: usize) -> Mem {
+        let len = len.max(1).next_multiple_of(PAGE);
+        Mem::Reserved { p: rerail_blocks::mem::reserve(len), len }
+    }
+
+    pub fn base(&self) -> usize {
+        match self {
+            Mem::Reserved { p, .. } => *p as usize,
+            Mem::Mapped(b) => b.bytes(0, 0).as_ptr() as usize,
+        }
+    }
+
+    fn len(&self) -> usize {
+        match self {
+            Mem::Reserved { len, .. } => *len,
+            Mem::Mapped(b) => b.used(),
+        }
+    }
+
+    fn write(&self, at: usize, bytes: &[u8]) {
+        let Mem::Reserved { p, len } = self else { panic!("a write into a mapped block") };
+        assert!(at + bytes.len() <= *len, "a write past a region: {at} + {} of {len}", bytes.len());
+        // SAFETY: within the reservation, which only the lab's thread touches while it is loaded.
+        unsafe { std::ptr::copy_nonoverlapping(bytes.as_ptr(), p.add(at), bytes.len()) };
+    }
+
+    fn bytes(&self, at: usize, n: usize) -> &[u8] {
+        assert!(at + n <= self.len(), "a read past a region: {at} + {n} of {}", self.len());
+        // SAFETY: within the region's memory.
+        unsafe { std::slice::from_raw_parts((self.base() + at) as *const u8, n) }
+    }
+}
+
+impl Drop for Mem {
+    fn drop(&mut self) {
+        if let Mem::Reserved { p, len } = self {
+            // SAFETY: the reservation's, released once, nothing reading it after.
+            unsafe { rerail_blocks::mem::release(*p, *len) };
+        }
+    }
+}
+
+/// A launch placed in the lab, ready to run (`run`), then to compare (`compare`).
+pub struct Loaded {
+    pub wave: Wave,
+    pub mems: Vec<Mem>,
+    /// `join_run`'s nine buffers' addresses, where its regions lie now.
+    binds: [u64; 9],
+    /// The addresses bound again (`relocs.zst`'s entries).
+    pub relocations: usize,
+}
+
+/// What a replay ran: its dispatches (those whose groups were not none), its groups, its wall time.
+#[derive(Clone, Debug, Default)]
+pub struct Ran {
+    pub dispatches: usize,
+    pub groups: u64,
+    pub seconds: f64,
+}
+
+/// A region the replay left otherwise than the engine's launch: its bytes compared, those that differ, the first.
+#[derive(Clone, Debug)]
+pub struct Diff {
+    pub region: String,
+    pub compared: usize,
+    pub differ: usize,
+    pub first: Option<usize>,
+    /// The first words that differ: their offsets, the replay's and the engine's.
+    pub words: Vec<(usize, u64, u64)>,
+}
+
+/// The join program's group size (`join_stages`' `JOIN_TG`, `join_run`'s).
+const TG: u32 = 256;
+
+impl Loaded {
+    /// Its chain through `join_run`, as the CPU device runs it: each dispatch's groups the three words at its offset
+    /// of the control words, which the phases before it wrote; its groups one after another on this thread.
+    pub fn run(&mut self) -> Ran {
+        let ctl = self.binds[7] as usize;
+        let prog = self.wave.args;
+        // The shim's two arguments past the kernel's: no groups' counts, and the first group's position 0.
+        let (counts, first): (*const u32, u32) = (std::ptr::null(), 0);
+        let mut argv: Vec<*const u8> = self.binds.iter().map(|b| (b as *const u64).cast::<u8>()).collect();
+        argv.push(prog.as_ptr().cast::<u8>());
+        argv.extend([(&raw const counts).cast::<u8>(), (&raw const first).cast::<u8>()]);
+        let start = std::time::Instant::now();
+        let mut ran = Ran::default();
+        for &offset in &self.wave.offsets {
+            // SAFETY: three words of the control words, which the dispatches before wrote.
+            let grid = unsafe { std::ptr::read_volatile((ctl + offset as usize) as *const [u32; 3]) };
+            if grid.contains(&0) {
+                continue;
+            }
+            ran.dispatches += 1;
+            let groups = grid.iter().map(|&g| u64::from(g)).product::<u64>();
+            ran.groups += groups;
+            for i in 0..groups {
+                let (x, rest) = ((i % u64::from(grid[0])) as u32, i / u64::from(grid[0]));
+                let (y, z) = ((rest % u64::from(grid[1])) as u32, (rest / u64::from(grid[1])) as u32);
+                let l = rerail_ukl_rust::Launch { group: [x, y, z], block: [TG, 1, 1], groups: grid };
+                // SAFETY: `argv` holds the program's buffers' addresses where the lab placed them, its `ProgP`, and the
+                // shim's two; the regions they reach are the capture's, bound again.
+                unsafe { rerail_ukl_rust::join_program::join_run(argv.as_ptr(), &l) };
+            }
+        }
+        ran.seconds = start.elapsed().as_secs_f64();
+        ran
+    }
+
+    /// Each region the launch may have written, held to its after-image: its runs' bytes (a buffer of its own), or
+    /// its used bytes (a block). Every region it names, compared; those equal are no `Diff` with `differ` 0.
+    pub fn compare(&self) -> io::Result<Vec<Diff>> {
+        let relocated = self.relocated()?;
+        let mut out = Vec::new();
+        for (name, source) in &self.wave.after {
+            let i = self.wave.regions.iter().position(|r| r.name == *name).ok_or_else(|| bad(format!("after: no region {name}")))?;
+            let (r, m) = (&self.wave.regions[i], &self.mems[i]);
+            // The words bound again hold the lab's addresses, the after-image the engine's: not compared.
+            let skip: std::collections::HashSet<usize> = relocated.iter().filter(|q| q.0 == i).map(|q| q.1).collect();
+            let mut d = Diff { region: name.clone(), compared: 0, differ: 0, first: None, words: Vec::new() };
+            let mut hold = |at: usize, want: &[u8]| {
+                let got = m.bytes(at, want.len());
+                for (k, (a, b)) in got.iter().zip(want).enumerate() {
+                    if skip.contains(&((at + k) / 8 * 8)) {
+                        continue;
+                    }
+                    if a != b {
+                        d.differ += 1;
+                        d.first.get_or_insert(at + k);
+                        let o = (at + k) / 8 * 8;
+                        if d.words.len() < 8 && d.words.last().is_none_or(|w| w.0 != o) && o >= at && o + 8 <= at + want.len() {
+                            let g = u64::from_ne_bytes(m.bytes(o, 8).try_into().expect("8 bytes"));
+                            let w = u64::from_ne_bytes(want[o - at..o - at + 8].try_into().expect("8 bytes"));
+                            d.words.push((o, g, w));
+                        }
+                    }
+                }
+                d.compared += want.len();
+            };
+            let path = self.wave.source_path(source);
+            if r.sparse() {
+                read_runs(&path, &mut hold)?;
+            } else {
+                let want = std::fs::read(&path)?;
+                hold(0, &want[..want.len().min(r.len)]);
+            }
+            out.push(d);
+        }
+        Ok(out)
+    }
+
+    /// The words the lab bound again (`relocs.zst`), as (region, offset): where an after-image holds the engine's
+    /// address and the replay the lab's.
+    pub fn relocated(&self) -> io::Result<Vec<(usize, usize)>> {
+        let relocs = zstd::stream::decode_all(std::fs::File::open(self.wave.dir.join("relocs.zst"))?)?;
+        Ok(relocs.chunks_exact(32).map(|q| (u64::from_le_bytes(q[..8].try_into().expect("8")) as usize, u64::from_le_bytes(q[8..16].try_into().expect("8")) as usize)).collect())
+    }
+}

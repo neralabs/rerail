@@ -977,6 +977,19 @@ use rerail_blocks::vector::Vector;
                 }
             }
         }
+        // The join lab's replay of each: its chain run through the join program's Rust apart from the engine, what it
+        // leaves what the engine's launch left.
+        for w in rerail_join_lab::Wave::all(&dir).unwrap() {
+            assert_eq!(w.unresolved, 0, "every address its regions hold is in a region it names: {}", w.dir.display());
+            assert_eq!(w.unbound, 0, "every address its encoding wrote is named: {}", w.dir.display());
+            let mut l = w.load().unwrap();
+            assert!(l.relocations > 0, "its addresses bound again");
+            let ran = l.run();
+            assert!(ran.dispatches > 0 && ran.groups > 0, "it ran: {ran:?}");
+            for d in l.compare().unwrap() {
+                assert!(d.compared > 0 && d.differ == 0, "{}: the replay leaves what the launch left: {d:?}", w.dir.display());
+            }
+        }
         let _ = std::fs::remove_dir_all(&dir);
     }
 

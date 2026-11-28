@@ -147,6 +147,8 @@ metal = "0.33.0"
 rerail-lang-python = { path = "../lang_python" }
 
 [dev-dependencies]
+# The join lab's replay of a launch captured (`join_capture`'s test).
+rerail-join-lab = { path = "../join_lab", features = ["test-hooks"] }
 rerail-logic = { path = "../logic", default-features = false, features = ["test-hooks"] }
 # This crate's own test build turns on its test hooks, as the engine's does (`test-hooks`).
 rerail-device-metal = { path = ".", features = ["test-hooks"] }

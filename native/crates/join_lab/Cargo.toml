@@ -1,0 +1,25 @@
+[package]
+name = "rerail-join-lab"
+version = "0.1.0"
+edition = "2024"
+publish = false
+description = "The join lab (2026-11-27): a launch of the join program the engine captured (`join_capture`: its blocks, its own buffers' written pages, its addresses as two-part references), replayed apart from the engine through the join program's Rust (`rerail_ukl_rust::join_program::join_run`), timed and compared with what the engine's launch left."
+
+[features]
+# The tests' variant of the blocks it maps (one compile of each workspace crate: `check_dev_features`).
+test-hooks = ["rerail-blocks/test-hooks"]
+
+[dependencies]
+# The join program's Rust, run as the CPU device runs it.
+rerail-ukl-rust = { path = "../ukl_rust" }
+# A capture's blocks mapped back (`Block::map_file`), and reservations for its own buffers (`mem`).
+rerail-blocks = { path = "../blocks" }
+zstd = "=0.14.4"
+
+[[bin]]
+name = "join-lab"
+path = "src/main.rs"
+
+[dev-dependencies]
+# Its own tests built with its test hooks (`check_dev_features`).
+rerail-join-lab = { path = ".", features = ["test-hooks"] }

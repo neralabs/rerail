@@ -3973,6 +3973,7 @@ dependencies = [
  "rerail-device",
  "rerail-device-metal",
  "rerail-facts",
+ "rerail-join-lab",
  "rerail-join-shapes",
  "rerail-lang",
  "rerail-lang-python",
@@ -4363,6 +4364,16 @@ dependencies = [
  "rerail-simd8",
  "rerail-tape-format",
  "unicode-ident",
+]
+
+[[package]]
+name = "rerail-join-lab"
+version = "0.1.0"
+dependencies = [
+ "rerail-blocks",
+ "rerail-join-lab",
+ "rerail-ukl-rust",
+ "zstd",
 ]
 
 [[package]]

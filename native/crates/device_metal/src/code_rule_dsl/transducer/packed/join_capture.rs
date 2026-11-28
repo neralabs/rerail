@@ -17,8 +17,10 @@
 //!   offset and length (u64s) then its bytes, zstd; the pages between read as fresh memory does. `<name>.after.zst`
 //!   as the launch left it, and each written block's bytes after it as `blocks/<digest>.blk` (`after <name>
 //!   <source>`).
-//! - `w/<id>/relocs.zst`: every address the program's regions hold, as (region, offset, region it points into, offset
-//!   there): decision 0353's two-part references, bound again where the replay maps each region.
+//! - `w/<id>/relocs.zst`: every address the program's regions hold (its buffers' address words by their structures,
+//!   and its parameters' words that hold an address its jobs reach, `Job::reach`), as (region, offset, region it
+//!   points into, offset there): decision 0353's two-part references, bound again where the replay places each
+//!   region.
 
 use rerail_device::device::Buffer;
 use std::collections::HashMap;
@@ -118,6 +120,10 @@ pub(in crate::code_rule_dsl) struct Pending {
 /// The program's own buffers a launch binds, in `join_run`'s order, and the rest it reaches.
 pub(in crate::code_rule_dsl) struct Reached<'a> {
     pub(in crate::code_rule_dsl) binds: [(&'static str, &'a Buffer); 9],
+    /// The words of its own buffers that hold addresses by their structures: each its buffer's role and offset.
+    pub(in crate::code_rule_dsl) typed: Vec<(&'static str, u64)>,
+    /// The addresses its jobs reach (`Job::reach`): a word of its parameters (`hold`) that holds one is an address.
+    pub(in crate::code_rule_dsl) reached: &'a [u64],
     pub(in crate::code_rule_dsl) top: Option<&'a Buffer>,
     pub(in crate::code_rule_dsl) holds: Vec<&'a Buffer>,
     pub(in crate::code_rule_dsl) text: Option<&'a Buffer>,
@@ -218,20 +224,9 @@ fn own(regions: &mut Vec<Region>, name: String, role: &'static str, b: &Buffer) 
     regions.push(Region { source: format!("{name}.zst"), name, role, base, len, kind: 0, written: true });
 }
 
-/// The words of `r`'s written runs that may be addresses (past 4 GB), each with its offset.
-fn words(r: &Region, runs: &[(usize, usize)]) -> Vec<(usize, usize)> {
-    let mut out = Vec::new();
-    for &(at, n) in runs {
-        let first = at.next_multiple_of(8);
-        let end = (at + n) / 8 * 8;
-        for o in (first..end).step_by(8) {
-            let a = u64::from_ne_bytes(r.bytes(o, 8).try_into().expect("8 bytes")) as usize;
-            if a > 1 << 32 {
-                out.push((o, a));
-            }
-        }
-    }
-    out
+/// The word at byte `o` of region `r`.
+fn word(r: &Region, o: usize) -> usize {
+    u64::from_ne_bytes(r.bytes(o, 8).try_into().expect("8 bytes")) as usize
 }
 
 fn write_before(cfg: &Config, id: u64, labels: &[Label], reach: &Reached<'_>) -> std::io::Result<Pending> {
@@ -254,15 +249,33 @@ fn write_before(cfg: &Config, id: u64, labels: &[Label], reach: &Reached<'_>) ->
     if let Some(t) = reach.table {
         own(&mut regions, "table".into(), "table", t);
     }
-    // Each region's written runs, once (a reservation's mincore is a byte a page).
-    let mut runs: Vec<Vec<(usize, usize)>> = regions.iter().map(Region::runs).collect();
-    // The blocks and leases its jobs reach, and every one an address in its own regions points into.
-    let mut reached: Vec<(usize, bool)> = reach.uses.iter().map(|(b, w)| (b.contents() as usize, *w)).collect();
-    for (r, runs) in regions.iter().zip(&runs).filter(|(r, _)| r.role != "text" && r.role != "counts") {
-        reached.extend(words(r, runs).into_iter().map(|(_, a)| (a, false)));
+    // Its words that hold addresses (region, offset): its buffers' by their structures, and its parameters' that
+    // hold an address its jobs reach (as `Kit::grow_rooms` finds them). No other word is read as one: a pair of
+    // 32-bit values may look like an address inside a reservation of gigabytes.
+    let reached: std::collections::HashSet<usize> = reach.reached.iter().map(|&a| a as usize).collect();
+    let mut refs: Vec<(usize, usize)> = Vec::new();
+    for &(role, o) in &reach.typed {
+        if let Some(i) = regions.iter().position(|r| r.role == role)
+            && (o as usize) + 8 <= regions[i].len
+        {
+            refs.push((i, o as usize));
+        }
     }
+    for (i, r) in regions.iter().enumerate().filter(|(_, r)| r.role == "hold") {
+        for (at, n) in r.runs() {
+            for o in (at.next_multiple_of(8)..(at + n) / 8 * 8).step_by(8) {
+                if reached.contains(&word(r, o)) {
+                    refs.push((i, o));
+                }
+            }
+        }
+    }
+    // The blocks and leases they and its jobs reach, as regions too.
+    let mut targets: Vec<(usize, bool)> = reach.uses.iter().map(|(b, w)| (b.contents() as usize, *w)).collect();
+    targets.extend(refs.iter().map(|&(i, o)| (word(&regions[i], o), false)).filter(|&(a, _)| a >= 1 << 32));
+    targets.extend(reach.reached.iter().map(|&a| (a as usize, false)));
     let mut written = 0u64;
-    for (addr, w) in reached {
+    for (addr, w) in targets {
         if let Some(r) = regions.iter_mut().find(|r| r.base <= addr && addr < r.base + r.len) {
             r.written |= w;
             continue;
@@ -287,28 +300,54 @@ fn write_before(cfg: &Config, id: u64, labels: &[Label], reach: &Reached<'_>) ->
             };
             Region { name, role: "block", base: p.start, len, kind: p.kind, source, written: w }
         };
-        runs.push(if region.sparse() { region.runs() } else { Vec::new() });
         regions.push(region);
     }
-    // The sparse regions' runs, and the addresses they hold.
+    // The sparse regions' runs, and each address word as (region, offset, region it points into, offset there).
+    for r in regions.iter().filter(|r| r.sparse()) {
+        written += write_runs(&dir.join(&r.source), r, &r.runs())?;
+    }
     let mut relocs: Vec<u8> = Vec::new();
-    // Words past 4 GB no region holds: data that looks like an address, or an address of memory no ledger knows (a
-    // replay that reads one fails there).
+    // Address words no region holds: memory no ledger knew (a replay that reads one fails there).
     let mut unresolved = 0u64;
-    for (i, r) in regions.iter().enumerate().filter(|(_, r)| r.sparse()) {
-        written += write_runs(&dir.join(&r.source), r, &runs[i])?;
-        if r.role == "text" || r.role == "counts" {
+    let mut unresolved_in: Vec<(usize, u64, Vec<(usize, usize)>)> = Vec::new();
+    for &(i, o) in &refs {
+        let a = word(&regions[i], o);
+        // A word of the program's a launch never reads (a descriptor's address of a buffer it has none of: 0).
+        if a < 1 << 32 {
             continue;
         }
-        for (o, a) in words(r, &runs[i]) {
-            match regions.iter().position(|t| t.base <= a && a < t.base + t.len) {
-                Some(t) => {
-                    for v in [i as u64, o as u64, t as u64, (a - regions[t].base) as u64] {
-                        // copy: not block data (a capture's relocation list, for the lab alone)
-                        relocs.extend_from_slice(&v.to_le_bytes());
-                    }
+        match regions.iter().position(|t| t.base <= a && a < t.base + t.len) {
+            Some(t) => {
+                for v in [i as u64, o as u64, t as u64, (a - regions[t].base) as u64] {
+                    // copy: not block data (a capture's relocation list, for the lab alone)
+                    relocs.extend_from_slice(&v.to_le_bytes());
                 }
-                None => unresolved += 1,
+            }
+            None => {
+                unresolved += 1;
+                if unresolved_in.last().is_none_or(|u| u.0 != i) {
+                    unresolved_in.push((i, 0, Vec::new()));
+                }
+                let u = unresolved_in.last_mut().expect("its entry");
+                u.1 += 1;
+                if u.2.len() < 4 {
+                    u.2.push((o, a));
+                }
+            }
+        }
+    }
+    // Words inside a region of its own or a lease (at most 64 MB: not a reservation, whose range a pair of 32-bit
+    // values may fall in) that are not bound again: an address its encoding wrote without naming it (`Job::names`),
+    // which a replay would read or write in the engine's memory. A capture holds none.
+    let bound: std::collections::HashSet<(usize, usize)> = refs.iter().copied().collect();
+    let mut unbound = 0u64;
+    for (i, r) in regions.iter().enumerate().filter(|(_, r)| r.sparse() && r.role != "text" && r.role != "counts") {
+        for (at, n) in r.runs() {
+            for o in (at.next_multiple_of(8)..(at + n) / 8 * 8).step_by(8) {
+                let a = word(r, o);
+                if a >= 1 << 32 && !bound.contains(&(i, o)) && regions.iter().any(|t| t.len <= 64 << 20 && t.sparse() && t.base <= a && a < t.base + t.len) {
+                    unbound += 1;
+                }
             }
         }
     }
@@ -320,6 +359,11 @@ fn write_before(cfg: &Config, id: u64, labels: &[Label], reach: &Reached<'_>) ->
     writeln!(w, "offsets {}", reach.offsets.iter().map(u64::to_string).collect::<Vec<_>>().join(" "))?;
     writeln!(w, "binds {}", reach.binds.map(|(r, _)| r).join(" "))?;
     writeln!(w, "unresolved {unresolved}")?;
+    writeln!(w, "unbound {unbound}")?;
+    for (i, n, some) in &unresolved_in {
+        let some: Vec<String> = some.iter().map(|(o, a)| format!("{o}:{a:#x}")).collect();
+        writeln!(w, "unresolved_in {} {n} {}", regions[*i].name, some.join(" "))?;
+    }
     for l in labels {
         writeln!(w, "label {} {} {}", l.shape, l.rule.replace(' ', "_"), l.work)?;
     }

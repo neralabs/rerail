@@ -3121,12 +3121,12 @@ impl Batch {
         let mut job = Job::new(JobKind::Sum, 0, Stage::default());
         let oa = job.reach(&offs.buffer, 0, true)?;
         let ta = job.reach(&total.0.buffer.buffer, 0, true)?;
-        let mut p: Vec<u64> = vec![srcs.len() as u64, ta + 4 * total.1 as u64];
+        let mut p: Vec<u64> = vec![srcs.len() as u64, job.names(ta + 4 * total.1 as u64)];
         let mut reads = Vec::new();
         for (i, (_, _, w, slot, _)) in srcs.iter().enumerate() {
             let wa = job.reach(&w.buffer.buffer, 0, false)?;
             reads.push(wa);
-            p.extend([wa + 4 * *slot as u64, oa + 4 * i as u64]);
+            p.extend([job.names(wa + 4 * *slot as u64), job.names(oa + 4 * i as u64)]);
         }
         job.p = Some(as_bytes(&p).to_vec());
         job.count = 1;
@@ -3288,7 +3288,7 @@ impl Batch {
             p.extend([to, from, u64::from(code) | (n as u64) << 32]);
         }
         // The arena's top emptied: a round's counts are its own (decision 0603 step 5).
-        let top = self.program.top()?;
+        let top = job.names(self.program.top()?);
         p.extend([top, 0, 2 | 1 << 32]);
         p[1] += 1;
         writes.push(top);
@@ -3585,6 +3585,7 @@ impl Batch {
         }
         let params = self.block(&params)?;
         let pa = address(&params.buffer)?;
+        let capturing = self.capture.is_some();
         let prog = &mut self.program;
         prog.uses.push((params.buffer.clone(), false));
         prog.rooms.relocs.extend(relocs.into_iter().map(|o| (params.buffer.clone(), o)));
@@ -3852,6 +3853,10 @@ impl Batch {
         }
         // What the jobs reach by address: resident at the launch; their own buffers, and the sort's, held to it.
         for mut j in jobs {
+            if capturing {
+                // copy: not block data (the addresses its jobs reach, which a capture binds again: `join_capture`)
+                prog.reached.extend_from_slice(&j.reached);
+            }
             prog.uses.append(&mut j.uses);
             prog.hold.append(&mut j.own);
         }
@@ -3989,7 +3994,7 @@ impl Batch {
         }
         let kit = Kit { held, resident, descs, items, phases, segs, scans: scan_levels, sorts, script, top, counts, reserved: self.reserve_arena.then(|| self.reserved.clone()).flatten(), phase_items: prog.phases, dispatches, format, uses: prog.uses, hold: prog.hold, rooms: std::mem::take(&mut prog.rooms), maps_grown: false,
                         rebase: Rebase { ca, ops, scans: arena_scans, at: (da, sa, xa), ta: self.arena.as_ref().map_or(Ok(0), |a| address(&a.buffer()))?, tt: self.arena.as_ref().and_then(|a| a.canon_buffer()).map_or(Ok(0), |b| address(&b))? },
-                        end, labels: std::mem::take(&mut prog.labels) };
+                        end, labels: std::mem::take(&mut prog.labels), reached: std::mem::take(&mut prog.reached) };
         // What its jobs reach, held while the program lives (`Ran::holds`).
         let holds = rerail_blocks::ledger::Fence::new();
         for b in kit.uses.iter().map(|(b, _)| b).chain(kit.resident.iter().map(|(b, _)| b)) {
@@ -4106,7 +4111,35 @@ impl Batch {
                 uses.extend(kit.resident.iter().map(|(b, r)| (b, !matches!(r, Reach::Read))));
                 uses.extend(kit.rooms.folds.iter().chain(&kit.rooms.dedups).map(|(_, b, _)| (b, true)));
                 uses.extend(kit.rooms.relocs.iter().map(|(b, _)| (b, true)));
+                // The words of its own buffers that hold addresses, by their structures: each descriptor's first
+                // words (`readdress`'s), each scan level's data and sums, each sort pass's buffers, each size script
+                // op's words, each segment's count.
+                let mut typed: Vec<(&'static str, u64)> = Vec::new();
+                let each = |b: &Held, size: usize, fields: &[usize], role: &'static str, typed: &mut Vec<(&'static str, u64)>| {
+                    for i in 0..b.buffer.length() as usize / size {
+                        typed.extend(fields.iter().map(|f| (role, (i * size + f) as u64)));
+                    }
+                };
+                let desc_words: Vec<usize> = (0..std::mem::offset_of!(JobDesc, at) / 8).map(|k| 8 * k).collect();
+                each(&kit.descs, std::mem::size_of::<JobDesc>(), &desc_words, "descs", &mut typed);
+                each(&kit.scans, std::mem::size_of::<ScanLevel>(), &[std::mem::offset_of!(ScanLevel, data), std::mem::offset_of!(ScanLevel, sums)], "scans", &mut typed);
+                use std::mem::offset_of as of;
+                each(&kit.sorts, std::mem::size_of::<SortPass>(), &[of!(SortPass, keys), of!(SortPass, values), of!(SortPass, hist), of!(SortPass, out_keys), of!(SortPass, out_values)], "sorts", &mut typed);
+                // A size op's `w` is an address where it has one; its `c` where it is a word of the program's (a
+                // descriptor's, a scan level's, a sort pass's, the arena's), and a constant otherwise (`Late::Abs`).
+                for (i, o) in kit.rebase.ops.iter().enumerate() {
+                    let at = (i * std::mem::size_of::<SizeOp>()) as u64;
+                    if !matches!(o.w, Late::Zero) {
+                        typed.push(("script", at + of!(SizeOp, w) as u64));
+                    }
+                    if matches!(o.c, Late::Desc(..) | Late::Scan(..) | Late::Sort(..) | Late::Arena(_)) {
+                        typed.push(("script", at + of!(SizeOp, c) as u64));
+                    }
+                }
+                each(&kit.segs, std::mem::size_of::<SegAt>(), &[of!(SegAt, count)], "segs", &mut typed);
                 let reached = super::join_capture::Reached {
+                    typed,
+                    reached: &kit.reached,
                     binds: [("descs", &kit.descs.buffer), ("items", &kit.items.buffer), ("phases", &kit.phases.buffer), ("segs", &kit.segs.buffer), ("scans", &kit.scans.buffer), ("sorts", &kit.sorts.buffer), ("script", &kit.script.buffer), ("ctl", &r.ctl.buffer.buffer), ("counts", &kit.counts.buffer)],
                     top: kit.top.as_ref().map(|t| &t.buffer.buffer),
                     holds: kit.hold.iter().map(|h| &h.buffer).collect(),
@@ -4754,6 +4787,8 @@ struct Kit {
     end: u32,
     /// Its runs, where its batch captures (`join_capture`).
     labels: Vec<super::join_capture::Label>,
+    /// The addresses its jobs reach, where its batch captures (`Program::reached`).
+    reached: Vec<u64>,
 }
 
 /// What a gate's room grew to (`RoomGrow`): its check's new cap, and the live relations grown with it (their block,
@@ -5245,6 +5280,9 @@ struct Program {
     rooms: Rooms,
     /// Its runs, where its batch captures (`Batch::label`).
     labels: Vec<super::join_capture::Label>,
+    /// The addresses its jobs reach (`Job::reach`), where its batch captures: the words of its parameters that hold
+    /// one are bound again where a replay places what they reach, as `Kit::grow_rooms` re-points them.
+    reached: Vec<u64>,
 }
 
 impl Program {
@@ -5938,6 +5976,13 @@ impl Job {
             // copy: not block data: the words of its parameter blocks its size script writes.
             self.d_caps.extend_from_slice(caps);
         }
+    }
+
+    /// An address the job's parameters hold (`a`, inside a buffer it reaches): named, as `reach`'s are, so the words
+    /// that hold it are found again (`Kit::grow_rooms`, a capture's relocations).
+    fn names(&mut self, a: u64) -> u64 {
+        self.reached.push(a);
+        a
     }
 
     /// `b`'s address `at` bytes in, which the job reaches (and writes, when `write`).
