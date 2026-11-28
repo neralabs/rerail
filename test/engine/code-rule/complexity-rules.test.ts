@@ -1,8 +1,9 @@
 /**
  * Parity of the complexity pack (packs/complexity/) with lizard, at the release its conformance.json pins. The corpus
  * under packs/complexity/upstream/lizard/fixtures/<language>/ is scored by lizard once, by hand (that directory's
- * generate.mjs), into lizard-<release>.tsv beside it; lizard is never a test or runtime dependency. Each rule must
- * report exactly the in-scope functions lizard scores above 6, with lizard's number in the message, apart from the
+ * generate.mjs), into lizard-<release>.tsv beside it; lizard is never a test or runtime dependency. Run at a ceiling of
+ * 6 (the rules' default is 50, which the corpus never reaches), each rule must report exactly the in-scope functions
+ * lizard scores above 6, with lizard's number in the message, apart from the
  * deviations listed here; a measuring variant of each rule (same counting, no threshold) must give every function
  * lizard's number, so functions at the limit and below are checked too. Test files are out of scope even where lizard
  * scores them over the limit. The conformance check judges the same rules on the findings alone
@@ -16,18 +17,27 @@ import { describe, expect, it } from "vitest";
 import { languageFor } from "../../../src/engine/code-rule/code-rule-enforcer.js";
 import { loadNativeBinding, type NativeCompiledCodeRuleDsl } from "../../../src/engine/native/native.js";
 import { loadPackRuleDocuments } from "../../../src/engine/catalog/rule-documents.js";
+import { applyCodeRuleConfig } from "../../../src/engine/code-rule/code-rule-options.js";
+import { codeRuleSchema } from "../../../src/engine/code-rule/code-rule-schema.js";
 import { requirePackFixture } from "../../../scripts/s3/pack-fixtures.mjs";
 import { repositoryPath } from "../../support/oracles.js";
 
 const CODE_RULE_DIRECTORY = fileURLToPath(new URL("../../../native/src/code_rule_dsl/", import.meta.url));
 const LIZARD = repositoryPath("packs", "complexity", "upstream", "lizard");
+const RULE_DIRECTORY = repositoryPath("packs", "complexity", "rules");
 // Pack test data, not in git (the corpus authored, in S3; the TSV derived): a checkout without it fails here, saying to
 // run `npm run fixtures:pull` and `npm run fixtures:derive`.
 const CORPUS = requirePackFixture(repositoryPath("packs", "complexity", "upstream", "lizard", "fixtures"));
 const capabilities = readFileSync(join(CODE_RULE_DIRECTORY, "capabilities.json"), "utf8");
 const runtime = loadNativeBinding().CodeRuleDslRuntime;
 
+/**
+ * The ceiling parity runs at: generate.mjs records lizard's findings at 6, below the rules' default, and each port in
+ * conformance.json sets it as its `config`.
+ */
 const LIMIT = 6;
+/** The rules' default ceiling, which a repository's `.rerail/packs.json` can change. */
+const DEFAULT_CEILING = 50;
 const RULES = {
   python: "complexity-cyclomatic-python",
   typescript: "complexity-cyclomatic-typescript",
@@ -196,17 +206,24 @@ function findings(language: CorpusLanguage, compiled: NativeCompiledCodeRuleDsl,
 }
 
 const documents = loadPackRuleDocuments([repositoryPath("packs", "complexity")]).filter(document => document.rule.id.startsWith("complexity-"));
-function ruleJson(language: CorpusLanguage): string {
+/** The shipped rule, at its default ceiling. */
+function shippedJson(language: CorpusLanguage): string {
   const document = documents.find(candidate => candidate.rule.id === RULES[language]);
   if (document === undefined) throw new Error(`${RULES[language]} is not bundled`);
   return JSON.stringify(document.rule);
 }
 
-/** The shipped rule with its threshold removed: every function is a finding whose message carries its number. */
+/** The shipped rule at the parity ceiling, `LIMIT`, set as a rule setting's `config` sets it. */
+function ruleJson(language: CorpusLanguage): string {
+  const source: unknown = JSON.parse(readFileSync(join(RULE_DIRECTORY, `${RULES[language]}.json`), "utf8"));
+  return JSON.stringify(codeRuleSchema.parse(applyCodeRuleConfig(source, { ceiling: LIMIT })));
+}
+
+/** The rule at the parity ceiling with its threshold removed: every function is a finding whose message carries its number. */
 function measuringJson(language: CorpusLanguage): string {
-  const shipped = ruleJson(language);
-  const measuring = shipped.replace(/"min":6(?=[,}])/u, '"min":0,"max":1000000');
-  expect(measuring, "the shipped count must read min 6").not.toBe(shipped);
+  const parity = ruleJson(language);
+  const measuring = parity.replace(/"min":6(?=[,}])/u, '"min":0,"max":1000000');
+  expect(measuring, "the parity count must read min 6").not.toBe(parity);
   return measuring;
 }
 
@@ -216,6 +233,11 @@ function compile(json: string): NativeCompiledCodeRuleDsl {
 }
 
 describe("complexity rule pack", () => {
+  it("runs every port's conformance at the ceiling lizard's findings are recorded at", () => {
+    const conformance = z.object({ rules: z.array(z.object({ id: z.string(), config: z.unknown() })) }).parse(JSON.parse(readFileSync(repositoryPath("packs", "complexity", "conformance.json"), "utf8")));
+    expect(Object.fromEntries(conformance.rules.map(rule => [rule.id, rule.config]))).toEqual(Object.fromEntries(LANGUAGES.map(language => [RULES[language], { ceiling: LIMIT }])));
+  });
+
   it("records the deviations against lizard's own numbers", () => {
     for (const deviation of DEVIATIONS) {
       expect(lizardRows.find(row => row.path === deviation.path && row.line === deviation.line)?.ccn ?? null, key(deviation.path, deviation.line)).toBe(deviation.lizard);
@@ -415,6 +437,39 @@ describe("complexity rule pack", () => {
     expect(starts.length).toBe(names.length);
     const expected = Object.fromEntries(starts.map((line, index) => [key(path, line), message(language, names[index], 7)]));
     expect(messages(compile(ruleJson(language)), [{ path, source }])).toEqual(expected);
+  });
+
+  /** One decision, as `OVER` writes six, and what ends the function after them. */
+  const DECISION: Record<CorpusLanguage, { decision: string; end: string }> = {
+    typescript: { decision: "if (a) {} ", end: "return 1;" },
+    javascript: { decision: "if (a) {} ", end: "return 1;" },
+    python: { decision: "if a: pass\n    ", end: "return 1" },
+    php: { decision: "if ($a) {} ", end: "return 1;" },
+    blade: { decision: "if ($a) {} ", end: "return 1;" },
+    rust: { decision: "if a {} ", end: "1" },
+    vue: { decision: "if (a) {} ", end: "return 1;" },
+    java: { decision: "if (a) {} ", end: "return 1;" },
+  };
+  /** A source whose one function, `declared`, starts on line 2 and holds `%D%`. */
+  const AT_LINE_2: Record<CorpusLanguage, { path: string; lines: string[] }> = {
+    typescript: { path: "src/ceiling.ts", lines: ["// ceiling", "export function declared(a: number) { %D% }"] },
+    javascript: { path: "src/ceiling.js", lines: ["// ceiling", "export function declared(a) { %D% }"] },
+    python: { path: "src/ceiling.py", lines: ["# ceiling", "def declared(a):", "    %D%"] },
+    php: { path: "src/ceiling.php", lines: ["<?php", "function declared($a) { %D% }"] },
+    blade: { path: "resources/views/ceiling.blade.php", lines: ["<?php", "function declared($a) { %D% }", "?>"] },
+    rust: { path: "src/ceiling.rs", lines: ["// ceiling", "fn declared(a: bool) -> i32 { %D% }"] },
+    vue: { path: "src/Ceiling.vue", lines: ["<script>", "export function declared(a) { %D% }", "</script>"] },
+    java: { path: "src/main/java/Ceiling.java", lines: ["class Ceiling {", "    int declared(boolean a) { %D% }", "}"] },
+  };
+
+  it.each(LANGUAGES)("%s: at its default, flags a function over a ceiling of 50 and not one at it", language => {
+    const { decision, end } = DECISION[language];
+    const { path, lines } = AT_LINE_2[language];
+    const source = (ccn: number) => lines.join("\n").replace("%D%", decision.repeat(ccn - 1) + end) + "\n";
+    const shipped = compile(shippedJson(language));
+    const steer = `\`declared\` has cyclomatic complexity ${DEFAULT_CEILING + 1}, over the ceiling of ${DEFAULT_CEILING}. Decompose it into smaller functions.`;
+    expect(messages(shipped, [{ path, source: source(DEFAULT_CEILING + 1) }])).toEqual({ [key(path, 2)]: steer });
+    expect(messages(shipped, [{ path, source: source(DEFAULT_CEILING) }])).toEqual({});
   });
 
   it("scopes each rule to its own language's sources outside dependency and build output", () => {

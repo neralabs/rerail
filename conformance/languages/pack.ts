@@ -49,6 +49,13 @@ const ruleSchema = z.strictObject({
    * ships, so a shipped port carries none.
    */
   examples: z.strictObject({ caught: exampleSchema, passes: exampleSchema }).optional(),
+  /**
+   * Option values the port is evaluated and scored at, as a rule setting's `config` sets them (option name to value),
+   * when the tool's recorded findings were made at another setting than the document's defaults. The complexity pack's
+   * lizard findings are recorded at a ceiling of 6, below its default of 50, so its ports set `{ "ceiling": 6 }`.
+   * Default: the document's own defaults.
+   */
+  config: z.record(nonEmpty, z.json()).optional(),
 });
 export type PackRule = z.infer<typeof ruleSchema>;
 

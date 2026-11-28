@@ -242,7 +242,7 @@ describe("Rerail steer text", () => {
   });
 
   it("names a rule by its own title, else the title its pack lists, else by nothing so its id stands", () => {
-    const packTitle = "Keep Python functions to 6 or fewer paths";
+    const packTitle = "Keep Python functions to 50 or fewer paths";
     expect(steerTitle("complexity-cyclomatic-python")).toBe(packTitle);
     expect(steerTitle("complexity-cyclomatic-python", { kind: "pack", packId: "complexity" })).toBe(packTitle);
     // A copy of a pack's rule, or a rule of yours, goes by the title it was saved with, and by none without one.

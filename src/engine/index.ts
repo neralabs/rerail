@@ -102,7 +102,8 @@ export {
   LANGUAGE_REGISTRY,
 } from "./code-rule/code-rule-languages.js";
 export { CODE_RULE_FORMAT, type CodeRule, codeRuleSchema, type CodeRuleScope } from "./code-rule/code-rule-schema.js";
-export { type CodeRuleAuditor, type CodeRuleSourceLanguage, type CodeRuleViolation, renderSteer, type RuleSteerDelivery } from "./code-rule/code-rule.js";
+export { type CodeRuleAuditor, type CodeRuleDslValue, type CodeRuleSourceLanguage, type CodeRuleViolation, renderSteer, type RuleSteerDelivery } from "./code-rule/code-rule.js";
+export { applyCodeRuleConfig } from "./code-rule/code-rule-options.js";
 export {
   asLateSteer, headlineText, messageSteer, SESSION_NOTE_MESSAGE_TYPE, sessionStartNote, steerBlock, steerHeadlines,
   steerRules, type SteerFinding, type SteerTrigger,
