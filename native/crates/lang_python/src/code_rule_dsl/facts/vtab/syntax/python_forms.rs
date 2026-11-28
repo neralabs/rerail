@@ -43,6 +43,47 @@ impl Form for PlaceTerm {
         }
         let mut guests: Vec<i64> = (0..hosted.len()).map(|r| hosted.value(r, 0)).collect();
         guests.sort_unstable();
+        let mut push = |out: &mut FormRows, n: i64, s: i64, sb: u32, [b, e]: [u32; 2], same: i64| {
+            let Some(rows) = terms.get(&s) else { return };
+            for &r in rows {
+                let t = out.text(format!("{}@{}+{}^{}", texts[r], i64::from(b) - i64::from(sb), e - b, same));
+                out.push(&[n, t]);
+            }
+        };
+        if call.keys.is_none() {
+            // Every node: one pass down each tape, a parent before its children, each node's nearest scope and
+            // count of its span's ancestors carried down from its parent's (this pass's own, let go after it).
+            for (i, p) in (&call.batch.docs).into_iter().enumerate() {
+                if call.batch.docs.withheld(i) {
+                    continue;
+                }
+                let f = p.f();
+                let mut at: Vec<(u32, [u32; 2], u32, i64, bool)> = Vec::with_capacity(p.len() as usize);
+                for local in 0..p.len() {
+                    let k = f.kind(p.node(local));
+                    let span = p.span(local);
+                    let up = p.parent(local as usize);
+                    let (scope_of, same) = if up == NONE {
+                        (NONE, 0)
+                    } else {
+                        debug_assert!(up < local, "a tape's parent before its children");
+                        let (_, uspan, uscope, usame, is_scope) = at[up as usize];
+                        (if is_scope { up } else { uscope }, if uspan == span { usame + 1 } else { 0 })
+                    };
+                    at.push((local, span, scope_of, same, scope.has(k)));
+                    if scope_of == NONE || skip.has(k) {
+                        continue;
+                    }
+                    let n = p.global(local);
+                    if guests.binary_search(&n).is_ok() {
+                        continue;
+                    }
+                    let (_, sspan, ..) = at[scope_of as usize];
+                    push(out, n, p.global(scope_of), sspan[0], span, same);
+                }
+            }
+            return Ok(());
+        }
         each_node(call.batch, call.keys, |p, local| {
             let f = p.f();
             if skip.has(f.kind(p.node(local))) {
@@ -64,12 +105,7 @@ impl Form for PlaceTerm {
                     same += 1;
                 }
                 if scope.has(f.kind(p.node(up))) {
-                    let Some(rows) = terms.get(&p.global(up)) else { return Ok(()) };
-                    let sb = p.span(up)[0];
-                    for &r in rows {
-                        let t = out.text(format!("{}@{}+{}^{}", texts[r], i64::from(b) - i64::from(sb), e - b, same));
-                        out.push(&[n, t]);
-                    }
+                    push(out, n, p.global(up), p.span(up)[0], [b, e], same);
                     return Ok(());
                 }
                 at = up;

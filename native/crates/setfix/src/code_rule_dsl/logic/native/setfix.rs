@@ -369,10 +369,11 @@ pub fn symbol_id(conn: impl Scoped, text: &str) -> Result<Option<i64>> {
 /// Intern a whole producer result without SQLite callbacks or a lock held across SQL.
 pub fn intern_batch<'a>(conn: &Connection, texts: impl IntoIterator<Item = &'a str>) -> Result<Vector<i64>> {
     let shared = symbols(conn)?;
-    let mut cursor = Interner::for_loading(&shared);
-    let ids = texts.into_iter().map(|text| cursor.id(text)).collect();
-    cursor.check()?;
-    Ok(ids)
+    // All at once (`Atoms::intern_all`): hashed outside the arena's locks, the new ones given ids under one write lock.
+    // One at a time, each new text took the write lock alone, and the chunks' threads queued on it.
+    let texts: Vec<&str> = texts.into_iter().collect();
+    let ids = shared.atoms().intern_all(&texts).map_err(|e| err(e.to_string()))?;
+    Ok(ids.iter().map(|&a| i64::from(a)).collect())
 }
 
 /// `sym_text(a)` read from `conn`'s symbols in memory, without a statement: the text of a request's atom, answered in a
