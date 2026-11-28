@@ -57,6 +57,12 @@ DELTA_GROUPS(docs_of_docs_of)
     parts_seal(blocks, 3u * n);
 }
 
+// Whether node `n` of document `r` is a statement: a counted child of the root.
+UKL_INLINE bool k0_is_statement(UKL_PRIVATE const Rr* r, uint32_t n) {
+    return n != 0u && clif_f16_parent(r->tape, r->v, n) == 0u && rr_counted(r, n);
+}
+UKL_INLINE uint32_t k0_nodes(CBlk t, CBlk docs, uint32_t k) { return (uint32_t)U64(blk(t, (uint32_t)DOC(docs, k, 3u)), SYMS_N_AT); }
+
 // Document `d`'s sizes, if the cache holds them, added to `need`, by relation.
 UKL_INLINE void room_add(CBlk cache, uint32_t d, UKL_PRIVATE uint64_t* need) {
     uint32_t at = cache_sizes(cache, d);
@@ -65,21 +71,24 @@ UKL_INLINE void room_add(CBlk cache, uint32_t d, UKL_PRIVATE uint64_t* need) {
         need[r] += U32(cache, at + CACHE_ENTRY_BYTES + 4u * r);
 }
 
-// The room a run's runs need, by relation: each gone document's kept rows and each read one's as they were, an eighth
-// more for an edit that grew. One threadgroup: a lane a document, the sums by the group's reductions.
+// The room a run's runs need, by relation: each gone document's kept rows (the cache's sizes), and each read one's
+// nodes (a K-form row names a node of its own in its relation). One threadgroup: a lane a document, the sums by the
+// group's reductions.
 DELTA_COUNT(room_of_room_of_items) { return 1u; }
 DELTA_GROUPS(room_of_room_of)
 {
     DELTA_GROUP_ITEM(one);
     CBlk cache = SLOT(0), gone = SLOT(1), docs = SLOT(2);
     Blk room = SLOT(3);
-    uint64_t need[K0_RELATIONS];
+    uint64_t need[K0_RELATIONS], nodes = 0u;
     for (uint32_t r = 0u; r < K0_RELATIONS; r++) need[r] = 0u;
     uint32_t ng = parts_len(gone), nd = docs_len(docs);
-    for (uint32_t k = lid; k < ng + nd; k += lsz) room_add(cache, k < ng ? (uint32_t)parts_get(gone, k) : (uint32_t)docs_module(docs, k - ng), need);
+    for (uint32_t k = lid; k < ng; k += lsz) room_add(cache, (uint32_t)parts_get(gone, k), need);
+    for (uint32_t k = lid; k < nd; k += lsz) nodes += k0_nodes(t, docs, k);
+    nodes = ukl_tg_reduce64(UKL_SUM_U64, nodes, lid, lsz, scratch __UKL_ARGS);
     for (uint32_t r = 0u; r < K0_RELATIONS; r++) {
         uint64_t v = ukl_tg_reduce64(UKL_SUM_U64, need[r], lid, lsz, scratch __UKL_ARGS);
-        if (lid == 0u) U64(room, BODY_AT + 8u * r) = v + v / 8u;
+        if (lid == 0u) U64(room, BODY_AT + 8u * r) = v + nodes;
     }
 }
 
@@ -280,11 +289,6 @@ UKL_INLINE uint32_t k0_places(uint32_t nd) { return K0_DOCN_AT + 4u * (nd + 1u);
     uint32_t nd = docs_len(docs);                                                                                   \
     (void)lang
 
-// Whether node `n` of document `r` is a statement: a counted child of the root.
-UKL_INLINE bool k0_is_statement(UKL_PRIVATE const Rr* r, uint32_t n) {
-    return n != 0u && clif_f16_parent(r->tape, r->v, n) == 0u && rr_counted(r, n);
-}
-UKL_INLINE uint32_t k0_nodes(CBlk t, CBlk docs, uint32_t k) { return (uint32_t)U64(blk(t, (uint32_t)DOC(docs, k, 3u)), SYMS_N_AT); }
 
 // Statement `item`'s walk's reads, its document's place and its node (from the statements' list).
 UKL_INLINE uint32_t k0_item(CBlk t, UKL_GLOBAL const uint32_t* slots, UKL_GLOBAL const uint8_t* p, uint32_t item, UKL_PRIVATE Walk* w, UKL_PRIVATE uint32_t* k) {
@@ -461,7 +465,7 @@ UKL_INLINE uint32_t k0_entry(CBlk h, uint32_t d) {
 // cache's capacity. A refused run, or one whose runs were too small, keeps no size.
 DELTA_ONE(k0_pass_keep)
 {
-    if (i != 0u) return;
+    DELTA_ITEM(one);
     CBlk control = SLOT(K0_CONTROL);
     if (U64(control, K0_REFUSED_NODE_AT) != 0xFFFFFFFFFFFFFFFFull) return;
     Blk h = SLOT(K0_CACHE);

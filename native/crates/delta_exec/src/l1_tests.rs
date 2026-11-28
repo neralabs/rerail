@@ -289,18 +289,19 @@ fn k0_pass_refuses_an_aggregate_through_l1() {
     assert!(disk.inst.heads().iter().all(Option::is_none), "a refused document writes no row");
 }
 
-/// L1's cache (Operations §6.1; Bootstrap, Figure 2): each document's sizes, kept by `k0_pass`. A cold run, from ∅,
-/// outgrows l0's runs and runs again; the cache then names l0's sizes, and an edit's run opens its runs at the room
-/// they name, in one attempt. With the cache dropped, the edit's run costs an attempt more and its change is the
-/// same, the reference's (L5).
+/// L1's cache (Operations §6.1; Bootstrap, Figure 2): each document's sizes, kept by `k0_pass`. A run's room is each
+/// read document's nodes (a bound on its rows) and each gone one's kept rows, by the cache: a cold run, from ∅, opens
+/// its runs at l0's nodes, in one attempt; the cache then names l0's sizes, and an edit's run retracts them and reads
+/// the edit, in one attempt. With the cache dropped, the edit's retraction is bounded by the kept relations' rows: one
+/// attempt still, and its change is the same, the reference's (L5).
 #[test]
-fn l1s_cache_sizes_its_runs_and_dropped_costs_an_attempt_not_an_answer() {
+fn l1s_runs_take_one_attempt_with_its_cache_or_without() {
     use crate::contract::OUTGROWN;
     let outgrown = |w: &Work| w.excess.iter().find(|e| e.0 == OUTGROWN).map_or(0, |e| e.1);
     let mut bench = Bench::new().unwrap();
     let mut disk = Disk::new(&mut bench, "b6-cache");
     let (_, cold) = disk.run(&mut bench).unwrap();
-    assert!(outgrown(&cold) > 0, "l0's k_arg rows outgrow a first room: {cold:?}");
+    assert_eq!(outgrown(&cold), 0, "a cold run's room is l0's nodes: {cold:?}");
     // The document's key (decision 0052 §3), its tape row's first column.
     let d = oracle_rows(&bench.dir, &disk.docs.tape, disk.docs.tape.head()).unwrap().first().unwrap()[0] as u32;
     {
@@ -320,7 +321,7 @@ fn l1s_cache_sizes_its_runs_and_dropped_costs_an_attempt_not_an_answer() {
     let _before = bench.dir.block(tape0.unwrap()).unwrap();
     let before: Vec<BTreeSet<Vec<i64>>> = disk.inst.outs.iter().map(|t| oracle_rows(&bench.dir, t, t.head()).unwrap()).collect();
     let (_, work) = disk.run(&mut bench).unwrap();
-    assert!(outgrown(&work) > 0, "from ∅, the edit outgrows a first room: {work:?}");
+    assert_eq!(outgrown(&work), 0, "from ∅, the edit's retraction bounded by the kept rows: {work:?}");
     let ins = [(&disk.docs.tape, tape0, disk.docs.tape.head())];
     let g = [crate::contract::GlobalIn { block: disk.atoms.0, before: Some(atoms0), after: disk.globals(&bench).count }];
     let want = reference(&disk.l1, &mut bench.cx(), &ins, &g).unwrap();

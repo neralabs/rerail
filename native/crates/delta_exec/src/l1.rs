@@ -238,15 +238,24 @@ impl L1 {
             // Only its demand moved (or a document no one wants): nothing to read or retract.
             return Ok(work);
         }
-        // The room the run needs, from the cache's sizes (`room_of`): each gone document's kept rows, and each added
-        // one's as they were, an eighth more for an edit that grew. A cache read as ∅ names none.
-        if let Some(c) = cache.read(cx)? {
-            let need = room_of(cx.ops, cx.dir, c, parts, docs)?;
-            for (k, n) in need.into_iter().enumerate() {
-                out.room(cx.dir, L1Ports::relation(k), n as usize)?;
-            }
-        }
+        // The room the run needs (`room_of`), so it never outgrows its runs and runs again: each gone document's kept
+        // rows, from the cache's sizes, and each read one's nodes, a bound on its rows. A cache read as ∅ names no
+        // gone document's: their retractions are then bounded by each kept relation's rows, read at its head.
+        let sized = cache.read(cx)?.is_some();
         let cache = cache.write(cx)?;
+        let need = room_of(cx.ops, cx.dir, cache, parts, docs)?;
+        for (k, n) in need.into_iter().enumerate() {
+            let kept = match out.kept(L1Ports::relation(k)) {
+                Some(h) if !sized && !parts.is_empty() => {
+                    let l = cx.dir.read("a kept relation's rows", &[h])?;
+                    let table = l.table();
+                    let v = View::chain(&table, Some(h.0), RELATIONS[k].1)?;
+                    Read::end(&v).get() as usize
+                }
+                _ => 0,
+            };
+            out.room(cx.dir, L1Ports::relation(k), n as usize + kept)?;
+        }
         work.rows_read += parts.len() as u64;
         for k in outs::<L1Ports>() {
             if let Some(kept) = out.kept(k) {

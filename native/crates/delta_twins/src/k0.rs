@@ -541,27 +541,35 @@ pub const O_GONE: usize = 1;
 pub const O_DOCS: usize = 2;
 pub const O_ROOM: usize = 3;
 
-/// The room a run's runs need, from L1's cache: each gone document's kept rows, and each read one's as they were, by
-/// relation (the sizes `keep` kept), an eighth more for an edit that grew.
+/// The room a run's runs need, by relation: each gone document's kept rows, from L1's cache (the sizes `keep` kept;
+/// none for a document it holds no sizes of), and each read one's nodes: a K-form row names a node of its own in its
+/// relation (a clause, a literal, an argument, a term), so a document gives each relation no more rows than it has
+/// nodes, whatever the cache holds.
 pub fn room(bytes: &[u8]) -> [u64; R] {
     core::array::from_fn(|r| word::<u64>(bytes, BODY_AT + 8 * r))
 }
 
+/// Document `i`'s nodes, as its symbols block counts them (read where it lies, by reference).
+fn doc_nodes(table: &Table<'_>, docs: &[u8], i: usize) -> u64 {
+    let syms = table.block(word::<u64>(docs, DOCS_AT + 8 * (DOC_WORDS * i + 3)) as u32).expect("a symbols block, reached by reference");
+    crate::intern::count(syms) as u64
+}
+
 /// `room_of`'s one item.
 fn room_of(c: &mut Ctx<'_, '_, '_>, _: Tile) {
+    let table = c.table;
     let ([cache, gone, docs], [room]) = c.views([O_CACHE, O_GONE, O_DOCS], [O_ROOM]);
     let mut need = [0u64; R];
-    let mut add = |d: i64| {
+    for d in crate::drop::parts(gone) {
         if let Some(s) = crate::cache::sizes(cache, d as u32) {
             for (n, &k) in need.iter_mut().zip(s) {
                 *n += u64::from(k);
             }
         }
-    };
-    crate::drop::parts(gone).for_each(&mut add);
-    (0..docs_n(docs)).for_each(|i| add(docs_module(docs, i)));
+    }
+    let nodes: u64 = (0..docs_n(docs)).map(|i| doc_nodes(table, docs, i)).sum();
     for (r, n) in need.into_iter().enumerate() {
-        set_word::<u64>(room, BODY_AT + 8 * r, n + n / 8);
+        set_word::<u64>(room, BODY_AT + 8 * r, n + nodes);
     }
 }
 

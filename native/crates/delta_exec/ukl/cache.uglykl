@@ -7,7 +7,7 @@
 
 DELTA_ONE(cache_open_open)
 {
-    if (i != 0u) return;
+    DELTA_ITEM(one);
     Blk h = SLOT(0);
     uint64_t from = PARAMS(CacheP).state;
     bool held = U64(h, CACHE_OPEN_AT) == 0u && U64(h, CACHE_STATE_AT) == from;
@@ -22,7 +22,7 @@ DELTA_ONE(cache_open_open)
 
 DELTA_ONE(cache_commit_commit)
 {
-    if (i != 0u) return;
+    DELTA_ITEM(one);
     Blk h = SLOT(0);
     U64(h, CACHE_STATE_AT) = PARAMS(CacheP).state;
     U64(h, CACHE_OPEN_AT) = 0u;

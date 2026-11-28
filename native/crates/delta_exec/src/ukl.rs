@@ -440,22 +440,27 @@ fn intern_cold_case(dir: &mut Directory) -> Case {
     Case { slots: slots.to_vec(), params: p.to_vec() }
 }
 
+/// Documents of `srcs`, parsed and interned, document `k` of module `module(k)`: a docs block over them, bound.
+fn k0_docs(cpu: &Runner, dir: &mut Directory, atoms: crate::sym::Atoms, srcs: &[&str], module: impl Fn(usize) -> i64) -> crate::k0::DocsIn {
+    let mut blobs = crate::files::BlobRows::new();
+    let mut docs = Vec::new();
+    for (k, src) in srcs.iter().enumerate() {
+        let ids = crate::files::doc_of(cpu, dir, &mut blobs, src).expect("a document");
+        let place = |dir: &Directory, blobs: &crate::files::BlobRows, id| blobs.get(dir, id).unwrap().expect("a blob housed");
+        let (s, t) = (place(dir, &blobs, &ids.source), place(dir, &blobs, &ids.tape));
+        let path = format!("m{k}.rerail");
+        let syms = crate::intern::intern(cpu, dir, &mut blobs, atoms, s, t, &path, &path[..2]).expect("interned");
+        docs.push(crate::k0::K0Doc { module: module(k), src: s, tape: t, syms: place(dir, &blobs, &syms).block });
+    }
+    crate::k0::DocsIn::of(dir, &docs).expect("the docs")
+}
+
 /// Documents `srcs` read, interned and listed for `k0_pass` (module `k + 1` each), its launch over them with control
 /// at room for two statements (`count` grows it) and a cache holding document 2's sizes and a gone document's.
 fn k0_launch(dir: &mut Directory, srcs: &[&str]) -> Case {
     let cpu = Runner::new().expect("the CPU's runner");
-    let mut blobs = crate::files::BlobRows::new();
     let atoms = crate::sym::Atoms::new(dir);
-    let mut docs = Vec::new();
-    for (k, src) in srcs.iter().enumerate() {
-        let ids = crate::files::doc_of(&cpu, dir, &mut blobs, src).expect("a document");
-        let place = |dir: &Directory, blobs: &crate::files::BlobRows, id| blobs.get(dir, id).unwrap().expect("a blob housed");
-        let (s, t) = (place(dir, &blobs, &ids.source), place(dir, &blobs, &ids.tape));
-        let path = format!("m{k}.rerail");
-        let syms = crate::intern::intern(&cpu, dir, &mut blobs, atoms, s, t, &path, &path[..2]).expect("interned");
-        docs.push(crate::k0::K0Doc { module: k as i64 + 1, src: s, tape: t, syms: place(dir, &blobs, &syms).block });
-    }
-    let d = crate::k0::DocsIn::of(dir, &docs).expect("the docs");
+    let d = k0_docs(&cpu, dir, atoms, srcs, |k| k as i64 + 1);
     let control = dir.make_capped(kind::CONTROL, k0_twin::control_bytes(2), 0, 1 << 20);
     {
         let b = dir.block(control).expect("just made");
@@ -645,7 +650,8 @@ fn merge_launch(dir: &mut Directory, layers: &[Vec<(Vec<i64>, i32)>]) -> Case {
     Case { slots: vec![head, out, scratch], params: params(rerail_delta_twins::trace::MergeP { head: head.0, count: 2, below, pad: 0 }) }
 }
 
-/// A cache holding the sizes of documents 1, 2 and 5; 5 and 7 gone, 1 and 3 read: the room 1's and 5's take.
+/// A cache holding the sizes of documents 1, 2 and 5; 5 and 7 gone, 1 and 3 read: the room 5's kept rows take, and 1's
+/// and 3's nodes.
 fn room_of_case(dir: &mut Directory) -> Case {
     let cpu = Runner::new().expect("the CPU's runner");
     let c = OpCache(dir.make(kind::CACHE, cache_twin::CACHE_BYTES + 256));
@@ -661,10 +667,10 @@ fn room_of_case(dir: &mut Directory) -> Case {
         set_word::<u64>(bytes, BODY_AT, (cache_twin::CACHE_BYTES + cache_twin::used(bytes)) as u64);
     }
     let gone = Parts::write(dir, 2, |put| [5, 7].into_iter().for_each(put)).expect("a parts block");
-    let doc = |module| DocAt { module, source: 0, tape: 0, syms: 0, src: (0, 0), at: (0, 0) };
-    let docs = docs_block(dir, 2, &[doc(1), doc(3)]);
+    let atoms = crate::sym::Atoms::new(dir);
+    let docs = k0_docs(&cpu, dir, atoms, &["e(1, 2).\np(x) :- e(x, _).\n", "q(\"s\").\n"], |k| [1, 3][k]);
     let room = dir.make(kind::CONTROL, 8 * k0_twin::R);
-    Case { slots: vec![c.0, gone.id(), docs, room], params: vec![] }
+    Case { slots: vec![c.0, gone.id(), docs.first, room], params: vec![] }
 }
 
 /// A document set of 1, 2, 3 and 4, 2 gone since: the blocks of 1's and 4's blobs and 3's source; 3 missing its tape.
