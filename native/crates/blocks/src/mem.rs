@@ -324,14 +324,11 @@ pub(crate) mod tests {
         let page = crate::block::PAGE;
         let p = super::reserve(4 * page);
         assert!(super::written_runs(p as usize, 4 * page).is_empty(), "a reservation unwritten");
-        // SAFETY: the reservation's second and third pages.
-        unsafe {
-            p.add(page + 8).write(1);
-            p.add(2 * page + 8).write(1);
-        }
+        // SAFETY: the reservation's second and third pages, whole (each a whole number of the system's pages: 16 KB
+        // on macOS, 4 KB on Linux).
+        unsafe { std::ptr::write_bytes(p.add(page), 1, 2 * page) };
         let runs = super::written_runs(p as usize, 4 * page);
-        assert_eq!(runs.len(), 1, "one run: {runs:?}");
-        assert!(runs[0].0 <= page + 8 && runs[0].0 + runs[0].1 >= 2 * page + 9 && runs[0].0 + runs[0].1 <= 3 * page, "{runs:?}");
+        assert_eq!(runs, vec![(page, 2 * page)], "one run, the pages written");
         let inside = super::written_runs(p as usize + page + 4, 2 * page);
         assert!(inside[0].0 == 0 && inside.iter().map(|r| r.1).sum::<usize>() <= 2 * page, "{inside:?}");
         // SAFETY: the reservation's, released once.
