@@ -1,8 +1,9 @@
 /**
  * One Claude Code session whose hooks name two model folders, against a daemon of this build and the hooks set-up
  * registers. First an update while one of the session's hooks waited for a busy daemon: the hook leaves its event
- * untaken with the model folder of the version it ran, the person runs the stop and start the update asks for, and the
- * new daemon checks that event beside the hooks of the new version, which name the new version's folder. Then
+ * untaken with the model folder of the version it ran, a hook of the new version leaves its own behind it, the person
+ * runs the stop and start the update asks for, and the new daemon checks the two together, then the hooks of the new
+ * version, which name the new version's folder. Then
  * `RERAIL_MODEL_PATH` set as the session starts and unset when it is resumed. Every event of the session is recorded,
  * in the one runtime it opened in; before, each one after that runtime opened was refused (`Rerail session <id> is
  * already owned by a live runtime`), the hook answered `{}` with exit code 0, and nothing was recorded.
@@ -264,7 +265,7 @@ const seen = (ran: Ran) => ({ code: ran.code, stderr: ran.stderr });
 const ANSWERED = { code: 0, stderr: "" };
 
 describe("one session whose hooks name two model folders, against a daemon", () => {
-  it("records every hook of a session after an update while one of its events waited for a busy daemon, and the event that waited", async () => {
+  it("records every hook of a session after an update while one of its events waited for a busy daemon, and the events that waited", async () => {
     const m = await Machine.made();
     const first = m.placeVersion(FIRST);
     m.placeVersion(NEXT);
@@ -287,6 +288,11 @@ describe("one session whose hooks name two model folders, against a daemon", () 
       const update = await m.rerail(["update"]);
       expect(update.code, `${update.stdout}\n${update.stderr}`).toBe(0);
       expect(realpathSync.native(join(m.home, "current"))).toBe(realpathSync.native(m.packageOf(NEXT)));
+      // A hook of the next version before the stop: the event that waited is still the stopped daemon's, so this hook
+      // leaves its event behind it at once, with the next version's model folder. The new daemon's first pass hands on
+      // both together.
+      expect(seen(await s.read()).code).toBe(0);
+      expect(m.untaken()).toHaveLength(2);
       expect((await m.rerail(["daemon", "stop"])).code).toBe(0);
       const restarted = await m.rerail(["daemon", "start"]);
       expect(restarted.stdout, restarted.stderr).toContain(`Rerail daemon ${NEXT} running`);
