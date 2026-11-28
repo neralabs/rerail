@@ -2082,6 +2082,73 @@ DEFINE_KERNEL2(tier2, {p}lanes,
     s[0] = status;
     s[1] = n;
 }}
+
+typedef struct {p}SArgs {{
+    uint32_t n;
+    uint32_t low;
+    uint32_t up;
+    uint32_t end;
+}} {p}SArgs;
+UKL_REFLECT_STRUCT({p}SArgs, n, low, up, end)
+
+// Pass 3's up-sweep (`tree`), a level a launch: node `i` of the level above `n` summaries (their headers from node
+// `low` of `tree`, `SUM` words each) the composition of two of them, the last alone where they are odd (its header
+// taken, its lanes the same), at node `up + i`. `raw` is the scratch of a composition, `2 * LANES * LANES` words a node.
+DEFINE_KERNEL2(tier2, {p}up,
+               ARGS,     {p}SArgs, args, ,
+               RWBUFFER, uint32_t, pool, "[pool]",
+               RWBUFFER, uint32_t, tree, "[nodes * SUM]",
+               RWBUFFER, uint32_t, raw,  "[(n + 1) / 2 * 2 * LANES * LANES]",
+               GID0,     uint32_t, i,    )
+{{
+    if (i >= (args.n + 1u) / 2u)
+        return;
+    UKL_GLOBAL uint32_t* low = tree + args.low * {p}SUM;
+    UKL_GLOBAL uint32_t* up = tree + (args.up + i) * {p}SUM;
+    if (2u * i + 1u < args.n) {{
+        ukl_lane_compose(pool, low + 2u * i * {p}SUM, low + (2u * i + 1u) * {p}SUM, raw + i * 2u * {p}LANES * {p}LANES, up, {p}LANES);
+    }} else {{
+        for (uint32_t k = 0u; k < {p}SUM; k++)
+            up[k] = low[2u * i * {p}SUM + k];
+    }}
+}}
+
+// Pass 3's root: the file's start the state at the tree's top (node `up`, its state at `states[up]`), and the file's end
+// (`states[end]`) the state its summary leaves after it. A tree past its room: `FULL` at both.
+DEFINE_KERNEL2(tier2, {p}root,
+               ARGS,     {p}SArgs, args,   ,
+               RWBUFFER, uint32_t, pool,   "[pool]",
+               ROBUFFER, uint32_t, tree,   "[nodes * SUM]",
+               RWBUFFER, uint32_t, states, "[nodes + 1]",
+               GID0,     uint32_t, i,      )
+{{
+    if (i != 0u)
+        return;
+    UKL_GLOBAL const uint32_t* top = tree + args.up * {p}SUM;
+    uint32_t start = top[0] != 0u ? UKL_LANE_FULL : ukl_at_new(pool, 0u, 0u);
+    states[args.up] = start;
+    states[args.end] = start == UKL_LANE_FULL ? start : ukl_lane_apply(pool, top, start);
+}}
+
+// Pass 3's down-sweep (`entries`), a level a launch: node `c` of a level of `n` (from node `low`) its state from its
+// parent's (from node `up`): a left child's its parent's, a right child's its state through its left sibling's
+// summary (`apply`), each as the node's range reads it (`keep`). `NONE` where no lane meets it, `FULL` past the room.
+DEFINE_KERNEL2(tier2, {p}down,
+               ARGS,     {p}SArgs, args,   ,
+               RWBUFFER, uint32_t, pool,   "[pool]",
+               ROBUFFER, uint32_t, tree,   "[nodes * SUM]",
+               RWBUFFER, uint32_t, states, "[nodes + 1]",
+               GID0,     uint32_t, c,      )
+{{
+    if (c >= args.n)
+        return;
+    uint32_t at = states[args.up + c / 2u];
+    if (at < UKL_LANE_FULL && c % 2u == 1u)
+        at = ukl_lane_apply(pool, tree + (args.low + c - 1u) * {p}SUM, at);
+    if (at < UKL_LANE_FULL)
+        at = ukl_lane_keep(pool, at, tree + (args.low + c) * {p}SUM);
+    states[args.low + c] = at;
+}}
 "#
     );
     Ok(out)

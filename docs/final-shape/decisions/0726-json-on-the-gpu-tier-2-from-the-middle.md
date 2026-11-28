@@ -186,6 +186,14 @@ bump (its layout in the header); a chunk's frames, its writes into its entry's f
 first record and its number, so no chunk's room meets another's. A chunk past its room (more than 64 lanes before they
 fold, 16 after, its pool, frames or levels) says so in its status, and the run is made again with more.
 
+Pass 3 runs on those lanes (`json_t2_up`, `json_t2_root`, `json_t2_down`): the summaries' tree up, a level a launch,
+a node the composition of two below (`ukl_lane_compose`: each lane then each, `ukl_lane_then`, each once, folded),
+the last of an odd level its header taken (the same lanes, not a copy of them); the file's start at the top and the
+file's end through the root; then the states down it, a level a launch, a right child's through its left sibling
+(`ukl_lane_apply`), each as its range reads it (`ukl_lane_keep`). A state is a record of words in the same pool
+(`At`'s fields; its levels innermost last, its frames outermost first); one no lane meets is `NONE`, one past the room
+`FULL`. The launches are a tree's height twice, plus one: the phases on one persistent grid make them a fixed count.
+
 ### 7. Every chunk on its own, in any order
 
 The user (2026-11-27): "run the blocks in random order (including the prefix sum). This should allow us to validate the
@@ -205,8 +213,8 @@ scan round, each chunk a thread or a group.
 ### 8. Still to build (the design's stages)
 
 - S6's scan of the piece lengths and its tail as device phases (the pieces' count and write are built).
-- Pass 3 (the summaries' tree, `compose` and `apply` down it) on the device, on `<ukl/lanes_mid.h>`'s lanes; the
-  blocks made (`make_blocks`) and the tape ended (`end_middle`) there.
+- The blocks made (`make_blocks`) and the tape ended (`end_middle`) on the device; pass 2 reading pass 3's states
+  where they lie in the pool.
 - The phases as one program on the work queue, a fixed number of launches.
 
 ## Tests
@@ -226,7 +234,8 @@ and every chunk's summary from them is the summary of pass 1 reading each token 
 `rerail-gpu`'s `json_tier2_lanes_are_its_rust`: pass 1 on the device, 9 files (the tier 1 cases and nests 60 deep,
 mixed, and closers that do not match) in chunks of 1, 3 and 16 records (12,381 chunks, 28,944 lanes, 3,749
 refusals): each chunk's lanes are `summaries`', lane for lane, on UKL's CPU backend and on Metal on the M3 Max and
-the M1 Max. `rerail-gpu`'s `lz4_blocks_encode_greedily`: 26 blocks (0 to 70,000 bytes: matches at every distance, short and long,
+the M1 Max. `json_tier2_entries_are_its_rust`: pass 3 on the device on pass 1's lanes there, the same runs (12,408
+states): each chunk's state and the file's end are `entries`', state for state, on the same three. `rerail-gpu`'s `lz4_blocks_encode_greedily`: 26 blocks (0 to 70,000 bytes: matches at every distance, short and long,
 runs, noise, and one byte repeated), each encoded by a group to the bytes of the serial parse (`lz4_greedy`), which
 LZ4's `LZ4_decompress_safe` decodes to the block; on UKL's CPU backend, compiled and on the vector path. The tape test also stores each tape from the middle (90, in order) as 16z by `z_of` and the greedy encoder (129,819
 bytes to 69,804): each loads as a 16z tape and decodes to its tape. `rerail-gpu`'s `z_pieces_encode_in_place`: JSON
