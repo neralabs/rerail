@@ -109,6 +109,26 @@ fn main() {
         println!("loop tops by masks: {files} files, {same} blocks the walk's, {differ} files with a block that differs");
         return;
     }
+    if only == Some("scan") {
+        // Pass 3 of the walk in fixed-size lanes against the scan by `Sym`, over the summaries by masks.
+        for blocks in [1, 3, 16] {
+            let (mut same, mut waits, mut bad) = (0, 0, 0);
+            for (p, b) in &all {
+                if let Some((s, w, first)) = strata::middle::walk_scan_is_syms(b, blocks, &strata::middle::in_order) {
+                    same += s;
+                    waits += w;
+                    if let Some(e) = first {
+                        bad += 1;
+                        if bad <= 3 {
+                            println!("{} :: {e}", p.strip_prefix(dir).unwrap_or(p).display());
+                        }
+                    }
+                }
+            }
+            println!("chunks of {blocks} blocks: the walk's scan in fixed size: {same} entries the scan by Sym's, {waits} it does not know (the chunk waits), {bad} files with one that differs");
+        }
+        return;
+    }
     if only == Some("chunked") {
         // From the middle: each file in chunks of 1, 2, 3 and 16 blocks, each from the one before's exit, against the
         // serial lexer (variant B's).

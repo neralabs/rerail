@@ -7,8 +7,11 @@ rustflags = ["-C", "target-feature=+crt-static"]
 # The x86-64 baseline the engine targets has AVX2: x86-64-v3 (AVX2, BMI1 and BMI2, LZCNT, FMA, MOVBE). Without it a
 # build is SSE2 only, and the vector code's byte shuffles (`rerail_simd`'s `swizzle_dyn`, `pshufb` from SSSE3) and
 # variable shifts compile to loops of bytes, with branches. Cargo joins the flags of every `cfg` table that matches.
+# LLVM's x86 cmov converter by default turns every conditional move with a memory operand into a branch around the
+# load (`-x86-cmov-converter-force-mem-operand`), a `select_unpredictable` too: the branch-free passes (decision 0698)
+# need their selections kept as selections.
 [target.'cfg(target_arch = "x86_64")']
-rustflags = ["-C", "target-cpu=x86-64-v3"]
+rustflags = ["-C", "target-cpu=x86-64-v3", "-C", "llvm-args=-x86-cmov-converter-force-mem-operand=false"]
 
 # SQLite's memory statistics take one process-wide mutex on every allocation and free, which
 # serializes the content store connections that evaluation workers read through. Nothing reads

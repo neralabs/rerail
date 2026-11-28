@@ -983,3 +983,24 @@ statements and blocks end.
       on x86-64, `select_unpredictable` too.
     - **As tested on x86-64** (a Linux host): `check_strata_branch_free.sh` gives 0 conditional branches and 0 calls
       in `block_map`, `then_block` and both instances of `walk_block`; `classes_over` keeps its loop's two.
+110. **The walk's pass 3 in fixed-size lanes, with no branch** (as built: `middle::WLane`, `then_walk`,
+    `walk_entries_in`).
+    - **A lane:** what it is (it goes on, it refuses, or masks do not know it), its exit, its refusal, up to 8
+      levels it opens (`own`), `t`, up to 8 reads of its entry, and its tokens and extras. A lane of pass 1 whose
+      levels or reads do not fit is not known.
+    - **Lane `a` then summary `b`** (`then_lane`, `Sym::then` in a fixed size): `b`'s lane of `a`'s exit, chosen by
+      selections. Each of its reads of its entry, written out 8 times: not known where one of `a`'s levels is in
+      it, else the read after `a`'s top, kept once. `a`'s levels at most `b`'s `t`, a prefix since they increase,
+      then `b`'s own. The levels `b` closes are dedents. More than the arrays hold is not known, so the chunk waits
+      for its entry, as in 0715. A lane that refuses or is not known stays as it is.
+    - **The scan** (`walk_entries_in`) is Hillis and Steele's over `then_walk`, as before. The scan by `Sym`
+      (`walk_entries_by_sym`, over `compose_walk`) stays as the oracle.
+    - **x86-64:** LLVM's cmov converter turns every conditional move with a memory operand into a branch around the
+      load, `select_unpredictable`'s too. So x86-64 builds turn that off
+      (`-x86-cmov-converter-force-mem-operand=false`, `.cargo/config.toml`).
+    - **As tested:** `walk_scan_is_syms`: every entry of the fixed-size scan is the scan by `Sym`'s, over the
+      summaries by masks, for the test texts at 1, 2, 3 and 16 blocks and 600 random texts of lines at 1, 2 and 3,
+      each scan in seeded random orders. Over the corpus none differs and none is lost to the fixed sizes (59840
+      entries known at 1 block a chunk, 20546 at 3, 4557 at 16). The corpus lexed from the middle is still the
+      serial lexer's in 1644 of 1644 files. `check_strata_branch_free.sh` gives `then_walk` 0 conditional branches
+      and 0 calls on AArch64 and x86-64, and the crate's tests pass on both.

@@ -1138,6 +1138,135 @@ pub fn compose_walk(a: &WalkSummary, b: &WalkSummary) -> WalkSummary {
     })
 }
 
+/// What a walk lane is: it goes on, it refuses, or masks do not know it.
+const GOES: u8 = 0;
+const REFUSED: u8 = 1;
+const UNKNOWN: u8 = 2;
+
+/// A walk lane in a fixed size, for pass 3's composition (`then_walk`): `Sym`'s levels and reads in arrays, at most
+/// `OWN` and `CONDS` (more is not known: the chunk then waits for its entry), and the lane's kind, exit, refusal and
+/// counts.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct WLane {
+    kind: u8,
+    exit: u8,
+    refusal: Refusal,
+    len: usize,
+    own: [u32; OWN],
+    t: i64,
+    nconds: usize,
+    conds: [(i64, i64); CONDS],
+    toks: usize,
+    extras: usize,
+}
+
+/// A chunk's walk summary in fixed-size lanes.
+pub type WLanes = [WLane; 3];
+
+const W_UNKNOWN: WLane =
+    WLane { kind: UNKNOWN, exit: 0, refusal: Refusal::TooLarge, len: 0, own: [0; OWN], t: i64::MAX, nconds: 0, conds: [(0, 0); CONDS], toks: 0, extras: 0 };
+
+impl WLane {
+    /// A lane of pass 1 in a fixed size: not known where its levels or reads do not fit.
+    pub fn of(l: &WalkLane) -> WLane {
+        let (kind, exit, refusal, sym, toks, extras) = match l {
+            WalkLane::Goes { exit, sym, toks, extras } => (GOES, *exit, Refusal::TooLarge, sym, *toks, *extras),
+            WalkLane::Refused(r, sym) => (REFUSED, 0, *r, sym, 0, 0),
+            WalkLane::Unknown => return W_UNKNOWN,
+        };
+        if sym.own.len() > OWN || sym.conds.len() > CONDS {
+            return W_UNKNOWN;
+        }
+        let mut w = WLane { kind, exit, refusal, len: sym.own.len(), t: sym.t, nconds: sym.conds.len(), toks, extras, ..W_UNKNOWN };
+        w.own[..sym.own.len()].copy_from_slice(&sym.own);
+        w.conds[..sym.conds.len()].copy_from_slice(&sym.conds);
+        w
+    }
+
+    /// The lane's entry from the text's start (indents `[0]`): its `open`, `header`, indents and counts.
+    fn entry(&self) -> WalkEntry {
+        let held = (0..self.nconds).all(|i| !(self.conds[i].0 <= 0 && 0 <= self.conds[i].1));
+        match self.kind {
+            GOES if held => {
+                let (open, header) = COMBOS[usize::from(self.exit)];
+                let mut indents: Vec<u32> = if self.t >= 0 { vec![0] } else { Vec::new() };
+                indents.extend(&self.own[..self.len]);
+                WalkEntry::At { open, header, indents, toks: self.toks + usize::from(self.t < 0), extras: self.extras }
+            }
+            REFUSED if held => WalkEntry::Refused(self.refusal),
+            _ => WalkEntry::Unknown,
+        }
+    }
+}
+
+/// Lane `a` then the summary `b` (`Sym::then` in a fixed size): no branch. `a` goes on into `b`'s lane of its exit;
+/// that lane's reads of its entry must hold for every entry of `a` (none of `a`'s levels in one), and are `a`'s after
+/// `a`'s top; `a`'s levels `b` closes go (a dedent each), and `b`'s own follow. More than the arrays hold is not known.
+#[inline(always)]
+fn then_lane(a: &WLane, b: &WLanes) -> WLane {
+    let bl = *pick(a.exit == 2, &b[2], pick(a.exit == 1, &b[1], &b[0]));
+    let level = |i: usize| i64::from(a.own[i]);
+    let (mut conds, mut n) = (a.conds, a.nconds);
+    // `CONDS` steps, written out (a loop of them stays a loop).
+    const _: () = assert!(CONDS == 8);
+    let mut bad = false;
+    bad |= then_cond(a, &bl, 0, &mut conds, &mut n);
+    bad |= then_cond(a, &bl, 1, &mut conds, &mut n);
+    bad |= then_cond(a, &bl, 2, &mut conds, &mut n);
+    bad |= then_cond(a, &bl, 3, &mut conds, &mut n);
+    bad |= then_cond(a, &bl, 4, &mut conds, &mut n);
+    bad |= then_cond(a, &bl, 5, &mut conds, &mut n);
+    bad |= then_cond(a, &bl, 6, &mut conds, &mut n);
+    bad |= then_cond(a, &bl, 7, &mut conds, &mut n);
+    // `a`'s levels are increasing: those at most `b`'s `t` are a prefix.
+    let keep = (0..OWN).fold(0, |k, i| k + usize::from((i < a.len) & (level(i) <= bl.t)));
+    let mut own = [0u32; OWN];
+    for (k, o) in own.iter_mut().enumerate() {
+        let j = k.wrapping_sub(keep);
+        *o = pick(k < keep, a.own[k], pick(j < bl.len, bl.own[j & (OWN - 1)], 0));
+    }
+    let len = keep + bl.len;
+    bad |= len > OWN;
+    let composed = WLane {
+        kind: pick(bad, UNKNOWN, bl.kind),
+        exit: bl.exit,
+        refusal: bl.refusal,
+        len: len.min(OWN),
+        own,
+        t: a.t.min(bl.t),
+        nconds: n,
+        conds,
+        toks: a.toks + bl.toks + (a.len - keep),
+        extras: a.extras + bl.extras,
+    };
+    // A lane that refuses, or that masks do not know, stays as it is.
+    pick(a.kind == GOES, composed, *a)
+}
+
+/// `b`'s read `j` of its entry after lane `a` (where `b` has one): whether one of `a`'s levels is in it (the
+/// composition is not known), else the read after `a`'s top, kept once in `conds` (more than it holds: not known).
+#[inline(always)]
+fn then_cond(a: &WLane, b: &WLane, j: usize, conds: &mut [(i64, i64); CONDS], n: &mut usize) -> bool {
+    let on = j < b.nconds;
+    let (lo, hi) = b.conds[j];
+    let level = |i: usize| i64::from(a.own[i]);
+    let hit = (0..OWN).fold(false, |h, i| h | ((i < a.len) & (lo <= level(i)) & (level(i) <= hi)));
+    let c = (lo, hi.min(a.t));
+    let dup = (0..CONDS).fold(false, |d, i| d | ((i < *n) & (conds[i] == c)));
+    let add = on & (c.0 <= c.1) & !dup;
+    let full = add & (*n == CONDS);
+    let at = (*n).min(CONDS - 1);
+    conds[at] = pick(add, c, conds[at]);
+    *n = pick(add, (*n + 1).min(CONDS), *n);
+    (on & hit) | full
+}
+
+/// Summary `a` then summary `b`, each lane: pass 3's composition, no branch.
+#[inline(never)]
+pub fn then_walk(a: &WLanes, b: &WLanes) -> WLanes {
+    [then_lane(&a[0], b), then_lane(&a[1], b), then_lane(&a[2], b)]
+}
+
 /// A chunk's walk entry by pass 3: its `open`, `header` and indents, and the tokens and extras the chunks before it
 /// wrote.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -1147,9 +1276,25 @@ pub enum WalkEntry {
     Unknown,
 }
 
-/// Pass 3 of the walk: each chunk's walk entry, by Hillis and Steele's scan of the summaries' compositions, each
-/// round's chunks in `order`'s order.
+/// Pass 3 of the walk: each chunk's walk entry, by Hillis and Steele's scan of the summaries' compositions in fixed
+/// size (`then_walk`, no branch), each round's chunks in `order`'s order.
 pub fn walk_entries_in(sums: &[WalkSummary], order: Order<'_>) -> Vec<WalkEntry> {
+    let mut acc: Vec<WLanes> = sums.iter().map(|s| s.each_ref().map(WLane::of)).collect();
+    let mut d = 1;
+    while d < acc.len() {
+        acc = each(acc.len(), order, |c| if c < d { acc[c] } else { then_walk(&acc[c - d], &acc[c]) });
+        d *= 2;
+    }
+    each(acc.len(), order, |c| {
+        if c == 0 {
+            return WalkEntry::At { open: false, header: false, indents: vec![0], toks: 0, extras: 0 };
+        }
+        acc[c - 1][0].entry()
+    })
+}
+
+/// Pass 3 of the walk by `Sym` (the oracle of `walk_entries_in`): the same scan by `compose_walk`.
+pub fn walk_entries_by_sym(sums: &[WalkSummary], order: Order<'_>) -> Vec<WalkEntry> {
     let mut acc = sums.to_vec();
     let mut d = 1;
     while d < acc.len() {
@@ -1412,6 +1557,40 @@ pub fn layout_is_the_walks(src: &[u8], blocks: usize) -> Option<(usize, usize, O
         }
     }
     Some((same, unknown, None))
+}
+
+/// The oracle of pass 3's fixed-size scan (`walk_entries_in`): for a text in chunks of `blocks` blocks, with the
+/// summaries by masks (as `lex_middle` makes them), each chunk's entry against the scan by `Sym`
+/// (`walk_entries_by_sym`). The entries the same, those the fixed sizes do not know where `Sym` does (the chunk waits),
+/// and the first that differs. None where the strata do not read the text.
+pub fn walk_scan_is_syms(src: &[u8], blocks: usize, order: Order<'_>) -> Option<(usize, usize, Option<String>)> {
+    let n = src.len().div_ceil(64);
+    let blocks = blocks.max(1);
+    let k = n.div_ceil(blocks).max(1);
+    let range = |c: usize| (c * blocks, (c + 1) * blocks);
+    let sums: Vec<_> = (0..k).map(|c| summary_superposed(src, range(c).0, range(c).1)).collect();
+    let strata = entries_in(&sums, &|k| (0..k).collect()).into_iter().collect::<Option<Vec<_>>>()?;
+    let own: Vec<_> = (0..k).map(|c| first_top(src, range(c).0, range(c).1, strata[c].0, strata[c].1)).collect::<Option<Vec<_>>>()?;
+    let mut places = vec![Place(src.len(), true); k];
+    for c in (0..k).rev() {
+        places[c] = match own[c] {
+            _ if c == 0 => Place(0, false),
+            Some(p) => Place(p, false),
+            None => places.get(c + 1).copied().unwrap_or(Place(src.len(), true)),
+        };
+    }
+    let wsums: Vec<_> = (0..k).map(|c| walk_summary_masks(src, range(c).0, range(c).1, strata[c].0, strata[c].1, places[c], places.get(c + 1).copied())).collect();
+    let (fixed, by_sym) = (walk_entries_in(&wsums, order), walk_entries_by_sym(&wsums, order));
+    let (mut same, mut waits) = (0, 0);
+    for (c, (f, y)) in fixed.iter().zip(&by_sym).enumerate() {
+        match (f, y) {
+            (WalkEntry::Unknown, WalkEntry::Unknown) => {}
+            (WalkEntry::Unknown, _) => waits += 1,
+            (a, b) if a == b => same += 1,
+            (a, b) => return Some((same, waits, Some(format!("chunk {c} of {k}, {blocks} blocks a chunk: fixed {a:?}, by Sym {b:?}")))),
+        }
+    }
+    Some((same, waits, None))
 }
 
 #[cfg(test)]
@@ -1723,6 +1902,53 @@ mod tests {
             }
         }
         assert!(blocks > 100, "{blocks}");
+    }
+
+    #[test]
+    fn walk_scan_in_fixed_size_is_the_scan_by_sym() {
+        let mut same = 0;
+        for (i, t) in texts().iter().enumerate() {
+            for blocks in [1, 2, 3, 16] {
+                if let Some((s, _, first)) = super::walk_scan_is_syms(t.as_bytes(), blocks, &super::in_order) {
+                    same += s;
+                    if let Some(e) = first {
+                        panic!("text {i}: {e}");
+                    }
+                }
+            }
+        }
+        assert!(same > 30, "{same}");
+        // Random texts of lines, each scan's rounds in seeded random orders.
+        let mut x = 0x9e37_79b9_7f4a_7c15u64;
+        let mut rnd = |k: u64| {
+            x ^= x << 13;
+            x ^= x >> 7;
+            x ^= x << 17;
+            (x >> 8) % k
+        };
+        let pieces: [&str; 14] = ["if a:", "x = 1", "y(", "z)", "# c", "", "  ", "f(a,", "b)", "else:", "'s'", "[", "]", "def f():"];
+        for k in 0..600 {
+            let mut t = String::new();
+            for _ in 0..(5 + rnd(80)) {
+                t.push_str(["", " ", "  ", "    ", "\t", "        ", "\t "][rnd(7) as usize]);
+                t.push_str(pieces[rnd(14) as usize]);
+                let pad = rnd(16) as usize;
+                if pad > 2 {
+                    t.push_str("  #");
+                    t.push_str(&"-".repeat(pad));
+                }
+                t.push_str(["\n", "\n", "\n", "\r\n", "\n\n"][rnd(5) as usize]);
+            }
+            for blocks in [1, 2, 3] {
+                if let Some((s, _, first)) = super::walk_scan_is_syms(t.as_bytes(), blocks, &shuffled(k * 7 + blocks as u64)) {
+                    same += s;
+                    if let Some(e) = first {
+                        panic!("{e}: {t:?}");
+                    }
+                }
+            }
+        }
+        assert!(same > 3000, "{same}");
     }
 
     #[test]
