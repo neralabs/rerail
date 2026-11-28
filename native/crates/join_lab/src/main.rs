@@ -3,7 +3,7 @@
 //! - `join-lab list <capture>`: each launch, its shapes by work, its regions and bytes.
 //! - `join-lab run <capture> [--engine program] [--only <text>]`: each launch replayed on each engine, held to what
 //!   the engine's launch left; an engine that leaves otherwise is an error naming its first differing region.
-//! - `join-lab profile <capture> [--engine program] [--repeat N] [--only <text>] [-o results.tsv]`: each launch run
+//! - `join-lab profile <capture> [--engine program] [--repeat N] [--core N] [--only <text>] [-o results.tsv]`: each launch run
 //!   warm N times (loaded afresh each time, the load not timed): its best and median wall time and the thread's CPU
 //!   time, written as a results table.
 //! - `join-lab page <results.tsv> -o page.html`: the page of a profile's results.
@@ -12,7 +12,7 @@ use rerail_join_lab::{Engine, Wave};
 use std::path::Path;
 
 fn usage() -> ! {
-    eprintln!("usage: join-lab list <capture>\n       join-lab run <capture> [--engine program] [--only <text>]\n       join-lab profile <capture> [--engine program] [--repeat N] [--only <text>] [-o results.tsv]\n       join-lab page <results.tsv> -o page.html");
+    eprintln!("usage: join-lab list <capture>\n       join-lab run <capture> [--engine program] [--only <text>]\n       join-lab profile <capture> [--engine program] [--repeat N] [--core N] [--only <text>] [-o results.tsv]\n       join-lab page <results.tsv> -o page.html");
     std::process::exit(2);
 }
 
@@ -72,6 +72,11 @@ fn main() {
         "profile" => {
             let repeat = flag(&args, "--repeat").and_then(|n| n.parse().ok()).unwrap_or(5usize).max(1);
             let out = flag(&args, "-o").unwrap_or("results.tsv");
+            // On one core where the host binds a thread to one (`--core N`, Linux; the last core by default).
+            let core = flag(&args, "--core").and_then(|n| n.parse().ok()).unwrap_or_else(|| std::thread::available_parallelism().map_or(0, |n| n.get() - 1));
+            let pinned = rerail_join_lab::counters::pin(core);
+            let counted = rerail_join_lab::counters::Counters::open().is_some();
+            eprintln!("join-lab: {}, {}", if pinned { format!("pinned to core {core}") } else { "not pinned (the host binds no thread to a core)".to_owned() }, if counted { "the thread's instructions and cycles counted" } else { "no counters (the host gives none)" });
             let mut rows = vec![rerail_join_lab::Profile::header()];
             for w in waves(target, only) {
                 for e in engines(&args) {

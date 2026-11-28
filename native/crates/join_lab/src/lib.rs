@@ -7,6 +7,7 @@
 //! (`join_run`), each dispatch's groups as the phase before it set them, as the CPU device runs it; `Loaded::compare`
 //! holds what it left to what the engine's launch left.
 
+pub mod counters;
 pub mod page;
 
 use rerail_blocks::block::{Block, PAGE};
@@ -666,38 +667,44 @@ pub struct Profile {
     pub best_ms: f64,
     pub median_ms: f64,
     pub cpu_ms: f64,
+    /// The median run's instructions and cycles (`counters`), 0 where the host gives none.
+    pub instructions: u64,
+    pub cycles: u64,
     pub bytes: u64,
     pub same: bool,
 }
 
 impl Profile {
     pub fn header() -> String {
-        "launch\tengine\tdispatches\tgroups\trepeat\tbest_ms\tmedian_ms\tcpu_ms\tbytes\tsame\tshapes".to_owned()
+        "launch\tengine\tdispatches\tgroups\trepeat\tbest_ms\tmedian_ms\tcpu_ms\tinstructions\tcycles\tbytes\tsame\tshapes".to_owned()
     }
 
     pub fn tsv(&self) -> String {
         let shapes: Vec<String> = self.shapes.iter().map(|(s, r, w)| format!("{s}|{r}|{w}")).collect();
-        format!("{}\t{}\t{}\t{}\t{}\t{:.4}\t{:.4}\t{:.4}\t{}\t{}\t{}", self.launch, self.engine, self.dispatches, self.groups, self.repeat, self.best_ms, self.median_ms, self.cpu_ms, self.bytes, self.same, shapes.join(","))
+        format!("{}\t{}\t{}\t{}\t{}\t{:.4}\t{:.4}\t{:.4}\t{}\t{}\t{}\t{}\t{}", self.launch, self.engine, self.dispatches, self.groups, self.repeat, self.best_ms, self.median_ms, self.cpu_ms, self.instructions, self.cycles, self.bytes, self.same, shapes.join(","))
     }
 
     pub fn line(&self) -> String {
         let shapes: Vec<&str> = self.shapes.iter().map(|s| s.0.as_str()).collect();
-        format!("{:<16} {:<8} {:>4} disp {:>9} groups  best {:>9.3} ms  median {:>9.3} ms  cpu {:>9.3} ms  {}  {}", self.launch, self.engine, self.dispatches, self.groups, self.best_ms, self.median_ms, self.cpu_ms, if self.same { "same" } else { "DIFFERS" }, shapes.join(" "))
+        format!("{:<16} {:<8} {:>4} disp {:>9} groups  best {:>9.3} ms  median {:>9.3} ms  cpu {:>9.3} ms  {:>7.2} M instr  {:>7.2} M cycles  {}  {}", self.launch, self.engine, self.dispatches, self.groups, self.best_ms, self.median_ms, self.cpu_ms, self.instructions as f64 / 1e6, self.cycles as f64 / 1e6, if self.same { "same" } else { "DIFFERS" }, shapes.join(" "))
     }
 }
 
 /// `w` run `repeat` times on `e`, each loaded afresh (the load not timed): its wall times' best and median, the
 /// CPU time of its median run, and whether its last run left what the engine's launch left.
 pub fn profile(w: &Wave, e: Engine, repeat: usize) -> io::Result<Profile> {
+    let counters = counters::Counters::open();
+    let count = || counters.as_ref().map_or(counters::Counts::default(), counters::Counters::read);
     let mut times = Vec::with_capacity(repeat);
     let mut last = None;
     for _ in 0..repeat.max(1) {
         let mut l = w.load()?;
-        let cpu = thread_cpu();
+        let (cpu, c) = (thread_cpu(), count());
         let ran = match e {
             Engine::Program => l.run(),
         };
-        times.push((ran.seconds, thread_cpu() - cpu));
+        let (cpu, c) = (thread_cpu() - cpu, count() - c);
+        times.push((ran.seconds, cpu, c));
         last = Some((ran, l));
     }
     let (ran, l) = last.expect("a run");
@@ -715,6 +722,8 @@ pub fn profile(w: &Wave, e: Engine, repeat: usize) -> io::Result<Profile> {
         best_ms: sorted[0].0 * 1e3,
         median_ms: median.0 * 1e3,
         cpu_ms: median.1 * 1e3,
+        instructions: median.2.instructions,
+        cycles: median.2.cycles,
         bytes: w.bytes(),
         same,
     })

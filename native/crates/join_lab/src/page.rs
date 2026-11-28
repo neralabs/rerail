@@ -14,6 +14,8 @@ struct Row {
     best: f64,
     median: f64,
     cpu: f64,
+    instructions: u64,
+    cycles: u64,
     bytes: u64,
     same: bool,
     shapes: Vec<(String, String, u64)>,
@@ -23,15 +25,15 @@ fn rows(tsv: &str) -> Result<Vec<Row>, String> {
     let mut out = Vec::new();
     for (n, line) in tsv.lines().enumerate().skip(1).filter(|(_, l)| !l.is_empty()) {
         let f: Vec<&str> = line.split('\t').collect();
-        if f.len() != 11 {
-            return Err(format!("line {}: {} fields, not 11", n + 1, f.len()));
+        if f.len() != 13 {
+            return Err(format!("line {}: {} fields, not 13", n + 1, f.len()));
         }
         let num = |i: usize| f[i].parse::<f64>().map_err(|e| format!("line {}: {}: {e}", n + 1, f[i]));
-        let shapes = f[10].split(',').filter(|s| !s.is_empty()).map(|s| {
+        let shapes = f[12].split(',').filter(|s| !s.is_empty()).map(|s| {
             let p: Vec<&str> = s.splitn(3, '|').collect();
             (p[0].to_owned(), p.get(1).copied().unwrap_or("").to_owned(), p.get(2).and_then(|w| w.parse().ok()).unwrap_or(0))
         }).collect();
-        out.push(Row { launch: f[0].into(), engine: f[1].into(), dispatches: num(2)? as u64, groups: num(3)? as u64, repeat: num(4)? as u64, best: num(5)?, median: num(6)?, cpu: num(7)?, bytes: num(8)? as u64, same: f[9] == "true", shapes });
+        out.push(Row { launch: f[0].into(), engine: f[1].into(), dispatches: num(2)? as u64, groups: num(3)? as u64, repeat: num(4)? as u64, best: num(5)?, median: num(6)?, cpu: num(7)?, instructions: num(8)? as u64, cycles: num(9)? as u64, bytes: num(10)? as u64, same: f[11] == "true", shapes });
     }
     Ok(out)
 }
@@ -67,10 +69,11 @@ pub fn write(tsv: &str) -> Result<String, String> {
     let same = rows.iter().filter(|r| r.same).count();
     let _ = write!(h, "<header style=\"display:flex;flex-direction:column;gap:10px\"><div class=\"eyebrow\">rerail · join lab · {} launches · {}</div><h1>Captured join launches, replayed apart from the engine</h1><p>Each launch the engine captured (<code>RERAIL_JOIN_CAPTURE</code>) placed again in the lab, its addresses bound where its regions lie now, and run warm on each engine. A replay that leaves every region it writes as the engine's launch left it is <b>same</b>. {same} of {} replays are.</p></header>", rows.len(), esc(&engines.join(", ")), rows.len());
     // The run table, by engine.
-    let _ = write!(h, "<section><h2>The run</h2><div class=\"scroll\"><table><thead><tr><th>Engine</th><th>Launches</th><th>Same</th><th>Best ms, summed</th><th>Median ms, summed</th><th>CPU ms, summed</th><th>Groups</th></tr></thead><tbody>");
+    let _ = write!(h, "<section><h2>The run</h2><div class=\"scroll\"><table><thead><tr><th>Engine</th><th>Launches</th><th>Same</th><th>Best ms, summed</th><th>Median ms, summed</th><th>CPU ms, summed</th><th>M instructions</th><th>M cycles</th><th>IPC</th><th>Groups</th></tr></thead><tbody>");
     for e in &engines {
         let of: Vec<&Row> = rows.iter().filter(|r| &r.engine == e).collect();
-        let _ = write!(h, "<tr><td><code>{}</code></td><td class=n>{}</td><td class=n>{}</td><td class=n>{:.1}</td><td class=n>{:.1}</td><td class=n>{:.1}</td><td class=n>{}</td></tr>", esc(e), of.len(), of.iter().filter(|r| r.same).count(), of.iter().map(|r| r.best).sum::<f64>(), of.iter().map(|r| r.median).sum::<f64>(), of.iter().map(|r| r.cpu).sum::<f64>(), of.iter().map(|r| r.groups).sum::<u64>());
+        let (ins, cyc) = (of.iter().map(|r| r.instructions).sum::<u64>(), of.iter().map(|r| r.cycles).sum::<u64>());
+        let _ = write!(h, "<tr><td><code>{}</code></td><td class=n>{}</td><td class=n>{}</td><td class=n>{:.1}</td><td class=n>{:.1}</td><td class=n>{:.1}</td><td class=n>{:.1}</td><td class=n>{:.1}</td><td class=n>{}</td><td class=n>{}</td></tr>", esc(e), of.len(), of.iter().filter(|r| r.same).count(), of.iter().map(|r| r.best).sum::<f64>(), of.iter().map(|r| r.median).sum::<f64>(), of.iter().map(|r| r.cpu).sum::<f64>(), ins as f64 / 1e6, cyc as f64 / 1e6, if cyc > 0 { format!("{:.2}", ins as f64 / cyc as f64) } else { "—".into() }, of.iter().map(|r| r.groups).sum::<u64>());
     }
     let _ = write!(h, "</tbody></table></div></section>");
     // Shapes by time: a launch's best time shared among its shapes by their work.
@@ -97,10 +100,10 @@ pub fn write(tsv: &str) -> Result<String, String> {
     // The launches, slowest first.
     let mut by_time: Vec<&Row> = rows.iter().collect();
     by_time.sort_by(|a, b| b.best.total_cmp(&a.best));
-    let _ = write!(h, "<section><h2>Launches</h2><div class=\"scroll\"><table><thead><tr><th>Launch</th><th>Engine</th><th>Best ms</th><th>Median ms</th><th>CPU ms</th><th>Dispatches</th><th>Groups</th><th>MB</th><th>Runs</th><th></th><th>Shapes</th></tr></thead><tbody>");
+    let _ = write!(h, "<section><h2>Launches</h2><div class=\"scroll\"><table><thead><tr><th>Launch</th><th>Engine</th><th>Best ms</th><th>Median ms</th><th>CPU ms</th><th>M instr</th><th>M cycles</th><th>Dispatches</th><th>Groups</th><th>MB</th><th>Runs</th><th></th><th>Shapes</th></tr></thead><tbody>");
     for r in by_time {
         let shapes: Vec<&str> = r.shapes.iter().map(|s| s.0.as_str()).collect();
-        let _ = write!(h, "<tr><td><code>{}</code></td><td><code>{}</code></td><td class=n>{:.3}</td><td class=n>{:.3}</td><td class=n>{:.3}</td><td class=n>{}</td><td class=n>{}</td><td class=n>{:.1}</td><td class=n>{}</td><td class=\"{}\">{}</td><td><code>{}</code></td></tr>", esc(&r.launch), esc(&r.engine), r.best, r.median, r.cpu, r.dispatches, r.groups, r.bytes as f64 / 1048576.0, r.repeat, if r.same { "ok" } else { "bad" }, if r.same { "same" } else { "differs" }, esc(&shapes.join(" ")));
+        let _ = write!(h, "<tr><td><code>{}</code></td><td><code>{}</code></td><td class=n>{:.3}</td><td class=n>{:.3}</td><td class=n>{:.3}</td><td class=n>{:.2}</td><td class=n>{:.2}</td><td class=n>{}</td><td class=n>{}</td><td class=n>{:.1}</td><td class=n>{}</td><td class=\"{}\">{}</td><td><code>{}</code></td></tr>", esc(&r.launch), esc(&r.engine), r.best, r.median, r.cpu, r.instructions as f64 / 1e6, r.cycles as f64 / 1e6, r.dispatches, r.groups, r.bytes as f64 / 1048576.0, r.repeat, if r.same { "ok" } else { "bad" }, if r.same { "same" } else { "differs" }, esc(&shapes.join(" ")));
     }
     let _ = write!(h, "</tbody></table></div></section></div>");
     Ok(h)
