@@ -198,6 +198,7 @@ fn json_tier2_writes_from_the_middle_as_its_rust() {
     let p = program("json_tier2.uglykl", rerail_json_aot::TIER2_UKL).unwrap_or_else(|e| panic!("{}: {e}", crate::device::backend()));
     let lang = json_lang();
     let (mut tapes, mut chunks_run, mut bytes_out, mut launches) = (0usize, 0usize, 0usize, 0usize);
+    let (mut zbytes, mut zlaunches) = (0usize, 0usize);
     for (k, f) in files().into_iter().chain(nested()).enumerate() {
         let buf = rerail_json_aot::padded(&f);
         let n = f.len();
@@ -222,6 +223,12 @@ fn json_tier2_writes_from_the_middle_as_its_rust() {
                 let fine = if c + 1 == nc { out[2 * c] == 2 } else { out[2 * c] == 0 && out[2 * c + 1] as usize == stop };
                 assert!(fine, "{}: file {k}, chunks of {size}: chunk {c} stopped as ({}, {})", crate::device::backend(), out[2 * c], out[2 * c + 1]);
             }
+            // Then stored as 16z where it lies, by the second program.
+            let (z, zl) = run.z(&mut q, p, most_blocks(&lx));
+            let want_z = rerail_tape_format::f16::z_of(&want, &rerail_tape_format::f16::lz4_greedy).expect("16z");
+            assert!(z == want_z, "{}: file {k}, chunks of {size}: the 16z tape differs at byte {:?} of {} ({} bytes)", crate::device::backend(), z.iter().zip(&want_z).position(|(a, b)| a != b), want_z.len(), z.len());
+            zbytes += z.len();
+            zlaunches = zlaunches.max(zl);
             m.from_device_region(&read::<u8>(&run.t, run.region));
             let have = m.finished_on_device().expect("the tape finished on the device").tape.as_bytes().to_vec();
             assert!(have == want, "{}: file {k}, chunks of {size}: the tape differs at byte {:?} of {} ({} bytes)", crate::device::backend(), have.iter().zip(&want).position(|(a, b)| a != b), want.len(), have.len());
@@ -231,7 +238,7 @@ fn json_tier2_writes_from_the_middle_as_its_rust() {
             launches = launches.max(run.launches);
         }
     }
-    eprintln!("{}: tier 2 from the middle as one program, the tape finished on the device, {tapes} tapes in chunks of 1, 3 and 16 records ({chunks_run} chunks, at most {launches} launches): the serial walk's tape, {bytes_out} bytes", crate::device::backend());
+    eprintln!("{}: tier 2 from the middle as one program, the tape finished on the device, {tapes} tapes in chunks of 1, 3 and 16 records ({chunks_run} chunks, at most {launches} launches): the serial walk's tape, {bytes_out} bytes; stored as 16z on the device in at most {zlaunches} launches, z_of's, {zbytes} bytes", crate::device::backend());
 }
 
 /// JSON's language for format 16 writers.
@@ -244,6 +251,19 @@ fn json_lang() -> rerail_tape_format::f16::Lang {
 fn json_writer(lang: &rerail_tape_format::f16::Lang, f: &[u8]) -> rerail_tape_format::f16::Writer {
     rerail_tape_format::f16::Writer::new(lang, f, rerail_tape_format::newlines::Terminators::Newlines, 0, false, true, f.len() / 2 + 16)
 }
+
+/// The most blocks a tape of the file's records and bytes has (`Run::go`'s room).
+fn most_blocks(lx: &rerail_json_aot::Lexed) -> usize {
+    (1 + lx.count + lx.len).div_ceil(1024).max(1)
+}
+
+#[repr(C)]
+#[derive(Clone, Copy)]
+struct T2ZArgs {
+    capacity: u32,
+    budget: u32,
+}
+unsafe impl Pod for T2ZArgs {}
 
 #[repr(C)]
 #[derive(Clone, Copy)]
@@ -279,6 +299,7 @@ impl Run {
         // The writer's room for the most nodes a file of its records and bytes can have.
         let most = 1 + lx.count + lx.len;
         m.reserve_run(most, (DEPTH + 1) * 3 + 1);
+        debug_assert_eq!(most.div_ceil(1024).max(1), most_blocks(lx));
         m.final_as_written();
         m.reserve_device_finish(most);
         let region = m.device_region();
@@ -348,6 +369,49 @@ impl Run {
             assert!(launches < 64, "{}: the work queue did not drain in {launches} launches ({} items left)", crate::device::backend(), control[2]);
         }
         Run { pool: mb, words, t: rb, region: region.len(), o, tree, tn, launches }
+    }
+
+    /// The tape the chain finished in the region, stored as 16z where it lies (`json_t2_z`, `<ukl/z16_run.h>`), for a
+    /// tape of at most `blocks` blocks: its bytes, and the launches it took.
+    fn z(&self, q: &mut crate::device::ComputeQueue, p: &crate::kernels::Program, blocks: usize) -> (Vec<u8>, usize) {
+        let np = 4 * blocks;
+        let room = self.region + 9 * np + 256;
+        let words = 16 + 3 * np;
+        let capacity = 2 * np + self.region / 4096 + 64;
+        // COUNT(0) seeded (a slot holds its item plus one).
+        let mut slots = vec![0u32; capacity];
+        slots[0] = 1;
+        let (zb, mb) = (alloc::<u8>(room).unwrap(), buffer_of(&vec![0u32; words]).unwrap());
+        let (qs, qc) = (buffer_of(&slots).unwrap(), buffer_of(&[0u32, 1, 1, 0, 0]).unwrap());
+        let groups = 64u64;
+        let args = T2ZArgs { capacity: capacity as u32, budget: (2 * capacity / groups as usize + 16) as u32 };
+        let mut launches = 0;
+        loop {
+            for _ in 0..2 {
+                launch(q, p.function("json_t2_z").unwrap())
+                    .value("args", &args)
+                    .buffer("t", &self.t)
+                    .buffer("z", &zb)
+                    .buffer("pool", &mb)
+                    .buffer("slots", &qs)
+                    .buffer("control", &qc)
+                    .run(&[groups], &[crate::device::simd_width() as u64])
+                    .unwrap();
+                launches += 1;
+            }
+            q.flush().await_().unwrap();
+            let control: Vec<u32> = read(&qc, 5);
+            assert_eq!(control[3], 0, "{}: the 16z queue of {capacity} overflowed", crate::device::backend());
+            if control[2] == 0 {
+                break;
+            }
+            assert!(launches < 64, "{}: the 16z queue did not drain in {launches} launches", crate::device::backend());
+        }
+        let m: Vec<u32> = read(&mb, 16);
+        assert_eq!(m[2], 0, "{}: the 16z program failed", crate::device::backend());
+        let end = m[3] as usize;
+        assert!(end <= room, "{}: a 16z tape of {end} bytes past its room of {room}", crate::device::backend());
+        (read::<u8>(&zb, end), launches)
     }
 
     /// Tree `tr`'s value and state words of node `x`.
