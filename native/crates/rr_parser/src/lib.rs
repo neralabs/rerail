@@ -23,6 +23,9 @@ use std::collections::HashMap;
 /// The grammar: the ladder's last step.
 const GRAMMAR: &str = include_str!("../rr.bitlex");
 
+/// The provers' answers to the grammar's questions, shipped beside it (decision 0669).
+const ANSWERS: &[u8] = include_bytes!("../rr.answers");
+
 /// Sample documents, for the profile tier 2 is cut by when the grammar compiles
 /// (docs/parser-generators/28-tier-2-in-clusters.md): 12 of the repository's `.rerail`
 /// files, spread over its folders. A profile of about ten files gives a cut as good as the
@@ -218,6 +221,12 @@ pub fn compile_text(grammar: &str, shape: bitlex_compile::Shape) -> Result<Compi
 /// the application's input): with fewer than a window reaches, each window is cut on a rare
 /// branch.
 pub fn compile_padded(grammar: &str, shape: bitlex_compile::Shape, pad: u16) -> Result<Compiled, String> {
+    rerail_bitlex::answers::answered_shipped("rr", grammar.as_bytes(), ANSWERS, |known| compile_known(grammar, shape, pad, known))
+}
+
+/// `compile_padded` from the provers' answers `known` (decision 0669), and the answers its compile
+/// made.
+fn compile_known(grammar: &str, shape: bitlex_compile::Shape, pad: u16, known: rerail_bitlex::bitlex_prove::Known) -> Result<(Compiled, Vec<(rerail_bitlex::bitlex_prove::Key, rerail_bitlex::bitlex_prove::Answer)>), String> {
     let stmts = ::bitlex::syntax::parse(grammar)?;
     let own: RefCell<HashMap<String, u16>> = RefCell::new(HashMap::new());
     let id = |names: &[&str], name: &str| -> u16 {
@@ -231,7 +240,8 @@ pub fn compile_padded(grammar: &str, shape: bitlex_compile::Shape, pad: u16) -> 
     let kind = |n: &str| Some(if n == "ERROR" { u16::MAX } else { id(rr::tape::KIND_NAMES, n) });
     let field = |n: &str| Some(id(rr::tape::FIELD_NAMES, n.trim_start_matches("field ")));
     let symbols = bitlex_compile::Symbols { kind: &kind, field: &field, terminators: rerail_tape_format::newlines::Terminators::Newlines };
-    let compiled = bitlex_compile::compile_shaped(&stmts, &[bitlex_compile::FALLBACK], Some(&symbols), shape)?;
+    // Its tiers as Rust too, which its tests read (`rust_tests`; decision 0669: a 0.09 s compile).
+    let compiled = bitlex_compile::compile_proved(&stmts, &[bitlex_compile::FALLBACK], Some(&symbols), shape, known, bitlex_compile::AsRust::Yes)?;
     let program = rir::assemble(&compiled.text())?;
     let mut native = native_ir::lower(&program, 0, 0).map_err(|e| format!("lowers: {e:?}"))?;
     native.tag = rerail_tape_format::RR_TAG;
@@ -249,7 +259,7 @@ pub fn compile_padded(grammar: &str, shape: bitlex_compile::Shape, pad: u16) -> 
         rerail_compiler::native_cpu_clusters::Cut { pick_traffic: traffic.clone(), near: true, unsigned: true, speed: true, ..rerail_compiler::native_cpu_clusters::by_rules(&native) }
     };
     let parser = native_cpu_stream::Parser::with_cut(&native, &cut).map_err(|e| format!("Cranelift: {e:?}"))?;
-    Ok(Compiled { parser, native: native.block_programs[0].clone(), costs: compiled.costs.clone(), origin: compiled.origin.clone(), values: compiled.values.clone(), block: program.block_programs[0].clone(), labels: compiled.labels.clone(), rows: compiled.rows.clone(), words: compiled.words.clone(), machine: compiled.machine.clone(), program, lexer_rust: compiled.lexer_rust.clone().unwrap_or_else(|| Err("no tree section".into())), rust: compiled.rust.clone().unwrap_or_else(|| Err("no tree section".into())), rust_loop: compiled.rust_loop.clone().unwrap_or_else(|| Err("no tree section".into())), numbers: Default::default() })
+    Ok((Compiled { parser, native: native.block_programs[0].clone(), costs: compiled.costs.clone(), origin: compiled.origin.clone(), values: compiled.values.clone(), block: program.block_programs[0].clone(), labels: compiled.labels.clone(), rows: compiled.rows.clone(), words: compiled.words.clone(), machine: compiled.machine.clone(), program, lexer_rust: compiled.lexer_rust.clone().unwrap_or_else(|| Err("no tree section".into())), rust: compiled.rust.clone().unwrap_or_else(|| Err("no tree section".into())), rust_loop: compiled.rust_loop.clone().unwrap_or_else(|| Err("no tree section".into())), numbers: Default::default() }, compiled.proofs))
 }
 
 /// `src`'s tape, the engine's (decisions 0140, 0631): from the compiled grammar, or, for a file
@@ -332,8 +342,56 @@ mod rust_tests;
 #[cfg(test)]
 mod token_local_tests;
 
+/// The shipped answers (`rr.answers`, decision 0669) answer every question the grammar's compile
+/// asks (`answers::check_shipped`; `RERAIL_BLESS_ANSWERS=1` writes them again).
+#[cfg(test)]
+#[test]
+fn the_shipped_answers_answer_the_grammar() {
+    let path = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("rr.answers");
+    rerail_bitlex::answers::check_shipped(&path, ANSWERS, |known| Ok(compile_known(GRAMMAR, bitlex_compile::Shape::Rules, rerail_cpu_block::native_cpu_block::BACK as u16, known)?.1));
+}
+
 #[cfg(test)]
 pub mod tests {
+    use super::bitlex_compile;
+
+    /// The walk lemmas (`bitlex_masks::NO_WALK_LEMMAS`: a walk's regions never overlap; this grammar's walk has six
+    /// kinds, strings, comments and backtick spans) change at most what tier 2 is proved to need: the grammar reads
+    /// each text as without them, the same tape or the same refusal. (Kotlin's grammar had this test until its
+    /// regions nested, decision 0621, with no walk.) The compile without them proves cold, the budget lifted.
+    #[test]
+    fn walk_lemmas_keep_the_tapes() {
+        let with = crate::compiled().expect("the grammar compiles");
+        let walks = &with.program.block_programs[0].walks;
+        assert!(walks.iter().any(|w| w.kinds.len() > 1), "the grammar has no walk of two kinds for the lemmas");
+        bitlex_compile::NO_WALK_LEMMAS.set(true);
+        bitlex_compile::PROVING_STEPS_HERE.set(Some(1 << 40));
+        let without = super::compile_known(super::GRAMMAR, bitlex_compile::Shape::Rules, rerail_cpu_block::native_cpu_block::BACK as u16, Default::default());
+        bitlex_compile::PROVING_STEPS_HERE.set(None);
+        bitlex_compile::NO_WALK_LEMMAS.set(false);
+        let without = without.expect("the grammar compiles without the walk lemmas").0;
+        assert!(with.program.words.len() <= without.program.words.len(), "the walk lemmas make tier 2 larger: {} words, {} without", with.program.words.len(), without.program.words.len());
+        let dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("samples");
+        let mut texts: Vec<String> = std::fs::read_dir(&dir).expect("the samples").map(|e| std::fs::read_to_string(e.expect("a sample").path()).expect("a sample's text")).collect();
+        texts.sort();
+        for t in [
+            ".decl r(x: symbol)\nr(\"a // b\") :- true. // c \"d\"\n",
+            "/* \"x\" // */ .decl a()\n",
+            "r(\"/* x */\"). // `y`\n",
+            "`a` ``b`` ```c // d``` \"`\"\n",
+            "// only\n",
+            "/* open\n",
+            "\"open\n",
+            "``open\n",
+            "```open\n",
+        ] {
+            texts.push(t.to_string());
+        }
+        for t in &texts {
+            assert_eq!(with.image(t.as_bytes()).ok(), without.image(t.as_bytes()).ok(), "{t:?}");
+        }
+    }
+
     /// The interpreter's tape of `src` (`stream::run`, then `stream::image16`: `crate::interpreted`), or why it refused it.
     pub(crate) fn interp_tape(c: &crate::Compiled, src: &str) -> Result<crate::Tape, String> {
         let run = c.program.block_programs[0].run(src.as_bytes());
@@ -1849,12 +1907,24 @@ pub mod tests {
             .replace(" test_on fixtures_on policy_on decl_on violation_on edit_on functor_on type_on io_on lattice_on pragma_on json_flat paren_term paren_tilde paren_closes count_on agg_call agg_word", "")
             .replace("negation | paren_term term [literal_tail] | paren_tilde paren_subject pattern_tail | group\n                        | term [literal_tail]", "negation | group | term [literal_tail]")
             .replace("paren_closes paren_subject | term", "term")
-            .replace("                        | count_on aggregate | agg_call aggregate | agg_word aggregate\n", "")
+            .replace("'_' as wildcard | count_on aggregate | agg_call aggregate | agg_word aggregate\n                        | call_on ('_' as wildcard | identifier wrap call function arguments: argument_list)\n                        | unless no_named (named_on ('_' as wildcard | identifier wrap named_argument name ':' value: term))\n                        | identifier as variable", "'_' as wildcard | identifier as variable")
             .replace("(json_flat argument: json | argument: word | punctuation)* (newline | argument: json)", "(argument: json | argument: word | punctuation)* newline")
-            .replace("test_on test_block | fixtures_on fixtures_block | directive", "setting")
-            .replace("test_on refused | fixtures_on refused | directive", "setting")
+            .replace("test_on test_block | fixtures_on fixtures_block | plain_statement", "plain_statement")
+            .replace("include | directive | clause", "include | setting | clause")
+            // The lean parser's peeks before a token it writes.
+            .replace(" empty_angle empty_parens code_str safe_on modal_on neg_number call_on named_on by_list", "")
+            .replace("[empty_angle '<' '>' | implied '<' argument: identifier implied '>']", "[implied '<' argument: identifier implied '>']")
+            .replace("[empty_parens parameters: '(' ')' | implied '(' parameters: leaf raw_text io_parameters implied ')']", "[implied '(' parameters: leaf raw_text io_parameters implied ')']")
+            .replace("code_str implied 'code' code: string | code: code_column", "code: code_column")
+            .replace("[safe_on 'safe'] ", "")
+            .replace("[modal_on modal: ('must' | 'may')] ", "")
+            .replace("neg_number '-' (float_at merge float number | merge number number) | unary_expression", "unary_expression")
+            .replace("  implied name_primary ':'\n", "")
+            .replace("  implied aggregate ','\n", "")
+            .replace("(by_list 'by' '(' key: term (',' key: term)* ')' ('sep' separator: string ':' implied '{' | ':' '{')\n                            | ['by'", "(['by'")
+            .replace("test_on refused | fixtures_on refused | plain_statement", "plain_statement")
             .lines()
-            .filter(|l| !["test_on", "fixtures_on", "policy_on", "decl_on", "violation_on", "edit_on", "functor_on", "type_on", "io_on", "lattice_on", "pragma_on", "json_flat", "paren_term", "paren_tilde", "paren_closes", "count_on", "agg_call", "agg_word"].iter().any(|m| l.starts_with(&format!("mark {m} "))))
+            .filter(|l| !["empty_angle", "empty_parens", "code_str", "safe_on", "modal_on", "neg_number", "call_on", "named_on", "by_list", "test_on", "fixtures_on", "policy_on", "decl_on", "violation_on", "edit_on", "functor_on", "type_on", "io_on", "lattice_on", "pragma_on", "json_flat", "paren_term", "paren_tilde", "paren_closes", "count_on", "agg_call", "agg_word"].iter().any(|m| l.starts_with(&format!("mark {m} "))))
             .filter(|l| !(l.starts_with("  choice directive") || l.starts_with("                        | edit_on") || l.starts_with("                        | io_on")))
             .filter(|l| !(l.starts_with("escape ") && l.contains(" at number when ")))
             .filter(|l| !(l.starts_with("                   after ") || l.starts_with("                   at ")))
@@ -2953,6 +3023,7 @@ pub mod tests {
             b.call(&p.tier1);
         }
         let mut writing = rerail_cpu_stream::ladder::Writing::new(p, super::rr::tape::lang(), super::rr::syntax::TERMINATORS);
+        let numbers = p.tier2.numbers(super::rr::tape::lang());
         let retired = rerail_compiler::native_cpu_codegen::retired;
         let (t0, (i0, c0)) = (thread_cpu(), retired());
         let (mut rounds, mut n) = (0usize, 0usize);
@@ -2964,7 +3035,9 @@ pub mod tests {
                 "tier2" => batches.iter().zip(&ours).for_each(|(b, f)| {
                     let _ = writing.words(p, b, f.as_bytes());
                 }),
-                other => panic!("RR_FORM={other}: lean, lexer, tier1 or tier2"),
+                // The JIT whole, as `rr_aot_against_jit` times it: tier 1, the tape, tier 2, the tape in format 16.
+                "image" => ours.iter().for_each(|f| n += p.image16(f.as_bytes(), super::rr::syntax::TERMINATORS, super::rr::tape::lang(), &numbers, false).map_or(0, |w| w.extent().len())),
+                other => panic!("RR_FORM={other}: lean, lexer, tier1, tier2 or image"),
             }
             rounds += 1;
         }

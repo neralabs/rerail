@@ -19,9 +19,11 @@ const DEFAULT_RUNS = 5;
 
 /** A unit test job's name: `Unit tests (1/3)` on Linux, `Unit tests (Windows, 1/5)` on Windows. */
 const UNIT_JOB = /^Unit tests \((?:(Windows), )?(\d+)\/(\d+)\)$/u;
-/** The step that runs the sharded suite, as the log's group header shows its command. */
-const SUITE_STEP = "##[group]Run npm test -- --shard=";
 const STEP = "##[group]Run ";
+/** The line that ends the group in which the log echoes a step's whole command, under the step's header. */
+const END_GROUP = "##[endgroup]";
+/** What the step that runs the sharded suite passes vitest, on some line of its command. */
+const SHARD_ARGUMENT = "--shard=";
 /** vitest's line for one test file: its mark, its path, its test count, and (unless every test skipped) its time. */
 const FILE_LINE = /^\s*[✓×❯↓]\s+(\S+\.(?:test|spec)\.[cm]?[jt]sx?)\s+\(\d+ tests?[^)]*\)(?:\s+(\d+(?:\.\d+)?)(ms|s))?\s*$/u;
 /** vitest's summary line of a run's wall time. */
@@ -51,6 +53,16 @@ function steps(log) {
   return cut;
 }
 
+/**
+ * Whether a step runs the sharded suite: its command passes vitest `--shard=`. The step's header shows only the
+ * command's first line, so the whole command is read, as the log echoes it up to the group's end.
+ */
+function runsSuite(lines) {
+  if (lines[0]?.startsWith(STEP) !== true) return false;
+  const end = lines.indexOf(END_GROUP);
+  return lines.slice(0, end === -1 ? 1 : end).some((line) => line.includes(SHARD_ARGUMENT));
+}
+
 /** The wall time of the vitest runs in a step's lines. */
 function vitestMs(lines) {
   return lines.reduce((sum, line) => {
@@ -65,7 +77,7 @@ function vitestMs(lines) {
  */
 export function parseUnitLog(log) {
   const cut = steps(log);
-  const suite = cut.findIndex((lines) => lines[0]?.startsWith(SUITE_STEP));
+  const suite = cut.findIndex(runsSuite);
   if (suite === -1) return { files: new Map(), suiteMs: 0, extraMs: 0 };
   const fileLines = cut[suite].map((line) => FILE_LINE.exec(line)).filter((match) => match !== null);
   return {
@@ -104,14 +116,19 @@ function firstShardExtraMs(jobs) {
 
 /**
  * The times file from parsed unit test jobs (`{ platform, shard, log }` with `log` from parseUnitLog), keeping only the
- * files `exists` says the checkout still has.
+ * files `exists` says the checkout still has. Throws when a platform's jobs give no such file's time: a table without
+ * them would weigh every file of that platform the same.
  */
 export function unitTestTimes(jobs, exists) {
   const platforms = [...new Set(jobs.map((job) => job.platform))].sort();
   return Object.fromEntries(
     platforms.map((platform) => {
       const ofPlatform = jobs.filter((job) => job.platform === platform);
-      return [platform, { firstShardExtraMs: firstShardExtraMs(ofPlatform), files: fileMedians(ofPlatform, exists) }];
+      const files = fileMedians(ofPlatform, exists);
+      if (Object.keys(files).length === 0) {
+        throw new Error(`the ${ofPlatform.length} ${platform} unit test jobs give no time for a test file this checkout has, in a step whose command passes vitest ${SHARD_ARGUMENT}`);
+      }
+      return [platform, { firstShardExtraMs: firstShardExtraMs(ofPlatform), files }];
     }),
   );
 }

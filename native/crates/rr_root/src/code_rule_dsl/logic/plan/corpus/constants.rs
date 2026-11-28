@@ -266,6 +266,7 @@ pub fn as_outputs_of(v: &std::sync::Arc<Version>, wanted: &[String]) -> Result<s
         let args: Vec<T<'_>> = names.iter().map(|n| T::Var(n.as_str())).collect();
         let pairs: Vec<(&str, &str)> = cols.iter().map(|(n, t)| (n.as_str(), t.as_str())).collect();
         b.fields().declare(&copy(rel), &pairs);
+        b.fields().add_qualifiers(&[(copy(rel).as_str(), crate::code_rule_dsl::typing::file_local::CROSS_FILE)]);
         b.rule().head(copy(rel).as_str(), &args).atom(rel.as_str(), &args).finish().map_err(super::super::Error::Plan)?;
         outputs.push(copy(rel));
     }
@@ -450,7 +451,7 @@ fn frame_key(key: &str) -> [u8; 32] {
 fn kept(frame: &[u8; 32], root: &Path, prog: &Version) -> Option<(Derived, Vector<[u8; 32]>)> {
     let kept = super::phases::reading_store().and_then(|store| super::frame::get(&store, frame))?;
     let mut leaves = super::leaves::Leaves::new(root, prog);
-    kept.reads.iter().all(|c| leaves.still(c)).then(|| ((kept.image, kept.reads), kept.plans))
+    kept.reads.iter().all(|c| leaves.still(c)).then_some(((kept.image, kept.reads), kept.plans))
 }
 
 /// Keeps the constants' rows and their run's leaves and plans as the frame `frame`.

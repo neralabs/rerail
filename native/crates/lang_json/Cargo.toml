@@ -39,7 +39,7 @@ system-allocator = ["rerail-facts/system-allocator", "rerail-lang/system-allocat
 code-rule-profile = ["rerail-facts/code-rule-profile", "rerail-lang/code-rule-profile", "rerail-transducer/code-rule-profile", "rerail-rules/code-rule-profile"]
 p-anchor-corpus = ["rerail-facts/p-anchor-corpus", "rerail-lang/p-anchor-corpus", "rerail-transducer/p-anchor-corpus", "rerail-rules/p-anchor-corpus"]
 metal-tests = ["rerail-facts/metal-tests", "rerail-lang/metal-tests", "rerail-transducer/metal-tests"]
-test-hooks = ["rerail-blocks/test-hooks", "rerail-facts/test-hooks", "rerail-lang/test-hooks", "rerail-transducer/test-hooks", "rerail-rules/test-hooks", "dep:tempfile", "rerail-compiler/test-hooks", "rerail-rir/test-hooks", "rerail-bitlex/test-hooks", "rerail-cpu-block/test-hooks", "rerail-cpu-stream/test-hooks", "rerail-prof/test-hooks", "rerail-rr-syntax/test-hooks", "rerail-store/test-hooks", "rerail-rr-parser/test-hooks"]
+test-hooks = ["rerail-blocks/test-hooks", "rerail-facts/test-hooks", "rerail-lang/test-hooks", "rerail-transducer/test-hooks", "rerail-rules/test-hooks", "dep:tempfile", "rerail-compiler/test-hooks", "rerail-rir/test-hooks", "rerail-bitlex/test-hooks", "rerail-cpu-block/test-hooks", "rerail-cpu-stream/test-hooks", "rerail-prof/test-hooks", "rerail-rr-syntax/test-hooks", "rerail-store/test-hooks", "rerail-rr-parser/test-hooks", "rerail-json-aot/test-hooks"]
 
 [dependencies]
 # Its structures lie in blocks (`rerail_blocks::vector::Vector`, `maps`), as the engine\'s do.
@@ -71,7 +71,7 @@ serde = { version = "1.0", features = ["derive"] }
 fancy-regex = "=0.17.0"
 regex = "=1.13.1"
 regex-automata = "=0.4.18"
-regex-syntax = "=0.8.11"
+regex-syntax = "=0.8.12"
 rusqlite = { version = "=0.41.1", features = ["bundled", "column_decltype", "functions", "hooks", "limits", "modern_sqlite", "series", "vtab"] }
 fallible-iterator = "0.3"
 ruff_python_parser = "=0.0.10"
@@ -102,6 +102,8 @@ rerail-rir = { path = "../rir" }
 rerail-bitlex = { path = "../bitlex" }
 rerail-cpu-block = { path = "../cpu_block" }
 rerail-cpu-stream = { path = "../cpu_stream" }
+# JSON's Bitlex parser, as the Bitlex compiler wrote it in Rust (`json_parser`).
+rerail-json-aot = { path = "../json_aot" }
 rerail-rr-parser = { path = "../rr_parser" }
 
 [target.'cfg(not(target_family = "wasm"))'.dependencies]

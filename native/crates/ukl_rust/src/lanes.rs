@@ -303,10 +303,104 @@ where
     gather32(tab.wrapping_add((lo.cast::<u64>() * s64(8) + s64(4)).cast::<usize>()))
 }
 
-/// The compiled `col_sealed` read (`rerail_clif::reads::READS`' "col_sealed", decision 0622): value `i` of the frozen
-/// column of the sealed chunk at `ic`. The one reader of a sealed chunk: a lane whose chunk is sealed reads through
-/// it, as `clif_col_get` does.
-pub type Sealed = unsafe extern "C" fn(u64, u32) -> u64;
+/// A sealed chunk's frozen column (`rerail_blocks::col::IntCol`, decision 0622): its fields' offsets, and its
+/// encodings' tags (`col::CONST` ..). A test holds both to the blocks' (`the_frozen_column_layout_is_the_blocks`).
+pub mod int_col {
+    pub const AT_TAG: u64 = 0;
+    pub const AT_BITS: u64 = 4;
+    pub const AT_RBITS: u64 = 12;
+    pub const AT_NRUNS: u64 = 16;
+    pub const AT_BASE: u64 = 24;
+    pub const AT_SLOPE: u64 = 32;
+    pub const AT_RMIN: u64 = 40;
+    pub const AT_DATA: u64 = 48;
+    pub const AT_RUNS: u64 = 64;
+    pub const CONST: u32 = 0;
+    pub const PACK: u32 = 1;
+    pub const RUNS: u32 = 2;
+    pub const LINE: u32 = 3;
+    pub const GROUPS: u32 = 4;
+    pub const DICT: u32 = 5;
+    /// A `GROUPS` group's rows, and an entry's width bits.
+    pub const GROUP_LOG: u64 = 7;
+}
+
+/// The mask of `w` bits (0..=64).
+#[inline(always)]
+fn mask_of(w: u64) -> u64 {
+    if w >= 64 { u64::MAX } else { (1u64 << w) - 1 }
+}
+
+/// The value of `mask`'s bits at bit `bit` of the packed words at `words` (each column's words end with a spare one,
+/// so the word after is read without a branch).
+#[inline(always)]
+unsafe fn packed(words: *const u8, bit: u64, mask: u64) -> u64 {
+    let p = words.wrapping_add((bit >> 6) as usize * 8);
+    let sh = bit & 63;
+    // `hi << 1 << (63 - sh)` is `hi << (64 - sh)` without a shift by 64 where `sh` is 0.
+    ((r64(p, 0) >> sh) | ((r64(p, 8) << 1) << (63 - sh))) & mask
+}
+
+/// `col_sealed(ic, i)`: value `i` of the frozen column at `ic` of a sealed chunk (`col::IntCol::get`, decision 0622),
+/// the CLIF's `col_sealed` written directly: `CONST`'s base; `PACK`'s base and packed value; `LINE`'s line, residuals'
+/// minimum and residual; `RUNS`' run found by a search of its starts; `DICT`'s code, then its value; `GROUPS`' group
+/// minimum and residual at the group's width. The one reader of a sealed chunk: a lane whose chunk is sealed reads
+/// through it, as `clif_col_get` does.
+#[inline(never)]
+pub unsafe fn col_sealed(ic: *const u8, i: u32) -> u64 {
+    use int_col::*;
+    let i = u64::from(i);
+    let tag = r32(ic, AT_TAG);
+    let bits = u64::from(r32(ic, AT_BITS));
+    let base = r64(ic, AT_BASE);
+    let mask = mask_of(bits);
+    if tag == CONST {
+        return base;
+    }
+    let data = follow(ic, AT_DATA);
+    let rbits = u64::from(r32(ic, AT_RBITS));
+    let rmask = mask_of(rbits);
+    match tag {
+        PACK => base.wrapping_add(packed(data, i * bits, mask)),
+        LINE => {
+            // `(i * slope) >> 16` as `col::Dec::on_line` takes it in 128 bits: with `slope = sh * 2^16 + sl`, `sl` its
+            // low 16 bits, `i * sh + ((i * sl) >> 16)` exactly, `i` a place in a chunk.
+            let slope = r64(ic, AT_SLOPE);
+            let t = i.wrapping_mul(((slope as i64) >> 16) as u64).wrapping_add(i.wrapping_mul(slope & 0xffff) >> 16);
+            let r = if bits == 0 { 0 } else { packed(data, i * bits, mask) };
+            base.wrapping_add(t).wrapping_add(r64(ic, AT_RMIN)).wrapping_add(r)
+        }
+        RUNS => {
+            let starts = follow(ic, AT_RUNS);
+            let (mut lo, mut hi) = (0u64, u64::from(r32(ic, AT_NRUNS)));
+            while hi - lo > 1 {
+                let mid = lo + ((hi - lo) >> 1);
+                if packed(starts, mid * rbits, rmask) <= i {
+                    lo = mid;
+                } else {
+                    hi = mid;
+                }
+            }
+            base.wrapping_add(packed(data, lo * bits, mask))
+        }
+        DICT => {
+            let k = packed(data, i * rbits, rmask);
+            base.wrapping_add(packed(follow(ic, AT_RUNS), k * bits, mask))
+        }
+        _ => {
+            // `GROUPS`: the entries start past the minima's words, `(nruns * bits).div_ceil(64) + 1` of them; an entry's
+            // width in its low 7 bits, its residuals' bit offset above.
+            let runs = follow(ic, AT_RUNS);
+            let entries = ((u64::from(r32(ic, AT_NRUNS)) * bits).div_ceil(64) + 1) << 6;
+            let k = i >> GROUP_LOG;
+            let min = packed(runs, k * bits, mask);
+            let e = packed(runs, entries + k * rbits, rmask);
+            let w = e & ((1 << GROUP_LOG) - 1);
+            let r = packed(data, (e >> GROUP_LOG) + (i & ((1 << GROUP_LOG) - 1)) * w, mask_of(w));
+            base.wrapping_add(min).wrapping_add(r)
+        }
+    }
+}
 
 /// A chunk's directory word's low bit: the chunk sealed (`rerail_blocks::rows::SEALED`), the rest its frozen
 /// column's offset from the directory.
@@ -314,19 +408,19 @@ const SEALED: u64 = 1;
 
 /// `clif_col_get` of column `c` (the same in every lane) of chunks from `1 << shift` rows: row `i`'s value.
 #[inline(always)]
-pub unsafe fn col_get<const N: usize>(c: *const u8, shift: u32, i: R<N>, sealed: Sealed) -> V<N>
+pub unsafe fn col_get<const N: usize>(c: *const u8, shift: u32, i: R<N>) -> V<N>
 where
     LaneCount<N>: SupportedLaneCount,
 {
     let (seg, within) = chunk(i, s32(shift));
-    col_get_in(c, seg, within, i, seg.simd_eq(s32(seg[0])).all(), sealed)
+    col_get_in(c, seg, within, i, seg.simd_eq(s32(seg[0])).all())
 }
 
-/// Each lane's value where its chunk (`chunks`, its directory word) is sealed, through the compiled read (`ic` its
-/// directory's address), the rest `raw`'s: `raw` is given the lanes not sealed, a sealed lane taking the first
+/// Each lane's value where its chunk (`chunks`, its directory word) is sealed, through `col_sealed` (its column at
+/// its offset from the directory), the rest `raw`'s: `raw` is given the lanes not sealed, a sealed lane taking the first
 /// unsealed one's chunk and place (none: no raw read).
 #[inline(always)]
-unsafe fn with_sealed<const N: usize>(dir: P<N>, chunks: V<N>, within: R<N>, sealed: Sealed, raw: impl FnOnce(P<N>, V<N>, R<N>) -> V<N>) -> V<N>
+unsafe fn with_sealed<const N: usize>(dir: P<N>, chunks: V<N>, within: R<N>, raw: impl FnOnce(P<N>, V<N>, R<N>) -> V<N>) -> V<N>
 where
     LaneCount<N>: SupportedLaneCount,
 {
@@ -340,7 +434,7 @@ where
     };
     for (l, x) in v.iter_mut().enumerate() {
         if tag.test(l) {
-            *x = sealed((dir[l] as u64).wrapping_add(chunks[l] & !SEALED), within[l]);
+            *x = col_sealed(dir[l].wrapping_add((chunks[l] & !SEALED) as usize), within[l]);
         }
     }
     Simd::from_array(v)
@@ -357,10 +451,10 @@ where
 }
 
 /// `col_get` of row `i`, its chunk and its place in it found (`chunk`): one chunk for every column of a relation.
-/// Where every lane's row is in one chunk (`one`), its address is one read. A sealed chunk's lanes read through the
-/// compiled read (`with_sealed`).
+/// Where every lane's row is in one chunk (`one`), its address is one read. A sealed chunk's lanes read through
+/// `col_sealed` (`with_sealed`).
 #[inline(always)]
-pub unsafe fn col_get_in<const N: usize>(c: *const u8, seg: R<N>, within: R<N>, i: R<N>, one: bool, sealed: Sealed) -> V<N>
+pub unsafe fn col_get_in<const N: usize>(c: *const u8, seg: R<N>, within: R<N>, i: R<N>, one: bool) -> V<N>
 where
     LaneCount<N>: SupportedLaneCount,
 {
@@ -370,7 +464,7 @@ where
     if (chunks & s64(SEALED)).simd_eq(s64(0)).all() {
         return col_raw_in(c, chunks, within, i, one);
     }
-    with_sealed(Simd::splat(c), chunks, within, sealed, |_, chunks, within| col_raw_in(c, chunks, within, i, false))
+    with_sealed(Simd::splat(c), chunks, within, |_, chunks, within| col_raw_in(c, chunks, within, i, false))
 }
 
 /// `col_get_in` of raw chunks (none sealed).
@@ -404,7 +498,7 @@ where
 
 /// `clif_col_get` of each lane's own column `c`: row `i`, its chunk and its place in it found (`chunk`).
 #[inline(always)]
-unsafe fn col_get_each_in<const N: usize>(c: P<N>, seg: R<N>, within: R<N>, i: R<N>, sealed: Sealed) -> V<N>
+unsafe fn col_get_each_in<const N: usize>(c: P<N>, seg: R<N>, within: R<N>, i: R<N>) -> V<N>
 where
     LaneCount<N>: SupportedLaneCount,
 {
@@ -412,7 +506,7 @@ where
     if (chunks & s64(SEALED)).simd_eq(s64(0)).all() {
         return col_raw_each_in(c, chunks, within, i);
     }
-    with_sealed(c, chunks, within, sealed, |c, chunks, within| col_raw_each_in(c, chunks, within, i))
+    with_sealed(c, chunks, within, |c, chunks, within| col_raw_each_in(c, chunks, within, i))
 }
 
 /// `col_get_each_in` of raw chunks (none sealed).
@@ -455,11 +549,11 @@ pub unsafe fn rows_col(rows: *const u8, c: u32) -> *const u8 {
 /// `clif_rel_get` of relation `d`: column `c` of each lane's row `r` (a delta's, its base's under it, by the chain of
 /// blocks each lane walks to its row's; a base in another block, `FAR_BASE`, in `far`, that block's start).
 #[inline(always)]
-pub unsafe fn rel_get<const N: usize>(d: *const u8, r: R<N>, c: u32, far: *const u8, sealed: Sealed) -> V<N>
+pub unsafe fn rel_get<const N: usize>(d: *const u8, r: R<N>, c: u32, far: *const u8) -> V<N>
 where
     LaneCount<N>: SupportedLaneCount,
 {
-    rel_at(d, r, far, sealed).get(c)
+    rel_at(d, r, far).get(c)
 }
 
 /// Each lane's row of a relation, found once for all its columns (`rel_at`): its block's columns and the row's place
@@ -478,30 +572,45 @@ where
     i: R<N>,
     /// Every lane's row in one chunk of one block.
     uniform: bool,
-    /// The compiled read of a sealed chunk.
-    sealed: Sealed,
 }
 
 impl<const N: usize> RowAt<N>
 where
     LaneCount<N>: SupportedLaneCount,
 {
+    /// No row: a place a walk fills (`rel_at`) before it reads any column.
+    #[inline(always)]
+    pub fn none() -> Self {
+        RowAt { one: core::ptr::null(), each: Simd::splat(core::ptr::null()), seg: Simd::splat(0), within: Simd::splat(0), i: Simd::splat(0), uniform: true }
+    }
+
     /// Column `c` of each lane's row: `clif_rel_get`'s.
     #[inline(always)]
     pub unsafe fn get(&self, c: u32) -> V<N> {
         let o = c as usize * 776;
         if !self.one.is_null() {
-            return col_get_in(self.one.wrapping_add(o), self.seg, self.within, self.i, self.uniform, self.sealed);
+            return col_get_in(self.one.wrapping_add(o), self.seg, self.within, self.i, self.uniform);
         }
-        col_get_each_in(self.each.wrapping_add(Simd::splat(o)), self.seg, self.within, self.i, self.sealed)
+        col_get_each_in(self.each.wrapping_add(Simd::splat(o)), self.seg, self.within, self.i)
     }
 }
 
+/// A relation's descriptor's words the chain walk reads (`rerail_blocks::relation::Relation`; `tests` holds them to
+/// it): its flags, its base's rows, its base's offset, its jump's offset and the rows below it.
+pub(crate) const REL_FLAGS: u64 = 4;
+pub(crate) const REL_BASE_ROWS: u64 = 8;
+pub(crate) const REL_BASE_OFF: u64 = 192;
+pub(crate) const REL_JUMP_OFF: u64 = 200;
+pub(crate) const REL_JUMP_ROWS: u64 = 208;
+/// A base in another block (`rerail_blocks::relation::FAR_BASE`, decision 0353 step 6).
+pub(crate) const FAR_BASE: u32 = 64;
+
 /// Each lane's row `r` of relation `d` found (a delta's, its base's under it, by the chain of blocks each lane walks
-/// to its row's; a base in another block, `FAR_BASE`, `base_off` bytes into `far`, as `clif_rel_get` reads it), for
-/// `RowAt::get` of its columns.
+/// to its row's), for `RowAt::get` of its columns. A base in another block (`FAR_BASE`) is its offset from `far`,
+/// that block's start (`clif_rel_get`'s last argument); a descriptor's jump (an ancestor in its block) is taken where
+/// the row lies below its rows, as `rerail_clif::relation::rel_get` walks.
 #[inline(always)]
-pub unsafe fn rel_at<const N: usize>(d: *const u8, r: R<N>, far: *const u8, sealed: Sealed) -> RowAt<N>
+pub unsafe fn rel_at<const N: usize>(d: *const u8, r: R<N>, far: *const u8) -> RowAt<N>
 where
     LaneCount<N>: SupportedLaneCount,
 {
@@ -510,30 +619,128 @@ where
         let i = r - s32(r32(d, 8));
         let (seg, within) = chunk(i, s32(r32(rows, 8)));
         let uniform = seg.simd_eq(s32(seg[0])).all();
-        return RowAt { one: rows_col(rows, 0), each: Simd::splat(core::ptr::null()), seg, within, i, uniform, sealed };
+        return RowAt { one: rows_col(rows, 0), each: Simd::splat(core::ptr::null()), seg, within, i, uniform };
     }
     // Each lane walks from the newest block to the one its row is in: down while its row is below the block's first.
     let mut b: P<N> = Simd::splat(d);
+    let fars: P<N> = Simd::splat(far);
     let mut first;
     loop {
-        first = gather32(b.wrapping_add(Simd::splat(8)));
-        let next = gather64(b.wrapping_add(Simd::splat(192)));
-        let go = r.simd_lt(first) & next.simd_ne(s64(0)).cast::<i32>();
+        first = gather32(b.wrapping_add(Simd::splat(REL_BASE_ROWS as usize)));
+        let off = gather64(b.wrapping_add(Simd::splat(REL_BASE_OFF as usize)));
+        let go = r.simd_lt(first) & off.simd_ne(s64(0)).cast::<i32>();
         if !go.any() {
             break;
         }
-        // A base in its own block lies `next` bytes from the descriptor; a far one (`FAR_BASE`, flags at 4) that far
-        // into `far`.
-        let is_far = (gather32(b.wrapping_add(Simd::splat(4))) & s32(64)).simd_ne(s32(0));
-        let from = is_far.cast::<isize>().select(Simd::splat(far), b);
-        b = go.cast::<isize>().select(from.wrapping_add(next.cast::<usize>()), b);
+        let is_far = (gather32(b.wrapping_add(Simd::splat(REL_FLAGS as usize))) & s32(FAR_BASE)).simd_ne(s32(0));
+        let base = is_far.cast::<isize>().select(fars, b).wrapping_add(off.cast::<usize>());
+        let jump = gather64(b.wrapping_add(Simd::splat(REL_JUMP_OFF as usize)));
+        let take = jump.simd_ne(s64(0)).cast::<i32>() & r.simd_lt(gather32(b.wrapping_add(Simd::splat(REL_JUMP_ROWS as usize))));
+        let next = take.cast::<isize>().select(b.wrapping_add(jump.cast::<usize>()), base);
+        b = go.cast::<isize>().select(next, b);
     }
     let rows = b.wrapping_add(Simd::splat(40));
     let shift = gather32(rows.wrapping_add(Simd::splat(8)));
     let cols = rows.wrapping_add((gather64(rows.wrapping_add(Simd::splat(24))) + s64(24)).cast::<usize>());
     let i = r - first;
     let (seg, within) = chunk(i, shift);
-    RowAt { one: core::ptr::null(), each: cols, seg, within, i, uniform: false, sealed }
+    RowAt { one: core::ptr::null(), each: cols, seg, within, i, uniform: false }
+}
+
+// ---- One row a read: the scalar reads a join step makes outside its lanes, and the rows' write. ----
+
+/// The seed a key's hash starts from (`rerail_blocks::SEED`; `tests` holds it to it).
+pub const KEY_SEED: u64 = 0x243F_6A88_85A3_08D3;
+
+/// A relation's rows' descriptor (`rerail_blocks::rows::Rows`, at `d + 40` of a relation's): its rows claimed, the
+/// rows its chunks hold, its rows' overflow count and its columns (`tests` holds them to it).
+pub(crate) const ROWS_LEN: u64 = 0;
+pub(crate) const ROWS_RESERVED: u64 = 4;
+pub(crate) const ROWS_NEEDED: u64 = 16;
+pub(crate) const ROWS_NCOLS: u64 = 20;
+/// An index's marks (`Index::marks`, decision 0671).
+pub(crate) const INDEX_MARKS: u64 = 64;
+
+#[inline(always)]
+unsafe fn atomic32<'a>(p: *const u8, o: u64) -> &'a core::sync::atomic::AtomicU32 {
+    &*p.wrapping_add(o as usize).cast::<core::sync::atomic::AtomicU32>()
+}
+
+/// `clif_rows_len` of rows `rows`: the rows claimed, read while a writer claims them.
+#[inline(always)]
+pub unsafe fn rows_len(rows: *const u8) -> u32 {
+    atomic32(rows, ROWS_LEN).load(core::sync::atomic::Ordering::Relaxed)
+}
+
+/// `clif_rows_put` of rows `rows`: `v` written as row `i`'s value in column `c`, at the column's width; 1. Where the
+/// row is not below the rows the chunks hold, or the column not below the columns, nothing is written and the rows'
+/// `needed` is counted (the overflow protocol, decision 0463); 0.
+#[inline(always)]
+pub unsafe fn rows_put(rows: *const u8, i: u32, c: u32, v: u64) -> u32 {
+    let reserved = atomic32(rows, ROWS_RESERVED).load(core::sync::atomic::Ordering::Relaxed);
+    if i >= reserved || c >= r32(rows, ROWS_NCOLS) {
+        atomic32(rows, ROWS_NEEDED).fetch_add(1, core::sync::atomic::Ordering::Relaxed);
+        return 0;
+    }
+    let dir = rows_col(rows, c);
+    let width = r32(dir, 0);
+    let (seg, within) = chunk::<1>(s32(i), s32(r32(rows, 8)));
+    let p = dir.wrapping_add(r64(dir, 8 + 8 * u64::from(seg[0])) as usize + within[0] as usize * width as usize).cast_mut();
+    if width == 4 {
+        p.cast::<u32>().write_unaligned(v as u32);
+    } else {
+        p.cast::<u64>().write_unaligned(v);
+    }
+    1
+}
+
+/// `clif_rel_group_mark` of relation `d`'s index `index`: entry `q` of its marks.
+#[inline(always)]
+pub unsafe fn rel_group_mark(d: *const u8, index: u32, q: u32) -> u32 {
+    r32(follow(index_of(d, index), INDEX_MARKS), 4 * u64::from(q))
+}
+
+/// The lanes' reads at one lane: a scalar caller's.
+pub mod one {
+    use super::*;
+
+    #[inline(always)]
+    pub unsafe fn rel_get(d: *const u8, r: u32, c: u32, far: *const u8) -> u64 {
+        super::rel_get::<1>(d, s32(r), c, far)[0]
+    }
+    #[inline(always)]
+    pub unsafe fn rel_dead(d: *const u8, r: u32) -> bool {
+        super::rel_dead::<1>(d, s32(r)).test(0)
+    }
+    /// The group's first place in the index's rows and its length.
+    #[inline(always)]
+    pub unsafe fn rel_group(d: *const u8, index: u32, h: u64) -> (u32, u32) {
+        let (start, len) = super::rel_group::<1>(d, index, s64(h));
+        (start[0], len[0])
+    }
+    #[inline(always)]
+    pub unsafe fn rel_group_row(d: *const u8, index: u32, q: u32) -> u32 {
+        super::rel_group_row::<1>(d, index, s32(q))[0]
+    }
+    #[inline(always)]
+    pub fn key_mix(h: u64, v: u64) -> u64 {
+        super::key_mix::<1>(s64(h), s64(v))[0]
+    }
+    /// A key's hash: its values mixed in order into the seed (`rerail_blocks::key_hash`).
+    #[inline(always)]
+    pub fn key_hash(kv: &[i64]) -> u64 {
+        kv.iter().fold(super::KEY_SEED, |h, &v| key_mix(h, v as u64))
+    }
+    #[inline(always)]
+    pub fn bloom_hash(key: u64) -> u64 {
+        let (lo, hi) = super::bloom_hash::<1>(s64(key));
+        super::joined(lo, hi)[0]
+    }
+    /// Whether filter `d` may hold the key of hash `h` (`bloom_hash`'s).
+    #[inline(always)]
+    pub unsafe fn bloom_may(d: *const u8, h: u64) -> bool {
+        super::bloom_may::<1>(d, s32(h as u32), s32((h >> 32) as u32)).test(0)
+    }
 }
 
 #[cfg(test)]

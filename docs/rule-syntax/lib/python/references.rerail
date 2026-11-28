@@ -40,15 +40,22 @@
 //   references_field(rename, by)              its constructor fields: field x is also @rx_replace(x, rename, by)'s
 //                                             `__init__` parameter
 #include "python/names.rerail"
-#include "python/reference-defs.rerail"
+#include "python/references-defs.rerail"
 
 // ==== per file ====================================================================================================
 
-// ---- definitions: their symbols (python/reference-defs.rerail), and their modules' names ---------------------------
+// ---- definitions --------------------------------------------------------------------------------------------------
+// Each definition, its module, qualified name and symbol: python/references-defs.rerail, which W's graph
+// (python/references_w.rerail) reads too.
+//
 // rf_doc_name(d, n): a name of document d's module in the name tables: its module, and its path's.
 .decl rf_doc_name(d: number, n: symbol)
 rf_doc_name(d, m) :- rf_module(d, m).
 rf_doc_name(d, a) :- rf_path_module(d, a).
+.decl rf_is_class(f: node)
+rf_is_class(f) :- rf_def(f, _), kind(f, "class_definition").
+.decl rf_is_function(f: node)
+rf_is_function(f) :- rf_def(f, _), kind(f, "function_definition").
 
 // ---- where a node's reference belongs -----------------------------------------------------------------------------
 // rf_body(g, b): b is function g's body.
@@ -99,6 +106,9 @@ rf_expr(n, n, t) :- rf_site(n), !kind(n, "call"), rf_owner(n, t).
 // ---- a name read: what it is bound to ----------------------------------------------------------------------------
 // rf_bind(i, x, s): name read i, of x, lands on scope s (python/names' lookup).
 .decl rf_bind(i: node, x: symbol, s: node)
+// One binding scope a read: its lookup's (`look`, keyed by its read) or, apart by `!rf_forward`, the module it
+// forwards to (its document's one module). Declared (decision 0361); the run checks it.
+.layout rf_bind key(i)
 rf_bind(i, x, s) :- rf_head(i), look(i, x, s), !rf_forward(i, _, _).
 rf_bind(i, x, m) :- rf_forward(i, x, m).
 // rf_forward(i, x, m): PEP 563. Under `from __future__ import annotations`, and in a stub, a name an annotation
@@ -291,7 +301,9 @@ rf_import_target(a, q) :- import_alias(i, a, m, "", _), kind(i, "import_statemen
 rf_named(e, t) :- rf_expr(n, e, t), kind(e, "identifier"), kind(n, "call").
 rf_named(e, t) :- rf_expr(e, e, t), kind(e, "identifier"), !rf_local(e, t), text(e, x), !rf_builtin(e, x).
 .decl rf_builtin(e: node, x: symbol)
-rf_builtin(e, x) :- rf_expr(e, e, _), kind(e, "identifier"), text(e, x), builtin(x), !rf_after_310(x).
+// From the builtins' names, by nameref's name key: a builtin read is a read of the name (its identifier is no attribute's
+// name), so only the reads of a builtin's name are asked about, not every identifier's text.
+rf_builtin(e, x) :- builtin(x), !rf_after_310(x), nameref(e, x), rf_expr(e, e, _).
 // rf_after_310(x): a builtin Python 3.10 lacks. W's graph reads the builtins of Ruff's default target, 3.10, so these
 // are module names to it.
 .decl rf_after_310(x: symbol)
@@ -314,7 +326,9 @@ rf_unq_bare(t, c, x, m) :- rf_named(e, t), text(e, x), rf_owner_class(t, _, c), 
 .decl rf_attr(e: node, t: node, o: node, f: symbol)
 rf_attr(e, t, o, f) :- rf_expr(_, e, t), kind(e, "attribute"), field(e, "object", o), field(e, "attribute", fa), text(fa, f).
 .decl rf_selfish(o: node)
-rf_selfish(o) :- kind(o, "identifier"), text(o, x), (x = "self" ; x = "cls").
+// Each one an attribute's object, a read: nameref's rows of the two names, by its name key, not every identifier's text.
+rf_selfish(o) :- nameref(o, "self").
+rf_selfish(o) :- nameref(o, "cls").
 rf_ref(t, "self", c, f, "") :- rf_attr(_, t, o, f), rf_selfish(o), rf_owner_class(t, _, c).
 rf_ref(t, "field", c, x, f) :- rf_attr(_, t, o, f), kind(o, "attribute"), field(o, "object", s), rf_selfish(s),
     field(o, "attribute", xa), text(xa, x), rf_owner_class(t, _, c).

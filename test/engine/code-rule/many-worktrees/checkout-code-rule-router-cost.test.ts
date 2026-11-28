@@ -15,6 +15,26 @@ vi.mock("node:child_process", async importOriginal => {
   return { ...original, spawnSync: counted(original.spawnSync), execFile: counted(original.execFile), spawn: counted(original.spawn) };
 });
 
+/**
+ * The questions Rerail asked a folder about which clone is there (its clone id file read, its `.git` entry's identity
+ * read), from outside the module that answers them.
+ */
+const folderQuestions = vi.hoisted(() => ({ asked: 0 }));
+vi.mock("../../../../src/engine/catalog/repository-identity.js", async importOriginal => {
+  const original = await importOriginal<typeof import("../../../../src/engine/catalog/repository-identity.js")>();
+  return {
+    ...original,
+    readCloneIdAt: (identityPath: string) => {
+      folderQuestions.asked += 1;
+      return original.readCloneIdAt(identityPath);
+    },
+    folderIdentity: (folder: string) => {
+      folderQuestions.asked += 1;
+      return original.folderIdentity(folder);
+    },
+  };
+});
+
 import Database from "better-sqlite3";
 import { CheckoutOwners } from "../../../../src/engine/catalog/checkout-owner.js";
 import { recordCheckout } from "../../../../src/engine/catalog/repository-registry.js";
@@ -127,17 +147,21 @@ async function openRouter(
   return auditor;
 }
 
-/** What `work` costs: the statements it runs on `database`'s connection and the Git processes it starts. */
-async function cost(database: RerailDatabase, work: () => Promise<void> | void): Promise<{ statements: number; gitProcesses: number }> {
+/**
+ * What `work` costs: the statements it runs on `database`'s connection, the Git processes it starts, and the questions
+ * it asks folders about which clone is there (`folderQuestions`).
+ */
+async function cost(database: RerailDatabase, work: () => Promise<void> | void): Promise<{ statements: number; gitProcesses: number; folderQuestions: number }> {
   statements.counting = database.$client;
   statements.run = 0;
   const started = gitProcesses.started;
+  const asked = folderQuestions.asked;
   try {
     await work();
   } finally {
     statements.counting = undefined;
   }
-  return { statements: statements.run, gitProcesses: gitProcesses.started - started };
+  return { statements: statements.run, gitProcesses: gitProcesses.started - started, folderQuestions: folderQuestions.asked - asked };
 }
 
 function withDatabase(databasePath: string, write: (database: RerailDatabase) => void): void {
@@ -196,7 +220,7 @@ describe("CheckoutCodeRuleRouter in a repository with many worktrees", () => {
     await auditor.settleGeneratedEdits();
   }
 
-  it("costs one tool call the same statements and Git processes however many worktrees the session knows", async () => {
+  it("costs one tool call the same statements, Git processes and questions of folders however many worktrees the session knows", async () => {
     const costOf = async (count: number, lanes: boolean) => {
       const { catalogs, auditor } = await sessionWithWorktrees(count, lanes);
       await editToolCall(auditor, 1);
@@ -208,6 +232,8 @@ describe("CheckoutCodeRuleRouter in a repository with many worktrees", () => {
       expect(await costOf(6, lanes)).toEqual(few);
       // The checkout declares no submodules, so its ignore rules ask Git nothing.
       expect(few.gitProcesses).toBe(0);
+      // Counted, so a mock that stopped counting fails here: a tool call asks five, with lanes or without.
+      expect({ lanes, folderQuestions: few.folderQuestions }).toEqual({ lanes, folderQuestions: 5 });
     }
   }, 60_000);
 

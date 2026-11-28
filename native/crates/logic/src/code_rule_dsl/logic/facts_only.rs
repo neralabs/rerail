@@ -32,7 +32,7 @@ const FACT_STORE: &[&str] = &[
     "file_documents",
     "object_pins",
     "store_state",
-    // The store's identity (RER-131): its atoms and connections belong to this store only.
+    // The store's identity: its atoms and connections belong to this store only.
     "store_identity",
     // The segment files objects (sources, tapes) are in, by number (decision 0295), and each guest's key, an identity
     // interned to its number as `strings` and `hashes` are (decision 0391; frames retired, 0439).
@@ -178,8 +178,16 @@ const STATE: &[(&str, &str)] = &[
     ("code_rule_dsl/logic/device/binding.rs", "Device"),
     // Profiling: the placements a recording run made, and the writer's jobs by kind.
     ("code_rule_dsl/logic/plan/placement.rs", "Recording"),
+    // Profiling (`RERAIL_PROF`): the join walker's plans' calls and steps' rows, summed over the run for its report
+    // (`walk_report`), and the walk's caller, set before it and taken by it. Measurements, not results kept.
+    ("code_rule_dsl/logic/native/setfix.rs", "WALK_PLANS"),
+    ("code_rule_dsl/logic/native/setfix.rs", "WALK_ENTRY"),
+    // The run's `RERAIL_KIND_BATCH` setting (decision 0706 E1), read once; and the open file of the join shapes'
+    // spike (`RERAIL_SPIKE_SHAPES`), where its lines are written. Settings and an open thing, not results kept.
+    ("code_rule_dsl/logic/native/setfix/kinds.rs", "MODE"),
+    ("code_rule_dsl/logic/plan.rs", "FILE"),
     // The coverage check's census of the shipped rule files, read once by a test process.
-    // A rule's pattern compiled on this thread (RER-131's group patterns, where `GROUPS` was): the in-memory form of
+    // A rule's pattern compiled on this thread (decision 0161's group patterns, where `GROUPS` was): the in-memory form of
     // the rule's own text, made again from it; compiling a regex is cheap, so nothing is written (t33 step 7).
     ("code_rule_dsl/logic/strings/functions.rs", "CACHE"),
     // A production's profiling counter's name, made once per name: a counter, not a result (t33 step 7).
@@ -213,14 +221,16 @@ const STATE: &[(&str, &str)] = &[
     // The mixed index spike's per-thread counters (the shape grown wave by wave): a measurement, not a result kept.
     ("code_rule_dsl/logic/native/setfix.rs", "GROWN"),
     ("code_rule_dsl/logic/native/setfix.rs", "VARIANTS"),
+    // The entry of the walk a caller starts (`RERAIL_PROF`): a switch the caller sets and the walk takes.
+    ("code_rule_dsl/logic/native/setfix.rs", "WALK_ENTRY"),
     // A test process's own tape cache path (`corpus::test_tape_cache`): where the store is, not a result kept.
     ("code_rule_dsl/logic/plan/corpus/base.rs", "PATH"),
     ("code_rule_dsl/logic/native/setfix/device.rs", "LAST"),
-    // core.rerail's declarations (RER-131), read once from the engine's own library text: not a result kept.
+    // core.rerail's declarations (decision 0161), read once from the engine's own library text: not a result kept.
     ("code_rule_dsl/logic/rr/lower/core.rs", "DECLS"),
-    // This thread's zstd decompression context (RER-131): an open thing, not a result.
+    // This thread's zstd decompression context (decision 0161): an open thing, not a result.
     ("content_store/compression.rs", "DECODER"),
-    // The store handles open in this process, by path (RER-131): a registry of open things.
+    // The store handles open in this process, by path (decision 0161): a registry of open things.
     ("code_rule_dsl/logic/plan/choices.rs", "DurableSide"),
     ("code_rule_dsl/logic/plan/corpus/base.rs", "TEST_TAPE_CACHE"),
     // A test's own store, the template's path and the threads said to ask off a test's (`test_store`): which files
@@ -282,6 +292,18 @@ const STATE: &[(&str, &str)] = &[
     ("code_rule_dsl/logic/rr.rs", "NODES"),
     // `core_names` less 0174's on-request relations: a set of the engine's own, as `CORE`, the same for every run.
     ("code_rule_dsl/logic/rr.rs", "SHAPE"),
+    // The kind set rules (0701 §5.1): a program of the engine's own files, lowered once, as `CORE`, the same for
+    // every run.
+    ("code_rule_dsl/logic/rr.rs", "RULES"),
+    // A thread's connection for rules passes (0701 §5.1): scratch, its inputs bound and its relations forgotten
+    // within each run, nothing kept from one run for another.
+    ("code_rule_dsl/logic/plan/corpus/preparation/rules_pass.rs", "ENGINE"),
+    // The frame keys of the run under way (`reuse::Naming`), bound to the run's context for its manifest to name: the
+    // run's own, gone with it, nothing kept for another.
+    ("code_rule_dsl/logic/plan/corpus/reuse.rs", "RunFrame"),
+    // The profiler's labels of the system's dispatch queues by thread port (macOS), noted as it samples: a measurement's,
+    // never a result.
+    ("code_rule_dsl/logic/profile.rs", "QUEUE_LABELS"),
     // The library images shipped beside the executable (0264), read once: an input, as `CORE`'s core.rerail, no result.
     ("code_rule_dsl/logic/rr/images.rs", "SHIPPED"),
     // The rule files' entries a thread read before its run (0275), taken by the run's manifest: a queue.
@@ -484,8 +506,7 @@ fn every_table_is_facts_or_listed() {
     for t in FACT_STORE.iter().chain(SCRATCH).chain(NOT_YET_TABLES.iter().map(|t| &t.0)) {
         assert!(seen.insert(*t), "{t} is in two lists");
     }
-    assert!(NOT_YET_TABLES.len() <= NOT_YET_TABLES_PIN, "a cache table added to the list (it may only shrink): {} > {NOT_YET_TABLES_PIN}", NOT_YET_TABLES.len());
-    assert_eq!(NOT_YET_TABLES.len(), NOT_YET_TABLES_PIN, "a cache table moved: lower NOT_YET_TABLES_PIN to {}", NOT_YET_TABLES.len());
+    assert_eq!(NOT_YET_TABLES.len(), NOT_YET_TABLES_PIN, "a cache table moved or added (the list may only shrink): its pin is {NOT_YET_TABLES_PIN}, the list {}", NOT_YET_TABLES.len());
 }
 
 #[test]
@@ -497,6 +518,5 @@ fn every_kept_map_is_state_or_listed() {
     assert!(new.is_empty(), "maps in no list of decision 0104 (a result kept for later use is facts, not a map of its own):\n{}", new.join("\n"));
     let gone: Vec<String> = listed.difference(&found).map(|(f, s)| format!("{f}\t{s}")).collect();
     assert!(gone.is_empty(), "listed maps no longer there (cut them from the list, and lower the pin if moved):\n{}", gone.join("\n"));
-    assert!(NOT_YET_MAPS.len() <= NOT_YET_MAPS_PIN, "a cache map added to the list (it may only shrink): {} > {NOT_YET_MAPS_PIN}", NOT_YET_MAPS.len());
-    assert_eq!(NOT_YET_MAPS.len(), NOT_YET_MAPS_PIN, "a cache map moved: lower NOT_YET_MAPS_PIN to {}", NOT_YET_MAPS.len());
+    assert_eq!(NOT_YET_MAPS.len(), NOT_YET_MAPS_PIN, "a cache map moved or added (the list may only shrink): its pin is {NOT_YET_MAPS_PIN}, the list {}", NOT_YET_MAPS.len());
 }

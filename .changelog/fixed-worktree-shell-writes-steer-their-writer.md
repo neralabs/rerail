@@ -1,1 +1,0 @@
-A shell write in another worktree of the repository now steers the coding agent whose command ran in that worktree, as one in its own folder does, and no other session records it. A change there that no session made is recorded once, in Log, as the repository's own: History by rule lists it under "Repository", in no session.

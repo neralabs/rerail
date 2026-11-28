@@ -221,7 +221,7 @@ pub fn within(text: &crate::code_rule_dsl::tape::Text, range: std::ops::Range<us
         let r = text.home().room()?.as_any().downcast_ref::<SlabRoom>()?;
         text.as_str().get(range.clone())?;
         let room = SlabRoom { slab: std::sync::Arc::clone(&r.slab), at: r.at + range.start, len: range.len() };
-        return crate::code_rule_dsl::tape::Text::new(Home::Placed(std::sync::Arc::new(room))).ok();
+        crate::code_rule_dsl::tape::Text::new(Home::Placed(std::sync::Arc::new(room))).ok()
     }
     #[cfg(not(any(target_os = "macos", target_os = "linux", windows)))]
     {

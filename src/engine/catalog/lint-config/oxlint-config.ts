@@ -307,7 +307,7 @@ function categoryDecision(config: OxlintConfig, category: string): PortDecision 
   if (level === undefined) {
     return category === DEFAULT_CATEGORY
       ? { on: true, explicit: false, because: `${config.file}: oxlint 1.88.0's default (the ${DEFAULT_CATEGORY} category)` }
-      : { on: false, explicit: false, because: `${config.file} does not turn it on` };
+      : { on: false, explicit: false, because: `not turned on in ${config.file}` };
   }
   return { on: !severityOf(level, "oxlint")!.off, explicit: true, because: `${config.file}: categories.${category}: ${JSON.stringify(level)}` };
 }
@@ -315,7 +315,7 @@ function categoryDecision(config: OxlintConfig, category: string): PortDecision 
 /** What the config says about `rule`, which its `rules` do not set: its category decides, in the plugins oxlint runs. */
 function unsetDecision(config: OxlintConfig, rule: PortRule): PortDecision {
   if (config.unread.length > 0) return { on: "unknown", because: `${config.unread.join(" and ")}, which Rerail does not read, may set it` };
-  if (!config.plugins.has(rule.plugin)) return { on: false, explicit: false, because: `${config.file} does not turn it on` };
+  if (!config.plugins.has(rule.plugin)) return { on: false, explicit: false, because: `not turned on in ${config.file}` };
   return categoryDecision(config, rule.category);
 }
 

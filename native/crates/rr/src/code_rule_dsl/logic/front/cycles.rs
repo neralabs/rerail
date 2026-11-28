@@ -1210,7 +1210,14 @@ fn constant_keyed(rules: &[Rule<'_>], component: &super::Comp) -> bool {
 /// (`Error::UnboundedValueCycle`). It reads the version's rules in place, its components as the tree's strata made
 /// them (`graph::components_by_name`).
 pub fn check(v: &Version) -> Result<Vec<BTreeSet<String>>, Error> {
-    checked(v, &Given::default())
+    checked(v, &Given::default(), None)
+}
+
+/// `check` of the components that hold a relation of `touched` alone: a program linked from tailed modules, whose
+/// other components its modules' tails checked (decision 0639 §6a, E14: no component crosses modules). The
+/// guarantees of the components below them are made as `check` makes them.
+pub fn check_within(v: &Version, touched: &BTreeSet<String>) -> Result<Vec<BTreeSet<String>>, Error> {
+    checked(v, &Given::default(), Some(touched))
 }
 
 /// `check` of a program lowered without the rules of the library it reads (`rr::Text::lower_in`, decision 0246 §2):
@@ -1219,7 +1226,7 @@ pub fn check(v: &Version) -> Result<Vec<BTreeSet<String>>, Error> {
 /// so they guarantee nothing there (PR #508's 363b91c0b, t47).
 pub fn check_given(v: &Version, library: &Version) -> Result<Vec<BTreeSet<String>>, Error> {
     match check(v) {
-        Err(Error::UnboundedValueCycle { .. }) => checked(v, &given(v, library)),
+        Err(Error::UnboundedValueCycle { .. }) => checked(v, &given(v, library), None),
         done => done,
     }
 }
@@ -1275,8 +1282,9 @@ fn given(v: &Version, library: &Version) -> Given {
     Given { moves, depths, rels }
 }
 
-/// `check`, the relations of `given` guaranteeing what it holds for them.
-fn checked(v: &Version, given: &Given) -> Result<Vec<BTreeSet<String>>, Error> {
+/// `check`, the relations of `given` guaranteeing what it holds for them; with `within`, of the components that hold
+/// one of its relations alone (`check_within`).
+fn checked(v: &Version, given: &Given, within: Option<&BTreeSet<String>>) -> Result<Vec<BTreeSet<String>>, Error> {
     let about = About::of(v);
     // A program that does not stratify fails there, by name.
     let Ok(sccs) = graph::components_by_name(v, &about) else { return Ok(Vec::new()) };
@@ -1299,8 +1307,9 @@ fn checked(v: &Version, given: &Given) -> Result<Vec<BTreeSet<String>>, Error> {
         .iter()
         .map(|component| {
             let recursive = component.len() > 1 || component.iter().any(|r| edges_by.get(r).is_some_and(|e| e.iter().any(|(w, _)| w == r)));
-            if !recursive {
-                return (false, None);
+            // A component outside `within` was checked where its module was tailed: it needs no bound here.
+            if !recursive || within.is_some_and(|w| !component.iter().any(|r| w.contains(r))) {
+                return (recursive, None);
             }
             let rules: Vec<Rule<'_>> = component.iter().flat_map(|rel| by_head.get(rel).into_iter().flatten().copied()).collect();
             (true, value_cycle(&p, &rules, component).then(|| !constant_keyed(&rules, component)))

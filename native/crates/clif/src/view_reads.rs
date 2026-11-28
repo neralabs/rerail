@@ -5,9 +5,11 @@
 //! A read takes the document's entry (`ViewDoc`, in its batch's block beside the projection's numbering, which it
 //! refers to by a run), the tape's base and its view (`view::TapeView`), then a row's local number and a column. The
 //! entry holds no per-node column: what a node's row says is its tape node's (`num_select`), read off the tape
-//! (`tape_number`, `tape_start`, `tape_end`); a kind is its code's, by the derived table of the tape's codes.
+//! (`tape_number`, `tape_start`, `tape_end`); a kind and a field are its code's, in its language's run of the codes'
+//! directory (`CodesLang`, decision 0697), which the binary holds and a read is passed.
 
-use crate::ids::Run;
+// The layout, and its host reads (`rerail_reads::views`), where the reads have always been found.
+pub use rerail_reads::views::*;
 #[cfg(feature = "ir")]
 use crate::reads::B;
 #[cfg(feature = "ir")]
@@ -17,550 +19,16 @@ use cranelift_codegen::ir::{
     types::{I32, I64},
 };
 
-/// A document's entry for its views' reads (`ViewDoc` in the kernels).
-#[repr(C)]
-#[derive(Debug, Default)]
-pub struct ViewDoc {
-    /// The document's key: an id's high 32 bits.
-    pub key: u32,
-    /// Its dialect's tape tag.
-    pub tag: u32,
-    /// 1 when ids are local ids (`RERAIL_NODE_IDS=preorder`: no granule table).
-    pub preorder: u32,
-    /// The projection's numbered nodes.
-    pub nodes: u32,
-    /// The projection's numbering (`ids::Numbering`, one).
-    pub numbering: Run,
-    /// By the tape's code (its table's number, `tape_number`): the kind atom its `kind` column holds (u32s, its
-    /// name's canonical code's), and the field atom (`tag << 16 | field`).
-    pub kinds: Run,
-    pub fields: Run,
-    /// core.rerail's positions past the nodes (`Locs`), for the `Loc` views: the tokens, then where the text is the
-    /// document's own (1) the whole text and each line, then the end points (`ends`, one a node, or none).
-    pub tokens: u32,
-    pub own_text: u32,
-    pub ends: u32,
-    pub source_len: u32,
-    /// A guest's placement in its host (`Placement`): 0 none (a file's own tree), `PLACED_COPIED` (host byte = guest
-    /// byte + `delta`, clamped to `within`), `PLACED_AT` (every span at `within`), `PLACED_SEGMENTS` (an embedder's,
-    /// by its `segments`), `PLACED_TABLE` (a string's normalized pieces: each position's host span in `placed`).
-    pub placement: u32,
-    /// The key of the file the document is part of (decision 0431 §4): its own, or a program's file's. Its
-    /// `docof`; its ids keep `key`.
-    pub file: u32,
-    pub delta: i64,
-    pub within_lo: u32,
-    pub within_hi: u32,
-    /// `PLACED_TABLE`'s: by local id (a node, then each position past them), the host span `start << 32 | end` the
-    /// guest's placement gives its span (`Placement::host`; u64s). A string's normalized pieces, which no word maps:
-    /// its spans placed once, as the host places them.
-    pub placed: Run,
-    /// The tape's rows' derived columns (`tape_rows`), each made on a program's first read of its relation, empty
-    /// before: each row's gap's atom of `structural_before` and `structural_after` (u32s, by row); `rr_token_named`'s
-    /// parent and place among its parent's tape children (`[u32; 2]`s, by row); each node's place in `visit_index`'s
-    /// order (u32s, by local id); each node's `tree_digest` hash (32 bytes each, by local id: its value the first 8,
-    /// big-endian).
-    pub gaps: [Run; 2],
-    pub named: Run,
-    pub visits: Run,
-    pub digests: Run,
-    /// By the tape's code (`tape_number`), the atom of its kind's name (u32s): the `op` view's `s` of an anonymous
-    /// child of that code (`view_op`), the host's and the kernels' one table. Interned once where a batch reads `op`;
-    /// empty where it does not.
-    pub names: Run,
-    /// `PLACED_SEGMENTS`' segments (`SEGMENT_WORDS` u32s each, in program order): an embedder's program's map.
-    pub segments: Run,
-    /// Which place a numbered node's is, read in its tape's auxiliary index (decision 0656 step 4): `PLACE_NAMED`
-    /// (`tape_place`, core.rerail's shape) or `PLACE_PAST_COMMENTS` (`tape_place_past_comments`, T's). An outermost
-    /// anchor's is its rank among the anchors (`ids` item `ANCHOR_ITEM`).
-    pub place: u32,
-    pub pad: u32,
-}
-const _: () = assert!(std::mem::size_of::<ViewDoc>() == 16 + 16 * 4 + 16 + 24 + 16 * 7 + 8);
-
-/// `ViewDoc::place`'s kinds.
-pub const PLACE_NAMED: u32 = 1;
-pub const PLACE_PAST_COMMENTS: u32 = 2;
-/// The rank index's item of an anchored projection's anchors (`Item::Anchor`).
-pub const ANCHOR_ITEM: i64 = 11;
-
-/// `ViewDoc::placement`'s kinds.
-pub const PLACED_COPIED: u32 = 1;
-pub const PLACED_AT: u32 = 2;
-/// An embedder's program (`Placement::Segments`): a span stands where `SegmentMap::file_ranges(..).primary()` puts it.
-pub const PLACED_SEGMENTS: u32 = 3;
-/// A segment's u32s: its program range, its host range, and 1 where it is copied (`SegmentMap::words`).
-pub const SEGMENT_WORDS: i64 = 5;
-/// A string's normalized pieces (`Placement::Pieces`): each position's host span in `placed`.
-pub const PLACED_TABLE: u32 = 4;
-
-/// A document of a batch, as an executor finds its views' rows (decision 0353 step 4d, and step 3 on the CPU). The
-/// search layer, made with the batch from its documents' keys and counts alone (none made): its key and its first row
-/// in each view (`ROWS`). The reads layer, written when the batch's views are read in place: its entry's offset in
-/// the batch's block, its tape's and its lines' places (a home of the directory's, `ViewHome`, and an offset in it),
-/// and its tape's view (the reads' own). Nothing in it is an address: the host and the device read the same row.
-///
-/// The view's 16z cache offset (`TapeView::side`, the cache's address less the tape's) is the device's, as the
-/// kernels read the view where it lies; the host's reads take the view with their own, from the same homes
-/// (`ViewDir::cache`).
-#[repr(C)]
-#[derive(Debug, Default, Clone, Copy)]
-pub struct ViewRow {
-    pub entry: u64,
-    /// Offsets in their homes (`homes`: the tape's, the lines', then the source's).
-    pub tape: u64,
-    pub lines: u64,
-    /// The document's own source text (a guest's its own program, not its host's): its first byte in home
-    /// `homes[2]`, where a node's text is read in place (`view_text_span`, decision 0287 §2).
-    pub source: u64,
-    pub homes: [u32; 3],
-    pub key: u32,
-    pub rows: [u32; ROWS],
-    pub view: crate::view::TapeView,
-    /// The tape's length in bytes from `tape`: the host's reads read it as a slice (`rerail_tape_format::view_reads`).
-    pub bytes: u32,
-    /// Its place in the directory's order (`ViewDir::order`: the order of its views' rows), or `NO_DOC` for a number
-    /// of the growth none of the directory's documents has.
-    pub at: u32,
-}
-const _: () = assert!(std::mem::size_of::<ViewRow>() == (8 + 8 + 8 + 8 + 12 + 4 + 4 * ROWS + std::mem::size_of::<crate::view::TapeView>() + 4 + 4).next_multiple_of(8));
-
-/// A row's first rows: one per view of `VIEWS`, then the views no kernel reads, the host's alone: `child`'s sibling
-/// view (`SIBLING`), the token order's four (`TOK`), `spread` (`SPREAD`), `end_point` (`END`) and `text` (`TEXT`: its
-/// nodes with text, then its positions with text), and the other relations of the tape's answers (`TAPE`, the
-/// engine's `tape_rows`). Every view's rows are found in the directory, whoever reads them.
-pub const ROWS: usize = TAPE + TAPE_RELATIONS;
-/// `op`'s rows (each numbered node's anonymous children, `Item::Op`): `view_op`'s, in `VIEWS`.
-pub const OP: usize = 12;
-const _: () = assert!(matches!(VIEWS[OP].as_bytes(), b"view_op"));
-pub const SIBLING: usize = VIEWS.len();
-/// The token order's four relations' (`tokens::TokRel`'s order; the engine's `tape_rows`): `TOK + rel`.
-pub const TOK: usize = SIBLING + 1;
-pub const SPREAD: usize = TOK + 4;
-pub const END: usize = SPREAD + 1;
-/// `text`'s rows (decision 0656 step 4: a view, no row made).
-pub const TEXT: usize = END + 1;
-/// The first of the tape's other relations' (`tape_rows`): `structural_before`, `structural_after`,
-/// `rr_token_named`, `visit_index`, `tree_digest` and `doc`, in that order.
-pub const TAPE: usize = TEXT + 1;
-/// How many relations `TAPE` starts.
-pub const TAPE_RELATIONS: usize = 6;
-
-/// Where a home of a directory's tapes and lines lies for each executor: a slab's (or a tape's vector's) host
-/// address, and its device address (`gpu`; 0 where the device has none: no device, or the home is a vector of the
-/// host's). A row's tape is at its home's base plus its offset, the executor's base.
-#[repr(C)]
-#[derive(Debug, Default, Clone, Copy)]
-pub struct ViewHome {
-    pub host: u64,
-    pub gpu: u64,
-}
-const _: () = assert!(std::mem::size_of::<ViewHome>() == 16);
-
-/// A batch's documents as its views' reads find them, in the batch's block and self-relative: its own offset in the
-/// block (`at`: the block's start is the directory's address less it, whoever reads it), its documents' rows and its
-/// homes (offsets in the block), how many of each, its 16z cache's home (its number + 1, 0 for none: a block of its
-/// own, which both executors' reads share and write), its documents' order by key (`by_key`: an offset in the block of
-/// `ndocs` row numbers), and each view's rows in all (`ROWS`' order; with `counted`, once the rows' first rows are
-/// written).
-///
-/// A row is its document's number in its growth less `first` (plan "Chunk node numbers"): the same document has the
-/// same row in every directory of the growth that holds it (a chunk's batch, the batch a round grew it into, a tape
-/// value's batch, the layered directory of them), so an id's page names its row (`doc_of_id`). The rows span the
-/// numbers from the directory's first to its last (`span`); a number between them that none of its documents has is
-/// a row of key and place `NO_DOC`. The views' rows go by the directory's order (`order`: `ndocs` rows, each one's
-/// place there its `ViewRow::at`): a batch's own documents in key order, a layered directory's the chunk's batch's,
-/// then each values batch's (`views_over`), so a lookup by key bisects `by_key`.
-#[repr(C)]
-#[derive(Debug, Default)]
-pub struct ViewDir {
-    pub at: u64,
-    pub ndocs: u32,
-    pub nhomes: u32,
-    pub rows: u64,
-    pub homes: u64,
-    pub cache: u64,
-    pub by_key: u64,
-    pub ends: [u32; ROWS],
-    pub counted: u32,
-    pub pad: u32,
-    /// Its growth's page table (`IdPages`, an offset in the block; plan "Chunk node numbers", step 1): each page of
-    /// the ids of the batches of its growth (a chunk's rounds and the tape values admitted to it, decision 0431 §6,
-    /// §8), its document's number in the growth and the local id it starts at. Every directory of the growth names
-    /// the same table: an id handed out in one round is the same id in the next.
-    pub pages: u64,
-    /// Its order (an offset in the block of `ndocs` rows): the order of its views' rows.
-    pub order: u64,
-    /// The number of its first row in its growth, and how many rows from it (`span`).
-    pub first: u32,
-    pub span: u32,
-}
-const _: () = assert!(std::mem::size_of::<ViewDir>() == (48 + 4 * ROWS + 8 + 8 + 8 + 8).next_multiple_of(8));
-
-/// A growth's ids (plan "Chunk node numbers"): 32 bits, cut into pages of `PAGE` ids. A document takes whole pages
-/// when it is first made in the growth, in its role's region, and its later spans (its comments, its matches) further
-/// pages when they are made; each page names its document's number and the local id it starts at, so an id's row in
-/// any directory of the growth is one load, and its local id the same load (`doc_of_id`, `dir_doc_of_id`,
-/// `dir_local_of_id`).
-pub const PAGE_BITS: u32 = 12;
-pub const PAGE: u32 = 1 << PAGE_BITS;
-/// The pages of the 32-bit ids.
-pub const PAGES: u32 = 1 << (32 - PAGE_BITS);
-/// The documents' roles, each a region of pages: files, code guests, the hidden documents.
-pub const ROLES: usize = 3;
-/// Each role's first page, then the end: files from id 0, code guests from 2^30, hidden documents from 1.5 × 2^30,
-/// the keys' ranges (`syntax::GUEST_KEYS`, `HIDDEN_KEYS`) in 32 bits, so a rule's bound on a role's ids is a
-/// literal.
-pub const ROLE_PAGES: [u32; ROLES + 1] = [0, (1 << 30) >> PAGE_BITS, ((1 << 30) + (1 << 29)) >> PAGE_BITS, PAGES];
-
-/// The role of the document of key `key`: its key's range (files below 2^30, code guests below 1.5 × 2^30).
-pub const fn role_of_key(key: u32) -> usize {
-    if key < ROLE_PAGES[1] << PAGE_BITS {
-        0
-    } else if key < ROLE_PAGES[2] << PAGE_BITS {
-        1
-    } else {
-        2
-    }
-}
-
-/// A page of a growth's ids: its document's number in the growth and the local id of its first id.
-#[repr(C)]
-#[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
-pub struct Page {
-    pub number: u32,
-    pub local: u32,
-}
-const _: () = assert!(std::mem::size_of::<Page>() == 8);
-
-/// A growth's page table, in its block: the pages taken so far in each role's region (`ROLE_PAGES`, from its
-/// first), then `PAGES` pages (`Page`). A page is written when it is taken (`take_pages`), before any id of it is
-/// handed out; one never taken is never read, so the table is reserved, not zeroed (its pages are address space until
-/// written).
-#[repr(C)]
-#[derive(Debug, Default)]
-pub struct IdPages {
-    pub tops: [u32; ROLES],
-    pub pad: u32,
-}
-const _: () = assert!(std::mem::size_of::<IdPages>() == 16);
-
-impl IdPages {
-    /// The bytes a table takes: its header and its pages.
-    pub const BYTES: usize = std::mem::size_of::<IdPages>() + PAGES as usize * std::mem::size_of::<Page>();
-    /// Page `p`'s address.
-    ///
-    /// # Safety
-    /// `this` is a table of `BYTES` bytes, alive, and `p` below `PAGES`.
-    unsafe fn page_at(this: *const Self, p: u32) -> *mut Page {
-        // SAFETY: the caller's.
-        unsafe { this.add(1).cast::<Page>().add(p as usize).cast_mut() }
-    }
-    /// The page of id `id`.
-    ///
-    /// # Safety
-    /// As `page_at`, `id` handed out by `take_pages` (its page written).
-    pub unsafe fn page_of(this: *const Self, id: u32) -> Page {
-        // SAFETY: the caller's.
-        unsafe { Self::page_at(this, id >> PAGE_BITS).read() }
-    }
-    /// Takes the pages that hold `ids` ids of the document of number `number`, local ids `local..local + ids`, in
-    /// role `role`'s region, after the pages taken before (making order): its first id, or `None` where the region
-    /// has no room for them. Many threads may take pages at once.
-    ///
-    /// # Safety
-    /// As `page_at`, and `role` below `ROLES`.
-    pub unsafe fn take_pages(this: *const Self, role: usize, number: u32, local: u32, ids: u32) -> Option<u32> {
-        use std::sync::atomic::{AtomicU32, Ordering};
-        let n = ids.div_ceil(PAGE);
-        let room = ROLE_PAGES[role + 1] - ROLE_PAGES[role];
-        // SAFETY: the caller's: the region's count of pages taken, written through atomics alone.
-        let top = unsafe { AtomicU32::from_ptr(std::ptr::addr_of!((*this).tops[role]).cast_mut()) };
-        let start = top.try_update(Ordering::AcqRel, Ordering::Acquire, |t| (t + n <= room).then_some(t + n)).ok()?;
-        let first = ROLE_PAGES[role] + start;
-        for k in 0..n {
-            // SAFETY: the caller's: page `first + k`, below `PAGES`, taken by this call alone.
-            unsafe { Self::page_at(this, first + k).write(Page { number, local: local + k * PAGE }) };
-        }
-        Some(first << PAGE_BITS)
-    }
-}
-
-/// No document (`ViewDir::doc_of_key`).
-pub const NO_DOC: u32 = u32::MAX;
-
-/// The directory's searches on the host, written directly beside their CLIF (`dir_doc_of_row`, `dir_doc_of_key`,
-/// decision 0353 step 3 on the CPU, step 2), which the kernels and the JIT read: each takes a memo, the document its
-/// caller found last, tried before the bisection. A stale memo costs a comparison, never a wrong document.
-///
-/// They read the search layer through the directory's address alone, field by field: the reads layer of the same
-/// rows is written while they run (`build_dir`), so no reference to a row is made.
-impl ViewDir {
-    /// The batch's block's start: the directory's address less its offset in it.
-    ///
-    /// # Safety
-    /// `this` is a directory in its block, which is alive.
-    unsafe fn block_of(this: *const Self) -> *const u8 {
-        // SAFETY: the caller's.
-        this.cast::<u8>().wrapping_sub(unsafe { std::ptr::addr_of!((*this).at).read() } as usize)
-    }
-    /// Its rows' address.
-    ///
-    /// # Safety
-    /// As `block_of`.
-    unsafe fn rows_of(this: *const Self) -> *const ViewRow {
-        // SAFETY: the caller's.
-        unsafe { Self::block_of(this).add(std::ptr::addr_of!((*this).rows).read() as usize).cast::<ViewRow>() }
-    }
-    /// Its rows' address, for their writer (`made::directory`, `Batch::firsts`, `build_dir`).
-    ///
-    /// # Safety
-    /// As `block_of`.
-    pub unsafe fn block_rows(this: *const Self) -> *mut ViewRow {
-        // SAFETY: the caller's.
-        unsafe { Self::rows_of(this).cast_mut() }
-    }
-    /// Its homes' address, for their writer (`made::directory`, the reads layer's rows).
-    ///
-    /// # Safety
-    /// As `block_of`, its homes allocated.
-    pub unsafe fn homes_mut(this: *mut Self) -> *mut ViewHome {
-        // SAFETY: the caller's.
-        unsafe { Self::block_of(this).add(std::ptr::addr_of!((*this).homes).read() as usize).cast::<ViewHome>().cast_mut() }
-    }
-    /// How many documents.
-    ///
-    /// # Safety
-    /// As `block_of`.
-    pub unsafe fn len_of(this: *const Self) -> u32 {
-        // SAFETY: the caller's.
-        unsafe { std::ptr::addr_of!((*this).ndocs).read() }
-    }
-    /// How many rows: the numbers from its first to its last.
-    ///
-    /// # Safety
-    /// As `block_of`.
-    pub unsafe fn span_of(this: *const Self) -> u32 {
-        // SAFETY: the caller's.
-        unsafe { std::ptr::addr_of!((*this).span).read() }
-    }
-    /// The row `m`th in its order (`order`).
-    ///
-    /// # Safety
-    /// As `block_of`, `m` below `ndocs`, the order written.
-    pub unsafe fn row_at(this: *const Self, m: u32) -> u32 {
-        // SAFETY: the caller's.
-        unsafe { Self::block_of(this).add(std::ptr::addr_of!((*this).order).read() as usize).cast::<u32>().add(m as usize).read() }
-    }
-    /// Row `row`'s place in its order (`ViewRow::at`), `NO_DOC` for a number none of its documents has.
-    ///
-    /// # Safety
-    /// As `block_of`, `row` below `span`.
-    pub unsafe fn at_of(this: *const Self, row: u32) -> u32 {
-        // SAFETY: the caller's.
-        unsafe { std::ptr::addr_of!((*Self::rows_of(this).add(row as usize)).at).read() }
-    }
-    /// The order's address, for its writer (`made::directory`, `views_over`).
-    ///
-    /// # Safety
-    /// As `block_of`, the order allocated.
-    pub unsafe fn order_mut(this: *mut Self) -> *mut u32 {
-        // SAFETY: the caller's.
-        unsafe { Self::block_of(this).add(std::ptr::addr_of!((*this).order).read() as usize).cast::<u32>().cast_mut() }
-    }
-    /// The `m`th document's first row in view `k` (`ROWS`' order), in its order; `m == ndocs`: the view's rows in all.
-    ///
-    /// # Safety
-    /// As `block_of`, `m` at most `ndocs`, the order and the first rows written (`counted`).
-    pub unsafe fn first_of(this: *const Self, k: usize, m: u32) -> u32 {
-        // SAFETY: the caller's.
-        unsafe {
-            if m == Self::len_of(this) {
-                return std::ptr::addr_of!((*this).ends[k]).read();
-            }
-            std::ptr::addr_of!((*Self::rows_of(this).add(Self::row_at(this, m) as usize)).rows[k]).read()
-        }
-    }
-    /// The row of the document `i`th by key (`by_key`).
-    ///
-    /// # Safety
-    /// As `block_of`, `i` below `ndocs`, the order written.
-    pub unsafe fn by_key_of(this: *const Self, i: u32) -> u32 {
-        // SAFETY: the caller's.
-        unsafe { Self::block_of(this).add(std::ptr::addr_of!((*this).by_key).read() as usize).cast::<u32>().add(i as usize).read() }
-    }
-    /// The order by key's address, for its writer (`made::directory`, `views_over`).
-    ///
-    /// # Safety
-    /// As `block_of`, the order allocated.
-    pub unsafe fn by_key_mut(this: *mut Self) -> *mut u32 {
-        // SAFETY: the caller's.
-        unsafe { Self::block_of(this).add(std::ptr::addr_of!((*this).by_key).read() as usize).cast::<u32>().cast_mut() }
-    }
-    /// Row `m`'s key (`NO_DOC` for a number none of its documents has).
-    ///
-    /// # Safety
-    /// As `block_of`, `m` below `span`.
-    pub unsafe fn key_of(this: *const Self, m: u32) -> u32 {
-        // SAFETY: the caller's.
-        unsafe { std::ptr::addr_of!((*Self::rows_of(this).add(m as usize)).key).read() }
-    }
-    /// Its rows (`span` of them, by number), the reads layer's too, where no one writes them.
-    ///
-    /// # Safety
-    /// As `block_of`, and the directory is not being written.
-    pub unsafe fn rows(&self) -> &[ViewRow] {
-        // SAFETY: the caller's.
-        unsafe { std::slice::from_raw_parts(Self::rows_of(self), self.span as usize) }
-    }
-    /// Its homes.
-    ///
-    /// # Safety
-    /// As `rows`.
-    pub unsafe fn homes(&self) -> &[ViewHome] {
-        // SAFETY: the caller's.
-        unsafe { std::slice::from_raw_parts(Self::block_of(self).add(self.homes as usize).cast::<ViewHome>(), self.nhomes as usize) }
-    }
-    /// Row `m`'s entry.
-    ///
-    /// # Safety
-    /// As `rows`, and `m` a row of one of its documents.
-    pub unsafe fn entry(&self, m: u32) -> &ViewDoc {
-        // SAFETY: the caller's.
-        unsafe { &*Self::block_of(self).add(self.rows()[m as usize].entry as usize).cast::<ViewDoc>() }
-    }
-    /// The row of the document whose rows of view `k` (`ROWS`' order) hold row `r`: the last in its order whose
-    /// first row is at or before it (an empty one starts where the next does); 0 for a directory of none. `memo` a
-    /// row, tried first.
-    ///
-    /// # Safety
-    /// As `first_of`.
-    pub unsafe fn doc_of_row(this: *const Self, k: u32, r: u32, memo: u32) -> u32 {
-        // SAFETY: the caller's.
-        unsafe {
-            let first = |m: u32| Self::first_of(this, k as usize, m);
-            let n = Self::len_of(this);
-            if n == 0 {
-                return 0;
-            }
-            if memo < Self::span_of(this) {
-                let at = Self::at_of(this, memo);
-                if at < n && first(at) <= r && (at + 1 == n || first(at + 1) > r) {
-                    return memo;
-                }
-            }
-            Self::row_at(this, crate::ids::bisect_n(n, |m| first(m) <= r).saturating_sub(1))
-        }
-    }
-    /// The document of key `key` (bisecting the order by key, `by_key`), or `NO_DOC`.
-    ///
-    /// # Safety
-    /// As `key_of`.
-    pub unsafe fn doc_of_key(this: *const Self, key: u32, memo: u32) -> u32 {
-        // SAFETY: the caller's.
-        unsafe {
-            let key_of = |m: u32| Self::key_of(this, m);
-            let n = Self::len_of(this);
-            if memo < Self::span_of(this) && key_of(memo) == key {
-                return memo;
-            }
-            let row = |i: u32| Self::by_key_of(this, i);
-            let c = crate::ids::bisect_n(n, |i| key_of(row(i)) <= key);
-            if c > 0 && key_of(row(c - 1)) == key { row(c - 1) } else { NO_DOC }
-        }
-    }
-    /// Its growth's page table.
-    ///
-    /// # Safety
-    /// As `block_of`, the table allocated.
-    pub unsafe fn table_of(this: *const Self) -> *const IdPages {
-        // SAFETY: the caller's.
-        unsafe { Self::block_of(this).add(std::ptr::addr_of!((*this).pages).read() as usize).cast::<IdPages>() }
-    }
-    /// The row of the document of id `id`, or `NO_DOC` where its number is none of the directory's rows: its page's
-    /// number less the directory's first (one load: a row is a number, in every directory of the growth). A row of
-    /// a number none of its documents has has key `NO_DOC`.
-    ///
-    /// # Safety
-    /// As `table_of`, `id` handed out by `IdPages::take_pages`.
-    pub unsafe fn doc_of_id(this: *const Self, id: u32) -> u32 {
-        // SAFETY: the caller's.
-        unsafe {
-            let row = IdPages::page_of(Self::table_of(this), id).number.wrapping_sub(std::ptr::addr_of!((*this).first).read());
-            if row < Self::span_of(this) { row } else { NO_DOC }
-        }
-    }
-    /// The local id of id `id` in its document: its page's first, and its place in the page.
-    ///
-    /// # Safety
-    /// As `doc_of_id`.
-    pub unsafe fn local_of_id(this: *const Self, id: u32) -> u32 {
-        // SAFETY: the caller's.
-        unsafe { IdPages::page_of(Self::table_of(this), id).local + (id & (PAGE - 1)) }
-    }
-}
-
-/// A view's number in a kernel's reads (`ViewDir`'s rows' and `vread`'s): `node`, `child`, `field`, `core_node`,
-/// `line`, then core.rerail's places (`Loc`): `line`, `end_line`, `col`, `docof`; then `tape`, `ast_depth` and
-/// `node_order`; then `op`.
-pub const VIEWS: [&str; 13] = ["view_node", "view_child", "view_field", "view_core", "view_line", "view_loc_line", "view_loc_end", "view_loc_col", "view_loc_docof", "view_tape", "view_depth", "view_order", "view_op"];
-
-/// A field's byte offset in the entry.
-pub mod at {
-    use super::ViewDoc;
-    use std::mem::offset_of;
-    pub const KEY: i32 = offset_of!(ViewDoc, key) as i32;
-    pub const TAG: i32 = offset_of!(ViewDoc, tag) as i32;
-    pub const PREORDER: i32 = offset_of!(ViewDoc, preorder) as i32;
-    pub const NODES: i32 = offset_of!(ViewDoc, nodes) as i32;
-    pub const NUMBERING: i32 = offset_of!(ViewDoc, numbering) as i32;
-    pub const KINDS: i32 = offset_of!(ViewDoc, kinds) as i32;
-    pub const FIELDS: i32 = offset_of!(ViewDoc, fields) as i32;
-    pub const TOKENS: i32 = offset_of!(ViewDoc, tokens) as i32;
-    pub const OWN_TEXT: i32 = offset_of!(ViewDoc, own_text) as i32;
-    pub const ENDS: i32 = offset_of!(ViewDoc, ends) as i32;
-    pub const SOURCE_LEN: i32 = offset_of!(ViewDoc, source_len) as i32;
-    pub const PLACEMENT: i32 = offset_of!(ViewDoc, placement) as i32;
-    pub const FILE: i32 = offset_of!(ViewDoc, file) as i32;
-    pub const DELTA: i32 = offset_of!(ViewDoc, delta) as i32;
-    pub const WITHIN_LO: i32 = offset_of!(ViewDoc, within_lo) as i32;
-    pub const WITHIN_HI: i32 = offset_of!(ViewDoc, within_hi) as i32;
-    pub const PLACED: i32 = offset_of!(ViewDoc, placed) as i32;
-    pub const NAMES: i32 = offset_of!(ViewDoc, names) as i32;
-    pub const SEGMENTS: i32 = offset_of!(ViewDoc, segments) as i32;
-    pub const PLACE: i32 = offset_of!(ViewDoc, place) as i32;
-}
-
-/// The `node` view's columns (`Viewed::columns`): the document, the node's id, its kind, start and end.
-pub const NODE_COLUMNS: u32 = 5;
-/// `child`'s: the parent's id, the child's, its place; `field`'s: the parent's id, the field atom, the child's id;
-/// `core_node`'s: the document, the tape node, the id.
-pub const CHILD_COLUMNS: u32 = 3;
-pub const FIELD_COLUMNS: u32 = 3;
-pub const CORE_COLUMNS: u32 = 3;
-/// `line`'s: the node's id, the line its start is on (from 1); each `Loc` view's: the node's or span's id, its place.
-pub const LINE_COLUMNS: u32 = 2;
-pub const LOC_COLUMNS: u32 = 2;
-/// `tape`'s: the node's id, its parent's id, the numbered nodes under it, its depth; `ast_depth`'s: the node's id,
-/// its depth; `node_order`'s: the node's id, its order key (the document's key above it).
-pub const TAPE_COLUMNS: u32 = 4;
-pub const DEPTH_COLUMNS: u32 = 2;
-pub const ORDER_COLUMNS: u32 = 2;
-/// `op`'s: its node's id, the anonymous child's name atom.
-pub const OP_COLUMNS: u32 = 2;
-
 /// The entry in UKL: `struct ViewDoc`, each field's offset and the size asserted against this definition's.
 #[cfg(feature = "ir")]
 pub fn ukl() -> String {
     use std::mem::offset_of;
-    let fields: [(&str, &str, usize); 25] = [
+    let fields: [(&str, &str, usize); 27] = [
         ("uint32_t", "key", offset_of!(ViewDoc, key)),
         ("uint32_t", "tag", offset_of!(ViewDoc, tag)),
         ("uint32_t", "preorder", offset_of!(ViewDoc, preorder)),
         ("uint32_t", "nodes", offset_of!(ViewDoc, nodes)),
         ("Run", "numbering", offset_of!(ViewDoc, numbering)),
-        ("Run", "kinds", offset_of!(ViewDoc, kinds)),
-        ("Run", "fields", offset_of!(ViewDoc, fields)),
         ("uint32_t", "tokens", offset_of!(ViewDoc, tokens)),
         ("uint32_t", "own_text", offset_of!(ViewDoc, own_text)),
         ("uint32_t", "ends", offset_of!(ViewDoc, ends)),
@@ -578,12 +46,33 @@ pub fn ukl() -> String {
         ("Run", "names", offset_of!(ViewDoc, names)),
         ("Run", "segments", offset_of!(ViewDoc, segments)),
         ("uint32_t", "place", offset_of!(ViewDoc, place)),
-        ("uint32_t", "pad", offset_of!(ViewDoc, pad)),
+        ("uint32_t", "doc_path", offset_of!(ViewDoc, doc_path)),
+        ("uint32_t", "doc_module", offset_of!(ViewDoc, doc_module)),
+        ("uint32_t", "parented", offset_of!(ViewDoc, parented)),
+        ("Run", "node_table", offset_of!(ViewDoc, node_table)),
+        ("Run", "node_by_id", offset_of!(ViewDoc, node_by_id)),
     ];
     let mut s = format!(
         "#include <ukl/backend.h>\ntypedef struct ViewRow {{\n    uint64_t entry;\n    uint64_t tape;\n    uint64_t lines;\n    uint64_t source;\n    uint32_t homes[3];\n    uint32_t key;\n    uint32_t rows[{}];\n    uint32_t view[{}];\n    uint32_t bytes;\n    uint32_t at;\n}} ViewRow;\n\
          typedef struct ViewHome {{\n    uint64_t host;\n    UKL_GLOBAL const uint8_t* gpu;\n}} ViewHome;\n\
-         typedef struct ViewDir {{\n    uint64_t at;\n    uint32_t ndocs;\n    uint32_t nhomes;\n    uint64_t rows;\n    uint64_t homes;\n    uint64_t cache;\n    uint64_t by_key;\n    uint32_t ends[{}];\n    uint32_t counted;\n    uint32_t pad;\n    uint64_t pages;\n    uint64_t order;\n    uint32_t first;\n    uint32_t span;\n}} ViewDir;\n",
+         typedef struct ViewDir {{
+    uint64_t at;
+    uint32_t ndocs;
+    uint32_t nhomes;
+    uint64_t rows;
+    uint64_t homes;
+    uint32_t cache;
+    uint32_t nbatch;
+    uint64_t keys;
+    uint32_t ends[{}];
+    uint32_t counted;
+    uint32_t codes;
+    uint64_t pages;
+    uint64_t order;
+    uint32_t first;
+    uint32_t span;
+}} ViewDir;
+",
         ROWS,
         std::mem::size_of::<crate::view::TapeView>() / 4,
         ROWS,
@@ -596,7 +85,9 @@ pub fn ukl() -> String {
     s += &format!("UKL_STATIC_ASSERT(sizeof(ViewDir) == {}, \"ViewDir: size\");\n", std::mem::size_of::<ViewDir>());
     s += &format!("UKL_STATIC_ASSERT(UKL_OFFSETOF(ViewDir, rows) == {}, \"ViewDir.rows\");\n", std::mem::offset_of!(ViewDir, rows));
     s += &format!("UKL_STATIC_ASSERT(UKL_OFFSETOF(ViewDir, cache) == {}, \"ViewDir.cache\");\n", std::mem::offset_of!(ViewDir, cache));
-    s += &format!("UKL_STATIC_ASSERT(UKL_OFFSETOF(ViewDir, by_key) == {}, \"ViewDir.by_key\");\n", std::mem::offset_of!(ViewDir, by_key));
+    s += &format!("UKL_STATIC_ASSERT(UKL_OFFSETOF(ViewDir, nbatch) == {}, \"ViewDir.nbatch\");\n", std::mem::offset_of!(ViewDir, nbatch));
+    s += &format!("UKL_STATIC_ASSERT(UKL_OFFSETOF(ViewDir, keys) == {}, \"ViewDir.keys\");\n", std::mem::offset_of!(ViewDir, keys));
+    s += &format!("UKL_STATIC_ASSERT(UKL_OFFSETOF(ViewDir, codes) == {}, \"ViewDir.codes\");\n", std::mem::offset_of!(ViewDir, codes));
     s += &format!("UKL_STATIC_ASSERT(UKL_OFFSETOF(ViewDir, pages) == {}, \"ViewDir.pages\");\n", std::mem::offset_of!(ViewDir, pages));
     s += &format!("UKL_STATIC_ASSERT(UKL_OFFSETOF(ViewDir, order) == {}, \"ViewDir.order\");\n", std::mem::offset_of!(ViewDir, order));
     s += &format!("UKL_STATIC_ASSERT(UKL_OFFSETOF(ViewRow, at) == {}, \"ViewRow.at\");\n", std::mem::offset_of!(ViewRow, at));
@@ -609,10 +100,18 @@ pub fn ukl() -> String {
     s += "UKL_INLINE uint32_t view_rows_end(UKL_GLOBAL const ViewDir* d, UKL_GLOBAL const ViewRow* e, uint32_t k, uint32_t end) { uint32_t m = e->at + 1u; return m < d->ndocs ? view_rows(d)[((UKL_GLOBAL const uint32_t*)(view_block(d) + d->order))[m]].rows[k] : end; }\n";
     s += "UKL_INLINE UKL_GLOBAL const uint8_t* view_home(UKL_GLOBAL const ViewDir* d, uint32_t h, uint64_t at) { return ((UKL_GLOBAL const ViewHome*)(view_block(d) + d->homes))[h].gpu + at; }\n";
     s += "UKL_INLINE UKL_GLOBAL const uint8_t* view_tape(UKL_GLOBAL const ViewDir* d, UKL_GLOBAL const ViewRow* e) { return view_home(d, e->homes[0], e->tape); }\n";
+    // A row's source where it lies, in its own home (its third: `ViewRow::source`), a node's text its span of it
+    // (`@rr_node_text_any`, no text made); and its length, its view's.
     s += "UKL_INLINE UKL_GLOBAL const uint8_t* view_source(UKL_GLOBAL const ViewDir* d, UKL_GLOBAL const ViewRow* e) { return view_home(d, e->homes[2], e->source); }\n";
+    s += &format!(
+        "UKL_INLINE uint32_t view_source_len(UKL_GLOBAL const ViewRow* e) {{ return e->view[{}]; }}\n",
+        std::mem::offset_of!(crate::view::TapeView, source_len) / 4
+    );
     // A document's lines by their home's base and their offset there (`ViewRow::lines`): a view read takes both (`ll`,
     // `la`), as a load's base must be 8-aligned and a tape's line index is 4-aligned in it (decision 0612).
     s += "UKL_INLINE UKL_GLOBAL const uint8_t* view_lines_base(UKL_GLOBAL const ViewDir* d, UKL_GLOBAL const ViewRow* e) { return view_home(d, e->homes[1], 0); }\n";
+    // The codes' directory (decision 0697), every row's: the binary's, at its home's device base.
+    s += "UKL_INLINE UKL_GLOBAL const uint8_t* view_codes(UKL_GLOBAL const ViewDir* d) { return view_home(d, d->codes, 0); }\n";
     s += "typedef struct ViewDoc {\n";
     for (ty, name, _) in fields.iter() {
         s += &format!("    {ty} {name};\n");
@@ -635,7 +134,15 @@ impl B<'_, '_> {
         let v = self.word_at(I32, self.tape, offset);
         self.f.ins().uextend(I64, v)
     }
-    /// The u32 at index `i` of the entry's run at `offset`, widened.
+    /// Code `code`'s atom in the document's language's run of the codes' directory (`read`: `codes_kind` or
+    /// `codes_field`), widened.
+    fn code_atom(&mut self, read: &str, code: Value) -> Value {
+        let tag = self.word_at(I32, self.tape, at::TAG);
+        let v = self.call_codes(read, &[tag, code]);
+        self.f.ins().uextend(I64, v)
+    }
+    /// The u32 at index `i` of the entry's run at `offset`, widened: the entry's own table (`ViewDoc::names`, the
+    /// store's atoms, which the binary's directory cannot hold).
     fn entry_item(&mut self, offset: i32, i: Value) -> Value {
         let items = self.follow(self.tape, offset);
         let p = self.item(items, i, 4);
@@ -647,14 +154,22 @@ impl B<'_, '_> {
         let key = self.entry_u32(at::KEY);
         let high = self.f.ins().ishl_imm(key, 32);
         let preorder = self.word_at(I32, self.tape, at::PREORDER);
-        let local = self.f.ins().icmp_imm(IntCC::NotEqual, preorder, 0);
+        let local = self.f.ins().icmp_imm(IntCC::Equal, preorder, 1);
         let low = self.either(I32, local, |_| l, |b| {
-            let numbering = b.follow(b.tape, at::NUMBERING);
-            let node = b.c32(0);
-            b.call_at("num_low_of", numbering, &[node, l])
+            let tape = b.ids_tape();
+            b.either(I32, tape, |b| b.tape_node(l), |b| {
+                let numbering = b.follow(b.tape, at::NUMBERING);
+                let node = b.c32(0);
+                b.call_at("num_low_of", numbering, &[node, l])
+            })
         });
         let low = self.f.ins().uextend(I64, low);
         self.f.ins().bor(high, low)
+    }
+    /// Whether the document's ids are tape positions (`IDS_TAPE`).
+    fn ids_tape(&mut self) -> Value {
+        let preorder = self.word_at(I32, self.tape, at::PREORDER);
+        self.f.ins().icmp_imm(IntCC::Equal, preorder, i64::from(IDS_TAPE))
     }
     /// Numbered node `l`'s parent's id (`Projected::parent`): its tape parent's, or the root's where that is not
     /// numbered (a narrowed projection's anchor); -1 for the root.
@@ -696,7 +211,7 @@ pub fn node(b: &mut B<'_, '_>) -> Value {
             let c = is(b, 2);
             b.either(I64, c, |b| {
                 let code = b.call_tape("tape_number", &[x]);
-                b.entry_item(at::KINDS, code)
+                b.code_atom("codes_kind", code)
             }, |b| {
                 let c = is(b, 3);
                 let v = b.either(I32, c, |b| b.call_tape("tape_start", &[x]), |b| b.call_tape("tape_end", &[x]));
@@ -767,7 +282,7 @@ pub fn field(b: &mut B<'_, '_>) -> Value {
         b.either(I64, c, |b| {
             let x = tape_node(b);
             let code = b.call_tape("tape_number", &[x]);
-            b.entry_item(at::FIELDS, code)
+            b.code_atom("codes_field", code)
         }, |b| {
             let x = tape_node(b);
             let l = numbered(b, x);
@@ -823,22 +338,25 @@ impl B<'_, '_> {
         let key = self.entry_u32(at::KEY);
         let high = self.f.ins().ishl_imm(key, 32);
         let preorder = self.word_at(I32, self.tape, at::PREORDER);
-        let local = self.f.ins().icmp_imm(IntCC::NotEqual, preorder, 0);
+        let local = self.f.ins().icmp_imm(IntCC::Equal, preorder, 1);
         let low = self.either(I32, local, |_| l, |b| {
             let nodes = b.word_at(I32, b.tape, at::NODES);
             let node = b.f.ins().icmp(IntCC::UnsignedLessThan, l, nodes);
             b.either(I32, node, |b| {
+                // A node's or token's id where ids are tape positions: its tape node (`num_select`).
+                let tape = b.ids_tape();
                 let numbering = b.follow(b.tape, at::NUMBERING);
                 let item = b.c32(0);
-                b.call_at("num_low_of", numbering, &[item, l])
+                b.either(I32, tape, |b| b.call_at("num_select", numbering, &[item, l]), |b| b.call_at("num_low_of", numbering, &[item, l]))
             }, |b| {
                 let i = b.f.ins().isub(l, nodes);
                 let tokens = b.word_at(I32, b.tape, at::TOKENS);
                 let token = b.f.ins().icmp(IntCC::UnsignedLessThan, i, tokens);
                 b.either(I32, token, |b| {
+                    let tape = b.ids_tape();
                     let numbering = b.follow(b.tape, at::NUMBERING);
                     let item = b.c32(1);
-                    b.call_at("num_low_of", numbering, &[item, i])
+                    b.either(I32, tape, |b| b.call_at("num_select", numbering, &[item, i]), |b| b.call_at("num_low_of", numbering, &[item, i]))
                 }, |b| {
                     let j = b.f.ins().isub(i, tokens);
                     let hi = b.f.ins().ushr_imm(j, i64::from(INDEX_BITS));
@@ -1169,7 +687,8 @@ mod dir_at {
     pub const AT: i32 = offset_of!(ViewDir, at) as i32;
     pub const NDOCS: i32 = offset_of!(ViewDir, ndocs) as i32;
     pub const ROWS: i32 = offset_of!(ViewDir, rows) as i32;
-    pub const BY_KEY: i32 = offset_of!(ViewDir, by_key) as i32;
+    pub const NBATCH: i32 = offset_of!(ViewDir, nbatch) as i32;
+    pub const KEYS: i32 = offset_of!(ViewDir, keys) as i32;
     pub const PAGES: i32 = offset_of!(ViewDir, pages) as i32;
     pub const ORDER: i32 = offset_of!(ViewDir, order) as i32;
     pub const FIRST: i32 = offset_of!(ViewDir, first) as i32;
@@ -1213,22 +732,81 @@ impl B<'_, '_> {
         let row = self.item(rows, m, dir_at::ROW_SIZE);
         self.word_at(I32, row, dir_at::ROW_AT)
     }
-    /// The directory's order by key (`by_key`): its address.
-    fn dir_order(&mut self) -> Value {
+    /// The documents' keys in row order (`ViewDir::keys`): their address.
+    fn dir_keys(&mut self) -> Value {
         let at = self.word_at(I64, self.tape, dir_at::AT);
         let block = self.f.ins().isub(self.tape, at);
-        let order = self.word_at(I64, self.tape, dir_at::BY_KEY);
-        self.f.ins().iadd(block, order)
+        let keys = self.word_at(I64, self.tape, dir_at::KEYS);
+        self.f.ins().iadd(block, keys)
     }
-    /// The row `i`th in an order of the directory's rows (`by_key`, `order`).
-    fn dir_by_key(&mut self, order: Value, i: Value) -> Value {
+    /// The row `i`th in the directory's order (`order`).
+    fn dir_row_in(&mut self, order: Value, i: Value) -> Value {
         let p = self.item(order, i, 4);
         self.word_at(I32, p, 0)
     }
-    /// Row `m`'s document's key.
-    fn dir_key(&mut self, rows: Value, m: Value) -> Value {
-        let row = self.item(rows, m, dir_at::ROW_SIZE);
-        self.word_at(I32, row, dir_at::ROW_KEY)
+    /// Document `i`'s key (`ViewDir::keys`).
+    fn key_at(&mut self, keys: Value, i: Value) -> Value {
+        let p = self.item(keys, i, 4);
+        self.word_at(I32, p, 0)
+    }
+    /// `lower_bound` of `key` among the `n` ascending keys at `keys`: a fixed count of steps, `n` alone sets, each a
+    /// select.
+    fn lower_bound(&mut self, keys: Value, n: Value, key: Value) -> Value {
+        let (head, body, last, done) = (self.f.create_block(), self.f.create_block(), self.f.create_block(), self.f.create_block());
+        self.f.append_block_param(head, I32);
+        self.f.append_block_param(head, I32);
+        self.f.append_block_param(last, I32);
+        self.f.append_block_param(done, I32);
+        let zero = self.c32(0);
+        self.f.ins().jump(head, &[zero.into(), n.into()]);
+        self.f.switch_to_block(head);
+        let (base, len) = (self.f.block_params(head)[0], self.f.block_params(head)[1]);
+        let more = self.f.ins().icmp_imm(IntCC::UnsignedGreaterThan, len, 1);
+        self.f.ins().brif(more, body, &[], last, &[base.into()]);
+        self.f.switch_to_block(body);
+        let half = self.f.ins().ushr_imm(len, 1);
+        let at = self.f.ins().iadd(base, half);
+        let probe = self.f.ins().iadd_imm(at, -1);
+        let k = self.key_at(keys, probe);
+        let below = self.f.ins().icmp(IntCC::UnsignedLessThan, k, key);
+        let base = self.f.ins().select(below, at, base);
+        let len = self.f.ins().isub(len, half);
+        self.f.ins().jump(head, &[base.into(), len.into()]);
+        // The last span: one key, or none (`n` 0).
+        self.f.switch_to_block(last);
+        let base = self.f.block_params(last)[0];
+        let none = self.f.ins().icmp_imm(IntCC::Equal, n, 0);
+        let c = self.either(I32, none, |b| b.c32(0), |b| {
+            let k = b.key_at(keys, base);
+            let below = b.f.ins().icmp(IntCC::UnsignedLessThan, k, key);
+            let one = b.f.ins().uextend(I32, below);
+            b.f.ins().iadd(base, one)
+        });
+        self.f.ins().jump(done, &[c.into()]);
+        self.f.switch_to_block(done);
+        self.f.block_params(done)[0]
+    }
+    /// The first of documents `from..n` whose key is `key`, or `NO_DOC`: every one read, each a select.
+    fn scan_keys(&mut self, keys: Value, from: Value, n: Value, key: Value) -> Value {
+        let (head, body, done) = (self.f.create_block(), self.f.create_block(), self.f.create_block());
+        self.f.append_block_param(head, I32);
+        self.f.append_block_param(head, I32);
+        self.f.append_block_param(done, I32);
+        let no = self.c32(i64::from(NO_DOC));
+        self.f.ins().jump(head, &[n.into(), no.into()]);
+        self.f.switch_to_block(head);
+        let (i, found) = (self.f.block_params(head)[0], self.f.block_params(head)[1]);
+        let more = self.f.ins().icmp(IntCC::UnsignedGreaterThan, i, from);
+        self.f.ins().brif(more, body, &[], done, &[found.into()]);
+        // From the last down, so the first that is `key` is kept.
+        self.f.switch_to_block(body);
+        let i = self.f.ins().iadd_imm(i, -1);
+        let k = self.key_at(keys, i);
+        let same = self.f.ins().icmp(IntCC::Equal, k, key);
+        let found = self.f.ins().select(same, i, found);
+        self.f.ins().jump(head, &[i.into(), found.into()]);
+        self.f.switch_to_block(done);
+        self.f.block_params(done)[0]
     }
     /// Id `id`'s page in the directory's page table: its address.
     fn dir_page(&mut self, id: Value) -> Value {
@@ -1260,7 +838,7 @@ pub fn dir_doc_of_row(b: &mut B<'_, '_>) -> Value {
             let next = b.f.ins().iadd_imm(at, 1);
             let last = b.f.ins().icmp(IntCC::Equal, next, n);
             let before = b.either(I32, last, |b| b.c32(1), |b| {
-                let m = b.dir_by_key(order, next);
+                let m = b.dir_row_in(order, next);
                 let after = b.dir_first(rows, m, k);
                 let past = b.f.ins().icmp(IntCC::UnsignedGreaterThan, after, r);
                 b.f.ins().uextend(I32, past)
@@ -1274,48 +852,50 @@ pub fn dir_doc_of_row(b: &mut B<'_, '_>) -> Value {
         let none = b.f.ins().icmp_imm(IntCC::Equal, n, 0);
         b.either(I32, none, |b| b.c32(0), |b| {
             let c = b.bisect(n, &mut |b, m| {
-                let row = b.dir_by_key(order, m);
+                let row = b.dir_row_in(order, m);
                 let first = b.dir_first(rows, row, k);
                 b.f.ins().icmp(IntCC::UnsignedLessThanOrEqual, first, r)
             });
             let one = b.c32(1);
             let c = b.f.ins().umax(c, one);
             let c = b.f.ins().isub(c, one);
-            b.dir_by_key(order, c)
+            b.dir_row_in(order, c)
         })
     })
 }
 
-/// `dir_doc_of_key(key, memo)`: the document of key `key` (`ViewDir::doc_of_key`: a bisection of the order by key),
-/// or `NO_DOC`, memo `memo` (a row) tried first.
+/// `dir_doc_of_key(key, memo)`: the row of the document of key `key` (`ViewDir::doc_of_key`: the batch's by a lower
+/// bound, the values' by a scan, in the directory's order, `keys`, its row read there), or `NO_DOC`, row `memo` tried
+/// first.
 #[cfg(feature = "ir")]
 pub fn dir_doc_of_key(b: &mut B<'_, '_>) -> Value {
     let (key, memo) = (b.arg(0), b.arg(1));
     let (rows, n) = b.dir_rows();
+    let keys = b.dir_keys();
+    let order = b.dir_view_order();
+    let nbatch = b.word_at(I32, b.tape, dir_at::NBATCH);
+    let nbatch = b.f.ins().umin(nbatch, n);
     let span = b.word_at(I32, b.tape, dir_at::SPAN);
     let inside = b.f.ins().icmp(IntCC::UnsignedLessThan, memo, span);
     let held = b.either(I32, inside, |b| {
-        let k = b.dir_key(rows, memo);
+        let row = b.item(rows, memo, dir_at::ROW_SIZE);
+        let k = b.word_at(I32, row, dir_at::ROW_KEY);
         let same = b.f.ins().icmp(IntCC::Equal, k, key);
         b.f.ins().uextend(I32, same)
     }, |b| b.c32(0));
     let hit = b.f.ins().icmp_imm(IntCC::NotEqual, held, 0);
     b.either(I32, hit, |_| memo, |b| {
-        let order = b.dir_order();
-        let c = b.bisect(n, &mut |b, i| {
-            let m = b.dir_by_key(order, i);
-            let k = b.dir_key(rows, m);
-            b.f.ins().icmp(IntCC::UnsignedLessThanOrEqual, k, key)
-        });
-        let any = b.f.ins().icmp_imm(IntCC::NotEqual, c, 0);
-        b.either(I32, any, |b| {
-            let i = b.f.ins().iadd_imm(c, -1);
-            let m = b.dir_by_key(order, i);
-            let k = b.dir_key(rows, m);
-            let same = b.f.ins().icmp(IntCC::Equal, k, key);
-            let no = b.c32(i64::from(NO_DOC));
-            b.f.ins().select(same, m, no)
-        }, |b| b.c32(i64::from(NO_DOC)))
+        // The batch's documents, in key order; then the values', in the order admitted.
+        let c = b.lower_bound(keys, nbatch, key);
+        let within = b.f.ins().icmp(IntCC::UnsignedLessThan, c, nbatch);
+        let at = b.either(I32, within, |b| b.key_at(keys, c), |b| b.c32(0));
+        let same = b.f.ins().icmp(IntCC::Equal, at, key);
+        let found = b.f.ins().band(within, same);
+        // The values' scan, whatever the batch's search found (none with no values): a select, not a branch.
+        let scanned = b.scan_keys(keys, nbatch, n, key);
+        let m = b.f.ins().select(found, c, scanned);
+        let none = b.f.ins().icmp_imm(IntCC::Equal, m, i64::from(NO_DOC));
+        b.either(I32, none, |b| b.c32(i64::from(NO_DOC)), |b| b.dir_row_in(order, m))
     })
 }
 
@@ -1345,10 +925,6 @@ pub fn dir_local_of_id(b: &mut B<'_, '_>) -> Value {
     b.f.ins().iadd(first, within)
 }
 
-/// No row: a parent probe's end (`view_child_first`, `view_child_next`, `view_number`).
-pub const NO_ROW: u32 = u32::MAX;
-/// `view_line_span`'s answer where the line is not read there (a guest's lines are its host's; past the last line).
-pub const NO_SPAN: u64 = u64::MAX;
 
 #[cfg(feature = "ir")]
 impl B<'_, '_> {
@@ -1542,9 +1118,21 @@ pub fn line_terminated(b: &mut B<'_, '_>) -> Value {
 pub fn number(b: &mut B<'_, '_>) -> Value {
     let low = b.arg(0);
     let preorder = b.word_at(I32, b.tape, at::PREORDER);
-    let local = b.f.ins().icmp_imm(IntCC::NotEqual, preorder, 0);
+    let local = b.f.ins().icmp_imm(IntCC::Equal, preorder, 1);
     let n = b.word_at(I32, b.tape, at::NODES);
-    let l = b.either(I32, local, |_| low, |b| {
+    let tape = b.ids_tape();
+    let l = b.either(I32, local, |_| low, |b| b.either(I32, tape, |b| {
+        // A tape position: the node there, if it is numbered (`num_is`), is its rank (`num_rank`).
+        let numbering = b.follow(b.tape, at::NUMBERING);
+        let item = b.c32(0);
+        let is = b.call_at("num_is", numbering, &[item, low]);
+        let numbered = b.f.ins().icmp_imm(IntCC::NotEqual, is, 0);
+        let numbering = b.follow(b.tape, at::NUMBERING);
+        let item = b.c32(0);
+        let rank = b.call_at("num_rank", numbering, &[item, low]);
+        let no = b.c32(i64::from(NO_ROW));
+        b.f.ins().select(numbered, rank, no)
+    }, |b| {
         let numbering = b.follow(b.tape, at::NUMBERING);
         let found = b.call_at("num_number_of", numbering, &[low]);
         // A node's: item 0 in the high word.
@@ -1553,7 +1141,7 @@ pub fn number(b: &mut B<'_, '_>) -> Value {
         let number = b.f.ins().ireduce(I32, found);
         let no = b.c32(i64::from(NO_ROW));
         b.f.ins().select(node, number, no)
-    });
+    }));
     let inside = b.f.ins().icmp(IntCC::UnsignedLessThan, l, n);
     let no = b.c32(i64::from(NO_ROW));
     b.f.ins().select(inside, l, no)
@@ -1635,10 +1223,14 @@ pub fn order(b: &mut B<'_, '_>) -> Value {
         let key = b.entry_u32(at::KEY);
         let high = b.f.ins().ishl_imm(key, 32);
         let preorder = b.word_at(I32, b.tape, at::PREORDER);
-        let local = b.f.ins().icmp_imm(IntCC::NotEqual, preorder, 0);
+        let local = b.f.ins().icmp_imm(IntCC::Equal, preorder, 1);
         let low = b.either(I32, local, |_| l, |b| {
-            let numbering = b.follow(b.tape, at::NUMBERING);
-            b.call_at("num_order_of", numbering, &[l])
+            // Where ids are tape positions, the order key is the tape node: the tape is in preorder.
+            let tape = b.ids_tape();
+            b.either(I32, tape, |b| b.tape_node(l), |b| {
+                let numbering = b.follow(b.tape, at::NUMBERING);
+                b.call_at("num_order_of", numbering, &[l])
+            })
         });
         let low = b.f.ins().uextend(I64, low);
         b.f.ins().bor(high, low)
@@ -1667,4 +1259,93 @@ pub fn op(b: &mut B<'_, '_>) -> Value {
         let code = b.call_tape("tape_number", &[x]);
         b.entry_item(at::NAMES, code)
     })
+}
+
+/// `view_doc(l, col)`: column `col` of `doc`'s row (one a file, `l` 0): the document's key, its path's atom, its
+/// module's (`ViewDoc::doc_path`, `doc_module`: interned where its program reads `doc`, `tape_rows::derive`).
+#[cfg(feature = "ir")]
+pub fn doc(b: &mut B<'_, '_>) -> Value {
+    let col = b.arg(1);
+    let k = b.f.ins().icmp_imm(IntCC::Equal, col, 0);
+    let p = b.f.ins().icmp_imm(IntCC::Equal, col, 1);
+    b.either(I64, k, |b| b.entry_u32(at::KEY), |b| b.either(I64, p, |b| b.entry_u32(at::DOC_PATH), |b| b.entry_u32(at::DOC_MODULE)))
+}
+
+#[cfg(all(test, feature = "ir"))]
+mod tests {
+    use super::{NO_DOC, ViewDir, ViewRow};
+
+    /// A directory's documents in row order need not be in key order: a chunk's tape values follow its batch's
+    /// documents in the order admitted (`values::Layered`, `device_chunk::views_over`). The search by key bisects the
+    /// batch's keys and scans the values' (`ViewDir::keys`, `nbatch`), on the host and in its CLIF, for every key and
+    /// some of none, with a memo of the right document, a wrong one and none. It bisected every row, which found no
+    /// admitted value whose key was below one before it (a Vue piece's root had no children: a policy's findings came
+    /// out wrong).
+    #[test]
+    fn a_directorys_search_by_key_finds_documents_out_of_key_order() {
+        let jit = crate::jit::Reads::new();
+        type ByKey = extern "C" fn(*const u8, u32, u32) -> u32;
+        // SAFETY: the read's signature: the directory, then its arguments.
+        let by_key: ByKey = unsafe { std::mem::transmute(jit.function("dir_doc_of_key")) };
+        // Batches of 0 to 9 documents (each lower bound's count of steps), and none or three values admitted out of
+        // key order: below, among and past the batch's keys.
+        for nbatch in 0..10u32 {
+            for values in [&[][..], &[2_090_826_275u32, 4, 1_786_418_522][..]] {
+                let keys: Vec<u32> = (0..nbatch).map(|i| 3 * i + 5).chain(values.iter().copied()).collect();
+                let n = keys.len();
+                // The rows are the documents' numbers (plan "Chunk node numbers"), not the order's: the `m`th in the
+                // order is row `n - 1 - m` here, so a search's answer is the row its order names.
+                let row_of = |m: usize| (n - 1 - m) as u32;
+                // The rows, the order and the keys after the directory (its size this build's: no field of it overlaps
+                // them).
+                let dir_at = 0usize;
+                let rows_at = size_of::<ViewDir>().next_multiple_of(8);
+                let order_at = rows_at + (n * size_of::<ViewRow>()).next_multiple_of(8);
+                let keys_at = order_at + (4 * n).next_multiple_of(8);
+                let mut block = vec![0u64; (keys_at + 4 * n).div_ceil(8) + 1];
+                let base = block.as_mut_ptr().cast::<u8>();
+                // SAFETY: each write within `block`, at an offset aligned for its type.
+                unsafe {
+                    for (m, &key) in keys.iter().enumerate() {
+                        base.add(rows_at).cast::<ViewRow>().add(row_of(m) as usize).write(ViewRow { key, at: m as u32, ..ViewRow::default() });
+                        base.add(order_at).cast::<u32>().add(m).write(row_of(m));
+                    }
+                    std::ptr::copy_nonoverlapping(keys.as_ptr(), base.add(keys_at).cast::<u32>(), n);
+                    base.add(dir_at).cast::<ViewDir>().write(ViewDir {
+                        at: dir_at as u64,
+                        ndocs: n as u32,
+                        rows: rows_at as u64,
+                        nbatch,
+                        keys: keys_at as u64,
+                        order: order_at as u64,
+                        span: n as u32,
+                        ..ViewDir::default()
+                    });
+                }
+                // SAFETY: the directory just written, in `block`, which outlives it.
+                let dir = unsafe { &*base.add(dir_at).cast::<ViewDir>() };
+                let asked = keys.iter().copied().chain([0, 4, 6, 3 * nbatch + 5, u32::MAX]);
+                for key in asked {
+                    let want = keys.iter().position(|&k| k == key).map_or(NO_DOC, row_of);
+                    for memo in [0, 3, n as u32, NO_DOC] {
+                        // SAFETY: as `dir`.
+                        assert_eq!(unsafe { ViewDir::doc_of_key(dir, key, memo) }, want, "the host's, batch {nbatch}, values {values:?}, key {key}, memo {memo}");
+                        assert_eq!(by_key(base.cast_const(), key, memo), want, "the CLIF's, batch {nbatch}, values {values:?}, key {key}, memo {memo}");
+                    }
+                }
+            }
+        }
+    }
+
+    /// The lower bound of a fixed count of steps is the first place whose key is at least the one asked, for every
+    /// length to 40 and every key around each one held.
+    #[test]
+    fn a_lower_bound_in_steps_its_length_sets_is_the_first_at_least_the_key() {
+        for n in 0..40u32 {
+            let keys: Vec<u32> = (0..n).map(|i| 2 * i + 1).collect();
+            for key in 0..2 * n + 3 {
+                assert_eq!(super::lower_bound(&keys, key), keys.partition_point(|&k| k < key) as u32, "{n} keys, key {key}");
+            }
+        }
+    }
 }

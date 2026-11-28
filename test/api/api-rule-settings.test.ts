@@ -3,10 +3,12 @@ import { mkdirSync, realpathSync } from "node:fs";
 import { mkdtemp } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import Database from "better-sqlite3";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { OpenAPIHono } from "@hono/zod-openapi";
 import { createRerailApi } from "../../src/api/http.js";
 import { createRerailMcpHandler } from "../../src/api/mcp.js";
+import { invokeOperation } from "../../src/api/operation.js";
 import { operations } from "../../src/api/operations.js";
 import { DatabaseApiStores } from "../../src/api/stores.js";
 import {
@@ -219,5 +221,41 @@ describe("rule settings: suppressions and config", () => {
     }));
     const body = await response.json() as { result: { structuredContent?: unknown; content: unknown } };
     expect(body.result.structuredContent, JSON.stringify(body.result.content)).toMatchObject({ settings: [{ owner: "checkout", ownerId: checkout, suppressions: "ignore" }] });
+  });
+
+  // Before, the save's statements waited for another process's write lock on the thread that answers every session's
+  // hooks, up to SQLite's 5 s, so the daemon answered nothing else meanwhile, then failed with the lock's error.
+  describe("while another process holds the database's write lock", () => {
+    const save = (): Promise<unknown> => invokeOperation(operations.find(operation => operation.id === "repository_settings_set")!, stores,
+      { repository: repositoryKey, owner: "repository", targets: [{ kind: "rule", id: RULE }], mode: "log" }, { kind: "person" });
+    let holder: Database.Database | undefined;
+    const holdWriteLock = (): Database.Database => {
+      holder = new Database(join(root, "rerail.sqlite"));
+      holder.exec("BEGIN IMMEDIATE");
+      return holder;
+    };
+
+    afterEach(() => {
+      if (holder?.inTransaction === true) holder.exec("ROLLBACK");
+      holder?.close();
+      holder = undefined;
+    });
+
+    it("saves a rule's mode once the lock is given back, leaving the thread free meanwhile", async () => {
+      const lock = holdWriteLock();
+      const saving = save();
+      // This thread holds the lock's holder too: a save that waited for the lock here failed before this line ran.
+      lock.exec("COMMIT");
+      expect(await saving).toMatchObject({ settings: [{ mode: "log" }] });
+      expect(await ruleView()).toMatchObject({ mode: "log" });
+    });
+
+    it("answers 503 database-busy and changes nothing when the lock stays held through SQLite's 5 s", async () => {
+      const before = await ruleView();
+      const lock = holdWriteLock();
+      await expect(save()).rejects.toMatchObject({ status: 503, code: "database-busy" });
+      lock.exec("COMMIT");
+      expect(await ruleView()).toMatchObject({ mode: before.mode });
+    }, 20_000);
   });
 });

@@ -71,7 +71,7 @@ serde = { version = "1.0", features = ["derive"] }
 fancy-regex = "=0.17.0"
 regex = "=1.13.1"
 regex-automata = "=0.4.18"
-regex-syntax = "=0.8.11"
+regex-syntax = "=0.8.12"
 rusqlite = { version = "=0.41.1", features = ["bundled", "column_decltype", "functions", "hooks", "limits", "modern_sqlite", "series", "vtab"] }
 fallible-iterator = "0.3"
 ruff_python_parser = "=0.0.10"
@@ -102,6 +102,8 @@ rerail-rules = { path = "../rules", default-features = false }
 rerail-accel = { path = "../../../accel" }
 # The GPU lane: its kernels and device joins (crate split 10d-3).
 rerail-accel-gpu = { path = "../../../accel/gpu" }
+# The join program's Rust on the host, and the texts it was written from (`program_pipe`: another is fatal).
+rerail-ukl-rust = { path = "../ukl_rust" }
 # The device layer's buffers and host-memory wraps, which the joins' and row programs' kernels bind (decision 0440).
 rerail-device = { path = "../../../gpu/device" }
 rerail-compiler = { path = "../compiler" }
@@ -149,7 +151,5 @@ rerail-device-metal = { path = ".", features = ["test-hooks"] }
 # The device tests read the store's cache by its reads (`rerail_clif::view::cache`: the text folds' test its
 # kept texts, `text_find`).
 rerail-clif = { path = "../clif" }
-# The digest of the label source `label_parents`' Rust was written from (`rust_tests`).
-rerail-ukl-rust = { path = "../ukl_rust" }
 ast-grep-language = { version = "=0.51.0", default-features = false, features = ["tree-sitter-bash", "tree-sitter-c", "tree-sitter-cpp", "tree-sitter-c-sharp", "tree-sitter-css", "tree-sitter-go", "tree-sitter-html", "tree-sitter-java", "tree-sitter-json", "tree-sitter-kotlin", "tree-sitter-lua", "tree-sitter-php", "tree-sitter-ruby", "tree-sitter-rust", "tree-sitter-scala", "tree-sitter-swift"] }
 rusqlite = { version = "=0.41.1", features = ["bundled", "limits", "hooks", "array"] }

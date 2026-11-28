@@ -310,6 +310,143 @@ anc(s, a) :- anc(s, b), p1__base(b, a).
         let _ = std::fs::remove_dir_all(&dir);
     }
 
+    /// A constant folded first (`constants::fold`) whose listing a request reads, where another request reads the
+    /// files' rows: `stub_dir` lists `stubs` (one value for the run), and `listed` asks for each directory a hit names,
+    /// so the requests' cone reads `want`, each file's. The constants' run is over no documents, so its copy of
+    /// `stub_dir` is one set of rows for the run (`cross_file`, decision 0652), not a union of the files' rows: it was
+    /// none, and gamma's stubs were not found.
+    #[test]
+    fn a_constant_whose_listing_a_request_reads_is_the_runs_where_another_request_reads_the_files() {
+        let dir = crate::code_rule_dsl::fixtures::temp().with_extension("phases-constant-cone");
+        let _ = std::fs::remove_dir_all(&dir);
+        let (src, phases) = (dir.join("src"), dir.join("phases"));
+        std::fs::create_dir_all(src.join("stubs/types-gamma/gamma")).unwrap();
+        std::fs::create_dir_all(&phases).unwrap();
+        std::fs::write(src.join("main.py"), "import gamma\n").unwrap();
+        std::fs::write(src.join("stubs/types-gamma/gamma/__init__.pyi"), "def f() -> None: ...\n").unwrap();
+        std::fs::write(phases.join("s.rerail"), r#"#include "core.rerail"
+.phase s
+.export hit
+.decl want(q: symbol)
+want(q) :- kind(i, "import_statement"), field(i, "name", n), text(n, q).
+.decl stub_dir(b: symbol)
+stub_dir(b) :- dir_entry("stubs", w, 1), b = cat("stubs/", w).
+.decl hit(q: symbol, l: symbol, b: symbol)
+hit(q, "declarations", "") :- want(q).
+hit(q, "stubs", b) :- want(q), dir_entry(b, q, 1), stub_dir(b).
+.decl listed(d: symbol)
+listed(d) :- hit(_, "stubs", d), dir_entry(d, _, _).
+"#).unwrap();
+        let out = dir.join("out");
+        crate::code_rule_dsl::logic::plan::corpus::TEST_TAPE_CACHE.with(|p| *p.borrow_mut() = Some(dir.join("store.sqlite")));
+        let options = serde_json::json!({ "phase_dir": phases.to_string_lossy() });
+        let reader = "#include \"core.rerail\"\n.decl s__hit(q: symbol, l: symbol, b: symbol)\n.decl r(q: symbol, l: symbol, b: symbol)\nr(q, l, b) :- s__hit(q, l, b).\n.output r\n";
+        let reader = crate::code_rule_dsl::logic::rr::print_version(&crate::code_rule_dsl::logic::rr::parse_version(reader).unwrap()).unwrap();
+        crate::code_rule_dsl::logic::plan::corpus::run_with_options(&[&reader], &src, None, &out, "program", Binding::Cpu, 1 << 18, &Default::default(), &options).unwrap();
+        assert_eq!(crate::code_rule_dsl::logic::plan::output::shown(&out, "r").unwrap(), [["gamma", "declarations", ""], ["gamma", "stubs", "stubs/types-gamma"]]);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// A plain program whose `rerail.env` names a typeshed (`python.typeshed`): the library asks for the lines of its
+    /// `stdlib/VERSIONS`, which is not there, and an empty answer is kept as one, so its reader reads no rows. It was
+    /// not kept, and the reader failed with "no such table: file_line".
+    #[test]
+    fn a_file_that_is_not_there_has_no_lines_in_a_plain_run() {
+        let dir = crate::code_rule_dsl::fixtures::temp().with_extension("plain-missing-lines");
+        let _ = std::fs::remove_dir_all(&dir);
+        let src = dir.join("ws");
+        std::fs::create_dir_all(src.join("stubs/types-gamma/gamma")).unwrap();
+        std::fs::write(src.join("main.py"), "import gamma\n").unwrap();
+        std::fs::write(src.join("rerail.env"), "python.typeshed = stubs\n").unwrap();
+        let program = r#"#include "core.rerail"
+.decl want(q: symbol)
+want(q) :- kind(i, "import_statement"), q = "gamma".
+.decl sd(b: symbol)
+sd("stubs/types-gamma").
+.decl dbg_try(q: symbol, l: symbol, b: symbol, t: symbol)
+dbg_try(q, "stubs", b, q) :- want(q), dir_entry(b, q, 1), sd(b).
+dbg_try(q, "decl", "", q) :- want(q).
+.decl listed(d: symbol)
+listed(d) :- dbg_try(_, _, d, _), dir_entry(d, _, _).
+.output dbg_try
+"#;
+        let out = dir.join("out");
+        crate::code_rule_dsl::logic::plan::corpus::TEST_TAPE_CACHE.with(|p| *p.borrow_mut() = Some(dir.join("store.sqlite")));
+        crate::code_rule_dsl::logic::plan::corpus::run(program, &src, None, &out, "program", Binding::Cpu, 1 << 18).unwrap();
+        assert_eq!(
+            crate::code_rule_dsl::logic::plan::output::shown(&out, "dbg_try").unwrap(),
+            [["gamma", "decl", "", "gamma"], ["gamma", "stubs", "stubs/types-gamma", "gamma"]]
+        );
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// A plain program whose request reads a listing at a folder its files' rows name: `want` is each file's (its
+    /// import), `sd` one folder for the run, `dbg_try`'s stubs row joins them with that folder's listing, and `listed`
+    /// asks for the listing of each folder a `dbg_try` row names. The request reads `dbg_try`, so every rule of the
+    /// output is the cone of requests' and none the cross part's: the cross part still publishes its rows. It ran
+    /// only for rules or facts of its own, and `dbg_try` was written empty.
+    #[test]
+    fn an_output_whose_rules_are_all_the_cone_of_requests_is_published() {
+        let dir = crate::code_rule_dsl::fixtures::temp().with_extension("plain-listing-cone");
+        let _ = std::fs::remove_dir_all(&dir);
+        let src = dir.join("ws");
+        std::fs::create_dir_all(src.join("stubs/types-gamma/gamma")).unwrap();
+        std::fs::write(src.join("main.py"), "import gamma\n").unwrap();
+        let program = r#"#include "core.rerail"
+.decl want(q: symbol)
+want(q) :- kind(i, "import_statement"), q = "gamma".
+.decl sd(b: symbol)
+sd("stubs/types-gamma").
+.decl dbg_try(q: symbol, l: symbol, b: symbol, t: symbol)
+dbg_try(q, "stubs", b, q) :- want(q), dir_entry(b, q, 1), sd(b).
+dbg_try(q, "decl", "", q) :- want(q).
+.decl listed(d: symbol)
+listed(d) :- dbg_try(_, _, d, _), dir_entry(d, _, _).
+.output dbg_try
+"#;
+        let out = dir.join("out");
+        crate::code_rule_dsl::logic::plan::corpus::TEST_TAPE_CACHE.with(|p| *p.borrow_mut() = Some(dir.join("store.sqlite")));
+        crate::code_rule_dsl::logic::plan::corpus::run(program, &src, None, &out, "program", Binding::Cpu, 1 << 18).unwrap();
+        assert_eq!(
+            crate::code_rule_dsl::logic::plan::output::shown(&out, "dbg_try").unwrap(),
+            [["gamma", "decl", "", "gamma"], ["gamma", "stubs", "stubs/types-gamma", "gamma"]]
+        );
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// A phase's export whose rules are all the cone of requests' (a request reads it, as
+    /// `an_output_whose_rules_are_all_the_cone_of_requests_is_published`'s): its reader reads its rows.
+    #[test]
+    fn a_phases_export_whose_rules_are_all_the_cone_of_requests_is_handed_on() {
+        let dir = crate::code_rule_dsl::fixtures::temp().with_extension("phases-export-cone");
+        let _ = std::fs::remove_dir_all(&dir);
+        let (src, phases) = (dir.join("src"), dir.join("phases"));
+        std::fs::create_dir_all(src.join("stubs/types-gamma/gamma")).unwrap();
+        std::fs::create_dir_all(&phases).unwrap();
+        std::fs::write(src.join("main.py"), "import gamma\n").unwrap();
+        std::fs::write(phases.join("s2.rerail"), r#"#include "core.rerail"
+.phase s2
+.export dbg_try
+.decl dbg_try(q: symbol, l: symbol, b: symbol, t: symbol)
+.decl want(q: symbol)
+want(q) :- kind(i, "import_statement"), field(i, "name", n), text(n, q).
+.decl sd(b: symbol)
+sd(b) :- r = "stubs", dir_entry(r, w, 1), b = cat(r, "/", w).
+dbg_try(q, "declarations", "", q) :- want(q), q = "gamma".
+dbg_try(q, "stubs", b, q) :- want(q), dir_entry(b, q, 1), sd(b).
+.decl listed(d: symbol)
+listed(d) :- dbg_try(_, _, d, _), dir_entry(d, _, _).
+"#).unwrap();
+        let out = dir.join("out");
+        crate::code_rule_dsl::logic::plan::corpus::TEST_TAPE_CACHE.with(|p| *p.borrow_mut() = Some(dir.join("store.sqlite")));
+        let options = serde_json::json!({ "phase_dir": phases.to_string_lossy() });
+        let reader = "#include \"core.rerail\"\n.decl s2__dbg_try(q: symbol, l: symbol, b: symbol, t: symbol)\n.decl r(q: symbol, l: symbol, b: symbol)\nr(q, l, b) :- s2__dbg_try(q, l, b, _).\n.output r\n";
+        let reader = crate::code_rule_dsl::logic::rr::print_version(&crate::code_rule_dsl::logic::rr::parse_version(reader).unwrap()).unwrap();
+        crate::code_rule_dsl::logic::plan::corpus::run_with_options(&[&reader], &src, None, &out, "program", Binding::Cpu, 1 << 18, &Default::default(), &options).unwrap();
+        assert_eq!(crate::code_rule_dsl::logic::plan::output::shown(&out, "r").unwrap(), [["gamma", "declarations", ""], ["gamma", "stubs", "stubs/types-gamma"]]);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
     /// An asked phase (decision 0705), `q`: a file's asks of other modules by key (`asked_at`, "m.x"), each sent to
     /// the file of the module it names (`ask_in`), answered there in the next round (`answer`), and followed through
     /// a star import into another module's file in the round after (`forward`, `resolved`).
@@ -614,8 +751,9 @@ resolved(k, q) :- answer(k, q).
 
     /// A later round's partial hits derive the rules that read the asks alone (decision 0705): the relations those
     /// read without reading an ask (`named`, a per-file relation made by three rules) are held in the file's entry
-    /// from round 1, so round 2's chunk of `m.py` runs `answer`'s rule and `resolved`'s (a union of `answer`'s rows,
-    /// per-file by decision 0680, located through `answer`'s twin), not `named`'s, `sig`'s and `defn`'s. Its
+    /// from round 1, so round 2's chunk of `m.py` runs `answer`'s rule and its copy `resolved`'s, not `named`'s, `sig`'s
+    /// and `defn`'s. Where the split relays `named` into `answer`'s located form, the cone stops at the export it
+    /// reads (`sig`), an entry's rows as well. Its
     /// constants are round 1's, not measured again (`phases::RoundsMeasured`).
     #[test]
     fn a_later_round_derives_only_the_rules_that_read_its_asks() {
@@ -626,7 +764,9 @@ resolved(k, q) :- answer(k, q).
         let q = report.phase_runs.iter().find(|r| r.name == "q").expect("q ran");
         assert_eq!(q.rounds.iter().map(|r| (r.asks, r.files - r.memo.0)).collect::<Vec<_>>(), [(1, 2), (1, 1)], "round 2 builds m.py alone");
         assert_eq!(q.rounds[0].partial_rules, 0, "round 1 has no partial hit");
-        assert_eq!(q.rounds[1].partial_rules, 2, "round 2's partial hit of m.py runs answer's rule and resolved's alone, named read from its entry");
+        // The rules that read the ask: `answer`'s and `resolved`'s (its copy), each at its located form (the split's
+        // `answer_at`, `resolved_at`); `named`, `sig` and `defn` are not among them.
+        assert_eq!(q.rounds[1].partial_rules, 2, "round 2's partial hit of m.py runs the rules that read the ask alone (answer's and resolved's), named read from its entry");
         assert_eq!((q.rounds[0].constants_measured, q.rounds[1].constants_measured), (1, 0), "round 2 reads its chunk's constants as round 1 measured them");
     }
 

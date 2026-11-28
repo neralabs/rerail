@@ -40,12 +40,12 @@ pub fn compile_rule(source: &str, format: &str, capabilities_json: &str) -> Resu
         id,
         report_count_gt,
         rule_mode,
-        canonical,
+        canonical: canonical.into(),
         digest,
         required_capabilities: serde_json::to_string(&required).map_err(json_error)?,
-        clauses,
+        clauses: clauses.into(),
         scope,
-        capabilities,
+        capabilities: std::sync::Arc::new(capabilities),
     })
 }
 
@@ -64,7 +64,7 @@ impl CompiledCodeRuleDsl {
 
     #[napi]
     pub fn canonical_json(&self) -> String {
-        self.inner.canonical.clone()
+        self.inner.canonical.to_string()
     }
 
     /// Whether a repository-relative path is inside this code rule's scope: the same

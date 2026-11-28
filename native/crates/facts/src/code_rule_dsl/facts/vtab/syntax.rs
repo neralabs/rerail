@@ -405,6 +405,22 @@ impl LongTexts {
         Self { nodes, batch: Arc::clone(batch), docs, counted: std::sync::OnceLock::new() }
     }
 
+    /// Whether its nodes' rows are made (a source not made by `MadeRows` always is).
+    fn made(&self) -> bool {
+        self.nodes.as_any().and_then(|a| a.downcast_ref::<made::MadeRows>()).is_none_or(made::MadeRows::is_done)
+    }
+
+    /// Its one column's statistics: the made rows' own (`estimate`: or their estimate), once made; before, counted on
+    /// the tape (the nodes' sampled statistics make documents).
+    fn tape_statistics(&self, estimate: bool) -> Option<Vec<(String, i64, i64, i64, i64)>> {
+        let known = if estimate { self.nodes.estimated_statistics() } else { self.nodes.statistics() };
+        if self.made() && let Some(known) = known {
+            return Some(known);
+        }
+        let n = self.estimated_len() as i64;
+        Some(self.nodes.columns().into_iter().map(|c| (c, n, n, n, n)).collect())
+    }
+
     /// How many rows it has, counted on the tape as the batch's rows are made (each node of a document of a grammar
     /// whose text is past the inline bound), with no row made: its group's rows are made only where they are read.
     fn tape_len(&self) -> usize {
@@ -528,6 +544,38 @@ impl LongTexts {
         Some(f.text(core))
     }
 
+    /// `text_any`'s text as its value, read where it lies (no text made): the atom the document's memo of its tape
+    /// terms holds for it, else the value `held` gives the text (the atom it has, or a value the reader gave it), else,
+    /// with `make`, the atom made (as the `text` view's reads make it, `Projected::text_atom`). An atom found or made is
+    /// kept in the memo. `None` for a comment's id, a node not in the batch, or a text with no value and none made.
+    /// 7.6 M reads of an idc run took 282 ns each, a text made and then looked up among the atoms.
+    pub fn text_atom_any(&self, n: i64, make: bool, held: &dyn Fn(&str) -> Option<i64>) -> Option<i64> {
+        use std::sync::atomic::{AtomicU32, Ordering::Relaxed};
+        let (key, low) = (rerail_blocks::located::Located(n).key(), rerail_blocks::located::Located(n).low());
+        if granules::comment_of(low).is_some() {
+            return None;
+        }
+        let p = &self.batch.docs[*self.docs.get(&key)?];
+        let x = p.ranks().select(Item::Node, p.local_of(low)?)?;
+        let f = p.f();
+        let index = f.index();
+        let memo = index.term(x).map(|term| &p.term_atoms.get_or_init(|| (0..index.terms()).map(|_| AtomicU32::new(u32::MAX)).collect())[term as usize]);
+        if let Some(a) = memo.map(|m| m.load(Relaxed)).filter(|&a| a != u32::MAX) {
+            return Some(i64::from(a));
+        }
+        let text = f.text(x);
+        let v = match held(text) {
+            Some(v) => v,
+            None if make => self.batch.atoms.intern(text).ok().map(i64::from)?,
+            None => return None,
+        };
+        // Only an atom is kept: a value the reader gave is its own.
+        if let (Some(m), Ok(a)) = (memo, u32::try_from(v)) {
+            m.store(a, Relaxed);
+        }
+        Some(v)
+    }
+
     /// Node `n`'s value as W reads it (`value(n, v)`, the plain reading), read off its document's tape: the
     /// document's values are read at its first request, and only those asked for are interned. None for a node with no
     /// value, a document of a language W reads no values of (its literals are `rr_value_lit`'s), or one not in the
@@ -620,9 +668,28 @@ impl Source for LongTexts {
     fn node_view(&self) -> Option<(usize, crate::code_rule_dsl::facts::vtab::ViewInPlace)> {
         use device_chunk::{VIEW_NODE, read_kind, views_in_place};
         let v = views_in_place(&self.batch).filter(|v| v.sources)?;
-        let mut view = crate::code_rule_dsl::facts::vtab::ViewInPlace { dir: v.dir?, kind: read_kind(VIEW_NODE), buffers: v.buffers.clone(), caches: v.caches.clone(), failed: 0, format: v.format, keep: Arc::clone(&self.batch) as Arc<dyn std::any::Any + Send + Sync> };
+        let mut view = crate::code_rule_dsl::facts::vtab::ViewInPlace { dir: v.dir?, kind: read_kind(VIEW_NODE), buffers: v.buffers.clone(), fixed: v.fixed.clone(), caches: v.caches.clone(), failed: 0, format: v.format, keep: Arc::clone(&self.batch) as Arc<dyn std::any::Any + Send + Sync> };
         view.failed = view.cache_failed();
         Some((self.batch.nodes().total(), view))
+    }
+    /// Its batch's `node` view in place: a node's text is its numbered node's span of the source, where both lie
+    /// (`text_any_ref`'s, for a node; a comment no node is reads none there).
+    #[cfg(any(target_os = "macos", target_os = "linux", windows))]
+    fn node_texts_in_place(&self) -> Option<crate::code_rule_dsl::facts::vtab::ViewInPlace> {
+        let why = |w: &'static str| crate::code_rule_dsl::logic::profile::decision("node texts read in place (rr_node_text_any)", || w.to_owned());
+        let Some(v) = device_chunk::views_in_place(&self.batch) else {
+            why("refused: the batch has no views' directory in place");
+            return None;
+        };
+        // The host reads every source where it lies; the device those in slabs.
+        if !device_chunk::ViewsInPlace::read_on_host() && !v.sources {
+            crate::code_rule_dsl::prof::count("views.refused.not_on_device.node_texts", 1);
+            why("refused: a document's source the device does not reach");
+            return None;
+        }
+        let read = v.read_of(device_chunk::VIEW_NODE, Arc::clone(&self.batch) as Arc<dyn std::any::Any + Send + Sync>);
+        why(if read.is_some() { "read in place" } else { "refused: the directory on no device" });
+        read
     }
     fn node_read(&self, name: &str, n: i64, more: &[i64]) -> Option<rusqlite::types::Value> {
         use rusqlite::types::Value;
@@ -632,8 +699,9 @@ impl Source for LongTexts {
         // makes there too. `str`'s is `str_any`'s, which answers `str` on request in either shape.
         if let Some(rel) = TRel::ALL.into_iter().find(|r| r.read() == name && *r != TRel::Str).filter(|r| self.batch.shape == Shape::T || matches!(r, TRel::Intval | TRel::Op)) {
             // A comment, declared a node though T's nodes leave it out, is a span whose `text` is its text
-            // (`Extra::document`).
-            if rel == TRel::Text && granules::comment_of(n as u32).is_some() {
+            // (`Extra::document`), and so is a line (`src_line`'s span, read in place: `text`'s rows of it, made
+            // when a rule reads one, are its text whatever its characters).
+            if rel == TRel::Text && (granules::comment_of(n as u32).is_some() || granules::line_of(n as u32).is_some()) {
                 return self.text_any(n).map(Value::Text);
             }
             let (p, x, dialect) = self.node_at(n)?;
@@ -670,6 +738,12 @@ impl Source for LongTexts {
             _ => self.node_read(name, n, more).map(super::NodeRead::Value),
         }
     }
+    fn node_atom(&self, name: &str, n: i64, make: bool, held: &dyn Fn(&str) -> Option<i64>, table: (*const (), Option<&std::path::Path>)) -> Option<i64> {
+        // Its atoms the run's table, or of its database (one database's tables number their atoms alike); else its
+        // atoms are another store's symbols (0706 E1).
+        let ours = std::ptr::addr_eq(Arc::as_ptr(&self.batch.atoms), table.0) || table.1.is_some() && self.batch.atoms.database() == table.1;
+        (name == "rr_node_text_any" && ours).then(|| self.text_atom_any(n, make, held)).flatten()
+    }
     fn rows_of_documents(&self, docs: &BTreeSet<u32>) -> Option<rerail_blocks::vector::Vector<usize>> {
         self.nodes.rows_of_documents(docs)
     }
@@ -692,17 +766,21 @@ impl Source for LongTexts {
     fn estimated_len(&self) -> usize {
         if self.batch.lazy() { self.nodes.estimated_len() } else { self.tape_len() }
     }
+    fn known_len(&self) -> Option<usize> {
+        if self.batch.lazy() { self.nodes.known_len() } else { Some(self.tape_len()) }
+    }
     /// Its one column's statistics, of its rows counted on the tape (decision 0353): one row a node, so each of its
     /// counts is its rows. Measured as rows (`sampled_statistics_unanswered`), the measure made its whole group's
     /// rows, every relation's of every document's (the M3's 300-file peak held 77 MB of them, and a 158 MB block).
     fn statistics(&self) -> Option<Vec<(String, i64, i64, i64, i64)>> {
-        // The made rows' own, once made; before, counted on the tape (the nodes' sampled statistics make documents).
-        let made = self.nodes.as_any().and_then(|a| a.downcast_ref::<made::MadeRows>()).is_none_or(made::MadeRows::is_done);
-        if made && let Some(known) = self.nodes.statistics() {
-            return Some(known);
+        // A lazy batch's count is its given counts' estimate (`estimated_len`): an estimate's.
+        if self.batch.lazy() && !self.made() {
+            return None;
         }
-        let n = self.estimated_len() as i64;
-        Some(self.nodes.columns().into_iter().map(|c| (c, n, n, n, n)).collect())
+        self.tape_statistics(false)
+    }
+    fn estimated_statistics(&self) -> Option<Vec<(String, i64, i64, i64, i64)>> {
+        self.tape_statistics(true)
     }
     fn estimated_matches(&self, column: usize, batch: bool) -> usize {
         self.nodes.estimated_matches(column, batch)
@@ -1744,8 +1822,8 @@ pub struct Projected {
     /// key of the file it is part of and its tag are read there (`key`, `file`), the one place the kernels read
     /// them too; the rest is written on the first read through the views (`view_docs::ViewEntry::new`).
     entry: cells::Desc<rerail_clif::view_reads::ViewDoc>,
-    /// The entry's codes' table, made with the rest of it.
-    codes: OnceLock<view_docs::Codes>,
+    /// What the entry's runs point at that it made itself (a guest's placed spans), made with the rest of it.
+    filled: OnceLock<view_docs::Filled>,
     pub facts: Arc<Facts>,
     /// The cache its 16z tape's blocks are decoded into: its batch's (`Growth::cache`), the block the device's reads
     /// share; its own where it is projected alone (`new`). Every read of its nodes names it (`f`).
@@ -1765,6 +1843,8 @@ pub struct Projected {
     pub extra: Option<Box<Locs>>,
     /// Node ids numbered per definition (`DefIds`), when the run asks for them; else a node's id is its preorder.
     defs: Option<DefIds>,
+    /// Node and token ids are their tape positions (`NodeIds::Tape`): no granule table, and spans in their top slots.
+    tape: bool,
     /// Its positions with `text` (`View::Text`); its nodes with text are `Item::Text`'s.
     text_spans: TextSpans,
     /// Each term of its tape's index (`DocIndex::term`): its text's atom, interned at the first read of a leaf of it
@@ -1790,7 +1870,29 @@ pub use ranks::Item;
 /// Whether this process numbers nodes per definition: the default; `RERAIL_NODE_IDS=preorder` numbers them in
 /// preorder, to compare.
 pub fn definition_ids() -> bool {
-    rerail_prof::code_rule_dsl::logic::profile::setting(|| !crate::code_rule_dsl::logic::profile::var("RERAIL_NODE_IDS").is_ok_and(|v| v == "preorder"))
+    node_ids() == NodeIds::Definition
+}
+
+/// How a node id's low 32 bits are numbered (`RERAIL_NODE_IDS`).
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum NodeIds {
+    /// Per definition (`granules`): the default.
+    Definition,
+    /// The node's preorder index among the projection's nodes (`preorder`), to compare.
+    Preorder,
+    /// The node's position on its document's tape (`tape`): a view reads the node there with no select of a rank, and
+    /// an id is a rank's test away from its row. Tokens are their tape positions too; spans keep their top slots
+    /// (`granules::span_low`).
+    Tape,
+}
+
+/// This process's `NodeIds`.
+pub fn node_ids() -> NodeIds {
+    rerail_prof::code_rule_dsl::logic::profile::setting(|| match crate::code_rule_dsl::logic::profile::var("RERAIL_NODE_IDS").as_deref() {
+        Ok("preorder") => NodeIds::Preorder,
+        Ok("tape") => NodeIds::Tape,
+        _ => NodeIds::Definition,
+    })
 }
 
 /// How an output shows a node id's low 32 bits: its preorder index, or by definition `slot.index` (`DefIds`). A
@@ -1908,9 +2010,9 @@ impl Projected {
         // SAFETY: the entry is this projection's, and `&mut self` has no reader.
         unsafe { (*self.entry.as_ptr()).file = file };
     }
-    /// Its entry, made whole on the first ask (`view_docs::ViewEntry::new`), and its codes' table.
-    pub(super) fn entry(&self) -> (&cells::Desc<rerail_clif::view_reads::ViewDoc>, &OnceLock<view_docs::Codes>) {
-        (&self.entry, &self.codes)
+    /// Its entry, made whole on the first ask (`view_docs::ViewEntry::new`), and what it made itself.
+    pub(super) fn entry(&self) -> (&cells::Desc<rerail_clif::view_reads::ViewDoc>, &OnceLock<view_docs::Filled>) {
+        (&self.entry, &self.filled)
     }
     /// Document `key`'s projection in `shape`; `dialect` is its facts' (`None` for a text-only document, which has no
     /// node). A `withheld` document (`core.rerail`: one that does not parse) has no nodes and no spans: no facts. A guest's
@@ -2111,13 +2213,14 @@ impl Projected {
         let mut p = Projected {
             module: None,
             entry,
-            codes: OnceLock::new(),
+            filled: OnceLock::new(),
             ranks,
             derived: tape_rows::Derived::default(),
             place: if shape == Shape::T { PlaceAmong::PastComments } else { PlaceAmong::Named },
             anchored: ranges.len() > 1,
             extra: None,
             defs: None,
+            tape: node_ids() == NodeIds::Tape,
             facts: Arc::clone(&facts),
             cache: cache.clone(),
             text_spans: if shape == Shape::Core { text.map(|(_, spans)| spans).unwrap_or_default() } else { TextSpans::default() },
@@ -2148,6 +2251,7 @@ impl Projected {
     #[cfg_attr(feature = "tape-reads", track_caller)]
     /// `node`, its group found from `hint` (`Ranks::select_near`): probes in key order.
     pub fn node_near(&self, local: u32, hint: &mut u32) -> u32 {
+        let _kind = rerail_prof::work::doing(rerail_prof::work::NODE);
         self.ranks.select_near(Item::Node, local, hint).expect("a local id of the projection")
     }
     pub fn node(&self, local: u32) -> u32 {
@@ -2558,6 +2662,16 @@ impl Projected {
     /// the table's read), else its local id.
     pub fn global(&self, local: u32) -> i64 {
         let low = match &self.defs {
+            None if self.tape => {
+                let (nodes, tokens) = (self.len(), self.ranks.count(Item::Token));
+                if local < nodes {
+                    self.node(local)
+                } else if local < nodes + tokens {
+                    self.ranks.select(Item::Token, local - nodes).expect("a numbered token")
+                } else {
+                    granules::span_low(local - nodes - tokens)
+                }
+            }
             None => local,
             Some(d) => {
                 let (nodes, tokens) = (self.len(), self.ranks.count(Item::Token));
@@ -2577,18 +2691,19 @@ impl Projected {
     pub fn global_near(&self, local: u32, hint: &mut u32) -> i64 {
         match &self.defs {
             Some(d) if local < self.len() => rerail_blocks::located::Located::new(self.key(), d.table.low_of_near(&self.ranks, Item::Node, local, hint).expect("a numbered node")).0,
+            None if self.tape && local < self.len() => rerail_blocks::located::Located::new(self.key(), self.node_near(local, hint)).0,
             _ => self.global(local),
         }
     }
     /// Every node in order with its id: `(local id, tape node, id)`. One walk (`granules::ids`), no point read.
     pub fn node_ids(&self) -> impl Iterator<Item = (u32, u32, i64)> + '_ {
-        let key = rerail_blocks::located::Located::new(self.key(), 0).0;
-        granules::ids(self.table(), &self.ranks, Item::Node, self.len()).map(move |(l, x, low)| (l, x, key | i64::from(low)))
+        let (key, tape) = (rerail_blocks::located::Located::new(self.key(), 0).0, self.tape);
+        granules::ids(self.table(), &self.ranks, Item::Node, self.len()).map(move |(l, x, low)| (l, x, key | i64::from(if tape { x } else { low })))
     }
     /// Every token in order with its id: `(local id, tape node, id)`, the local ids from `len()`.
     pub fn token_ids(&self) -> impl Iterator<Item = (u32, u32, i64)> + '_ {
-        let (key, n) = (rerail_blocks::located::Located::new(self.key(), 0).0, self.len());
-        granules::ids(self.table(), &self.ranks, Item::Token, n).map(move |(k, x, low)| (n + k, x, key | i64::from(low)))
+        let (key, n, tape) = (rerail_blocks::located::Located::new(self.key(), 0).0, self.len(), self.tape);
+        granules::ids(self.table(), &self.ranks, Item::Token, n).map(move |(k, x, low)| (n + k, x, key | i64::from(if tape { x } else { low })))
     }
     /// Every node, token and span in local order with its id: `(local id, id)` (`node_ids`, `token_ids`, then the
     /// spans', which are their positions).
@@ -2599,12 +2714,17 @@ impl Projected {
     /// Node `local`'s order key: `node_order`'s low 32 bits (`granules::Table::order_of`, from its number; its
     /// preorder index without `DefIds`).
     pub fn order(&self, local: u32) -> u32 {
-        self.defs.as_ref().map_or(local, |d| d.table.order_of(&self.ranks, local).expect("a node's order key"))
+        match &self.defs {
+            Some(d) => d.table.order_of(&self.ranks, local).expect("a node's order key"),
+            None if self.tape => self.node(local),
+            None => local,
+        }
     }
     /// The node whose order key (`node_order`'s low 32 bits) is `key`.
     pub fn local_of_order(&self, key: u32) -> Option<u32> {
         match &self.defs {
             Some(d) => d.table.number_of_order(&self.ranks, key),
+            None if self.tape => self.ranks.local(Item::Node, key),
             None => (key < self.len()).then_some(key),
         }
     }
@@ -2614,11 +2734,47 @@ impl Projected {
     }
     /// `local_of`, the slot's entry first looked for at `hint` (`granules::Table::number_of_near`): probes in key order.
     pub fn local_of_near(&self, low: u32, hint: &mut u32) -> Option<u32> {
+        let _kind = rerail_prof::work::doing(rerail_prof::work::NODE);
         match &self.defs {
             Some(_) if granules::span_of(low).is_some() => granules::span_of(low).map(|i| self.len() + self.ranks.count(Item::Token) + i),
+            // SPIKE (local fixes, 1): a node's, from the entry's nodes by id where it is made (`ViewDoc::node_by_id`).
+            Some(_) if let Some(l) = self.node_by_id(low) => Some(l),
             Some(d) => d.table.number_of_near(&self.ranks, low, hint).map(|(item, k)| if item == Item::Node { k } else { self.len() + k }),
+            None if self.tape => self.tape_local(low),
             None => Some(low),
         }
+    }
+    /// SPIKE (local fixes, 1): the node whose id's low bits are `low`, from the entry's nodes by place (`ViewDoc::
+    /// node_by_id`) once the entry is made: the numbering's slot entry, then one load. `None` for no such node (a
+    /// token's id), or no table.
+    #[inline]
+    fn node_by_id(&self, low: u32) -> Option<u32> {
+        self.filled.get()?;
+        // SAFETY: the entry's run, set where it was made (before `filled` was) to cells of its block, or empty; the
+        // numbering is the projection's, read as every read of it.
+        unsafe {
+            let by = self.entry.node_by_id.as_slice::<u32>();
+            if by.is_empty() {
+                return None;
+            }
+            by.get(self.ranks.numbering().own_place_of(low)? as usize).copied()
+        }
+    }
+    /// The node, token or span whose id's low bits are `low`, where ids are tape positions: a rank, no select.
+    #[inline]
+    fn tape_local(&self, low: u32) -> Option<u32> {
+        if let Some(i) = granules::span_of(low) {
+            return Some(self.len() + self.ranks.count(Item::Token) + i);
+        }
+        if let Some(k) = self.ranks.local(Item::Node, low) {
+            return Some(k);
+        }
+        self.ranks.local(Item::Token, low).map(|k| self.len() + k)
+    }
+    /// Whether ids are tape positions (`NodeIds::Tape`): an id's low bits are then its node's tape node.
+    #[inline]
+    pub fn tape_ids(&self) -> bool {
+        self.tape
     }
     /// The included children of `local`, in order.
     pub fn children(&self, local: u32) -> impl Iterator<Item = u32> + '_ {
@@ -2669,10 +2825,20 @@ pub struct Batch {
     /// by index (`by_tag`), and where each tag's start, and one past the last (`tag_at`, 257 of them).
     by_tag: Cells<u32>,
     tag_at: Cells<u32>,
-    /// The `node` view's rows by kind, one index for each tape tag the batch has documents of (`of_tag`), made at the
-    /// first lookup of one of its kinds over that tag's documents alone (Q183; decision 0494: a program's language
-    /// stays unmade).
-    kinds: Vec<(u8, OnceLock<KindRows>)>,
+    /// The `node` view's rows by kind (`KindRows`), for each tape tag the batch has documents of (`of_tag`): a place
+    /// for each of its dialect's kinds, made at the first lookup of one of them, and each kind's rows made at its own
+    /// first lookup, over that tag's documents alone (Q183; decision 0494: a program's language stays unmade).
+    kinds: Vec<(u8, OnceLock<Box<[OnceLock<KindRows>]>>)>,
+    /// The `field` view's rows by field (decision 0706 E4), built ahead of the seed scans of a field (`field(_, #f, _)`)
+    /// in one walk of every document's fielded nodes, when the run has seen a chunk's scans walk them for several
+    /// fields (`Source::build_value_index`). None until then: a scan walks the field column (`filter_eq`).
+    fields: OnceLock<FieldRows>,
+    /// The `node` view's nodes of a kind as node bits (`Source::build_value_bits`), by kind: each its bits' chunk in
+    /// the batch's block, built ahead of the tests of a bound node against the kind (`kind(n, K)`, `!kind(n, K)`) where
+    /// the run has seen them pay. An index of the view in its relation's block (decision 0353), not a copy of it.
+    kind_bits: std::sync::Mutex<Vec<(i64, usize)>>,
+    /// `kind_bits`' generation: one more each time bits are built (`Source::value_bits_gen`).
+    bits_gen: std::sync::atomic::AtomicU32,
     shape: Shape,
     /// The registered lazy families (`Families`, Python's `py.*`: list step 25), by registration; `None` for one
     /// whose dialect has no document in the batch.
@@ -2730,6 +2896,9 @@ pub struct Batch {
     keeps_strings: bool,
     /// Whether it was renewed from a held batch, whose strings it shares (decision 0616): its vocabulary is its groups'.
     renewed: bool,
+    /// SPIKE (`spike_strata`, the planner's): the batch's tree by node row and its strata's lookups, made at the first
+    /// spiked stratum and dropped with the batch.
+    pub spike: OnceLock<Arc<dyn std::any::Any + Send + Sync>>,
 }
 
 /// What a batch's groups share, and the batches it grows into (decision 0431 §6): its vocabulary, and the producers of
@@ -2802,34 +2971,75 @@ pub struct Growth {
     wave: Option<(Matchers, crate::code_rule_dsl::facts::nearest::Binding)>,
 }
 
-/// The `node` view's rows by kind: an index of the view (decision 0353: an index in its relation's place, not a copy of
-/// its rows), made in one walk of each document's numbered nodes (`Projected::nodes`, no select) at the batch's first
-/// lookup by kind. Each match keeps its document, local id and tape node, so a lookup reads no rank and no select.
-/// Q220: a probe `kind($m, $k)` scanned every document's tape for the kind's codes (`Facts::of_kind`), 55 k probes
-/// of a cold run at 39 µs each, where t41's `kind`, a relation of its own, had an index.
+/// The `node` view's rows of one kind: an index of the view (decision 0353: an index in its relation's place, not a copy
+/// of its rows), made at the batch's first lookup of that kind. Each match is its row (`Batch::nodes`' first row of its
+/// document plus its local id), ascending: a row is all three readers need. A lookup's rows are these; one that reads
+/// columns finds each row's document by advancing through the documents' first rows (`Batch::kind_matches`), and a
+/// column that reads the tape node selects it then (`read_matches`' `NEED_X`).
+///
+/// Only the kinds the rules look up are made, from the documents that hold them: each document's index of the codes it
+/// holds (decision 0656) skips one with none of the kind's codes, a rare code's nodes are the index's list, and the
+/// rest are the tape's code match (`FactsIn::each_of_kind`, none collected). PostHog's run looks up 43 kinds, whose matches are 14% of the
+/// nodes: an index of every node by kind (`[document, local id, tape node]`, sorted on the host) held 490 MB.
+/// Q220: a probe `kind($m, $k)` scanned every document's tape for the kind's codes, 55 k probes of a cold run at 39 µs
+/// each; a kind's rows are made once a batch.
 ///
 /// In the batch's block (decision 0353 step 4: an index in its relation's block, not a host structure).
 struct KindRows {
-    /// The kinds, ascending.
-    keys: Cells<i64>,
-    /// Where each kind's matches start in `at`, and one past the last.
-    starts: Cells<u32>,
-    /// Each kind's nodes in row order: `[document, local id, tape node]`.
-    at: Cells<[u32; 3]>,
+    rows: Cells<u32>,
 }
 
 impl KindRows {
-    /// Over the documents of tape tag `tag` alone (`Batch::of_tag`).
-    fn new(b: &Batch, tag: u8) -> Self {
+    /// Kind atom `kind`'s rows, over the documents of tape tag `tag` alone (`Batch::of_tag`), in row order: the
+    /// documents ascending, each one's nodes in preorder.
+    fn new(b: &Batch, tag: u8, kind: u32) -> Self {
+        let nodes = b.nodes();
+        // The scratch the rows are found in: the index itself is the block's.
+        let mut rows: Vec<u32> = Vec::new();
+        for &doc in b.of_tag(tag) {
+            let p = &b.docs[doc as usize];
+            let first = nodes.at(doc as usize);
+            // A match a token is (no `node` row) has no number.
+            p.f().each_of_kind(kind, &mut |x| {
+                if let Some(local) = p.ranks().local(Item::Node, x) {
+                    rows.push((first + local as usize) as u32);
+                }
+            });
+        }
+        KindRows { rows: in_block(&b.block, &rows) }
+    }
+}
+
+/// The `field` view's rows by their field (`field($p, #f, $c)`, neither node bound): each field's rows in row order,
+/// `[document, its row among the document's fielded nodes, the child's local id, its parent's]` (the parent as a
+/// read of the view's row reads it, `Projected::parent_of_node`; `NONE` for the root's). A probe by a field alone
+/// walked every node of the batch for the few in the field, 884 probes of an idc run at 572 ns a row out (1.84 s).
+///
+/// In the batch's block (decision 0353 step 4: an index in its relation's block, not a host structure).
+struct FieldRows {
+    /// The field atoms, ascending.
+    keys: Cells<i64>,
+    /// Where each field's rows start in `at`, and one past the last.
+    starts: Cells<u32>,
+    at: Cells<[u32; 4]>,
+}
+
+impl FieldRows {
+    fn new(b: &Batch) -> Self {
         // The scratch the index is sorted in: the index itself is the block's.
-        let mut all: Vec<(i64, u32, u32, u32)> = Vec::new();
-        if let Some(dialect) = b.dialects.get(tag) {
-            for &doc in b.of_tag(tag) {
-                let p = &b.docs[doc as usize];
-                all.extend(p.nodes().map(|(l, x)| (dialect.kind(p.f(), x), doc, l, x)));
+        let mut all: Vec<(i64, [u32; 4])> = Vec::new();
+        for doc in 0..b.docs.len() {
+            let p = &b.docs[doc];
+            for (r, x) in p.ranks().iter(Item::Field) {
+                let l = p.local_of_node(x);
+                if l == NONE {
+                    continue;
+                }
+                let up = if l == 0 { NONE } else { p.parent_of_node(x) };
+                all.push((i64::from(field_atom(p.tag(), p.f().field(x))), [doc as u32, r, l, up]));
             }
         }
-        // Stable: within a kind, the rows stay in order.
+        // Stable: within a field, the rows stay in order.
         all.sort_by_key(|e| e.0);
         let (mut keys, mut starts) = (Vec::new(), Vec::new());
         for (i, e) in all.iter().enumerate() {
@@ -2839,7 +3049,15 @@ impl KindRows {
             }
         }
         starts.push(all.len() as u32);
-        KindRows { keys: in_block(&b.block, &keys), starts: in_block(&b.block, &starts), at: in_block(&b.block, &all.iter().map(|&(_, d, l, x)| [d, l, x]).collect::<Vec<_>>()) }
+        FieldRows { keys: in_block(&b.block, &keys), starts: in_block(&b.block, &starts), at: in_block(&b.block, &all.iter().map(|e| e.1).collect::<Vec<_>>()) }
+    }
+    /// The rows of `field`, in row order.
+    fn of(&self, field: i64) -> &[[u32; 4]] {
+        self.keys.binary_search(&field).map_or(&[][..], |i| &self.at[self.starts[i] as usize..self.starts[i + 1] as usize])
+    }
+    /// How many rows it holds.
+    fn len(&self) -> usize {
+        self.at.len()
     }
 }
 
@@ -4267,6 +4485,9 @@ impl Batch {
             dialects,
             offsets: made::Offsets::default(),
             kinds: (0..=u8::MAX).filter(|&t| tag_at[usize::from(t) + 1] > tag_at[usize::from(t)]).map(|t| (t, OnceLock::new())).collect(),
+            fields: OnceLock::new(),
+            kind_bits: std::sync::Mutex::new(Vec::new()),
+            bits_gen: std::sync::atomic::AtomicU32::new(1),
             by_tag,
             tag_at: in_block(&block, &tag_at),
             shape,
@@ -4291,6 +4512,7 @@ impl Batch {
             node_words: Default::default(),
             guests_of: OnceLock::new(),
             by_file_key: OnceLock::new(),
+            spike: OnceLock::new(),
             by_module: OnceLock::new(),
             shared: Arc::clone(&grown.shared),
             outer: if alone { last.clone() } else { None },
@@ -4373,6 +4595,7 @@ impl Batch {
     /// block relations (else staged to go on in them). `held`: tape values the batch's growth holds, given more places
     /// (decision 0431 §6): each one's projection, document, new places and whether it is withheld.
     fn make_rows(&self, group: &[usize], first: bool, held: &[(&Projected, &Document, std::ops::Range<usize>, bool)]) -> StoreResult<made::Made> {
+        let _kind = rerail_prof::work::doing(rerail_prof::work::BUILD);
         let projection = &*self.projection;
         let (shape, matches, markers, metal) = (projection.shape, &self.matches[..], &self.markers[..], self.metal);
         let documents: Vec<&Document> = group.iter().map(|&i| self.docs.input(i)).collect();
@@ -4537,7 +4760,7 @@ impl Batch {
             // A path's parts read where it lies, each once: a few, so each is checked against those before it (a
             // list and a set a document before).
             let parts = || d.path.split('/').filter(|s| !s.is_empty());
-            if let Some(last) = parts().last() {
+            if let Some(last) = parts().next_back() {
                 file_name.push([key, string(last) as i64]);
             }
             for (i, part) in parts().enumerate() {
@@ -4677,7 +4900,7 @@ impl Batch {
         // A value alone's rows are staged: they are written once, past the chunk's relations' rows (`Grower::admit`).
         let relation: Make = if first { Relation::from_rows } else { Relation::staged };
         let pairs = |columns: &[&str], rows: &[[i64; 2]], sym: [bool; 2]| {
-            relation(columns, &mut rows.iter().map(|&[a, b]| rerail_facts_base::row![if sym[0] { atom(a) } else { a }, if sym[1] { atom(b) } else { b }]))
+            relation(columns, &mut rows.iter().map(|&[a, b]| rerail_facts_base::row![if sym[0] { atom(a) } else { a }, if sym[1] { atom(b) } else { b }])).with_atoms(&sym)
         };
         let mut relations = vec![
             (LONG_TEXT_NODES, relation(&["n"], &mut long_text_nodes.iter().map(|&n| rerail_facts_base::row![n]))),
@@ -4834,6 +5057,11 @@ impl Batch {
         if free.contains(&slot) {
             return made::Firsts::new(&self.docs, slot);
         }
+        // The documents the fill below would make one at a time, made first on the cores, outside its once (a pool
+        // thread that waits on a once runs no job).
+        if self.offsets.counted.get().is_none() {
+            self.docs.make_uncounted();
+        }
         self.offsets.counted.get_or_init(|| {
             let dir = self.docs.dir().cast_mut();
             let (wants_field, wants_sibling) = (self.projection.wants("field"), self.projection.wants("next_sibling"));
@@ -4862,11 +5090,11 @@ impl Batch {
                 let [nodes, fielded, siblings, locs] = [c[0], c[1], c[2], c[3]];
                 let own = [nodes, nodes.saturating_sub(1), if wants_field { fielded } else { 0 }, if wants_sibling { siblings } else { 0 }, locs];
                 // `ROWS`' order: node, child, field, core_node, line, the four `Loc` views, tape, ast_depth,
-                // node_order, `op`, then siblings; then the host's alone: the token order's four, `spread`,
-                // `end_point`, `text`, and the tape's other relations (`tape_rows`), whose token order's four it
-                // counts too.
+                // node_order, `op`, `doc` (a free slot, written above), then siblings; then the host's alone: the token
+                // order's four, `spread`, `end_point`, `text`, and the tape's other relations (`tape_rows`), whose token
+                // order's four it counts too.
                 let views: [usize; TAPE] = [
-                    own[0], own[1], own[2], own[0], own[0], own[4], own[4], own[4], own[4], own[0], own[0], own[0], c[9],
+                    own[0], own[1], own[2], own[0], own[0], own[4], own[4], own[4], own[4], own[0], own[0], own[0], c[9], 0,
                     own[3], 0, 0, 0, 0, if wants_spread { c[5] } else { 0 }, if wants_end { nodes } else { 0 }, c[11],
                 ];
                 let mut by: [usize; ROWS] = std::array::from_fn(|k| views.get(k).copied().unwrap_or(0));
@@ -4951,15 +5179,21 @@ impl Batch {
             return Some((m.doc as usize, m.local, m.x));
         }
         let (doc, local) = self.node_nearer(n, hint, slot)?;
-        let at = std::ptr::from_ref(&self.docs[doc]) as usize;
-        memo.set(super::NodeMemo { docs, id: n, doc: doc as u32, local, x: NONE, at });
-        Some((doc, local, NONE))
+        let p = &self.docs[doc];
+        let at = std::ptr::from_ref(p) as usize;
+        // Ids that are tape positions carry their tape node.
+        let x = if p.tape_ids() { (n & 0xffff_ffff) as u32 } else { NONE };
+        memo.set(super::NodeMemo { docs, id: n, doc: doc as u32, local, x, at });
+        Some((doc, local, x))
     }
     /// Node `local` of document `doc`'s tape node, id `n`: selected, and kept in `memo` where it holds that node
     /// (`node_hint`).
     #[inline]
     fn tape_node(&self, doc: usize, local: u32, n: i64, memo: &std::cell::Cell<super::NodeMemo>) -> u32 {
         let p = &self.docs[doc];
+        if p.tape_ids() {
+            return (n & 0xffff_ffff) as u32;
+        }
         let x = p.node(local);
         let m = memo.get();
         if m.docs == self.docs.addr() && m.id == n && m.doc as usize == doc && m.local == local && m.at == std::ptr::from_ref(p) as usize {
@@ -4967,12 +5201,40 @@ impl Batch {
         }
         x
     }
-    /// The nodes whose `kind` (the `node` view's column 2) is `kind`, in row order: `(document, local id, tape node)`.
-    fn by_kind(&self, kind: i64) -> &[[u32; 3]] {
-        let (Ok(tag), true) = (u8::try_from(kind / i64::from(crate::code_rule_dsl::facts::core::KIND_STRIDE)), kind >= 0) else { return &[] };
+    /// The `node` view's rows whose `kind` (column 2) is `kind`, ascending (`KindRows`).
+    fn by_kind(&self, kind: i64) -> &[u32] {
+        let stride = i64::from(crate::code_rule_dsl::facts::core::KIND_STRIDE);
+        let (Ok(tag), true) = (u8::try_from(kind / stride), kind >= 0) else { return &[] };
         let Ok(at) = self.kinds.binary_search_by_key(&tag, |e| e.0) else { return &[] };
-        let k = self.kinds[at].1.get_or_init(|| KindRows::new(self, tag));
-        k.keys.binary_search(&kind).map_or(&[][..], |i| &k.at[k.starts[i] as usize..k.starts[i + 1] as usize])
+        let Some(dialect) = self.dialects.get(tag) else { return &[] };
+        let places = self.kinds[at].1.get_or_init(|| (0..dialect.canonical.len()).map(|_| OnceLock::new()).collect());
+        let Some(place) = places.get((kind % stride) as usize) else { return &[] };
+        &place.get_or_init(|| { let _kind = rerail_prof::work::doing(rerail_prof::work::BUILD); KindRows::new(self, tag, kind as u32) }).rows
+    }
+    /// `by_kind`'s rows, each with its document and local id.
+    fn kind_matches(&self, kind: i64) -> impl Iterator<Item = (usize, u32)> + '_ {
+        let (rows, nodes) = (self.by_kind(kind), self.nodes());
+        // The first row's document by search, then each next row's by advancing: the rows ascend.
+        let first = rows.first().map_or(0, |&r| {
+            let (mut lo, mut hi) = (0, self.docs.len());
+            while lo + 1 < hi {
+                let mid = (lo + hi) / 2;
+                if nodes.at(mid) <= r as usize { lo = mid } else { hi = mid }
+            }
+            lo
+        });
+        let mut doc = first;
+        rows.iter().map(move |&r| {
+            while nodes.at(doc + 1) <= r as usize {
+                doc += 1;
+            }
+            (doc, (r as usize - nodes.at(doc)) as u32)
+        })
+    }
+    /// The `field` view's rows whose field is `field`, in row order, where the field index was built ahead (decision
+    /// 0706 E4, `Source::build_value_index`: the planner builds an index a join needs, a lookup does not): `None` before.
+    fn by_field(&self, field: i64) -> Option<&[[u32; 4]]> {
+        self.fields.get().map(|k| k.of(field))
     }
     /// The document index and node or span of id `n`.
     fn loc(&self, n: i64, memo: &mut u32) -> Option<(usize, u32)> {
@@ -4992,7 +5254,7 @@ impl Batch {
     /// The name atom of anonymous child `x` of a numbered node of `p` (`op`'s `s`): its tape code's, in the document's
     /// entry (`ViewDoc::names`), the table the kernels' `view_op` reads.
     pub(super) fn op_atom(&self, p: &Projected, x: u32) -> i64 {
-        let entry = view_docs::ViewEntry::new(p.block(), p, &self.dialects[p.tag()], self.docs.names());
+        let entry = view_docs::ViewEntry::new(p.block(), p, self.dialects.get(p.tag()), self.docs.names());
         entry.names().get(p.f().tape_code(x) as usize).map_or(-1, |&a| i64::from(a))
     }
     /// The strings `op`'s `s` column holds in this batch's made documents, and their atoms (`op_atom`): each
@@ -5009,7 +5271,7 @@ impl Batch {
             let p = &self.docs[i];
             // A document of no grammar (held by its path alone) has no tokens.
             let Some(d) = self.dialects.get(p.tag()) else { continue };
-            let entry = view_docs::ViewEntry::new(p.block(), p, d, self.docs.names());
+            let entry = view_docs::ViewEntry::new(p.block(), p, Some(d), self.docs.names());
             let (f, names) = (p.f(), entry.names());
             let codes: BTreeSet<u32> = p.ranks().iter(Item::Op).map(|(_, x)| f.tape_code(x)).collect();
             for c in codes {
@@ -5061,8 +5323,9 @@ impl Batch {
                 break;
             }
             let p = &self.docs[doc];
-            // Ids by definition are not in local order: the locals whose ids fall in the range.
-            if p.defs.is_some() {
+            // Ids by definition are not in local order, and tape positions are not local ids: the locals whose ids fall
+            // in the range.
+            if p.defs.is_some() || p.tape_ids() {
                 let ids: Box<dyn Iterator<Item = (u32, i64)>> = if matches!(view, View::Loc(_) | View::Text) { Box::new(p.loc_ids()) } else { Box::new(p.node_ids().map(|(l, _, n)| (l, n))) };
                 let mut locals: Vector<u32> = ids.filter(|&(_, n)| (lo..=hi).contains(&n)).map(|(l, _)| l).collect();
                 locals.sort_unstable();
@@ -5111,17 +5374,17 @@ impl Viewed {
     /// the batch's (`node_order`'s key is one: `key << 32 | order`), or a `u32` (a kind, a field, a position, a
     /// line, a column, a depth, a size, a child's place, a tape id; the report's columns, `col + 1`, are too: a
     /// position is a `u32` offset in a text of at most `u32::MAX` bytes, so a column is at most `u32::MAX - 1`). Not
-    /// known: `tape`'s parent (its root's is `-1`), `end_point`'s span.
+    /// known: `tape`'s parent (its root's is `-1`).
     pub(super) fn col_kind(&self, column: usize) -> Option<made::ColKind> {
         use made::ColKind;
         match (self.view, *Self::columns(self.view).get(column)?) {
-            // `end_point`'s point is a span (`-1` where it has none).
-            (View::Tape, "par") | (View::End, "p") => None,
+            (View::Tape, "par") => None,
             (View::Node | View::Core | View::Loc(Place::Docof), "d") => Some(ColKind::Key),
-            // A node's text and an anonymous child's name: atoms, interned where they are read (`text_atom`, the
-            // names' atoms, decision 0353 row 7).
-            (View::Text | View::Op, "s") => Some(ColKind::Atom),
             (View::Loc(Place::Col), "c") => Some(ColKind::U32),
+            // -1 for none: no sibling before (`prev_id`), no end point made (`end_id`).
+            (View::Sibling, "a") | (View::End, "p") => Some(ColKind::NodeOrNone),
+            // A text's atom (`Projected::text_atom`), an anonymous child's name's (`ViewDoc::names`).
+            (View::Text | View::Op, "s") => Some(ColKind::Atom),
             (View::Order, "k") | (_, "n" | "p" | "c" | "a" | "b") => Some(ColKind::Node),
             (View::Node, "kind" | "start" | "end_")
             | (View::Child, "idx")
@@ -5246,17 +5509,16 @@ impl Source for Viewed {
         // `Loc` views, every document's places), or not at all: nothing makes its rows (decision 0353 step 4).
         let loc = matches!(self.view, View::Loc(_));
         // The directory is of the process's device's addresses, which the stages read it by (decision 0440 step C):
-        // none where its buffers have none (`views_in_place`).
-        rerail_accel::gpu::shared::device().ok()?;
+        // none where its buffers have none (`views_in_place`). Where the join programs run on the host
+        // (`rerail_accel::gpu::shared::on_host`, or no process device), of the host's (`ViewsInPlace::host`).
         let in_place = device_chunk::views_in_place(&self.batch)
-            .filter(|v| (view != device_chunk::VIEW_LINE || v.lines) && (!loc || v.locs))
-            .and_then(|v| {
-                let mut in_place = crate::code_rule_dsl::facts::vtab::ViewInPlace { dir: v.dir?, kind: device_chunk::read_kind(view), buffers: v.buffers.clone(), caches: v.caches.clone(), failed: 0, format: v.format, keep: Arc::clone(&self.batch) as Arc<dyn std::any::Any + Send + Sync> };
-                in_place.failed = in_place.cache_failed();
-                Some(in_place)
-            });
+            .filter(|v| {
+                let (lines, locs) = v.holds();
+                (view != device_chunk::VIEW_LINE || lines) && (!loc || locs)
+            })
+            .and_then(|v| v.read_of(view, Arc::clone(&self.batch) as Arc<dyn std::any::Any + Send + Sync>));
         let Some(in_place) = in_place else {
-            crate::code_rule_dsl::prof::count(["views.refused.not_on_device.node", "views.refused.not_on_device.child", "views.refused.not_on_device.field", "views.refused.not_on_device.core", "views.refused.not_on_device.axis", "views.refused.not_on_device.line", "views.refused.not_on_device.end_line", "views.refused.not_on_device.col", "views.refused.not_on_device.docof", "views.refused.not_on_device.tline", "views.refused.not_on_device.tape", "views.refused.not_on_device.depth", "views.refused.not_on_device.order"].get(view as usize).copied().unwrap_or("views.refused.not_on_device.other"), 1);
+            crate::code_rule_dsl::prof::count(["views.refused.not_on_device.node", "views.refused.not_on_device.child", "views.refused.not_on_device.field", "views.refused.not_on_device.core", "views.refused.not_on_device.axis", "views.refused.not_on_device.line", "views.refused.not_on_device.end_line", "views.refused.not_on_device.col", "views.refused.not_on_device.docof", "views.refused.not_on_device.tline", "views.refused.not_on_device.tape", "views.refused.not_on_device.depth", "views.refused.not_on_device.order", "views.refused.not_on_device.op", "views.refused.not_on_device.doc"].get(view as usize).copied().unwrap_or("views.refused.not_on_device.other"), 1);
             return None;
         };
         // Room for an index at every entry of its directory, found again by every later binding (with room for one, each
@@ -5321,6 +5583,7 @@ impl Source for Viewed {
         column == self.own()
     }
     fn range_lookup(&self, column: usize, lower: Option<(i64, bool)>, upper: Option<(i64, bool)>) -> Option<rerail_blocks::vector::Vector<usize>> {
+        let _kind = rerail_prof::work::doing(rerail_prof::work::VIEW);
         if column != self.own() {
             return None;
         }
@@ -5338,12 +5601,114 @@ impl Source for Viewed {
         self.read_matches(column, value, columns, &mut super::ProbeCursor::default(), each)
     }
     fn lookup_read_at(&self, column: usize, value: i64, columns: &[usize], cursor: &mut super::ProbeCursor, each: &mut dyn FnMut(usize, &[i64])) -> bool {
+        let _kind = rerail_prof::work::doing(rerail_prof::work::VIEW);
+        let outer = each;
+        let each: &mut dyn FnMut(usize, &[i64]) = &mut |r, v| { let _caller = _kind.paused(); outer(r, v) };
         self.read_matches(column, value, columns, cursor, each)
+    }
+    /// Decision 0706 E1: a batch of nodes by their own ids, each one's row's columns `reads` (`Source::read_own_batch`,
+    /// the one read of rows by their own id: a batched walk's step, a fused row program's view tests, a walk's step
+    /// that can't batch), as `read_matches` reads a probe by the own column (a node's one row): every id found first
+    /// (its document, local id, tape node and row), then each read, through the document's directory row where the
+    /// view is the kernels', else off the tape. The cursor is the caller's, kept from batch to batch: its hints, its
+    /// node memo (the read's, `node_hint`, which also keeps the tape node a directory read selected) and its plan of
+    /// the reads (`plan_for`, made on the first batch).
+    fn read_own_batch(&self, column: usize, values: &[i64], reads: &[usize], out: &mut [i64], found: &mut [u8], cursor: &mut super::ProbeCursor) -> bool {
+        let _kind = rerail_prof::work::doing(rerail_prof::work::VIEW);
+        use read_op::*;
+        // An operator's rows are its tokens' (several to a node).
+        if column != self.own() || matches!(self.view, View::Spread | View::Op) {
+            return false;
+        }
+        // A place's and a text's rows (a node's or a position's, one): each read as a probe reads it
+        // (`read_matches`), the batch's ids one after another with the caller's cursor.
+        if matches!(self.view, View::Loc(_) | View::Text) {
+            let k = reads.len();
+            for (r, &v) in values.iter().enumerate() {
+                let (o, f) = (&mut out[r * k..(r + 1) * k], &mut found[r]);
+                *f = 0;
+                if !self.read_matches(column, v, reads, cursor, &mut |_, got| {
+                    o.copy_from_slice(got);
+                    *f = 1;
+                }) {
+                    *f = 2;
+                }
+            }
+            return true;
+        }
+        const B: usize = 256;
+        let b = &*self.batch;
+        let (firsts, kernel, view) = (b.firsts(self.view), self.kernel_view(), self.view);
+        // The plan of the reads (at most 8 columns), else each column's op made here.
+        let plan = self.plan_for(column, reads, cursor);
+        let made: Vec<u8>;
+        let (ops, needs): (&[u8], u8) = match &plan {
+            Some(p) => (&p.ops[..usize::from(p.len)], p.needs),
+            None => {
+                made = reads.iter().map(|&r| Self::read_op(view, r).0).collect();
+                (&made, reads.iter().fold(0, |n, &r| n | Self::read_op(view, r).1))
+            }
+        };
+        let own = std::cell::Cell::new(super::NodeMemo::default());
+        let shared = cursor.node.clone();
+        let node: &std::cell::Cell<super::NodeMemo> = shared.as_deref().unwrap_or(&own);
+        let k = reads.len();
+        let mut at = [(0usize, 0u32, 0u32, 0usize); B];
+        for (c, vs) in values.chunks(B).enumerate() {
+            // Every node of the chunk found, then every one's columns read.
+            for (&v, f) in vs.iter().zip(at.iter_mut()) {
+                *f = b
+                    .node_hint(v, &mut cursor.hint[0], &mut cursor.near[0], node)
+                    .and_then(|(doc, local, x)| Some((doc, local, x, if x != NONE { b.row_of_node(view, doc, local, x) } else { b.row(view, doc, local) }?)))
+                    .unwrap_or((usize::MAX, 0, 0, 0));
+            }
+            for (j, (&v, &(doc, local, x, row))) in vs.iter().zip(at.iter()).enumerate() {
+                let r = c * B + j;
+                found[r] = u8::from(doc != usize::MAX);
+                if doc == usize::MAX {
+                    continue;
+                }
+                let o = &mut out[r * k..(r + 1) * k];
+                if kernel
+                    && let Some(d) = b.docs.read(doc, false)
+                {
+                    let i = row - firsts.at(doc);
+                    let d = match view {
+                        _ if x == NONE => d,
+                        View::Field => d.knowing(local, x, i as u32),
+                        _ => d.knowing(local, x, u32::MAX),
+                    };
+                    for (o, &rd) in o.iter_mut().zip(reads) {
+                        *o = self.read_value(&d, i, rd);
+                    }
+                    // The tape node the read selected, kept in the memo, as a probe's match keeps it.
+                    if x == NONE
+                        && k > 0
+                        && let s = d.selected()
+                        && s.l == local
+                    {
+                        let m = node.get();
+                        if m.id == v && m.doc as usize == doc && m.local == local {
+                            node.set(super::NodeMemo { x: s.x, ..m });
+                        }
+                    }
+                    continue;
+                }
+                let p = &b.docs[doc];
+                let x = if x != NONE || needs & NEED_X == 0 { x } else { b.tape_node(doc, local, v, node) };
+                let up = if needs & NEED_UP != 0 { Self::parent_id_of(p, local, x) } else { 0 };
+                for (o, &op) in o.iter_mut().zip(ops) {
+                    *o = Self::op_value(b, p, local, x, v, up, Known::default(), op);
+                }
+            }
+        }
+        true
     }
     /// A node's row by its id, tested (`kind(n, k)`, `node(n, _, k)` bound): its tape node found once, each tested
     /// column read off the tape and compared as read, the first other value ending it. A view with a row for every
     /// node alone: no row is found, no values handed on.
     fn test_at(&self, column: usize, value: i64, columns: &[usize], want: &[i64], cursor: &mut super::ProbeCursor) -> Option<bool> {
+        let _kind = rerail_prof::work::doing(rerail_prof::work::VIEW);
         use read_op::*;
         if column != self.own() || !matches!(self.view, View::Node | View::Line | View::Tape | View::Core | View::Depth | View::Order | View::Unit | View::End) {
             return None;
@@ -5353,12 +5718,76 @@ impl Source for Viewed {
         // Each hint is checked against this document's tables: another document's gives the same answer.
         let Some((doc, local)) = b.node_nearer(value, &mut cursor.hint[0], &mut cursor.near[0]) else { return Some(false) };
         let p = &b.docs[doc];
-        let x = if plan.needs & NEED_X != 0 { p.node_near(local, &mut cursor.near[1]) } else { NONE };
+        // Ids that are tape positions carry their tape node: no select of the local id.
+        let x = if plan.needs & NEED_X == 0 {
+            NONE
+        } else if p.tape_ids() {
+            (value & 0xffff_ffff) as u32
+        } else {
+            p.node_near(local, &mut cursor.near[1])
+        };
         let up = if plan.needs & NEED_UP != 0 { Self::parent_id_of(p, local, x) } else { 0 };
         Some(plan.ops[..usize::from(plan.len)].iter().zip(want).all(|(&op, &w)| Self::op_value(b, p, local, x, value, up, Known::default(), op) == w))
     }
     fn lookup(&self, column: usize, values: &[i64]) -> Option<rerail_blocks::vector::Vector<usize>> {
+        // A field's rows from the batch's field index, where it was built ahead (decision 0706 E4).
+        if matches!(self.view, View::Field) && column == 1 && let Some(f) = self.batch.fields.get() {
+            let firsts = self.batch.firsts(View::Field);
+            let mut rows: rerail_blocks::vector::Vector<usize> = values.iter().flat_map(|&v| f.of(v).iter().map(|e| firsts.at(e[0] as usize) + e[1] as usize)).collect();
+            if values.len() > 1 {
+                rows.sort_unstable();
+                rows.dedup();
+            }
+            return Some(rows);
+        }
         self.lookup_docs(column, values, None)
+    }
+    fn build_value_index(&self, column: usize) -> Option<usize> {
+        if !matches!(self.view, View::Field) || column != 1 {
+            return None;
+        }
+        let mut built = None;
+        self.batch.fields.get_or_init(|| {
+            let rows = FieldRows::new(&self.batch);
+            built = Some(rows.len());
+            rows
+        });
+        built
+    }
+    fn build_value_bits(&self, node: usize, column: usize, value: i64) -> Option<usize> {
+        if !matches!(self.view, View::Node) || node != self.own() || column != 2 {
+            return None;
+        }
+        let b = &*self.batch;
+        if b.kind_bits.lock().unwrap().iter().any(|&(k, _)| k == value) {
+            return None;
+        }
+        // Each node of the kind, its document and local id (`kind_matches`).
+        let nodes: Vec<(usize, u32)> = b.kind_matches(value).collect();
+        // Bounded by a bitmap of every node of the batch, and a word a group past it.
+        let all: usize = (0..b.docs.len()).map(|d| b.docs[d].len() as usize).sum();
+        let (at, _, _) = rerail_blocks::relation::node_bits_chunk(&b.block, nodes.len() as u32, |r| {
+            let (d, l) = nodes[r as usize];
+            b.docs[d].global(l)
+        }, false, all / 64 + nodes.len() / 2 + 1024)?;
+        let mut kb = b.kind_bits.lock().unwrap();
+        if kb.iter().any(|&(k, _)| k == value) {
+            return None;
+        }
+        kb.push((value, at));
+        b.bits_gen.fetch_add(1, std::sync::atomic::Ordering::Release);
+        Some(nodes.len())
+    }
+    fn value_bits(&self, node: usize, column: usize, value: i64) -> Option<crate::code_rule_dsl::facts::vtab::ValueBits> {
+        if !matches!(self.view, View::Node) || node != self.own() || column != 2 {
+            return None;
+        }
+        let b = &*self.batch;
+        let at = b.kind_bits.lock().unwrap().iter().find(|&&(k, _)| k == value)?.1;
+        Some(crate::code_rule_dsl::facts::vtab::ValueBits { bits: b.block.ptr::<u8>(at).cast_const(), others: Arc::from([]) })
+    }
+    fn value_bits_gen(&self) -> u32 {
+        if matches!(self.view, View::Node) { self.batch.bits_gen.load(std::sync::atomic::Ordering::Acquire) } else { 0 }
     }
     /// A kind's nodes read in their list (`Batch::by_kind`), not one run each; the other lookups' runs (a document's
     /// rows are one) listed.
@@ -5366,8 +5795,8 @@ impl Source for Viewed {
         use crate::code_rule_dsl::facts::vtab::Seq;
         let b = &*self.batch;
         if matches!(self.view, View::Node) && column == 2 {
-            let (list, nodes) = (b.by_kind(value), b.nodes());
-            return Some(Seq::new(list.len(), move |i| nodes.at(list[i][0] as usize) + list[i][1] as usize));
+            let rows = b.by_kind(value);
+            return Some(Seq::new(rows.len(), move |i| rows[i] as usize));
         }
         let (mut runs, mut memo) = (Vec::new(), crate::code_rule_dsl::facts::vtab::NO_MEMO);
         self.lookup_runs(column, value, None, &mut memo, &mut |r| runs.push(r)).then(|| Seq::runs(runs))
@@ -5569,6 +5998,7 @@ impl Source for Viewed {
     }
     /// The row's node selected once (`Projected::node`), however many columns read it.
     fn row_at(&self, row: usize, columns: &[usize], out: &mut [i64]) {
+        let _kind = rerail_prof::work::doing(rerail_prof::work::VIEW);
         self.row_at_memo(row, columns, out, &mut { super::NO_MEMO });
     }
     fn value_memo(&self, row: usize, column: usize, memo: &mut u32) -> i64 {
@@ -5581,9 +6011,7 @@ impl Source for Viewed {
         if self.kernel_view()
             && let Some(d) = self.batch.docs.read(doc, matches!(self.view, View::Loc(_)))
         {
-            for (o, &c) in out.iter_mut().zip(columns) {
-                *o = self.read_value(&d, i, c);
-            }
+            self.read_row(&d, i, columns, out);
             return;
         }
         let (p, i) = (&self.batch.docs[doc], i);
@@ -5767,7 +6195,16 @@ impl Viewed {
                 }
             }
         } else if matches!(self.view, View::Node) && column == 2 {
-            b.by_kind(v).iter().filter(|&&[doc, _, _]| kept(&(doc as usize))).for_each(|&[doc, local, _]| one(Some(b.nodes().at(doc as usize) + local as usize)));
+            if only.is_none() {
+                b.by_kind(v).iter().for_each(|&r| one(Some(r as usize)));
+            } else {
+                b.kind_matches(v).filter(|(doc, _)| kept(doc)).for_each(|(doc, local)| one(Some(b.nodes().at(doc) + local as usize)));
+            }
+        } else if matches!(self.view, View::Field) && column == 1 && let Some(rows) = b.by_field(v) {
+            // A field's rows by the field alone, from the batch's index of them where it was built ahead (decision 0706
+            // E4); else the general lookup (`false`).
+            let firsts = b.firsts(View::Field);
+            rows.iter().filter(|e| kept(&(e[0] as usize))).for_each(|e| one(Some(firsts.at(e[0] as usize) + e[1] as usize)));
         } else {
             return false;
         }
@@ -5796,6 +6233,9 @@ impl Viewed {
         Some(cursor.plan)
     }
     fn read_matches(&self, column: usize, value: i64, columns: &[usize], cursor: &mut super::ProbeCursor, each: &mut dyn FnMut(usize, &[i64])) -> bool {
+        let _kind = rerail_prof::work::doing(rerail_prof::work::VIEW);
+        let outer = each;
+        let each: &mut dyn FnMut(usize, &[i64]) = &mut |r, v| { let _caller = _kind.paused(); outer(r, v) };
         use read_op::*;
         // A place's row by its node or position (`line`, `col`, `docof`, by `n`): its values read off its span, into
         // an array, no vector a probe. By another column (`docof` by file), refused.
@@ -5850,6 +6290,40 @@ impl Viewed {
             }
             return true;
         }
+        // A field's rows by the field alone (`field($p, #f, $c)`, neither node bound): the batch's index of them
+        // (`Batch::by_field`, where it was built ahead: decision 0706 E4), each row's values its parent's id, the field
+        // and the child's id (from the last one's granule, `global_near`, while the rows stay in a document), no row
+        // found and read again. The general lookup took 978 ns a row out on idc (3.1 s), and a walk of every node for
+        // the few in the field 572.
+        if matches!(self.view, View::Field) && column == 1 && columns.len() <= 8 && columns.iter().all(|&c| c < 3) && let Some(rows) = self.batch.by_field(value) {
+            let b = &*self.batch;
+            let (firsts, mut vals) = (b.firsts(View::Field), [0i64; 8]);
+            let (mut doc_at, mut near, mut up_near, mut last_up) = (u32::MAX, 0u32, 0u32, (NONE, -1i64));
+            for &[doc, r, l, up] in rows {
+                if doc != doc_at {
+                    (doc_at, near, up_near, last_up) = (doc, 0, 0, (NONE, -1));
+                }
+                let p = &b.docs[doc as usize];
+                let parent = match up {
+                    NONE => -1,
+                    q if q == last_up.0 => last_up.1,
+                    q => {
+                        last_up = (q, p.global_near(q, &mut up_near));
+                        last_up.1
+                    }
+                };
+                let child = p.global_near(l, &mut near);
+                for (o, &c) in vals.iter_mut().zip(columns) {
+                    *o = match c {
+                        0 => parent,
+                        1 => value,
+                        _ => child,
+                    };
+                }
+                each(firsts.at(doc as usize) + r as usize, &vals[..columns.len()]);
+            }
+            return true;
+        }
         // A field's rows are its fielded nodes: a probe's match without a field has no row (`row_of_node`), and is
         // passed over.
         let Some(plan) = self.plan_for(column, columns, cursor) else { return false };
@@ -5864,6 +6338,8 @@ impl Viewed {
         let [slot_hint, group_hint] = &mut cursor.near;
         let mut vals = [0i64; 8];
         let (firsts, kernel) = (b.firsts(view), self.kernel_view());
+        // The directory row read last (`Docs::read`): a probe's matches are mostly one document's.
+        let mut open: Option<(usize, Option<rerail_tape_format::view_reads::Doc<'_>>)> = None;
         // A match: its document, local id, tape node (`NONE`: unknown), own id and parent's id where known, and its place
         // and depth where the probe knows them (a probe by parent: the hop's counter, one below the parent).
         let mut emit = |doc: usize, local: u32, x: u32, id: Option<i64>, up: Option<i64>, known: Known| {
@@ -5872,36 +6348,30 @@ impl Viewed {
             let Some(row) = row else { return };
             // Read through the document's directory row (decision 0353 step 3 on the CPU), as a scan reads it; off the
             // plan where the view is the host's alone or the row has no tape read.
-            if kernel
-                && let Some(d) = b.docs.read(doc, false)
-            {
-                // The hop's tape node, where it has one (an op's `x` is the anonymous child's, not node `local`'s):
-                // the row's columns then select no node.
-                let i = row - firsts.at(doc);
-                let d = match view {
-                    _ if x == NONE => d,
-                    View::Op => d,
-                    // A field row's node is the child the hop found.
-                    View::Field => d.knowing(local, x, i as u32),
-                    _ => d.knowing(local, x, u32::MAX),
-                };
-                for (o, &c) in vals[..len].iter_mut().zip(columns) {
-                    *o = self.read_value(&d, i, c);
+            if kernel {
+                if open.as_ref().is_none_or(|o| o.0 != doc) {
+                    open = Some((doc, b.docs.read(doc, false)));
                 }
-                // A match by its own id: the tape node its read selected, kept in the read's memo (`node_hint`), so
-                // the next probe of that id selects none.
-                if x == NONE
-                    && let Some(n) = id
-                    && let s = d.selected()
-                    && s.l == local
-                {
-                    let m = node.get();
-                    if m.id == n && m.doc as usize == doc && m.local == local {
-                        node.set(super::NodeMemo { x: s.x, ..m });
+                if let Some((_, Some(d))) = &open {
+                    let i = row - firsts.at(doc);
+                    for ((o, &c), &op) in vals[..len].iter_mut().zip(columns).zip(&plan.ops) {
+                        *o = self.read_known(d, i, InHand { local, x, id, up, known }, op, c);
                     }
+                    // A match by its own id: the tape node its read selected, kept in the read's memo (`node_hint`),
+                    // so the next probe of that id selects none.
+                    if x == NONE
+                        && let Some(n) = id
+                        && let s = d.selected()
+                        && s.l == local
+                    {
+                        let m = node.get();
+                        if m.id == n && m.doc as usize == doc && m.local == local {
+                            node.set(super::NodeMemo { x: s.x, ..m });
+                        }
+                    }
+                    each(row, &vals[..len]);
+                    return;
                 }
-                each(row, &vals[..len]);
-                return;
             }
             let p = &b.docs[doc];
             // A match by its own id: its tape node through the read's memo (`Batch::tape_node`).
@@ -6006,9 +6476,10 @@ impl Viewed {
                 p.each_of_unit(&b.dialects[p.tag()], local, |l| emit(doc, l, NONE, None, None, Known::default()));
             }
         } else if matches!(self.view, View::Node) && column == 2 {
-            // The batch's index by kind (`Batch::by_kind`): each match with its local id and tape node.
-            for &[doc, local, x] in b.by_kind(value) {
-                emit(doc as usize, local, x, None, None, Known::default());
+            // The batch's index by kind (`Batch::by_kind`): each match's document and local id; its tape node selected
+            // where a column reads it.
+            for (doc, local) in b.kind_matches(value) {
+                emit(doc, local, NONE, None, None, Known::default());
             }
         } else {
             return false;
@@ -6022,6 +6493,64 @@ impl Viewed {
             Some(d) => self.read_value(&d, i, column),
             None => self.value_at(&self.batch.docs[doc], i, column),
         }
+    }
+    /// Row `i`'s `columns` through its document's directory row (`read_value`), its node selected once however many
+    /// columns read it (`in_hand`).
+    #[inline]
+    fn read_row(&self, d: &rerail_tape_format::view_reads::Doc<'_>, i: usize, columns: &[usize], out: &mut [i64]) {
+        if columns.len() < 2 {
+            for (o, &c) in out.iter_mut().zip(columns) {
+                *o = self.read_value(d, i, c);
+            }
+            return;
+        }
+        let m = self.in_hand(d, i);
+        for (o, &c) in out.iter_mut().zip(columns) {
+            *o = self.read_known(d, i, m, Self::read_op(self.view, c).0, c);
+        }
+    }
+    /// Row `i`'s numbered node and its tape node, selected (`InHand`): what its columns' reads share. `NONE` for a
+    /// view whose columns read no tape node.
+    #[inline]
+    fn in_hand(&self, d: &rerail_tape_format::view_reads::Doc<'_>, i: usize) -> InHand {
+        let i = i as u32;
+        let (local, x) = match self.view {
+            View::Node | View::Line | View::Core | View::Tape | View::Depth => (i, d.tape_node(i)),
+            View::Child => (i + 1, d.tape_node(i + 1)),
+            View::Field => d.fielded(i),
+            View::Sibling => d.after_sibling(i),
+            _ => (i, NONE),
+        };
+        InHand { local, x, id: None, up: None, known: Known::default() }
+    }
+    /// `read_value` of a probe's match (`read_matches`), with what the probe has of it (`InHand`). Those in hand are
+    /// not read again: no select of the row's tape node, no id, parent, place or depth read. `op` is column `c`'s
+    /// (`read_op`).
+    #[inline]
+    fn read_known(&self, d: &rerail_tape_format::view_reads::Doc<'_>, i: usize, m: InHand, op: u8, c: usize) -> i64 {
+        let InHand { local, x, id, up, known } = m;
+        let got = match (op, id, up, known.idx, known.depth) {
+            (read_op::ID, Some(id), ..) => id,
+            (read_op::UP, _, Some(up), ..) => up,
+            (read_op::IDX, _, _, Some(idx), _) => i64::from(idx),
+            (read_op::DEPTH, .., Some(depth)) => i64::from(depth),
+            _ => {
+                let (i, c) = (i as u32, c as u32);
+                match self.view {
+                    View::Node => d.node_at(i, x, c),
+                    View::Line => d.line_at(i, x, c),
+                    View::Child => d.child_at(i, x, c),
+                    View::Core => d.core_at(i, x, c),
+                    View::Tape => d.tape_row_at(i, x, c),
+                    View::Depth => d.depth_row_at(i, x, c),
+                    View::Field if x != NONE => d.field_at(local, x, c),
+                    View::Sibling if x != NONE => d.sibling_at(local, x, c),
+                    _ => return self.read_value(d, i as usize, c as usize),
+                }
+            }
+        };
+        debug_assert_eq!(got, self.read_value(d, i, c), "a match's known read (column {c}, op {op})");
+        got
     }
     /// Row `i` of a document's rows in this view, column `c`, read through its directory row (`view_reads::Doc`).
     pub(super) fn read_value(&self, d: &rerail_tape_format::view_reads::Doc<'_>, i: usize, c: usize) -> i64 {
@@ -6065,9 +6594,7 @@ impl Viewed {
         {
             let mut vals = vec![0i64; columns.len()];
             for i in 0..n {
-                for (o, &c) in vals.iter_mut().zip(columns) {
-                    *o = self.read_value(&d, i, c);
-                }
+                self.read_row(&d, i, columns, &mut vals);
                 row(i, &vals);
             }
             return;
@@ -6343,6 +6870,17 @@ mod read_op {
     pub const NEED_UP: u8 = 4;
 }
 
+/// What a probe has of a match, for its directory read (`Viewed::read_known`): its local id (the numbered node), its
+/// tape node (`NONE`: not known), its id and its parent's id where known, and its place and depth (`Known`).
+#[derive(Clone, Copy)]
+struct InHand {
+    local: u32,
+    x: u32,
+    id: Option<i64>,
+    up: Option<i64>,
+    known: Known,
+}
+
 /// What a walk or a probe already has of a match (`Viewed::op_value`): its place among its parent's children, its depth
 /// and the numbered sibling before it, by id (`next_sibling`'s `a`); read off the tape where not.
 #[derive(Clone, Copy, Default)]
@@ -6353,22 +6891,7 @@ struct Known {
 }
 
 /// The field atom of field `code` in the dialect whose tape tag is `tag`.
-pub fn field_atom(tag: u8, code: u16) -> u32 {
-    u32::from(tag) << 16 | u32::from(code)
-}
-
-/// Document `key`'s `function_definition` and `class_definition` nodes by byte range (start, end), as ids of
-/// `node` in the run's shape (`core`: core.rerail's, else T's; a node's id is its rank among the shape's numbered nodes,
-/// so T's ids name other nodes of a run in core.rerail's shape): what W's call summaries name a definition by
-/// (`calls::summary::Def`).
-pub fn definitions(key: u32, facts: &Arc<Facts>, core: bool) -> StoreResult<HashMap<(u32, u32), i64>> {
-    let dialect = Dialect::new(crate::code_rule_dsl::facts::core::facts_tag(facts))?;
-    let p = Projected::new(key, Arc::clone(facts), Some(&dialect), if core { Shape::Core } else { Shape::T }, false, None);
-    Ok(p.node_ids()
-        .filter(|&(_, id, _)| matches!(dialect.name(p.f(), id), "function_definition" | "class_definition"))
-        .map(|(_, id, n)| ((p.f().start(id), p.f().end(id)), n))
-        .collect())
-}
+pub use rerail_tape_format::codes::field_atom;
 
 /// T's nine base relations over `documents`, and the `py.*` families, by table name.
 pub fn sources(store: &dyn FactStore, documents: Vec<Document>) -> StoreResult<Vec<(&'static str, Arc<dyn Source>)>> {
@@ -6450,8 +6973,9 @@ pub fn views_read_both_ways(batch: &Arc<Batch>) -> Result<Vec<(&'static str, usi
 pub fn views(batch: &Arc<Batch>) -> Vec<(&'static str, Arc<dyn Source>)> {
     let mut out: Vec<(&'static str, Arc<dyn Source>)> = Vec::new();
     let named = named_views(batch.shape);
-    // A relation the batch made as rows (`Batch::made`: its spans have places too) is bound in place of the view.
-    for (name, view) in named.into_iter().filter(|(name, _)| !batch.made.contains(name)) {
+    // A relation the batch made as rows (`Batch::made`: its spans have places too) is bound in place of the view. `op`
+    // reads its codes' names, which a batch interns where its projection reads `op` (`Docs::names`): none, no view.
+    for (name, view) in named.into_iter().filter(|(name, _)| !batch.made.contains(name) && (*name != "op" || batch.docs.names().is_some())) {
         out.push((name, Arc::new(Viewed { batch: Arc::clone(batch), view, home: std::sync::OnceLock::new() })));
     }
     // The relations of the tape's answers no maker makes as rows (`tape_rows`): the token relations, `rr_token_named`.
@@ -6473,6 +6997,114 @@ impl Batch {
         let (p, local) = self.locate(View::Node, row, memo);
         p.global(local as u32)
     }
+
+    /// Node `n`'s row (the `node` view's: its document's first row and its local id), if it is one of the batch's.
+    pub fn row_of(&self, n: i64, memo: &mut u32) -> Option<u32> {
+        self.node(n, memo).map(|(doc, local)| (self.nodes().at(doc) + local as usize) as u32)
+    }
+
+    /// SPIKE (`spike_eval`): the `text` of document `doc`'s local node `local`, as the `text` view gives it; `None`
+    /// where the view has no row of it.
+    pub fn text_at(&self, doc: usize, local: u32) -> Option<i64> {
+        let p = &self.docs[doc];
+        let x = p.node(local);
+        p.text_row_of(local, x)?;
+        Some(p.text_atom(&*self.atoms, local, x))
+    }
+
+    /// SPIKE (`spike_strata`): the batch's nodes by row, each value as its view gives it: the node's id, kind (`kind`),
+    /// and document (its place in the batch); each document's first row and file (the `node` view's `d`).
+    pub fn tree_core(&self) -> TreeCore {
+        let n = self.nodes().total();
+        let docs = self.docs.len();
+        let mut t = TreeCore { low: Vec::with_capacity(n), kind: Vec::with_capacity(n), doc: Vec::with_capacity(n), base: Vec::with_capacity(docs), file: Vec::with_capacity(docs), key: Vec::with_capacity(docs) };
+        for (doc, p) in self.docs.iter().enumerate() {
+            let d = &self.dialects[p.tag()];
+            t.base.push(self.nodes().at(doc) as u32);
+            t.file.push(i64::from(p.file()));
+            t.key.push(p.key());
+            for l in 0..p.len() {
+                let x = p.node(l);
+                t.doc.push(doc as u32);
+                let id = p.global(l);
+                debug_assert_eq!(id >> 32, i64::from(p.key()));
+                t.low.push(id as u32);
+                t.kind.push(u32::try_from(d.kind(p.f(), x)).expect("a kind atom is 32 bits"));
+            }
+        }
+        t
+    }
+
+    /// SPIKE (`spike_strata`): the batch's named tree by node row: each node's parent row (`NONE` for a root), place
+    /// among its siblings (`child`'s `idx`) and field (`field`, `i64::MIN` for none).
+    pub fn tree_shape(&self) -> TreeShape {
+        let n = self.nodes().total();
+        let mut t = TreeShape { parent: Vec::with_capacity(n), idx: Vec::with_capacity(n), field: Vec::with_capacity(n) };
+        let check = std::env::var_os("RERAIL_SPIKE_CHECK").is_some();
+        let mut differ = 0usize;
+        // Each document's nodes in one preorder walk of its open subtrees (`places`): a node's parent is the innermost
+        // open one, its place the count of that one's children before it; no node's parent or place searched for.
+        let mut open: Vec<(u32, u32, u32)> = Vec::new();
+        for (doc, p) in self.docs.iter().enumerate() {
+            let base = self.nodes().at(doc) as u32;
+            open.clear();
+            for (l, x) in p.ranks().iter(Item::Node) {
+                while open.last().is_some_and(|&(end, _, _)| end <= x) {
+                    open.pop();
+                }
+                let (parent, idx) = match open.last_mut() {
+                    None => (NONE, 0),
+                    Some(o) => {
+                        o.1 += 1;
+                        (base + o.2, o.1 - 1)
+                    }
+                };
+                open.push((p.f().subtree_end(x), 0, l));
+                if check && (parent != p.parent(l as usize).checked_add(base).unwrap_or(NONE) || idx != p.idx(l as usize)) {
+                    differ += 1;
+                }
+                t.parent.push(parent);
+                t.idx.push(idx);
+                t.field.push(if l > 0 && p.ranks().is(Item::Field, x) { i64::from(field_atom(p.tag(), p.f().field(x))) } else { i64::MIN });
+            }
+        }
+        if check {
+            eprintln!("SPIKE SHAPE {} nodes, {differ} whose parent or place the walk finds otherwise", t.parent.len());
+        }
+        t
+    }
+
+    /// SPIKE (`spike_strata`): each node row's span, the `node` view's `start` and `end`.
+    pub fn tree_spans(&self) -> (Vec<u32>, Vec<u32>) {
+        let n = self.nodes().total();
+        let (mut start, mut end) = (Vec::with_capacity(n), Vec::with_capacity(n));
+        for p in self.docs.iter() {
+            for l in 0..p.len() {
+                let x = p.node(l);
+                start.push(p.f().start(x));
+                end.push(p.f().end(x));
+            }
+        }
+        (start, end)
+    }
+}
+
+/// SPIKE: `Batch::tree_core`'s arrays, one value a node row (each document's, one a document).
+pub struct TreeCore {
+    /// Each node's id's low 32 bits: its id is its document's `key` above them (`DocTape::global`).
+    pub low: Vec<u32>,
+    pub kind: Vec<u32>,
+    pub doc: Vec<u32>,
+    pub base: Vec<u32>,
+    pub file: Vec<i64>,
+    pub key: Vec<u32>,
+}
+
+/// SPIKE: `Batch::tree_shape`'s arrays, one value a node row.
+pub struct TreeShape {
+    pub parent: Vec<u32>,
+    pub idx: Vec<u32>,
+    pub field: Vec<i64>,
 }
 
 /// T's base relations over `documents` (`sources`) in `projection`'s shape and those of core.rerail's the program reads
@@ -6794,6 +7426,23 @@ fn finish(mut out: Vec<(String, Arc<dyn Source>)>, batch: &Arc<Batch>, sets: &[(
     drop(viewing);
     // The kind-set axes, made per looked-up node like containment (decision 0050): a set no join reads, and the nodes
     // no join binds, cost nothing. Their statistics come from the tree.
+    // SPIKE (throw-away, t61): `RERAIL_SPIKE_TREE=kind,child,field`: those views' rows read once for the chunk into
+    // indexed relations, bound in their place, so every stratum's joins probe one shared index, not the views.
+    if let Some(names) = std::env::var_os("RERAIL_SPIKE_TREE") {
+        let _span = crate::code_rule_dsl::logic::profile::span(|| "spike: the tree's relations, made once".into());
+        let names = names.to_string_lossy().into_owned();
+        for (name, source) in out.iter_mut() {
+            if !names.split(',').any(|n| n == name) {
+                continue;
+            }
+            let columns = source.columns();
+            let all: Vec<usize> = (0..columns.len()).collect();
+            let mut rows: Vec<rerail_facts_base::code_rule_dsl::facts::vtab::Row> = Vec::with_capacity(source.len());
+            source.for_rows(&all, &mut |_, row| rows.push(row.iter().copied().collect()));
+            let names: Vec<&str> = columns.iter().map(String::as_str).collect();
+            *source = Arc::new(Relation::from_rows(&names, &mut rows.into_iter()));
+        }
+    }
     let _nearest = crate::code_rule_dsl::logic::profile::span(|| "nearest".into());
     use crate::code_rule_dsl::logic::front::ast::{AXIS, DESCENDANTS};
     // The axes over one set of kinds share their solves (`within::Solves`, decision 0494 step 7): each mode's is made
@@ -6816,7 +7465,17 @@ fn finish(mut out: Vec<(String, Arc<dyn Source>)>, batch: &Arc<Batch>, sets: &[(
                 shared
             }
         };
-        out.push((name.clone(), Arc::new(within::Within::axis(Arc::clone(&batch), axis, members, binding).sharing(shared))));
+        let w = within::Within::axis(Arc::clone(&batch), axis, members, binding).sharing(shared);
+        // SPIKE (S3): `RERAIL_SPIKE_PARENT_SET=child=parent`: axis `child`'s members have a parent in axis `parent`'s set.
+        let parent = std::env::var("RERAIL_SPIKE_PARENT_SET").ok().and_then(|v| {
+            let (c, q) = v.split_once('=')?;
+            (c == name).then(|| q.to_owned())
+        });
+        let w = match parent.and_then(|q| sets.iter().find(|(n, _)| *n == q)) {
+            Some((_, kinds)) => w.parent_in(Arc::new(within::Within::axis(Arc::clone(&batch), within::Axis::Nearest, kinds, binding))),
+            None => w,
+        };
+        out.push((name.clone(), Arc::new(w)));
     }
     // The stored-projection spike (measurement only): the relations the program reads, but the per-node axes.
     if let Some(db) = std::env::var_os("RERAIL_SPIKE_PROJECTION") {
@@ -6848,9 +7507,10 @@ fn out_with_within(mut out: Vec<(String, Arc<dyn Source>)>, batch: &Arc<Batch>, 
 }
 
 /// The planner's statistics of `source` (`stat_col`'s rows, ndv, sq and sqd per column, `sqd` by
-/// document `d = id >> 32`), for a relation made at bind time rather than at ingestion.
+/// document `d = id >> 32`), for a relation made at bind time rather than at ingestion: its estimate where it gives one
+/// (`Source::estimated_statistics`).
 pub fn statistics(source: &dyn Source) -> Vec<(String, i64, i64, i64, i64)> {
-    if let Some(known) = source.statistics() {
+    if let Some(known) = source.estimated_statistics() {
         return known;
     }
     measured(source)

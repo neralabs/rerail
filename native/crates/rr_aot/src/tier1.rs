@@ -414,71 +414,71 @@ static TOKEN: [(u8, u8, u8); 1024] = {
         c += 1;
     }
     t[b' ' as usize] = (255, 1, 0);
-    t[b'!' as usize] = (6, 2, 19);
+    t[b'!' as usize] = (6, 2, 11);
     t[b'"' as usize] = (0, 7, 0);
     t[b'#' as usize] = (3, 4, 0);
     t[b'$' as usize] = (7, 0, 0);
-    t[b'%' as usize] = (6, 2, 30);
-    t[b'&' as usize] = (6, 2, 33);
+    t[b'%' as usize] = (6, 2, 20);
+    t[b'&' as usize] = (6, 2, 23);
     t[b'\'' as usize] = (7, 0, 0);
-    t[b'(' as usize] = (6, 2, 10);
-    t[b')' as usize] = (6, 2, 11);
-    t[b'*' as usize] = (6, 2, 24);
-    t[b'+' as usize] = (6, 2, 28);
-    t[b',' as usize] = (6, 2, 12);
-    t[b'-' as usize] = (6, 2, 27);
-    t[b'.' as usize] = (6, 2, 13);
-    t[b'/' as usize] = (13, 2, 29);
+    t[b'(' as usize] = (6, 2, 2);
+    t[b')' as usize] = (6, 2, 3);
+    t[b'*' as usize] = (6, 2, 14);
+    t[b'+' as usize] = (6, 2, 18);
+    t[b',' as usize] = (6, 2, 4);
+    t[b'-' as usize] = (6, 2, 17);
+    t[b'.' as usize] = (6, 2, 5);
+    t[b'/' as usize] = (13, 2, 19);
     let mut c = b'0' as usize;
     while c <= b'9' as usize {
         t[c] = (5, 6, 0);
         c += 1;
     }
-    t[b':' as usize] = (6, 2, 15);
-    t[b';' as usize] = (6, 2, 14);
-    t[b'<' as usize] = (6, 2, 17);
-    t[b'=' as usize] = (6, 2, 16);
-    t[b'>' as usize] = (6, 2, 18);
+    t[b':' as usize] = (6, 2, 7);
+    t[b';' as usize] = (6, 2, 6);
+    t[b'<' as usize] = (6, 2, 9);
+    t[b'=' as usize] = (6, 2, 8);
+    t[b'>' as usize] = (6, 2, 10);
     t[b'?' as usize] = (7, 0, 0);
-    t[b'@' as usize] = (6, 2, 23);
+    t[b'@' as usize] = (6, 2, 13);
     let mut c = b'A' as usize;
     while c <= b'Z' as usize {
         t[c] = (4, 8, 0);
         c += 1;
     }
-    t[b'[' as usize] = (6, 2, 25);
+    t[b'[' as usize] = (6, 2, 15);
     t[b'\\' as usize] = (7, 0, 0);
-    t[b']' as usize] = (6, 2, 26);
-    t[b'^' as usize] = (6, 2, 32);
-    t[b'_' as usize] = (4, 8, 65);
+    t[b']' as usize] = (6, 2, 16);
+    t[b'^' as usize] = (6, 2, 22);
+    t[b'_' as usize] = (4, 8, 51);
     t[b'`' as usize] = (16, 5, 0);
     let mut c = b'a' as usize;
     while c <= b'z' as usize {
         t[c] = (4, 8, 0);
         c += 1;
     }
-    t[b'{' as usize] = (6, 2, 20);
-    t[b'|' as usize] = (6, 2, 22);
-    t[b'}' as usize] = (6, 2, 21);
-    t[b'~' as usize] = (6, 2, 31);
+    t[b'{' as usize] = (6, 2, 24);
+    t[b'|' as usize] = (6, 2, 12);
+    t[b'}' as usize] = (6, 2, 25);
+    t[b'~' as usize] = (6, 2, 21);
     t[0x7f as usize] = (7, 0, 0);
-    t[256 + b'!' as usize] = (6, 2, 5);
-    t[256 + b'-' as usize] = (6, 2, 9);
-    t[256 + b':' as usize] = (6, 2, 3);
-    t[256 + b'<' as usize] = (6, 2, 6);
-    t[256 + b'=' as usize] = (6, 2, 4);
-    t[256 + b'>' as usize] = (6, 2, 7);
-    t[768 + b'<' as usize] = (6, 2, 8);
+    t[256 + b'!' as usize] = (6, 2, 28);
+    t[256 + b'-' as usize] = (6, 2, 32);
+    t[256 + b':' as usize] = (6, 2, 26);
+    t[256 + b'<' as usize] = (6, 2, 29);
+    t[256 + b'=' as usize] = (6, 2, 27);
+    t[256 + b'>' as usize] = (6, 2, 30);
+    t[768 + b'<' as usize] = (6, 2, 31);
     t
 };
 /// The words the grammar reads, a word's code its place plus one, as the lean lexer's `WORD_LIST`.
 const WORD_LIST: [&[u8]; 71] = [
-    b"pragma", b"type", b":-", b"=>", b"!=", b"<=", b">=", b"<:", b"->", b"(", b")", b",",
-    b".", b";", b":", b"=", b"<", b">", b"!", b"{", b"}", b"|", b"@", b"*",
-    b"[", b"]", b"-", b"+", b"/", b"%", b"~", b"^", b"&", b"#include", b"must", b"may",
-    b"code", b"in", b"tag", b"fix", b"safe", b"suppress", b"over", b"options", b"by", b"sep", b"count", b"min",
-    b"max", b"sum", b"mean", b"join", b"test", b"exactly", b"uses", b"end", b"fixtures", b"input", b"output", b"product",
-    b"true", b"false", b"null", b"at", b"_", b"policy", b"decl", b"violation", b"edit", b"functor", b"lattice",
+    b"#include", b"(", b")", b",", b".", b";", b":", b"=", b"<", b">", b"!", b"|",
+    b"@", b"*", b"[", b"]", b"-", b"+", b"/", b"%", b"~", b"^", b"&", b"{",
+    b"}", b":-", b"=>", b"!=", b"<=", b">=", b"<:", b"->", b"test", b"fixtures", b"exactly", b"uses",
+    b"end", b"decl", b"violation", b"policy", b"edit", b"functor", b"type", b"input", b"output", b"lattice", b"pragma", b"true",
+    b"false", b"null", b"_", b"must", b"may", b"count", b"min", b"max", b"sum", b"product", b"mean", b"join",
+    b"by", b"at", b"sep", b"code", b"in", b"tag", b"fix", b"safe", b"suppress", b"over", b"options",
 ];
 
 /// Up to 8 bytes as one word of memory: little-endian, zeros past them.
@@ -561,6 +561,49 @@ pub fn tested(src: &[u8], recs: &[Rec], xs: &[Rec], j: usize, b: u32) -> bool {
         || xs[k..].iter().take_while(|x| x.start < to).any(|x| token_test(src, n, x, true, b, false) || token_test(src, n, x, true, b, true))
 }
 
+/// The gap marks tier 1 writes one bit for, the carrier's, the others of its mask asked of it where a rule reads one
+/// (decision 0721), as the lean parser asks `asi` of a token's `nl`.
+pub const DERIVED: u32 = 0x0;
+
+/// Whether derived mark `b` holds at a token whose marks are `marks`, after a token of word `before`.
+#[inline(always)]
+pub fn derived(b: u32, marks: u32, before: u32) -> bool {
+    let _ = (b, marks, before);
+    false
+}
+
+/// Marks `bits` with the carriers of the derived ones (`DERIVED`): an extra's own, read of its code, after a grammar
+/// token of word `before`. A mark whose mask holds its `unless after` (`under_unless`) holds none after those words.
+#[inline(always)]
+pub const fn carried(before: u32, bits: u32) -> u32 {
+    let _ = before;
+    let mut r = bits;
+    r
+}
+
+/// The gap marks tier 2 asks of the spans between the records where a rule reads one (decision 0721), as the lean
+/// parser asks whether two tokens touch and whether a line breaks since the token before: tier 1 writes no bit of them.
+pub const SPANNED: u32 = 0x0;
+
+/// Whether spanned mark `b` holds at a grammar token starting at `s`: `ps` and `pe` the first byte and the byte after the
+/// grammar token before (0: none), `xend` the byte after the extra before (0: none), `before` the grammar token before's
+/// word.
+#[inline]
+pub fn spanned(src: &[u8], ps: usize, pe: usize, xend: usize, s: usize, before: u32, b: u32, code: &dyn Fn(usize) -> bool) -> bool {
+    let _ = (src, ps, pe, xend, s, before, b, code);
+    false
+}
+
+/// Whether byte `q` is code, of tier 1's records (`recs`, the extras `xs`): no extra holds it, nor a token of a region
+/// (a string's, a character's, a name in backticks), as the grammar's `code` is none of a region's bytes.
+pub fn code_at(recs: &[Rec], xs: &[Rec], q: usize) -> bool {
+    let q = q as u32;
+    let within = |rs: &[Rec]| rs.partition_point(|r| r.start <= q).checked_sub(1).is_some_and(|k| rs[k].last >= q);
+    let k = recs.partition_point(|r| r.start <= q);
+    let region = k > 0 && recs[k - 1].last >= q && matches!(recs[k - 1].code & 0xff, 5 | 7);
+    !region && !within(xs)
+}
+
 /// The gap marks tier 2 asks of the bytes, where a rule asks one (decision 0623 step 5), by their bits: tier 1's
 /// records hold only its token tests' hits of them.
 pub const ASKED: u32 = 0x806;
@@ -573,7 +616,7 @@ pub fn gap(src: &[u8], from: usize, to: usize, before: u32, b: u32) -> bool {
         // `line`
         1 => src[from..to].contains(&0x0a),
         // `newline`
-        2 => src[from..to].contains(&0x0a) && !matches!(before, 12),
+        2 => src[from..to].contains(&0x0a) && !matches!(before, 4),
         // `json_bad`
         11 => src[from..to].contains(&0x0c),
         _ => false,

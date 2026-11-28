@@ -729,10 +729,10 @@ impl CoreRows {
                 }
                 lit.value = self.format_values.as_ref().and_then(|(_, v)| v.get(id as usize).cloned().flatten());
             }
-            if let Some(prefix) = &lit.prefix {
-                if !self.skip.literal_rows {
-                    self.strprefix.push([n, string(prefix) as i64]);
-                }
+            if let Some(prefix) = &lit.prefix
+                && !self.skip.literal_rows
+            {
+                self.strprefix.push([n, string(prefix) as i64]);
             }
             if !self.skip.str && let Some(v) = &lit.str {
                 self.str.push([n, string(v) as i64]);
@@ -807,7 +807,7 @@ impl CoreRows {
         for (local, id) in p.nodes() {
             at.entry((f.start(id), f.end(id), dialect.name(f, id))).or_insert(local);
         }
-        // A pattern is a tape, its implied tokens left out (RER-131's `tape::pattern_doc`): it is matched over the
+        // A pattern is a tape, its implied tokens left out (decision 0161's `tape::pattern_doc`): it is matched over the
         // document's tape, kept for it or encoded here from tree-sitter's parse, not over tree-sitter's tree.
         let tape = match tape {
             Some(t) => t.clone(),

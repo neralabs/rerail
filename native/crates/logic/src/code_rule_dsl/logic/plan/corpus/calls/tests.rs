@@ -74,16 +74,16 @@ impl FileState for Files {
     }
 }
 
-/// `n` columns of symbols, as `atoms_source` takes a reader's declared columns.
-fn symbols(n: usize) -> Vec<(String, String)> {
-    (0..n).map(|c| (format!("c{c}"), "symbol".to_owned())).collect()
+/// `touches`' three columns as `atoms_source` takes them: none a node path.
+fn touches_columns() -> Vec<(String, String)> {
+    (0..3).map(|c| (format!("c{c}"), "symbol".to_owned())).collect()
 }
 
 fn files(store: &crate::content_store::ContentStore, touches: &[Vec<Value>]) -> Files {
     let mut by: HashMap<i64, Arc<dyn Source>> = HashMap::new();
     for p in ["a.py", "b.py", "c.py"] {
         let rows: Vec<Vec<Value>> = touches.iter().filter(|r| r[0] == s(p)).cloned().collect();
-        let source = super::super::atoms_source(store, &symbols(3), rows.iter()).unwrap();
+        let source = super::super::atoms_source(store, &touches_columns(), rows.iter()).unwrap();
         by.insert(source.value(0, 0), source);
     }
     Files(by, Default::default())
@@ -102,7 +102,7 @@ fn both(n: usize) -> (BTreeSet<Vec<String>>, BTreeSet<Vec<String>>, CallCounts, 
     let whole_v = with_facts(&v, &[("runs_in", &runs)]);
     let whole_l = lowered(&whole_v);
     let state = files(&store, &touches);
-    let all_touches = super::super::atoms_source(&store, &symbols(3), touches.iter()).unwrap();
+    let all_touches = super::super::atoms_source(&store, &touches_columns(), touches.iter()).unwrap();
     let mut whole_stats = Stats::empty_of_lowered(&whole_l).unwrap();
     super::measured(&mut whole_stats, "touches", all_touches.as_ref());
     crate::code_rule_dsl::facts::vtab::Modules::default().bind(&db, "touches", all_touches).unwrap();
@@ -183,12 +183,12 @@ fn a_callables_memo_holds_what_was_asked() {
 fn a_call_leaves_its_files_state_as_it_was() {
     let v = parse_version(THREADS).unwrap();
     let split = callable::split(&v).unwrap().unwrap();
-    let callee = &split.callees[0];
-    let heads: BTreeSet<&str> = callee.program.rules().map(|r| callee.program.rel_name(r.head().rel())).collect();
+    let callees = &split.program;
+    let heads: BTreeSet<&str> = callees.rules().map(|r| callees.rel_name(r.head().rel())).collect();
     assert_eq!(heads, BTreeSet::from(["same_globals"]));
-    let inputs: Vec<&str> = callee.program.inputs().map(|a| callee.program.text(a)).collect();
+    let inputs: Vec<&str> = callees.inputs().map(|a| callees.text(a)).collect();
     assert_eq!(inputs, ["same_globals__call", "touches"]);
-    assert!(callee.program.rules().all(|r| callee.program.show_rule(r).contains("same_globals__call(")), "each rule reads its request first");
+    assert!(callees.rules().all(|r| callees.show_rule(r).contains("same_globals__call(")), "each rule reads its request first");
     let asks: Vec<String> = split.caller.rules().filter(|r| split.caller.rel_name(r.head().rel()) == "same_globals__call").map(|r| split.caller.show_rule(r)).collect();
     assert_eq!(asks.len(), 1, "one request rule, from unsafe_pair: {asks:?}");
     assert!(asks[0].contains("runs_in(") && !asks[0].contains("same_globals("), "{asks:?}");

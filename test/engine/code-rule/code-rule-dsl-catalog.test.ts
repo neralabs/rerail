@@ -30,12 +30,14 @@ import { applyCodeRuleConfig } from "../../../src/engine/code-rule/code-rule-opt
 import { setRepositoryStarted } from "../../../src/runtime/index.js";
 import { addAttachment, loadCheckoutRuleSet, ruleConfigurationSignature, setRuleSetting } from "../../../src/engine/catalog/rule-configuration.js";
 import { upsertLibraryRule } from "../../../src/engine/catalog/rule-library.js";
-import { approve, ruleSubject } from "../../../src/engine/catalog/rule-approval.js";
+import { approve, packSubject, ruleSubject } from "../../../src/engine/catalog/rule-approval.js";
 import { setUpTestRepository, testCodeRuleCatalog } from "../../support/repository-rules.js";
 import { startTestRepository } from "../../support/started-repository.js";
 import { validateCodeRule } from "../../../src/engine/rules.js";
 import { removeFolderSync } from "../../support/platform/remove-folder.js";
 import { installPack } from "../../support/installed-packs.js";
+import { resolveCloneId } from "../../../src/engine/catalog/repository-identity.js";
+import { recordCheckout } from "../../../src/engine/catalog/repository-registry.js";
 
 const temporaryDirectories: string[] = [];
 
@@ -274,6 +276,72 @@ describe("checkout code-rule catalog", () => {
     }
   });
 
+  it("serializes no pack rule again for another checkout at the same mode, in another runtime's catalogs too", () => {
+    installPack("typescript");
+    const base = temporaryRoot();
+    const main = join(base, "main");
+    execFileSync("git", ["init", "--quiet", "-b", "main", main]);
+    execFileSync("git", ["-c", "user.name=Rerail", "-c", "user.email=rerail@example.invalid", "commit", "--quiet", "--allow-empty", "-m", "base"], { cwd: main });
+    const [first, second] = ["first", "second"].map(name => join(base, name)) as [string, string];
+    for (const worktree of [first, second]) execFileSync("git", ["worktree", "add", "--quiet", "--detach", worktree], { cwd: main });
+    const databasePath = join(base, "rerail.sqlite");
+    setUpTestRepository(main, { packs: ["typescript"] }, databasePath);
+    const ruleCatalog = loadRuleCatalog();
+    const ids = new Set([...ruleCatalog.documents.values()].map(document => document.rule.id));
+    // Each runtime of the daemon keeps catalogs of its own; both build from the daemon's one rule catalog.
+    const [one, other] = [new CheckoutCatalogs(databasePath, { ruleCatalog }), new CheckoutCatalogs(databasePath, { ruleCatalog })];
+    try {
+      const firstCount = one.catalog(first).status.ruleCount;
+      expect(firstCount).toBeGreaterThan(0);
+      // A rule's content, as its catalog serializes it to compile it: the pack rule with the mode it runs at.
+      const stringify = vi.spyOn(JSON, "stringify");
+      const secondCount = other.catalog(second).status.ruleCount;
+      const serialized = stringify.mock.calls.filter(([value]) => {
+        const rule = value as { id?: unknown; mode?: unknown } | null | undefined;
+        return typeof rule === "object" && rule !== null && ids.has(rule.id as string) && "mode" in rule;
+      }).length;
+      stringify.mockRestore();
+      expect(secondCount).toBe(firstCount);
+      expect(serialized).toBe(0);
+    } finally {
+      one.close();
+      other.close();
+    }
+  });
+
+  it("runs a rule at each checkout's own mode, the same document wherever the mode is the same", () => {
+    installPack("typescript");
+    const base = temporaryRoot();
+    const main = join(base, "main");
+    execFileSync("git", ["init", "--quiet", "-b", "main", main]);
+    execFileSync("git", ["-c", "user.name=Rerail", "-c", "user.email=rerail@example.invalid", "commit", "--quiet", "--allow-empty", "-m", "base"], { cwd: main });
+    const [first, second] = ["first", "second"].map(name => join(base, name)) as [string, string];
+    for (const worktree of [first, second]) execFileSync("git", ["worktree", "add", "--quiet", "--detach", worktree], { cwd: main });
+    const databasePath = join(base, "rerail.sqlite");
+    setUpTestRepository(main, { packs: ["typescript"] }, databasePath);
+    const ruleCatalog = loadRuleCatalog();
+    const catalogs = new CheckoutCatalogs(databasePath, { ruleCatalog });
+    try {
+      // A pack linked from a folder runs in Log until a person approves it, as `rerail rules approve` does here.
+      const subject = packSubject(ruleCatalog, ruleCatalog.packs.get("typescript")!);
+      if (subject !== undefined) approve(catalogs.database, subject);
+      for (const root of [first, second]) catalogs.refresh(root);
+      const rules = (root: string) => loadCheckoutRuleSet(
+        catalogs.database, ruleCatalog, catalogs.checkout(root)!, { started: true, setUp: true, startedBy: "repository" }, catalogs.ownerCheckoutPaths(root).slice(1),
+      ).rulesFor("");
+      const [ruled, other] = rules(first).filter(rule => rule.document.kind === "code" && rule.mode !== "log");
+      // The second worktree runs one rule in Log; the first runs it at the pack's mode.
+      setRuleSetting(catalogs.database, { owner: { kind: "checkout", checkoutPath: second }, folder: "", targetKind: "rule", targetId: ruled!.document.rule.id, on: null, mode: "log" });
+      const byId = (root: string) => new Map(rules(root).map(rule => [rule.document.rule.id, rule]));
+      const [atFirst, atSecond] = [byId(first), byId(second)];
+      expect(atFirst.get(ruled!.document.rule.id)!.document.rule.mode).toBe(ruled!.mode);
+      expect(atSecond.get(ruled!.document.rule.id)!.document.rule.mode).toBe("log");
+      expect(atSecond.get(other!.document.rule.id)!.document).toBe(atFirst.get(other!.document.rule.id)!.document);
+    } finally {
+      catalogs.close();
+    }
+  });
+
   it("reads a checkout at one cost however many checkouts its repository has recorded", () => {
     const rowsRead = (recorded: number): number => {
       const base = temporaryRoot();
@@ -428,6 +496,143 @@ describe("checkout code-rule catalog", () => {
   });
 });
 
+describe("checkout code-rule catalog of a checkout replaced at its path while it is read", () => {
+  const gitIn = (cwd: string, ...args: string[]): void => {
+    execFileSync("git", ["-c", "user.name=Rerail", "-c", "user.email=rerail@example.invalid", "-c", "protocol.file.allow=always", ...args], { cwd, stdio: "ignore" });
+  };
+  /** A Git clone at `path` with one commit; Rerail records nothing there, so it has no clone id yet. */
+  const cloneAt = (path: string): string => {
+    mkdirSync(path, { recursive: true });
+    gitIn(path, "init", "-q", "-b", "main");
+    gitIn(path, "commit", "-q", "--allow-empty", "-m", "first");
+    return path;
+  };
+
+  /**
+   * Checkouts set up with the rule `test:replaced`, each in a layout whose clone id is somewhere else: a main
+   * checkout's in its own `.git`; a linked worktree's in its clone's Git folder, a submodule's in its parent's
+   * `.git/modules` and a `--separate-git-dir` clone's in the folder it names, each of which stays once the checkout goes.
+   */
+  const layouts: Record<string, (base: string) => string> = {
+    "a main checkout": base => cloneAt(join(base, "app")),
+    "a linked worktree": base => {
+      const path = join(base, "feature");
+      gitIn(cloneAt(join(base, "app")), "worktree", "add", "-q", "-b", "feature", path);
+      return path;
+    },
+    "a submodule": base => {
+      const parent = cloneAt(join(base, "parent"));
+      gitIn(parent, "submodule", "add", "-q", cloneAt(join(base, "source")), "lib");
+      return join(parent, "lib");
+    },
+    "a clone made with --separate-git-dir": base => {
+      const path = join(base, "separate");
+      execFileSync("git", ["init", "-q", "-b", "main", `--separate-git-dir=${join(base, "separate.git")}`, path], { cwd: base, stdio: "ignore" });
+      return path;
+    },
+  };
+
+  /** `layout`'s checkout set up with `test:replaced`, and a clone `other` set up with `test:other`, in one database. */
+  function replacedAndOther(layout: (base: string) => string) {
+    const base = temporaryRoot();
+    const databasePath = join(base, "rerail.sqlite");
+    const replaced = layout(base);
+    const replacedKey = setUpTestRepository(replaced, { library: [{ kind: "code", rule: rule("test:replaced") }] }, databasePath);
+    const other = cloneAt(join(base, "other"));
+    const otherKey = setUpTestRepository(other, { library: [{ kind: "code", rule: rule("test:other") }] }, databasePath);
+    const catalogs = new CheckoutCatalogs(databasePath, { ruleCatalog: loadRuleCatalog() });
+    try {
+      const catalog = catalogs.catalog(replaced);
+      const ruleIds = (): string[] => catalog.snapshot().codeRules.map(({ id }) => id);
+      expect(ruleIds()).toEqual(["test:replaced"]);
+      removeFolderSync(replaced);
+      return { base, databasePath, replaced, replacedKey, other, otherKey, catalogs, catalog, ruleIds };
+    } catch (error) {
+      // The caller closes them only once this returns; an open database keeps Windows from removing the temp folder.
+      catalogs.close();
+      throw error;
+    }
+  }
+
+  for (const [name, layout] of Object.entries(layouts)) {
+    it(`reads ${name} replaced by another clone's linked worktree with that clone's rules at its next refresh`, () => {
+      const { replaced, other, otherKey, catalogs, catalog, ruleIds } = replacedAndOther(layout);
+      try {
+        gitIn(other, "worktree", "add", "-q", "-b", "side", replaced);
+
+        expect(catalog.refresh()).toBe(true);
+        expect(ruleIds()).toEqual(["test:other"]);
+        expect(catalogs.checkout(replaced)).toMatchObject({ repositoryKey: otherKey, git: true, main: false });
+      } finally {
+        catalogs.close();
+      }
+    });
+  }
+
+  it("runs no rule in a checkout replaced by a clone Rerail has not recorded, the row at its path being the removed clone's", () => {
+    const { base, replaced, other, catalogs, catalog, ruleIds } = replacedAndOther(layouts["a main checkout"]!);
+    try {
+      cloneAt(replaced);
+
+      expect(catalog.refresh()).toBe(true);
+      expect(ruleIds()).toEqual([]);
+      expect(catalogs.eligibility(replaced)).toBe("unrecorded");
+      // Read again beside a worktree of a started clone that the same read records, as a session knowing both reads them.
+      const added = join(base, "added");
+      gitIn(other, "worktree", "add", "-q", "-b", "added", added);
+      expect(catalogs.refreshAll([replaced, added])).toEqual(new Map([[replaced, "unrecorded"], [added, "ok"]]));
+    } finally {
+      catalogs.close();
+    }
+  });
+
+  // Its rules read while the folder is gone, as an event between the command that removes it and the one that adds the
+  // worktree reads them: no row there is the folder's own then.
+  it("records another started clone's worktree added at the path of a checkout read while it was gone", () => {
+    const { replaced, other, otherKey, catalogs, catalog } = replacedAndOther(layouts["a main checkout"]!);
+    try {
+      catalog.refresh();
+      expect(catalogs.eligibility(replaced)).toBe("unrecorded");
+      gitIn(other, "worktree", "add", "-q", "-b", "side", replaced);
+
+      expect(catalogs.refreshAll([replaced]).get(replaced)).toBe("ok");
+      expect(catalogs.checkout(replaced)?.repositoryKey).toBe(otherKey);
+    } finally {
+      catalogs.close();
+    }
+  });
+
+  it("takes the row of a linked worktree added again at its path by its own clone, read while it was gone", () => {
+    const { base, replaced, replacedKey, catalogs, catalog } = replacedAndOther(layouts["a linked worktree"]!);
+    try {
+      catalog.refresh();
+      expect(catalogs.eligibility(replaced)).toBe("unrecorded");
+      gitIn(join(base, "app"), "worktree", "prune");
+      gitIn(join(base, "app"), "worktree", "add", "-q", "-b", "again", replaced);
+
+      expect(catalogs.refreshAll([replaced]).get(replaced)).toBe("ok");
+      expect(catalogs.checkout(replaced)?.repositoryKey).toBe(replacedKey);
+    } finally {
+      catalogs.close();
+    }
+  });
+
+  it("takes the row a session start records for the clone now at the path at the next read of every checkout", () => {
+    const { databasePath, replaced, other, otherKey, catalogs } = replacedAndOther(layouts["a main checkout"]!);
+    const database = openRerailDatabase(databasePath);
+    try {
+      gitIn(other, "worktree", "add", "-q", "-b", "side", replaced);
+      recordCheckout(database, replaced);
+
+      expect(catalogs.refreshAll([replaced]).get(replaced)).toBe("ok");
+      expect(catalogs.checkout(replaced)?.repositoryKey).toBe(otherKey);
+    } finally {
+      database.$client.close();
+      catalogs.close();
+    }
+  });
+});
+
 /** The statements `work` prepares and runs on `database`'s connection. */
 function countStatements(database: RerailDatabase, work: () => void): { prepared: number; run: number } {
   const client = database.$client;
@@ -452,16 +657,20 @@ function countStatements(database: RerailDatabase, work: () => void): { prepared
   return counted;
 }
 
-/** Records a checkout of `repositoryKey` at each path, as recording each worktree would. */
+/**
+ * Records a checkout of `repositoryKey` at each path, as recording each worktree would: under the clone id of the folder
+ * there, made as recording makes it, and under a made-up one at a path with no folder.
+ */
 function recordCheckoutRows(databasePath: string, repositoryKey: string, paths: readonly string[]): void {
   const database = openRerailDatabase(databasePath);
   try {
     const insert = database.$client.prepare(
-      "INSERT INTO checkouts (checkout_path, repository_key, clone_id, started, created_at, last_seen_at) VALUES (?, ?, 'clone', NULL, 1, 1)",
+      "INSERT INTO checkouts (checkout_path, repository_key, clone_id, started, created_at, last_seen_at) VALUES (?, ?, ?, NULL, 1, 1)",
     );
+    const cloneIds = paths.map(path => (existsSync(path) ? resolveCloneId(path).cloneId : "clone"));
     // One transaction: the database syncs every commit to disk, and 300 commits on a busy disk outlast the test's limit.
     database.$client.transaction(() => {
-      for (const path of paths) insert.run(path, repositoryKey);
+      for (const [index, path] of paths.entries()) insert.run(path, repositoryKey, cloneIds[index]);
     })();
   } finally {
     database.$client.close();

@@ -1,1 +1,0 @@
-`rerail daemon start` run right after `rerail setup`, or beside another start, no longer exits 1 while the daemon just launched is still starting: it waits for it as long as for a daemon it launches, and reports a failed start once, with its log. `rerail status` says such a daemon is still starting.

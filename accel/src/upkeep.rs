@@ -99,9 +99,10 @@ impl<'a> Slice<'a> {
     }
 }
 
-/// A probe of other processes' runs on a store: the store's path, its runs lock file (if it opened), when the probe
-/// last looked, and whether another process held the lock then.
-type ProbeHeld = (std::path::PathBuf, Option<std::fs::File>, Instant, bool);
+/// A probe of other processes' runs on a store: the store's path, when the probe last looked, and whether another
+/// process held its runs lock then. The lock file is opened for each look and closed after it: a handle kept would
+/// hold the store's directory open past the store (a test's, removed with it).
+type ProbeHeld = (std::path::PathBuf, Instant, bool);
 
 /// The machine's upkeep (decision 0442): its jobs and their scheduler, the runs under way on it, the probes of other
 /// processes' runs, the settings in force.
@@ -181,14 +182,15 @@ fn others_run_over(file: &std::path::Path) -> bool {
         let at = match probes.iter().position(|(p, ..)| p == file) {
             Some(i) => i,
             None => {
-                let lock = std::fs::OpenOptions::new().create(true).truncate(false).read(true).write(true).open(runs_lock(file)).ok();
-                probes.push((file.to_path_buf(), lock, Instant::now() - Duration::from_secs(1), false));
+                probes.push((file.to_path_buf(), Instant::now() - Duration::from_secs(1), false));
                 probes.len() - 1
             }
         };
-        let (_, lock, asked, active) = &mut probes[at];
+        let (_, asked, active) = &mut probes[at];
         if asked.elapsed() >= Duration::from_millis(25) {
             *asked = Instant::now();
+            // Opened only where the store's directory is: a probe makes no lock file beside a store that is gone.
+            let lock = file.parent().is_some_and(|d| d.is_dir()).then(|| std::fs::OpenOptions::new().create(true).truncate(false).read(true).write(true).open(runs_lock(file)).ok()).flatten();
             *active = lock.as_ref().is_some_and(|l| {
                 if l.try_lock().is_ok() {
                     let _ = l.unlock();

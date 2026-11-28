@@ -48,6 +48,17 @@ pub fn hash(key: i64) -> u64 {
     (u64::from(w) << 32) | u64::from(h)
 }
 
+/// A key of several columns as a filter places it (decision 0706 E2): one column's value is hashed as `hash` hashes it
+/// (so a one-column relation filter places keys as the kept column filters do); several are folded by the hashed
+/// index's key hash first (`crate::key_hash`), then hashed so.
+#[inline]
+pub fn key(vals: &[i64]) -> u64 {
+    match vals {
+        [v] => hash(*v),
+        _ => hash(crate::key_hash(vals) as i64),
+    }
+}
+
 /// The bits of its word a key of hash `h` sets (the CLIF's `bloom_mask`): five, from 6-bit fields of `h`.
 #[inline(always)]
 pub fn mask(h: u64) -> u64 {
@@ -66,13 +77,17 @@ impl Bloom {
     pub fn try_create(block: &Block, words: usize) -> Option<usize> {
         assert!(words.is_power_of_two(), "a filter's words are a power of two");
         let at = block.try_alloc_chunk(DESC_BYTES, 64)?;
-        let Some(w) = block.try_alloc_chunk(8 * words, 64) else {
+        let Some((w, fresh)) = block.try_alloc_chunk_fresh(8 * words, 64) else {
             block.free_chunk(at, DESC_BYTES);
             return None;
         };
         let desc: *mut Bloom = block.ptr(at);
-        // SAFETY: both chunks are this block's, just taken (zeroed), and nothing else holds them.
-        unsafe { Span::set(&raw const (*desc).words, block.ptr::<u64>(w), words) };
+        // SAFETY: both chunks are this block's, just taken, and nothing else holds them: its bits are set one by one,
+        // so they are written clear where the chunk was used before.
+        unsafe {
+            block.clear_where_used(w, 8 * words, fresh);
+            Span::set(&raw const (*desc).words, block.ptr::<u64>(w), words);
+        }
         Some(at)
     }
 

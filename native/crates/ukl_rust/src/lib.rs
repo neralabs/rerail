@@ -8,7 +8,6 @@
 pub mod label_parents_w8;
 #[cfg(target_arch = "aarch64")]
 pub mod label_leaves_w8;
-#[cfg(target_arch = "aarch64")]
 pub mod join_program;
 pub mod lanes;
 mod sources;
@@ -17,60 +16,20 @@ mod sort_merge_spike;
 
 pub use sources::*;
 
-/// The digests of `join_stages.uglykl` as the join program (`JOIN_PROGRAM`, decisions 0603, 0648) for views of format
-/// 0 (several), 16 and 16z, on a device other than Metal (`metal_join::program_pipes`): `join_grid`, `join_phase` and
-/// `join_chain`, written by hand (`join_program`), which read the views' format as the compiled reads do, so one Rust
-/// for each. Not `sources.rs`, which rerail-ukl-vec's tests write: device-metal's test (`join_rust`) holds these to
+/// The digests of `join_stages.uglykl` as the join program (`JOIN_PROGRAM`, decisions 0603, 0674) for views of format
+/// 0 (several), 16 and 16z, on a device other than Metal (`metal_join::program_pipe`): `join_run`, written by hand
+/// (`join_program`), which reads the views' format as the compiled reads do, so one Rust for each. Not `sources.rs`, which rerail-ukl-vec's tests write: device-metal's test (`join_rust`) holds these to
 /// the source.
-pub const JOIN_PROGRAM: [u64; 3] = [0xb2df4eea2d6a5dcf, 0xd93b2a06fb251345, 0x6bb366e51cde8654];
+pub const JOIN_PROGRAM: [u64; 3] = [0xd7e070748f58f1f9, 0xbedd43dcf10a0023, 0x2055304e32d45d92];
 
 /// A group's launch, as a kernel's Rust reads it: its group's position, its threads' (each dimension's), and the
-/// groups'; and the reads written once in CLIF as the CPU compiled them, each by its place in `rerail_clif::reads::READS`
-/// (`rerail_clif::jit::Reads::table`), which a kernel's Rust calls (rerail-ukl-vec's `rs::Read`); null for a kernel
-/// that calls none.
+/// groups'.
 #[repr(C)]
 #[derive(Clone, Copy, Debug)]
 pub struct Launch {
     pub group: [u32; 3],
     pub block: [u32; 3],
     pub groups: [u32; 3],
-    pub reads: *const *const u8,
-}
-
-/// The reads written once in CLIF, compiled for the CPU (`rerail_clif::jit::Reads`): their table in
-/// `rerail_clif::reads::READS`' order, which a kernel's Rust calls through (`Launch::reads`), and the code it points
-/// into, held as long as the table.
-pub struct Reads {
-    table: Vec<*const u8>,
-    _code: Box<dyn std::any::Any>,
-}
-
-// SAFETY: the table and the code are written once, before `new`, and only read after: each read a function of its
-// arguments, callable from any thread.
-unsafe impl Send for Reads {}
-unsafe impl Sync for Reads {}
-
-impl Reads {
-    /// # Safety
-    ///
-    /// `table` holds every compiled read in `READS`' order, its code `code`'s, unchanged while `code` lives.
-    pub unsafe fn new(table: Vec<*const u8>, code: Box<dyn std::any::Any>) -> Self {
-        Reads { table, _code: code }
-    }
-
-    /// The table, as `Launch::reads`.
-    pub fn table(&self) -> *const *const u8 {
-        self.table.as_ptr()
-    }
-}
-
-/// The kernels here that call the compiled reads (and so need `Launch::reads`): the join program's (none of the label
-/// passes').
-const CALLING_READS: [&str; 2] = ["join_phase", "join_chain"];
-
-/// Whether any of `host`'s kernels calls the compiled reads (and so needs `Launch::reads`).
-pub fn calls_reads(host: &[(&'static str, Kernel)]) -> bool {
-    host.iter().any(|(name, _)| CALLING_READS.contains(name))
 }
 
 /// A kernel's Rust: one group's threads. `argv` holds the address of each argument's bytes (a buffer's: of its
@@ -84,7 +43,7 @@ pub type Kernel = unsafe fn(*const *const u8, &Launch);
 /// `argv` holds `k`'s arguments, its buffers as large as the launch reads and writes.
 pub unsafe fn launch(k: Kernel, argv: &[*const u8], groups: u32, block: u32) {
     for g in 0..groups {
-        let l = Launch { group: [g, 0, 0], block: [block, 1, 1], groups: [groups, 1, 1], reads: std::ptr::null() };
+        let l = Launch { group: [g, 0, 0], block: [block, 1, 1], groups: [groups, 1, 1] };
         unsafe { k(argv.as_ptr(), &l) };
     }
 }
@@ -105,22 +64,37 @@ pub fn digest(text: &str, defines: &[(&str, &str)]) -> u64 {
     h
 }
 
+/// The join program's kernel (decision 0674: its chain's driver): on the CPU it runs only as its SIMD Rust
+/// (`join_program::join_run`), never its UKL's build, until the user says otherwise. Every other kernel runs its Rust
+/// where it has it, else its UKL.
+pub const JOIN_KERNELS: [&str; 1] = ["join_run"];
+
+/// Whether `text`, specialized by `defines`, is the join program (`JOIN_PROGRAM` defined, its kernels compiled).
+pub fn is_join_program(text: &str, defines: &[(&str, &str)]) -> bool {
+    (defines.iter().any(|(n, _)| *n == "JOIN_PROGRAM") || text.contains("#define JOIN_PROGRAM ")) && text.contains(", join_run,")
+}
+
 /// The kernels of the program `text` (specialized by `defines`) that run as Rust on this processor: each its name
 /// and Rust. None where no kernel here was written from that text and those defines.
-pub fn kernels(text: &str, defines: &[(&str, &str)]) -> Vec<(&'static str, Kernel)> {
+///
+/// The join program whose text or defines are not the ones `join_program` was written from is an error: its UKL's build
+/// never runs in the Rust's place (it is orders of magnitude slower, and nothing would say so).
+pub fn kernels(text: &str, defines: &[(&str, &str)]) -> Result<Vec<(&'static str, Kernel)>, String> {
     let d = digest(text, defines);
     let mut out: Vec<(&'static str, Kernel)> = Vec::new();
     #[cfg(target_arch = "aarch64")]
     if d == LABEL_PASSES_16 {
         out.push(("label_parents", label_parents_w8::label_parents_w8));
     }
-    #[cfg(target_arch = "aarch64")]
     if JOIN_PROGRAM.contains(&d) {
-        out.push(("join_grid", join_program::join_grid));
-        out.push(("join_phase", join_program::join_phase));
-        out.push(("join_chain", join_program::join_chain));
+        out.push(("join_run", join_program::join_run));
+    } else if is_join_program(text, defines) {
+        return Err(format!(
+            "the join program's Rust (rerail_ukl_rust::join_program::join_run) was not written from this source (digest {d:#018x}): \
+             bring join_program to the source and JOIN_PROGRAM to its digests. Its UKL's build is not run in the Rust's place."
+        ));
     }
-    out
+    Ok(out)
 }
 
 #[cfg(test)]
@@ -135,8 +109,19 @@ mod tests {
     }
 
     /// Another text, or the same with another define, has no kernel here: its compiler's build runs.
+    /// A join program that is not the source `join_run` was written from is refused: its UKL's build does not run in
+    /// the Rust's place.
+    #[test]
+    fn a_changed_join_program_is_refused() {
+        let text = "#define JOIN_PROGRAM 1\nDEFINE_KERNEL2(join, join_run, ...)\n";
+        let e = super::kernels(text, &[]).unwrap_err();
+        assert!(e.contains("join_run") && e.contains("not written from this source"), "{e}");
+        // The same source without `JOIN_PROGRAM` compiles none of those kernels.
+        assert!(super::kernels("DEFINE_KERNEL2(join, join_run, ...)\n", &[]).unwrap().is_empty());
+    }
+
     #[test]
     fn another_program_has_no_rust() {
-        assert!(super::kernels("kernel text", &[("UKL_CONSTANT_0", "16")]).is_empty());
+        assert!(super::kernels("kernel text", &[("UKL_CONSTANT_0", "16")]).unwrap().is_empty());
     }
 }

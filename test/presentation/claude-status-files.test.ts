@@ -99,11 +99,12 @@ describe("the Claude Code status files the daemon keeps", () => {
     expect([truecolor, palette, plain].map(line => shown(line!))).toEqual(Array(3).fill("R E R A I L ● 3 rules"));
     expect(truecolor).toContain("\u001b[38;2;165;173;251mR");
     expect(palette).toContain("\u001b[38;5;147mR");
-    expect(plain).not.toContain("\u001b[");
+    // NO_COLOR takes the colour away; the links keep their underline, the one mark that says they are links.
+    expect(plain!.replace(/\u001b\[(?:4|24)m/gu, "")).not.toContain("\u001b[");
     const { repositoryKey } = stores.checkouts()(workspace)!;
     const scope = new URLSearchParams({ repository: repositoryKey, checkout: realpathSync(workspace) });
-    expect(plain).toContain(`\u001b]8;;${ORIGIN}/?${scope}#rules\u00073 rules\u001b]8;;\u0007`);
-    expect(plain).toMatch(/^\u001b\]8;;http:\/\/127\.0\.0\.1:4737\/\?[^\u0007]*sessionId=session-one&host=claude-code[^\u0007]*\u0007R E R A I L\u001b\]8;;\u0007 ● /u);
+    expect(plain).toContain(`\u001b]8;;${ORIGIN}/?${scope}#rules\u0007\u001b[4m3 rules\u001b[24m\u001b]8;;\u0007`);
+    expect(plain).toMatch(/^\u001b\]8;;http:\/\/127\.0\.0\.1:4737\/\?[^\u0007]*sessionId=session-one&host=claude-code[^\u0007]*\u0007\u001b\[4mR E R A I L\u001b\[24m\u001b\]8;;\u0007 ● /u);
   });
 
   it.skipIf(!POSIX_MODES)(`keeps the files to their owner (${NO_POSIX_MODES} otherwise)`, async () => {
@@ -117,13 +118,13 @@ describe("the Claude Code status files the daemon keeps", () => {
     const session = recordSession("session-one", workspace, 3);
     const kept = keeper();
     await kept.refresh();
-    const first = statSync(join(folder, "session-one")).ino;
+    const first = statSync(join(folder, "session-one"), { bigint: true }).ino;
     await kept.refresh();
-    expect(statSync(join(folder, "session-one")).ino).toBe(first);
+    expect(statSync(join(folder, "session-one"), { bigint: true }).ino).toBe(first);
     store.recordSteer(session, "receipt", ["team:one", "team:two"]);
     await kept.refresh();
     expect(shown(drawn("session-one")![2]!)).toBe("R E R A I L ● 3 rules · steered 2×");
-    expect(statSync(join(folder, "session-one")).ino).not.toBe(first);
+    expect(statSync(join(folder, "session-one"), { bigint: true }).ino).not.toBe(first);
   });
 
   it("draws nothing for a session where Rerail is not on or the footer is silent, and says a repository is not set up", async () => {

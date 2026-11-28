@@ -141,7 +141,7 @@ Invalidation follows from content addressing:
 
 - Tapes are opaque zstd blobs, never read by SQL.
 - Query-independent contentless FTS5 indexes exist: the kind stream (position = preorder ordinal, `detail=full`), values, and source words (`content_store.rs:359-386`). The tape-delete trigger cleans them up.
-- `tempo_matches` is a vtab where `xFilter` takes a batch token and runs all (file, program) pairs. Inputs are in-memory `TapeDoc`s, not SQL columns (`T:…/transducer/sql_backend.rs:1-5`).
+- `<predecessor>_matches` is a vtab where `xFilter` takes a batch token and runs all (file, program) pairs. Inputs are in-memory `TapeDoc`s, not SQL columns (`T:…/transducer/sql_backend.rs:1-5`).
 
 ---
 

@@ -38,6 +38,14 @@ describe.skipIf(process.platform === "win32")("what Rerail keeps private", () =>
     expect(await mode(home)).toBe(0o700);
   });
 
+  it("is the folder of the events hooks left while the daemon did not read, kept private as the home is made", async () => {
+    const home = join(await temporaryDirectory(), "home");
+    await mkdir(join(home, "untaken-events"), { recursive: true });
+    await chmod(join(home, "untaken-events"), 0o755);
+    makeRerailHome(home);
+    expect(await mode(join(home, "untaken-events"))).toBe(0o700);
+  });
+
   it("is a folder kept private on every call, made or not, since a chmod starts no program", async () => {
     const folder = join(await temporaryDirectory(), "tokens");
     await mkdir(folder);

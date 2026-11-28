@@ -125,9 +125,6 @@ struct Lp<'g, 'a> {
     end_unread: std::cell::Cell<bool>,
     /// Each checked kind's check (`check K = G`).
     check_of: BTreeMap<String, Gram>,
-    /// Whether the check being written reads its bytes with no bound (`b[j]`): none of its bytes the padding's, so its
-    /// match stops before the padded source's end, as the lean parser's `number_end` reads.
-    direct: std::cell::Cell<bool>,
     /// Whether the code being written is the root's, outside every level: there no level is open (`depth` is 0), and
     /// a call tests no depth, as `walk`'s document.
     at_root: std::cell::Cell<bool>,
@@ -1112,105 +1109,19 @@ impl Lp<'_, '_> {
         Ok(first)
     }
 
-    /// A `check K = G` as a function of the token's bytes: `G` over them, its names byte classes, its literals
-    /// bytes, each decision at the next byte.
-    fn check_fn(&self, kind: &str, body: &Gram) -> Result<String, String> {
-        // The padding's byte (a space) none of the check's: its match stops at the padding at the latest.
-        self.direct.set(!self.check_bytes(body)?.contains(&b' '));
-        let code = self.check_code(body, false)?;
-        self.direct.set(false);
-        Ok(format!("/// `check {kind}`: the end of the check's grammar's match from the start of `b` (the bytes from the token's,\n/// to the padded source's end), or none.\nfn check_{}(b: &[u8]) -> Option<usize> {{\nlet mut j = 0usize;\n{}Some(j)\n}}\n\n", ident(kind), code))
+    /// The lexer's checks' writer (`bitlex_check_rust`).
+    fn checks(&self) -> crate::bitlex_check_rust::Checks<'_> {
+        crate::bitlex_check_rust::Checks::new(self.g.x.lexer, "tier 2 as one loop")
     }
 
-    /// Every byte a check's grammar may read.
-    fn check_bytes(&self, g: &Gram) -> Result<Vec<u8>, String> {
-        Ok(match g {
-            Gram::Lit(_) | Gram::Sym(_) => self.check_first(g)?.0,
-            Gram::Seq(gs) | Gram::Alt(gs) => gs.iter().map(|g| self.check_bytes(g)).collect::<Result<Vec<_>, _>>()?.concat(),
-            Gram::Opt(a) | Gram::Star(a) | Gram::Plus(a) => self.check_bytes(a)?,
-            other => return self.err(format!("a check's {other:?}")),
-        })
+    /// A `check K = G` as a function of the token's bytes (`bitlex_check_rust`), the source padded.
+    fn check_fn(&self, kind: &str, body: &Gram) -> Result<String, String> {
+        self.checks().check_fn(&ident(kind), kind, body, true)
     }
 
     /// The bytes a check's grammar may start with, and whether it may match none.
     fn check_first(&self, g: &Gram) -> Result<(Vec<u8>, bool), String> {
-        Ok(match g {
-            Gram::Lit(t) if t.len() == 1 => (vec![t.as_bytes()[0]], false),
-            Gram::Sym(n) => (self.class(n)?, false),
-            Gram::Seq(gs) => {
-                let mut out = Vec::new();
-                for g in gs {
-                    let (f, e) = self.check_first(g)?;
-                    out.extend(f);
-                    if !e {
-                        return Ok((out, false));
-                    }
-                }
-                (out, true)
-            }
-            Gram::Alt(gs) => {
-                let (mut out, mut empty) = (Vec::new(), false);
-                for g in gs {
-                    let (f, e) = self.check_first(g)?;
-                    out.extend(f);
-                    empty |= e;
-                }
-                (out, empty)
-            }
-            Gram::Opt(a) | Gram::Star(a) => (self.check_first(a)?.0, true),
-            Gram::Plus(a) => self.check_first(a)?,
-            other => return self.err(format!("a check's {other:?}")),
-        })
-    }
-
-    fn class(&self, name: &str) -> Result<Vec<u8>, String> {
-        for s in self.g.x.lexer {
-            if let Stmt::Class(n, items) = s
-                && n == name
-            {
-                let mut out: Vec<u8> = items.iter().flat_map(|&(lo, hi)| (lo..=hi).map(|b| b as u8)).collect();
-                out.sort_unstable();
-                out.dedup();
-                return Ok(out);
-            }
-        }
-        self.err(format!("a check's `{name}`: no class"))
-    }
-
-    fn at_byte(&self, g: &Gram) -> Result<String, String> {
-        let (mut f, _) = self.check_first(g)?;
-        f.sort_unstable();
-        f.dedup();
-        Ok(if self.direct.get() { format!("matches!(b[j], {})", pattern(&f)) } else { format!("matches!(b.get(j), Some({}))", pattern(&f)) })
-    }
-
-    /// The code of a check's `g`; `tested`, whether the test before it found its first byte (an `[A]`, `A*`, `A+` or
-    /// `A | B` found it there, so its code reads it as found).
-    fn check_code(&self, g: &Gram, tested: bool) -> Result<String, String> {
-        Ok(match g {
-            Gram::Lit(_) | Gram::Sym(_) if tested => "j += 1;\n".to_owned(),
-            Gram::Lit(_) | Gram::Sym(_) => format!("if !{} {{\nreturn None;\n}}\nj += 1;\n", self.at_byte(g)?),
-            Gram::Seq(gs) => gs.iter().enumerate().map(|(k, g)| self.check_code(g, tested && k == 0)).collect::<Result<String, String>>()?,
-            Gram::Opt(a) => format!("if {} {{\n{}}}\n", self.at_byte(a)?, self.check_code(a, true)?),
-            Gram::Star(a) => format!("while {} {{\n{}}}\n", self.at_byte(a)?, self.check_code(a, true)?),
-            Gram::Plus(a) => format!("{}while {} {{\n{}}}\n", self.check_code(a, tested)?, self.at_byte(a)?, self.check_code(a, true)?),
-            // Each alternative one byte: one test of them all (`walk`'s exponent sign), none where the test before found it.
-            Gram::Alt(gs) if gs.iter().all(|g| matches!(g, Gram::Lit(_) | Gram::Sym(_))) => {
-                if tested {
-                    "j += 1;\n".to_owned()
-                } else {
-                    format!("if !{} {{\nreturn None;\n}}\nj += 1;\n", self.at_byte(g)?)
-                }
-            }
-            Gram::Alt(gs) => {
-                let mut out = String::new();
-                for g in gs {
-                    let _ = write!(out, "if {} {{\n{}}} else ", self.at_byte(g)?, self.check_code(g, true)?);
-                }
-                out + "{\nreturn None;\n}\n"
-            }
-            other => return self.err(format!("a check's {other:?}")),
-        })
+        self.checks().check_first(g)
     }
 }
 
@@ -1228,21 +1139,21 @@ const RUNTIME: &str = r#"
 #[inline(always)]
 fn open(d: &mut Cursor<Cells>, number: u32, start: u64) {
     // SAFETY: the cursor's state's room is reserved for the run (`parse`).
-    unsafe { d.open(number, start) }
+    unsafe { d.open(d.number(number), start) }
 }
 
 /// A leaf, as `open`.
 #[inline(always)]
 fn leaf(d: &mut Cursor<Cells>, number: u32, start: u64, end: u64) {
     // SAFETY: as `open`'s.
-    unsafe { d.leaf(number, start, end) }
+    unsafe { d.leaf(d.number(number), start, end) }
 }
 
 /// A node of one leaf child, both at once (the writer's `leaf_in`), as `open`.
 #[inline(always)]
 fn leaf_in(d: &mut Cursor<Cells>, number: u32, child: u32, start: u64, cs: u64, ce: u64, end: u64) {
     // SAFETY: as `open`'s.
-    unsafe { d.leaf_in(number, child, start, cs, ce, end) }
+    unsafe { d.leaf_in(d.number(number), d.number(child), start, cs, ce, end) }
 }
 
 /// A token's leaf from `s` to `end`, the next record taken: its end (the lean parser's `leaf`, for each place's arm).
@@ -1412,7 +1323,7 @@ matches!(ROWS[usize::from(b)], {pat})
 
 ")))
     });
-    let lp = Lp { g: &g, places: RefCell::new(Vec::new()), entries: RefCell::new(Vec::new()), levels: RefCell::new(BTreeMap::new()), ends, readers, checked, row_of, root_end: String::new(), root_place: std::cell::Cell::new(None), methods: RefCell::new(BTreeMap::new()), method_code: RefCell::new(Vec::new()), making: RefCell::new(Vec::new()), placed: RefCell::new(BTreeMap::new()), end_unread: std::cell::Cell::new(false), check_of: checks.iter().cloned().collect(), direct: std::cell::Cell::new(false), at_root: std::cell::Cell::new(false), run_ends, deciding: RefCell::new(std::collections::BTreeSet::new()) };
+    let lp = Lp { g: &g, places: RefCell::new(Vec::new()), entries: RefCell::new(Vec::new()), levels: RefCell::new(BTreeMap::new()), ends, readers, checked, row_of, root_end: String::new(), root_place: std::cell::Cell::new(None), methods: RefCell::new(BTreeMap::new()), method_code: RefCell::new(Vec::new()), making: RefCell::new(Vec::new()), placed: RefCell::new(BTreeMap::new()), end_unread: std::cell::Cell::new(false), check_of: checks.iter().cloned().collect(), at_root: std::cell::Cell::new(false), run_ends, deciding: RefCell::new(std::collections::BTreeSet::new()) };
     // The root: its node, its body, then the stream's end. It ends at the file's end, as tree-sitter's root does.
     let root = *g.order.first().ok_or("tier 2 as one loop: no rule")?;
     let (kind, body) = match g.rules[root] {
@@ -1525,7 +1436,7 @@ matches!(ROWS[usize::from(b)], {pat})
     }
     let mut out = String::new();
     out.push_str("// Generated by native/crates/compiler/src/bitlex_rust/one_loop.rs; do not edit. The Bitlex compiler's Rust from the grammar's tree rules, as one loop.\n\n");
-    out.push_str("use rerail_tape_format::f16::Writer;\nuse rerail_tape_format::writer16::{Cursor, Fixed};\n\n");
+    out.push_str("use rerail_tape_format::f16::Writer;\nuse rerail_tape_format::writer16::{Cursor, Fixed, Nodes};\n\n");
     // The language's widths (slots, gaps, lengths) are the parser's: a value past its width is its side list's, as
     // every format 16 tape's. One byte each, the implementer's choice.
     out.push_str("/// The language's cell widths, slots, gaps and lengths: the writer's language is to have these (`Lang::new`).\npub const WIDTHS: [usize; 3] = [1, 1, 1];\n\n/// The writer's cells at those widths, constants in the ops.\ntype Cells = Fixed<1, 1, 1>;\n\n");
@@ -1544,7 +1455,7 @@ matches!(ROWS[usize::from(b)], {pat})
     }
     let _ = write!(
         out,
-        "/// `src`'s tape into `w` (`src` the file padded, `lx.len` its length), from tier 1's records (each token's first byte) and the bytes, or the byte it was\n/// refused at.\n/// The run's room is reserved once: a node a record, or a byte in a region's pieces, and the root; the levels' nodes\n/// open at once ({frames} a level), and the root's.\npub fn parse(src: &[u8], lx: &crate::tier1::Lexed, w: &mut Writer) -> Result<(), u32> {{\n// Where tier 1 sends the file to tree-sitter.\nif lx.refused {{\nreturn Err(0);\n}}\n// A file with no token: simdjson's `EMPTY`.\nif lx.count == 0 {{\nreturn Err(lx.len as u32);\n}}\nw.reserve_run(1 + lx.count + lx.len, (DEPTH + 1) * {frames} + 1);\n// Each node final as written: no commit after each.\nw.final_as_written();\nlet d = w.state_address();\nrun_best(src, lx, d)?;\nmatch w.failure() {{\nNone => Ok(()),\nSome(_) => Err(u32::MAX),\n}}\n}}\n\n/// `parse`'s walk, on the writer's state `d`, its byte reads on `S`'s backend (chosen once, `run_best`).\n///\n/// # Safety\n/// The CPU runs `S`'s backend.\n#[inline(always)]\nunsafe fn run<S: rerail_simd8::Simd8x64>(src: &[u8], lx: &crate::tier1::Lexed, state: *mut u8) -> Result<(), u32> {{\n// The walk's hold on the tape, its own while it runs (the lean parser's `Walk`): the nodes stored through it.\n// SAFETY: `state` is the writer's, its room reserved (`parse`).\nlet mut cursor = unsafe {{ Cursor::<Cells>::begin(state) }};\nlet d = &mut cursor;\n// The records, then the index's three last entries; their count; the file's length (`src` is it padded).\nlet (starts, count, len) = (&lx.starts[..], lx.count, lx.len);\n// The next record, the last token's end, by depth the place each open level returns to (the lean parser's `object[d]`), the levels open, the place.\nlet mut i = 0usize;\nlet mut e = 0usize;\nlet mut ret: [{ty}; DEPTH] = [0; DEPTH];\nlet mut depth = 0usize;\nlet mut st: {ty} = 0;\n'run: loop {{\nmatch st {{\n{arms}_ => unreachable!(),\n}}\n}}\n}}\n\nrerail_simd8::dispatch! {{\n    fn run_best(src: &[u8], lx: &crate::tier1::Lexed, state: *mut u8) -> Result<(), u32> = run, on run_on;\n}}\n"
+        "/// `src`'s tape into `w` (`src` the file padded, `lx.len` its length), from tier 1's records (each token's first byte) and the bytes, or the byte it was\n/// refused at.\n/// The run's room is reserved once: a node a record, or a byte in a region's pieces, and the root; the levels' nodes\n/// open at once ({frames} a level), and the root's. `numbers`: the writer's language's number of each of `ENTRIES`' (empty: its\n/// table is `ENTRIES`).\npub fn parse(src: &[u8], lx: &crate::tier1::Lexed, w: &mut Writer, numbers: &[u32]) -> Result<(), u32> {{\n// Where tier 1 sends the file to tree-sitter.\nif lx.refused {{\nreturn Err(0);\n}}\n// A file with no token: simdjson's `EMPTY`.\nif lx.count == 0 {{\nreturn Err(lx.len as u32);\n}}\nw.reserve_run(1 + lx.count + lx.len, (DEPTH + 1) * {frames} + 1);\n// Each node final as written: no commit after each.\nw.final_as_written();\n// The state and the record of its nodes, which the walk writes both of (its auxiliary index laid from the record).\nlet (d, nodes) = w.cursor_parts();\nrun_best(src, lx, d, nodes, numbers)?;\nmatch w.failure() {{\nNone => Ok(()),\nSome(_) => Err(u32::MAX),\n}}\n}}\n\n/// `parse`'s walk, on the writer's state `d`, its byte reads on `S`'s backend (chosen once, `run_best`).\n///\n/// # Safety\n/// The CPU runs `S`'s backend.\n#[inline(always)]\nunsafe fn run<S: rerail_simd8::Simd8x64>(src: &[u8], lx: &crate::tier1::Lexed, state: *mut u8, nodes: *mut Nodes, numbers: &[u32]) -> Result<(), u32> {{\n// The walk's hold on the tape, its own while it runs (the lean parser's `Walk`): the nodes stored through it.\n// SAFETY: `state` and `nodes` are the writer's, its room reserved (`parse`); `numbers` holds each of `ENTRIES`'.\nlet mut cursor = unsafe {{ Cursor::<Cells>::recording(state, nodes, numbers) }};\nlet d = &mut cursor;\n// The records, then the index's three last entries; their count; the file's length (`src` is it padded).\nlet (starts, count, len) = (&lx.starts[..], lx.count, lx.len);\n// The next record, the last token's end, by depth the place each open level returns to (the lean parser's `object[d]`), the levels open, the place.\nlet mut i = 0usize;\nlet mut e = 0usize;\nlet mut ret: [{ty}; DEPTH] = [0; DEPTH];\nlet mut depth = 0usize;\nlet mut st: {ty} = 0;\n'run: loop {{\nmatch st {{\n{arms}_ => unreachable!(),\n}}\n}}\n}}\n\nrerail_simd8::dispatch! {{\n    fn run_best(src: &[u8], lx: &crate::tier1::Lexed, state: *mut u8, nodes: *mut Nodes, numbers: &[u32]) -> Result<(), u32> = run, on run_on;\n}}\n"
     );
     let _ = &x.tokens;
     // The parser's own code, but for what nothing in it calls.

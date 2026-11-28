@@ -230,7 +230,7 @@ fn the_setup_is_a_program_on_a_queue() {
     assert!(source().contains("#include <ukl/stages.h>") && source().contains("#include <ukl/workqueue.h>"));
     let tiles = [1, 7, TILES_MOST];
     assert_eq!(queue_slots(&tiles), BUDGET as usize + workers() as usize * TILES_MOST as usize + (8 + TILES_MOST as usize) + 64);
-    assert!(2 * PP_LAUNCHES <= crate::launch::KERNEL_LAUNCH_LIMIT, "a command's launches within the limit");
+    const { assert!(2 * PP_LAUNCHES <= crate::launch::KERNEL_LAUNCH_LIMIT, "a command's launches within the limit") };
 }
 
 /// A unit's runs (`runs`, `LPRUN`) are laid out as the kernel reads them: a tile's `RUN_SLOTS` slots of `RUN_BYTES`

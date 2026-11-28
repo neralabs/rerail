@@ -182,7 +182,7 @@ jobs:
         run: npm audit --omit=dev --audit-level=moderate
 
       - name: Install cargo-audit
-        uses: taiki-e/install-action@cfdb7ed4ccc7c7dce37759eae89dc5674b469b39 # v2.90.3
+        uses: taiki-e/install-action@ab49d3c64680143e184118bed66a46419fc15519 # v2.90.5
         with:
           tool: cargo-audit
 
@@ -244,6 +244,7 @@ jobs:
               - 'accel/**'
               - 'forest/**'
               - 'tools/bitlex/**'
+              - 'tray/**'
               - 'conformance/**'
               - 'fixtures/**'
               - 'packs/**'
@@ -371,8 +372,9 @@ jobs:
               - 'packs/python/**'
               - 'packs/typescript/**'
             # The integration tests and the rule packs from npm: the suites, the test support they import, the vitest
-            # config, the OMP host they provision, the built package. The packs come from the registry, not packs/,
-            # except the complexity pack claude-hook-rules.test.ts adds from this checkout.
+            # config, the OMP host they provision, the built package, the scripts updater-cli.test.ts packs this checkout
+            # and its engine package with. The packs come from the registry, not packs/, except the complexity pack
+            # claude-hook-rules.test.ts adds from this checkout.
             integration:
               - *common
               - *package
@@ -381,6 +383,8 @@ jobs:
               - 'vitest.config.ts'
               - 'packs/complexity/**'
               - 'scripts/host/**'
+              - 'scripts/release/engine/**'
+              - 'scripts/release/shrinkwrap*.mjs'
             # The real-session runs: the host scripts and the built package, loaded by each host as its plugin. They set
             # repositories up with library rules only, so no pack.
             sessions:
@@ -441,7 +445,9 @@ jobs:
 
   # Which unit test files a pull request can affect (scripts/check/ci/test-selection.mjs): those whose import closure, or
   # the paths its files name, hold a changed file. The unit jobs run only those, on as many shards as their share needs
-  # (`unit-shards`, `windows-shards`), or none ('[]': their jobs and the Windows engine's build skip). Everything off pull
+  # (`unit-shards`, `windows-shards`): the larger of their share of the test files and of the job's recorded test time
+  # (unit-test-times.generated.ts, weighed as the shards' split weighs it), times the job's shards for every file,
+  # rounded up; or none ('[]': their jobs and the Windows engine's build skip). Everything off pull
   # requests, past 3000 files, and when the step fails: `unit` 'all', `unit-tests` empty, every shard. A change of prose
   # alone (scripts/check/ci/prose.mjs) gets no Windows shard: Linux's run what it selects. Its own job, so the `npm ci`
   # it needs is off the path of the jobs that need `changes` alone.
@@ -1050,6 +1056,75 @@ jobs:
       - name: Tree watch tests
         run: cargo test --manifest-path Cargo.toml -p rerail-tree-watch --lib
 
+  # The tray (tray/): the macOS and Windows icon and the Linux one. package.yml builds it only from release.yml and from
+  # env-matrix.yml after a push to main, never on a pull request, so without this job desktop.rs and linux.rs would
+  # first compile in a release. Each system lints and tests the code it compiles; Linux also builds the static musl
+  # binary the release ships, which is the one that must link. The crate reads no pack data and needs no engine, so a
+  # cold build takes a few minutes. A debug build, as in the rust job.
+  rust-tray:
+    name: Tray (${{ matrix.os }})
+    needs: changes
+    if: >-
+      ${{
+        (needs.changes.outputs.rust-all != 'false' || contains(fromJSON(needs.changes.outputs.rust-packages), 'rerail-tray')) &&
+        needs.changes.outputs.rust != 'false' && needs.changes.outputs.release-pr != 'true' &&
+        (
+          github.event_name != 'pull_request' ||
+          (github.event.pull_request.head.repo.full_name == github.repository && github.actor != 'dependabot[bot]')
+        )
+      }}
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 20
+    permissions:
+      contents: read
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [macos-15, windows-2025, ubuntu-24.04]
+    defaults:
+      run:
+        shell: bash
+    env:
+      CARGO_PROFILE_DEV_DEBUG: line-tables-only
+      CARGO_INCREMENTAL: "0"
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 1
+          persist-credentials: false
+
+      - id: rust-toolchain
+        name: Read pinned Rust toolchain
+        run: echo "channel=$(sed -n 's/^channel *= *"\([^"]*\)".*/\1/p' rust-toolchain.toml)" >> "$GITHUB_OUTPUT"
+
+      - name: Install pinned Rust toolchain
+        uses: dtolnay/rust-toolchain@683b588c487a69d01f6c6ddf40f036ff682cc2c8 # v1
+        with:
+          toolchain: ${{ steps.rust-toolchain.outputs.channel }}
+          components: clippy
+
+      - name: Tray lints
+        run: cargo clippy -p rerail-tray --locked --all-targets -- -D warnings
+
+      - name: Tray tests
+        run: cargo test -p rerail-tray --locked
+
+      # The tray exits when its stdin closes, so it never outlives the daemon. With no state read it shows nothing, so
+      # an empty stdin runs it headless: it must exit 0 at once. A hang fails the step at its time limit.
+      - name: Build the tray program
+        run: cargo build -p rerail-tray --locked
+
+      - name: Tray exits when its stdin closes
+        timeout-minutes: 2
+        run: ./target/debug/rerail-tray < /dev/null
+
+      - name: Tray static Linux build
+        if: runner.os == 'Linux'
+        run: |
+          rustup target add x86_64-unknown-linux-musl
+          cargo build -p rerail-tray --locked --target x86_64-unknown-linux-musl
+
   # Builds the package once: dist/ and the release native engine, handed to every test job as an artifact. An engine an
   # earlier run built from the same inputs is downloaded, not built (.github/actions/engine-artifact); otherwise the
   # engine builds incrementally from the cargo target main's last run uploaded (.github/actions/cargo-target), and
@@ -1305,13 +1380,21 @@ jobs:
           mode: save
 
   # The engine's #[cfg(windows)] tests (process starts, Windows import roots, the tree watch's oplock watch, the path
-  # owner read, the named pipe lookup's open) are compiled out on Linux, where the rust job runs every other test;
-  # these filters select them and the Windows-neutral tests beside them: the process, path owner and pipe lookup
-  # tests are the engine's, the tree watch's rerail-tree-watch's, the import roots' rerail-lang-ecma's, which mounts
-  # `import_target`. The `.rerail` library's canonical path is joined with `/` by `bootstrap.rerail`, which only
-  # Windows' verbatim paths broke: its test runs here too. A debug build, as in the rust job, through its own compile
-  # cache. Its own job, beside build-windows and the shards rather than on one of them. Gated as the rust job is, and
-  # only when the change selects the engine's tests (`rust-engine`).
+  # owner read, the named pipe lookup's open, a restore's and the server graph's walk's reading of NTFS's change time)
+  # are compiled out on Linux, where the rust job runs every other test; these filters select them and the
+  # Windows-neutral tests beside them: the process, path owner and pipe lookup tests are the engine's, the tree watch's
+  # rerail-tree-watch's, the import roots' rerail-lang-ecma's, which mounts `import_target`. The restore's
+  # (`git_workspace::`) are rerail-store's, the walk's (`code_rule_dsl::module_graph::`) the engine's and, for its
+  # folder listing, rerail-lang-ecma's, and the warm index's four the engine's.
+  # `discovers_current_repository_without_a_git_process` stays out: it fails on Windows on `main` as well. So does
+  # `a_folder_git_does_not_ignore_that_this_account_may_not_list_still_stops_discovery`: it denies a folder's listing,
+  # which a token with the Backup privilege on, as this runner's administrator holds it, lists all the same (run on
+  # Windows 11 with that privilege kept, it fails, and the restore's, the walk's and the warm index's cases pass). The
+  # `.rerail` library's canonical path is joined with `/` by `bootstrap.rerail`, which only Windows' verbatim paths
+  # broke: its test runs here too. The main instance's lock tests run here as well: the wait for a held lock is Windows
+  # code (an overlapped LockFileEx cancelled at its bound) that the same tests run as Unix code on Linux. A debug
+  # build, as in the rust job, through its own compile cache. Its own job, beside build-windows and the shards rather
+  # than on one of them. Gated as the rust job is, and only when the change selects the engine's tests (`rust-engine`).
   rust-windows:
     name: Rust engine (Windows)
     needs: changes
@@ -1366,7 +1449,18 @@ jobs:
           ref: ${{ env.WARM_REF }}
 
       - name: Engine Windows tests
-        run: "cargo test --manifest-path Cargo.toml -p rerail-engine -p rerail-tests-rr -p rerail-lang-ecma -p rerail-tree-watch --lib -- process:: code_rule_dsl::import_target:: tree_watch:: path_owner:: pipe_server:: code_rule_dsl::logic::rr::tests::the_canonical_library_joins_with_a_slash_as_bootstrap_joins_it"
+        run: >-
+          cargo test --manifest-path Cargo.toml -p rerail-engine -p rerail-tests-rr -p rerail-lang-ecma -p rerail-tree-watch
+          -p rerail-observe -p rerail-store -p rerail-tests-workspace
+          --lib -- process:: code_rule_dsl::import_target:: tree_watch:: path_owner:: main_instance:: pipe_server::
+          code_rule_dsl::logic::rr::tests::the_canonical_library_joins_with_a_slash_as_bootstrap_joins_it
+          git_workspace code_rule_dsl::module_graph::
+          code_rule_dsl::workspace::context_tests::a_warm_index_reads_a_same_size_edit_that_keeps_its_mtime_before_discovery
+          code_rule_dsl::workspace::context_tests::a_warm_index_restores_a_clean_file_whose_read_is_denied
+          code_rule_dsl::workspace::context_tests::a_warm_index_reads_a_file_whose_change_time_moved_at_every_index
+          code_rule_dsl::workspace::context_tests::a_warm_index_restores_a_file_whose_data_is_offline_with_no_read
+          --skip git_workspace::tests::discovers_current_repository_without_a_git_process
+          --skip git_workspace::tests::a_folder_git_does_not_ignore_that_this_account_may_not_list_still_stops_discovery
 
       - name: Save the compile cache
         if: ${{ !cancelled() && env.SAVE_WARM == 'true' }}
@@ -2156,6 +2250,7 @@ jobs:
       - rust
       - rust-profiling
       - rust-macos
+      - rust-tray
       - build
       - build-windows
       - build-macos

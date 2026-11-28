@@ -111,10 +111,10 @@ jobs:
     # `reviewer_ref` is where the called workflow loads the reviewer's own code from, so it is the same commit:
     # Dependabot moves `uses:` alone, and `npm run check:pins` fails until `npm run deps:sync` brings `reviewer_ref`
     # along (scripts/deps/sync-pins.mjs).
-    uses: neralabs/reviewer/.github/workflows/review.yml@6b393dd3c809fd695a034d96067c471b17dca79f # v0.1.3
+    uses: neralabs/reviewer/.github/workflows/review.yml@969f6c29ba6a1feb0b55fb07b46e1b8e552d7d9c # v0.1.4
     with:
       app_client_id: ${{ vars.REVIEWER_APP_CLIENT_ID }}
-      reviewer_ref: 6b393dd3c809fd695a034d96067c471b17dca79f
+      reviewer_ref: 969f6c29ba6a1feb0b55fb07b46e1b8e552d7d9c
       allow_approve: true
       handle: "@neralabs-reviewer"
       bot_login: neralabs-reviewer[bot]
@@ -124,18 +124,17 @@ jobs:
       provider: bedrock
       model: ${{ vars.REVIEWER_MODEL }}
       aws_region: us-east-1
-      # Rerail module (trial): beside the review, a Rerail scan checks the pull request against this repo's own
-      # rule pack (packs/rerail, taken from the base branch only and approved there) and the complexity rule pack,
-      # with the rules from the base branch, and marks each violation new or existing. A separate rules pass
-      # recommends which new violations to post; a new violation of a steer rule can be a blocker that names its
-      # rule. The review itself never sees the scan. Rerail is the published npm release; the scan result is sent
-      # to the Rerail remote (send_results), in a job that holds only the remote's URL and token. To turn it off,
-      # remove these five inputs and the two RESULTS_SINK secrets. The two pack inputs stay until the Rerail here
-      # reads .rerail/packs.json (neralabs/rerail#736, after 0.1.5): left empty before that, only .rerail/rules/ runs.
+      # Rerail module (trial): beside the review, a Rerail scan checks the pull request against the packs this repo
+      # lists in .rerail/packs.json (the complexity pack, at the options its entry sets, and its own packs/rerail),
+      # read from the base branch only, so a pull request can't change the rules it is judged by; packs/rerail is
+      # approved there. It marks each violation new or existing. A separate rules pass recommends which new
+      # violations to post; a new violation of a steer rule can be a blocker that names its rule. The review itself
+      # never sees the scan. The scan result is sent to the Rerail remote (send_results), in a job that holds only
+      # the remote's URL and token. To turn it off, remove these two inputs and the two RESULTS_SINK secrets.
+      # The scan runs the Rerail release the reviewer pins (0.2.2 at v0.1.4). packs/rerail's rules use `dimensions`,
+      # which 0.2.2 is the first to read; when main's packs need a newer Rerail, move `uses:` to a reviewer release
+      # that pins it. No rerail_packs or rerail_repo_packs: either would replace the file's packs.
       modules: rerail
-      rerail_package: "@neralabs/rerail@0.1.5"
-      rerail_packs: complexity
-      rerail_repo_packs: packs/rerail
       send_results: true
     # Named, not `secrets: inherit`: the reviewer gets these and nothing else this repo can see.
     secrets:

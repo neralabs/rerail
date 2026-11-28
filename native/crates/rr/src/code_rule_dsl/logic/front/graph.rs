@@ -4,8 +4,8 @@
 //! version (`cycles::check`) read the strata by name as `analyses` does.
 use crate::code_rule_dsl::logic::front::Error;
 use crate::code_rule_dsl::logic::program_image::handles::{AggRef, Lit};
-use crate::code_rule_dsl::logic::program_image::{About, RelId, Version};
-use std::collections::BTreeSet;
+use crate::code_rule_dsl::logic::program_image::{About, RelId, RuleRef, Version};
+use std::collections::{BTreeMap, BTreeSet};
 
 /// Dependency edges, head → dependency, with whether each is negative (an aggregate's is, a gated negation's is
 /// not): sorted by head and dependency, each once.
@@ -63,14 +63,15 @@ impl Edges {
 
 /// The derived relations (heads, and what answers produce), the edges, and the non-monotone aggregation edges.
 pub fn components(v: &Version, about: &About) -> (Vec<RelId>, Edges, Vec<(RelId, RelId)>) {
+    components_keyed(v, about, None)
+}
+
+/// `components`, and where `keys`, each relation with rules' key of the edges they add (`edge_key`).
+fn components_keyed(v: &Version, about: &About, mut keys: Option<&mut BTreeMap<String, u64>>) -> (Vec<RelId>, Edges, Vec<(RelId, RelId)>) {
     let n = v.rel_end() as usize;
-    let mut derived = vec![false; n];
-    for r in v.rules() {
-        derived[r.head().rel().index()] = true;
-    }
+    let derived = derived_of(v, about);
     let mut edges = Vec::new();
     for (p, req) in about.produced() {
-        derived[p.index()] = true;
         edges.push((p, req, false));
     }
     for nat in &about.natives {
@@ -79,24 +80,26 @@ pub fn components(v: &Version, about: &About) -> (Vec<RelId>, Edges, Vec<(RelId,
         }
     }
     let mut aggs = Vec::new();
+    let mut per_head: Vec<Vec<(RelId, bool, bool)>> = if keys.is_some() { vec![Vec::new(); n] } else { Vec::new() };
+    let mut has_rules = vec![false; if keys.is_some() { n } else { 0 }];
     for r in v.rules() {
         let head = r.head().rel();
-        for l in r.body() {
-            let Some(a) = l.atom() else { continue };
-            if !derived[a.rel().index()] {
-                continue;
+        rule_edges(v, about, &derived, r, |w, neg, agg| {
+            if agg {
+                aggs.push((head, w));
             }
-            // Aggregation that is not monotone in the head's lattice is negative.
-            let agg = match l.view() {
-                Lit::Agg { op, .. } => !about.lattice_of(head).is_some_and(|lat| {
-                    matches!((op, v.text(lat)), (AggRef::Count | AggRef::Max, "max") | (AggRef::Min, "min"))
-                }),
-                _ => false,
-            };
-            if agg && !a.gated() {
-                aggs.push((head, a.rel()));
+            edges.push((head, w, neg));
+            if let Some(e) = per_head.get_mut(head.index()) {
+                e.push((w, neg, agg));
             }
-            edges.push((head, a.rel(), (a.neg() || agg) && !a.gated()));
+        });
+        if let Some(h) = has_rules.get_mut(head.index()) {
+            *h = true;
+        }
+    }
+    if let Some(keys) = keys.as_deref_mut() {
+        for (i, e) in per_head.into_iter().enumerate().filter(|(i, _)| has_rules[*i]) {
+            keys.insert(v.rel_name(RelId(i as u32)).to_owned(), edge_key(v, e));
         }
     }
     guest_copies_after_requests(v, about, &derived, &mut edges);
@@ -104,6 +107,61 @@ pub fn components(v: &Version, about: &About) -> (Vec<RelId>, Edges, Vec<(RelId,
     aggs.dedup();
     let derived = (0..n as u32).map(RelId).filter(|r| derived[r.index()]).collect();
     (derived, Edges::of(edges), aggs)
+}
+
+/// Which relations are derived: the heads of rules, and what answers produce.
+pub fn derived_of(v: &Version, about: &About) -> Vec<bool> {
+    let mut derived = vec![false; v.rel_end() as usize];
+    for r in v.rules() {
+        derived[r.head().rel().index()] = true;
+    }
+    for (p, _) in about.produced() {
+        derived[p.index()] = true;
+    }
+    derived
+}
+
+/// The edges rule `r` adds to the graph: per atom reading a derived relation, its relation, whether the edge is negative
+/// and whether it is an aggregation not monotone in the head's lattice (negative too). A gated atom's is neither.
+pub fn rule_edges(v: &Version, about: &About, derived: &[bool], r: RuleRef<'_>, mut edge: impl FnMut(RelId, bool, bool)) {
+    let head = r.head().rel();
+    for l in r.body() {
+        let Some(a) = l.atom() else { continue };
+        if !derived[a.rel().index()] {
+            continue;
+        }
+        let agg = match l.view() {
+            Lit::Agg { op, .. } => !about.lattice_of(head).is_some_and(|lat| {
+                matches!((op, v.text(lat)), (AggRef::Count | AggRef::Max, "max") | (AggRef::Min, "min"))
+            }),
+            _ => false,
+        };
+        edge(a.rel(), (a.neg() || agg) && !a.gated(), agg && !a.gated());
+    }
+}
+
+/// A key of the edges a relation's rules add (`rule_edges`), by the names they read: two versions whose relations
+/// with rules are the same with the same keys have one graph.
+fn edge_key(v: &Version, edges: Vec<(RelId, bool, bool)>) -> u64 {
+    use std::hash::{Hash, Hasher};
+    let mut e: Vec<(&str, bool, bool)> = edges.into_iter().map(|(w, neg, agg)| (v.rel_name(w), neg, agg)).collect();
+    e.sort_unstable();
+    e.dedup();
+    let mut h = rustc_hash::FxHasher::default();
+    e.hash(&mut h);
+    h.finish()
+}
+
+/// `rel`'s key of its rules' edges (`edge_key`), `None` where it has no rule: what the components are kept by
+/// (`Components::edge_keys`).
+pub fn head_edge_key(v: &Version, about: &About, derived: &[bool], rel: RelId) -> Option<u64> {
+    let mut e = Vec::new();
+    let mut any = false;
+    for r in v.heads(rel) {
+        any = true;
+        rule_edges(v, about, derived, r, |w, neg, agg| e.push((w, neg, agg)));
+    }
+    any.then(|| edge_key(v, e))
 }
 
 /// The prefix of a relation hiding copies for a guest's grammar (`rr_in_<grammar>_<relation>`, decision 0058 §2): its
@@ -166,7 +224,19 @@ pub fn edges_by_name(v: &Version, about: &About) -> crate::code_rule_dsl::logic:
 /// names, and the tree's error where a negation closes a cycle. For a reader whose output follows the components' order (the
 /// composed query lists its definitions in it); `strata` gives them in an order of ids.
 pub fn components_by_name(v: &Version, about: &About) -> Result<crate::code_rule_dsl::logic::front::Components, Error> {
-    let (mut by_name, edges, aggs) = components(v, about);
+    components_by_name_keyed(v, about, None)
+}
+
+/// `components_by_name`, with each relation with rules' key of its edges (`head_edge_key`): the analysis's, which
+/// keeps them over an edit that changes no edge.
+pub fn components_by_name_with_keys(v: &Version, about: &About) -> Result<crate::code_rule_dsl::logic::front::Components, Error> {
+    let mut keys = BTreeMap::new();
+    let c = components_by_name_keyed(v, about, Some(&mut keys))?;
+    Ok(c.keyed(keys))
+}
+
+fn components_by_name_keyed(v: &Version, about: &About, keys: Option<&mut BTreeMap<String, u64>>) -> Result<crate::code_rule_dsl::logic::front::Components, Error> {
+    let (mut by_name, edges, aggs) = components_keyed(v, about, keys);
     by_name.sort_unstable_by(|a, b| v.rel_name(*a).cmp(v.rel_name(*b)));
     const NONE: u32 = u32::MAX;
     let mut place = vec![NONE; v.rel_end() as usize];

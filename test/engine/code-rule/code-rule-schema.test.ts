@@ -1,6 +1,6 @@
 import { readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
-import { CODE_RULE_AST_LANGUAGES } from "../../../src/engine/code-rule/code-rule-languages.js";
+import { CODE_RULE_AST_LANGUAGES, CODE_RULE_EMBEDDING_LANGUAGES } from "../../../src/engine/code-rule/code-rule-languages.js";
 import { codeRuleMessageVariables, codeRuleSchema } from "../../../src/engine/code-rule/code-rule-schema.js";
 import { validateCodeRule } from "../../../src/engine/rules.js";
 
@@ -25,14 +25,14 @@ const astIssues = (document: object) =>
   (codeRuleSchema.safeParse(document).error?.issues ?? []).map(issue => ({ path: issue.path.slice(4).join("."), message: issue.message }));
 
 describe("a token test's stored note", () => {
-  // The engine's compiler asks why a token the grammar may leave out is stored where a rule tests it (RER-131); the
+  // The engine's compiler asks why a token the grammar may leave out is stored where a rule tests it (decision 0161); the
   // shipped packs' rules say so beside the regex, so a schema that refuses the key skips their whole pack.
   it("is taken beside a regex, in a rule and a relation, and refused without one", () => {
     const note = "optional modifiers: stored";
     expect(astIssues(astRule("typescript", { regex: "^static$", stored: note }))).toEqual([]);
     expect(astIssues(astRule("typescript", { kind: "class_body", has: { regex: "^static$", stored: note, stopBy: "neighbor" } }))).toEqual([]);
     expect(astIssues(astRule("typescript", { kind: "identifier", stored: note }))).toEqual([
-      { path: "rule", message: "stored says why a token a regex tests is stored: it needs a regex." },
+      { path: "rule.stored", message: "stored says why a token a regex tests is stored: it needs a regex." },
     ]);
   });
 });
@@ -243,6 +243,9 @@ describe("code rule schema language families", () => {
   });
 });
 
+// How each language that embeds another embeds it, as a refusal names them: every one the registry has.
+const EMBEDDINGS = CODE_RULE_EMBEDDING_LANGUAGES.map(([language, vias]) => `${language}: ${vias.join(", ")}`).join("; ");
+
 describe("code rule schema embedded programs", () => {
   it("runs a query on the program its language embeds through ast.embedded", () => {
     expect(astIssues(astRule("blade", { kind: "function_call_expression" }, { embedded: "compiled-view" }))).toEqual([]);
@@ -252,7 +255,7 @@ describe("code rule schema embedded programs", () => {
   it.each([
     ["blade", "script-block", "blade embeds no program via script-block; expected compiled-view."],
     ["vue", "compiled-view", "vue embeds no program via compiled-view; expected script-block."],
-    ["php", "compiled-view", "php embeds no other language; ast.embedded names how a language embeds one (blade: compiled-view; vue: script-block)."],
+    ["php", "compiled-view", `php embeds no other language; ast.embedded names how a language embeds one (${EMBEDDINGS}).`],
   ] as const)("refuses ast.embedded on %s via %s", (language, via, message) => {
     expect(astIssues(astRule(language, { kind: "program" }, { embedded: via }))).toContainEqual({ path: "embedded", message });
   });
@@ -281,7 +284,7 @@ describe("code rule schema embedded programs", () => {
   it.each([
     ["a rule over the embedded program", "blade", { kind: "variable_name", embedded: { kind: "variable_name" } }, "compiled-view", "rule.embedded", "embedded reaches the program embedded in a host node; this rule already runs on the embedded program. Reach the host node with host first."],
     ["an embedded sub-rule", "vue", { kind: "element", embedded: { kind: "identifier", has: { kind: "identifier", embedded: { kind: "identifier" } } } }, undefined, "rule.embedded.has.embedded", "embedded reaches the program embedded in a host node; this rule already runs on the embedded program. Reach the host node with host first."],
-    ["a language that embeds none", "php", { kind: "program", embedded: { kind: "variable_name" } }, undefined, "rule.embedded", "embedded reaches the program a language embeds; php embeds none (blade: compiled-view; vue: script-block)."],
+    ["a language that embeds none", "php", { kind: "program", embedded: { kind: "variable_name" } }, undefined, "rule.embedded", `embedded reaches the program a language embeds; php embeds none (${EMBEDDINGS}).`],
     ["a parsed tree", "blade", { kind: "comment", parse: { grammar: "phpDoc", has: { kind: "param_tag_value", embedded: { kind: "name" } } } }, "compiled-view", "rule.parse.has.embedded", "embedded is not supported inside parse (phpDoc trees)."],
   ] as const)("refuses embedded in %s", (_name, language, rule, embedded, path, message) => {
     expect(astIssues(astRule(language, rule, embedded === undefined ? {} : { embedded }))).toContainEqual({ path, message });

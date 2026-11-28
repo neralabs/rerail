@@ -112,7 +112,7 @@ use rerail_blocks::vector::Vector;
                 )
                 .unwrap();
                 let span = match (edge, mode) {
-                    // The tape stores named nodes only (RER-131): the brackets are not children, so the
+                    // The tape stores named nodes only (decision 0161): the brackets are not children, so the
                     // all-sibling and named edges are the same arguments.
                     (FIRST, _) => 2..4,
                     (LAST, _) => source.len() - 6..source.len() - 2,
@@ -343,7 +343,7 @@ use rerail_blocks::vector::Vector;
         // QueryMatch does not expose its structural root. Add one oracle-only capture and compare
         // root spans as an unordered relation, while the original query above remains the ordering
         // oracle. One common root capture does not change capture-containment relationships.
-        const MATCH_CAPTURE: &str = "__tempo_match_span";
+        const MATCH_CAPTURE: &str = "__rerail_match_span";
         let span_query_source = format!("{query_source} @{MATCH_CAPTURE}");
         let span_query = tree_sitter::Query::new(&language, &span_query_source).unwrap();
         let match_capture = span_query
@@ -1965,7 +1965,7 @@ use rerail_blocks::vector::Vector;
             .unwrap();
         let selected = connection
             .prepare(
-                "WITH terminal AS MATERIALIZED (SELECT * FROM tempo_matches(?1)) \
+                "WITH terminal AS MATERIALIZED (SELECT * FROM rerail_matches(?1)) \
                  SELECT e.program_index,count(DISTINCT CASE WHEN t.match_index IS NOT NULL \
                    THEN printf('%d:%d',t.file_index,t.match_index) END) matches \
                  FROM expectations e LEFT JOIN terminal t ON t.program_index=e.program_index \
@@ -1985,7 +1985,7 @@ use rerail_blocks::vector::Vector;
         assert_eq!(selected, vec![(0, 3)]);
         let negatives: i64 = connection
             .query_row(
-                "SELECT count(*) FROM tempo_matches(?1) WHERE program_index=1 \
+                "SELECT count(*) FROM rerail_matches(?1) WHERE program_index=1 \
                  AND complete=1 AND match_index IS NULL AND error_code IS NULL",
                 [batch],
                 |row| row.get(0),
@@ -2013,7 +2013,7 @@ use rerail_blocks::vector::Vector;
 
                 let (matches, failures): (i64, i64) = connection
                     .query_row(
-                        "SELECT count(DISTINCT CASE WHEN match_index IS NOT NULL THEN printf('%d:%d:%d',file_index,program_index,match_index) END),count(DISTINCT error_code) FROM tempo_matches(?1)",
+                        "SELECT count(DISTINCT CASE WHEN match_index IS NOT NULL THEN printf('%d:%d:%d',file_index,program_index,match_index) END),count(DISTINCT error_code) FROM rerail_matches(?1)",
                         [metal_batch],
                         |row| Ok((row.get(0)?, row.get(1)?)),
                     )
@@ -2068,7 +2068,7 @@ use rerail_blocks::vector::Vector;
                 .unwrap();
             let matches: i64 = connection
                 .query_row(
-                    "SELECT count(*) FROM tempo_matches(?1) WHERE match_index IS NOT NULL",
+                    "SELECT count(*) FROM rerail_matches(?1) WHERE match_index IS NOT NULL",
                     [batch],
                     |row| row.get(0),
                 )

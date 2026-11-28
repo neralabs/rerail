@@ -1,8 +1,9 @@
-// scripts/build/pull-engine.mjs: a released native engine for a checkout without Rust, and the warning when the
-// engine's sources changed since that release.
+// scripts/build/pull-engine.mjs: a released native engine for a checkout without Rust, the package it is fetched from,
+// and the warning when the engine's sources changed since that release.
 
 import { describe, expect, it } from "vitest";
-import { ENGINE_SOURCES, engineFileName, staleWarning } from "../../../scripts/build/pull-engine.mjs";
+import { ENGINE_SOURCES, engineFileName, engineSource, staleWarning } from "../../../scripts/build/pull-engine.mjs";
+import { ENGINE_PACKAGES } from "../../../scripts/release/engine/packages.mjs";
 
 describe("engineFileName", () => {
   it("names the file the release packs for each supported platform (package.yml's list)", () => {
@@ -15,6 +16,22 @@ describe("engineFileName", () => {
       "rerail_engine.win32-x64-msvc.node",
       "rerail_engine.win32-arm64-msvc.node",
     ]);
+  });
+});
+
+describe("engineSource", () => {
+  /** A core's optional dependencies as its release pins them: every engine package at core's own version. */
+  const pins = (version) => Object.fromEntries(ENGINE_PACKAGES.map(({ name }) => [name, version]));
+
+  it("is the platform's engine package, at the version core pins, for a core that names its engine packages", () => {
+    for (const { os, cpu, name, engine } of ENGINE_PACKAGES) {
+      expect(engineSource("0.2.1", pins("0.2.1"), os, cpu), name).toEqual({ spec: `${name}@0.2.1`, path: `package/${engine}` });
+    }
+  });
+
+  it("is core's own tarball for a release from before the engine packages, which names none", () => {
+    expect(engineSource("0.1.5", {}, "linux", "x64")).toEqual({ spec: "@neralabs/rerail@0.1.5", path: "package/native/rerail_engine.linux-x64-gnu.node" });
+    expect(engineSource("0.1.5", {}, "win32", "arm64")).toEqual({ spec: "@neralabs/rerail@0.1.5", path: "package/native/rerail_engine.win32-arm64-msvc.node" });
   });
 });
 

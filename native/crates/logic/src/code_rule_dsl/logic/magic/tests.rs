@@ -196,8 +196,17 @@ fn t_programs_transform_like_t() {
                 }
                 None => l.to_owned(),
             };
+            // The program's input views (`kind`, `docof`), rules over `node`: T's parser wrote them first, the version
+            // writes them after the program's own rules. Compared apart, by being there.
+            let view_rule = |l: &str| ["rule kind($n, $k) :- node(_, $n, $k, _, _)", "rule docof($n, $d) :- node($d, $n, _, _, _)"].contains(&l);
+            let views = |t: &str| t.lines().filter(|l| view_rule(l)).map(str::to_owned).collect::<std::collections::BTreeSet<_>>();
+            if views(&got) != views(&expected) {
+                failures.push(format!("{name}.{mode}: the view rules {:?}, T's {:?}", views(&got), views(&expected)));
+            }
+            let got: String = got.lines().filter(|l| !view_rule(l)).map(|l| format!("{l}\n")).collect();
             let expected: String = expected
                 .lines()
+                .filter(|l| !view_rule(l))
                 .filter(|l| l.strip_prefix("decl done_").and_then(|d| d.split_once('(')).is_none_or(|(rel, _)| named(&format!("done_{rel}"))))
                 .map(|l| format!("{}\n", sorted_demand(l)))
                 .collect();
@@ -245,10 +254,9 @@ fn demanded(src: &str) -> (Vec<String>, Vec<(String, String)>, Vec<String>) {
 }
 
 /// python/compare.rerail's shape: `pair` carries asks down to children, and `un`'s demand from its recursive rule
-/// must leave `pair(x, y)` out (kept, it closes a cycle through `!leaf`). The atom tied `x` and `y` to one document
-/// (decision 0652: a relation not declared `cross_file` holds one document's rows), so a magic rule joining both keeps
-/// `@doc(x) = @doc(y)` and joins no files; the coarser demand of the body left disconnected reads each `kid` alone and
-/// joins none. Declared `cross_file`, the atom says nothing of documents, and no join stays.
+/// must leave `pair(x, y)` out (kept, it closes a cycle through `!leaf`). The atom tied `x` and `y` (decision 0652: a
+/// relation not declared `cross_file` holds one document's rows); left out, each child's magic rule keeps only its
+/// own side's `kid`, so neither joins two nodes, whether `pair` is declared `cross_file` or not.
 const DROPPED_PAIR: &str = "
     .decl ask(a: node, b: node)
     .decl kid(x: node, i: number, c: node)
@@ -268,19 +276,20 @@ const DROPPED_PAIR: &str = "
 
 #[test]
 fn a_left_out_per_document_atom_keeps_its_nodes_in_one_document() {
-    // The magic rules of `un` the recursive `pair` rule makes: they read `kid($x, $i, $c)` or `kid($y, $i, $d)`.
+    // The magic rules `pair`'s recursive rule gives `un`: its children `c` and `d`.
     let magic = |src: &str| -> Vec<String> {
         let (rules, _, _) = demanded(src);
-        rules.into_iter().filter(|r| r.starts_with("magic_un_bf(") && (r.contains("kid($x, $i, $c)") || r.contains("kid($y, $i, $d)"))).collect()
+        rules.into_iter().filter(|r| r.starts_with("magic_un_bf($c)") || r.starts_with("magic_un_bf($d)")).collect()
     };
-    let both = |r: &String| r.contains("kid($x, $i, $c)") && r.contains("kid($y, $i, $d)");
-    let per_doc = magic(DROPPED_PAIR);
-    assert!(!per_doc.is_empty() && per_doc.iter().all(|r| !r.contains("pair(")), "pair(x, y) is left out: {per_doc:#?}");
-    // A rule joining both nodes keeps them in one document; one reading a node alone joins none (the coarser demand
-    // of a disconnected body, each atom's own).
-    assert!(per_doc.iter().all(|r| !both(r) || (r.contains("doc($x) = ") && r.contains("doc($y)"))), "x and y in one document: {per_doc:#?}");
-    let across = magic(&DROPPED_PAIR.replace(".decl pair(x: node, y: node)", ".decl pair(x: node, y: node) cross_file"));
-    assert!(!across.is_empty() && across.iter().all(|r| !r.contains("doc(")), "a cross_file atom leaves no join: {across:#?}");
+    // Each keeps only what ties its own child (decision 0677, batch 6: a demand answered through a coarser one keeps
+    // no literal only the left-out atom tied to its key): `kid(x, i, c)` alone, never `y`'s side. So no rule joins
+    // two nodes, and no `@doc(x) = @doc(y)` is needed to keep them in one document (f8f4cfcde2, where both sides stayed).
+    for (what, src) in [("per document", DROPPED_PAIR.to_owned()), ("cross_file", DROPPED_PAIR.replace(".decl pair(x: node, y: node)", ".decl pair(x: node, y: node) cross_file"))] {
+        let rules = magic(&src);
+        assert_eq!(rules.len(), 2, "{what}: one magic rule for each child: {rules:#?}");
+        assert!(rules.iter().all(|r| !r.contains("pair(")), "{what}: pair(x, y) is left out: {rules:#?}");
+        assert!(rules.iter().all(|r| r.matches("kid(").count() == 1 && !r.contains("doc(")), "{what}: one child's kid alone, no join of two nodes: {rules:#?}");
+    }
 }
 
 /// A string annotation's shape (decision 0431 §8): the parse request reads `unparen` (through `tsub`), and a reader

@@ -22,7 +22,8 @@ daemon's `/api` operations and `/healthz` (`api.js`).
   switch, a pack's Add and Remove, the time range); `sheet.js` the sheet's own and what a poll loads while it is open.
 - `views/` holds one module per view (`overview`, whose banner for a newer Rerail copies `/rerail-update`; `pack` for
   a pack page and Created by you; `packs` for the catalog, which lists the packs Rerail suggests for the repository
-  first, each with why, and the review; `create`, `history`, `sessions`, `settings`, `merge` for Merge Assist) and the pages shown in their
+  first, each with why, then the others, and after the installed packs of each the ones only published on npm, each
+  with the command that installs it, and the review; `create`, `history`, `sessions`, `settings`, `merge` for Merge Assist) and the pages shown in their
   place (`access`, `no-repo`, `missing`, `not-set-up`); `views/index.js` lists them and says what each module exports.
   Merge Assist's page shows, while it is on, its status strip, its Settings (the conflict hook command) and the
   conflicts with work in flight: open ones as cards, those not quiet first and then the newest, a quiet one saying it
@@ -34,7 +35,9 @@ daemon's `/api` operations and `/healthz` (`api.js`).
   state and clicks in `rule-sheet-actions.js`, its pure text and prompts in `rule-sheet-model.js`), a rule pack in the
   sheet (`pack-panel.js`: why Rerail suggested it, and until it is added its rules under Start on and Start off), the
   session timeline (`timeline.js`), and a command to copy (`command.js`).
-- `state.js` holds the state; `poll.js` refreshes it with what the page needs (`setNeeds`);
+- `state.js` holds the state; `poll.js` refreshes it with what the page needs (`setNeeds`) whenever the daemon's
+  change stream (`GET /api/changes`, followed through `api.js`) says something changed, at most every 5 s while changes
+  keep coming;
   `repo-rule-counts.js` reads each repository's rule counts; `attachments.js` writes
   rule pack changes in click order, `rule-remove.js` deletes a rule created by you from the repository (with Undo),
   and `settings-writes.js` writes rule settings. Merge Assist's writes go through `writeMergeAssist` in `poll.js`:
@@ -43,8 +46,8 @@ daemon's `/api` operations and `/healthz` (`api.js`).
 - Pure derivations, without the DOM: `derive.js` (a rule's title, mode, scope and how a pack's rules treat suppression comments),
   `first-open.js` (the Overview: the repository's first-open state, the Violations steered tally, the Most violations
   logged ranking, whether a session is live), `pack-model.js` (a pack page's rules as filtered and sorted, the
-  whole-pack switch's state, the catalog's kinds and order and the packs suggested for the repository, and a pack
-  sheet's rules), `history-model.js` (which rules History by rule lists under
+  whole-pack switch's state, the catalog's kinds, entries and order and the packs suggested for the repository, a pack
+  sheet's rules, and what the message after adding a pack says it turns on), `history-model.js` (which rules History by rule lists under
   its All · Log only · Steered · Declined chips, each violation in one outcome, and which one it shows), `sessions-model.js` (a session's events as turns and tool
   calls, and the steers its coding agent declined, joined to their cards), `settings-model.js` (coding agent states,
   the install date, and the version: its release notes and whether a newer one is out), `repo-rules.js` (what Settings and the repository menu say of a repository's rule counts) and

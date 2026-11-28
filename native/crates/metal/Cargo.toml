@@ -6,6 +6,9 @@ publish = false
 description = "The engine's Metal runtime: device, buffer budget, mapped buffers, pipelines, launches."
 
 [features]
+# The preprocessor's evaluator and macro expansion on the device (decisions 0436, 0448, t51): parked (the user,
+# 2026-11-25), off in every build until it is picked up again: `--features device-pp` builds it and its tests.
+device-pp = []
 # Per-thread buffer ledgers and buffer observations, for tests (the engine's and this crate's).
 test-hooks = ["rerail-slabs/test-hooks", "rerail-accel-gpu/test-hooks", "rerail-context/test-hooks", "rerail-clif/test-hooks", "rerail-blocks/test-hooks", "rerail-prof/test-hooks", "rerail-tape-format/test-hooks", "rerail-ukl/test-hooks"]
 

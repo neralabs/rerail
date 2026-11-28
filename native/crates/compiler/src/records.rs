@@ -398,6 +398,15 @@ pub struct Reader {
     /// ends the record a template left open (`ReadArm::template`), or, closed at a template
     /// again, leaves it open over the next one's code.
     pub resumes: bool,
+    /// With templates that nest (`block::Level::nest`): the outputs of its regions' depth bits,
+    /// low first, and how deep they nest (2 to 4). The record a template left open is kept by
+    /// its string's depth: a template's string opens a record at its depth, and a read that
+    /// resumes ends the one at its own.
+    pub nest: Option<(u16, u16, u8)>,
+    /// A token that starts at a prefix before its region's opener (`Parts::prefix`, a string's letters): the output
+    /// whose first bit at or after its start is the opener, the last byte of its first piece. Its parts and its closer
+    /// come after that. None: the opener is the token's first byte.
+    pub open_last: Option<u16>,
 }
 
 /// Where a region read in parts is split into its tokens (`Reader::split`, decision 0323).
@@ -574,8 +583,12 @@ pub fn first_bit(outputs: &[Vector<u64>], o: u16, from: usize) -> Option<usize> 
 /// bytes the last token. `None` where the closer never comes (the file is refused).
 pub fn read_parts(reader: &Reader, s: usize, outputs: &[Vector<u64>]) -> Option<Vec<(usize, usize)>> {
     let a = reader.arms.first()?;
-    let mut out = vec![(s, s)];
-    let mut at = s + 1;
+    let o = match reader.open_last {
+        Some(x) => first_bit(outputs, x, s)?,
+        None => s,
+    };
+    let mut out = vec![(s, o)];
+    let mut at = o + 1;
     loop {
         let c = first_bit(outputs, a.closer, at)?;
         let part = reader.parts.iter().filter_map(|p| first_bit(outputs, p.start, at).filter(|&e| e < c).map(|e| (e, p.bytes, p))).min_by_key(|&(e, n, p)| (e, n, p.start));
@@ -801,8 +814,9 @@ pub fn walk(records: &Records, skip: u16, bytes: &[u8], outputs: &[Vector<u64>])
                     continue;
                 }
                 if template {
-                    // A template in a template's code: refused, as by the CPU's loop.
-                    read |= !open.is_empty();
+                    // A template in a template's code: refused, as by the CPU's loop, past how
+                    // deep templates nest (`Reader::nest`).
+                    read |= open.len() >= reader.nest.map_or(1, |n| usize::from(n.2));
                     open.push(starts.len());
                 }
                 l

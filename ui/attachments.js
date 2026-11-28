@@ -6,6 +6,7 @@
 import { data, ui, packById, packFolder, isSetUp, keptPacks } from "./state.js";
 import { recommendationsFor, captureScope, inScope, queueInScope, refreshNow } from "./poll.js";
 import { andList, failed as failedText } from "./format.js";
+import { madeButUnconfirmed } from "./api.js";
 
 const ATTACHMENTS = "/api/repository/attachments";
 
@@ -28,6 +29,13 @@ function setUpMessage(added) {
   const repo = data.repository?.name ?? "This repo";
   return added.length === 0 ? `${repo} is set up. No rule pack matches what it’s built with.`
     : `${repo} is set up with ${andList(added.map(({ sourceId }) => packName(sourceId)))}.`;
+}
+
+/** After a failed write: the packs and set-up shown `before` it, unless its change was made (`madeButUnconfirmed`). */
+function putBack(before, error) {
+  if (madeButUnconfirmed(error)) return;
+  data.attachedPacks = before.attached;
+  data.repository = before.repository;
 }
 
 export function attachmentWrites({ toast, invalidate }) {
@@ -58,8 +66,9 @@ export function attachmentWrites({ toast, invalidate }) {
    * before it; `body` may still be loading. The shown packs change to `attached` (and a `configure` write marks the
    * repository set up): at once, or when `attached` is a promise, once it resolves. On error they go back to what
    * they were before this click and the poll reads them back; the writes clicked after it are dropped, so that also
-   * undoes their changes. Dropped when the page shows another repository before it is sent; once it is, neither the
-   * answer nor a rollback touches the page. `failed` begins the toast when the write fails, before the error.
+   * undoes their changes. A change the daemon made but could not confirm on the disk stays shown, and the writes after
+   * it go out (`queueInScope`). Dropped when the page shows another repository before it is sent; once it is, neither
+   * the answer nor a rollback touches the page. `failed` begins the toast when the write fails, before the error.
    */
   async function setAttachments(scope, { body, attached, configure = false }, message, failed = "Couldn’t save") {
     const before = { attached: data.attachedPacks, repository: data.repository };
@@ -77,8 +86,7 @@ export function attachmentWrites({ toast, invalidate }) {
       shown = await queueInScope(scope, "PUT", ATTACHMENTS, body);
     } catch (error) {
       if (!inScope(scope)) return;
-      data.attachedPacks = before.attached;
-      data.repository = before.repository;
+      putBack(before, error);
       toast(failedText(failed, error));
       await refreshNow();
       return;

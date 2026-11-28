@@ -108,6 +108,15 @@ file. It is keyed by the rows it reads:
   digest over the export's current rows: an edit that changes `e`'s rows at no probed value keeps the entry.
 - **A probe the split finds cross-file keys nothing.** Its export is read whole by every entry that reaches it, and
   its crossing is the engine's, not the author's: `crossings_checked` accepts it.
+- **A rule binding no location is probed by its values alone** (added in roll-up 149). Points-to's
+  `pt_wsown(d) :- types__owner(d, m), pt_wsmod(m)` fixes `m` at the file's own module, but `pt_wsmod` is a relation
+  of values (0680) and holds no location. Its probe, `rr_probe_<digest>_<columns>_v`, holds only the fixed values.
+  The split locates it as it does any relation of values, and the entry keys by its located twin's rows. Read whole
+  instead, every row of `types__owner` keyed every file's entry: moving one definition missed all 25 entries of
+  0094 §8's test (`a_moved_definition_costs_about_itself`).
+- **A probed export is not in the memo's plan.** Its rows key entries through the probes, so the plan
+  (`under_phased`) leaves it out, as it leaves out the settings. Before this, the same edit made a new plan, and the
+  cross part found no documents' table under it (0458).
 
 This replaces `SETTINGS_BY_PATH` and `SETTINGS_BY_FOLDER` for `tsx_names`: a read of `target_at` at the file's own path
 is a probe like any other. The repository's settings keep their keying (a path is not a value a rule fixes from the

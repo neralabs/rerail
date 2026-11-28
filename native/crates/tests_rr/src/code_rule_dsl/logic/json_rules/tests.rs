@@ -10,7 +10,7 @@ fn repo() -> std::path::PathBuf {
 
 /// Every JSON rule of main's pinned pack translates to the pack's `<id>.rerail`, byte for byte: the generated pack is
 /// what the engine reads from the JSON, so a translator change regenerates it (`site/regen_main_pack.sh`, or
-/// `RERAIL_WRITE_PACK=1`, which writes each file that differs).
+/// `RERAIL_BLESS=1`, which writes each file that differs).
 #[test]
 fn json_rules_pack_is_current() {
     let pack = repo().join("docs/rule-syntax/packs/python-main");
@@ -25,14 +25,19 @@ fn json_rules_pack_is_current() {
         let want = std::fs::read_to_string(&golden).unwrap_or_else(|e| panic!("{}: {e}", golden.display()));
         match translator.translate_file(json) {
             Ok(got) if got == want => {}
-            Ok(got) if std::env::var_os("RERAIL_WRITE_PACK").is_some() => std::fs::write(&golden, got).unwrap_or_else(|e| panic!("{}: {e}", golden.display())),
-            Ok(_) => differ.push(format!("{id}: differs from {}", golden.display())),
+            // RERAIL_BLESS=1 writes the translator's output as the pack (what `site/regen_main_pack.sh` writes, without
+            // an engine build); the diff is then read, not taken on trust.
+            Ok(got) if std::env::var_os("RERAIL_BLESS").is_some() => std::fs::write(&golden, got).unwrap_or_else(|e| panic!("{}: {e}", golden.display())),
+            Ok(got) => {
+                let (g, w): (Vec<&str>, Vec<&str>) = (got.lines().collect(), want.lines().collect());
+                let at = g.iter().zip(&w).position(|(a, b)| a != b).unwrap_or(g.len().min(w.len()));
+                differ.push(format!("{id}: differs from {} at line {} ({} lines and {}):\n  translated: {:?}\n  the pack's: {:?}", golden.display(), at + 1, g.len(), w.len(), g.get(at), w.get(at)));
+            }
             Err(e) => differ.push(format!("{id}: {e}")),
         }
     }
     assert!(differ.is_empty(), "{} of {} rules differ:\n{}", differ.len(), jsons.len(), differ.join("\n"));
 }
-
 #[test]
 fn json_rules_policy_json_is_recognised() {
     assert!(super::is_policy_json(r#"{"format": "rerail.policy/v1", "id": "x"}"#));

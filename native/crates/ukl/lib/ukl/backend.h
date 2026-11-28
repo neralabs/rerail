@@ -171,6 +171,14 @@ UKL_INLINE float ukl_f16_to_f32_native(uint32_t h) { return float(as_type<half>(
 #define UKL_SHARED static __device__ __noinline__
 #define UKL_LARGE UKL_SHARED
 #define UKL_RARE UKL_COLD
+// A poll of another group's progress (a work queue's idle take, `ukl_wq_idle_sg`): a short sleep, so the groups with
+// nothing to take do not hammer the queue's counters while the few with work run (a chain of requests, one ready at a
+// time: its GPU time varied 2-5 times run to run on a GB10 with every other group spinning, 2026-11-25).
+#if defined(UKL_HIP)
+#define ukl_poll_yield() __builtin_amdgcn_s_sleep(2)
+#else
+#define ukl_poll_yield() __nanosleep(128)
+#endif
 #define UKL_GLOBAL
 #define UKL_COHERENT volatile
 #define UKL_LOCAL

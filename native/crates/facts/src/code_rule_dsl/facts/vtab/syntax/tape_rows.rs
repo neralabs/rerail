@@ -15,7 +15,7 @@
 //! `doc`'s rows are a batch's documents themselves, one each, of what the documents are given.
 
 use super::cells::Cells;
-use super::made::ViewCounts;
+use super::made::{ColKind, ViewCounts};
 use super::ranks::Item;
 use super::tokens::TokRel;
 use super::{Batch, Projected, Shape};
@@ -39,6 +39,8 @@ pub struct Derived {
     visits: OnceLock<Cells<u32>>,
     /// Each node's `tree_digest` hash, its 32 bytes, by local id.
     digests: OnceLock<Cells<[u8; 32]>>,
+    /// `doc`'s row of a file: its path's and module's atoms (`DocRow::doc`'s), for its entry (`ViewDoc::doc_path`).
+    doc: OnceLock<[u32; 2]>,
 }
 
 impl Derived {
@@ -46,6 +48,10 @@ impl Derived {
     /// and the digests.
     pub(super) fn made(&self) -> ([Option<&Cells<u32>>; 3], Option<&Cells<[u32; 2]>>, Option<&Cells<[u8; 32]>>) {
         ([self.gaps[0].get(), self.gaps[1].get(), self.visits.get()], self.named.get(), self.digests.get())
+    }
+    /// `doc`'s atoms, where its program reads `doc` (`derive`).
+    pub(super) fn doc(&self) -> Option<[u32; 2]> {
+        self.doc.get().copied()
     }
 }
 
@@ -125,9 +131,9 @@ pub(super) trait TapeRows: Send + Sync + 'static {
     fn row(&self, at: &At, d: &Self::Doc, item: u32, k: u32, out: &mut [i64]);
     /// The tape nodes under tape node `x` that may have a row whose `parent()` column is `x`, in order.
     fn under(&self, _at: &At, _x: u32, _each: &mut dyn FnMut(u32)) {}
-    /// What bounds column `column`'s values before any row is read (`Source::col_bounds`, `Batch::bounds_of`): none
-    /// where nothing does.
-    fn col_kind(&self, _column: usize) -> Option<super::made::ColKind> {
+    /// What column `column` holds where the batch alone bounds it (`Batch::bounds_of`, `Source::col_bounds`): none
+    /// said.
+    fn col_kind(&self, _column: usize) -> Option<ColKind> {
         None
     }
     /// Whether a lookup on `column` finds its items (`find`).
@@ -154,6 +160,25 @@ pub(super) trait TapeRows: Send + Sync + 'static {
     fn statistics(&self, _batch: &Batch) -> Option<Vec<(String, i64, i64, i64, i64)>> {
         None
     }
+    /// Its view's device code (`device_chunk::VIEW_*`), where the views' reads read its rows in place (decision 0353
+    /// step 4), and whether document `doc`'s entry holds what they read: `None` where no read does.
+    fn device_read(&self, _batch: &Batch, _doc: usize) -> Option<(u32, bool)> {
+        None
+    }
+}
+
+/// Whether every entry of `batch`'s documents holds what view `view`'s read reads of it (`TapeRows::device_read`):
+/// `doc`'s atoms where its program reads it. A reader over several batches' directory (`values::Layered`, its tape
+/// values') asks it of each: a batch whose projection reads no `doc` holds none.
+pub(super) fn entries_hold(view: u32, batch: &Batch) -> bool {
+    if view != super::device_chunk::VIEW_DOC {
+        return true;
+    }
+    let held = (0..batch.docs.len()).all(|doc| DocRow.device_read(batch, doc).is_some_and(|(_, held)| held));
+    if !held {
+        crate::code_rule_dsl::prof::count("views.refused.not_derived", 1);
+    }
+    held
 }
 
 /// A document's rows of a `TapeRows`.
@@ -170,12 +195,15 @@ pub(super) struct RowsView<R: TapeRows> {
     batch: Arc<Batch>,
     rows: R,
     per: Box<[OnceLock<Per<R::Doc>>]>,
+    /// Its index's home where the device reads it in place (`device_view`), as a view's (`Viewed::home`): room for an
+    /// index at every entry of its directory, found again by every later binding.
+    home: OnceLock<Option<crate::code_rule_dsl::facts::rows::Part>>,
 }
 
 impl<R: TapeRows> RowsView<R> {
     pub(super) fn new(batch: &Arc<Batch>, rows: R) -> Self {
         let per = (0..batch.docs.len()).map(|_| OnceLock::new()).collect();
-        RowsView { batch: Arc::clone(batch), rows, per }
+        RowsView { batch: Arc::clone(batch), rows, per, home: OnceLock::new() }
     }
 
     fn at(&self, doc: usize) -> At<'_> {
@@ -219,11 +247,27 @@ impl<R: TapeRows> RowsView<R> {
 }
 
 impl<R: TapeRows> Source for RowsView<R> {
-    fn col_bounds(&self, column: usize) -> Option<[i64; 2]> {
-        self.rows.col_kind(column).map(|k| self.batch.bounds_of(k))
-    }
     fn syntax_batch(&self) -> Option<Arc<dyn std::any::Any + Send + Sync>> {
         Some(Arc::clone(&self.batch) as _)
+    }
+    /// Its rows read in place through the batch's views' directory (decision 0353 step 4), as a view's
+    /// (`Viewed::device_view`), where a view's read reads them (`TapeRows::device_read`) and every document's entry
+    /// holds what it reads; nothing makes its rows.
+    #[cfg(any(target_os = "macos", target_os = "linux", windows))]
+    fn device_view(&self) -> Option<crate::code_rule_dsl::facts::vtab::DeviceView> {
+        if self.batch.docs.len() == 0 {
+            return None;
+        }
+        // The directory first: its documents made, their derived columns with them (`derive`).
+        let in_place = super::device_chunk::views_in_place(&self.batch)?;
+        let (view, _) = self.rows.device_read(&self.batch, 0)?;
+        if !entries_hold(view, &self.batch) {
+            return None;
+        }
+        let in_place = in_place.read_of(view, Arc::clone(&self.batch) as Arc<dyn std::any::Any + Send + Sync>)?;
+        let rows = self.len();
+        let home = self.home.get_or_init(|| crate::code_rule_dsl::facts::rows::Part::for_device_indexed(0, rows, rerail_blocks::relation::ADDED_INDEXES).ok()).clone()?;
+        Some(crate::code_rule_dsl::facts::vtab::DeviceView { view, rows, in_place, home })
     }
     fn as_any(&self) -> Option<&dyn std::any::Any> {
         Some(self)
@@ -249,6 +293,10 @@ impl<R: TapeRows> Source for RowsView<R> {
     fn statistics(&self) -> Option<Vec<(String, i64, i64, i64, i64)>> {
         self.rows.statistics(&self.batch)
     }
+    /// By what the column holds (`TapeRows::col_kind`), from the batch's documents: no row made.
+    fn col_bounds(&self, column: usize) -> Option<[i64; 2]> {
+        self.rows.col_kind(column).map(|k| self.batch.bounds_of(k))
+    }
     fn failure(&self) -> Option<String> {
         self.batch.docs.failure()
     }
@@ -259,6 +307,7 @@ impl<R: TapeRows> Source for RowsView<R> {
         out[column]
     }
     fn row_at(&self, row: usize, columns: &[usize], out: &mut [i64]) {
+        let _kind = rerail_prof::work::doing(rerail_prof::work::VIEW);
         let (doc, k) = self.locate(row);
         let mut all = [0; COLUMNS];
         self.read(doc, k, &mut all);
@@ -320,6 +369,9 @@ impl<R: TapeRows> Source for RowsView<R> {
     }
     /// `lookup`'s rows in its order, sorted in the probe's frame: a list made a probe was 2.07 M on cold PostHog.
     fn lookup_each(&self, column: usize, values: &[i64], each: &mut dyn FnMut(usize)) -> bool {
+        let _kind = rerail_prof::work::doing(rerail_prof::work::VIEW);
+        let outer = each;
+        let each: &mut dyn FnMut(usize) = &mut |r| { let _caller = _kind.paused(); outer(r) };
         if !self.rows.keyed(column) {
             return false;
         }
@@ -441,6 +493,20 @@ pub(super) fn derive(batch: &Batch, doc: usize) {
     if wants(VISIT) {
         VisitIndex::places(&at);
     }
+    // `doc`'s row, read in place (`view_doc`): its atoms in its entry, a file's alone (a tape value has none).
+    // Written into the entry here, whenever its other fields were (`view_docs::ViewEntry::fill`): these two are
+    // `derive`'s alone, written once, before a directory over the entry is made.
+    if wants(DOC) && DocRow::is_file(batch, doc) {
+        let p = at.p();
+        p.derived.doc.get_or_init(|| {
+            let [path, module] = DocRow.doc(&at).map(|a| u32::try_from(a).expect("an atom of 32 bits"));
+            let e = p.entry().0.as_ptr();
+            // SAFETY: the entry lies in the projection's block from its making; its `doc_path` and `doc_module` are
+            // written by this alone, inside the `OnceLock`, and read once a directory over it is made, after.
+            unsafe { ((*e).doc_path, (*e).doc_module) = (path, module) };
+            [path, module]
+        });
+    }
 }
 
 /// The strings the views of `batch` that its projection reads hold (each interned when read), of every document: a
@@ -499,7 +565,7 @@ impl Gap {
     /// Each row's gap, `(tape node, from, to)` in bytes of the source, in the tape's order of their parents.
     fn walk(&self, p: &Projected, each: &mut dyn FnMut(u32, u32, u32)) {
         let f = p.f();
-        if f.len() > 0 && p.local_of_node(0) != NONE {
+        if !f.is_empty() && p.local_of_node(0) != NONE {
             match self.0 {
                 Side::Before => each(0, 0, f.start(0)),
                 Side::After => each(0, f.end(0), p.facts.source.len() as u32),
@@ -711,14 +777,10 @@ impl TapeRows for DocRow {
         DOC
     }
     fn slot(&self) -> usize {
-        TAPE + 5
+        rerail_clif::view_reads::DOC_VIEW
     }
     fn columns(&self) -> &'static [&'static str] {
         &["d", "path", "module"]
-    }
-    /// A document's key, and two atoms.
-    fn col_kind(&self, column: usize) -> Option<super::made::ColKind> {
-        Some(if column == 0 { super::made::ColKind::Key } else { super::made::ColKind::Atom })
     }
     fn own(&self) -> usize {
         0
@@ -741,6 +803,10 @@ impl TapeRows for DocRow {
         out[1] = d[0];
         out[2] = d[1];
     }
+    /// Its document's key; its path's and module's atoms.
+    fn col_kind(&self, column: usize) -> Option<ColKind> {
+        Some(if column == 0 { ColKind::Key } else { ColKind::Atom })
+    }
     fn keyed(&self, column: usize) -> bool {
         column < 3
     }
@@ -762,6 +828,11 @@ impl TapeRows for DocRow {
                 each(doc, 0);
             }
         }
+    }
+    /// `view_doc`, its atoms in the entry where its program reads it (`derive`); a tape value's entry holds no row.
+    fn device_read(&self, batch: &Batch, doc: usize) -> Option<(u32, bool)> {
+        let held = !Self::is_file(batch, doc) || batch.docs[doc].derived.doc().is_some();
+        Some((super::device_chunk::VIEW_DOC, held))
     }
     fn statistics(&self, batch: &Batch) -> Option<Vec<(String, i64, i64, i64, i64)>> {
         batch.doc_statistics()

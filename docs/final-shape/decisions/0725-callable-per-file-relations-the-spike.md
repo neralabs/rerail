@@ -195,3 +195,62 @@ at home, 97.64% in all; 1.90% are answered by files elsewhere, 0.42% name no fil
 and 73.03% of 21,386 (94.33%), 2.67% elsewhere, 2.92% none. The pair caches are asked by their document alone (`fb`, the
 document bound): a whole file's rows. The findings are the same (PostHog's 5); 52.0 s real, 2.32 GB.
 
+
+**A call routed by its key's file (`.callable R PATTERN by H [C]`).** For the 97.6% whose key names its file, the call
+is sent to the file the key names. `H(k, d)` is a router of column C (default: the first bound one): the callable split
+writes `H__ask(k) :- <the reader's body>` and `R__call(d, key..) :- <the reader's body>, H(k, d)`, and the callee
+reads `R__call(_, key..)`, column 0 bound by the router. A router reads every file's table, so it is declared
+`cross_file`; the run refuses a request made in each file (there a router reads one file's rows and routes none).
+Nothing but the split reads a router before the split runs, so the passes that drop what no output reads take it as a
+root: `prune`, the relations no output reads, a part's outputs (decision 0345) and demand's closure (decision 0048),
+which had dropped `pt_tm_file`'s rules and left every call empty. A file-local relation the cone of requests reads is
+exported, not projected again in the cross part from a stored input, whose rows no load answers (the router's table
+of the files). The library's router is `pt_tm_file` (python/points-to-solve): a term's file, by its scope walked up
+with `@pkg_up` to a module of `doc`'s, and a guest's term by the document its string holds (`pt_tm_guest_doc`); it
+routes `pt_vopen_l_8 b`. PostHog's 291 files, get-handler-writes: 2,260 requests to 163 files (3 holders entered), 0
+of no file, 1,193 answer rows; the cross part's `pt_vopen_l_8` is those 1,193 rows, against 79,319 made whole. The
+findings are the same 5, identical. Measured again with `time -l` (instructions retired do not move with the
+Mac's load; CPU did, the same `pt_tm_same` steps over the same rows taking 1.44 times the CPU a row in a run more
+loaded): 799.7 G instructions against 780.4 G, +2.5%; process CPU 53.06 s against 50.77 s. The first figures here
+(CPU 29.4 s against 24.8 s, one run each) were the load's, not the call's. Peak memory 1,220.5 MB against 569.2 MB:
+with the call, points_to's cross part makes a request, so its cone holds the solve that makes the key (the
+66-relation component `pt_acls/pt_ainst/…`), and what the rest reads of the cone is handed on as rows
+(`held_rows`, then columns again for the cross part's bind): 640 MB allocated in 0.3 s at the cone's end and freed
+after; the cone 0.78 s CPU (473 MB allocated), the hand-on 0.54 s (715 MB). The calls themselves are 20 ms. Each file still makes the callee's memo entry
+(`pt_vopen_l_8_at`) whole. Tests: `callable_tests` (a routed call, under demand, and a router's table of the files
+exported).
+
+**Calls in bulk: every callable's requests, one call into each file.** The callees are lowered together, one program
+(`Split::program`: every callable's rules, every request an input, the union of what they read in a file), and the
+runner answers a list of requests at once (`Calls::answer_all`): their new keys grouped by the file holding them, each
+file entered once, every request bound in it (the ones with no key there empty), one run of the program, each
+request given the rows its keys select. The cone thread holds a callable's posted requests, not answering each as it
+comes: when the run is about to wait (`Asks::waits`, a marker posted once after posts, before the run blocks), every
+held request is answered in the one call, and each ticket gets its rows. The run posts its requests, so they
+accumulate, in both its loops: the scoreboard's, and the serial loop of a run whose strata are kept across runs
+(decision 0077 §4), which had waited for each; there a stratum still asking is not taken as evaluated until it has
+resumed, and its posted answers are logged with its stratum's reads (`Run::logs_posted`). A produced relation's
+stratum (decision 0065 §2a) posts, with its own request, the requests of every produced relation whose request is
+made and not yet answered, and waits once for them all (`posted_together`). Two callables, each routed, asked in one
+program (`callable_tests::two_callables_asked_together_are_answered_in_one_call`): 1 batch, 24 requests, 2 files
+entered (2 batches, 4 files entered before), the findings and both readers' rows the whole program's. PostHog's 291
+files, get-handler-writes (one callable): 1 batch, 2,260 requests to 163 files, 3 holders entered, 1,193 answer rows,
+the same 5 findings. Tests: `rerail-tests-rr` (298 passed), `calls::tests`, `answers::tests`, `complete_answer_tests`.
+
+**The cone's relations handed on in place.** The memory the call cost was two copies (decision 0353) of what the
+cone reads and makes, neither on 0353's list nor marked. At the cone's end, each relation the rest of the cross-file
+part reads was copied out as rows (`held_rows`, a heap vector a row) and copied again into columns for the bind; it
+is now handed on as the engine holds it (`held_source`: `component::derived`, the relation itself), or as the rounds
+hold it (`Retained::derived_source`, the kept relation or the frames' block, `InRel::source`); only answers and the
+rounds' views, which are rows when made, are made once into a relation. And the digest of each document's part of
+what the cone reads (`cone_digests`, the cone's reuse) collected every row of those exports per document, copied, to
+sort and hash them: it now reads them where they lie, twice, the document's nodes first (a node is digested as its
+rank among them) and then each row's hash summed per document, an order-free digest of the document's rows (the
+digests differ from the last run's once). PostHog's 291 files, get-handler-writes: peak memory 614.9 MB, against
+1,220.5 MB with the copies and 569.2 MB with no call; 795.3 G instructions against 780.4 G with no call (+1.9%); the
+same 5 findings.
+Calls in bulk had posted a request once per produced relation of it that was ready (`posted_together`): a request
+producing several, each its own stratum (the C preprocessor's `c_pp_tu_req`), was asked again for each (`corpus::tests::
+a_header_edit_asks_again_only_for_the_units_that_read_it`: each unit 7 times); each request is posted once now, and a
+produced relation once asked is not asked again. Tests: `rerail-tests-corpus` (281 passed, with the coverage ledger's
+one more `to_number`, the router's, and `RERAIL_ASKS` classified a measurement aid), `rerail-tests-rr` (298).

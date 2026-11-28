@@ -298,7 +298,7 @@ function readPackage(root: string, manifest: CargoManifest, shared: Shared, note
   const roots = crateRoots(root, manifest).flatMap(file => readCrateRoot(root, file, notes) ?? []);
   const setting = roots.flatMap(crate => ("flags" in crate && crate.flags.length > 0 ? [crate.file] : []));
   const labels = [...(cargo.label === undefined ? [] : [cargo.label]), ...rustflags.labels, ...setting];
-  const unset = labels.length === 0 ? undefined : `${labels.join(" and ")} ${labels.length > 1 ? "do" : "does"} not turn it on`;
+  const unset = labels.length === 0 ? undefined : `not turned on in ${labels.join(" and ")}`;
   return { folder: manifest.folder, flags: [...cargo.flags, ...rustflags.flags], roots, unset };
 }
 

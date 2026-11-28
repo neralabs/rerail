@@ -10,7 +10,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { rewriteAppendedFile, runScrubCommand, scrubHintOnce } from "../../src/cli/scrub-cli.js";
 import { openRerailDatabase, recordCheckout } from "../../src/engine/index.js";
 import { withPendingFileLock } from "../../src/harness/index.js";
-import { withoutBackupPrivileges } from "../support/platform/backup-privileges.js";
+import { backupPrivilegeSwitch } from "../support/platform/backup-privileges.js";
 import { NO_POSIX_MODES, POSIX_MODES } from "../support/platform/file-mode.js";
 import { linkFolder } from "../support/platform/links.js";
 import { removeFolder } from "../support/platform/remove-folder.js";
@@ -262,7 +262,7 @@ function denyListing(folder: string): { restore: () => void } {
 
 /**
  * Whether listing `folder` is refused: root reads past a mode, and on Windows a process whose Backup privilege is on past
- * a deny entry, which {@link withoutBackupPrivileges} turns off.
+ * a deny entry, which {@link backupPrivilegeSwitch} turns off.
  */
 function refusesListing(folder: string): boolean {
   try {
@@ -320,55 +320,59 @@ describe("rerail scrub alongside running sessions", () => {
     }
   });
 
-  it("scrubs the held steers of the sessions it records in a held-steer folder this account may not list, and names the folder", async ({ skip }) => {
-    const { sessions, token, live, printed } = await scrubFixture();
-    const pending = join(sessions, "claude-code-pending");
-    const file = join(pending, `${createHash("sha256").update("s1").digest("hex")}.json`);
-    try {
-      mkdirSync(pending);
-      writeFileSync(file, JSON.stringify([{ sessionId: "s1", requested: "steer", mechanism: "deferred-context", content: `use ${token}`, ruleIds: [], rules: [] }]));
-      // As a held-steer folder another account made in a records folder both share: this one adds files, never lists.
-      const listing = denyListing(pending);
-      try {
-        await withoutBackupPrivileges(async () => {
-          if (!refusesListing(pending)) skip("this process lists past the denial");
-          expect(await runScrubCommand([], () => "usage")).toBe(0);
-        });
-      } finally {
-        listing.restore();
-      }
-      expect(readFileSync(file, "utf8")).not.toContain(token);
-      expect(printed()).toContain("Scrubbed 0 lines in 0 session ledgers and 1 held steer file ");
-      const unlisted = printed().split("\n").find(line => line.startsWith(`Could not list ${pending} `))?.slice(`Could not list ${pending} `.length);
-      expect(unlisted).toMatch(/^\(E(?:ACCES|PERM)\): scrubbed the 1 held steer file the database records there; a session it does not record is left\.$/u);
-    } finally {
-      live.$client.close();
-    }
-  });
+  describe("with this process's Backup and Restore privileges off", () => {
+    const { withoutBackupPrivileges } = backupPrivilegeSwitch();
 
-  it("names a held-steer folder this account may not list when the database records none of its steers", async ({ skip }) => {
-    const { sessions, token, live, printed } = await scrubFixture();
-    const pending = join(sessions, "claude-code-pending");
-    // A steer held for a session this database does not record, as another account's hook would hold one.
-    const file = join(pending, `${createHash("sha256").update("s2").digest("hex")}.json`);
-    try {
-      mkdirSync(pending);
-      writeFileSync(file, JSON.stringify([{ sessionId: "s2", requested: "steer", mechanism: "deferred-context", content: `use ${token}`, ruleIds: [], rules: [] }]));
-      const listing = denyListing(pending);
+    it("scrubs the held steers of the sessions it records in a held-steer folder this account may not list, and names the folder", async ({ skip }) => {
+      const { sessions, token, live, printed } = await scrubFixture();
+      const pending = join(sessions, "claude-code-pending");
+      const file = join(pending, `${createHash("sha256").update("s1").digest("hex")}.json`);
       try {
-        await withoutBackupPrivileges(async () => {
-          if (!refusesListing(pending)) skip("this process lists past the denial");
-          expect(await runScrubCommand([], () => "usage")).toBe(0);
-        });
+        mkdirSync(pending);
+        writeFileSync(file, JSON.stringify([{ sessionId: "s1", requested: "steer", mechanism: "deferred-context", content: `use ${token}`, ruleIds: [], rules: [] }]));
+        // As a held-steer folder another account made in a records folder both share: this one adds files, never lists.
+        const listing = denyListing(pending);
+        try {
+          await withoutBackupPrivileges(async () => {
+            if (!refusesListing(pending)) skip("this process lists past the denial");
+            expect(await runScrubCommand([], () => "usage")).toBe(0);
+          });
+        } finally {
+          listing.restore();
+        }
+        expect(readFileSync(file, "utf8")).not.toContain(token);
+        expect(printed()).toContain("Scrubbed 0 lines in 0 session ledgers and 1 held steer file ");
+        const unlisted = printed().split("\n").find(line => line.startsWith(`Could not list ${pending} `))?.slice(`Could not list ${pending} `.length);
+        expect(unlisted).toMatch(/^\(E(?:ACCES|PERM)\): scrubbed the 1 held steer file the database records there; a session it does not record is left\.$/u);
       } finally {
-        listing.restore();
+        live.$client.close();
       }
-      expect(readFileSync(file, "utf8")).toContain(token);
-      const unlisted = printed().split("\n").find(line => line.startsWith(`Could not list ${pending} `))?.slice(`Could not list ${pending} `.length);
-      expect(unlisted).toMatch(/^\(E(?:ACCES|PERM)\): scrubbed the 0 held steer files the database records there; a session it does not record is left\.$/u);
-    } finally {
-      live.$client.close();
-    }
+    });
+
+    it("names a held-steer folder this account may not list when the database records none of its steers", async ({ skip }) => {
+      const { sessions, token, live, printed } = await scrubFixture();
+      const pending = join(sessions, "claude-code-pending");
+      // A steer held for a session this database does not record, as another account's hook would hold one.
+      const file = join(pending, `${createHash("sha256").update("s2").digest("hex")}.json`);
+      try {
+        mkdirSync(pending);
+        writeFileSync(file, JSON.stringify([{ sessionId: "s2", requested: "steer", mechanism: "deferred-context", content: `use ${token}`, ruleIds: [], rules: [] }]));
+        const listing = denyListing(pending);
+        try {
+          await withoutBackupPrivileges(async () => {
+            if (!refusesListing(pending)) skip("this process lists past the denial");
+            expect(await runScrubCommand([], () => "usage")).toBe(0);
+          });
+        } finally {
+          listing.restore();
+        }
+        expect(readFileSync(file, "utf8")).toContain(token);
+        const unlisted = printed().split("\n").find(line => line.startsWith(`Could not list ${pending} `))?.slice(`Could not list ${pending} `.length);
+        expect(unlisted).toMatch(/^\(E(?:ACCES|PERM)\): scrubbed the 0 held steer files the database records there; a session it does not record is left\.$/u);
+      } finally {
+        live.$client.close();
+      }
+    });
   });
 
   it("loses no line a process appends to daemon.log or a ledger while it scrubs them", async () => {

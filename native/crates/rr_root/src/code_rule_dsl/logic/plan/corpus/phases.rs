@@ -878,7 +878,15 @@ pub fn stage(v: &std::sync::Arc<Version>, options: &serde_json::Value) -> Result
                         _ => false,
                     })
                     .collect();
-                let (Some((n, n_type)), false, false) = (node.clone(), in_agg, fixed.is_empty()) else {
+                // A rule binding no location still fixes the read where the values come from the file's own rows: a
+                // relation of values its rules derive per file (decision 0680, `pt_wsown`'s `pt_wsmod(m)`, the file's
+                // own module). Its probe is those values alone, and the split places it: per file, it keys the entry
+                // by the export's rows at them; elsewhere it keys nothing, and the export is read whole
+                // (`memo::StageDigests`), as it was for every such read.
+                // An export its phase declares a key for (decision 0705, a setting) is keyed by its declaration where
+                // no located probe reads it: a probe of values alone is not made for it.
+                let declared = crate::code_rule_dsl::typing::file_local::setting_input(e);
+                let (false, false) = (in_agg, fixed.is_empty() || (node.is_none() && (others.is_empty() || declared))) else {
                     whole.insert(read_name(e));
                     continue;
                 };
@@ -886,18 +894,20 @@ pub fn stage(v: &std::sync::Arc<Version>, options: &serde_json::Value) -> Result
                 let probe = {
                     use sha2::Digest as _;
                     let d: [u8; 32] = sha2::Sha256::new().chain_update(e.as_bytes()).finalize().into();
-                    format!("{PROBE}{}_{}", d[..4].iter().map(|b| format!("{b:02x}")).collect::<String>(), cols.iter().map(usize::to_string).collect::<Vec<_>>().join("_"))
+                    // One with no location is another relation (`_v`, its values): its columns are not a located probe's.
+                    let valued = if node.is_none() { "_v" } else { "" };
+                    format!("{PROBE}{}_{}{valued}", d[..4].iter().map(|b| format!("{b:02x}")).collect::<String>(), cols.iter().map(usize::to_string).collect::<Vec<_>>().join("_"))
                 };
                 if !probes.iter().any(|(p, _, _)| *p == probe) {
                     let types = v.columns_of(e).unwrap_or_default();
-                    let mut decl: Vec<(String, String)> = vec![("n".to_owned(), n_type.clone())];
+                    let mut decl: Vec<(String, String)> = node.iter().map(|(_, t)| ("n".to_owned(), t.clone())).collect();
                     decl.extend(cols.iter().map(|&c| (format!("c{c}"), types[c].1.clone())));
                     let decl: Vec<(&str, &str)> = decl.iter().map(|(c, t)| (c.as_str(), t.as_str())).collect();
                     b.fields().declare(&probe, &decl);
                     b.fields().add_output(&probe);
                     probes.push((probe.clone(), read_name(e), cols.clone()));
                 }
-                let mut head = vec![t_of(r, TermRef::Var(n))];
+                let mut head: Vec<_> = node.iter().map(|(n, _)| t_of(r, TermRef::Var(*n))).collect();
                 head.extend(fixed.iter().map(|(_, t)| t_of(r, *t)));
                 let mut rb = b.rule().head(probe.as_str(), &head);
                 for ((_, l), named) in others.iter().zip(&other_names) {
@@ -983,8 +993,19 @@ fn existence_reads(v: &std::sync::Arc<Version>) -> Result<Option<std::sync::Arc<
         let f = crate::code_rule_dsl::logic::plan::fields::Fields::over(v, &d);
         v.rules().map(|r| r.head().rel()).filter(|&h| f.native(v.rel_name(h)).is_some()).collect::<BTreeSet<_>>()
     };
-    let reading: Vec<_> =
-        v.rules().filter(|r| !natives.contains(&r.head().rel()) && r.body().any(|l| matches!(l.view(), Lit::Atom(a) if open(a).is_some()))).collect();
+    // A callable's rule (decision 0725) is kept as written too: it runs in the file its request is routed to, and its
+    // read with the placing columns open (`qtouch(_, q, v)`) is of that file's rows, not of any file's. Read through a
+    // relation of names, the callee read no relation of its file, and the call was refused.
+    let callables: BTreeSet<String> = rerail_corpus_prep::code_rule_dsl::logic::plan::corpus::preparation::callable::declared(v)
+        .map_err(Error::Plan)?
+        .into_iter()
+        .map(|c| c.rel)
+        .collect();
+    let reading: Vec<_> = v
+        .rules()
+        .filter(|r| !natives.contains(&r.head().rel()) && !callables.contains(v.rel_name(r.head().rel())))
+        .filter(|r| r.body().any(|l| matches!(l.view(), Lit::Atom(a) if open(a).is_some())))
+        .collect();
     if reading.is_empty() {
         return Ok(None);
     }
@@ -1424,13 +1445,16 @@ pub fn sources(
     }
     // The observer's facts: stated, handed down as a phase's exports are (they are its inputs, not its program).
     let stated: Vec<Vec<Value>> = files.iter().map(|(p, m, g, c)| vec![Value::Str(p.clone().into()), Value::Str(m.clone().into()), Value::Str(g.clone().into()), Value::Str(c.clone().into())]).collect();
-    let paths = files.iter().filter_map(|(p, _, _, _)| {
-        let file = if crate::git_workspace::snapshot::contains(root) {
-            p.clone()
-        } else {
-            // Spelled with `/` on every OS, as the rules join and split paths (`corpus::slashed`).
-            super::slashed(&crate::git_workspace::snapshot::canonicalize(root.join(p)).ok()?)
-        };
+    // Each file's canonical path, by the observer's (a directory at a time, on the pool, and each one this run
+    // resolved before as it was): spelled with `/` on every OS, as the rules join and split paths (`corpus::slashed`).
+    let canonical: Vec<Option<PathBuf>> = if crate::git_workspace::snapshot::contains(root) {
+        Vec::new()
+    } else {
+        let joined: Vec<PathBuf> = files.iter().map(|(p, ..)| root.join(p)).collect();
+        crate::content_store::observe::Observer::canonical_all(|f| super::observe(|o| f(o)), &joined)
+    };
+    let paths = files.iter().enumerate().filter_map(|(i, (p, _, _, _))| {
+        let file = if crate::git_workspace::snapshot::contains(root) { p.clone() } else { super::slashed(canonical[i].as_deref()?) };
         Some(vec![Value::Str(p.clone().into()), Value::Str(file.into())])
     }).collect();
     let _down = HandingDown::enter(NAME, Facts::from([

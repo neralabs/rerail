@@ -1,7 +1,7 @@
 //! The gap test (t31): a relation to a bare token regex, where the token is one the tape leaves
 //! out because the grammar implies it.
 //!
-//! A tape stores no token its grammar implies (RER-131): `f(a, b)` holds `f`, `a` and `b`, not the
+//! A tape stores no token its grammar implies (decision 0161): `f(a, b)` holds `f`, `a` and `b`, not the
 //! parentheses or the comma. A rule that asks "is the node before me a `,`" can no longer find the
 //! `,` as a node. It asks the grammar instead: the parent's stored children, walked through its
 //! automaton, say which word each gap between them holds ([`TokenGrammar::gaps`]). That reads the
@@ -155,7 +155,7 @@ fn gaps_of<D: Doc>(dialect: GrammarDialect, grammar: &'static TokenGrammar, pare
 }
 
 /// The implied tokens a sibling walk passes between stored children of one parent, counted as the tree-sitter tree
-/// holds them: the candidates a walk over a full tree tests between two of the tape's (RER-131, PR #508's 7529228ce).
+/// holds them: the candidates a walk over a full tree tests between two of the tape's (decision 0161, PR #508's 7529228ce).
 /// A named-only tape leaves them out, so its walk tests fewer candidates for the same siblings, and its work budget,
 /// spent per candidate, bought more work than a full tree's: the walk charges these (`relation::charged`). Read from
 /// the parent's gaps (`gaps_of`, made once a parent within a tape's call); none for a document that is not a tape,

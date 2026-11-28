@@ -643,8 +643,8 @@ pub fn preempted_again<T>(mut run: impl FnMut() -> Result<T, Error>) -> Result<T
     }
 }
 
-/// The runs of a unit the system may stop before it is a failure (`preempted_again`).
-pub const PREEMPTED_RUNS: u32 = 4;
+/// The runs of a unit the system may stop before it is a failure (`preempted_again`): the device work's one bound.
+pub use rerail_accel::gpu::PREEMPTED_RUNS;
 
 /// A name's key, as `pp_eval.uglykl`'s `name_key` makes it: its bytes 8 at a time, line splices
 /// left out (its phase-2 spelling).

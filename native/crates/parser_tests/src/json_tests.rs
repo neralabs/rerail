@@ -316,7 +316,7 @@ fn simdjson_form_against_simdjson() {
         // kept by `structurals`), each tape given back as the next one's room.
         let mut w = rerail_tape_format::f16::Writer::empty();
         let mut ours = || {
-            w.begin(&lang, f, rerail_tape_format::newlines::Terminators::Newlines, tag, false, true, nodes);
+            w.begin(&rerail_tape_format::f16::Document { lang: &lang, source: f, tag, z: false, blocks: true, nodes, sha256: None }, rerail_tape_format::newlines::Terminators::Newlines);
             rerail_json_aot::parse(&fp, f.len(), &mut w).expect("parses");
             let t = w.finish().expect("finishes").tape;
             w.recycle(std::hint::black_box(t));
@@ -340,7 +340,7 @@ fn simdjson_form_against_simdjson() {
         });
         let lexed = rerail_json_aot::lex(&fp, f.len());
         let (t2i, t2n) = measure(&mut || {
-            w.begin(&lang, f, rerail_tape_format::newlines::Terminators::Newlines, tag, false, true, nodes);
+            w.begin(&rerail_tape_format::f16::Document { lang: &lang, source: f, tag, z: false, blocks: true, nodes, sha256: None }, rerail_tape_format::newlines::Terminators::Newlines);
             rerail_json_aot::parse_lexed(&fp, &lexed, &mut w).expect("parses");
             let t = w.finish().expect("finishes").tape;
             w.recycle(std::hint::black_box(t));
@@ -398,7 +398,7 @@ fn simdjson_form_jit_and_aot_phase_by_phase() {
         let (mut wj, mut wa) = (Writer::empty(), Writer::empty());
         for z in [false, true] {
             let want = jit.parser.image16_in(&mut wj, f, rerail_tape_format::newlines::Terminators::Newlines, &lang, &numbers, z).unwrap_or_else(|e| panic!("{name}: the JIT refuses it: {e}"));
-            wa.begin(&lang, f, rerail_tape_format::newlines::Terminators::Newlines, tag, z, true, nodes);
+            wa.begin(&rerail_tape_format::f16::Document { lang: &lang, source: f, tag, z, blocks: true, nodes, sha256: None }, rerail_tape_format::newlines::Terminators::Newlines);
             rerail_json_aot::parse(&fp, f.len(), &mut wa).unwrap_or_else(|e| panic!("{name}: the Rust refuses it at byte {e}"));
             let got = wa.finish().expect("finishes").tape;
             assert!(got.extent() == want.extent(), "{name}: the Rust's tape is the JIT's (z {z})");
@@ -417,7 +417,7 @@ fn simdjson_form_jit_and_aot_phase_by_phase() {
             std::hint::black_box(&batch);
         });
         let aot_whole = |w: &mut Writer, z: bool| {
-            w.begin(&lang, f, rerail_tape_format::newlines::Terminators::Newlines, tag, z, true, nodes);
+            w.begin(&rerail_tape_format::f16::Document { lang: &lang, source: f, tag, z, blocks: true, nodes, sha256: None }, rerail_tape_format::newlines::Terminators::Newlines);
             rerail_json_aot::parse(&fp, f.len(), w).expect("parses");
             let t = w.finish().expect("finishes").tape;
             w.recycle(std::hint::black_box(t));
@@ -427,7 +427,7 @@ fn simdjson_form_jit_and_aot_phase_by_phase() {
         let a1 = least(&mut || _ = std::hint::black_box(rerail_json_aot::lex(&fp, f.len())));
         let lexed = rerail_json_aot::lex(&fp, f.len());
         let a2 = least(&mut || {
-            wa.begin(&lang, f, rerail_tape_format::newlines::Terminators::Newlines, tag, false, true, nodes);
+            wa.begin(&rerail_tape_format::f16::Document { lang: &lang, source: f, tag, z: false, blocks: true, nodes, sha256: None }, rerail_tape_format::newlines::Terminators::Newlines);
             rerail_json_aot::parse_lexed(&fp, &lexed, &mut wa).expect("parses");
             let t = wa.finish().expect("finishes").tape;
             wa.recycle(std::hint::black_box(t));
@@ -1221,9 +1221,19 @@ fn json_rust() -> (String, String) {
     let kind = |n: &str| Some(ids.of(n));
     let field = |n: &str| Some(ids.of(&format!("field {n}")));
     let symbols = rerail_bitlex::bitlex_masks::Symbols { kind: &kind, field: &field, terminators: rerail_tape_format::newlines::Terminators::Newlines };
-    let c = rerail_bitlex::bitlex_masks::compile_shaped(&stmts, &[rerail_bitlex::bitlex_masks::FALLBACK], Some(&symbols), rerail_bitlex::bitlex_masks::Shape::Auto).expect("compiles");
+    // Its tiers as Rust, which only a caller that reads them asks for (decision 0669).
+    let c = rerail_bitlex::bitlex_masks::compile_proved(&stmts, &[rerail_bitlex::bitlex_masks::FALLBACK], Some(&symbols), rerail_bitlex::bitlex_masks::Shape::Auto, Default::default(), rerail_bitlex::bitlex_masks::AsRust::Yes).expect("compiles");
     let tier1 = c.lexer_rust.expect("a tree section").unwrap_or_else(|e| panic!("tier 1 as Rust: {e}"));
-    let tier2 = c.rust_loop.expect("a tree section").unwrap_or_else(|e| panic!("tier 2 as one loop: {e}"));
+    let mut tier2 = c.rust_loop.expect("a tree section").unwrap_or_else(|e| panic!("tier 2 as one loop: {e}"));
+    // The ids' names, so that a writer of another language (the engine's JSON, tree-sitter-json's ids) numbers
+    // `ENTRIES` by name (`rerail_json_aot::parse_numbered`).
+    let (kinds, fields) = ids.names();
+    let table = |names: std::collections::HashMap<u16, String>| {
+        let mut v: Vec<(u16, String)> = names.into_iter().collect();
+        v.sort();
+        v.iter().map(|(i, n)| format!("    ({i}, {n:?}),\n")).collect::<String>()
+    };
+    tier2.push_str(&format!("\n/// The names of `ENTRIES`' kinds, by id.\npub const KIND_NAMES: &[(u16, &str)] = &[\n{}];\n\n/// The names of `ENTRIES`' fields, by id.\npub const FIELD_NAMES: &[(u16, &str)] = &[\n{}];\n", table(kinds), table(fields)));
     (tier1, tier2)
 }
 
@@ -1408,7 +1418,7 @@ fn json_tier2_is_walks_shape() {
     assert!(!tier2.contains("i += 1;\ne = end;\nleaf("), "a token's leaf written out at a place");
     // The nodes stored through the walk's hold on the tape, a local of `run` (`Cursor`, the lean parser's `Walk`), not
     // the writer's ops on its state.
-    assert_eq!(tier2.matches("let mut cursor = unsafe { Cursor::<Cells>::begin(state) };").count(), 1, "one cursor, the walk's");
+    assert_eq!(tier2.matches("let mut cursor = unsafe { Cursor::<Cells>::recording(state, nodes, numbers) };").count(), 1, "one cursor, the walk's, recording its nodes");
     for op in ["w_open_with", "w_leaf_with", "w_close_with", "w_leaf_in_with", "d: *mut u8"] {
         assert!(!tier2.contains(op), "tier 2 still has `{op}`");
     }
@@ -1424,8 +1434,16 @@ fn json_tier2_is_walks_shape() {
 #[test]
 fn json_escape_checks_are_tier2s() {
     let (tier1, tier2) = json_rust();
+    // Its code's names, not its comments (whose prose may say "alone") nor other words (`Clone`): a name has `m` where
+    // a run of its `_`-separated parts is `m`'s.
+    let names: Vec<&str> = tier1.lines().map(|l| l.split("//").next().unwrap_or("")).flat_map(|l| l.split(|c: char| !(c.is_ascii_alphanumeric() || c == '_'))).filter(|w| !w.is_empty()).collect();
+    let has = |name: &str, m: &str| {
+        let parts: Vec<&str> = name.split('_').collect();
+        let k = m.split('_').count();
+        parts.windows(k).any(|w| w.join("_") == m)
+    };
     for m in ["unicode", "r_m_hex", "r_m_dee", "high_2", "low_2", "r_m_low", "lone"] {
-        assert!(!tier1.contains(m), "tier 1 still has `{m}`");
+        assert!(!names.iter().any(|n| has(n, m)), "tier 1 still has `{m}`");
     }
     let string = tier2.split("fn string<S").nth(1).expect("string").split("\nOk(e)\n}").next().expect("its body");
     let at = string.split("let y = p + 1;\n").nth(1).expect("the checks at an escape");

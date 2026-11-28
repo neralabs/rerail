@@ -50,6 +50,9 @@ def constant(ty):
     ty = ty.strip()
     if any(w in ty for w in ("Atomic", "Mutex", "RwLock", "Cell", "OnceLock", "LazyLock", "Lazy<", "Once")):
         return False
+    # A tuple of constants (a pair of byte tables) is one. The type is read up to its first `;`, an array's length's.
+    if ty.startswith("("):
+        return all(constant(p) for p in ty[1:].rstrip(")").split(",") if p.strip())
     return ty.startswith("&") or ty.startswith("[") or re.fullmatch(r"(u8|u16|u32|u64|usize|i32|i64|f64|bool|char)", ty) is not None
 
 

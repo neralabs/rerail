@@ -94,6 +94,13 @@ impl Region {
         !self.queued.is_null() && unsafe { (*self.queued).load(std::sync::atomic::Ordering::Relaxed) } != 0
     }
 
+    /// Its guard's count of queued device uses (`Guard::queued`), null with no guard: what a vector of it keeps beside
+    /// its pointer (`Vector::check`). It lives as long as the region's guard.
+    #[inline(always)]
+    pub fn queued_ptr(&self) -> *const std::sync::atomic::AtomicUsize {
+        self.queued
+    }
+
     /// Its guard and its first byte's offset in the guard's block.
     #[inline]
     pub fn guard(&self) -> Option<&(Arc<dyn Guard>, usize)> {
@@ -133,9 +140,9 @@ impl Region {
 }
 
 /// Where a structure lives: a region of `bytes` bytes in a block of the right life, its first byte at a multiple of
-/// `align` (at least 8). A thread's rooms and the heap's read zero (the stack's region and a large room's chunk
-/// zeroed, the heap's `alloc_zeroed`); a relation block's (`facts::rows`' `LifeRoom`, a home's room) is a chunk taken
-/// unzeroed (`try_alloc_chunk_fit`), so a structure writes each byte before it reads it.
+/// `align` (at least 8). Its bytes are whatever was there: no room zeroes a region (zeroing touched every page of
+/// it, so its whole length stayed in memory where its holder wrote a part), so a structure writes each byte before
+/// it reads it.
 pub trait Room: Send + Sync {
     fn region(&self, bytes: usize, align: usize, name: &'static str) -> Region;
 }
@@ -161,7 +168,8 @@ impl Room for HeapRoom {
     fn region(&self, bytes: usize, align: usize, _name: &'static str) -> Region {
         let layout = std::alloc::Layout::from_size_align(bytes.max(1), align.max(8)).expect("a region's layout");
         // SAFETY: a layout of at least one byte.
-        let ptr = unsafe { std::alloc::alloc_zeroed(layout) };
+        // Not zeroed, as no room's region is (`Room`).
+        let ptr = unsafe { std::alloc::alloc(layout) };
         if ptr.is_null() {
             std::alloc::handle_alloc_error(layout);
         }
@@ -171,11 +179,14 @@ impl Room for HeapRoom {
 }
 
 /// The run's room, as the blocks crate gives it (`install_default_room`): registered once, at load.
-static DEFAULT_ROOM: rerail_registry::Slot<fn() -> Arc<dyn Room>> = rerail_registry::Slot::new("the run's room every structure made with no room takes (rerail_vector::DEFAULT_ROOM)");
+/// What makes the run's room (`install_default_room`'s).
+pub type RoomProvider = fn() -> Arc<dyn Room>;
+
+static DEFAULT_ROOM: rerail_registry::Slot<RoomProvider> = rerail_registry::Slot::new("the run's room every structure made with no room takes (rerail_vector::DEFAULT_ROOM)");
 
 /// Installs the run's room: what a structure made with no room (`Vector::new`) takes its regions from. Once, at load
 /// (a second registration is a bug in the program's composition: `rerail_registry::Slot`).
-pub fn install_default_room(provider: &'static str, room: fn() -> Arc<dyn Room>) {
+pub fn install_default_room(provider: &'static str, room: RoomProvider) {
     DEFAULT_ROOM.register(provider, room);
 }
 
@@ -184,7 +195,7 @@ pub fn default_room() -> Arc<dyn Room> {
     // The provider, kept a thread once found: the slot's lock is every thread's, and a vector's every growth asks.
     // Registered once, at load, and never taken back, so a found one stays right.
     thread_local! {
-        static FOUND: std::cell::Cell<Option<fn() -> Arc<dyn Room>>> = const { std::cell::Cell::new(None) };
+        static FOUND: std::cell::Cell<Option<RoomProvider>> = const { std::cell::Cell::new(None) };
     }
     let found = FOUND.try_with(|f| f.get()).ok().flatten();
     let room: Arc<dyn Room> = match found.or_else(|| {

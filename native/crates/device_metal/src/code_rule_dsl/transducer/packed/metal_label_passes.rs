@@ -2815,27 +2815,15 @@ impl Runner<'_> {
             // Lanes times states is the arena: one over the buffer budget runs again with fewer states.
             let acquire = || crate::code_rule_dsl::prof::time("size.lease", || MetalWorkspaceLease::acquire(totals, scheduler_bytes, output_bytes, tasks));
             let mut lease = match acquire() {
-                // Not room now: admitted as a stratum's tables are (Q203, Q203), its need in bytes, waiting for what
-                // threads that go on hold to come back while waiting is worth it; its buffers are then drawn from the
-                // reservation. Refused, the run goes on with fewer states (`run_batch`), then the wave splits.
+                // Not room now: admitted as a stratum's tables are (Q203), its need in bytes (it fits, or the run ends
+                // with the memory it needs); its buffers are then drawn from the reservation.
                 Err(Error::BackendCapacity) => {
                     let bytes = MetalWorkspace::bytes_for(totals, scheduler_bytes, output_bytes, tasks);
-                    match rerail_accel::gpu::shared::admit(bytes, crate::code_rule_dsl::logic::plan::placement::admission_patience(self.nodes as f64)) {
-                        Ok(admitted) => {
-                            crate::code_rule_dsl::prof::count("wave.admitted", 1);
-                            if admitted.waited > 0.0 {
-                                crate::code_rule_dsl::prof::count("wave.admission_waits", 1);
-                            }
-                            let lease = acquire();
-                            drop(admitted);
-                            lease
-                        }
-                        Err(why) => {
-                            crate::code_rule_dsl::prof::count("wave.admission_refused", 1);
-                            crate::code_rule_dsl::logic::profile::decision("a matcher wave's workspace not admitted (Q203)", || format!("{} MB: {why}", bytes >> 20));
-                            Err(Error::BackendCapacity)
-                        }
-                    }
+                    let admitted = rerail_accel::gpu::shared::admit(bytes);
+                    crate::code_rule_dsl::prof::count("wave.admitted", 1);
+                    let lease = acquire();
+                    drop(admitted);
+                    lease
                 }
                 got => got,
             }

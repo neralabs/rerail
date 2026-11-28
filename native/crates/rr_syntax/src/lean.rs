@@ -631,7 +631,7 @@ impl Sink16<'_> {
     /// `new`, its tape written in a room of `rooms` where there is one (`None`: its own vector).
     pub fn placing(z: bool, blocks: bool, rooms: Option<std::sync::Arc<dyn rerail_tape_format::home::Rooms>>) -> Self {
         let number = std::sync::Arc::new(crate::tape::number);
-        Sink16 { target: rerail_tape_format::Sixteen { lang: crate::tape::lang(), terminators: crate::syntax::TERMINATORS, tag: rerail_tape_format::RR_TAG, z, blocks, number, rooms }, lay: None }
+        Sink16 { target: rerail_tape_format::Sixteen { lang: crate::tape::lang(), terminators: crate::syntax::TERMINATORS, tag: rerail_tape_format::RR_TAG, z, blocks, number, writers: None, sha256: None, rooms }, lay: None }
     }
 }
 

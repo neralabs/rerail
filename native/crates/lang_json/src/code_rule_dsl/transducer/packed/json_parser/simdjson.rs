@@ -14,7 +14,7 @@
 //! reads it (rerail reads source as it is written: permissive). A file still refused (a number past
 //! simdjson's range, nesting past 1,024, invalid JSON) goes to tree-sitter-json.
 use rerail_blocks::vector::Vector;
-use crate::code_rule_dsl::tape::{Code, FIELD_LIMIT, FileImage, Grammar, KIND_LIMIT, ParserImpl, TapeImage, TemplateError, TreeParser};
+use crate::code_rule_dsl::tape::{Code, FIELD_LIMIT, FileImage, Grammar, KIND_LIMIT, ParserImpl, TapeImage, TemplateError, TreeParser, Source};
 pub use rerail_simdjson::Refusal;
 
 /// tree-sitter-json's ids of the tree's kinds and fields, and of the `_value` supertype.
@@ -53,7 +53,9 @@ pub fn kinds() -> Option<&'static (rerail_simdjson::Kinds, u16)> {
 /// window at a time, go to format 16's ops, each code numbered in JSON's table once. The walk never edits a node it
 /// wrote, so each window is committed and 16z's blocks are compressed as they close. A file the strict read refuses
 /// is read again as JSONC.
-pub fn encode_with(route: Option<rerail_simdjson::Kernel>, grammar: &Grammar, source: &str, budget: &dyn Fn() -> bool) -> Result<Result<TapeImage, String>, Refusal> {
+pub fn encode_with<'s>(route: Option<rerail_simdjson::Kernel>, grammar: &Grammar, source: impl Into<Source<'s>>, budget: &dyn Fn() -> bool) -> Result<Result<TapeImage, String>, Refusal> {
+    let source: Source<'s> = source.into();
+    let source = &source;
     use crate::code_rule_dsl::language::GrammarDialect;
     use crate::code_rule_dsl::tape::formats;
     use crate::code_rule_dsl::tape::f16;
@@ -67,8 +69,11 @@ pub fn encode_with(route: Option<rerail_simdjson::Kernel>, grammar: &Grammar, so
     let src = source.as_bytes();
     let walk = |jsonc: bool| -> Result<(f16::Writer, Option<[u8; 32]>, Option<String>), Refusal> {
         // About a node for every 8 bytes: the writer grows past it.
+        // The source's digest where its reader took it: the writer takes none of its own. Its tape is written in the
+        // run's rooms (0353 row 17).
+        let doc = f16::Document { lang, source: src, tag, z, blocks: true, nodes: src.len() / 8 + 16, sha256: source.sha256 };
         let mut w = f16::Writer::placing(crate::code_rule_dsl::tape::placed::rooms());
-        w.begin(lang, src, crate::code_rule_dsl::lines::terminators(GrammarDialect::Json), tag, z, true, src.len() / 8 + 16);
+        w.begin_with(&doc, |out| crate::code_rule_dsl::lines::index_into(out, src, crate::code_rule_dsl::lines::terminators(GrammarDialect::Json)));
         let mut numbers: Vector<u32> = rerail_blocks::vector::Vector::new();
         let mut bad: Option<String> = None;
         let on = |codes: &rerail_simdjson::Codes, words: &[u32]| {
@@ -122,17 +127,8 @@ pub fn encode_with(route: Option<rerail_simdjson::Kernel>, grammar: &Grammar, so
     if let Some(why) = bad {
         return Ok(Err(why));
     }
-    // The source's digest (the kernel's, where it hashed the source as it read it): the tape's auxiliary index is keyed
-    // by it, and laid by its writer (`aux_of`).
-    let digest = match digest {
-        Some(d) => d,
-        None => match crate::code_rule_dsl::tape::source_digest(source, &budget) {
-            Ok(d) => d,
-            Err(e) => return Ok(Err(e)),
-        },
-    };
-    let lay = |t: &f16::Written| crate::code_rule_dsl::tape::formats::aux_of(t, GrammarDialect::Json, source, &digest);
-    Ok(w.finish_laid(Some(&lay)).and_then(|f| TapeImage::written_16(f, GrammarDialect::Json, source, Some(digest), budget)))
+    let aux = crate::code_rule_dsl::tape::formats::AuxFor::new(GrammarDialect::Json, source, digest, budget);
+    Ok(w.finish_laid(Some(&|t, nodes, taken| aux.make(t, nodes, taken))).and_then(|f| TapeImage::written_16(f, GrammarDialect::Json, source, aux.digest(), budget)))
 }
 
 /// The code of a node of kind `kind` and field `field` (`in_value`: a member of `_value`): a comment is an extra.
@@ -145,7 +141,9 @@ fn code(kinds: &rerail_simdjson::Kinds, value: u16, kind: u16, field: u16, in_va
 }
 
 /// `source`'s tape by the fastest route this CPU runs (`encode_with`).
-pub fn encode(grammar: &Grammar, source: &str, budget: &dyn Fn() -> bool) -> Result<Result<TapeImage, String>, Refusal> {
+pub fn encode<'s>(grammar: &Grammar, source: impl Into<Source<'s>>, budget: &dyn Fn() -> bool) -> Result<Result<TapeImage, String>, Refusal> {
+    let source: Source<'s> = source.into();
+    let source = &source;
     encode_with(rerail_simdjson::Kernel::best(), grammar, source, budget)
 }
 
@@ -184,7 +182,7 @@ pub fn registrations() -> Vec<ParserImpl> {
 }
 
 impl TreeParser for Simdjson {
-    fn parse(&self, grammar: &Grammar, source: &str, budget: &dyn Fn() -> bool) -> Option<Result<FileImage, TemplateError>> {
+    fn parse(&self, grammar: &Grammar, source: &Source<'_>, budget: &dyn Fn() -> bool) -> Option<Result<FileImage, TemplateError>> {
         if !matches!(crate::code_rule_dsl::language::base(crate::code_rule_dsl::language::Family::of(grammar.lang)).parse_input(source), std::borrow::Cow::Borrowed(_))
         {
             return None;

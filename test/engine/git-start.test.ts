@@ -484,7 +484,7 @@ describe("Git started through Node, off Linux or without the engine", () => {
   it("is what a process gets off Linux, and in a process whose engine cannot be loaded", () => {
     expect(startGitWithoutCopying(loadNativeBinding, "win32")).toBe(false);
     expect(startGitWithoutCopying(loadNativeBinding, "darwin")).toBe(false);
-    expect(startGitWithoutCopying(() => { throw new Error("Unsupported platform or missing native addon"); }, "linux")).toBe(false);
+    expect(startGitWithoutCopying(() => { throw new Error("Rerail's engine for Linux on x64 is not installed"); }, "linux")).toBe(false);
     expect(startGitWithoutCopying(() => ({}), "linux")).toBe(false);
   });
 });

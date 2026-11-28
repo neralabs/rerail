@@ -160,6 +160,7 @@ impl<'t> Extractor<'t> {
     }
 
     fn intern(&mut self, name: &str) -> u32 {
+        rerail_prof::code_rule_dsl::w_joins::count(rerail_prof::code_rule_dsl::w_joins::Site::Intern, 1, u64::from(!self.ids.contains_key(name)));
         if let Some(id) = self.ids.get(name) {
             return *id;
         }
@@ -245,6 +246,7 @@ impl<'t> Extractor<'t> {
         let mut local_references = Vec::new();
         let mut stack = vec![(root.clone(), 0usize)];
         while let Some((node, context)) = stack.pop() {
+            rerail_prof::code_rule_dsl::w_joins::count(rerail_prof::code_rule_dsl::w_joins::Site::SummaryWalk, 1, 0);
             let before = stack.len();
             let kind = node.kind();
             let inner = match kind.as_ref() {
@@ -273,6 +275,9 @@ impl<'t> Extractor<'t> {
                 // parent read and its field's range were made for every node (0477).
                 let named = kind == "identifier" || kind == "attribute";
                 let parent = if named { node.parent() } else { None };
+                if named {
+                    rerail_prof::code_rule_dsl::w_joins::count(rerail_prof::code_rule_dsl::w_joins::Site::SummaryParentRead, 1, u64::from(parent.is_some()));
+                }
                 let head_of_attribute = kind == "identifier"
                     && parent.as_ref().is_some_and(|parent| {
                         parent.kind() == "attribute"
@@ -461,6 +466,7 @@ impl<'t> Extractor<'t> {
         node: &Node<'_, D>,
         outer: &Context,
     ) -> Option<Context> {
+        rerail_prof::code_rule_dsl::w_joins::count(rerail_prof::code_rule_dsl::w_joins::Site::SummaryDefinition, 1, 1);
         let class = node.kind() == "class_definition";
         let qualified = format!(
             "{}{}",
@@ -730,6 +736,7 @@ impl<'t> Extractor<'t> {
         let mut reference_aliases = Vec::new();
         let mut opaque = Vec::new();
         for (index, scope) in table.scopes.iter().enumerate() {
+            rerail_prof::code_rule_dsl::w_joins::count(rerail_prof::code_rule_dsl::w_joins::Site::Members, scope.bindings.len() as u64, 0);
             let prefix = if index == 0 {
                 self.module.clone()
             } else if scope.kind == ScopeKind::Class {
@@ -1046,6 +1053,7 @@ impl<'t> Extractor<'t> {
     /// `from m import *` at module level.
     fn stars<D: Doc>(&mut self, root: &Node<'_, D>) {
         for statement in root.children() {
+            rerail_prof::code_rule_dsl::w_joins::count(rerail_prof::code_rule_dsl::w_joins::Site::Stars, 1, 0);
             if statement.kind() != "import_from_statement"
                 || !statement.children().any(|c| c.kind() == "wildcard_import")
             {
@@ -1133,6 +1141,7 @@ fn callee<D: Doc>(
     call: &Node<'_, D>,
     receiver: Option<&Receiver>,
 ) -> Option<Found> {
+    rerail_prof::code_rule_dsl::w_joins::count(rerail_prof::code_rule_dsl::w_joins::Site::Callee, 1, 0);
     follow(
         table,
         path,
@@ -1162,7 +1171,9 @@ fn follow<D: Doc>(
 ) -> Option<Found> {
     let mut head = unparenthesized(expression);
     let mut tail = Vec::new();
+    rerail_prof::code_rule_dsl::w_joins::count(rerail_prof::code_rule_dsl::w_joins::Site::Follow, 1, 0);
     while head.kind() == "attribute" {
+        rerail_prof::code_rule_dsl::w_joins::steps(rerail_prof::code_rule_dsl::w_joins::Site::Follow, 1, 0);
         let (Some(attribute), Some(object)) = (head.field("attribute"), head.field("object"))
         else {
             return Some(Found::Open);
@@ -1247,6 +1258,7 @@ fn follow_reference<D: Doc>(
     class: Option<&str>,
     parameter_owner: Option<u32>,
 ) -> Option<Found> {
+    rerail_prof::code_rule_dsl::w_joins::count(rerail_prof::code_rule_dsl::w_joins::Site::FollowReference, 1, 0);
     if let (Some(object), Some(attribute)) =
         (expression.field("object"), expression.field("attribute"))
     {

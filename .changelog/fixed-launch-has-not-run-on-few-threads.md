@@ -1,1 +1,0 @@
-A rule run on a machine with few cores no longer fails now and then with "launch … has not run: its wave was not flushed": work a waiting thread did for others ran launches it had queued for itself, and their results were lost.

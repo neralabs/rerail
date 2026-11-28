@@ -1202,6 +1202,14 @@ impl Retained {
 /// An input's source under another relation's column names (`r__old`'s, `sql_col`): read in place, not copied.
 struct Renamed(Arc<dyn Source>, Vec<String>);
 
+impl Renamed {
+    /// The source's statistics under its new names.
+    fn renamed(&self, stats: Vec<(String, i64, i64, i64, i64)>) -> Option<Vec<(String, i64, i64, i64, i64)>> {
+        let names = self.0.columns();
+        stats.into_iter().map(|(c, a, b, x, y)| Some((self.1[names.iter().position(|n| *n == c)?].clone(), a, b, x, y))).collect()
+    }
+}
+
 /// What `load` reads an input's old rows by, beside the documents the last run read: the documents whose content and
 /// key are as they were (`same`), and each changed input's new rows, as the run binds them.
 pub(in crate::code_rule_dsl) struct NewInputs<'a> {
@@ -1309,6 +1317,9 @@ impl Source for Renamed {
     fn estimated_len(&self) -> usize {
         self.0.estimated_len()
     }
+    fn known_len(&self) -> Option<usize> {
+        self.0.known_len()
+    }
     fn may_hold_rows(&self) -> bool {
         self.0.may_hold_rows()
     }
@@ -1361,9 +1372,10 @@ impl Source for Renamed {
         self.0.failed()
     }
     fn statistics(&self) -> Option<Vec<(String, i64, i64, i64, i64)>> {
-        let names = self.0.columns();
-        let stats = self.0.statistics()?;
-        stats.into_iter().map(|(c, a, b, x, y)| Some((self.1[names.iter().position(|n| *n == c)?].clone(), a, b, x, y))).collect()
+        self.renamed(self.0.statistics()?)
+    }
+    fn estimated_statistics(&self) -> Option<Vec<(String, i64, i64, i64, i64)>> {
+        self.renamed(self.0.estimated_statistics()?)
     }
     fn indexed(&self, column: usize) -> bool {
         self.0.indexed(column)
@@ -2692,6 +2704,9 @@ impl Source for Traced {
     fn estimated_len(&self) -> usize {
         self.inner.estimated_len()
     }
+    fn known_len(&self) -> Option<usize> {
+        self.inner.known_len()
+    }
     fn may_hold_rows(&self) -> bool {
         self.inner.may_hold_rows()
     }
@@ -2744,6 +2759,10 @@ impl Source for Traced {
     fn statistics(&self) -> Option<Vec<(String, i64, i64, i64, i64)>> {
         self.whole("statistics");
         self.inner.statistics()
+    }
+    fn estimated_statistics(&self) -> Option<Vec<(String, i64, i64, i64, i64)>> {
+        self.whole("statistics");
+        self.inner.estimated_statistics()
     }
     fn value_counts(&self, wanted: &[(usize, i64)]) -> Option<Vector<i64>> {
         self.whole("value_counts");
@@ -3249,6 +3268,21 @@ impl Retained {
         Ok(true)
     }
 
+    /// Derived relation `rel` where it lies, as held or bound from the frames: a source of columns `c0`, `c1`, … over
+    /// the held relation itself (its live rows), for a reader that binds it (the cone's relations, handed on to the
+    /// rest of the cross-file part). Decision 0353: never its rows copied out.
+    pub(in crate::code_rule_dsl) fn derived_source(&self, store: &ContentStore, rel: &str) -> Option<Arc<dyn crate::code_rule_dsl::facts::vtab::Source>> {
+        let names = |w: usize| (0..w).map(|c| format!("c{c}")).collect::<Vec<_>>();
+        if let Some(k) = self.rels.get(rel) {
+            return Some(k.rel.source(names(k.width)));
+        }
+        let frames = self.frames.as_ref().filter(|f| f.derived.contains_key(rel))?;
+        let name = &frames.names[rel];
+        let entry = frames.bound.as_ref().and_then(|b| b.entry(&name.name, &name.ident, DOCS_PART))?;
+        let held = entry.rel(&store.atoms_handle())?;
+        Some(held.source(names(entry.width())))
+    }
+
     /// Derived relation `rel`'s rows, as held or read back from the frames.
     pub(in crate::code_rule_dsl) fn read_derived(&self, store: &ContentStore, rel: &str) -> Result<Option<Vec<Vector<i64>>>> {
         if let Some(k) = self.rels.get(rel) {
@@ -3576,7 +3610,7 @@ pub(in crate::code_rule_dsl) fn write_input_kept(store: &ContentStore, was: &InK
     // An input whose rows are those its entry holds (its digest known, the same as the entry's) puts its statistics
     // at most, a few words: its job is run here, not on the pool. A warm run's every input is such, and as 1,146
     // jobs of a microsecond or two each they woke the pool's 17 threads, which spun 0.1 s of CPU between them.
-    let unchanged = |rel: &String| was.names.get(rel).is_some() && digests.get(rel).is_some_and(|d| was.inputs.get(rel).is_some_and(|(k, _)| k == d));
+    let unchanged = |rel: &String| was.names.contains_key(rel) && digests.get(rel).is_some_and(|d| was.inputs.get(rel).is_some_and(|(k, _)| k == d));
     let mut framed_inputs: Vec<Option<(u64, usize)>> = inputs.iter().map(|(rel, source)| if unchanged(rel) { one_input(rel, source) } else { None }).collect();
     let rest: Vec<usize> = (0..inputs.len()).filter(|&k| !unchanged(&inputs[k].0)).collect();
     if !rest.is_empty() {

@@ -14,6 +14,10 @@
 // `defined`); and its own relations, keyed by the module: class, defined, ancestor, library_ancestor, the
 // members', the ancestors' and the Django facts.
 
+// A file's own facts are python/scopes' (sym_of, qn, attr_of): this file reads them, so it includes it, and a check of
+// its own components (decision 0639 §6a) knows what attr_of guarantees (o is below n), which bounds lsym's recursion.
+#include "python/scopes.rerail"
+
 .decl exports_of(m: symbol, x: symbol, q: symbol) extensible
 .decl handed_sym(q: symbol) extensible
 .decl handed_obj(q: symbol) extensible

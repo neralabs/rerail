@@ -302,7 +302,7 @@ pub enum SettingsScope {
 /// path, a variable its head drops) is of every file's rows, and so is a memoised relation still keyed by one.
 pub fn settings_scopes(local: &crate::code_rule_dsl::logic::plan::body::Placed, rels: &BTreeSet<String>) -> BTreeMap<String, SettingsScope> {
     use crate::code_rule_dsl::logic::program_image::TermRef;
-    use crate::code_rule_dsl::typing::file_local::{setting_by_folder, setting_by_path, setting_key_hop, setting_input};
+    use crate::code_rule_dsl::logic::plan::phased::{Keyed, declared_key};
     /// A relation's reads of the settings: of any file's, of its own file's, and keyed by its columns' paths or folders.
     #[derive(Clone, Default, PartialEq)]
     struct Reach {
@@ -312,16 +312,18 @@ pub fn settings_scopes(local: &crate::code_rule_dsl::logic::plan::body::Placed, 
         path: BTreeSet<usize>,
     }
     let v = &local.v;
-    let base = |rel: &str| -> Option<Reach> {
-        if setting_by_folder(rel) {
-            Some(Reach { folder: [0].into(), ..Reach::default() })
-        } else if setting_by_path(rel).is_some() {
-            Some(Reach { path: [0].into(), ..Reach::default() })
-        } else if setting_input(rel) {
-            // Keyed by nothing (`Keyed::Whole`: `env`, `py_names__dj_app_defers`): every file's rows.
-            Some(Reach { all: true, ..Reach::default() })
-        } else {
-            None
+    // Each relation's declared key (`phased::declared_key`, what `file_local::setting_input` and its kin read), looked
+    // up once: the fixpoints below read it for every atom of every rule, each round.
+    let keys: std::cell::RefCell<Vec<Option<Option<Keyed>>>> = std::cell::RefCell::new(vec![None; v.rel_end() as usize]);
+    let key = |a: &crate::code_rule_dsl::logic::program_image::AtomRef<'_>| -> Option<Keyed> {
+        keys.borrow_mut()[a.rel().0 as usize].get_or_insert_with(|| declared_key(v.rel_name(a.rel()))).clone()
+    };
+    let base = |k: Option<Keyed>| -> Option<Reach> {
+        match k? {
+            Keyed::ByKey(_) => Some(Reach { folder: [0].into(), ..Reach::default() }),
+            Keyed::ByPath(_) => Some(Reach { path: [0].into(), ..Reach::default() }),
+            // Keyed by nothing (`env`, `py_names__dj_app_defers`): every file's rows.
+            Keyed::Whole => Some(Reach { all: true, ..Reach::default() }),
         }
     };
     // A rule's own paths (its document's, `doc(d, p, _)`), and the folders its own file's rows name: read at its own
@@ -331,7 +333,10 @@ pub fn settings_scopes(local: &crate::code_rule_dsl::logic::plan::body::Placed, 
         let own: HashSet<_> = atoms.iter().filter(|a| v.rel_name(a.rel()) == "doc").filter_map(|a| a.args().nth(1).and_then(|t| t.var())).collect();
         let mut folders: HashSet<_> = atoms
             .iter()
-            .filter_map(|a| setting_by_path(v.rel_name(a.rel())).flatten().map(|c| (a, c)))
+            .filter_map(|a| match key(a) {
+                Some(Keyed::ByPath(c)) => c.map(|c| (a, c)),
+                _ => None,
+            })
             .filter(|(a, _)| a.args().next().and_then(|t| t.var()).is_some_and(|p| own.contains(&p)))
             .filter_map(|(a, c)| a.args().nth(c).and_then(|t| t.var()))
             .collect();
@@ -345,7 +350,10 @@ pub fn settings_scopes(local: &crate::code_rule_dsl::logic::plan::body::Placed, 
         loop {
             let more: Vec<_> = atoms
                 .iter()
-                .filter_map(|a| setting_key_hop(v.rel_name(a.rel())).map(|c| (a, c)))
+                .filter_map(|a| match key(a) {
+                    Some(Keyed::ByKey(c)) => c.map(|c| (a, c)),
+                    _ => None,
+                })
                 .filter(|(a, _)| a.args().next().and_then(|t| t.var()).is_some_and(|k| folders.contains(&k)))
                 .filter_map(|(a, c)| a.args().nth(c).and_then(|t| t.var()))
                 .filter(|x| !folders.contains(x))
@@ -385,7 +393,7 @@ pub fn settings_scopes(local: &crate::code_rule_dsl::logic::plan::body::Placed, 
             let mut got = reach.get(head).cloned().unwrap_or_default();
             for a in &atoms {
                 let rel = v.rel_name(a.rel());
-                let Some(r) = base(rel).or_else(|| reach.get(rel).cloned()) else { continue };
+                let Some(r) = base(key(a)).or_else(|| reach.get(rel).cloned()) else { continue };
                 got.all |= r.all;
                 got.own |= r.own;
                 for (keys, by_folder) in [(&r.folder, true), (&r.path, false)] {
@@ -558,6 +566,9 @@ pub struct StageDigests {
     whole: BTreeMap<String, [u8; 32]>,
     /// Each memoised relation's exports reached, in order.
     reach: BTreeMap<String, Vec<String>>,
+    /// The probes read from an entry's exported rows, not its outputs: a probe of values the split located (decision
+    /// 0680), whose twin the cross part reads back. Their keys are the store's atoms, as the entry's rows hold them.
+    twins: BTreeSet<String>,
 }
 
 impl StageDigests {
@@ -568,13 +579,17 @@ impl StageDigests {
 
     /// Of the phases' rows (`phased`), the probes (`(probe, export, columns)`), the exports read whole, and the
     /// memoised relations' identities' leaves (`Strata`). A probe the file-local part does not output (`local`) keys
-    /// nothing: its export is read whole, as is one a memoised relation reaches with no probe of it.
+    /// nothing: its export is read whole, as is one a memoised relation reaches with no probe of it. A probe among
+    /// `twins` is read from the entry's exported rows, its texts the store's atoms (`atoms`, of texts in order; `None`,
+    /// or too few, and the export is read whole).
     pub fn of(
         phased: &BTreeMap<String, Vec<Vec<crate::code_rule_dsl::logic::front::Value>>>,
         probes: &[(String, String, Vec<usize>)],
         whole: &BTreeSet<String>,
         strata: &Strata,
         local: &dyn Fn(&str) -> bool,
+        twins: &BTreeSet<String>,
+        atoms: &dyn Fn(&[&str]) -> Option<Vec<i64>>,
     ) -> Self {
         use crate::code_rule_dsl::logic::front::Value;
         let row_key = |row: &[Value], cols: &[usize]| {
@@ -621,8 +636,36 @@ impl StageDigests {
         }
         for (probe, export, cols) in probes {
             let mut by: HashMap<Vec<u8>, Vec<[u8; 32]>> = HashMap::new();
-            for row in phased.get(export).into_iter().flatten() {
-                by.entry(row_key(row, cols)).or_default().push(digest(row));
+            let rows = phased.get(export).map(Vec::as_slice).unwrap_or_default();
+            if twins.contains(probe) {
+                // Keyed as the twin's rows hold the values: a text by its atom, a number by itself.
+                let texts: Vec<&str> = rows.iter().flat_map(|row| cols.iter().filter_map(|&c| match row.get(c) {
+                    Some(Value::Str(t)) => Some(t.as_str()),
+                    _ => None,
+                })).collect();
+                // Texts the store cannot name: the export is read whole, never keyed short of its rows.
+                let Some(ids) = atoms(&texts).filter(|ids| ids.len() == texts.len()) else {
+                    whole.insert(export.clone());
+                    continue;
+                };
+                let mut ids = ids.into_iter();
+                for row in rows {
+                    let mut k = Vec::new();
+                    for &c in cols {
+                        match row.get(c) {
+                            Some(Value::Str(_)) => key_bytes(&mut k, None, ids.next().expect("an atom for each text")),
+                            Some(Value::Int(i)) => key_bytes(&mut k, None, *i),
+                            Some(other) => key_bytes(&mut k, Some(&format!("{other:?}")), 0),
+                            None => {}
+                        }
+                    }
+                    by.entry(k).or_default().push(digest(row));
+                }
+                out.twins.insert(probe.clone());
+            } else {
+                for row in rows {
+                    by.entry(row_key(row, cols)).or_default().push(digest(row));
+                }
             }
             for rows in by.values_mut() {
                 rows.sort_unstable();
@@ -657,19 +700,31 @@ impl StageDigests {
                 }
                 for (probe, (e, by)) in self.probes.iter().filter(|(_, (e, _))| e == export) {
                     let _ = e;
-                    let Some((_, rows)) = entry.outputs.get(probe) else { continue };
-                    let mut keys: Vec<Vec<u8>> = (0..rows.len())
-                        .map(|i| {
-                            let mut k = Vec::new();
-                            for c in 1..rows.width() {
-                                match rows.cell(i, c) {
-                                    super::super::output::Cell::Text(t) => key_bytes(&mut k, Some(t), 0),
-                                    super::super::output::Cell::Int(x) => key_bytes(&mut k, None, x),
+                    // Past the location, column 0: the values the probe fixed the export's read at.
+                    let mut keys: Vec<Vec<u8>> = if self.twins.contains(probe) {
+                        let Some((w, rows)) = entry.rows.get(probe) else { continue };
+                        rows.chunks_exact((*w).max(1))
+                            .map(|row| {
+                                let mut k = Vec::new();
+                                row.iter().skip(1).for_each(|&x| key_bytes(&mut k, None, x));
+                                k
+                            })
+                            .collect()
+                    } else {
+                        let Some((_, rows)) = entry.outputs.get(probe) else { continue };
+                        (0..rows.len())
+                            .map(|i| {
+                                let mut k = Vec::new();
+                                for c in 1..rows.width() {
+                                    match rows.cell(i, c) {
+                                        super::super::output::Cell::Text(t) => key_bytes(&mut k, Some(t), 0),
+                                        super::super::output::Cell::Int(x) => key_bytes(&mut k, None, x),
+                                    }
                                 }
-                            }
-                            k
-                        })
-                        .collect();
+                                k
+                            })
+                            .collect()
+                    };
                     keys.sort_unstable();
                     keys.dedup();
                     h.update(probe.as_bytes());
@@ -821,9 +876,11 @@ pub fn plan_digest(program: &[u8; 32]) -> [u8; 32] {
     hash.update(b"rerail.corpus-local/v5\0");
     hash.update(crate::code_rule_dsl::build_ids::engine().as_bytes());
     hash.update(crate::code_rule_dsl::build_ids::grammar_version().to_le_bytes());
-    // A memoised row's node ids are those of the scheme it was made under: preorder, or per definition.
-    if crate::code_rule_dsl::facts::vtab::syntax::definition_ids() {
-        hash.update(b"node-ids:definition\0");
+    // A memoised row's node ids are those of the scheme it was made under: preorder, per definition, or tape positions.
+    match crate::code_rule_dsl::facts::vtab::syntax::node_ids() {
+        crate::code_rule_dsl::facts::vtab::syntax::NodeIds::Definition => hash.update(b"node-ids:definition\0"),
+        crate::code_rule_dsl::facts::vtab::syntax::NodeIds::Tape => hash.update(b"node-ids:tape\0"),
+        crate::code_rule_dsl::facts::vtab::syntax::NodeIds::Preorder => {}
     }
     hash.update(program);
     hash.finalize().into()

@@ -154,8 +154,8 @@ enum Pre {
 /// whether it is a run of its choices (`program::TokenElem`), a run's depths' sides: each its
 /// counter, whether it opens, its kinds' names and its words (`program::Nest`), and a run's
 /// `ending`'s kinds and words, and the marks it holds with or without (`with M`, `without M`:
-/// each its name and whether with).
-pub type TokenElemRow = (i8, Vec<String>, Vec<u16>, bool, bool, bool, Vec<NestRow>, Option<(Vec<String>, Vec<u16>)>, Vec<(String, bool)>);
+/// each its name and whether with), and the depths it takes whole (bits of the counters).
+pub type TokenElemRow = (i8, Vec<String>, Vec<u16>, bool, bool, bool, Vec<NestRow>, Option<(Vec<String>, Vec<u16>)>, Vec<(String, bool)>, u8);
 
 /// One side of a run's depth, as `TokenElemRow` holds it: counter, opens, kinds, words.
 pub type NestRow = (u8, bool, Vec<String>, Vec<u16>);
@@ -256,6 +256,9 @@ pub struct Mark {
     /// `, ends`: hidden, and a level that may end where it holds and does not take it ends
     /// there, its caller to take it.
     pub ends: bool,
+    /// `, deeper`, `, shallower` (decision 0698): it holds only where the column of its token
+    /// is past, or less than, the asking level's indent (`Words::mark_columns`).
+    pub column: Option<::bitlex::syntax::Column>,
 }
 
 impl Mark {
@@ -367,7 +370,7 @@ impl Emit<'_> {
     /// `flags`: the arm's flags (`flags_of`), `i` the call's: with a function a rule, one flag
     /// the call runs with is its `PUSH`'s (`push_flag`), as a parameter, so the callee is entered
     /// at its one entry; else they are the first words after it.
-    fn call(&mut self, ret: u16, callee: u16, flags: &[(u8, u16, bool)], i: usize) {
+    fn call(&mut self, ret: u16, callee: u16, flags: &[(u8, u16, bool)], indents: &[u8], i: usize) {
         let mine: Vec<(u16, bool)> = flags.iter().filter(|f| usize::from(f.0) == i).map(|f| (f.1, f.2)).collect();
         let on_push = self.by_rules && mine.len() == 1;
         let mode = if on_push { push_flag(mine[0].0, mine[0].1) } else { 0 };
@@ -379,6 +382,10 @@ impl Emit<'_> {
         }
         if !on_push {
             self.flags_of(flags, i);
+        }
+        // An `indented` level's indent: its first token's column (decision 0698).
+        if indents.iter().any(|&c| usize::from(c) == i) {
+            self.push("INDENT", 0, Arg::None);
         }
     }
 
@@ -423,7 +430,9 @@ impl Emit<'_> {
         }
         self.endings(st);
         if own {
-            self.push("CLOSE", mode, Arg::None);
+            // An indented level's node: the comment lines pending at least as deep as its
+            // indent are its own (`CLOSE m=2`), as tree-sitter's scanner dedents after them.
+            self.push("CLOSE", if st.indented && mode == 0 { 2 } else { mode }, Arg::None);
         }
     }
 
@@ -563,6 +572,8 @@ impl Emit<'_> {
         let mut remember = None;
         // Each call's flags (`with F R`), after its `PUSH`: (call, flag, set).
         let mut flags: Vec<(u8, u16, bool)> = Vec::new();
+        // The calls into an `indented` level, each its indent after its `PUSH`.
+        let mut indents: Vec<u8> = Vec::new();
         let a = &self.arms[arm];
         for act in a.acts.clone() {
             let (supers, field) = match act {
@@ -570,8 +581,9 @@ impl Emit<'_> {
                     self.push("CLOSE", 0, Arg::None);
                     continue;
                 }
-                Act::Open { kind, field, supers } => {
-                    self.push("OPEN", 0, Arg::Kind(kind));
+                Act::Open { kind, field, supers, attached } => {
+                    // `m=1`: at the end of the record before the token (an `attached` rule's).
+                    self.push("OPEN", u8::from(attached), Arg::Kind(kind));
                     (supers, field)
                 }
                 Act::Leaf { field, supers, kind } => {
@@ -613,6 +625,11 @@ impl Emit<'_> {
                     self.push("RETAG", 0, Arg::Kind(kind));
                     continue;
                 }
+                // Mode 5: the node the open node, a wrap, holds first.
+                Act::Inner { field } => {
+                    self.push("NODE_FIELD", 5, Arg::Field(field));
+                    continue;
+                }
                 Act::Merge { kind } => {
                     self.push("MERGE", 0, Arg::Kind(kind));
                     continue;
@@ -635,6 +652,10 @@ impl Emit<'_> {
                     flags.push((call, flag, set));
                     continue;
                 }
+                Act::Indent { call } => {
+                    indents.push(call);
+                    continue;
+                }
                 Act::Unless { .. } => continue,
                 Act::Relabel { field, moved, inner } => {
                     // Mode 2: the node made last at this level; mode 3: the node its wrap holds
@@ -651,11 +672,14 @@ impl Emit<'_> {
                     }
                     continue;
                 }
-                Act::Wrap { kind, field, moved } => {
-                    // The wrap takes the moved node's field; then the moved node gets its own.
+                Act::Wrap { kind, field, moved, slot } => {
+                    // The wrap takes the moved node's field and slot; then the moved node gets its own.
                     self.push("WRAP", 0, Arg::Kind(kind));
                     if field != 0 {
                         self.push("NODE_FIELD", 1, Arg::Field(field));
+                    }
+                    if slot != 0 {
+                        self.push("NODE_SUPER", 1, Arg::Kind(slot));
                     }
                     if moved != 0 {
                         self.push("RETAG", 1, Arg::Kind(moved));
@@ -666,7 +690,9 @@ impl Emit<'_> {
             if field != 0 {
                 self.push("NODE_FIELD", 0, Arg::Field(field));
             }
-            for s in supers {
+            // A node's slot: the outermost supertype it is reached through; its classes are the
+            // slot's and its kind's (`Words::super_classes`, decision 0698).
+            if let Some(&s) = supers.first() {
                 self.push("NODE_SUPER", 0, Arg::Kind(s));
             }
         }
@@ -683,7 +709,7 @@ impl Emit<'_> {
             (Some((&p, outer)), Some(c)) if ends_at_once => {
                 for (i, &o) in outer.iter().enumerate() {
                     let callee = outer.get(i + 1).copied().unwrap_or(p);
-                    self.call(o, callee, &flags, i);
+                    self.call(o, callee, &flags, &indents, i);
                 }
                 let st = st.clone();
                 self.end_closes(&st, c, 1, st.own);
@@ -692,7 +718,7 @@ impl Emit<'_> {
             _ => {
                 for (i, &p) in ret.iter().enumerate() {
                     let callee = ret.get(i + 1).copied().unwrap_or(to);
-                    self.call(p, callee, &flags, i);
+                    self.call(p, callee, &flags, &indents, i);
                 }
                 if let Some(k) = remember {
                     // A keyword's: its kind from the token's word, as a keyword's leaf's.
@@ -1442,8 +1468,12 @@ impl Emit<'_> {
             self.switches[t].words = keep;
         }
         // The marks' arms: their acts, no bytes taken (the next state switches on this token).
+        // A mark's arm the flags guard (`unless F`): where the flag is set, the mark is not asked here, as if the arm were
+        // not there (the reference's `starts_flagged`): the state's next test, after the mark's.
         for (jump, a) in mark_arms {
+            let default = std::mem::replace(&mut self.default, jump + 1);
             let to = self.body(a);
+            self.default = default;
             self.words[jump as usize].2 = Arg::Pc(to);
         }
         Ok(())
@@ -1542,12 +1572,16 @@ pub fn lower(states: &[StateRow], arms: &[ArmRow], rows: &[Row], marks: &[Mark],
         let to = arms.iter().find(|a| usize::from(a.from) == s).map(|a| usize::from(a.to)).expect("an arm");
         e.at_switch[to] = false;
     }
-    // The keywords' strings first, in the order of their kinds, as the lean parser numbers its
-    // words: a keyword's leaf kind is then its word plus a constant over each run of kinds
-    // (`word_kind`), one add, not a compare tree.
-    let mut keywords: Vec<(u16, Vec<u8>)> = rows.iter().flat_map(|r| r.keywords.iter().chain(&r.soft)).map(|(w, k)| (*k, w.clone())).collect();
+    // The keywords' strings first, the hard ones (a row's `keywords`) before the soft, each row's in its order, as the
+    // lean parser numbers its words (hard keywords, then `w::SOFT` on), by class: a name that is no hard keyword is a
+    // word past them, one compare (`bitlex_rust`'s `kind_test`), not a list, and a class a grammar lists together is a
+    // run, one range. A keyword's leaf kind is its word's (`word_kinds`), whatever its number.
+    // Row by row, so that a row's hard keywords are one run (a name row's: the words a name is not). The soft ones in
+    // their row's order: a grammar lists them by class, as the lean parser lists its words (`w`), so that a class of
+    // them (a modifier) is a run of words, one range (`bitlex_rust`'s word tests), not a list.
+    let mut keywords: Vec<(bool, usize, u16, Vec<u8>)> = rows.iter().enumerate().flat_map(|(i, r)| r.keywords.iter().enumerate().map(move |(j, (w, _))| (false, i, j as u16, w.clone())).chain(r.soft.iter().enumerate().map(move |(j, (w, _))| (true, i, j as u16, w.clone())))).collect();
     keywords.sort();
-    for (_, w) in &keywords {
+    for (_, _, _, w) in &keywords {
         e.string(w);
     }
     // The token marks' words, and their elements by offset.
@@ -1568,14 +1602,14 @@ pub fn lower(states: &[StateRow], arms: &[ArmRow], rows: &[Row], marks: &[Mark],
                 let (mut kinds, mut words, mut end, mut without) = (Vec::new(), Vec::new(), false, Vec::new());
                 let none_nest = Vec::new();
                 let none_ending = Vec::new();
-                let (not, run, choices, nests, ending) = match choices.as_slice() {
-                    [::bitlex::syntax::TokenElem::Not(inner)] => (true, false, inner.as_slice(), &none_nest, &none_ending),
-                    // A run of tokens none of the choices.
+                let (not, run, choices, nests, ending): (bool, bool, Vec<::bitlex::syntax::TokenElem>, _, _) = match choices.as_slice() {
+                    [::bitlex::syntax::TokenElem::Not(inner)] => (true, false, inner.clone(), &none_nest, &none_ending),
+                    // A run of tokens none of the choices, each with or without the marks after them.
                     [::bitlex::syntax::TokenElem::Many(inner, nests, ending)] => match inner.as_slice() {
-                        [::bitlex::syntax::TokenElem::Not(none)] => (true, true, none.as_slice(), nests, ending),
-                        _ => (false, true, inner.as_slice(), nests, ending),
+                        [::bitlex::syntax::TokenElem::Not(none), marks @ ..] => (true, true, none.iter().chain(marks).cloned().collect(), nests, ending),
+                        _ => (false, true, inner.clone(), nests, ending),
                     },
-                    c => (false, false, c, &none_nest, &none_ending),
+                    c => (false, false, c.to_vec(), &none_nest, &none_ending),
                 };
                 // The run's `ending` (Q342).
                 let ending_row = if ending.is_empty() {
@@ -1593,6 +1627,8 @@ pub fn lower(states: &[StateRow], arms: &[ArmRow], rows: &[Row], marks: &[Mark],
                 };
                 // The run's depths (Q339): each side its counter's.
                 let mut nest_rows = Vec::new();
+                // The depths whose contents it takes whole (decision 0633).
+                let whole = nests.iter().enumerate().filter(|(_, n)| n.whole).fold(0u8, |a, (k, _)| a | 1 << k);
                 for (k, n) in nests.iter().enumerate() {
                     for (open, side) in [(true, &n.open), (false, &n.close)] {
                         let (mut ks, mut ws) = (Vec::new(), Vec::new());
@@ -1606,7 +1642,7 @@ pub fn lower(states: &[StateRow], arms: &[ArmRow], rows: &[Row], marks: &[Mark],
                         nest_rows.push((k as u8, open, ks, ws));
                     }
                 }
-                for c in choices {
+                for c in &choices {
                     match c {
                         ::bitlex::syntax::TokenElem::Kind(name) => kinds.push(name.clone()),
                         ::bitlex::syntax::TokenElem::Word(w) => words.push(e.string(w)),
@@ -1619,7 +1655,7 @@ pub fn lower(states: &[StateRow], arms: &[ArmRow], rows: &[Row], marks: &[Mark],
                 }
                 // The token before, `~`: it holds with no token before too (`end` there).
                 let end = end || (offset == -1 && not);
-                elems.push((offset, kinds, words, not, end, run, nest_rows, ending_row, without));
+                elems.push((offset, kinds, words, not, end, run, nest_rows, ending_row, without, whole));
             }
             // A refusing one's word: its bit in the record is the word's alone (no state tests
             // it, so no `MARK` names the word).
@@ -1797,6 +1833,12 @@ pub fn lower(states: &[StateRow], arms: &[ArmRow], rows: &[Row], marks: &[Mark],
     crate::rir_text::mark_word_rows(&mut text, &mark_words);
     let mark_passes: Vec<(u8, u64)> = marks.iter().enumerate().filter(|(_, m)| m.passes != 0).map(|(k, m)| (k as u8, m.passes)).collect();
     crate::rir_text::mark_pass_rows(&mut text, &mark_passes);
+    let mark_columns: Vec<(u8, u8)> = marks
+        .iter()
+        .enumerate()
+        .filter_map(|(k, m)| m.column.map(|c| (k as u8, if c == ::bitlex::syntax::Column::Deeper { 1 } else { 2 })))
+        .collect();
+    crate::rir_text::mark_column_rows(&mut text, &mark_columns);
     let word_kinds: Vec<(u16, u16)> = e.word_kinds.iter().map(|(&s, &k)| (s, k)).collect();
     crate::rir_text::word_kind_rows(&mut text, &word_kinds);
     crate::rir_text::rule_rows(&mut text, &firsts);
