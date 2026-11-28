@@ -258,6 +258,16 @@ pub fn field(b: &mut B<'_, '_>) -> Value {
     })
 }
 
+/// `view_label(l)`: numbered node `l`'s field atom, its code's in the entry's `fields` (`field_atom` of its tag and
+/// the field it hangs by; field 0 for none), as the `field` view's `f` reads a fielded node's.
+#[cfg(feature = "ir")]
+pub fn label(b: &mut B<'_, '_>) -> Value {
+    let l = b.arg(0);
+    let x = b.tape_node(l);
+    let code = b.call_tape("tape_number", &[x]);
+    b.entry_item(at::FIELDS, code)
+}
+
 /// `view_core(l, col)`: column `col` of `core_node`'s row of numbered node `l`: the document, its tape node, its id.
 #[cfg(feature = "ir")]
 pub fn core(b: &mut B<'_, '_>) -> Value {

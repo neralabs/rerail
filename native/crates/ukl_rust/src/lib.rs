@@ -22,7 +22,7 @@ pub use sources::*;
 /// `join_chain`, written by hand (`join_program`), which read the views' format as the compiled reads do, so one Rust
 /// for each. Not `sources.rs`, which rerail-ukl-vec's tests write: device-metal's test (`join_rust`) holds these to
 /// the source.
-pub const JOIN_PROGRAM: [u64; 3] = [0x107b3c2583459d01, 0xbb573245b241e1f3, 0x1f40815e947aa146];
+pub const JOIN_PROGRAM: [u64; 3] = [0xabcbd0f3fd18d721, 0x113fb0b22810943b, 0x3b9f17773ab46b8e];
 
 /// A group's launch, as a kernel's Rust reads it: its group's position, its threads' (each dimension's), and the
 /// groups'.

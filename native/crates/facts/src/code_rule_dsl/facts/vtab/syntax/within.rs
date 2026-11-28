@@ -681,6 +681,14 @@ impl Within {
     /// The axis solved on the device over `views`' `node` rows, in one relation (`nearest::AxisSolve`).
     #[cfg(any(target_os = "macos", target_os = "linux", windows))]
     fn solved_over(&self, views: &super::device_chunk::ViewsInPlace, keep: Arc<dyn std::any::Any + Send + Sync>) -> Option<crate::code_rule_dsl::facts::nearest::SolvedOnDevice> {
+        use crate::code_rule_dsl::facts::nearest::AxisRows;
+        let rows = if matches!(self.mode, Mode::Axis(Axis::Inside) | Mode::Tree) { AxisRows::Inside } else { AxisRows::Nearest };
+        self.solved_as(views, keep, rows)
+    }
+
+    /// The axis solved on the device over `views`' `node` rows as `rows` asks (`nearest::AxisSolve`).
+    #[cfg(any(target_os = "macos", target_os = "linux", windows))]
+    fn solved_as(&self, views: &super::device_chunk::ViewsInPlace, keep: Arc<dyn std::any::Any + Send + Sync>, rows: crate::code_rule_dsl::facts::nearest::AxisRows) -> Option<crate::code_rule_dsl::facts::nearest::SolvedOnDevice> {
         use crate::code_rule_dsl::facts::core::KIND_STRIDE;
         use crate::code_rule_dsl::facts::nearest::axis_solve;
         let solve = axis_solve().filter(|_| self.binding == Binding::Metal)?;
@@ -691,8 +699,7 @@ impl Within {
         let _span = crate::code_rule_dsl::logic::profile::span(|| "kind-set axis solved on the device off the tape".into());
         // Per tag and slot a bit: the host's `member`, ERROR at slot 0 (`kind_atom`), as the kernel reads an atom.
         let bits = (self.mode != Mode::Tree).then_some(&self.members[..]).filter(|b| b.len() == 256 * KIND_STRIDE as usize / 32);
-        let inside = matches!(self.mode, Mode::Axis(Axis::Inside) | Mode::Tree);
-        match solve(&node, nodes, &self.batch.block, views.at, bits.as_deref(), inside) {
+        match solve(&node, nodes, &self.batch.block, views.at, bits.as_deref(), rows) {
             Ok(c) => Some(c),
             Err(why) => {
                 crate::code_rule_dsl::logic::profile::decision("kind-set axes (decision 0289)", || format!("solved on the host: {why}"));
@@ -1478,6 +1485,15 @@ impl NearestChild {
         use crate::code_rule_dsl::facts::nearest::NONE as NO;
         use crate::code_rule_dsl::facts::rows::Part;
         let batch = &self.axis.batch;
+        // On the device where the axis is bound to it (Plan A step 2): its climb's last hop is the child, its field
+        // read off the tape (`view_label`); the same rows as the sweep's, its starts in the batch's block.
+        #[cfg(any(target_os = "macos", target_os = "linux", windows))]
+        if self.axis.on_device()
+            && let Some(views) = super::device_chunk::views_in_place(batch)
+            && let Some(c) = self.axis.solved_as(views, Arc::clone(batch) as Arc<dyn std::any::Any + Send + Sync>, crate::code_rule_dsl::facts::nearest::AxisRows::NearestChild)
+        {
+            return Solved { start: Vector::new(), rows: c.rows, start_in_block: Some(c.start) };
+        }
         let (near, child, field) = self.found();
         let n = near.len();
         let mut start = Vector::with_capacity(n + 1);
@@ -1521,12 +1537,31 @@ impl NearestChild {
         }
     }
 
+    /// Whether its solve was made on the device (its starts in the batch's block).
+    #[cfg(any(target_os = "macos", target_os = "linux", windows))]
+    pub fn solved_on_device(&self) -> bool {
+        self.solved().start_in_block.is_some()
+    }
+
+    /// The solve's first row per node row (`nodes + 1` values): the host's, or where the device wrote them.
+    fn starts(&self) -> &[u32] {
+        let s = self.solved();
+        #[cfg(any(target_os = "macos", target_os = "linux", windows))]
+        if let Some(at) = s.start_in_block {
+            let n = self.axis.batch.nodes().total() + 1;
+            // SAFETY: the device wrote `n` values there, in the batch's block, which lives as long as the batch the
+            // axis holds.
+            return unsafe { std::slice::from_raw_parts(self.axis.batch.block.ptr::<u32>(at), n) };
+        }
+        &s.start
+    }
+
     /// Node id `value`'s row, if it has one.
     fn row_of(&self, value: i64, memo: &mut u32) -> Option<usize> {
-        let s = self.solved();
+        let s = self.starts();
         let (doc, local) = self.axis.batch.node(value, memo)?;
         let r = self.axis.batch.nodes().at(doc) + local as usize;
-        (s.start[r] != s.start[r + 1]).then_some(s.start[r] as usize)
+        (s[r] != s[r + 1]).then_some(s[r] as usize)
     }
 }
 
@@ -1535,8 +1570,8 @@ impl Source for NearestChild {
         vec!["n".into(), "a".into(), "c".into(), "f".into()]
     }
     fn len(&self) -> usize {
-        let s = self.solved();
-        s.start[s.start.len() - 1] as usize
+        let s = self.starts();
+        s[s.len() - 1] as usize
     }
     /// As the axis's `nearest`: about a row a node.
     fn estimated_len(&self) -> usize {

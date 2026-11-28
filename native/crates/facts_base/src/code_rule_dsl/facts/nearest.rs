@@ -50,12 +50,24 @@ pub struct SolvedOnDevice {
     pub rows: super::rows::Part,
 }
 
+/// Which rows an axis's solve on the device writes per node (`AxisSolve`).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum AxisRows {
+    /// Its nearest ancestor in the set: `(n, a)`.
+    Nearest,
+    /// Every ancestor in the set (containment's, `inside`'s): `(n, a)` each.
+    Inside,
+    /// Its nearest ancestor in the set and that one's child that holds it, with the child's field atom
+    /// (`NearestChild`): `(n, a, c, f)`, none where `a` is `n`'s parent.
+    NearestChild,
+}
+
 /// What makes an axis's solve on the device: a views' directory read in place (a batch's, or a layered source's of
 /// a batch and its tape values, decision 0431 §8), its `node` rows, the block its starts go in (the batch's),
-/// `members` per kind atom (256 tags of 1,024 slots) a bit, `None` for every kind (containment); `inside` for every
-/// ancestor in the set, else the nearest.
+/// `members` per kind atom (256 tags of 1,024 slots) a bit, `None` for every kind (containment); which rows
+/// (`AxisRows`).
 #[cfg(any(target_os = "macos", target_os = "linux", windows))]
-pub type AxisSolve = fn(&crate::code_rule_dsl::facts::vtab::ViewInPlace, usize, &rerail_blocks::Block, usize, Option<&[u32]>, bool) -> Result<SolvedOnDevice, String>;
+pub type AxisSolve = fn(&crate::code_rule_dsl::facts::vtab::ViewInPlace, usize, &rerail_blocks::Block, usize, Option<&[u32]>, AxisRows) -> Result<SolvedOnDevice, String>;
 
 /// The device's solve of an axis (registered once, at load: the device crate's).
 #[cfg(any(target_os = "macos", target_os = "linux", windows))]

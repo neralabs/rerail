@@ -477,7 +477,7 @@ struct AxisParams {
     n: u32,
     bits: u32,
     inside: u32,
-    pad: u32,
+    child: u32,
     rows_at: u64,
     rows: u64,
 }
@@ -496,10 +496,11 @@ impl AxisParams {
 /// climbs them, and counted; the counts scanned into the starts, in `block` (the batch's, page-aligned, bound as a
 /// buffer of their own with no copy); then, the total read, the rows written, each the ids of `n` and `a`, into one
 /// relation of exactly that many rows (decision 0353 step 5). It is a derived fact like a rule's head: it lies in a
-/// run's block, not leased from the device's budget. `bits`: per kind atom a bit (`None`: every kind); `inside`: every
-/// ancestor in the set, else the nearest. A 16z directory whose caches fail while it reads is refused (the host
+/// run's block, not leased from the device's budget. `bits`: per kind atom a bit (`None`: every kind); `rows`: every
+/// ancestor in the set, the nearest, or the nearest with its child on the path and the child's field atom (Plan A
+/// step 2: the climb's last hop, `NearestChild`). A 16z directory whose caches fail while it reads is refused (the host
 /// solves).
-pub fn axis_in_place(views: &crate::code_rule_dsl::facts::vtab::ViewInPlace, nodes: usize, block: &rerail_blocks::Block, dir_at: usize, bits: Option<&[u32]>, inside: bool)
+pub fn axis_in_place(views: &crate::code_rule_dsl::facts::vtab::ViewInPlace, nodes: usize, block: &rerail_blocks::Block, dir_at: usize, bits: Option<&[u32]>, rows: crate::code_rule_dsl::facts::nearest::AxisRows)
                      -> Result<crate::code_rule_dsl::facts::nearest::SolvedOnDevice, String> {
     use crate::code_rule_dsl::facts::rows::Part;
     use rerail_clif::view_reads::{ViewDir, ViewRow};
@@ -531,7 +532,9 @@ pub fn axis_in_place(views: &crate::code_rule_dsl::facts::vtab::ViewInPlace, nod
             set.set(i, w);
         }
     }
-    let mut params = AxisParams { dir: views.dir, n: n as u32, bits: u32::from(bits.is_some()), inside: u32::from(inside), pad: 0, rows_at: 0, rows: 0 };
+    use crate::code_rule_dsl::facts::nearest::AxisRows;
+    let (inside, child) = (rows == AxisRows::Inside, rows == AxisRows::NearestChild);
+    let mut params = AxisParams { dir: views.dir, n: n as u32, bits: u32::from(bits.is_some()), inside: u32::from(inside), child: u32::from(child), rows_at: 0, rows: 0 };
     let start_bytes = (4 * (n + 1)).next_multiple_of(PAGE);
     let start_at = block.try_alloc(start_bytes, PAGE).ok_or("the batch's block cannot hold the axis's starts")?;
     // SAFETY: the starts' pages lie in the batch's block, which outlives the work: it is waited for below.
@@ -574,7 +577,8 @@ pub fn axis_in_place(views: &crate::code_rule_dsl::facts::vtab::ViewInPlace, nod
     runs_of(&mut |_, _| runs += 1);
     // Alone in its block, with room for an index at every entry of its directory (`Part::over_key_runs`). Each column
     // its ids' low bits, under the documents' keys.
-    let (out_rows, keys) = Part::over_key_runs(crate::code_rule_dsl::facts::rows::Life::Run, 2, total, runs);
+    // With the child, `(n, a, c, f)`: the ids keyed, the field atom not (as the host's `NearestChild::solve`).
+    let (out_rows, keys) = if child { Part::over_key_runs_of(crate::code_rule_dsl::facts::rows::Life::Run, 4, 3, total, runs) } else { Part::over_key_runs(crate::code_rule_dsl::facts::rows::Life::Run, 2, total, runs) };
     let mut k = 0;
     runs_of(&mut |first, key| {
         keys.put(k, first, key);

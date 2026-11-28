@@ -135,6 +135,7 @@ UKL_COLD uint64_t clif_view_line_span(UKL_GLOBAL const uint8_t* t,uint64_t a0,UK
 UKL_COLD uint32_t clif_view_line_terminated(UKL_GLOBAL const uint8_t* t,uint64_t a0,UKL_GLOBAL const uint8_t* tt,CLIF_VIEW_SPACE const uint32_t* v,UKL_GLOBAL const uint8_t* ll,uint64_t la,uint32_t a4);
 UKL_INLINE uint64_t clif_view_doc(UKL_GLOBAL const uint8_t* t,uint64_t a0,UKL_GLOBAL const uint8_t* tt,CLIF_VIEW_SPACE const uint32_t* v,UKL_GLOBAL const uint8_t* ll,uint64_t la,uint32_t a4,uint32_t a5);
 UKL_COLD uint32_t clif_view_loc_number(UKL_GLOBAL const uint8_t* t,uint64_t a0,UKL_GLOBAL const uint8_t* tt,CLIF_VIEW_SPACE const uint32_t* v,UKL_GLOBAL const uint8_t* ll,uint64_t la,uint32_t a4);
+UKL_COLD uint64_t clif_view_label(UKL_GLOBAL const uint8_t* t,uint64_t a0,UKL_GLOBAL const uint8_t* tt,CLIF_VIEW_SPACE const uint32_t* v,UKL_GLOBAL const uint8_t* ll,uint64_t la,uint32_t a4);
 UKL_INLINE uint64_t clif_view_core(UKL_GLOBAL const uint8_t* t,uint64_t a0,UKL_GLOBAL const uint8_t* tt,CLIF_VIEW_SPACE const uint32_t* v,UKL_GLOBAL const uint8_t* ll,uint64_t la,uint32_t a4,uint32_t a5){
  uint64_t v0=0;
  uint64_t v1=0;
@@ -721,4 +722,8 @@ UKL_COLD uint64_t clif_view_op(UKL_GLOBAL const uint8_t* t,uint64_t a0,UKL_GLOBA
 UKL_COLD uint64_t clif_view_text_span(UKL_GLOBAL const uint8_t* t,uint64_t a0,UKL_GLOBAL const uint8_t* tt,CLIF_VIEW_SPACE const uint32_t* v,UKL_GLOBAL const uint8_t* ll,uint64_t la,uint32_t a4){
  if(clif_view(v,CLIF_T_FORMAT)==CLIF_T_F16Z_FORMAT) CLIF_Z_READ(uint64_t,tt,v,clif_f16z_view_text_span(t,a0,tt,v,ll,la,a4))
  return clif_f16_view_text_span(t,a0,tt,v,ll,la,a4);
+}
+UKL_COLD uint64_t clif_view_label(UKL_GLOBAL const uint8_t* t,uint64_t a0,UKL_GLOBAL const uint8_t* tt,CLIF_VIEW_SPACE const uint32_t* v,UKL_GLOBAL const uint8_t* ll,uint64_t la,uint32_t a4){
+ if(clif_view(v,CLIF_T_FORMAT)==CLIF_T_F16Z_FORMAT) CLIF_Z_READ(uint64_t,tt,v,clif_f16z_view_label(t,a0,tt,v,ll,la,a4))
+ return clif_f16_view_label(t,a0,tt,v,ll,la,a4);
 }

@@ -193,6 +193,9 @@ pub const READS: &[Read] = &[
     // A `Loc` view probed by its id (`docof`'s, decision 0706 step 0): the id's position, no index of the view. Last,
     // so no other read's number moves.
     Read { family: Family::View, name: "view_loc_number", params: &[I32], ret: I32, hot: false, body: crate::view_reads::loc_number },
+    // A numbered node's field atom (`nearest(n, a, S, c)`'s `f`, Plan A step 2: the device's solve carries the last
+    // hop). Last, so no other read's number moves.
+    Read { family: Family::View, name: "view_label", params: &[I32], ret: I64, hot: false, body: crate::view_reads::label },
 ];
 
 /// The reads of format 16 alone: a side list's value, and a node's slot (16z's parent steps read it block by

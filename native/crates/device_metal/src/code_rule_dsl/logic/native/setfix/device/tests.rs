@@ -2408,6 +2408,27 @@ use rerail_blocks::vector::Vector;
             // The device's solve, its answer as ids too: read where it lies.
             read_in_place("the device's solve", &dev, &[0, 1]);
         }
+        // `nearest(n, a, S, c)` (Plan A step 2): the device's climb carries its last hop, the member's child that holds
+        // `n` and the field that child hangs by (`view_label`): the sweep's words, row for row, and its rows by `n`.
+        {
+            use crate::code_rule_dsl::facts::vtab::syntax::within::NearestChild;
+            let host = NearestChild::new(Arc::clone(&batch), &kinds, Binding::Cpu);
+            let dev = NearestChild::new(Arc::clone(&batch), &kinds, Binding::Metal);
+            let n = host.len();
+            assert!(n > 20, "nearest with the child: {n} rows");
+            assert_eq!(dev.len(), n, "nearest with the child: the device's rows");
+            assert!(dev.solved_on_device() && !host.solved_on_device(), "nearest with the child: solved on the device's binding there alone");
+            for c in 0..4 {
+                let (h, d): (Vector<i64>, Vector<i64>) = ((0..n).map(|r| host.value(r, c)).collect(), (0..n).map(|r| dev.value(r, c)).collect());
+                assert_eq!(d, h, "nearest with the child: column {c}");
+            }
+            let fields: std::collections::BTreeSet<i64> = (0..n).map(|r| host.value(r, 3) & 0xffff).collect();
+            assert!(fields.len() > 2, "children under several fields and none: {fields:?}");
+            for r in 0..node.len() {
+                let id = node.value(r, 1);
+                assert_eq!(dev.lookup(0, &[id]), host.lookup(0, &[id]), "nearest with the child: the row of {id}");
+            }
+        }
         let sent: Vec<String> = crate::code_rule_dsl::logic::profile::take_decisions().into_keys().filter(|(t, x)| t == "kind-set axes (decision 0289)" && x.starts_with("solved on the host")).map(|(_, x)| x).collect();
         crate::code_rule_dsl::logic::profile::set(false);
         assert!(sent.is_empty(), "the device's binding solved on the device: {sent:?}");
@@ -2439,8 +2460,8 @@ use rerail_blocks::vector::Vector;
         let (node_view, nodes) = views.node_view(batch.block(), Arc::clone(&batch) as Arc<dyn std::any::Any + Send + Sync>).expect("the device reads the batch's tapes");
         assert_eq!(nodes, node.len(), "the directory's node rows are the batch's");
         let read = |c: &crate::code_rule_dsl::facts::nearest::SolvedOnDevice| -> Vec<(i64, i64)> { (0..c.rows.len()).map(|r| (c.rows.get(r, 0), c.rows.get(r, 1))).collect() };
-        let once = mj::axis_in_place(&node_view, nodes, batch.block(), views.at, None, true).unwrap();
-        let again = mj::axis_in_place(&node_view, nodes, batch.block(), views.at, None, true).unwrap();
+        let once = mj::axis_in_place(&node_view, nodes, batch.block(), views.at, None, crate::code_rule_dsl::facts::nearest::AxisRows::Inside).unwrap();
+        let again = mj::axis_in_place(&node_view, nodes, batch.block(), views.at, None, crate::code_rule_dsl::facts::nearest::AxisRows::Inside).unwrap();
         assert!(once.rows.len() > 0);
         assert_eq!(once.rows.len() as usize, Within::new(Arc::clone(&batch), Mode::Tree).len());
         // Room for its rows, rounded up to whole chunks: not a bound sized before the count.
