@@ -124,7 +124,7 @@ pub fn admit(
 /// houses both, `TapeImage::housed` and `placed::housed`), its view naming them there. Nothing is copied: a document
 /// held apart (no device room, or format 15) is refused, and read where it is, on the CPU.
 pub fn admit_docs(docs: &[crate::code_rule_dsl::tape::TapeDoc]) -> Result<Vec<Arc<Resident>>, Error> {
-    let digests = docs.iter().map(|doc| doc.tape_digest_and_image().map(|(digest, _)| digest).map_err(invalid)).collect::<Result<Vec<_>, _>>()?;
+    let digests = docs.iter().map(|doc| doc.tape_digest().map_err(invalid)).collect::<Result<Vec<_>, _>>()?;
     let missing = misses(&digests)?;
     if !missing.is_empty() {
         let mut lying = Vec::with_capacity(missing.len());
@@ -226,17 +226,14 @@ fn place(
     let source = region(source_at, plan.source);
     match parts {
         // Decompressed straight into the slab, to the frames' raw lengths exactly (a 16z tape as stored), then
-        // checked: the store's bytes are the tape's and the source's whose digests the store holds.
+        // checked: the store's bytes are the source's whose digest the store holds. The tape's key names what made it,
+        // not its bytes (`HashKey::tape_identity`), so its bytes are the store's as written.
         Parts::Frames(frames) => {
             frames.tape_frame.copy_into(tape).map_err(|error| invalid(format!("tape frame: {error}")))?;
             frames.source_frame.copy_into(source).map_err(|error| invalid(format!("source frame: {error}")))?;
             let source_sha256: [u8; 32] = Sha256::digest(&*source).into();
             if source_sha256 != frames.source_sha256 {
                 return Err(invalid("a resident source's digest"));
-            }
-            // The key is the tape's identity: its bytes as stored and its source's (`HashKey::tape_identity`).
-            if crate::code_rule_dsl::tape::tape_identity(&source_sha256, tape) != *digest {
-                return Err(invalid("a resident tape's digest"));
             }
         }
     }

@@ -129,6 +129,14 @@ fn make(path: &Path) {
         .unwrap_or_else(|panic| Err(panic.downcast_ref::<String>().cloned().or_else(|| panic.downcast_ref::<&str>().map(|s| s.to_string())).unwrap_or_default()));
     if let Err(why) = filled {
         eprintln!("rerail: the test stores' template holds no library ({why}); every test's store starts empty");
+        // The failed fill's runs may have queued writes behind them, and the process holds what it read of the store:
+        // its writes drained and the store forgotten before its folder goes. Left, a late write's rows landed in the
+        // empty store made in its place, naming kept facts files its folder did not hold, and every copy's first run
+        // failed ("a space's kept facts: No such file or directory").
+        if let Ok(handle) = crate::content_store::ContentStore::open(&store) {
+            let _ = handle.written();
+        }
+        crate::content_store::ContentStore::forget(&store);
         let _ = std::fs::remove_dir_all(&staging);
         crate::content_store::prepare_cache_directory(&staging).expect("the template's staging directory");
         drop(crate::content_store::ContentStore::open(&store).expect("an empty store"));
@@ -160,6 +168,24 @@ fn make(path: &Path) {
     }
     std::fs::rename(&published, path).expect("the template, published");
     let _ = std::fs::remove_dir_all(&staging);
+    crate::content_store::ContentStore::forget(&store);
+    held_whole(path);
+}
+
+/// The template at `path` holds every kept facts file its rows name: a copy of one that did not failed at its first
+/// run, far from the cause.
+fn held_whole(path: &Path) {
+    let db = rusqlite::Connection::open(path).expect("the published template");
+    let mut q = db.prepare("SELECT space, name FROM facts_chain").expect("the template's kept facts");
+    let rows: Vec<([u8; 32], String)> = q
+        .query_map([], |r| Ok((r.get::<_, Vec<u8>>(0)?.try_into().unwrap_or([0; 32]), r.get(1)?)))
+        .expect("the template's kept facts")
+        .collect::<Result<_, _>>()
+        .expect("the template's kept facts");
+    for (space, name) in rows {
+        let file = crate::content_store::kept_facts::space_dir(path, &space).join(&name);
+        assert!(file.is_file(), "the store template names a kept facts file it does not hold: {}", file.display());
+    }
 }
 
 /// Phase 0 over every library module, the engine's phase programs and the core program, then a run of the core program

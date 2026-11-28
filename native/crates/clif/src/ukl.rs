@@ -146,7 +146,7 @@ pub fn translate_view_reads(funcs: &[(u32, ir::Function, &str)], prefix: &str) -
         let outer = signature(f, &format!("{prefix}{n}"), family, hot)?;
         writeln!(head, "{outer};").unwrap();
         let args: String = (family.pointers()..f.signature.params.len()).map(|k| format!(",a{k}")).collect();
-        let pass = format!("t,a0,tt,v,ll,la{args}");
+        let pass = format!("t,a0,tt,v,ll,la,cd{args}");
         writeln!(
             each,
             "{outer}{{\n if(clif_view(v,CLIF_T_FORMAT)==CLIF_T_F16Z_FORMAT) CLIF_Z_READ({ret},tt,v,{prefix}f16z_{n}({pass}))\n return {prefix}f16_{n}({pass});\n}}"
@@ -256,7 +256,9 @@ fn pointers(family: Family) -> (&'static str, &'static str) {
         // in a tape: CUDA faults on a load from a base that is not 8-aligned).
         Family::Relation => ("CLIF_BLOCK_SPACE const uint8_t* t,uint64_t a0", "t"),
         Family::Lines => ("UKL_GLOBAL const uint8_t* t,uint64_t a0", "t"),
-        Family::View => ("UKL_GLOBAL const uint8_t* t,uint64_t a0,UKL_GLOBAL const uint8_t* tt,CLIF_VIEW_SPACE const uint32_t* v,UKL_GLOBAL const uint8_t* ll,uint64_t la", "t"),
+        // The codes' directory (decision 0697): its device buffer's start, which a view read passes on (`cd`).
+        Family::Codes => ("UKL_GLOBAL const uint8_t* t,uint64_t a0", "t"),
+        Family::View => ("UKL_GLOBAL const uint8_t* t,uint64_t a0,UKL_GLOBAL const uint8_t* tt,CLIF_VIEW_SPACE const uint32_t* v,UKL_GLOBAL const uint8_t* ll,uint64_t la,UKL_GLOBAL const uint8_t* cd", "t"),
     }
 }
 
@@ -879,7 +881,7 @@ fn instruction(f: &ir::Function, inst: ir::Inst, name: &dyn Fn(ir::Value) -> Str
                     32 => "uint32_t",
                     _ => "uint64_t",
                 };
-                let space = if family == Family::Lines { "UKL_GLOBAL" } else { "CLIF_BLOCK_SPACE" };
+                let space = if matches!(family, Family::Lines | Family::Codes) { "UKL_GLOBAL" } else { "CLIF_BLOCK_SPACE" };
                 set(format!("(({u})(*({space} const {t}*)(t+{})))", addr(&args[0])))
             } else if aligned {
                 // The view: its u32 fields.
@@ -933,8 +935,9 @@ fn instruction(f: &ir::Function, inst: ir::Inst, name: &dyn Fn(ir::Value) -> Str
             let pointers = match (family, to) {
                 (Family::View, Family::Tape) => "tt,v".to_owned(),
                 (Family::View, Family::Lines) => "ll,la".to_owned(),
-                (Family::Lines, Family::Lines) => "t,a0".to_owned(),
-                (Family::View, Family::View) => format!("t,{},tt,v,ll,la", args[0]),
+                (Family::View, Family::Codes) => "cd,0ul".to_owned(),
+                (Family::Lines, Family::Lines) | (Family::Codes, Family::Codes) => "t,a0".to_owned(),
+                (Family::View, Family::View) => format!("t,{},tt,v,ll,la,cd", args[0]),
                 (_, Family::Relation) => format!("t,{}", args[0]),
                 (Family::Tape, _) => pointers(family).1.to_owned(),
                 (from, to) => return Err(format!("a {from:?} read's call of a {to:?} read")),

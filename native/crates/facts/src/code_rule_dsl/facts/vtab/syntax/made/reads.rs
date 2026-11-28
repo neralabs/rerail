@@ -36,11 +36,20 @@ pub(super) struct Layer {
     /// The 16z documents' cache (decision 0353 step 4b, `view::cache`): the batch's (`Docs::cache`), which the host's
     /// reads of its tapes decode into, home `3n` of the directory from the first 16z row: every reader shares it.
     cache: OnceLock<Option<ZCache>>,
+    /// The codes' directory as the device reads it (decision 0697): the binary's, wrapped in place for the device
+    /// (no copy) where the device's reads are set up, home `2n + 1`'s device address.
+    #[cfg(any(target_os = "macos", target_os = "linux", windows))]
+    codes: OnceLock<Option<rerail_device::device::Buffer>>,
 }
 
 impl Layer {
     pub(super) fn new(n: usize) -> Layer {
-        Layer { rows: (0..n).map(|_| OnceLock::new()).collect(), cache: OnceLock::new() }
+        Layer {
+            rows: (0..n).map(|_| OnceLock::new()).collect(),
+            cache: OnceLock::new(),
+            #[cfg(any(target_os = "macos", target_os = "linux", windows))]
+            codes: OnceLock::new(),
+        }
     }
 }
 
@@ -93,18 +102,44 @@ impl Docs {
                 // Its home, `3n`: the directory names it (`ViewDir::cache`, its number + 1).
                 let n = super::HOMES * self.len();
                 let host = cache.cache.at() as u64;
-                let gpu = cache.buffer.as_ref().and_then(|b| b.device_address()).unwrap_or(0);
+                // With no process device the join programs run on the host, which reads every home where it lies: its
+                // device address its host address (`ViewsInPlace::read_on_host`).
+                let gpu = cache.buffer.as_ref().and_then(|b| b.device_address()).unwrap_or(if crate::code_rule_dsl::tape::placed::device().is_none() { host } else { 0 });
                 let dir = self.dir().cast_mut();
                 // SAFETY: the directory's home `3n` and its `cache` field, in the batch's block: the reads layer's,
                 // which no reader reads before a 16z row (written after this) names it.
                 unsafe {
                     ViewDir::homes_mut(dir).add(n).write(ViewHome { host, gpu });
-                    (&raw mut (*dir).cache).write(n as u64 + 1);
+                    (&raw mut (*dir).cache).write(n as u32 + 1);
                 }
                 Some(cache)
             })
             .as_ref()
             .filter(|c| c.entry >= entry)
+    }
+
+    /// The codes' directory's device buffer (`Layer::codes`), its home's device address written: none without a
+    /// device. A device that refuses the binary's memory is an error, never a copy (decision 0353). Made where the
+    /// device's reads of the batch are set up (`device_chunk::build_views`), before any of its rows is read there.
+    #[cfg(any(target_os = "macos", target_os = "linux", windows))]
+    pub fn codes_device(&self) -> Option<&rerail_device::device::Buffer> {
+        self.layer
+            .codes
+            .get_or_init(|| {
+                placed::device()?;
+                // The binary's directory, wrapped once and held as long as the device (`Shared::wrap_static`): a wrap
+                // released with this layer left the directory's pages unreadable on Metal.
+                let buffer = rerail_device::shared::get()?
+                    .wrap_static(rerail_tape_format::codes_dir::bytes())
+                    .unwrap_or_else(|e| panic!("the device's wrap of the codes' directory: {e}"));
+                let gpu = buffer.device_address()?;
+                let dir = self.dir().cast_mut();
+                // SAFETY: the directory's codes' home, in the batch's block: written here once, before any row the
+                // device reads names it (this row's, written after).
+                unsafe { (*ViewDir::homes_mut(dir).add((*dir).codes as usize)).gpu = gpu };
+                Some(buffer)
+            })
+            .as_ref()
     }
 
     /// Document `i`'s row written: its entry, its tape, lines and source in their homes, its view.
@@ -114,6 +149,14 @@ impl Docs {
         if !Arc::ptr_eq(p.block(), b) {
             return Err("views.refused.block");
         }
+        // Its row names its entry, whatever else it reads: a file of no tape read still has its `doc` row, read in its
+        // entry (`view_doc`: its key, its path's and module's atoms, which `tape_rows::derive` writes there, before or
+        // after this). The entry lies in the block from the projection's making; where no tape is read, no other view
+        // has a row of it, and the reads layer has no entry (`read`: None).
+        let dir = self.dir().cast_mut();
+        // SAFETY: row `i`'s entry field, in the batch's block: the reads layer's, written only here (once, in the row's
+        // `OnceLock`); the entry is the projection's, in the same block.
+        unsafe { (&raw mut (*ViewDir::block_rows(dir).add(i)).entry).write(b.offset_of(p.entry().0.as_ptr()) as u64) };
         let nodes = p.len() > 0;
         // The `Loc` rows are the reads' where the positions are a file's own tree's or a placement in the block.
         let locs = p.extra.is_some() && (p.locs() == 0 || ViewEntry::locs(p).is_some());
@@ -171,13 +214,19 @@ impl Docs {
         if view.format == rerail_clif::view::F16Z_FORMAT {
             let cache = self.zcache(view.columns[3] as usize).ok_or("views.refused.zcache_small")?;
             (view.columns[3], view.columns[4]) = (cache.entry as u32, 1);
-            let cache_gpu = cache.buffer.as_ref().and_then(|b| b.device_address()).unwrap_or(0);
+            let cache_gpu = cache.buffer.as_ref().and_then(|b| b.device_address()).unwrap_or(if crate::code_rule_dsl::tape::placed::device().is_none() { cache.cache.at() as u64 } else { 0 });
             if cache_gpu != 0 && tape_gpu != 0 {
                 let rel = cache_gpu.wrapping_sub(tape_gpu + tape_home.at) as i64;
                 (view.side[0], view.side[1]) = (rel as u32, (rel >> 32) as u32); // bits: an offset's halves
             }
         }
-        let entry = ViewEntry::new(b, p, &self.context.dialects[p.tag()], self.names());
+        // A text read as text only has no dialect, and no nodes (`ViewEntry::new` reads no kind of it); a document
+        // with nodes and none is refused.
+        let dialect = self.context.dialects.get(p.tag());
+        if dialect.is_none() && nodes {
+            return Err("views.refused.no_dialect");
+        }
+        let entry = ViewEntry::new(b, p, dialect, self.names());
         let dir = self.dir().cast_mut();
         // SAFETY: row `i` and its homes `3i` to `3i + 2`, in the batch's block: the reads layer's fields, which only
         // this write writes (once, in the row's `OnceLock`), and the search layer's readers do not read.
@@ -234,7 +283,14 @@ impl Docs {
                 0 => std::ptr::null(),
                 k => (*homes.add(k as usize - 1)).host as *const u8,
             };
-            Some(Doc::new(entry, Tape::new(tape, &row.view, cache), lines, self[i].facts.source.as_bytes()))
+            Some(Doc::new(entry, Tape::new(tape, &row.view, cache), lines, self[i].facts.source.as_bytes(), codes(entry)))
         }
     }
+}
+
+/// A document's language's codes' kind atoms and field atoms (decision 0697), the binary's, as its views' reads take
+/// them (`view_reads::Doc::new`).
+fn codes(entry: &ViewDoc) -> (&'static [u32], &'static [u32]) {
+    let tag = entry.tag as u8;
+    (rerail_tape_format::codes_dir::kinds(tag), rerail_tape_format::codes_dir::fields(tag))
 }

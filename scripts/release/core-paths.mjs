@@ -106,15 +106,18 @@ export function publishRetryRefusal({ version, ref, latest = "", packageVersion,
 }
 
 /**
- * Paths `coreChanges` doesn't count that can still change the tarball: what builds it, what packing runs, how Git checks
- * out the large files it packs, and the changelog it packs. A directory ends in `/`.
+ * Paths `coreChanges` doesn't count that can still change the tarball: what builds it, what packing runs (the engine
+ * packages core pins, and the shrinkwrap that lists them), how Git checks out the large files it packs, and the
+ * changelog it packs. A directory ends in `/`.
  */
 export const PACKAGE_INPUTS = [
   ".gitattributes",
   ".github/actions/",
   ".github/workflows/package.yml",
   "CHANGELOG.md",
+  "scripts/release/engine/",
   "scripts/release/shrinkwrap-pack.mjs",
+  "scripts/release/shrinkwrap.mjs",
 ];
 
 /** Whether a change to repository path `path` can change the tarball though `coreChanges` doesn't count it. */
@@ -138,13 +141,20 @@ export function retrySummary(version, changed) {
   ].join("\n");
 }
 
-/** What the environment matrix itself runs on: a change to one of these is tested even though core does not ship it. */
+/**
+ * What the environment matrix itself runs on: a change to one of these is tested even though core does not ship it.
+ * The engine packages are among them: the matrix installs the ones package.yml packs, and whether an install has an
+ * engine is decided by how they are packed and pinned.
+ */
 export const MATRIX_INPUTS = [
   ".github/workflows/env-matrix.yml",
   ".github/workflows/package.yml",
   "scripts/host/azure/",
   "scripts/host/windows-host.ps1",
   "scripts/release/core-paths.mjs",
+  "scripts/release/engine/",
+  "scripts/release/shrinkwrap-pack.mjs",
+  "scripts/release/shrinkwrap.mjs",
 ];
 
 /**

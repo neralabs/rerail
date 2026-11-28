@@ -101,6 +101,19 @@
 .decl types__anc(c: symbol, a: symbol)
 .decl types__proto(c: symbol)
 .decl struct__param(f: symbol, i: number, x: symbol, a: symbol)
+// ---- a term's file (decision 0725: callable relations routed by key) ---------------------------------------------
+// pt_tm_file(t, d): the document a term's rows lie in, read off the term. A term is a node path (decision 0722), which
+// names its file: its granule's key begins with the document's path (`@path_file`). A guest's node's path is its
+// host's file's, whose part holds the guest's nodes (0722 §7). The relations of a file's terms are asked by term
+// (`.callable R PATTERN by pt_tm_file C`), each ask answered in its term's file; the split writes the terms asked as
+// `pt_tm_file__ask`. The router reads every file's path (`cross_file`): a file's own table names its path alone. It
+// reads them as a file's rows (`pt_tm_file_path`), as the cone of requests reads exports, not a base relation.
+.decl pt_tm_file_path(p: symbol, d: number)
+pt_tm_file_path(p, d) :- doc(d, p, _).
+.decl pt_tm_file__ask(t: node_path)
+.decl pt_tm_file(t: node_path, d: number) cross_file
+pt_tm_file(t, d) :- pt_tm_file__ask(t), p = @path_file(t), pt_tm_file_path(p, d).
+
 // ---- names read, and the scope that binds them ----------------------------------------------------------------
 // ---- unconditional rebinding --------------------------------------------------------------------------------------
 // ---- decorators ---------------------------------------------------------------------------------------------------
@@ -1060,6 +1073,7 @@ pt_vopen(n) :- pt_vopen_l_7(n, o), pt_pv(o, "super", c), pt_base_open(c).
 pt_vopen(n) :- pt_vopen_l_5(n, o), pt_pv(o, "fn", _).
 pt_vopen(n) :- pt_vopen_l_5(n, o), pt_pv(o, "wfn", _).
 .decl pt_vopen_l_8(n: node_path)
+.callable pt_vopen_l_8 b by pt_tm_file
 pt_vopen_l_8(n__t) :- pt_vpos(n), !pt_callee(_, n), n__t = @node_path(n).
 pt_vopen(n) :- pt_vopen_l_8(n), pt_ext_attr(n).
 .decl pt_vopen_l_9(c: node_path, n: node_path)

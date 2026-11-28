@@ -51,7 +51,7 @@ text_deprecated_comparison_op_m(n, n) :- text_deprecated_comparison_op_name(n).
 text_deprecated_comparison_op_m(n, a) :- text_deprecated_comparison_op_name(n), field(a, "attribute", n), node(_, a, "attribute", _, _).
 .decl text_deprecated_comparison_op_hit(m: node)
 // The policy asks for the token after m to be `=`, `==`, `:` or `:=`. The tape stores none of those but `==` and
-// the `=` of `f"{x=}"` (RER-131); each marks a place in the named structure, read from it here.
+// the `=` of `f"{x=}"` (decision 0161); each marks a place in the named structure, read from it here.
 text_deprecated_comparison_op_hit(m) :- text_deprecated_comparison_op_m(_, m), text_deprecated_comparison_op_before(m).
 .decl text_deprecated_comparison_op_before(m: node)
 // `m = …`, `m: T`, `m: T = …`

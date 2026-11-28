@@ -467,9 +467,12 @@ enum Made<'v> {
     Cut { name: String, rule: RuleRef<'v>, rel: String, vars: Vec<String>, consts: Vec<(String, TermRef<'v>)>, filters: Vec<(String, String)> },
 }
 
-/// A round's program: the readers' atoms to rename (by node), the rules made, the declarations and the keys.
+/// A round's program: the readers' atoms to rename (by rule, then node), the rules made, the declarations and the keys.
+/// A literal's node is its place in its rule's image, which a version of several images (an overlay, a union of
+/// modules) gives two rules alike: keyed by node alone, a reader's rename renamed a literal of another rule
+/// (`flag_col`'s `kind` read as `xd_called`).
 struct Plan<'v> {
-    renamed: HashMap<u32, String>,
+    renamed: HashMap<crate::code_rule_dsl::logic::program_image::RuleId, HashMap<u32, String>>,
     made: Vec<Made<'v>>,
     decls: BTreeMap<String, Vec<(String, String)>>,
     keys: Vec<String>,
@@ -491,11 +494,11 @@ fn write(b: &mut Builder<'_>, input: &Version, plan: &Plan<'_>, onto: bool) -> R
         b.fields().declare(rel, &cols);
     }
     for r in input.rules() {
-        if r.body().any(|l| plan.renamed.contains_key(&l.node())) {
+        if let Some(renamed) = plan.renamed.get(&r.id()) {
             if onto {
                 b.remove(r.id());
             }
-            b.rewrite(input, r, &mut ReadCut(&plan.renamed)).finish()?;
+            b.rewrite(input, r, &mut ReadCut(renamed)).finish()?;
         } else if !onto {
             b.keep(input, r);
         }
@@ -753,8 +756,8 @@ impl ProgramPass for DemandExports {
                     }
                 }
                 lines.push(format!("{rel}: {} reads, cut by {} rules", reads[rel].len(), seen.len()));
-                for (_, l, _) in &reads[rel] {
-                    plan.renamed.insert(l.node(), xd.clone());
+                for (rule, l, _) in &reads[rel] {
+                    plan.renamed.entry(rule.id()).or_default().insert(l.node(), xd.clone());
                 }
             }
             plan.keys = keys_of.keys().cloned().collect();

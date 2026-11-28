@@ -57,6 +57,7 @@ pub fn placed(key: &str, p: &crate::code_rule_dsl::logic::plan::placement::Place
         }
     }
     t.gpu_cheaper += u64::from(p.gpu_cheaper);
+    t.placed_device += u64::from(p.gpu);
     t.device |= p.device;
     t.forms = shape.forms.iter().map(|f| f.name()).collect();
     t.missing = p.missing.iter().map(|f| f.name()).collect();
@@ -287,6 +288,18 @@ pub fn write(dir: &Path, header: &str) -> std::io::Result<()> {
         let _ = writeln!(native_tsv, "{p}\t{}\t{}\t{plan}\t{cpu:.4}\t{}", work(steps), s.join(","), stepped.join(","));
     }
     std::fs::write(dir.join("native.tsv"), native_tsv)?;
+    // Per join and step, its `Rows::each` calls' shapes (`setfix::SHAPES`), where counted.
+    let mut shapes_tsv = String::from("span\tjoin\tstep\tcalls_gather\tcalls_walk\tcalls_list0\tcands_gather\tcands_walk\tcands_list0\trange\tslice\towned\tshared\truns\tpending\tread\tstream\tn0\tn1\tn2_3\tn4_15\tn16_255\tn256_\tm0\tm1\tm2_\tdirect\tto_head\tto_lookup\tto_other\tr_other\tr_view\tr_derived_part_key\tr_derived_no_index\n");
+    for ((p, join), steps) in &state.native_shapes {
+        for (i, c) in steps.iter().enumerate() {
+            if c.iter().all(|&x| x == 0) {
+                continue;
+            }
+            let cs: Vec<String> = c.iter().map(u64::to_string).collect();
+            let _ = writeln!(shapes_tsv, "{p}\t{join}\t{i}\t{}", cs.join("\t"));
+        }
+    }
+    std::fs::write(dir.join("native_shapes.tsv"), shapes_tsv)?;
     let mut placement_tsv = String::from("stratum\truns\ton_gpu\tgpu_cheaper\tplanned_work\twork\tcpu_s\tcpu_estimate_s\tgpu_estimate_s\tforms\tmissing\tplanned_scanned\tsteps\tgpu_cpu_s\tgpu_encode_s\tgpu_wait_s\tgpu_decode_s\tgpu_submissions\tgpu_waved\tgpu_rules\tgpu_steps\tgpu_sorts\tgpu_values\tgpu_rows\tgpu_joins_s\tgpu_other_work\tgpu_sorts_made\tgpu_rows_made\trules\tgpu_views\tgpu_s\tgpu_rounds\tgpu_handed\tlacking\n");
     for (key, t) in &state.placements {
         let _ = writeln!(
@@ -307,6 +320,12 @@ pub fn write(dir: &Path, header: &str) -> std::io::Result<()> {
     r.push_str(header);
     let _ = writeln!(r, "Memory budgets (decision 0126): overall {} MB, Metal {} MB on top of it", rerail_accel::budget::memory() >> 20, rerail_accel::budget::metal() >> 20);
     cpu_by_thread(&mut r, &threads, &gaps);
+    // The CPU sampler's table (`rerail_prof::work`): CPU time by span, join, step and kind of work, first.
+    std::fs::write(dir.join("work.tsv"), rerail_prof::work::tsv())?;
+    let sampled = rerail_prof::work::report(40);
+    if !sampled.is_empty() {
+        let _ = writeln!(r, "\n== {sampled}");
+    }
     let (analysis_text, analysis_json) = analysis_report::report(&state);
     std::fs::write(dir.join("analysis.txt"), &analysis_text)?;
     std::fs::write(dir.join("analysis.json"), serde_json::to_vec_pretty(&analysis_json)?)?;
@@ -692,6 +711,10 @@ fn metal_summary(r: &mut String, state: &State) {
             "no device form for one of its steps (== Executor hazards, GPU support missing)"
         } else if t.refused.is_some() {
             "placed on the GPU, refused there at run time (== Placement, refused)"
+        } else if t.placed_device > t.on_gpu {
+            // Placed on the device (bound to the CPU: its join program, whatever the price), run on the CPU with no
+            // refusal from it.
+            "placed on the device, run on the CPU with no device report (== Placement)"
         } else {
             "priced cheaper on the CPU (== Placement; grain: CPU ms a run)"
         };

@@ -299,7 +299,7 @@ pub fn compile_task_shell(_native: &NativeModule) -> Result<CompiledTaskShell, E
         .params
         .push(AbiParam::new(module.target_config().pointer_type()));
     let function_id = module
-        .declare_function("tempo_native_task", Linkage::Local, &signature)
+        .declare_function("rerail_native_task", Linkage::Local, &signature)
         .unwrap_or_else(|e| compile_failed("the task shell's declaration", e));
     let mut context = module.make_context();
     context.func.signature = signature;
@@ -590,7 +590,7 @@ pub fn compile_straight_line(native: &NativeModule) -> Result<CompiledStraightLi
     let mut signature = module.make_signature();
     signature.params.push(AbiParam::new(pointer_type));
     let function_id = module
-        .declare_function("tempo_native_straight_line", Linkage::Local, &signature)
+        .declare_function("rerail_native_straight_line", Linkage::Local, &signature)
         .unwrap_or_else(|e| compile_failed("the program's declaration", e));
     let mut context = module.make_context();
     context.func.signature = signature;

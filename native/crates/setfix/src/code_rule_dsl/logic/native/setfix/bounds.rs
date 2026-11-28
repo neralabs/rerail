@@ -42,7 +42,7 @@ fn slots<'a>(j: &'a JoinRule) -> Vec<Option<From<'a>>> {
             Step::Atom { src, neg: false, binds, .. } => {
                 for &(c, s) in binds {
                     let f = match src {
-                        Src::In(rel, _) => From::In(&**j.bound(rel), c),
+                        Src::In(rel, _) => From::In(j.bound(rel), c),
                         Src::Delta(r) | Src::Full(r) | Src::FullMulti(r, _) => From::Own(*r, c),
                     };
                     set(s, Some(f), &mut from);

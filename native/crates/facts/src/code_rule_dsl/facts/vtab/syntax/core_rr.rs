@@ -729,10 +729,10 @@ impl CoreRows {
                 }
                 lit.value = self.format_values.as_ref().and_then(|(_, v)| v.get(id as usize).cloned().flatten());
             }
-            if let Some(prefix) = &lit.prefix {
-                if !self.skip.literal_rows {
-                    self.strprefix.push([n, string(prefix) as i64]);
-                }
+            if let Some(prefix) = &lit.prefix
+                && !self.skip.literal_rows
+            {
+                self.strprefix.push([n, string(prefix) as i64]);
             }
             if !self.skip.str && let Some(v) = &lit.str {
                 self.str.push([n, string(v) as i64]);
@@ -807,7 +807,7 @@ impl CoreRows {
         for (local, id) in p.nodes() {
             at.entry((f.start(id), f.end(id), dialect.name(f, id))).or_insert(local);
         }
-        // A pattern is a tape, its implied tokens left out (RER-131's `tape::pattern_doc`): it is matched over the
+        // A pattern is a tape, its implied tokens left out (decision 0161's `tape::pattern_doc`): it is matched over the
         // document's tape, kept for it or encoded here from tree-sitter's parse, not over tree-sitter's tree.
         let tape = match tape {
             Some(t) => t.clone(),
@@ -853,9 +853,8 @@ impl CoreRows {
     /// `text` rows made beside these: the text of `Extra`'s spans (`granules::ExtraSpan`), which `core_rr`'s `text` has not.
     /// The literal values (n, v, v's type) of the nodes of documents `docs`: where `Extra`'s W's values are bound, a
     /// document W reads no values of (`Dialect::values`) has these.
-    /// `key_of`: a node's document's key, by its page (plan "Chunk node numbers").
-    pub(super) fn values_of<'a>(&'a self, docs: &'a HashSet<u32>, key_of: impl Fn(i64) -> Option<u32> + 'a) -> impl Iterator<Item = [i64; 3]> + 'a {
-        self.value.iter().filter(move |r| key_of(r[0]).is_some_and(|k| docs.contains(&k))).copied()
+    pub(super) fn values_of<'a>(&'a self, docs: &'a HashSet<u32>) -> impl Iterator<Item = [i64; 3]> + 'a {
+        self.value.iter().filter(move |r| docs.contains(&rerail_blocks::located::Located(r[0]).key())).copied()
     }
 
     /// The relations, the strings' indexes made atoms by `atom`.

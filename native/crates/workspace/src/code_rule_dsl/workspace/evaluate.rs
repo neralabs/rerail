@@ -1378,7 +1378,8 @@ fn encode_own_image(
     let parse_started = Instant::now();
     #[cfg(any(test, feature = "test-hooks"))]
     pause_at_test_phase("native-tree", &file.input.source);
-    let parsed = tape::parse_own(parser, grammar, &file.input.source, interrupted);
+    // The text's digest, taken as it was ingested: the tape's writer takes none of its own.
+    let parsed = tape::parse_own(parser, grammar, &tape::Source { text: &file.input.source, sha256: Some(file.source_digest) }, interrupted);
     #[cfg(feature = "code-rule-profile")]
     drop(parse_timer);
     metrics.ast_parse_nanoseconds += parse_started.elapsed().as_nanos() as u64;

@@ -390,6 +390,22 @@ impl<S: AsRef<str>> ProgramPass for PartOf<'_, S> {
         b.fields().keep_relation_fields(self.fields.natives, self.fields.lattice, self.fields.gates);
         // The request record of the relations whose rules the part holds (decision 0331): the record is by rule.
         b.fields().keep_asked(&|rel| cx.v().rel(rel).is_some_and(|r| cx.v().heads(r).next().is_some()));
+        // The answers (decision 0065 §2a) a part can use: a produced relation is a stratum of the run, answered by its
+        // request, so a part that neither derives the request nor reads or derives the relation drops it. The run's
+        // constants, a part of the file-local version, kept a callable's `pt_vopen_l_8` (decision 0725), whose request
+        // only the cross part makes, and asked it.
+        let v = cx.v();
+        let used: BTreeSet<&str> = v.rules().flat_map(|r| std::iter::once(r.head().rel()).chain(r.reads().map(|a| a.rel()))).map(|r| v.rel_name(r)).collect();
+        let derives = |rel: &str| v.rel(rel).is_some_and(|r| v.heads(r).next().is_some());
+        let answers = super::fields::ProgramFields::answers(&**v);
+        let kept: BTreeMap<String, Vec<String>> = answers
+            .iter()
+            .map(|(req, by)| (req.clone(), by.iter().filter(|p| derives(req) || used.contains(p.as_str())).cloned().collect::<Vec<_>>()))
+            .filter(|(_, by)| !by.is_empty())
+            .collect();
+        if kept != answers {
+            b.fields().set_answers(&kept);
+        }
         Ok(())
     }
 }

@@ -8,8 +8,6 @@ pub mod core;
 pub mod nearest;
 pub mod span_prefilter;
 pub mod connection;
-/// A chunk's numbering of its nodes as the readers above the syntax table ask it (plan "Chunk node numbers").
-pub mod numbering;
 pub mod grammar_shape;
 // cratify: `families` is rerail-facts' (it mounts it, over the base)
 // cratify: `facts_a` is rerail-workspace's (it mounts it)

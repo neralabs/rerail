@@ -38,7 +38,7 @@ fn native_rows(query: &str, source: &str, tape: &TapeDoc) -> CaptureRows {
         assert_eq!(tape.transducer_kind(index), node.kind_id());
         assert_eq!(tape.transducer_span(index), node.byte_range());
         nodes.insert(node.id(), index);
-        // The children the tape stores: no implied token (RER-131).
+        // The children the tape stores: no implied token (decision 0161).
         let children = crate::code_rule_dsl::tape::stored_children_for_test(SupportLang::Python, node);
         pending.extend(children.into_iter().rev().map(|(child, _)| child));
     }
@@ -627,9 +627,9 @@ fn wildcard_and_missing_flags_preserve_native_node_meaning() {
 
 #[test]
 fn native_repetition_preserves_sibling_boundaries_and_capture_order() {
-    // No case captures an implied token such as `,`: the tape never stores one (RER-131).
+    // No case captures an implied token such as `,`: the tape never stores one (decision 0161).
     for (query, source) in [
-        // Separated by comparison operators, which a tape stores (a list's commas are implied, so not, RER-131).
+        // Separated by comparison operators, which a tape stores (a list's commas are implied, so not, decision 0161).
         ("(comparison_operator ((identifier) @item)+)", "a < b < c\n"),
         (
             r#"(comparison_operator [(identifier) @name "<" @comma]+)"#,
@@ -695,7 +695,7 @@ fn missing_patterns_reject_nested_or_multiple_node_kinds() {
 #[test]
 fn repetition_across_an_implied_token_is_one_run_on_the_tape() {
     // Tree-sitter ends a `+` run at an anonymous sibling: `[a, b, c]` gives three one-item matches. The tape
-    // stores no implied token (RER-131), so the run goes on over `a b c` and gives one match of three.
+    // stores no implied token (decision 0161), so the run goes on over `a b c` and gives one match of three.
     // O-repetition-implied-boundary: whether rules need tree-sitter's boundary here.
     let (query, source) = ("(list ((identifier) @item)+)", "items = [a, b, c]\n");
     let tape = document(source);

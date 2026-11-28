@@ -1325,7 +1325,15 @@ fn command(args: &[String], kept: &mut crate::code_rule_dsl::logic::plan::corpus
         Some("dump") => dump_command(&args[1..]),
         Some("asm") => asm_command(&args[1..]),
         Some("sql") => sql_command(&args[1..]),
-        Some("logic") => logic_command(&args[1..]),
+        Some("logic") => {
+            let r = logic_command(&args[1..]);
+            // `RERAIL_PROF`: the run's counted stages and tallies, as the tests print them.
+            crate::code_rule_dsl::prof::report("logic");
+            // `RERAIL_PROF_WALK_TOP=N`: the N plans that entered the most steps (25 by default), each with its steps.
+            let top = std::env::var("RERAIL_PROF_WALK_TOP").ok().and_then(|v| v.parse().ok()).unwrap_or(25);
+            crate::code_rule_dsl::logic::native::setfix::walk_report(top);
+            r
+        }
         Some("repeat") => repeat_script_command(&args[1..]),
         Some("facts-stamp") => facts_stamp_command(&args[1..]),
         Some("capture-tapes") => capture_tapes_command(&args[1..]),

@@ -1160,6 +1160,14 @@ part solves over them alone, and the outputs are keyed by them. The design was a
   wants the nodes reads them back through `reference_def`: the reference tests, the CLI's batch test, and the data
   layer's `imperative-private-functions` (disabled, so not run). Tests: the stage tests on the cases, in small chunks
   and on the projects; `failed_batch_reports_each_policy_in_argument_order`.
+- **W's graph (`python/references_w.rerail`, `RERAIL_REFERENCES=rust`), by the same symbols.** It was keyed by node
+  too: the engine bound each edge's two definitions by their nodes in the cross part. A definition's symbol is now
+  made by one set of rules, `python/references-defs.rerail` (the setting's facts, `rf_def`, `rf_module`, `rf_qn`,
+  `rf_sym`, `reference_def`), which both graphs include. The engine names W's definitions the same way from W's
+  summary (`w_references::symbols`: the path, `Def::name`, which rf_qn spells alike, and the file's earlier
+  definitions of that name), so no node of W's graph crosses either, and `syntax::definitions`, its node lookup, is
+  gone. Test: `the_rules_and_ws_rust_make_one_graph_by_symbol` (both graphs on a small package, equal by symbol);
+  `reference_graph_by_rules_against_ws_rust_on_a_corpus` compares by symbol.
 - **`workload.rerail` (W4).** A call's type was its callee's return, the callee a node of any file
   (`fn_ref(n, f)`, `returns(f, t)`).
   - Each file now gives each typed node a type it decides itself (`lt`) or a dependency on a function's return

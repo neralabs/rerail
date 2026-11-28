@@ -10,11 +10,11 @@ import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import semver from "semver";
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { changesPackage, coreChanges, lockChangesCore, matrixChanges, publishRetryRefusal, retrySummary, shipsWithCore } from "../../scripts/release/core-paths.mjs";
-import { admitsRefusingCore, CHANGE_TYPES, changelogEntries, changelogEntryFileRefusal, changelogEntryType, changelogEntryTypeRefusal, changelogLead, changelogLeadRefusal, changelogSection, coreBeforeFloor, coreFloor, coreTagRefusal, firstChangelogSection, handWrittenChangelogEntries, HELD_OFF_SINCE, heldOffRules, isOpenRange, LANGUAGE_SINCE, newChangelogEntries, nextCoreVersion, NO_CHANGELOG_ENTRIES, PLUGIN_PINS, raisedCoreRange, readChangelogEntries, releaseChangelog, RERAIL_DOCUMENTS_SINCE, rerailRules, RULE_KEY_SINCE, setLockVersion, setPackageVersion, setPluginVersion, shippedLanguages, shippedRuleKeys, unreleasedChangelogEntries } from "../../scripts/release/core.mjs";
+import { admitsRefusingCore, CHANGE_TYPES, changelogEntries, changelogEntryFileRefusal, changelogEntryType, changelogEntryTypeRefusal, changelogLead, changelogLeadRefusal, changelogSection, coreBeforeFloor, coreFloor, coreTagRefusal, DIMENSIONS_SINCE, firstChangelogSection, handWrittenChangelogEntries, HELD_OFF_SINCE, heldOffRules, isOpenRange, LANGUAGE_SINCE, newChangelogEntries, nextCoreVersion, NO_CHANGELOG_ENTRIES, PLUGIN_PINS, raisedCoreRange, readChangelogEntries, releaseChangelog, RERAIL_DOCUMENTS_SINCE, rerailRules, RULE_KEY_SINCE, setLockVersion, setPackageVersion, setPluginVersion, shippedLanguages, shippedRuleKeys, unreleasedChangelogEntries } from "../../scripts/release/core.mjs";
 import { RELEASE_NOTE_WORDS, releaseNoteRefusal } from "../../scripts/release/release-notes.mjs";
-import { compareVersions, distTagReport, nextTrails, parseDistTagList, parseExpectation, publishRefusal, raiseNext, releaseChannel } from "../../scripts/release/dist-tags.mjs";
+import { compareVersions, distTagReport, nextTrails, parseDistTagList, parseExpectation, publishRefusal, raiseNext, readDistTagsOrNone, releaseChannel } from "../../scripts/release/dist-tags.mjs";
 import { linkFolder } from "../support/platform/links.ts";
 import { removeFolderSync } from "../support/platform/remove-folder.ts";
 
@@ -86,11 +86,21 @@ describe("publishRetryRefusal", () => {
     expect(refusal).toContain("src/cli/cli.ts, package-lock.json");
     expect(refusal).toContain("the next version");
   });
+
+  // A retry builds the engines again, to other bytes than an engine package npm already has at the version, and core
+  // would pin those. The check asks npm itself, so what is pinned here is that it asks, and last (rebuildRefusal and
+  // publishedEnginePackages are tested in release-engine-release.test.mjs).
+  it("is followed, in core-retry-check.mjs, by the refusal of a version npm already has an engine package of", () => {
+    const check = readFileSync(join(ROOT, "scripts", "release", "core-retry-check.mjs"), "utf8");
+    expect(check).toMatch(/publishRetryRefusal\(\{[^}]*\}\) \?\?\s+rebuildRefusal\(version, await publishedEnginePackages\(version\)\);/u);
+  });
 });
 
 describe("retrySummary", () => {
   it("counts the paths that build or are packed into the tarball, and no others", () => {
     for (const path of [".github/workflows/package.yml", ".github/actions/lfs/action.yml", "scripts/release/shrinkwrap-pack.mjs", ".gitattributes", "CHANGELOG.md"]) expect(changesPackage(path)).toBe(true);
+    // What packs the engine packages and pins them in core: neither ships, and both decide what an install gets.
+    for (const path of ["scripts/release/engine/packages.mjs", "scripts/release/shrinkwrap.mjs"]) expect(changesPackage(path), path).toBe(true);
     for (const path of [".github/workflows/release.yml", "docs/release.md", "scripts/host/azure/matrix.mjs", "scripts/release/core-paths.mjs"]) expect(changesPackage(path)).toBe(false);
   });
 
@@ -123,6 +133,11 @@ describe("matrixChanges", () => {
     expect(matrixChanges(["src/cli/cli.ts", "scripts/host/azure/guest.sh", "scripts/host/windows-host.ps1", ".github/workflows/env-matrix.yml"], readLock))
       .toEqual({ core: ["src/cli/cli.ts"], matrix: ["scripts/host/azure/guest.sh", "scripts/host/windows-host.ps1", ".github/workflows/env-matrix.yml"] });
     expect(matrixChanges(["scripts/host/windows-host.ps1.bak", "scripts/host/azure-notes.md", ".github/workflows/env-matrix.yml.orig"], readLock).matrix).toEqual([]);
+  });
+
+  it("runs for what packs the engine packages and pins them in core, which core does not ship", () => {
+    const packing = ["scripts/release/engine/packages.mjs", "scripts/release/shrinkwrap-pack.mjs", "scripts/release/shrinkwrap.mjs"];
+    expect(matrixChanges(packing, readLock)).toEqual({ core: [], matrix: packing });
   });
 });
 
@@ -311,6 +326,8 @@ describe("release notes: the lead, the entries, and what a note may say", () => 
         // A copy of the scripts, since the check reads the checkout that holds it.
         cpSync(join(ROOT, "scripts", "release"), join(root, "scripts", "release"), { recursive: true });
         cpSync(join(ROOT, "scripts", "check", "check-internal-refs.mjs"), join(root, "scripts", "check", "check-internal-refs.mjs"));
+        // core.mjs installs a released core beside its engine package, whose table reaches the build's npm command.
+        cpSync(join(ROOT, "scripts", "build", "ensure-sqlite.mjs"), join(root, "scripts", "build", "ensure-sqlite.mjs"));
         linkFolder(join(ROOT, "node_modules"), join(root, "node_modules"));
         const git = (...args) => execFileSync("git", ["-c", "user.name=test", "-c", "user.email=test@example.com", ...args], { cwd: root, stdio: "ignore" });
         const write = (files) => {
@@ -541,6 +558,38 @@ describe("raiseNext", () => {
   });
 });
 
+describe("readDistTagsOrNone", () => {
+  afterEach(() => vi.unstubAllGlobals());
+  const answering = (status, body = {}) => {
+    const requests = [];
+    vi.stubGlobal("fetch", async (url) => {
+      requests.push(url);
+      return new Response(JSON.stringify(body), { status, headers: { "content-type": "application/json" } });
+    });
+    return requests;
+  };
+
+  it("reads a published package's dist-tags from the dist-tags endpoint, its scope's slash escaped", async () => {
+    const requests = answering(200, { latest: "0.2.0", next: "0.2.0" });
+    expect(await readDistTagsOrNone("@neralabs/rerail-pack-django")).toEqual({ latest: "0.2.0", next: "0.2.0" });
+    expect(requests).toEqual(["https://registry.npmjs.org/-/package/@neralabs%2frerail-pack-django/dist-tags"]);
+  });
+
+  it("takes a 401, npm's answer for a scoped name it never had, and a 404 alike for no package", async () => {
+    answering(401, { error: "unauthorized" });
+    expect(await readDistTagsOrNone("@neralabs/rerail-pack-django")).toEqual({});
+    answering(404, { error: "Not found" });
+    expect(await readDistTagsOrNone("rerail-unscoped")).toEqual({});
+  });
+
+  it("throws on any other answer, so an unreadable registry is never taken for an absent package", async () => {
+    for (const status of [403, 500, 503]) {
+      answering(status);
+      await expect(readDistTagsOrNone("@neralabs/rerail-pack-django")).rejects.toThrow(`@neralabs/rerail-pack-django's dist-tags answer an anonymous request with ${status}`);
+    }
+  });
+});
+
 const coreRangeDirectories = [];
 afterEach(() => {
   for (const directory of coreRangeDirectories.splice(0)) removeFolderSync(directory);
@@ -551,30 +600,35 @@ describe("coreFloor", () => {
   const stored = RULE_KEY_SINCE.get("stored");
 
   it("is undefined for a pack every core loads", () => {
-    expect(coreFloor([], ["python", "typescript", "vue"], [], [])).toBeUndefined();
-    expect(coreFloor([], [], [], [])).toBeUndefined();
+    expect(coreFloor([], ["python", "typescript", "vue"], [], [], [])).toBeUndefined();
+    expect(coreFloor([], [], [], [], [])).toBeUndefined();
   });
 
   it("is the release that first reads heldOff for a pack holding a rule off", () => {
-    expect(coreFloor(["ruff-b009-get-attr-with-constant"], ["python"], [], [])).toBe(HELD_OFF_SINCE);
+    expect(coreFloor(["ruff-b009-get-attr-with-constant"], ["python"], [], [], [])).toBe(HELD_OFF_SINCE);
   });
 
   it("is the release that first reads the language for a pack with a rule in one added since", () => {
-    expect(coreFloor([], ["python", "java"], [], [])).toBe(java);
+    expect(coreFloor([], ["python", "java"], [], [], [])).toBe(java);
   });
 
   it("is the release that first reads the key for a pack whose ast rule uses one added since", () => {
-    expect(coreFloor([], ["python"], ["stored"], [])).toBe(stored);
+    expect(coreFloor([], ["python"], ["stored"], [], [])).toBe(stored);
   });
 
   it("is the newest of them for a pack with several", () => {
-    expect(coreFloor(["held"], ["java"], [], [])).toBe([HELD_OFF_SINCE, java].sort(semver.compare).at(-1));
-    expect(coreFloor(["held"], ["java"], ["stored"], [])).toBe([HELD_OFF_SINCE, java, stored].sort(semver.compare).at(-1));
+    expect(coreFloor(["held"], ["java"], [], [], [])).toBe([HELD_OFF_SINCE, java].sort(semver.compare).at(-1));
+    expect(coreFloor(["held"], ["java"], ["stored"], [], [])).toBe([HELD_OFF_SINCE, java, stored].sort(semver.compare).at(-1));
   });
 
   it("is 0.2.1, the release that first reads a rule written in .rerail, for a pack that ships one", () => {
-    expect(coreFloor([], ["python"], [], ["django-practice-count-not-len"])).toBe("0.2.1");
-    expect(coreFloor([], ["python"], [], [])).toBeUndefined();
+    expect(coreFloor([], ["python"], [], ["django-practice-count-not-len"], [])).toBe("0.2.1");
+    expect(coreFloor([], ["python"], [], [], [])).toBeUndefined();
+  });
+
+  it("is the release that first reads dimensions for a pack giving a rule them, and newer than .rerail's", () => {
+    expect(coreFloor([], ["python"], [], [], ["django-practice-enqueue-on-commit"])).toBe(DIMENSIONS_SINCE);
+    expect(coreFloor([], ["python"], [], ["django-practice-enqueue-on-commit"], ["django-practice-enqueue-on-commit"])).toBe(DIMENSIONS_SINCE);
   });
 });
 

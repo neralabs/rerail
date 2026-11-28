@@ -5,7 +5,8 @@ import { mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
-import { acceptedFloor, coreRefusals, newerFloor, packRuleDocuments, releasedCoreVersions } from "../../scripts/release/core.mjs";
+import { acceptedFloor, coreInstallSpecs, coreRefusals, newerFloor, packRuleDocuments, releasedCoreVersions } from "../../scripts/release/core.mjs";
+import { ENGINE_PACKAGES } from "../../scripts/release/engine/packages.mjs";
 import { removeFolderSync } from "../support/platform/remove-folder.ts";
 
 const folders = [];
@@ -74,6 +75,24 @@ describe("packRuleDocuments", () => {
     write(join(pack, "rules", "broken.json"), "{");
     write(join(pack, "rules", "notes.md"), "not a rule");
     expect(packRuleDocuments(pack)).toEqual({ a: { format: "rerail.policy/v1", id: "a" }, "group/b": { format: "rerail.policy/v1", id: "b" } });
+  });
+});
+
+describe("coreInstallSpecs", () => {
+  it("installs a core from before the engine packages by itself: it carries its engines", () => {
+    expect(coreInstallSpecs("0.1.5", "linux", "x64")).toEqual(["@neralabs/rerail@0.1.5"]);
+    expect(coreInstallSpecs("0.2.0", "darwin", "arm64")).toEqual(["@neralabs/rerail@0.2.0"]);
+  });
+
+  // npm alone installs all six through core's shrinkwrap; the core-refusals job installs every released core.
+  it("installs a core with engine packages without the six it pins, beside the one this machine loads, at core's version", () => {
+    for (const { os, cpu, name } of ENGINE_PACKAGES) {
+      expect(coreInstallSpecs("0.2.1", os, cpu), name).toEqual(["--omit=optional", "@neralabs/rerail@0.2.1", `${name}@0.2.1`]);
+    }
+  });
+
+  it("refuses a machine Rerail has no engine for, where the core could not check a rule", () => {
+    expect(() => coreInstallSpecs("0.2.1", "freebsd", "x64")).toThrow("no engine package for freebsd x64");
   });
 });
 

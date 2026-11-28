@@ -48,10 +48,23 @@ describe("check-internal-refs", () => {
     ]);
   });
 
+  it("flags a ticket of every internal team key, RER- among them", () => {
+    const problems = internalRefProblems(
+      repository({
+        "src/a.rs": `// named-only tapes (${ticket("RER", 131)})\n`,
+        "docs/b.md": `Built in ${ticket("res", 4)} and ${ticket("Tes", 27)}.\n`,
+      }),
+    );
+    expect(problems).toEqual([
+      { path: "docs/b.md", line: 1, text: `Built in ${ticket("res", 4)} and ${ticket("Tes", 27)}.` },
+      { path: "src/a.rs", line: 1, text: `// named-only tapes (${ticket("RER", 131)})` },
+    ]);
+  });
+
   it("passes words that only contain the prefix, a prefix without digits, and binary files", () => {
     const problems = internalRefProblems(
       repository({
-        "a.txt": `${ticket("INNER", 12)} corpus-nera ${ticket("NER", "x")}\n`,
+        "a.txt": `${ticket("INNER", 12)} ${ticket("figures", 2)} ${ticket("bytes", 64)} corpus-nera ${ticket("NER", "x")}\n`,
         "b.bin": Buffer.concat([Buffer.from([0, 1, 2, 0]), Buffer.from(ticket("NER", 99))]),
       }),
     );

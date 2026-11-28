@@ -273,7 +273,7 @@ fn sym_of(op: &str) -> &str {
 /// A rule whose subject is an anonymous token that opens its parent: `{regex: "^except$", inside: {stopBy: neighbor,
 /// kind: except_clause, ..}, precedes: {stopBy: neighbor, regex: "^:$"}}` (E722's bare `except:`), or a capture of
 /// one of several (`regex: "^(?<BRANCH>elif|else)$"` inside an elif or else clause, RET505). A token the tape stores
-/// is the parent's first `token` child, the next one the rule names its second; one the tape leaves out (RER-131) is
+/// is the parent's first `token` child, the next one the rule names its second; one the tape leaves out (decision 0161) is
 /// read at the start of the source before the parent's first stored child (the parent's whole text where it has
 /// none). The subject is the parent, which starts where the token does, so a finding sits on the token's line and
 /// column, and a capture is the token's text. Uncaptured, a named node the regex matches (`self`) is the first

@@ -502,9 +502,10 @@ mod tests {
         let _ = std::fs::remove_dir_all(&d);
     }
 
-    /// A file reused (an archived segment's) holds the old bytes: the block zeroes what it allocates.
+    /// A file reused (an archived segment's) holds the old bytes: its block's allocations say they are not fresh (a
+    /// holder writes before it reads), and a new file's that they are.
     #[test]
-    fn a_reused_file_reads_zero_where_allocated() {
+    fn a_reused_file_hands_out_memory_that_is_not_fresh() {
         let d = dir("reuse");
         let path = d.join("seg-1");
         let slab = create(&path, 1 << 20, true);
@@ -512,9 +513,11 @@ mod tests {
         unsafe { std::ptr::write_bytes(slab.block().ptr::<u8>(off), 0xff, 64 << 10) };
         slab.seal().write_back(Flush::Synced).unwrap();
         let again = create(&path, 1 << 20, false);
-        let off = again.block().alloc(64 << 10, 64);
-        let bytes = again.block().bytes(off, off + (64 << 10));
-        assert!(bytes.iter().all(|&b| b == 0), "an allocation in a reused file reads zero");
+        let (_, fresh) = again.block().try_alloc_fresh(64 << 10, 64).unwrap();
+        assert!(!fresh, "an allocation in a reused file is not fresh");
+        let new = create(&d.join("seg-2"), 1 << 20, true);
+        assert!(new.block().try_alloc_fresh(64, 64).unwrap().1, "one in a new file is");
+        drop(new);
         drop(again);
         let _ = std::fs::remove_dir_all(&d);
     }

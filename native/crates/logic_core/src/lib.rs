@@ -39,6 +39,7 @@ pub mod code_rule_dsl {
         pub use rerail_program_image::code_rule_dsl::logic::{program_facts, program_image};
         pub use rerail_facts_base::code_rule_dsl::logic::strings;
         pub use rerail_facts_base::code_rule_dsl::logic::sql_names;
+        pub mod access;
         pub mod analysis;
         pub mod bloom;
         #[path = "../../../../facts_base/src/code_rule_dsl/logic/crypto.rs"]

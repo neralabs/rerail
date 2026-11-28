@@ -67,6 +67,8 @@
     #[test]
     fn coverage_reports_a_broken_files_partial_clause_cold_warm_and_paged() {
         let _slot = WORKSPACE_TEST_SLOT.lock();
+        // Named by the clock's count since the epoch: `SystemTime`'s debug form holds a colon,
+        // which no Windows file name takes.
         let directory = std::env::temp_dir().join(format!(
             "rerail-coverage-{}-{}",
             std::process::id(),
@@ -126,6 +128,8 @@
     #[test]
     fn blind_files_are_reported_by_reason_cold_warm_and_paged() {
         let _slot = WORKSPACE_TEST_SLOT.lock();
+        // Named by the clock's count since the epoch: `SystemTime`'s debug form holds a colon,
+        // which no Windows file name takes.
         let directory = std::env::temp_dir().join(format!(
             "rerail-blind-{}-{}",
             std::process::id(),

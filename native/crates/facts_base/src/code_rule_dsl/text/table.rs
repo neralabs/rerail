@@ -24,6 +24,16 @@ use std::sync::Arc;
 /// The most states a table holds (a state is a byte in the device's scratch).
 pub const MAX_STATES: usize = 255;
 
+/// A dense automaton's configuration for a table, its determinization bounded by what a table can hold: a state's
+/// row is at most 512 transitions of 4 bytes (`regex_automata`'s stride, a power of two past 256 classes and the
+/// end), so a few times `MAX_STATES` of them, and the work of making them at most a few times that. Past it, the plans
+/// are refused at once ("its automaton: ..."), as a table of more than `MAX_STATES` states is: unbounded, a set of
+/// plans one python_main shard tests was determinized for most of its 240 s, to be refused when it was done.
+fn bounded(config: dense::Config) -> dense::Config {
+    const STATE_BYTES: usize = 512 * 4;
+    config.dfa_size_limit(Some(4 * MAX_STATES * STATE_BYTES)).determinize_size_limit(Some(16 * MAX_STATES * STATE_BYTES))
+}
+
 /// A dense automaton: its bytes (`bytes()`, in the automata block, decision 0478 step 2c) are the byte classes
 /// (256), then `next` (`states` rows of `classes`), then the end-of-text transition per state, then whether each state
 /// accepts (all bytes).
@@ -99,7 +109,7 @@ fn build(plans: &[Arc<Lowered>]) -> Result<(Vec<u8>, [u32; 3]), String> {
         .build_many_from_hir(&hirs)
         .map_err(|e| format!("its automaton: {e}"))?;
     let dfa = dense::Builder::new()
-        .configure(dense::Config::new().match_kind(MatchKind::All).start_kind(StartKind::Unanchored))
+        .configure(bounded(dense::Config::new().match_kind(MatchKind::All).start_kind(StartKind::Unanchored)))
         .build_from_nfa(&nfa)
         .map_err(|e| format!("its automaton: {e}"))?;
     let first = dfa.start_state(&start::Config::new().anchored(Anchored::No)).map_err(|e| format!("its start: {e}"))?;
@@ -264,7 +274,7 @@ fn build_replacer(pattern: &str) -> Result<(Vec<u8>, u32), String> {
     }
     let forward = thompson::Compiler::new().build_from_hir(&hir).map_err(|e| format!("its automaton: {e}"))?;
     let fdfa = dense::Builder::new()
-        .configure(dense::Config::new().match_kind(MatchKind::LeftmostFirst).start_kind(StartKind::Unanchored))
+        .configure(bounded(dense::Config::new().match_kind(MatchKind::LeftmostFirst).start_kind(StartKind::Unanchored)))
         .build_from_nfa(&forward)
         .map_err(|e| format!("its automaton: {e}"))?;
     let reverse = thompson::Compiler::new()
@@ -272,7 +282,7 @@ fn build_replacer(pattern: &str) -> Result<(Vec<u8>, u32), String> {
         .build_from_hir(&hir)
         .map_err(|e| format!("its reverse automaton: {e}"))?;
     let rdfa = dense::Builder::new()
-        .configure(dense::Config::new().match_kind(MatchKind::All).start_kind(StartKind::Anchored))
+        .configure(bounded(dense::Config::new().match_kind(MatchKind::All).start_kind(StartKind::Anchored)))
         .build_from_nfa(&reverse)
         .map_err(|e| format!("its reverse automaton: {e}"))?;
     let (fs, fc, f0, f1, fd, ft) = dense_table(&fdfa, Anchored::No)?;

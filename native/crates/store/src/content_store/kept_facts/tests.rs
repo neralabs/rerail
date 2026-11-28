@@ -666,6 +666,35 @@ fn a_reader_inside_a_transaction_whose_files_a_commit_swept_reads_the_last_commi
     reader.execute_batch("COMMIT").unwrap();
 }
 
+/// A file staged ahead of its wave's commit (`KeptStage`) under one run's object is kept by a sweep under another
+/// object on the same machine (a writer's job outside a run): its stage holds the space's `STAGING_LOCK`, which no
+/// object owns. With the staged set an object's, the sweep removed it before the commit linked it, and the chain named
+/// a file gone.
+#[test]
+fn a_file_staged_under_one_object_is_kept_by_a_sweep_under_another() {
+    use rerail_prof::code_rule_dsl::logic::profile::{Shared, shared_here, within};
+    let (path, _c) = store("staged-objects");
+    let machine = std::sync::Arc::clone(shared_here().machine());
+    let staged = {
+        let _a = within(Shared::on(&machine));
+        stage_space(&path, &SPACE, &[], rerail_blocks::block::Flush::Os).unwrap()
+    };
+    let file = space_dir(&path, &SPACE).join(&staged.name);
+    assert!(file.exists());
+    {
+        let _b = within(Shared::on(&machine));
+        sweep(&space_dir(&path, &SPACE), &Vec::new());
+    }
+    assert!(file.exists(), "a staged file, unlinked yet, kept by another object's sweep");
+    // Once a chain row names it, its stage is over (its lock let go): a sweep that names it no more removes it.
+    let rows: ChainRows = vec![(1, staged.name.clone(), staged.tag)];
+    drop(staged);
+    sweep(&space_dir(&path, &SPACE), &rows);
+    assert!(file.exists(), "a file a row names, kept");
+    sweep(&space_dir(&path, &SPACE), &Vec::new());
+    assert!(!file.exists(), "a linked file no row names, swept");
+}
+
 /// A reader's rows can name a file a later commit swept: read before a write merged the chain into one file, and the
 /// write after removed the file they name. The space is read by the rows read again (`KeptSpace::settle`), as the
 /// store's last commit names its files; a file gone from the rows the store names still is corruption. Before, a

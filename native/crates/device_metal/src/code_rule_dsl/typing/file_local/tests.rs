@@ -22,6 +22,8 @@ fn unrefused(version: Arc<Version>) -> Programs {
     let (local, constants) = split.found();
     let mut p = assemble(version, local, constants, split.views(), split.locations.clone(), split.same_doc.clone()).unwrap();
     p.causes = split.causes.clone();
+    p.crossings = split.crossings.clone();
+    p.moved_unions = split.moved_unions.clone();
     crossings_under(&p.program, &mut p.nodes, &split.causes);
     p
 }
@@ -459,7 +461,8 @@ far(f, k) :- node(_, f, "call", _, _), text(f, x), node(_, k, "class", _, _), te
 /// (decision 0692): its rules are its readers' prefixes, so in each file it holds every key the file's readers ask for.
 /// Read as a test, it leaves `callee` and its readers per-file, though its rows (`alias`'s names) name no document.
 /// One guarding a relation a cross-file rule reads (`far`, through `callee2`) is every file's, as before: that reader
-/// may join one file's prefix with another's rows.
+/// may join one file's prefix with another's rows. That reader holds a node in the cross-file part, which the split
+/// refuses (decision 0677): the test reads the split short of the refusal.
 #[test]
 fn a_readers_demand_guarding_per_file_readers_is_each_files_own() {
     let text = r#"
@@ -1924,6 +1927,40 @@ fn exports_are_cut_on_a_version() {
     }
 }
 
+/// The cut renames its readers' atoms alone on a version of two images: the reader in an overlay, the rest in its
+/// base, where a literal of another rule has the reader's literal's node (its place in its own image). Keyed by node
+/// alone, that literal was renamed too (`flag_col`'s `kind` read as `xd_called`, once a program stayed an edit of its
+/// library's union).
+#[test]
+fn exports_are_cut_by_their_readers_alone_on_an_overlay() {
+    use crate::code_rule_dsl::logic::program_image::build::T;
+    let base = read(
+        ".decl node(d: number, n: node, kind: symbol, start: number, end: number)\n.decl text(n: node, s: symbol)\n\
+         .decl within(c: node, n: node)\n.input node, text, within\n\
+         .decl fl_later(n: node, c: node)\nfl_later(n, c) :- within(c, n), node(_, c, \"call\", _, _).\n\
+         .decl named(n: node, s: symbol)\nnamed(n, s) :- text(n, s).\n\
+         .decl demand(n: node, m: node)\ndemand(n, m) :- named(n, s), named(m, s), node(_, n, \"function\", _, _), n != m.\n\
+         .decl later(n: node, c: node)\n.output later\n",
+    );
+    let mut b = Builder::on(&base);
+    b.rule().head("later", &[T::Var("n"), T::Var("c")]).atom("demand", &[T::Var("n"), T::Wild]).atom("fl_later", &[T::Var("n"), T::Var("c")]).atom("text", &[T::Var("c"), T::Wild]).finish().unwrap();
+    let v = b.finish_overlay().unwrap();
+    let reader = rules_of(&v, "later")[0];
+    let at = reader.body().find(|l| l.atom().is_some_and(|a| v.rel_name(a.rel()) == "fl_later")).unwrap().node();
+    let others: Vec<String> = v.rules().filter(|r| r.id() != reader.id()).map(|r| v.show_rule(r)).collect();
+    assert!(v.rules().any(|r| r.id() != reader.id() && r.body().any(|l| l.node() == at)), "a rule of the base has a literal at the reader's node {at}:\n{}", v.show());
+    let mut pass = DemandExports::default();
+    let mut p = Pipeline::new("test", Arc::clone(&v));
+    p.program(&mut pass);
+    let (out, _) = p.finish().unwrap();
+    assert!(pass.lines[0].starts_with("1 exports cut"), "{:?}", pass.lines);
+    let shown = out.show();
+    assert!(rules_of(&out, "later").iter().all(|r| reads(&out, *r).contains(&"xd_fl_later".to_owned())), "the reader reads the cut:\n{shown}");
+    for rule in &others {
+        assert!(shown.contains(rule.as_str()), "{rule} as it was, in\n{shown}");
+    }
+}
+
 /// A demand whose location only a `top` superset cuts is `top` itself when what is left of its chain names every node
 /// (`unwrap(n, n) :- kind(n, k), k != "paren"`, as `unparen` is): no superset of it is made and stored. The export is
 /// still cut by its reader's own key (`xk_text_0`). Left with an atom that names some nodes only (`called`), the
@@ -2061,7 +2098,9 @@ outer(f, x) :- uses(f, x), fl_outer(f, x).
 }
 
 /// The file-local joins of cross-file rules are pushed on a version: helpers named from their content
-/// (`fl<h>_<head>`), each derived by the chunks and read in place of the join.
+/// (`fl<h>_<head>`), each derived by the chunks and read in place of the join. One atom with its nodes' attributes
+/// (`ATTRIBUTES`: `node`, `text`, ...) is read in the cross part by its key, and is no join (t50 item 3): `named`'s
+/// two `child` atoms are.
 #[test]
 fn local_joins_are_pushed_on_a_version() {
     let text = r#"
@@ -2071,7 +2110,7 @@ fn local_joins_are_pushed_on_a_version() {
 .decl docof(n: node, d: number)
 .decl line(n: node, l: number)
 .input node, child, text, docof, line
-.decl defined(s: symbol)
+.decl defined(s: symbol) cross_file
 defined(s) :- node(_, n, "function_definition", _, _), text(n, s).
 .decl uses(f: node, x: symbol)
 uses(f, x) :- node(_, f, "identifier", _, _), text(f, x), defined(x).
@@ -2084,7 +2123,7 @@ bound(p, x) :- node(_, p, "block", _, _), child(p, c, _), node(_, c, "assignment
 outer(f, x) :- uses(f, x), encl(f, p), bound(p, x).
 .decl named(f: node, s: symbol)
 .output named
-named(f, s) :- uses(f, _), child(p, f, _), text(p, s), !bound(p, s).
+named(f, s) :- uses(f, _), child(p, f, _), child(g, p, _), text(g, s), !bound(p, s).
 .decl at(f: node, l: number)
 .output at
 at(f, l) :- uses(f, _), docof(f, d), node_line_number(f, l), d > 0.
@@ -2132,6 +2171,34 @@ late(e) :- refers(_, e), docof(e, d), lead(d).
     let keeps_bound = helpers[0].body().any(|l| matches!(l.view(), crate::code_rule_dsl::logic::program_image::Lit::Cmp { .. }));
     assert!(reads_stated && keeps_bound, "the facts and the bound are the join's:\n{}", out.show());
     assert!(!out.rules().any(|r| { let h = out.rel_name(r.head().rel()); h.starts_with("fl") && h.ends_with("_late") }), "late's join narrows no node: the filter's:\n{}", out.show());
+}
+
+/// A test of a node's text (`text(s, "k")`, read since `text` is a view as `"k" = @rr_node_text_any(s)`) goes with the
+/// component that binds the node, and makes it a file-local helper: left in the cross part, the component's relation
+/// (an AST matcher's, `rr_ast_32_1(o, s)` in `rf_ref`) was scanned over every file to test its nodes, which made every
+/// document's rows (2026-11-24).
+#[test]
+fn a_test_of_a_nodes_text_is_pushed_with_its_node() {
+    let text = r#"
+.decl node(d: number, n: node, kind: symbol, start: number, end: number)
+.decl text(n: node, s: symbol)
+.decl lit(o: node, s: node)
+.input node, text, lit
+.decl defined(s: symbol)
+defined(s) :- node(_, n, "function_definition", _, _), text(n, s).
+.decl named(o: node, x: symbol)
+named(o, x) :- node(_, o, "identifier", _, _), text(o, x), defined(x).
+.decl tagged(o: node, x: symbol)
+.output tagged
+tagged(o, x) :- lit(o, s), "Literal" = @rr_node_text_any(s), named(o, x).
+"#;
+    let (out, made) = pushed(read(text));
+    let helpers: Vec<&String> = made.iter().filter(|m| m.ends_with("_tagged")).collect();
+    assert_eq!(helpers.len(), 1, "tagged's component is a helper: {made:?}\n{}", out.show());
+    let shown = out.show();
+    let rule = shown.lines().find(|l| l.starts_with(&format!("{}(", helpers[0]))).unwrap_or_default();
+    assert!(rule.contains("lit(") && rule.contains("rr_node_text_any"), "the helper holds the atom and the test of its node: {rule}");
+    assert!(split_of(&out).local.contains(helpers[0]), "{}: file-local", helpers[0]);
 }
 
 #[test]

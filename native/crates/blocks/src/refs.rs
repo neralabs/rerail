@@ -40,6 +40,9 @@ impl<T: KernelField> KernelField for Ptr<T> {
     fn ty() -> String {
         "Ptr".into()
     }
+    fn empty() -> Self {
+        Ptr { off: AtomicI64::new(0), _t: PhantomData }
+    }
     fn deps(out: &mut Vec<String>) {
         T::deps(out);
         let s = "typedef struct Ptr {\n    int64_t off;\n} Ptr;\nUKL_STATIC_ASSERT(sizeof(Ptr) == 8, \"Ptr: size\");\n".to_string();
@@ -111,6 +114,9 @@ impl<T> Span<T> {
 impl<T: KernelField> KernelField for Span<T> {
     fn ty() -> String {
         "Span".into()
+    }
+    fn empty() -> Self {
+        Span { off: AtomicI64::new(0), len: AtomicU64::new(0), _t: PhantomData }
     }
     fn deps(out: &mut Vec<String>) {
         T::deps(out);

@@ -128,7 +128,7 @@ impl ContentStore {
                         source,
                         publication
                             .tape
-                            .map(|tape| HashKey::tape_identity(source, tape.bytes)),
+                            .map(|tape| HashKey::tape_identity(source, tape.grammar_id, tape.grammar_version, tape.tape_format_version)),
                     ))
                 })
                 .collect::<StoreResult<Vec<_>>>()
@@ -582,7 +582,7 @@ fn prepare_object_pass(
                     payload.documents.iter().zip(frames).enumerate()
                 {
                     let document_source = HashKey::sha256(document.source);
-                    let document_tape = HashKey::tape_identity(document_source, document.tape);
+                    let document_tape = HashKey::tape_identity(document_source, document.grammar_id, payload.grammar_version, payload.tape_format_version);
                     hashes.insert(document_source);
                     hashes.insert(document_tape);
                     source_rows.push((

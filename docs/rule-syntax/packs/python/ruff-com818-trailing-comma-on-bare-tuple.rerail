@@ -19,7 +19,7 @@
     "Remove the trailing comma if a single value was meant; if a tuple is intended, parenthesize it as `(value,)`."
     suppress ruff "COM818"
 // The bare tuple is an expression_list of one element, ending where the statement does; the tape stores no
-// comma there, as the grammar implies it (RER-131), so the finding is on the tuple, and a `;` after it is the
+// comma there, as the grammar implies it (decision 0161), so the finding is on the tuple, and a `;` after it is the
 // statement's next stored token.
 COM818(x) :- (kind(p, "module") ; kind(p, "block")), child(p, s, _), node(_, s, _, _, e), kind(x, "expression_list"),
     node(_, x, _, _, e), (x = s ; within(x, s)), count : { child(x, c, _), !kind(c, "comment") } = 1,

@@ -883,6 +883,14 @@ active(t, p, e) :- c_pp_active(t, _, p, _, e).
     let _ = std::fs::remove_dir_all(&dir);
 }
 
+/// The strata a run maintained from their deltas: its program's cross-file part's, and its stages'. A cross-file
+/// relation of names a per-file rule reads is staged before the program (decision 0709), its rows the stage's cross
+/// part's, so a program of `used(q) :- uses(_, q)` maintains them there.
+fn maintained_with_stages(report: &super::Report) -> usize {
+    let staged = report.phase_runs.iter().filter(|p| p.name.starts_with(crate::code_rule_dsl::logic::plan::phased::STAGE));
+    report.cross_maintained.0 + staged.map(|p| p.report.cross_maintained.0).sum::<usize>()
+}
+
 /// t32 4.1: a new process maintains its cross-file part from the rows the last process kept, as a session does.
 /// After an edit that changes a cross-file row, a changed stratum is maintained from its deltas, not derived
 /// again, and the outputs are a run's with an empty store.
@@ -918,7 +926,7 @@ unused(f) :- def(f, q), !used(q).
     let run = |store: &str| {
         super::TEST_TAPE_CACHE.with(|p| *p.borrow_mut() = Some(dir.join(store)));
         let report = super::run(&text, &dir, None, &out, "program", crate::code_rule_dsl::typing::file_local::Binding::Cpu, 1 << 18).unwrap();
-        (report.cross_maintained.0, crate::code_rule_dsl::logic::plan::output::shown(&out, "unused").unwrap())
+        (maintained_with_stages(&report), crate::code_rule_dsl::logic::plan::output::shown(&out, "unused").unwrap())
     };
     let (cold, derived) = run("kept.sqlite");
     assert_eq!(cold, 0, "nothing kept: every stratum derived");
@@ -975,7 +983,7 @@ unused(f) :- def(f, q), !used(q).
     let run = |store: &str| {
         super::TEST_TAPE_CACHE.with(|p| *p.borrow_mut() = Some(dir.join(store)));
         let report = super::run(&text, &dir, None, &out, "program", crate::code_rule_dsl::typing::file_local::Binding::Cpu, 1 << 18).unwrap();
-        (report.cross_maintained.0, crate::code_rule_dsl::logic::plan::output::shown(&out, "unused").unwrap())
+        (maintained_with_stages(&report), crate::code_rule_dsl::logic::plan::output::shown(&out, "unused").unwrap())
     };
     run("kept.sqlite");
     write("c.py", "def h():\n    pass\n");
@@ -1034,7 +1042,7 @@ lone(f) :- unused(f), def(f, q), !used(q), !imp_at(_, q).
         let report = super::run(&text, &dir, None, &out, "program", binding, 1 << 18).unwrap();
         let rows = ["unused", "lone"].map(|r| crate::code_rule_dsl::logic::plan::output::shown(&out, r).unwrap());
         // A stratum the evaluator's maintain mode takes (decision 0364) has no pieces: it is one component.
-        (report.cross_maintained.0, rows, (crate::code_rule_dsl::logic::plan::mode_strata() - moded) as usize)
+        (maintained_with_stages(&report), rows, (crate::code_rule_dsl::logic::plan::mode_strata() - moded) as usize)
     };
     let run = |store: &str| run_on(store, Binding::Cpu);
     run("kept.sqlite");
@@ -1197,6 +1205,10 @@ named(n, @dot(q, q)) :- imp(n, q), docof(n, a), uses(a, q).
 /// Decision 0103 (t33 K1): a relation is kept as a frame under its identity, not its program's. A second program
 /// with the same rules for `def`, `imp` and `uses` finds them clean on its first run, and the first program's
 /// relations are still clean after it. A rule edit makes new only the relations it reaches.
+///
+/// Both programs read `uses` in their cross-file parts: `unused` names the definitions no file imports, not their
+/// nodes. A per-file reader of `used` would stage it (decision 0709), and a stage keeps its strata in its own space
+/// (decision 0083), not the program's.
 #[test]
 fn a_relation_two_programs_share_is_kept_once_and_a_rule_edit_reaches_only_its_readers() {
     let marker = format!("# {:?}\n", std::time::SystemTime::now());
@@ -1218,7 +1230,7 @@ imp_at(d, q) :- imp(n, q), docof(n, d).
 uses(a, q) :- imp_at(a, q), def_at(_, q).
 .output uses
 "#;
-    let unused = ".decl used(q: symbol)\nused(q) :- uses(_, q).\n.decl unused(f: node)\nunused(f) :- def(f, q), !used(q).\n.output unused\n";
+    let unused = ".decl used(q: symbol)\nused(q) :- uses(_, q).\n.decl unused(q: symbol)\nunused(q) :- def_at(_, q), !used(q).\n.output unused\n";
     let named = ".decl named(q: symbol)\nnamed(q) :- uses(_, q).\n.output named\n";
     let out = dir.join("out");
     super::TEST_TAPE_CACHE.with(|p| *p.borrow_mut() = Some(dir.join("kept.sqlite")));
@@ -1236,7 +1248,7 @@ uses(a, q) :- imp_at(a, q), def_at(_, q).
     let (ran_a, _) = run(unused);
     assert!(ran_a < all, "the first program's relations are still kept ({ran_a} of {all})");
     // An edit to `unused`'s rule: `uses` and what it reads stay clean.
-    let (edited, all_e) = run(&unused.replace("!used(q)", "!used(q), f != 0"));
+    let (edited, all_e) = run(&unused.replace("!used(q)", "!used(q), q != \"a.g\""));
     assert!(edited < all_e, "a rule edit reruns only what it reaches ({edited} of {all_e})");
     let _ = std::fs::remove_dir_all(&dir);
 }
@@ -2276,6 +2288,8 @@ fn every_switch_lowering_reads_is_classified() {
         // A profile's live heap by allocating stack (`heap-frames.tsv`): a diagnostic; the program is the same.
         "RERAIL_HEAP_FRAMES",
         "RERAIL_SPIKE_PROJECTION",
+        // A measurement aid (decision 0725): the asks of the exported relations, recorded; the program is the same.
+        "RERAIL_ASKS",
         // A diagnostic: a refused component's members, printed (`front::unstratified_trace`).
         "RERAIL_STRATA_COUNTS",
         "RERAIL_TAPE_CACHE",
@@ -2386,14 +2400,11 @@ fn every_switch_lowering_reads_is_classified() {
     let base_region = |from: &str, to: &str| region_of("corpus/base.rs", &base, from, to);
     // Combining: `combine_tail` (its link, `combine_linked_as`, and its tail, `tail_version`), what it calls that
     // reads a switch (`scoping`, the tail's passes), the `.rerail` lowering its `rr::parse` runs (`logic/rr`,
-    // `front`), and the passes it replays to judge an answer as the program's own demand leaves it
-    // (`answers_where_documents_are_version` through `reading_demanded`: simplify, reach index, demand). The combined
-    // program is kept under `COMBINING` alone.
+    // `front`), and `answers_where_documents_are_version`. The combined program is kept under `COMBINING` alone. The
+    // program's own demand is preparation's: it judges an answer on the split it makes (`Deferral::with_round_undone`).
     let mut combining = sources(&[
         "logic/rr", "logic/front.rs", "logic/front", "logic/plan/corpus/scoping.rs", "logic/plan/corpus/preparation/whole.rs",
         "logic/plan/corpus/preparation/on_request.rs", "logic/plan/corpus/preparation/hide.rs", "logic/plan/corpus/link.rs",
-        "logic/plan/corpus/preparation/simplify.rs", "logic/plan/corpus/preparation/prune.rs", "logic/plan/corpus/preparation/demand.rs",
-        "logic/plan/corpus/preparation/magic.rs", "logic/plan/corpus/preparation/magic",
     ]);
     combining.push(("corpus/base.rs, answers_where_documents_are_version".to_owned(), base_region("\npub fn answers_where_documents_are_version(", "\n/// The programs `programs` linked into one")));
     combining.push(("corpus/base.rs, combine_tail".to_owned(), base_region("\npub fn combine_tail(", "\n}\n")));
@@ -2568,19 +2579,23 @@ fn a_file_read_from_the_memo_has_its_tape_values_for_a_cross_file_rule() {
     let _ = std::fs::remove_dir_all(&fresh);
 }
 
-/// A count below a bound over a relation of values (decision 0680): p297's `refers` (UP032) as it read before 0677
-/// keyed the format parsers by the call: a format string's `{}` field takes the positional argument of its place among
-/// the string's `{}` fields. `value_arg` is a relation of the strings' values, read by file-local rules too, so its rank
-/// (`rr_rank`, `rank_form`) is the cross part's.
+/// A count below a bound over a relation of values (decision 0680): p297's `refers` (UP032), a format string's `{}`
+/// field takes the positional argument of its place among the string's `{}` fields. `field_of` is a relation of the
+/// strings' values, so its rank (`rr_rank`, `rank_form`) is the cross part's, `slot`. Since decision 0677 no node
+/// crosses into that part, and a file's rule that reads it is the part's too, so what it gives is a relation of values:
+/// each file's arguments by their texts (`arg_text`, a union of one file's values, per-file: 0680 §1) placed by the
+/// string's value. (The library's `brace_arg` is keyed by the call since 0677's third tail, 6d59c0b734.)
 const RANK_OF_VALUES: &str = r#"
 #include "core.rerail"
 #include "python/upgrade-format.rerail"
-.decl value_arg(v: symbol, k: number, a: symbol)
-value_arg(v, k, a) :- format_call(c, v), brace_arg(c, k, a).
-.decl refers(c: node, k: number, e: node)
-refers(c, k, e) :- format_call(c, v), value_arg(v, k, ""), r = count : { value_arg(v, k2, ""), k2 < k }, call_pos(c, r, e).
-.decl place(c: node, k: number, e: symbol)
-place(c, k, x) :- refers(c, k, e), text(e, x).
+.decl field_of(v: symbol, k: number)
+field_of(v, k) :- format_call(c, v), brace_arg(c, k, "").
+.decl slot(v: symbol, k: number, r: number) cross_file
+slot(v, k, r) :- field_of(v, k), r = count : { field_of(v, k2), k2 < k }.
+.decl arg_text(v: symbol, r: number, x: symbol)
+arg_text(v, r, x) :- format_call(c, v), call_pos(c, r, e), text(e, x).
+.decl place(v: symbol, k: number, x: symbol) cross_file
+place(v, k, x) :- slot(v, k, r), arg_text(v, r, x).
 .output place
 "#;
 
@@ -2869,15 +2884,20 @@ called(n, p, x) :- kind(n, "call"), field(n, "function", f), text(f, x), def(_, 
 /// value, and the rows are a fresh run's. `named_in(x, d)` is placed by a document's id, and the cross-file part reads
 /// it at an open location (`both`, as pure-lazy's walk reads `plp_id_in`): its choice reads the flag at that id, not at
 /// a node's document (decision 0693).
+///
+/// No node crosses into the cross-file part (decision 0677): `shared` holds a definition's document and name, a name
+/// defined in another file too, and each file's rules relate its own definitions to it.
 #[test]
 fn a_flag_over_every_file_is_applied_last() {
     const PROGRAM: &str = r#"
 .decl def(n: node, x: symbol)
 def(n, x) :- kind(n, "function_definition"), field(n, "name", i), text(i, x).
-.decl shared(n: node) cross_file
-shared(n) :- def(n, x), def(m, x), n != m.
+.decl def_at(d: number, x: symbol)
+def_at(d, x) :- def(n, x), docof(n, d).
+.decl shared(d: number, x: symbol) cross_file
+shared(d, x) :- def_at(d, x), def_at(e, x), d != e.
 .decl cand(d: number)
-cand(d) :- shared(n), docof(n, d).
+cand(d) :- shared(d, _).
 .decl any()
 any() :- cand(_).
 .decl docin(d: number)
@@ -2892,7 +2912,7 @@ unchecked(n, p, x) :- def(n, x), !inrec(n), docof(n, d), doc(d, p, _).
 .decl named_in(x: symbol, d: number)
 named_in(x, d) :- inrec(n), def(n, x), docof(n, d).
 .decl both(m: node, p: symbol, x: symbol)
-both(m, p, x) :- named_in(x, _), def(m, x), shared(m), docof(m, d), doc(d, p, _).
+both(m, p, x) :- named_in(x, _), def(m, x), docof(m, d), shared(d, x), doc(d, p, _).
 .output checked, unchecked, both
 "#;
     let files = [("a.py", "def f():\n    pass\n\ndef h():\n    pass\n"), ("b.py", "def f():\n    pass\n"), ("c.py", "def g():\n    pass\n")];
@@ -3235,6 +3255,18 @@ fn py_classes_workspace(name: &str, edits: &[(&str, &str)]) -> std::path::PathBu
     dir
 }
 
+/// `dir/lib/django.rerail`, the Django pack's library (`packs/django/rules/lib`) as the tree has it now: a program of
+/// `dir` includes `lib/django.rerail` beside it, as the pack's own rules do. A hard link, or a copy across volumes; not
+/// a symbolic link, which the file observer lists as no directory.
+fn django_beside(dir: &std::path::Path) {
+    let lib = crate::source_tree::root().expect("a checkout").join("packs/django/rules/lib/django.rerail");
+    std::fs::create_dir_all(dir.join("lib")).unwrap();
+    let to = dir.join("lib/django.rerail");
+    if std::fs::hard_link(&lib, &to).is_err() {
+        std::fs::copy(&lib, &to).unwrap();
+    }
+}
+
 /// `anc` and `old_anc`'s rows of a run of `program` over `dir`'s workspace.
 fn py_classes_run(dir: &std::path::Path, program: &str) -> (super::Report, std::collections::BTreeMap<String, Vec<Vec<String>>>) {
     crate::install_store_functions();
@@ -3383,6 +3415,7 @@ dk(p, x, k, v) :- dj_qs_model(q, r), dj_model_field_kw(r, x, k, v), docof(q, d),
 dm(p, x) :- dj_qs_model(q, r), dj_model_has_method(r, x), docof(q, d), doc(d, p, _).
 .output dm
 "#;
+    django_beside(&dir);
     let (_, rows) = py_classes_run(&dir, program);
     let r = |xs: &[&str]| xs.iter().map(|x| (*x).to_owned()).collect::<Vec<_>>();
     assert_eq!(rows["dq"], [r(&["views.py", "shop.models.Book"])], "{rows:?}");
@@ -3456,6 +3489,7 @@ da(p, mq) :- dj_model_abstract(e), dj_model_named(e, mq), docof(e, d), doc(d, p,
 mm(mq, a, x) :- at_view(e, mq), dj_model_manager_method(e, a, x).
 .output mm
 "#;
+    django_beside(&dir);
     let (_, rows) = py_classes_run(&dir, program);
     let r = |xs: &[&str]| xs.iter().map(|x| (*x).to_owned()).collect::<Vec<_>>();
     assert_eq!(
@@ -3512,6 +3546,7 @@ hk(mq, k, h) :- dj_qs_root(_, e), dj_model_named(e, mq), docof(e, d), doc(d, "vi
 rd(p, x, mq) :- dj_receiver_def(f, mq), def_name(f, x), docof(f, d), doc(d, p, _).
 .output rd
 "#;
+    django_beside(&dir);
     let (_, rows) = py_classes_run(&dir, program);
     let r = |xs: &[&str]| xs.iter().map(|x| (*x).to_owned()).collect::<Vec<_>>();
     assert_eq!(
@@ -3721,6 +3756,31 @@ fn a_files_programs_are_kept_with_its_tape() {
     assert_eq!(unknown.programs, (0, 1), "made by its embedder in the batch: {:?}", unknown.programs);
     super::TEST_TAPE_CACHE.with(|p| *p.borrow_mut() = None);
     let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// A place relation read where a chunk's tape values are admitted, on the CPU (the host's join programs): `line` is
+/// the `Loc` view's rows then `Extra`'s spans' (a match's, `places::Places`), and a string annotation's tree is a value
+/// whose rows the chunk layers over it (`values::Layered`). The layered view kept the placed view's kind with the
+/// values' directory, which the program read as a `PlacedDir`: its directory pointer was the directory's offset in its
+/// block, and the run faulted (the 57 data-layer rules over 50 files, every cold run). The lines of the annotation's
+/// tree's nodes, the host file's names and the match are each read.
+#[test]
+fn a_place_relation_with_spans_and_tape_values_is_read_on_the_cpu() {
+    let program = "#include \"core.rerail\"\n.language python\n\
+        .decl ann_name(x: symbol, l: number)\nann_name(x, l) :- kind(s, \"string\"), parsed(s, \"annotation\", r), within(n, r), text(n, x), line(n, l).\n\
+        .decl host_name(x: symbol, l: number)\nhost_name(x, l) :- kind(n, \"identifier\"), text(n, x), line(n, l).\n\
+        .decl todo(l: number)\ntodo(l) :- source(_, sp), match_all(\"TODO\", sp, m), line(m, l).\n\
+        .decl lines(k: symbol, x: symbol, l: number)\nlines(\"ann\", x, l) :- ann_name(x, l).\nlines(\"host\", x, l) :- host_name(x, l).\nlines(\"todo\", \"TODO\", l) :- todo(l).\n.output lines\n";
+    let file = "x: \"List[Node]\" = 1\n# TODO\ny = 2\n";
+    let (_, rows) = batch_run_on("places-values-cpu", &[("a.py", file)], program, "lines", crate::code_rule_dsl::typing::file_local::Binding::Cpu);
+    let mut rows = rows;
+    rows.sort();
+    let (ann, rest): (Vec<_>, Vec<_>) = rows.into_iter().partition(|r| r[0] == "ann");
+    // The annotation's tree's nodes, each on the host's line 1 (`List`, `Node`, and the trees holding them).
+    assert!(["List", "Node"].iter().all(|x| ann.iter().any(|r| r[1] == *x && r[2] == "1")), "the annotation's names: {ann:?}");
+    assert!(ann.iter().all(|r| r[2] == "1"), "every annotation node on line 1: {ann:?}");
+    let want: Vec<Vec<String>> = [["host", "x", "1"], ["host", "y", "3"], ["todo", "TODO", "2"]].map(|r| r.map(str::to_owned).to_vec()).to_vec();
+    assert_eq!(rest, want);
 }
 
 /// Decision 0431 R5's run: `program` (`.rerail`, with its includes) over `files` in a store of its own, giving the report

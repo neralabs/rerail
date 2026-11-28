@@ -1,0 +1,10 @@
+[package]
+name = "rerail-reads"
+version = "0.1.0"
+edition = "2024"
+publish = false
+description = "The layouts every reader of the engine's data reads where it lies, and their reads written directly in Rust (decisions 0353, 0534, 0536, 0704): a tape's view and reads (format 16, and 16z through its batch's rolling cache), its line index and auxiliary index, a projection's numbering, a batch's views' entries and directory, and the views' rows (`view_reads::Doc`). Below every crate that reads them, the CPU's join program included; the CLIF of the same reads is rerail-clif's."
+
+[dependencies]
+# A term's leaves found in an auxiliary index's names a chunk at a time (`aux::AuxIndex::leaves_with_term`).
+memchr = "=2.8.3"

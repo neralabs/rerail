@@ -1,15 +1,15 @@
 ; ast-grep pattern
-program sha256:785d11872a5ac586a0898d03701022652bb7c3183c22ecd4291cc683b90a31e2 ir=7 grammar=python@e3844d3566d29cd0 caps=interp,micro,pattern
+program sha256:9ee31615066e8e665a41c2ca9462e75654a4c92e4a27bf8233e866419e94be97 ir=7 grammar=python@e3844d3566d29cd0 caps=interp,micro,pattern
   mode set=0 query=0
   pattern (internal call (terminal identifier named "exec") (internal argument_list (single "A" named) (terminal #65534 any ")")))
   0000 STOP 0
 ; ast-grep pattern with a multi-capture
-program sha256:28d37f7ed1a760b04cd4d9ea1a1119771094658498ec8aa8ff4540ddb2ab7ad8 ir=7 grammar=python@e3844d3566d29cd0 caps=interp,micro,pattern
+program sha256:da7fcfe430361ee048a9e9cb6f6b18a8eca9cce49a7caef8249e5002d703fa43 ir=7 grammar=python@e3844d3566d29cd0 caps=interp,micro,pattern
   mode set=0 query=0
   pattern (internal function_definition (terminal "def" any "def") (single "F" named) (internal parameters (ellipsis "ARGS") (terminal #65534 any ")")) (ellipsis "BODY"))
   0000 STOP 0
 ; ast-grep literal
-program sha256:0c1622da2a63be67a1e19dd55636a1e2902af6c5fa6ebd31e791a82212168fa8 ir=7 grammar=python@e3844d3566d29cd0 caps=interp,micro
+program sha256:c12ce1f24b6fd7773f458f1ec9c53a4cb884e9a1a3c85d9ed876c4d1735793d7 ir=7 grammar=python@e3844d3566d29cd0 caps=interp,micro
   mode set=0 query=0
   string 0 "execute"
   string 1 "match"
@@ -22,7 +22,7 @@ program sha256:0c1622da2a63be67a1e19dd55636a1e2902af6c5fa6ebd31e791a82212168fa8 
   0002 CAPTURE L0  ; match
   0003 EMIT L1  ; ast-grep-literal
 ; regex
-program sha256:245e896be4dd6e26c997894121ea7cb22c1c665c6e9eea840d98c7989ac6bce4 ir=7 grammar=python@e3844d3566d29cd0 caps=interp,micro
+program sha256:31e6cdb3241b91db3075112e3f6ec212c2ed92202d557d10a8a18b352389bc80 ir=7 grammar=python@e3844d3566d29cd0 caps=interp,micro
   mode set=0 query=0
   string 0 "^eval|exec$"
   string 1 "match"
@@ -34,11 +34,11 @@ program sha256:245e896be4dd6e26c997894121ea7cb22c1c665c6e9eea840d98c7989ac6bce4 
   0001 CAPTURE L0  ; match
   0002 EMIT L1  ; regex
 ; navigation
-program sha256:3679b03b478eab3817a347a7cc89c9cc62b61254106ad7aa03f6942996400705 ir=7 grammar=python@e3844d3566d29cd0 caps=interp,micro
+program sha256:520d1c1f6424aa2c53d9cd7507b6fcc1baff8e58eb5b2a3ead3eeaa7467e887b ir=7 grammar=python@e3844d3566d29cd0 caps=interp,micro
   mode set=0 query=0
   0000 STOP 0
 ; query: fields
-program sha256:ce7aa27ed0d860b292a6966c37293cb39a2b2039d83a1195b1e4049e24e3d758 ir=7 grammar=python@e3844d3566d29cd0 caps=interp
+program sha256:a23176d5b8bbba56ec0256a141186553b988882aa4a31ff496b56e0894358132 ir=7 grammar=python@e3844d3566d29cd0 caps=interp
   mode set=0 query=1
   string 0 "name"
   string 1 "definition"
@@ -56,7 +56,7 @@ program sha256:ce7aa27ed0d860b292a6966c37293cb39a2b2039d83a1195b1e4049e24e3d758 
   0007 CAPTURE L1  ; definition
   0008 EMIT L2  ; tree-sitter-query
 ; query: #eq?
-program sha256:23c9709fe811e43f218456cd29d450ee53f39b10bd53c6ce33d5ded15bb6cc7f ir=7 grammar=python@e3844d3566d29cd0 caps=interp
+program sha256:8051d5a4b5f2316f28b14425635c29697199e00b15fb86eac437bbf73b970983 ir=7 grammar=python@e3844d3566d29cd0 caps=interp
   mode set=0 query=1
   string 0 "name"
   string 1 "exec"
@@ -70,7 +70,7 @@ program sha256:23c9709fe811e43f218456cd29d450ee53f39b10bd53c6ce33d5ded15bb6cc7f 
   0002 ASSERT A0
   0003 EMIT L1  ; tree-sitter-query
 ; query: #match? over alternation
-program sha256:8797e5539e75d2052e771722c94c78760f0a8c883ea62d44e7f4f2b5407320d2 ir=7 grammar=python@e3844d3566d29cd0 caps=interp
+program sha256:b72f81b4bc1c5639e080dbbfa9b36211f2fa48b645f8ff502543f166a865f666 ir=7 grammar=python@e3844d3566d29cd0 caps=interp
   mode set=0 query=1
   string 0 "number"
   string 1 "^[12]"
@@ -87,7 +87,7 @@ program sha256:8797e5539e75d2052e771722c94c78760f0a8c883ea62d44e7f4f2b5407320d2 
   0005 ASSERT A0
   0006 EMIT L1  ; tree-sitter-query
 ; query: quantifier
-program sha256:b916c57e1160beca5af3907a84ac7d202f51010d1a662f204f899d3a91e36e66 ir=7 grammar=python@e3844d3566d29cd0 caps=interp
+program sha256:42828941aec7acc3c3b2974f0512c8bb078e4e3f73dc93f5b36691d2535c55ae ir=7 grammar=python@e3844d3566d29cd0 caps=interp
   mode set=0 query=1
   string 0 "item"
   string 1 "# 0"
@@ -115,7 +115,7 @@ program sha256:b916c57e1160beca5af3907a84ac7d202f51010d1a662f204f899d3a91e36e66 
   0016 ASSERT A0
   0017 EMIT L1  ; tree-sitter-query
 ; query: directives
-program sha256:331d85f378be06103657ea042b3f45177e4cec565e160075fad4f68797cc9e12 ir=7 grammar=python@e3844d3566d29cd0 caps=interp
+program sha256:7272fa8e0e8e8df3f9ff572f18d87de0f602adb42532e44599402ba126f8e2cc ir=7 grammar=python@e3844d3566d29cd0 caps=interp
   mode set=0 query=1
   string 0 "name"
   string 1 "role"
@@ -129,7 +129,7 @@ program sha256:331d85f378be06103657ea042b3f45177e4cec565e160075fad4f68797cc9e12 
   0001 CAPTURE L0  ; name
   0002 EMIT L1  ; tree-sitter-query
 ; query: offset
-program sha256:76720dffaddce2bb0f69d121e4f6231799e5182458b95f54849ffe79d7eba227 ir=7 grammar=python@e3844d3566d29cd0 caps=interp
+program sha256:d510d80716469a540a29aa1d81f82ad32ee3f3418fe26850f7826373f04b89b5 ir=7 grammar=python@e3844d3566d29cd0 caps=interp
   mode set=0 query=1
   string 0 "name"
   string 1 "role"
@@ -143,7 +143,7 @@ program sha256:76720dffaddce2bb0f69d121e4f6231799e5182458b95f54849ffe79d7eba227 
   0001 CAPTURE L0  ; name
   0002 EMIT L1  ; tree-sitter-query
 ; set mode
-program sha256:2cd1fdaeb20670296d67664208167eeaf5c3cdd0d0e7556a48ae3b27fa0934bc ir=7 grammar=python@e3844d3566d29cd0 caps=interp,micro
+program sha256:540b5cee0487e0ea9e930229e3b62104bf7747c104630e1596d28ff75b2a2d2b ir=7 grammar=python@e3844d3566d29cd0 caps=interp,micro
   mode set=1 query=0
   string 0 "execute"
   string 1 "match"

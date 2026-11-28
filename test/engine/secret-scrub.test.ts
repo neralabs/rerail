@@ -204,35 +204,42 @@ describe("scrubSecrets", () => {
     }
   });
 
-  it("replaces a string too long to scan whole, and stays linear on many unterminated key headers", () => {
+  it("replaces a string too long to scan whole, and redacts many unterminated key headers", () => {
     expect(scrubSecrets("a".repeat(MAX_SCRUB_CHARS + 1))).toBe("[redacted:unscanned]");
-    const headers = "-----BEGIN RSA PRIVATE KEY-----!".repeat(100_000);
-    const started = performance.now();
-    expect(scrubSecrets(headers)).not.toContain("-----BEGIN");
-    expect(performance.now() - started).toBeLessThan(5_000);
+    expect(scrubSecrets("-----BEGIN RSA PRIVATE KEY-----!".repeat(100_000))).not.toContain("-----BEGIN");
   });
 
-  // Each run starts a candidate match every few characters; none may make a pass cost more than linear time.
+  // Each run starts a candidate match every few characters; none may make a pass cost more than linear time. One pass
+  // over a megabyte costs as much as four over a quarter megabyte when the cost is linear and 4 times as much when it
+  // is quadratic: the bound of 2 sits between them.
   it.each([
     "eyJ-", ".eyJ", `eyJ${"a".repeat(10)}.`, ` eyJ${"a".repeat(5000)}`, "sk-", ` sk-${"a".repeat(300)}`, "AIza-",
     `-sk_live_${"a".repeat(300)}_`, "glpat-", "xoxb-", "pypi-", "a.a.a.a.a.a.a.a.a.a://u:", `a://${"a".repeat(255)}:${"a".repeat(255)} `,
-    "Bearer ", "token=", "aws_secret_access_key=", "-----END PRIVATE KEY-----",
+    "Bearer ", "token=", "aws_secret_access_key=", "-----END PRIVATE KEY-----", "-----BEGIN RSA PRIVATE KEY-----!",
   ].map(unit => ({ unit, shown: JSON.stringify(unit.length > 24 ? `${unit.slice(0, 24)}...` : unit) })))("scrubs a megabyte of $shown repeated in linear time", ({ unit }) => {
-    // The fastest of several passes: other test files share the CPU, and a pass they preempt only takes longer, so
-    // the minimum is the scan's own cost. A single sample under a full suite run measured the scheduler instead.
-    const time = (size: number): number => {
-      const text = unit.repeat(Math.ceil(size / unit.length)).slice(0, size);
-      return Math.min(...Array.from({ length: 5 }, () => {
-        const started = performance.now();
-        scrubSecrets(text);
-        return performance.now() - started;
-      }));
+    const text = (size: number): string => unit.repeat(Math.ceil(size / unit.length)).slice(0, size);
+    const quarter = text(256 * 1024);
+    const whole = text(1024 * 1024);
+    scrubSecrets(text(64 * 1024));
+    // The two sides do the same work when the cost is linear, so they last as long and a CPU shared with other test
+    // files' workers cuts into both alike: one quarter pass, shorter than the scheduler's time slice, could end uncut
+    // where every megabyte pass was cut, and a linear scan read as quadratic. Each side's cost is the least of its
+    // turns, since load only adds to a turn, and the sides take turns, so a stretch of load slows both.
+    const elapsed = (passes: number, subject: string): number => {
+      const started = performance.now();
+      for (let pass = 0; pass < passes; pass++) scrubSecrets(subject);
+      return performance.now() - started;
     };
-    time(64 * 1024);
-    const quarter = time(256 * 1024);
-    const whole = time(1024 * 1024);
-    expect(whole).toBeLessThan(500);
-    expect(whole).toBeLessThan(8 * quarter + 50);
+    let quarters = Number.POSITIVE_INFINITY;
+    let megabyte = Number.POSITIVE_INFINITY;
+    for (let round = 0; round < 5; round++) {
+      quarters = Math.min(quarters, elapsed(4, quarter));
+      megabyte = Math.min(megabyte, elapsed(1, whole));
+    }
+    // The ratio is the guard, and the case's own time limit its only clock: a fixed bound on one pass reads a busy
+    // runner's load as well as a slow rule. A rule linear in the text but slow on each character reads 1 here too; the
+    // five turns scan 10 MB, so vitest's 5 s limit on Linux ends a case whose rule takes about 500 ms a megabyte.
+    expect(megabyte).toBeLessThan(2 * quarters);
   });
 
   it("tells whether text holds a secret", () => {

@@ -49,11 +49,13 @@ pub(super) fn view_counts(p: &Projected) -> ViewCounts {
 }
 
 /// A batch's views' directory with its search layer's keys (`view_reads::ViewDir`, decision 0353 step 3 on the CPU), in
-/// `block`: `n` documents, each its key, `keys` in order, each one's row its number in the growth (`numbered`) less
+/// `block`: `n` documents, each its key, `keys` in order (`ViewDir::keys`, which a search by key reads alone), each one's row its number in the growth (`numbered`) less
 /// the first's, rows of the numbers between that none of them has with key `NO_DOC`; the first rows are written when
 /// counted (`Batch::firsts`), and each document's reads layer on its first read (`Docs::reads`). Its homes are fixed:
 /// the `i`th document's tape in home `3i`, its lines in `3i + 1`, its source in `3i + 2`, the 16z cache in `3n`
-/// (`ViewDir::cache` is `3n + 1` once it is made). Beside it, each document's views' counts as the documents' table gave them (`Given`, `[counts, 1]`, or
+/// (`ViewDir::cache` is `3n + 1` once it is made), the codes' directory in `3n + 1` (`ViewDir::codes`: the binary's,
+/// decision 0697; its device address written with the first row the device reads). Beside it, each document's views'
+/// counts as the documents' table gave them (`Given`, `[counts, 1]`, or
 /// zeros where none was given). Its offset in the block, and the given counts'.
 pub(super) fn directory(block: &Block, docs: impl Iterator<Item = (u32, Option<ViewCounts>)>, n: usize, ids: &Ids, numbered: &[Arc<Numbered>]) -> (usize, usize) {
     use rerail_clif::view_reads::{ViewDir, ViewHome, ViewRow};
@@ -61,9 +63,10 @@ pub(super) fn directory(block: &Block, docs: impl Iterator<Item = (u32, Option<V
     let (first, span) = numbers_spanned(numbered.iter().map(|d| d.number));
     let rows: *mut ViewRow = block.alloc_t((span as usize).max(1));
     let given: *mut Given = block.alloc_t(n.max(1));
-    let homes: *mut ViewHome = block.alloc_t(HOMES * n + 1);
-    // Its documents are in key order (`Docs::new`, `Docs::grown`): their order by key is their order's.
-    let by_key: *mut u32 = block.alloc_t(n.max(1));
+    let homes: *mut ViewHome = block.alloc_t(HOMES * n + 2);
+    // Its documents' keys in its order (`ViewDir::keys`, `order`'s), which a search by key reads alone: all the batch's,
+    // in key order (`Docs::new`, `Docs::grown`), as its order is.
+    let keys: *mut u32 = block.alloc_t(n.max(1));
     let order: *mut u32 = block.alloc_t(n.max(1));
     // SAFETY: `span` rows, just allocated in `block`: the numbers none of its documents has.
     unsafe { write_absent(rows, first, span, numbered.iter().map(|d| d.number)) };
@@ -71,8 +74,8 @@ pub(super) fn directory(block: &Block, docs: impl Iterator<Item = (u32, Option<V
     let mut k = 0;
     for (key, counts) in docs.take(n) {
         let row = numbered[k].number - first;
-        // SAFETY: its row of the rows, its given counts just allocated in `block`, and its homes, and its places in
-        // the order and the order by key.
+        // SAFETY: its row of the rows, its given counts and its key just allocated in `block`, its homes, and its place
+        // in the order.
         unsafe {
             let h = (HOMES * k) as u32;
             rows.add(row as usize).write(ViewRow { key, homes: [h, h + 1, h + 2], at: k as u32, ..Default::default() });
@@ -83,7 +86,7 @@ pub(super) fn directory(block: &Block, docs: impl Iterator<Item = (u32, Option<V
                 g[..COUNTS].copy_from_slice(&c);
                 g
             }));
-            by_key.add(k).write(row);
+            keys.add(k).write(key);
             for j in 0..HOMES {
                 homes.add(HOMES * k + j).write(ViewHome::default());
             }
@@ -91,18 +94,25 @@ pub(super) fn directory(block: &Block, docs: impl Iterator<Item = (u32, Option<V
         k += 1;
     }
     assert_eq!(k, n, "a key for every document");
-    // SAFETY: the cache's home, just allocated.
-    unsafe { homes.add(HOMES * n).write(ViewHome::default()) };
+    // SAFETY: the `n` keys just written in `block`.
+    debug_assert!(unsafe { std::slice::from_raw_parts(keys, n) }.windows(2).all(|w| w[0] < w[1]), "a batch's documents in key order");
+    // SAFETY: the cache's and the codes' homes, just allocated.
+    unsafe {
+        homes.add(HOMES * n).write(ViewHome::default());
+        homes.add(HOMES * n + 1).write(ViewHome { host: rerail_tape_format::codes_dir::bytes().as_ptr() as u64, gpu: 0 });
+    }
     let at = block.offset_of(dir);
     // SAFETY: the directory just allocated in `block`.
     unsafe {
         dir.write(ViewDir {
             at: at as u64,
             ndocs: n as u32,
-            nhomes: (HOMES * n) as u32 + 1,
+            nhomes: (HOMES * n) as u32 + 2,
             rows: block.offset_of(rows) as u64,
             homes: block.offset_of(homes) as u64,
-            by_key: block.offset_of(by_key) as u64,
+            nbatch: n as u32,
+            keys: block.offset_of(keys) as u64,
+            codes: (HOMES * n) as u32 + 1,
             pages: ids.table_at() as u64,
             order: block.offset_of(order) as u64,
             first,
@@ -371,6 +381,22 @@ impl Docs {
         let g = unsafe { self.context.block.ptr::<Given>(self.given).add(i).read() };
         (g[COUNTS] != 0).then(|| std::array::from_fn(|k| g[k]))
     }
+    /// Every document whose views' counts were not given, made on the pool's cores. `counts` makes the one it is
+    /// asked for: `Batch::firsts_at` asked every document's, one after another inside its once, while the pool's
+    /// threads that read the batch waited on it (cold PostHog's statistics: `ast_depth`'s count 6.1 s wall, 1.4 s
+    /// CPU, over the corpus batch's 29,880 documents).
+    pub(super) fn make_uncounted(&self) {
+        use rayon::prelude::*;
+        let todo: Vec<u32> = (0..self.slots.len()).filter(|&i| self.slots[i].made.get().is_none() && self.given(i).is_none()).map(|i| i as u32).collect();
+        if todo.len() < 2 {
+            return;
+        }
+        crate::code_rule_dsl::logic::profile::on_cores(|| {
+            todo.par_iter().for_each(|&i| {
+                self.made(i as usize);
+            })
+        });
+    }
     /// Document `i`'s views' counts: those given, else its projection's (made if it is not).
     pub fn counts(&self, i: usize) -> ViewCounts {
         match (self.slots[i].made.get(), self.given(i)) {
@@ -402,14 +428,6 @@ impl Docs {
         // SAFETY: as `row`; a row below its span.
         let at = unsafe { (row < rerail_clif::view_reads::ViewDir::span_of(self.dir())).then(|| rerail_clif::view_reads::ViewDir::at_of(self.dir(), row)) }?;
         (at != rerail_clif::view_reads::NO_DOC).then_some(at as usize)
-    }
-    /// The document and local id of value `value` in the chunk's numbering (plan "Chunk node numbers"): its page's
-    /// number's row, that row's document, and its page's local id; `None` for a value that is no id of a document of
-    /// the batch.
-    pub fn of_id(&self, value: i64) -> Option<(usize, u32)> {
-        // SAFETY: the directory `new` made in the batch's block, which the context holds.
-        let (row, local) = unsafe { rerail_clif::view_reads::ViewDir::of_value(self.dir(), value) }?;
-        Some((self.of_row(row)?, local))
     }
     /// Every document's key, in order.
     pub fn keys(&self) -> impl ExactSizeIterator<Item = u32> + '_ {
@@ -570,14 +588,24 @@ impl Docs {
     /// in the growth; `None` where its role's region has no room (the batch fails).
     pub fn base(&self, i: usize) -> Option<u32> {
         let d = &self.numbered[i];
-        let base = self.context.ids.base(d, || self.made_alone(i).p.base_count());
-        match base {
-            None => self.fail(format!("{}: its ids pass its role's region of the chunk's ids (plan \"Chunk node numbers\")", self.slots[i].input.path())),
-            // Its projection in this batch, newly numbered: where its ids leave the chunk from now (`located`).
-            Some(_) if self.made_alone(i).p.numbered_as(Arc::clone(d)) => d.made_in(&self.slots[i]),
-            Some(_) => {}
+        let base = self.context.ids.base(d, || {
+            let p = &self.made_alone(i).p;
+            p.locs() + p.f().lines.count() as u32 + 1
+        });
+        if base.is_none() {
+            self.fail(format!("{}: its ids pass its role's region of the chunk's ids (plan \"Chunk node numbers\")", self.slots[i].input.path()));
         }
         base
+    }
+    /// Document `i`'s later spans (its comments no node is, then its matches: `ids` of them, made with its rows):
+    /// their first id and first local id, taken once in the growth.
+    pub fn later_ids(&self, i: usize, ids: u32) -> Option<(u32, u32)> {
+        self.base(i)?;
+        let later = self.context.ids.later(&self.numbered[i], ids);
+        if later.is_none() {
+            self.fail(format!("{}: its spans pass its role's region of the chunk's ids (plan \"Chunk node numbers\")", self.slots[i].input.path()));
+        }
+        later
     }
     /// Document `i`'s nodes as its projection would number them, by their codes as the `node` view reads them
     /// (`Dialect::code`): `(nodes, each code's nodes)`, read off its index (decision 0656 step 4) with none made.
@@ -686,6 +714,10 @@ impl Docs {
         // Its positions (tokens, text, lines) in the top slots (`granules::span_low`): past them ids would clash.
         if p.defs.is_some() && u64::from(p.locs() - p.len()) > granules::POSITIONS {
             self.fail(format!("{} has more than {} positions (tokens and lines: core.rerail's span ids)", d.path, granules::POSITIONS));
+        }
+        // Ids that are tape positions: the tape below the slots of the spans, and the spans within theirs.
+        if p.tape_ids() && (p.f().len() as u64 > granules::TAPE_POSITIONS || u64::from(p.locs() - p.len() - p.ranks().count(super::Item::Token)) > granules::POSITIONS) {
+            self.fail(format!("{} has more than {} tape nodes or {} spans (ids as tape positions)", d.path, granules::TAPE_POSITIONS, granules::POSITIONS));
         }
         // A file's lines, for its guests a later round or an admitted value places in it.
         if core && guest.is_none() && let Some(x) = &p.extra {
@@ -842,6 +874,85 @@ const INDEXED: usize = 8;
 /// A group's index of one column of one relation (an index in its relation's block, decision 0353): nothing where
 /// the group's rows are in the column's order, else its rows in that order (stable: equal values in row order). A
 /// probe is a binary search. A hash map of a row list a value was most of a made relation's first probes' time.
+/// A made relation's node ids in one group as bits (`Group::holds`): the ids grouped by all but their low
+/// `ID_SPLIT` bits (a document and, by definition, a granule's slot; by tape position, a stretch of 2^18 of them),
+/// and within a group a bit an id from its least, as decision 0694's set form keys its bits by slot. Built only
+/// where the words are at most 4 bytes a row, from the rows read where they lie (d2036b8dfa): a sorted copy of the
+/// ids and words up to 16 bytes a row held 1.5 GB of the heap at the peak of a run on `all`.
+pub(super) struct NodeBits {
+    /// Each group's high bits, its least id's low bits, and its words' start in `words`, by group.
+    docs: Vec<(i64, u32, u32)>,
+    words: Vec<u64>,
+}
+
+/// The low bits of an id within its `NodeBits` group.
+const SPLIT: u32 = rerail_blocks::packed::ID_SPLIT;
+
+impl NodeBits {
+    /// The bits of rows `0..rows`, row `i`'s id `at(i)`, read where they lie: once for each group's span (a group's
+    /// rows mostly lie together, its runs merged by key), once for its bits. `None` where an id is negative or the
+    /// words would be more than 4 bytes a row (`2 * words > rows`): the probe reads the rows.
+    fn new(rows: usize, at: impl Fn(usize) -> i64) -> Option<Self> {
+        let low = |v: i64| (v & ((1 << SPLIT) - 1)) as u32;
+        // Each run of rows of one group: its key, least and greatest low bits.
+        let mut spans: Vec<(i64, u32, u32)> = Vec::new();
+        for i in 0..rows {
+            let v = at(i);
+            if v < 0 {
+                return None;
+            }
+            let (key, l) = (v >> SPLIT, low(v));
+            match spans.last_mut() {
+                Some(s) if s.0 == key => (s.1, s.2) = (s.1.min(l), s.2.max(l)),
+                _ => spans.push((key, l, l)),
+            }
+        }
+        // A group's runs as one, by key.
+        spans.sort_unstable_by_key(|s| s.0);
+        spans.dedup_by(|b, a| {
+            let same = a.0 == b.0;
+            if same {
+                (a.1, a.2) = (a.1.min(b.1), a.2.max(b.2));
+            }
+            same
+        });
+        let mut docs = Vec::with_capacity(spans.len());
+        let mut n = 0usize;
+        for &(key, least, most) in &spans {
+            docs.push((key, least, n as u32));
+            n += (most - least) as usize / 64 + 1;
+            if 2 * n > rows {
+                return None;
+            }
+        }
+        drop(spans);
+        let mut words = vec![0u64; n];
+        // The group of the row before: the next row's most often.
+        let mut d = 0;
+        for i in 0..rows {
+            let v = at(i);
+            let key = v >> SPLIT;
+            if docs[d].0 != key {
+                d = docs.partition_point(|e| e.0 < key);
+            }
+            let (_, base, start) = docs[d];
+            let x = (low(v) - base) as usize;
+            words[start as usize + x / 64] |= 1 << (x % 64);
+        }
+        Some(NodeBits { docs, words })
+    }
+    fn has(&self, value: i64) -> bool {
+        let key = value >> SPLIT;
+        let d = self.docs.partition_point(|e| e.0 < key);
+        let Some(&(k, base, start)) = self.docs.get(d).filter(|e| e.0 == key) else { return false };
+        let end = self.docs.get(d + 1).map_or(self.words.len(), |e| e.2 as usize);
+        let Some(at) = ((value & ((1 << SPLIT) - 1)) as u32).checked_sub(base) else { return false };
+        let w = start as usize + at as usize / 64;
+        debug_assert_eq!(k, key);
+        w < end && self.words[w] >> (at % 64) & 1 != 0
+    }
+}
+
 pub(super) enum ColIndex {
     /// Runs of rows each in the column's order, whose values do not overlap, by their values: a group's documents'
     /// rows, each document's in node order (its node ids' high half is the document's key). A probe finds its run,
@@ -915,6 +1026,43 @@ fn partition_near(lo: usize, hi: usize, near: usize, below: impl Fn(usize) -> bo
 }
 
 #[cfg(test)]
+mod node_bits_tests {
+    use super::NodeBits;
+
+    fn bits(rows: &[i64]) -> Option<NodeBits> {
+        NodeBits::new(rows.len(), |i| rows[i])
+    }
+
+    /// A membership by bits answers as the rows do: each document's ids, none of another document's, none outside,
+    /// a group's rows apart from each other (another's between) too.
+    #[test]
+    fn bits_hold_exactly_the_rows_ids() {
+        let id = |doc: i64, low: i64| doc << 32 | low;
+        // By definition: a granule's slot above 18 index bits (two slots of document 7).
+        let def = |doc: i64, slot: i64, index: i64| doc << 32 | slot << 18 | index;
+        let rows = [id(9, 5), id(7, 1000), id(7, 1003), def(7, 3, 4), id(7, 1050), id(9, 70), id(7, 1003), def(7, 3, 9), def(7, 5, 0), id(7, 1001), id(9, 6)];
+        let bits = bits(&rows).expect("dense ids take bits");
+        for &v in &rows {
+            assert!(bits.has(v), "{v:#x}");
+        }
+        for v in [id(7, 999), id(7, 1002), id(7, 1051), id(7, 1 << 20), id(8, 1000), id(9, 4), id(9, 71), id(10, 5), def(7, 3, 5), def(7, 4, 4), def(7, 5, 1), def(7, 6, 0)] {
+            assert!(!bits.has(v), "{v:#x}");
+        }
+    }
+
+    /// Ids whose words would be past 4 bytes a row, or negative, take no bits: the probe reads the rows.
+    #[test]
+    fn sparse_or_negative_ids_take_no_bits() {
+        assert!(bits(&[1i64 << 32, (1i64 << 32) | (1 << 17)]).is_none());
+        assert!(bits(&[-1i64]).is_none());
+        // Two rows a word is 4 bytes a row: bits; three words for four rows is 6: none.
+        let id = |doc: i64, low: i64| doc << 32 | low;
+        assert!(bits(&[id(1, 0), id(1, 63), id(2, 0), id(2, 63)]).is_some());
+        assert!(bits(&[id(1, 0), id(1, 200), id(2, 0), id(2, 1)]).is_none());
+    }
+}
+
+#[cfg(test)]
 mod partition_tests {
     use super::{partition, partition_near, ColIndex, Group, Relation, Source};
 
@@ -928,7 +1076,7 @@ mod partition_tests {
         shuffled.swap(1, 20);
         shuffled.swap(4, 12);
         let mut h = 0x9e37_79b9u64;
-        let scattered: Vec<i64> = (0..300).map(|_| { h ^= h << 13; h ^= h >> 7; h ^= h << 17; (h % 7) as i64 + 2 << 32 | (h >> 20) as i64 % 90 }).collect();
+        let scattered: Vec<i64> = (0..300).map(|_| { h ^= h << 13; h ^= h >> 7; h ^= h << 17; (((h % 7) as i64 + 2) << 32) | ((h >> 20) as i64 % 90) }).collect();
         for (values, is_runs) in [(runs, true), (shuffled, false), (scattered, false)] {
             let mut r = Relation::new(&["n", "s"]);
             r.push(&[-5, 0]);
@@ -978,6 +1126,10 @@ pub(super) struct Group {
     /// Each slot boxed once built: most are never probed, and an index held in place made a group's slots 16 KB
     /// (2,439 GB·s on cold PostHog).
     index: Box<[std::sync::OnceLock<Box<ColIndex>>]>,
+    /// Per relation, its rows' nodes as bits over each document's node ids (layer c of the joins' design, decision
+    /// 0694's set form for a made relation): a membership test of the document column is one bit. Made at the first
+    /// such test, an index in its relation's block as `index` is; `None` where the bits would outweigh the rows.
+    bits: Box<[std::sync::OnceLock<Option<Box<NodeBits>>>]>,
     /// The strings its rows used (`Made::used`), where its batch keeps them: a renewed batch's vocabulary is its
     /// groups' (decision 0616).
     /// The list as made (`Made::used`), shared, not copied into a slice (1.18 M copies on cold PostHog).
@@ -987,7 +1139,8 @@ pub(super) struct Group {
 impl Group {
     fn new(docs: rerail_blocks::vector::Vector<usize>, ranges: Vec<Range<usize>>, strings: Option<Arc<Vec<u32>>>) -> Self {
         let index = (0..ranges.len() * INDEXED).map(|_| std::sync::OnceLock::new()).collect();
-        Group { docs, ranges, index, strings }
+        let bits = (0..ranges.len()).map(|_| std::sync::OnceLock::new()).collect();
+        Group { docs, ranges, index, bits, strings }
     }
 
     /// The group's rows of relation `rel` (held in `r`) whose `column` is a key of the index, made if it is not.
@@ -1022,6 +1175,20 @@ impl Group {
             let fence = pairs.iter().step_by(ORDER_FENCE).map(|p| p.0).collect();
             ColIndex::Order { order: pairs.into_iter().map(|(_, row)| row).collect(), fence }
         })()))
+    }
+    /// Whether the group's rows of `rel` (in `r`) hold `value` in `column`, the document column, by its bits
+    /// (`NodeBits`): `None` where it has none.
+    fn holds(&self, rel: usize, column: usize, r: &Relation, value: i64) -> Option<bool> {
+        let bits = self.bits[rel].get_or_init(|| {
+            let range = self.ranges[rel].clone();
+            let read = r.range_reader(range.clone(), column);
+            let at = |i: usize| {
+                let row = range.start + i;
+                read.as_ref().map_or_else(|| Source::value(r, row, column), |c| c.get(row as u32))
+            };
+            NodeBits::new(range.len(), at).map(Box::new)
+        });
+        bits.as_ref().map(|b| b.has(value))
     }
     /// The group's rows of `rel` (in `r`) whose `column` is `value`, in row order, each given to `each`.
     /// `near`: the row the last probe's search ended at (a cursor's), searched out from and left at this one's.
@@ -1215,11 +1382,10 @@ impl ByDocument {
         }
     }
     /// The key of the document `value` (of `column`) names, if it names one: the row's own, or its host's.
-    fn document(self, docs: &Docs, value: i64) -> Option<u32> {
+    fn document(self, value: i64) -> Option<u32> {
         match self {
             Self::Key(_) => u32::try_from(value).ok(),
-            // A node's (its own, or its host's: another document of the chunk), by its page (plan "Chunk node numbers").
-            Self::Id(_) | Self::Host(_) => docs.ids().key_of_value(value),
+            Self::Id(_) | Self::Host(_) => rerail_blocks::located::Located::key_of(value),
             Self::No => None,
         }
     }
@@ -1386,22 +1552,23 @@ impl Rows {
 pub(super) enum ColKind {
     /// A document's key.
     Key,
-    /// A node's, a token's or a span's id in its chunk: its document's base plus its local id (plan "Chunk node
-    /// numbers"), 32 bits.
+    /// A node's or a span's id, `key << 32 | slot`.
     Node,
-    /// A key in located form (`rerail_blocks::located::Located`): a document's key and 32 low bits, `node_order`'s.
-    Located,
+    /// A node's or a span's id, or -1 for none (a node's sibling before it, its end point where the document's are
+    /// not made).
+    NodeOrNone,
     /// A text: an atom (`content_store::atoms::Sym`, 32 bits), one interned after it is asked too.
     Atom,
     /// A value the engine makes as a `u32`: a kind, a field, a position, a line, a depth, a child's place.
     U32,
 }
 
+
 impl Batch {
     /// Bounds of what a column of `kind` of the batch's rows holds, its documents made or not (`Source::col_bounds`).
     /// A key: the least and greatest of its documents' keys and their files' (a program's document and nodes are its
-    /// file's, decision 0431 §4: `Docs::file`, a key that need not be the batch's). A node: every id of the chunk's
-    /// numbering, 32 bits. `[MAX, MIN]` with no documents.
+    /// file's, decision 0431 §4: `Docs::file`, a key that need not be the batch's). A node: every slot of the
+    /// least's to the greatest's, so one document's are 32 bits. `[MAX, MIN]` with no documents.
     pub(super) fn bounds_of(&self, kind: ColKind) -> [i64; 2] {
         let keys = (0..self.docs.len()).fold([i64::MAX, i64::MIN], |[lo, hi], i| {
             let (key, file) = (self.docs.key(i), self.docs.file(i));
@@ -1410,13 +1577,13 @@ impl Batch {
         match kind {
             ColKind::Key => keys,
             ColKind::Node if keys[0] > keys[1] => keys,
-            // Every id a chunk hands out (plan "Chunk node numbers"): 32 bits, its documents made or not.
-            ColKind::Node => [0, i64::from(u32::MAX)],
-            ColKind::Located if keys[0] > keys[1] => keys,
-            ColKind::Located => rerail_blocks::located::Located::range(keys[0], keys[1]),
+            ColKind::Node => rerail_blocks::located::Located::range(keys[0], keys[1]),
+            ColKind::NodeOrNone if keys[0] > keys[1] => keys,
+            ColKind::NodeOrNone => [-1, rerail_blocks::located::Located::range(keys[0], keys[1])[1]],
             ColKind::Atom | ColKind::U32 => [0, i64::from(u32::MAX)],
         }
     }
+
 
     /// The rows of `want`'s documents made: those not made yet, as one group (decision 0494), which each relation goes
     /// on with in its block relation. A group is made unlocked (its prefilter and matchers run on the pool, where a
@@ -1492,11 +1659,12 @@ impl Batch {
                 need.sort_unstable();
                 need.dedup();
                 if need.is_empty() && waits {
-                    // Another thread's group: the pool's next job, else a wait for a group to end. Its time is the
-                    // wait's span's, not the reading step's (t56 step 1); a job it runs charges its own scopes.
+                    // Another thread's group: the pool's next job (`help_once`, within this thread's stack), else a
+                    // wait for a group to end. Its time is the wait's span's, not the reading step's (t56 step 1); a
+                    // job it runs charges its own scopes.
                     drop(s);
                     let _waited = profile::span(|| "batch: waited for another thread's make".to_owned());
-                    if rayon::yield_now() != Some(rayon::Yield::Executed) {
+                    if !rerail_accel::exec::help_once() {
                         let mut s = self.rows.state.lock();
                         if want.iter().any(|&i| s.of[i].is_none() && s.claimed[i].is_some_and(|t| t != me)) {
                             self.rows.made.wait_for(&mut s, std::time::Duration::from_millis(1));
@@ -1617,7 +1785,7 @@ impl Batch {
                 _ => by.column().map(|c| (c, &keys, by)),
             };
             for (c, within, by) in checked.into_iter().chain(also.iter().map(|&c| (c, &keys, ByDocument::Id(c)))) {
-                if let Some(row) = (0..Source::len(r)).find(|&row| !by.document(&self.docs, Source::value(r, row, c)).is_some_and(|k| within.contains(&k))) {
+                if let Some(row) = (0..Source::len(r)).find(|&row| !by.document(Source::value(r, row, c)).is_some_and(|k| within.contains(&k))) {
                     return Err(StoreError::Invalid(format!(
                         "{name}: a row's column {c} ({}) names a document outside its group {keys:?} (hosts {hosts:?}), which a probe of it would not make (decision 0494)",
                         Source::value(r, row, c)
@@ -1752,8 +1920,7 @@ impl Batch {
         paths.sort_unstable();
         let (path_ndv, path_sq) = squares(&mut paths.chunk_by(|a, b| a == b).map(|run| run.len() as i64));
         let (module_ndv, module_sq) = squares(&mut by.values().map(|k| k.len() as i64));
-        // A row is its own document's (`documents_of`: its key), so within a document each value is once: sqd is the rows'.
-        Some(vec![("d".into(), rows, rows, rows, rows), ("path".into(), rows, path_ndv, path_sq, rows), ("module".into(), rows, module_ndv, module_sq, rows)])
+        Some(vec![("d".into(), rows, rows, rows, rows), ("path".into(), rows, path_ndv, path_sq, path_sq), ("module".into(), rows, module_ndv, module_sq, module_sq)])
     }
 
     /// Each host's guests, by key (decision 0055), from the documents' places, none made: what a probe of a guest's
@@ -1856,7 +2023,6 @@ fn session_group() -> usize {
 /// A relation a batch makes (`text`, `op`, the matchers'), over its groups (decision 0494): every document made, the
 /// one group's rows when one group holds them all (a batch read whole); before, what is known without making a
 /// document, and a probe of the first column makes the documents it names.
-
 pub(super) struct MadeRows {
     pub(super) batch: Arc<Batch>,
     pub(super) rel: usize,
@@ -1954,11 +2120,8 @@ impl MadeRows {
                     .enumerate()
                     .map(|(c, name)| {
                         pairs.resize(0, [0, 0]);
-                        let docs = &self.batch.docs;
                         for &row in &rows {
-                            // The row's document: its first column's, by its page (a key column's, its value).
-                            let first = Source::value(r.as_ref(), row, 0);
-                            pairs.push([Source::value(r.as_ref(), row, c), docs.ids().key_of_value(first).map_or(first, i64::from)]);
+                            pairs.push([Source::value(r.as_ref(), row, c), rerail_blocks::located::Located::key_wide(Source::value(r.as_ref(), row, 0))]);
                         }
                         pairs.sort_unstable();
                         let (mut ndv, mut sq, mut sqd) = (0i64, 0i64, 0i64);
@@ -2042,7 +2205,7 @@ impl MadeRows {
         if by.column() != Some(column) || matches!(by, ByDocument::Host(_)) {
             return None;
         }
-        let key = by.document(&self.batch.docs, value)?;
+        let key = by.document(value)?;
         let docs = &self.batch.docs;
         let last = hint[0].wrapping_sub(1) as usize;
         if last < docs.len() && docs.key(last) == key {
@@ -2077,13 +2240,13 @@ impl MadeRows {
         Some(if by.column() == Some(column) && matches!(by, ByDocument::Host(_)) {
             // A host's node: the guests of the documents named, which make the rows.
             let guests = self.batch.guests_of()?;
-            values.iter().filter_map(|&v| by.document(&self.batch.docs, v)).flat_map(|h| guests.get(&h).into_iter().flatten().copied()).collect()
+            values.iter().filter_map(|&v| by.document(v)).flat_map(|h| guests.get(&h).into_iter().flatten().copied()).collect()
         } else if by.column() == Some(column) {
-            values.iter().filter_map(|&v| by.document(&self.batch.docs, v)).collect()
+            values.iter().filter_map(|&v| by.document(v)).collect()
         } else if self.batch.rows.also[self.rel].contains(&column) {
             // A node of the row's own document: every value must name one of the batch's, or the read is not routed
             // (a row of a document left unmade could hold it).
-            values.iter().map(|&v| ByDocument::Id(column).document(&self.batch.docs, v).filter(|&k| self.batch.docs.position(k).is_some())).collect::<Option<_>>()?
+            values.iter().map(|&v| ByDocument::Id(column).document(v).filter(|&k| self.batch.docs.position(k).is_some())).collect::<Option<_>>()?
         } else if self.batch.rows.key_column[self.rel] == Some(column) {
             self.batch.keys_of_documents(values)
         } else if self.batch.rows.path_column[self.rel] == Some(column) {
@@ -2223,6 +2386,7 @@ impl Source for MadeRows {
         }
     }
     fn row_at(&self, row: usize, columns: &[usize], out: &mut [i64]) {
+        let _kind = rerail_prof::work::doing(rerail_prof::work::VIEW);
         if let Some(t) = self.done() {
             return t.row_at(row, columns, out);
         }
@@ -2235,9 +2399,14 @@ impl Source for MadeRows {
     /// By the document column, the document's group's rows of the value, each compared where it lies (`group_of`,
     /// `each_match`): no row's values copied out, no match handed on. Another column's test is the matches'.
     fn test_at(&self, column: usize, value: i64, columns: &[usize], want: &[i64], cursor: &mut crate::code_rule_dsl::facts::vtab::ProbeCursor) -> Option<bool> {
+        let _kind = rerail_prof::work::doing(rerail_prof::work::VIEW);
         // A document the batch has not: no rows.
         let Some(p) = self.group_of(column, value, &mut cursor.hint)? else { return Some(false) };
         let (g, r) = (&p.group, &p.rels[self.rel]);
+        // A membership alone (no other column tested): one bit, where the group has its bits.
+        if columns.is_empty() && let Some(held) = g.holds(self.rel, column, r, value) {
+            return Some(held);
+        }
         let mut found = false;
         g.each_match(self.rel, column, r, value, &mut cursor.hint[1], |row| {
             found = found || columns.iter().zip(want).all(|(&c, &w)| Source::value(r.as_ref(), row, c) == w);
@@ -2246,6 +2415,9 @@ impl Source for MadeRows {
     }
     /// By the document column, the step's cursor leads: the last probe's document and row (`read_one`).
     fn lookup_read_at(&self, column: usize, value: i64, columns: &[usize], cursor: &mut crate::code_rule_dsl::facts::vtab::ProbeCursor, each: &mut dyn FnMut(usize, &[i64])) -> bool {
+        let _kind = rerail_prof::work::doing(rerail_prof::work::VIEW);
+        let outer = each;
+        let each: &mut dyn FnMut(usize, &[i64]) = &mut |r, v| { let _caller = _kind.paused(); outer(r, v) };
         self.read_one(column, value, columns, &mut cursor.hint, each) || self.lookup_read(column, value, columns, each)
     }
     fn lookup_read(&self, _column: usize, _value: i64, _columns: &[usize], _each: &mut dyn FnMut(usize, &[i64])) -> bool {
@@ -2278,7 +2450,7 @@ impl Source for MadeRows {
             return false;
         }
         // Its documents' groups, made if they are not: their ranges hold every row a key names.
-        let docs: BTreeSet<u32> = keys.iter().filter_map(|&v| by.document(&self.batch.docs, v)).collect();
+        let docs: BTreeSet<u32> = keys.iter().filter_map(|&v| by.document(v)).collect();
         let groups = self.batch.groups_of(docs);
         let r = self.batch.made_so_far(self.rel);
         let (rel, mut row) = (r.as_ref(), vec![0i64; columns.len()]);
@@ -2302,7 +2474,7 @@ impl Source for MadeRows {
         match (self.done(), self.batch.rows.counted(self.rel)) {
             (Some(t), _) => t.len() > 0,
             (None, Some(n)) => n > 0,
-            (None, None) => self.batch.docs.len() > 0,
+            (None, None) => !self.batch.docs.is_empty(),
         }
     }
     /// Before its rows are made, its counts as given, else `doc`'s its documents' (a row a file): the target's estimate
@@ -2315,6 +2487,14 @@ impl Source for MadeRows {
                 None => self.target().estimated_len(),
             },
             _ => self.target().estimated_len(),
+        }
+    }
+    /// Its made rows', its counts as given, or its sample's once made; else none (`estimated_len` would make it).
+    fn known_len(&self) -> Option<usize> {
+        match (self.done(), self.batch.rows.counted(self.rel)) {
+            (Some(t), _) => Some(t.estimated_len()),
+            (None, Some(n)) => Some(n),
+            (None, None) => self.sampled.get().map(|s| s.as_ref().and_then(|s| s.first()).map_or(0, |c| c.1 as usize)),
         }
     }
     fn rows_owned(&self, _g: usize, _owned: &dyn Fn(i64) -> bool) -> Option<rerail_blocks::vector::Vector<usize>> {
@@ -2376,7 +2556,7 @@ impl Source for MadeRows {
                 rows.extend(range);
             } else {
                 let c = by.own_column()?;
-                rows.extend(range.filter(|&row| by.document(&self.batch.docs, Source::value(r.as_ref(), row, c)).is_some_and(|k| docs.contains(&k))));
+                rows.extend(range.filter(|&row| by.document(Source::value(r.as_ref(), row, c)).is_some_and(|k| docs.contains(&k))));
             }
         }
         rows.sort_unstable();
@@ -2399,7 +2579,7 @@ impl Source for MadeRows {
         let mut rows = rerail_blocks::vector::Vector::new();
         for g in groups {
             rows.extend(g.ranges[self.rel].clone().filter(|&row| {
-                _values.contains(&Source::value(r.as_ref(), row, _column)) && by.own_column().is_none_or(|c| by.document(&self.batch.docs, Source::value(r.as_ref(), row, c)) == u32::try_from(_doc).ok())
+                _values.contains(&Source::value(r.as_ref(), row, _column)) && by.own_column().is_none_or(|c| by.document(Source::value(r.as_ref(), row, c)) == u32::try_from(_doc).ok())
             }));
         }
         Some(rows)
@@ -2434,8 +2614,12 @@ impl Source for MadeRows {
             t.expect_lookups(_column, _keys)
         }
     }
-    /// The made relation's, or before its rows are made, its sample's (`sampled`).
+    /// The made relation's, once its rows are made.
     fn statistics(&self) -> Option<Vec<(String, i64, i64, i64, i64)>> {
+        self.done().and_then(|t| t.statistics())
+    }
+    /// The made relation's, or before its rows are made, its sample's (`sampled`).
+    fn estimated_statistics(&self) -> Option<Vec<(String, i64, i64, i64, i64)>> {
         match self.done() {
             Some(t) => t.statistics(),
             None => self.sampled(),
@@ -2488,22 +2672,13 @@ impl Source for MadeRows {
         if let Some(t) = self.done() {
             return t.range_lookup(_column, _lower, _upper);
         }
-        // A range of the column that names a document, within known bounds: its documents, each made. A key column's
-        // are the keys between its ends; a node column's, the documents whose ids it meets (their ids are their bases'
-        // runs, in making order: plan "Chunk node numbers").
-        let docs = &self.batch.docs;
-        let met: Option<Vec<u32>> = match ((_lower, _upper), self.by()) {
-            ((Some((lo, _)), Some((hi, _))), by) if by.own_column() == Some(_column) => match by {
-                ByDocument::Key(_) => match (u32::try_from(lo), u32::try_from(hi)) {
-                    (Ok(first), Ok(last)) => Some(docs.keys().filter(|k| (first..=last).contains(k)).collect()),
-                    _ => None,
-                },
-                _ => Some(docs.keys().filter(|&k| docs.ids().numbered_if(k).and_then(|n| n.ids_of()).is_some_and(|(a, b)| i64::from(a) <= hi && i64::from(b) > lo)).collect()),
-            },
-            _ => None,
-        };
-        if let Some(keys) = met {
-            let groups = self.batch.groups_of(keys);
+        // A range of the column that names a document, within known bounds: its documents' keys, each made.
+        if let (Some((lo, _)), Some((hi, _))) = (_lower, _upper)
+            && self.by().own_column() == Some(_column)
+            && let (Some(first), Some(last)) = (self.by().document(lo), self.by().document(hi))
+        {
+            let keys = self.batch.docs.keys().filter(|k| (first..=last).contains(k));
+            let groups = self.batch.groups_of(keys.collect::<Vec<_>>());
             let r = self.batch.made_so_far(self.rel);
             let within = |v: i64| _lower.is_none_or(|(lo, inc)| if inc { v >= lo } else { v > lo }) && _upper.is_none_or(|(hi, inc)| if inc { v <= hi } else { v < hi });
             let mut rows = rerail_blocks::vector::Vector::new();
@@ -2548,6 +2723,15 @@ impl Source for MadeRows {
         match self.done() {
             Some(t) => t.keys_rows(_column),
             None => self.template().keys_rows(_column),
+        }
+    }
+    /// A batch of rows by their own id (decision 0706 E1; a fused row program's tests of the nodes it bound, t57
+    /// E6) as `keys_rows` answers: the relation's once made, else its template's (a view of the tape reads a node's
+    /// document in place, makes no document's rows).
+    fn read_own_batch(&self, column: usize, values: &[i64], reads: &[usize], out: &mut [i64], found: &mut [u8], cursor: &mut crate::code_rule_dsl::facts::vtab::ProbeCursor) -> bool {
+        match self.done() {
+            Some(t) => t.read_own_batch(column, values, reads, out, found, cursor),
+            None => self.template().read_own_batch(column, values, reads, out, found, cursor),
         }
     }
     /// A key column's row. `keys_rows` answers from the template before the rows are made, and a key's values are one
@@ -2751,6 +2935,7 @@ impl TextTest {
             let r = Relation::from_rows(&["s"], &mut passed.iter().map(|&v| std::iter::once(v).collect()));
             return self.whole.get_or_init(|| r);
         }
+        profile::decision("a text test read whole (decision 0494)", || format!("{}: the batch's every string scanned, its {} documents made", self.tested.tests.tests[self.k].0, self.batch.docs.len()));
         self.tested.scan(&self.batch, &self.scanned);
         let s = self.tested.state.lock();
         let r = Relation::from_rows(&["s"], &mut s.passed[self.k].rows.iter().map(|&v| rerail_facts_base::row![v]));
@@ -2816,8 +3001,21 @@ impl Source for TextTest {
             None => self.sampled().unwrap_or_else(|| self.whole().len()),
         }
     }
-    /// A key of strings: each passing string one row. Before the scan, its rows as sampled (`sampled`).
+    /// `estimated_len` where it tests no string a sample would make: scanned, a lazy batch's probed, or sampled.
+    fn known_len(&self) -> Option<usize> {
+        match self.whole.get() {
+            Some(w) => Some(w.len()),
+            None if self.batch.lazy() => Some(self.estimated_len()),
+            None => self.sampled.get().map(|s| s.map_or(0, |s| s.0)),
+        }
+    }
+    /// A key of strings: each passing string one row, once scanned.
     fn statistics(&self) -> Option<Vec<(String, i64, i64, i64, i64)>> {
+        let n = self.whole.get()?.len() as i64;
+        Some(vec![("s".to_owned(), n, n, n, n)])
+    }
+    /// `statistics`; before the scan, its rows as sampled (`sampled`).
+    fn estimated_statistics(&self) -> Option<Vec<(String, i64, i64, i64, i64)>> {
         let n = match self.whole.get() {
             Some(w) => w.len(),
             None if self.batch.lazy() => return None,

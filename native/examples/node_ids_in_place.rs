@@ -12,7 +12,7 @@ use rerail_facts::code_rule_dsl::facts::core::{self, Facts};
 use rerail_facts::code_rule_dsl::facts::vtab::syntax::{Dialect, Projected, Shape};
 use rerail_facts::code_rule_dsl::language::GrammarDialect;
 use rerail_facts::code_rule_dsl::lines::terminators;
-use rerail_facts::code_rule_dsl::tape::{Grammar, TapeImage, formats::Format};
+use rerail_facts::code_rule_dsl::tape::{Grammar, TapeImage, Text, formats::Format};
 use std::path::PathBuf;
 use std::sync::Arc;
 
@@ -66,7 +66,7 @@ fn main() {
     }
     let lang = GrammarDialect::Python;
     let grammar = Grammar::new(lang).unwrap();
-    let sources: Vec<Arc<String>> = files.iter().map(|p| Arc::new(std::fs::read_to_string(p).unwrap())).collect();
+    let sources: Vec<Arc<Text>> = files.iter().map(|p| Arc::new(Text::from(std::fs::read_to_string(p).unwrap()))).collect();
     let images_in = |format| -> Vec<TapeImage> {
         rerail_facts::code_rule_dsl::tape::formats::as_run(format, || sources.iter().map(|s| TapeImage::parse(&grammar, s, &|| false).unwrap().unwrap().primary).collect())
     };

@@ -78,7 +78,7 @@ describe("biomeReader", () => {
   it("keeps Biome's recommended rules on and leaves the others off when the config names none", async () => {
     const { decision } = await read({ "biome.json": json({ $schema: "https://biomejs.dev/schemas/2.5.15/schema.json" }) });
     expect(decision(NO_DEBUGGER)).toEqual({ on: true, explicit: false, because: "biome.json: recommended" });
-    expect(decision(CURLY)).toEqual({ on: false, explicit: false, because: "biome.json does not turn it on" });
+    expect(decision(CURLY)).toEqual({ on: false, explicit: false, because: "not turned on in biome.json" });
   });
 
   it("turns a named rule on or off explicitly, whatever the preset", async () => {
@@ -87,7 +87,7 @@ describe("biomeReader", () => {
     });
     expect(decision(CURLY)).toEqual({ on: true, explicit: true, because: "biome.json: \"useBlockStatements\": \"warn\" in linter.rules.style" });
     expect(decision(NO_DEBUGGER)).toEqual({ on: false, explicit: true, because: "biome.json: \"noDebugger\": \"off\" in linter.rules.suspicious" });
-    expect(decision(EQEQEQ)).toEqual({ on: false, explicit: false, because: "biome.json does not turn it on" });
+    expect(decision(EQEQEQ)).toEqual({ on: false, explicit: false, because: "not turned on in biome.json" });
   });
 
   it("reads groups: a severity turns the group on or off, and a group's recommended is a preset", async () => {
@@ -95,14 +95,14 @@ describe("biomeReader", () => {
     expect(plain.decision(CURLY)).toEqual({ on: true, explicit: true, because: "biome.json: \"style\": \"error\" in linter.rules" });
     expect(plain.decision(NO_DEBUGGER)).toEqual({ on: false, explicit: true, because: "biome.json: \"suspicious\": \"off\" in linter.rules" });
     const grouped = await read({ "biome.jsonc": "// Biome\n{ \"linter\": { \"rules\": { \"suspicious\": { \"recommended\": false, }, }, }, }\n" });
-    expect(grouped.decision(NO_DEBUGGER)).toEqual({ on: false, explicit: false, because: "biome.jsonc does not turn it on" });
+    expect(grouped.decision(NO_DEBUGGER)).toEqual({ on: false, explicit: false, because: "not turned on in biome.jsonc" });
     const all = await read({ "biome.json": json({ linter: { rules: { preset: "all" } } }) });
     expect(all.decision(CURLY)).toEqual({ on: true, explicit: true, because: "biome.json: \"preset\": \"all\" in linter.rules" });
   });
 
   it("turns nursery rules on only by name or by the group", async () => {
     const all = await read({ "biome.json": json({ linter: { rules: { preset: "all" } } }) });
-    expect(all.decision(THIS_IN_METHODS)).toEqual({ on: false, explicit: false, because: "biome.json does not turn it on" });
+    expect(all.decision(THIS_IN_METHODS)).toEqual({ on: false, explicit: false, because: "not turned on in biome.json" });
     const named = await read({ "biome.json": json({ linter: { rules: { nursery: { useThisInClassMethods: "on" } } } }) });
     expect(named.decision(THIS_IN_METHODS)).toEqual({ on: true, explicit: true, because: "biome.json: \"useThisInClassMethods\": \"on\" in linter.rules.nursery" });
   });
@@ -110,12 +110,12 @@ describe("biomeReader", () => {
   it("reads domains, and leaves a recommended domain rule to the pack when only a package.json could turn it on", async () => {
     const unset = await read({ "biome.json": "{}", "package.json": "{}" });
     expect(unset.decision(HOOKS)).toEqual({ on: "unknown", because: "biome.json: Biome turns the recommended \"react\" rules on when package.json depends on the domain's packages" });
-    expect(unset.decision(UNKNOWN_ATTRIBUTE)).toEqual({ on: false, explicit: false, because: "biome.json does not turn it on" });
+    expect(unset.decision(UNKNOWN_ATTRIBUTE)).toEqual({ on: false, explicit: false, because: "not turned on in biome.json" });
     // Without a package.json, no dependency turns a domain on.
-    expect((await read({ "biome.json": "{}" })).decision(HOOKS)).toEqual({ on: false, explicit: false, because: "biome.json does not turn it on" });
+    expect((await read({ "biome.json": "{}" })).decision(HOOKS)).toEqual({ on: false, explicit: false, because: "not turned on in biome.json" });
     const recommended = await read({ "biome.json": json({ linter: { domains: { react: "recommended", next: "none" } } }) });
     expect(recommended.decision(HOOKS)).toEqual({ on: true, explicit: false, because: "biome.json: \"react\": \"recommended\" in linter.domains" });
-    expect(recommended.decision(UNKNOWN_ATTRIBUTE)).toEqual({ on: false, explicit: false, because: "biome.json does not turn it on" });
+    expect(recommended.decision(UNKNOWN_ATTRIBUTE)).toEqual({ on: false, explicit: false, because: "not turned on in biome.json" });
     const all = await read({ "biome.json": json({ linter: { domains: { react: "all" } } }) });
     expect(all.decision(UNKNOWN_ATTRIBUTE)).toEqual({ on: true, explicit: true, because: "biome.json: \"react\": \"all\" in linter.domains" });
     const none = await read({ "biome.json": json({ linter: { domains: { react: "none", next: "none" } } }) });
@@ -173,17 +173,17 @@ describe("biomeReader", () => {
     expect(decided).toEqual({
       decision: may,
       folders: [
-        { folder: "lib", on: false, explicit: false, because: "biome.json does not turn it on" },
+        { folder: "lib", on: false, explicit: false, because: "not turned on in biome.json" },
         { folder: "tests", on: true, explicit: true, because: "biome.json: \"noDebugger\": \"error\" in overrides[0].linter.rules.suspicious" },
       ],
     });
     expect(settleVerdicts({ ...port(NO_DEBUGGER), startsOn: true }, [decided], []).settings).toEqual([
-      { ruleId: NO_DEBUGGER, folder: "lib", on: false, config: null, explicit: false, because: "biome.json does not turn it on" },
+      { ruleId: NO_DEBUGGER, folder: "lib", on: false, config: null, explicit: false, because: "not turned on in biome.json" },
     ]);
     const mixed = await read({ "biome.json": config, "a.ts": "", "a.test.ts": "" });
     expect(mixed.decision(NO_DEBUGGER)).toEqual({
       on: "unknown",
-      because: "biome.json: \"noDebugger\": \"error\" in overrides[0].linter.rules.suspicious; biome.json does not turn it on: each for only some of the files here",
+      because: "biome.json: \"noDebugger\": \"error\" in overrides[0].linter.rules.suspicious; not turned on in biome.json: each for only some of the files here",
     });
   });
 
@@ -213,7 +213,7 @@ describe("biomeReader", () => {
     expect(verdict(CURLY)?.folders).toEqual([{ folder: "src", on: true, explicit: true, because: "biome.json: \"style\": \"error\" in overrides[1].linter.rules" }]);
     // The globs match from the root: old/{legacy}.js is not {legacy}.js, nor old/sub/a,b.js a,b.js; src/'s files turn the suspicious group off.
     expect(verdict(UNKNOWN_ATTRIBUTE)).toEqual({
-      decision: { on: false, explicit: false, because: "biome.json does not turn it on" },
+      decision: { on: false, explicit: false, because: "not turned on in biome.json" },
       folders: [{ folder: "src", on: false, explicit: true, because: "biome.json: \"suspicious\": \"off\" in overrides[1].linter.rules" }],
     });
   });
@@ -330,7 +330,7 @@ describe("biomeReader", () => {
       ],
     });
     // A rule off stays off, whatever Biome lints.
-    expect(verdict(CURLY)).toEqual({ decision: { on: false, explicit: false, because: "biome.json does not turn it on" } });
+    expect(verdict(CURLY)).toEqual({ decision: { on: false, explicit: false, because: "not turned on in biome.json" } });
     expect(notes).toEqual([]);
     const linter = await read({ "biome.json": json({ linter: { includes: ["./src/**", "!!**/*.min.js"], rules: { style: "error" } } }), "a.js": "", "src/a.js": "", "src/b.min.js": "" });
     expect(linter.verdict(CURLY)).toEqual({
@@ -424,13 +424,13 @@ describe("biomeReader", () => {
   it("reads a group's own recommended over the rules' preset", async () => {
     const { decision } = await read({ "biome.json": json({ linter: { rules: { recommended: false, suspicious: { recommended: true } } } }) });
     expect(decision(NO_DEBUGGER)).toEqual({ on: true, explicit: false, because: "biome.json: \"recommended\": true in linter.rules.suspicious" });
-    expect(decision(HOOKS)).toEqual({ on: false, explicit: false, because: "biome.json does not turn it on" });
+    expect(decision(HOOKS)).toEqual({ on: false, explicit: false, because: "not turned on in biome.json" });
   });
 
   it("does not turn a domain rule on by its group's severity, nor by package.json once rules set no preset", async () => {
     const plain = await read({ "biome.json": json({ linter: { rules: { correctness: "error", suspicious: "error" } } }) });
-    expect(plain.decision(HOOKS)).toEqual({ on: false, explicit: false, because: "biome.json does not turn it on" });
-    expect(plain.decision(UNKNOWN_ATTRIBUTE)).toEqual({ on: false, explicit: false, because: "biome.json does not turn it on" });
+    expect(plain.decision(HOOKS)).toEqual({ on: false, explicit: false, because: "not turned on in biome.json" });
+    expect(plain.decision(UNKNOWN_ATTRIBUTE)).toEqual({ on: false, explicit: false, because: "not turned on in biome.json" });
     const recommended = await read({ "biome.json": json({ linter: { rules: { preset: "recommended" } } }), "package.json": "{}" });
     expect(recommended.decision(HOOKS)).toEqual({ on: "unknown", because: "biome.json: Biome turns the recommended \"react\" rules on when package.json depends on the domain's packages" });
   });
@@ -445,7 +445,7 @@ describe("biomeReader", () => {
     { names: ["lint/suspicious/noSuchRule", "lint/suspicious/noDoubleEquals"], expected: { on: true, explicit: false, because: "biome.json: recommended" } },
     { names: ["lint/complexity/noVoid", "lint/suspicious/noSuchRule"], expected: { on: "unknown", because: "lint/suspicious/noSuchRule is not a Biome 2.5.15 lint rule" } },
     { names: ["lint/complexity/noVoid", "lint/suspicious/noDebugger"], expected: { on: false, explicit: true, because: "biome.json: \"noDebugger\": \"off\" in linter.rules.suspicious" } },
-    { names: ["lint/complexity/noVoid", "lint/style/noNegationElse"], expected: { on: false, explicit: false, because: "biome.json does not turn it on" } },
+    { names: ["lint/complexity/noVoid", "lint/style/noNegationElse"], expected: { on: false, explicit: false, because: "not turned on in biome.json" } },
   ])("decides a port of several Biome rules $names: on, else unknown, else explicitly off", async ({ names, expected }) => {
     const { decision } = await read({ "biome.json": json({ linter: { rules: { suspicious: { noDebugger: "off" }, style: { useBlockStatements: "error" } } } }) });
     expect(decision({ ...biomePort(names[0]!), suppress: { ...biomePort(names[0]!).suppress, biome: names } })).toEqual(expected);

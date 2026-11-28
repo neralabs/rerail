@@ -62,11 +62,6 @@ fn host(need: &Need) -> Block {
     b
 }
 
-/// The bytes zeroed as blocks' memory was handed out again (`rerail_blocks::block::zeroed_bytes`).
-pub fn zeroed_bytes() -> u64 {
-    rerail_blocks::block::zeroed_bytes()
-}
-
 /// The bytes the host blocks' free lists keep resident: their free chunks less those whose pages went to the OS
 /// (`Extent::given`).
 pub fn host_free_resident() -> usize {
@@ -77,6 +72,30 @@ pub fn host_free_resident() -> usize {
         let free = e.free.load(std::sync::atomic::Ordering::Relaxed);
         free.saturating_sub(e.given.load(std::sync::atomic::Ordering::Relaxed))
     }).sum()
+}
+
+/// The bytes of the host blocks live now that are in memory, measured (`Extent::resident`): a profile's account,
+/// where their used bytes count room reserved and never written.
+pub fn host_resident() -> usize {
+    let host = rerail_context::machine::<Host>();
+    let live: Vec<_> = {
+        let mut live = host.0.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+        live.retain(|e| e.strong_count() > 0);
+        live.iter().filter_map(std::sync::Weak::upgrade).collect()
+    };
+    live.iter().map(|e| e.resident()).sum()
+}
+
+/// The free chunks' bytes the blocks keep in memory: in pages no live chunk reaches, and in pages one shares
+/// (`rerail_blocks::ledger::free_kept_split`).
+pub fn free_kept_split() -> (usize, usize) {
+    rerail_blocks::ledger::free_kept_split()
+}
+
+/// The bytes in memory of every block's memory: the anonymous blocks', and the rest's (pooled leases and the blocks
+/// over them, file mappings; `rerail_blocks::ledger::resident_split`).
+pub fn resident_split() -> ([usize; 9], usize) {
+    rerail_blocks::ledger::resident_split()
 }
 
 /// The host blocks live now: bytes used in them, and of those the bytes their free lists hold.

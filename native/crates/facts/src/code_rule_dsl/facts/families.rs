@@ -401,7 +401,7 @@ impl Families {
         let lines = Arc::new(image.primary.lines(&source, crate::code_rule_dsl::lines::terminators(language), true));
         let doc = crate::code_rule_dsl::prof::time("push.restore", || TapeDoc::restore_with_lines(source, grammar, &image, Arc::clone(&lines), &|| false))
             .map_err(StoreError::Invalid)?;
-        let identity = crate::code_rule_dsl::tape::tape_identity(doc.source_digest(), &bytes);
+        let identity = doc.tape_digest().map_err(StoreError::Invalid)?;
         Ok(Some((identity, Tape { id, doc: doc.stored_as(identity), lines })))
     }
 
@@ -429,7 +429,7 @@ impl Families {
         let lines = Arc::new(image.primary.lines(&source, crate::code_rule_dsl::lines::terminators(language), true));
         let doc = TapeDoc::restore_with_lines(source, grammar, &image, Arc::clone(&lines), &|| false)
             .map_err(StoreError::Invalid)?;
-        let identity = crate::code_rule_dsl::tape::tape_identity(doc.source_digest(), &bytes);
+        let identity = doc.tape_digest().map_err(StoreError::Invalid)?;
         Ok(Some((identity, Tape { id, doc: doc.stored_as(identity), lines })))
     }
 

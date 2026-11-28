@@ -55,13 +55,6 @@ pub const COMBINING: &[&str] = &[
     // (`lower::bounded`, decision 0511) and a group's first by an order (`lower::first`, decision 0515).
     "RERAIL_ASOF",
     "RERAIL_FIRST",
-    // The passes combining replays to judge an answer as preparation's own demand leaves it (`demanded`), and runs
-    // again in preparing: `simplify` and the reach index.
-    "RERAIL_EXISTENCE_COUNTS",
-    "RERAIL_INLINE_FILTERS",
-    "RERAIL_JOIN_KEYS",
-    "RERAIL_PROJECT_COLUMNS",
-    "RERAIL_REACH_INDEX",
 ];
 
 pub fn text(v: &SqlValue) -> String {
@@ -869,11 +862,6 @@ impl crate::code_rule_dsl::logic::program_image::manager::ProgramPass for Answer
         if last.delta.touched != Reads::RULES || !Arc::ptr_eq(last.input, last.output) {
             return Ok(false);
         }
-        // Where the program's own demand can change an answer (`demanded`), what places it is more than what the answers
-        // read: judged again whole.
-        if demand_reaches_an_answer(cx.v()) {
-            return Ok(false);
-        }
         // The split places a relation from its rules and what they read, down: where the edit defines none of the
         // answers' relations nor what they read, it places them as it did, file-local, and is not asked for.
         let v = cx.v();
@@ -913,8 +901,9 @@ impl crate::code_rule_dsl::logic::program_image::manager::ProgramPass for Answer
 /// hold: there `@rr_node_value` answered nothing, without an error, and every reader of `value` saw no value (the
 /// Python pack: `__all__`'s and `exports`' readers ask across modules, so `value` went cross-file, and `1 if a else
 /// 0`'s branches compared the same in RUF034). Until a cross-file answer reads its documents (0174 §6), an attribute a
-/// cross-file reader asks for is eager, and so is one whose answer the program's own demand puts in the cross-file part
-/// (`demanded`): preparation applies that demand after combining, so it is judged here as it will run. Each round whose function's answer a cross-file reader asks for is undone
+/// cross-file reader asks for is eager. One that the program's own demand puts in the cross-file part is made eager by
+/// preparation, which applies that demand and judges the answer on the split it makes (`Deferral::with_round_undone`).
+/// Each round whose function's answer a cross-file reader asks for is undone
 /// (`rr::lower::undone_with` over `undo_round`), by the version's file-local split (`FileLocal`), to a fixpoint
 /// (decision 0281's path, step 7b).
 pub fn answers_where_documents_are_version(mut v: Arc<crate::code_rule_dsl::logic::program_image::Version>) -> Result<Arc<crate::code_rule_dsl::logic::program_image::Version>> {
@@ -922,11 +911,7 @@ pub fn answers_where_documents_are_version(mut v: Arc<crate::code_rule_dsl::logi
     loop {
         let split = crate::code_rule_dsl::logic::program_image::manager::analysis::<crate::code_rule_dsl::typing::file_local::FileLocal>(&v).map_err(Error::Plan)?;
         let declared = |rel: &str| v.declares(rel);
-        let written = ON_REQUEST.iter().find_map(|round| round.iter().find(|a| matches!(a.answer, Answer::Function(_)) && declared(a.req) && !split.local.contains(a.rel)).map(|a| (*round, a.rel))).map(|(round, rel)| (round, rel, "a cross-file reader asks"));
-        let found = match written {
-            Some(found) => Some(found),
-            None => demanded_answer(&v)?.map(|(round, rel)| (round, rel, "the program's demand reads across files for its request")),
-        };
+        let found = ON_REQUEST.iter().find_map(|round| round.iter().find(|a| matches!(a.answer, Answer::Function(_)) && declared(a.req) && !split.local.contains(a.rel)).map(|a| (*round, a.rel))).map(|(round, rel)| (round, rel, "a cross-file reader asks"));
         let Some((round, rel, why)) = found else {
             return Ok(v);
         };
@@ -937,90 +922,6 @@ pub fn answers_where_documents_are_version(mut v: Arc<crate::code_rule_dsl::logi
 
 /// One round of the attributes answered on request (`rr::lower::ON_REQUEST`).
 type OnRequestRound = &'static [crate::code_rule_dsl::logic::rr::lower::OnRequest];
-
-/// The first round with an attribute answered by a function of the node's document that `v` declares, whose answer
-/// is cross-file in `v` as preparation makes it with its own demand (`demanded`), where the attribute is still
-/// answered as preparation's check asks; and that attribute. None where the demand cannot change an answer.
-fn demanded_answer(v: &Arc<crate::code_rule_dsl::logic::program_image::Version>) -> Result<Option<(OnRequestRound, &'static str)>> {
-    use crate::code_rule_dsl::logic::rr::lower::{Answer, ON_REQUEST};
-    let Some(d) = demanded(v) else { return Ok(None) };
-    let split = crate::code_rule_dsl::logic::program_image::manager::analysis::<crate::code_rule_dsl::typing::file_local::FileLocal>(&d).map_err(Error::Plan)?;
-    let derived = |rel: &str| d.rel(rel).is_some_and(|id| d.heads(id).next().is_some());
-    Ok(ON_REQUEST.iter().find_map(|round| {
-        round.iter().find(|a| matches!(a.answer, Answer::Function(_)) && v.declares(a.req) && !split.local.contains(a.rel) && derived(a.rel)).map(|a| (*round, a.rel))
-    }))
-}
-
-/// `v` as preparation makes it up to its own demand (`.pragma "magic-transform"`, decision 0145), demand included,
-/// when that demand can change an attribute's answer by a function (`demand_reaches_an_answer`). The transform leaves
-/// a derived literal out of a demand rule where keeping it would close a negative cycle, and a request reading the
-/// demanded relation can close one through the attribute's readers. RUF034 alone: `rr_value_req` reads `unparen`, whose
-/// demand comes from `same_pair`, which negates `same_leaf`, which reads `value`; without `same_pair`, `unparen`'s
-/// demand joined the two compared nodes by a child's position only, so it, `value`'s request and its answer were
-/// cross-file, and preparation refused the program. The passes are `preparation::front`'s before the demand, in its
-/// order (the combined program has none of them yet: on it, the demand made no `unparen` demand rule), then the
-/// demand, the prune after it, and the closures the demand put in cycles made rows again (`demand::UndoInCycles`). Not
-/// `hiding::fold_own`: it folds guests' copies for the run's language, which combining does not know (the prepared key
-/// names it). Nor `RERAIL_DEMAND=off`: the demand is replayed under it too, which can only make an answer eager, so the
-/// combined program is not a function of it. None when the demand cannot change an answer, or when a pass fails or the
-/// demand is not applied (preparation then fails, or leaves the demand out).
-fn demanded(v: &Arc<crate::code_rule_dsl::logic::program_image::Version>) -> Option<Arc<crate::code_rule_dsl::logic::program_image::Version>> {
-    use crate::code_rule_dsl::logic::plan::corpus::preparation::{demand, magic, prune, simplify};
-    if !demand_reaches_an_answer(v) {
-        return None;
-    }
-    let mut p = crate::code_rule_dsl::logic::program_image::manager::Pipeline::new("demanded", Arc::clone(v));
-    p.program(&mut simplify::CpythonFunctors);
-    p.program(&mut simplify::BaseInputs);
-    p.program(&mut prune::Prune::default());
-    simplify::passes(&mut p).ok()?;
-    p.program(&mut prune::Prune::default());
-    p.program(&mut demand::ReachForm::default());
-    p.program(&mut demand::NegatedDemand::default());
-    let mut own = magic::ProgramDemand::default();
-    p.program(&mut own);
-    if !matches!(own.outcome, Some(Ok(_))) {
-        return None;
-    }
-    p.program(&mut prune::Prune::default());
-    p.program(&mut demand::UndoInCycles::default());
-    p.current().ok().cloned()
-}
-
-/// Whether `v` has its own demand, and an attribute answered by a function whose answer reads a demanded relation: the
-/// demand can change only what reads what it demands.
-fn demand_reaches_an_answer(v: &crate::code_rule_dsl::logic::program_image::Version) -> bool {
-    use crate::code_rule_dsl::logic::program_image::fields::ProgramFields as _;
-    use crate::code_rule_dsl::logic::rr::lower::{Answer, ON_REQUEST};
-    let demand = v.demand();
-    if demand.is_empty() {
-        return false;
-    }
-    let reading = reading_demanded(v, &demand);
-    ON_REQUEST.iter().flat_map(|r| r.iter()).any(|a| matches!(a.answer, Answer::Function(_)) && v.declares(a.req) && reading.contains(a.rel))
-}
-
-/// The relations `demand` lists and those whose rules in `v` read one, directly or through others: what its demand can
-/// change.
-fn reading_demanded(v: &crate::code_rule_dsl::logic::program_image::Version, demand: &[String]) -> std::collections::BTreeSet<String> {
-    let mut readers: std::collections::BTreeMap<&str, Vec<&str>> = std::collections::BTreeMap::new();
-    for rule in v.rules() {
-        let head = v.rel_name(rule.head().rel());
-        for read in rule.body().filter_map(|l| l.atom()) {
-            readers.entry(v.rel_name(read.rel())).or_default().push(head);
-        }
-    }
-    let mut seen: std::collections::BTreeSet<String> = demand.iter().cloned().collect();
-    let mut todo: Vec<String> = seen.iter().cloned().collect();
-    while let Some(rel) = todo.pop() {
-        for h in readers.get(rel.as_str()).into_iter().flatten() {
-            if seen.insert((*h).to_owned()) {
-                todo.push((*h).to_owned());
-            }
-        }
-    }
-    seen
-}
 
 /// The programs `programs` linked into one (`link::Part`: versions, `link::Versioned`, decision 0281's path, step
 /// 7a-2), and what the combine's tail does to that (`Tail`). `images_used`: where the aliases of the module and
@@ -1886,6 +1787,9 @@ pub struct ThreadStore {
 impl ThreadStore {
     pub fn select(path: &Path, ownership: Option<(PathBuf, crate::content_store::analysis_scope::AnalysisOwner)>) -> Self {
         let path = (path != Path::new(":memory:")).then(|| path.to_owned());
+        // The owned root canonical, as a run names its root (`owner`): a root given through a link (macOS's `/tmp`,
+        // `/private/tmp`) is the same root.
+        let ownership = ownership.map(|(root, owner)| (dunce::canonicalize(&root).unwrap_or(root), owner));
         Self { _bound: crate::code_rule_dsl::logic::profile::bind(SelectedStore(Some(StoreSelection { path, ownership, git_reads: Arc::default() }))) }
     }
 
@@ -1907,7 +1811,8 @@ impl ThreadStore {
     pub fn owner(root: &Path) -> Option<crate::content_store::analysis_scope::AnalysisOwner> {
         Self::with(|store| {
             let (expected, owner) = store?.ownership.as_ref()?;
-            (expected == root).then(|| owner.clone())
+            // A caller may ask with its root as given (`run_policies`' `root`) or as the run canonicalized it.
+            (expected == root || dunce::canonicalize(root).is_ok_and(|root| &root == expected)).then(|| owner.clone())
         })
     }
 
@@ -2592,14 +2497,30 @@ pub fn walked(root: &Path, enters: fn(&str) -> bool) -> Result<Vec<String>> {
             o.preload(&real);
         }
     });
+    // Every directory's listing, a level of the tree at a time, each level's read at once on the pool: each entry
+    // with whether it is a file, as the directory's listing read it (one call a directory; a symbolic link, or a
+    // listing kept from an earlier run, by its own `stat`).
+    let mut lists: HashMap<PathBuf, Vec<(String, bool, bool)>> = HashMap::new();
+    let mut level = vec![root.to_path_buf()];
+    while !level.is_empty() {
+        let read = crate::content_store::observe::Observer::listings_all(|f| observe(|o| f(o)), &level);
+        let mut next = Vec::new();
+        for (dir, listing) in level.into_iter().zip(read) {
+            let listing = listing.ok_or_else(|| Error::Plan(format!("{}: not a readable directory", dir.display())))?;
+            next.extend(listing.iter().filter(|(name, is_dir, _)| *is_dir && enters(name)).map(|(name, ..)| dir.join(name)));
+            lists.insert(dir, listing);
+        }
+        level = next;
+    }
+    // The files in the walk's order: a directory's entries in its listing's, the directories last listed first.
     let (mut pending, mut out) = (vec![root.to_path_buf()], Vec::new());
     while let Some(dir) = pending.pop() {
-        let listing = observe(|o| o.listing(&dir)).ok_or_else(|| Error::Plan(format!("{}: not a readable directory", dir.display())))?;
-        for (name, is_dir) in listing.iter() {
+        let listing = lists.remove(&dir).ok_or_else(|| Error::Plan(format!("{}: not a readable directory", dir.display())))?;
+        for (name, is_dir, is_file) in &listing {
             let path = dir.join(name);
             if *is_dir {
                 pending.extend(enters(name).then_some(path));
-            } else if path.is_file() {
+            } else if *is_file {
                 // A document is named by its path in the repository, with `/` on Windows too: scopes' globs and
                 // findings read it.
                 out.push(slashed(path.strip_prefix(root).map_err(|e| Error::Plan(e.to_string()))?));

@@ -1,5 +1,7 @@
 # Rerail rule pack: React
 
+Install it with Rerail ([`@neralabs/rerail`](https://www.npmjs.com/package/@neralabs/rerail)), not with npm: `rerail packs add react`, then add it to a repository in the dashboard.
+
 **Linter-equivalent to eslint-plugin-react 7.37.5 and react-hooks 7.1.1.** Each rule flags what the original flags, bar declared differences. Its own practice rules are Rerail's, not ports. [What this means](../../docs/rule-packs.md#linter-equivalent).
 
 The pack ships 30 eslint-plugin-react and 10 eslint-plugin-react-hooks rules, ports of eslint-plugin-react 7.37.5 and

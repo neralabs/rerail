@@ -439,7 +439,7 @@ fn field<D: Doc>(node: &Node<'_, D>, context: &mut Context<'_>, out: &mut Vec<To
     let children = node.children().collect::<Vec<_>>();
     if let Some(equals) = children.iter().position(|child| child.kind() == "=") {
         // From after `{` to the next part of the field, newlines as Python reads them. The braces are the
-        // field's first and last bytes, implied tokens the tape does not store (RER-131): read from the field,
+        // field's first and last bytes, implied tokens the tape does not store (decision 0161): read from the field,
         // not from its children.
         let start = node.range().start + 1;
         let end = children.get(equals + 1).map_or(node.range().end - 1, |next| next.range().start);

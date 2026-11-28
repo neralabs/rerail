@@ -594,6 +594,122 @@ fn stop_axes_in_aggregates(px: &Patterns, text: String) -> String {
 }
 
 /// One translated rule's display text in the engine's dialect.
+/// A guest capture a `host` rule reads by text (`// Guest captures …`) and passes to its helpers is passed as its text
+/// (decision 0677: no node id crosses into the cross-file part). The rule that binds it (`K = c`) reads its text
+/// beside the binding (`text(K, KT)`) and passes `KT` on, a helper's head and its callers' arguments alike (a finding's
+/// head keeps the node); a helper takes it as a symbol. A join by text on it (`text(K, t), text(N, t)`) reads the
+/// symbol (`text(N, K)`), and a helper's `node(_, K, …)` (any node, any file's) goes, so the helper reads its own
+/// document and its declaration crosses no file.
+fn host_reads_by_text(px: &Patterns, text: String) -> String {
+    let crossing: BTreeSet<String> = captures(&px.engine_dialect_host_reads, &text)
+        .iter()
+        .flat_map(|m| g(m, 1).split(',').map(|x| x.trim().to_owned()).collect::<Vec<_>>())
+        .filter(|x| is_full("[A-Z_][A-Z0-9_]*", x))
+        .collect();
+    let mut text = text;
+    for k in &crossing {
+        let ek = fancy_regex::escape(k).into_owned();
+        // A helper whose head takes it: only then would its node cross.
+        if !search(&re(&format!(r"(?m)^[a-z]\w*\([^\n]*?(?<![\w$]){ek}\b[^\n]*?\) :-")), &text) {
+            continue;
+        }
+        let kt = format!("{k}T");
+        let bind = re(&format!(r"(?<![\w$]){ek} = (\w+)"));
+        let any_node = re(&format!(r"(?:,\s*)?(?<![\w$])node\(_, {ek}, _, _, _\)(?:,\s*)?"));
+        text = sub(&px.engine_dialect_rule, &text, |m| {
+            let rule = g(m, 0);
+            let Some(hs) = rule.find('(').and_then(|p| head_span(rule, p)) else { return rule.to_owned() };
+            let (head, body) = rule.split_at(hs);
+            let finding = head.starts_with(char::is_uppercase);
+            let k_use = re(&format!(r"(?<![\w$]){ek}\b"));
+            if search(&bind, body) {
+                // Bound here: K keeps its binding, its text read beside it; every other read is of its text.
+                let body = sub(&bind, body, |c| format!("\u{0}{}\u{0}", g(c, 1)));
+                let body = sub(&k_use, &body, |_| kt.clone());
+                let body = sub(&re("\u{0}(\\w+)\u{0}"), &body, |c| format!("{k} = {}, text({k}, {kt})", g(c, 1)));
+                let head = if finding { head.to_owned() } else { sub(&k_use, head, |_| kt.clone()) };
+                format!("{head}{}", by_symbol(&body, &kt))
+            } else if search(&k_use, body) || search(&k_use, head) {
+                // A parameter: its text, read by symbol; no node of any file.
+                let body = sub(&any_node, body, |c| {
+                    let m = g(c, 0);
+                    match (m.starts_with(','), m.ends_with(|ch: char| ch == ',' || ch.is_whitespace())) {
+                        // Between two literals: the comma and the space (or line break) after it kept.
+                        (true, true) => m[m.rfind(')').expect("the literal") + 1..].to_owned(),
+                        _ => String::new(),
+                    }
+                });
+                format!("{head}{}", by_symbol(&body, k))
+            } else {
+                rule.to_owned()
+            }
+        });
+        // The helpers' columns of it are symbols, and, reading no node of another file, they cross none.
+        let heads: Vec<(String, usize)> = findall_heads(&text, k, &kt);
+        let decl = re(r"(?m)^(// Cross-file: it reads a guest capture by text, any file's \(decision 0652\)\.\n)?\.decl (\w+)\(([^\n]*)\)( cross_file)?$");
+        text = sub(&decl, &text, |c| {
+            let name = g(c, 2);
+            let cols: Vec<usize> = heads.iter().filter(|(n, _)| n == name).map(|(_, i)| *i).collect();
+            if cols.is_empty() {
+                return g(c, 0).to_owned();
+            }
+            let args: Vec<String> = split_args(g(c, 3))
+                .into_iter()
+                .enumerate()
+                .map(|(i, a)| match a.split_once(": ") {
+                    Some((n, _)) if cols.contains(&i) => format!("{n}: symbol"),
+                    _ => a,
+                })
+                .collect();
+            format!(".decl {name}({})", args.join(", "))
+        });
+        // What the helpers' notes say it is, and the list's note of how it is passed.
+        text = text.replace(&format!("//   {k}: metavariable of the calling rule, passed in"), &format!("//   {k}: the text of the calling rule's metavariable, passed in"));
+        text = sub(&re(r"(?m)^(// Guest captures a host rule reads, by text \(another document\): [^\n]*)$"), &text, |c| {
+            format!("{}, passed to the helpers as its text, {kt} (decision\n// 0677: a capture is a tape's node, and a tape every file holding its text shares).", g(c, 1))
+        });
+    }
+    text
+}
+
+/// The lowercase heads whose argument `i` is `k` or `kt`: the helpers that take the capture.
+fn findall_heads(text: &str, k: &str, kt: &str) -> Vec<(String, usize)> {
+    let head = re(r"(?m)^([a-z]\w*)\(([^\n]*?)\) :-");
+    let mut out = Vec::new();
+    for c in captures(&head, text) {
+        for (i, a) in split_args(g(&c, 2)).iter().enumerate() {
+            if a == k || a == kt {
+                let e = (g(&c, 1).to_owned(), i);
+                if !out.contains(&e) {
+                    out.push(e);
+                }
+            }
+        }
+    }
+    out
+}
+
+/// A join by text on the symbol `s` (`text(s, t)` or `value(s, t)`, and `t` read once more, `text(N, t)`): the other
+/// read takes `s` itself, and the first goes.
+fn by_symbol(body: &str, s: &str) -> String {
+    let es = fancy_regex::escape(s).into_owned();
+    let first = re(&format!(r"(?<![\w$])(?:text|value)\({es}, (\w+)\)"));
+    let mut body = body.to_owned();
+    while let Some(c) = captures(&first, &body).into_iter().next() {
+        let t = g(&c, 1).to_owned();
+        let whole = g(&c, 0).to_owned();
+        let et = fancy_regex::escape(&t).into_owned();
+        let other = re(&format!(r"(?<![\w$])(text|value)\((\w+), {et}\)"));
+        let uses = findall(&re(&format!(r"(?<![\w$]){et}\b")), &body).len();
+        if uses != 2 || !search(&other, &body) {
+            break;
+        }
+        body = if body.contains(&format!("{whole}, ")) { body.replacen(&format!("{whole}, "), "", 1) } else { body.replacen(&format!(", {whole}"), "", 1) };
+        body = sub(&other, &body, |o| format!("{}({}, {s})", g(o, 1), g(o, 2)));
+    }
+    body
+}
+
 pub fn engine_text(px: &Patterns, text: String, base: &str, lib: &super::place_columns::NodeColumns) -> R<String> {
     let text = stop_axes_in_aggregates(px, text);
     let text = anchor_captures(px, text);
@@ -604,8 +720,45 @@ pub fn engine_text(px: &Patterns, text: String, base: &str, lib: &super::place_c
     let text = lower_options(px, text);
     let text = lone_metavariables(px, text);
     let text = same_document_joins(px, text);
+    let text = host_reads_by_text(px, text);
     let text = compare_pairs(px, text);
     let text = unbound_tests(px, text);
     Ok(super::place_columns::place_columns(unset_unbound(px, text)?, lib))
 }
 
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Decision 0677: a guest capture a helper takes is passed as its text. The rule that binds it reads its text
+    /// beside the binding and passes that on (a finding's head keeps the node); the helper takes a symbol, reads it
+    /// by symbol, joins no node of another file, and declares no crossing. A capture no helper takes stays as it is.
+    #[test]
+    fn a_guest_capture_a_helper_takes_is_passed_as_its_text() {
+        let px = Patterns::new();
+        let text = "\
+// Guest captures a host rule reads, by text (another document): K
+.decl F(n: node, k: loc)
+F(n, K) :- has(n, c3, \"name\"), K = c3, guest_of(n, h), h_eq(h, K), value(K, t1), value(h, t1).
+//   K: metavariable of the calling rule, passed in (bound by the caller)
+// Cross-file: it reads a guest capture by text, any file's (decision 0652).
+.decl h_eq(n: node, k: loc) cross_file
+h_eq(n, K) :- node(_, K, _, _, _), kind(n, \"identifier\"), N = n, text(K, t2), text(N, t2).
+"
+        .to_owned();
+        let got = host_reads_by_text(&px, text);
+        assert!(got.contains("F(n, K) :- has(n, c3, \"name\"), K = c3, text(K, KT), guest_of(n, h), h_eq(h, KT), value(h, KT)."), "{got}");
+        assert!(got.contains(".decl h_eq(n: node, k: symbol)\n"), "{got}");
+        assert!(!got.contains("cross_file") && !got.contains("Cross-file:"), "{got}");
+        assert!(got.contains("h_eq(n, K) :- kind(n, \"identifier\"), N = n, text(N, K)."), "{got}");
+        assert!(got.contains("//   K: the text of the calling rule's metavariable, passed in"), "{got}");
+        assert!(got.contains("): K, passed to the helpers as its text, KT (decision\n// 0677"), "{got}");
+        let alone = "\
+// Guest captures a host rule reads, by text (another document): H1
+a(n) :- kind(n, \"field\"), H1 = n, node(_, c, _, _, _), KN = c, text(H1, t), text(KN, t).
+"
+        .to_owned();
+        assert_eq!(host_reads_by_text(&px, alone.clone()), alone, "a capture no helper takes");
+    }
+}

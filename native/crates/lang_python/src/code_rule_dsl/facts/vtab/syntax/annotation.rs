@@ -99,7 +99,7 @@ impl Annotations {
         let by_range: ByRange = p
             .node_ids()
             .filter(|&(_, id, _)| HOSTS.contains(&dialect.name(f, id)))
-            .map(|(local, id, n)| ((f.start(id), f.end(id)), (n, p.located(local))))
+            .map(|(local, id, n)| ((f.start(id), f.end(id)), (n, p.global(local))))
             .collect();
         if let Some(g) = d.guest.as_deref() {
             if g.grammar == GRAMMAR {

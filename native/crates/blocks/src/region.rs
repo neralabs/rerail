@@ -430,12 +430,18 @@ pub fn whole(block: &Arc<Block>) -> Shared<u8> {
 /// The ledger is found once a fence and address (`Fence::held_at`): a stack's thousands of dispatches each bind its
 /// buffers, and each bind was a search of the live blocks (decision 0641).
 pub fn bind_address(fence: &Arc<Fence>, addr: usize, write: bool, op: &'static str) -> bool {
+    // Bound before for this access, its region pinned: the pin holds the region (and its memory) for the fence's
+    // life, so nothing else can lie there now.
+    if fence.bound_already(addr, write) {
+        return true;
+    }
     let Some(l) = fence.held_at(addr) else { return false };
     let root = l.root.lock().unwrap_or_else(|e| e.into_inner()).upgrade();
-    if let Some(r) = root
-        && fence.first_pin(Arc::as_ptr(&r) as usize, write)
-    {
-        r.pin(fence, op, write);
+    if let Some(r) = root {
+        if fence.first_pin(Arc::as_ptr(&r) as usize, write) {
+            r.pin(fence, op, write);
+        }
+        fence.note_bound(addr, write);
     }
     true
 }
@@ -529,8 +535,10 @@ impl<T: crate::Pod> Clone for Frozen<T> {
 }
 
 impl<T: crate::Pod> Mutable<T> {
-    /// `n` zeroed `T`s in `block`, named `name` for what fails: a chunk of its free list (given back when the last
-    /// handle goes), or from its front. `None` when it has no room.
+    /// Room for `n` `T`s in `block`, named `name` for what fails: a chunk of its free list (given back when the last
+    /// handle goes), or from its front. `None` when it has no room. Never zeroed: a chunk taken again holds what was
+    /// there, and its holder writes each byte before it reads it (zeroing touched every page of it, so its whole
+    /// length stayed in memory where its holder wrote a part).
     pub fn alloc(block: &Arc<Block>, n: usize, name: &'static str) -> Option<Mutable<T>> {
         Self::alloc_aligned(block, n, align_of::<T>(), name)
     }
@@ -540,7 +548,7 @@ impl<T: crate::Pod> Mutable<T> {
     pub fn alloc_aligned(block: &Arc<Block>, n: usize, align: usize, name: &'static str) -> Option<Mutable<T>> {
         let bytes = (n * size_of::<T>()).max(1);
         let align = align.max(align_of::<T>()).max(8);
-        let (at, kept) = if block.has_free_list() { block.try_alloc_chunk_fit_zeroed(bytes, align)? } else { (block.try_alloc(bytes, align)?, 0) };
+        let (at, kept) = if block.has_free_list() { block.try_alloc_chunk_fit(bytes, align)? } else { (block.try_alloc(bytes, align)?, 0) };
         let r = Region {
             block: block.clone(),
             at,

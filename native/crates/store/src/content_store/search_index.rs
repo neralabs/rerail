@@ -271,15 +271,16 @@ impl ContentStore {
             rows
         };
         drop(view);
-        // A source is checked against its hash; its tape against its identity (`HashKey::tape_identity`).
+        // A source is checked against its hash; its tape by its length (its identity names what made it, not its bytes:
+        // `HashKey::tape_identity`).
         // In a segment (decision 0295 step 5): read there; one whose segment is gone is not indexed, nor an archived
         // one (decision 0450 step 4): placed back to be indexed in the background, it would undo the archive. An index
         // made before its archive is kept; a run that reads the tape places it back, and it is indexed after.
         let mut maps = super::segments::SegmentMaps::new(super::object_segments::object_dir(&self.database_path));
-        let mut decode = |(length, hash, [seg, at, len]): Frame, identity: &dyn Fn(&[u8]) -> HashKey| -> StoreResult<Option<super::ObjectBytes>> {
+        let mut decode = |(length, hash, [seg, at, len]): Frame, identity: Option<&dyn Fn(&[u8]) -> HashKey>| -> StoreResult<Option<super::ObjectBytes>> {
             let Some(frame) = super::object_segments::row_frame(&mut maps, seg, at, len) else { return Ok(None) };
             let bytes = super::ObjectBytes::Mapped(frame.segment().clone());
-            if usize::try_from(length).ok() != Some(bytes.len()) || identity(&bytes) != hash {
+            if usize::try_from(length).ok() != Some(bytes.len()) || identity.is_some_and(|identity| identity(&bytes) != hash) {
                 return Err(StoreError::Corrupt(
                     "object length or hash does not match metadata".to_owned(),
                 ));
@@ -288,8 +289,7 @@ impl ContentStore {
         };
         let mut out = Vec::with_capacity(rows.len());
         for (tape, grammar, source, image) in rows {
-            let source_hash = source.1;
-            let (Some(source), Some(image)) = (decode(source, &|bytes| HashKey::sha256(bytes))?, decode(image, &|bytes| HashKey::tape_identity(source_hash, bytes))?) else { continue };
+            let (Some(source), Some(image)) = (decode(source, Some(&|bytes| HashKey::sha256(bytes)))?, decode(image, None)?) else { continue };
             out.push(UnindexedTape { tape, grammar, source, image });
         }
         Ok(out)

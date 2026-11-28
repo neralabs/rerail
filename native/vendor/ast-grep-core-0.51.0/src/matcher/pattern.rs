@@ -18,7 +18,7 @@ pub struct Pattern {
   pub strictness: MatchStrictness,
 }
 
-/// Rerail (RER-131): what the tree a pattern's document was written from says about each node (by
+/// Rerail (decision 0161): what the tree a pattern's document was written from says about each node (by
 /// `node_id`), where the document leaves its implied tokens out. `Default`: the document's own
 /// shape, as upstream.
 #[derive(Default)]
@@ -57,12 +57,12 @@ impl PatternBuilder<'_> {
     self.build_doc(doc, &PatternShape::default())
   }
 
-  /// Rerail (RER-131): the pattern's source, as `pre_process_pattern` left it.
+  /// Rerail (decision 0161): the pattern's source, as `pre_process_pattern` left it.
   pub fn source(&self) -> &str {
     &self.src
   }
 
-  /// Rerail (RER-131): the pattern of `doc`, a parse of `source()`, with `shape`'s answers about
+  /// Rerail (decision 0161): the pattern of `doc`, a parse of `source()`, with `shape`'s answers about
   /// the tree it was written from (`PatternShape`).
   pub fn build_doc<D: Doc>(&self, doc: D, shape: &PatternShape<'_>) -> Result<Pattern, PatternError> {
     let root = Root::doc(doc);
@@ -221,7 +221,7 @@ pub enum PatternNode {
 }
 
 impl PatternNode {
-  /// Rerail (RER-131): the end-of-children goal (`kind_utils::CHILDREN_END`), standing for the
+  /// Rerail (decision 0161): the end-of-children goal (`kind_utils::CHILDREN_END`), standing for the
   /// implied tokens `word` (their texts, in order) that a tape leaves out after the last child.
   pub fn children_end(word: Vec<String>) -> Self {
     PatternNode::Terminal {
@@ -231,12 +231,12 @@ impl PatternNode {
     }
   }
 
-  /// Rerail (RER-131): whether this is the end-of-children goal.
+  /// Rerail (decision 0161): whether this is the end-of-children goal.
   pub fn is_children_end(&self) -> bool {
     matches!(self, PatternNode::Terminal { kind_id, .. } if *kind_id == super::kind_utils::CHILDREN_END)
   }
 
-  /// Rerail (RER-131): the implied tokens the end-of-children goal stands for, in order.
+  /// Rerail (decision 0161): the implied tokens the end-of-children goal stands for, in order.
   pub fn children_end_word(&self) -> Option<Vec<&str>> {
     match self {
       PatternNode::Terminal { kind_id, text, .. } if *kind_id == super::kind_utils::CHILDREN_END => {
@@ -256,7 +256,7 @@ impl PatternNode {
 
   pub fn fixed_string(&self) -> Cow<'_, str> {
     match &self {
-      // Rerail (RER-131): the end-of-children goal matches no text of its own.
+      // Rerail (decision 0161): the end-of-children goal matches no text of its own.
       PatternNode::Terminal { kind_id, .. } if *kind_id == super::kind_utils::CHILDREN_END => Cow::Borrowed(""),
       PatternNode::Terminal { text, .. } => Cow::Borrowed(text),
       PatternNode::MetaVar { .. } => Cow::Borrowed(""),
@@ -276,7 +276,7 @@ impl PatternNode {
   }
 }
 
-/// Rerail (RER-131): between the implied tokens of an end-of-children goal's word, which no token's
+/// Rerail (decision 0161): between the implied tokens of an end-of-children goal's word, which no token's
 /// text holds.
 const END_WORD_SEPARATOR: &str = "\u{1f}";
 

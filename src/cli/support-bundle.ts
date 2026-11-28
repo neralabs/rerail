@@ -11,6 +11,7 @@
  */
 import { createHash } from "node:crypto";
 import { closeSync, existsSync, fstatSync, mkdirSync, openSync, readFileSync, readSync } from "node:fs";
+import { eachLineSync } from "../engine/storage/file-lines.js";
 import { replaceFileSync } from "../engine/file-replace.js";
 import { arch, homedir, hostname, platform, release, userInfo } from "node:os";
 import { dirname, join, resolve } from "node:path";
@@ -445,21 +446,33 @@ function selectSession(database: RerailDatabase, historyIds: readonly string[], 
   return session;
 }
 
+interface TimelineRow {
+  kind: string; at: number; tool: string | null; failed: number | null; ruleIds: string | null; count: number | null; boundary: string | null; activeRuleCount: number | null;
+}
+
+type TimelineFields = Omit<SupportBundleTimelineEntry, "at" | "kind">;
+
+const toolOf = ({ tool }: TimelineRow): TimelineFields => (tool === null ? {} : { tool });
+const countOf = ({ count }: TimelineRow): TimelineFields => (count === null ? {} : { count });
+const boundaryOf = ({ boundary }: TimelineRow): TimelineFields => (boundary === null ? {} : { boundary });
+
 /**
  * The fields of a stored event that may leave it, by kind. They are read with `json_extract`, so a payload's text never
  * reaches this process, and a kind not named here is recorded by its name alone.
  */
-function timelineEntry(row: {
-  kind: string; at: number; tool: string | null; failed: number | null; ruleIds: string | null; count: number | null; boundary: string | null; activeRuleCount: number | null;
-}): SupportBundleTimelineEntry {
-  const entry: SupportBundleTimelineEntry = { at: row.at, kind: row.kind };
-  if ((row.kind === "call" || row.kind === "result") && row.tool !== null) entry.tool = row.tool;
-  if (row.kind === "result" && row.failed === 1) entry.failed = true;
-  if (row.kind === "steering-delivered" && row.ruleIds !== null) entry.ruleIds = JSON.parse(row.ruleIds) as string[];
-  if (row.kind === "events-dropped" && row.count !== null) entry.count = row.count;
-  if ((row.kind === "source-discovery-pending" || row.kind === "code-rules-pending") && row.boundary !== null) entry.boundary = row.boundary;
-  if (row.kind === "rule-coverage" && row.activeRuleCount !== null) entry.activeRuleCount = row.activeRuleCount;
-  return entry;
+const TIMELINE_FIELDS = new Map<string, (row: TimelineRow) => TimelineFields>([
+  ["call", toolOf],
+  ["result", row => ({ ...toolOf(row), ...(row.failed === 1 ? { failed: true } : {}) })],
+  ["steering-delivered", ({ ruleIds }) => (ruleIds === null ? {} : { ruleIds: JSON.parse(ruleIds) as string[] })],
+  ["events-dropped", countOf],
+  ["events-lost", countOf],
+  ["source-discovery-pending", boundaryOf],
+  ["code-rules-pending", boundaryOf],
+  ["rule-coverage", ({ activeRuleCount }) => (activeRuleCount === null ? {} : { activeRuleCount })],
+]);
+
+function timelineEntry(row: TimelineRow): SupportBundleTimelineEntry {
+  return { at: row.at, kind: row.kind, ...TIMELINE_FIELDS.get(row.kind)?.(row) };
 }
 
 function readTimeline(database: RerailDatabase, sessionId: string): SupportBundleTimelineEntry[] {
@@ -480,22 +493,84 @@ function readTimeline(database: RerailDatabase, sessionId: string): SupportBundl
 /** The steers as delivered, from the session's ledger: the one thing in it that leaves. Its samples and preimages hold the person's files. */
 function readSteers(roots: readonly string[], sessionId: string): { steers: SupportBundleSteer[]; total: number; found: boolean } {
   const directory = createHash("sha256").update(sessionId).digest("hex");
-  const ledger = roots.map(root => readQuietly(join(defaultStorageRoot(root), directory, "events.jsonl"))).find(text => text !== undefined);
-  if (ledger === undefined) return { steers: [], total: 0, found: false };
-  const steers: SupportBundleSteer[] = [];
-  for (const line of ledger.split("\n")) {
-    if (line === "") continue;
-    let entry: { type?: unknown; delivery?: { mechanism: string; requested: string; ruleIds: string[]; content: string } };
-    try {
-      entry = JSON.parse(line) as typeof entry;
-    } catch {
-      continue;
-    }
-    if (entry.type !== "delivery" || entry.delivery === undefined) continue;
-    const { mechanism, requested, ruleIds, content } = entry.delivery;
-    steers.push({ mechanism, requested, ruleIds, text: content.length > MAX_STEER_CHARACTERS ? `${content.slice(0, MAX_STEER_CHARACTERS)}…` : content });
+  for (const root of roots) {
+    const steers = ledgerSteers(join(defaultStorageRoot(root), directory, "events.jsonl"));
+    if (steers !== undefined) return { steers: steers.slice(-MAX_STEERS), total: steers.length, found: true };
   }
-  return { steers: steers.slice(-MAX_STEERS), total: steers.length, found: true };
+  return { steers: [], total: 0, found: false };
+}
+
+/**
+ * The steers a session ledger holds, its last line included, read a line at a time (`eachLineSync`): a session open for
+ * weeks can write more text than one string holds. Undefined when the ledger cannot be read.
+ */
+function ledgerSteers(path: string): SupportBundleSteer[] | undefined {
+  const steers: SupportBundleSteer[] = [];
+  const take = (line: string): void => {
+    const steer = deliveredSteer(line);
+    if (steer !== undefined) steers.push(steer);
+  };
+  let descriptor: number;
+  try {
+    descriptor = openSync(path, "r");
+  } catch {
+    return undefined;
+  }
+  try {
+    take(eachLineSync(descriptor, take).text);
+    return steers;
+  } catch {
+    // Only the read throws here: `deliveredSteer` returns for every line, so a misshapen entry costs only its own steer.
+    return undefined;
+  } finally {
+    closeSync(descriptor);
+  }
+}
+
+/** The steer a ledger line records (a `delivery` entry), its text cut at `MAX_STEER_CHARACTERS`; undefined for any other line. */
+function deliveredSteer(line: string): SupportBundleSteer | undefined {
+  if (line === "") return undefined;
+  let entry: unknown;
+  try {
+    entry = JSON.parse(line);
+  } catch {
+    return undefined;
+  }
+  const delivery = steerDelivery(entry);
+  if (delivery === undefined) return undefined;
+  const { mechanism, requested, ruleIds, content } = delivery;
+  return { mechanism, requested, ruleIds, text: content.length > MAX_STEER_CHARACTERS ? `${content.slice(0, MAX_STEER_CHARACTERS)}…` : content };
+}
+
+/** A ledger delivery's fields as its line holds them, any JSON value until `steerFields` checks each. */
+interface LedgerDeliveryFields {
+  readonly mechanism?: unknown;
+  readonly requested?: unknown;
+  readonly ruleIds?: unknown;
+  readonly content?: unknown;
+}
+
+/** The fields of a delivery a steer keeps. */
+interface SteerFields {
+  mechanism: string;
+  requested: string;
+  ruleIds: string[];
+  content: string;
+}
+
+/**
+ * The `delivery` of a ledger entry that records a steer (`steerFields`); undefined for any other entry, which is skipped
+ * as a line that is no JSON is.
+ */
+function steerDelivery(entry: unknown): SteerFields | undefined {
+  const { type, delivery } = (entry ?? {}) as { type?: unknown; delivery?: LedgerDeliveryFields | null };
+  return type === "delivery" ? steerFields(delivery ?? {}) : undefined;
+}
+
+/** The fields of `delivery` a steer keeps; undefined unless `mechanism`, `requested` and `content` are text and `ruleIds` a list of text. */
+function steerFields({ mechanism, requested, ruleIds, content }: LedgerDeliveryFields): SteerFields | undefined {
+  if (typeof mechanism !== "string" || typeof requested !== "string" || typeof content !== "string") return undefined;
+  return Array.isArray(ruleIds) && ruleIds.every((id): id is string => typeof id === "string") ? { mechanism, requested, ruleIds, content } : undefined;
 }
 
 function reportedPath(path: string | undefined): string | null {
@@ -538,7 +613,8 @@ function reportedAudit(audit: AuditRecord): SupportBundleAudit {
   };
 }
 
-function readSession(database: RerailDatabase, databasePath: string, session: typeof sessions.$inferSelect, workspaceRoot: string, problems: string[]): SupportBundleSession {
+function readSession(database: RerailDatabase, context: DatabaseReadContext, session: typeof sessions.$inferSelect): SupportBundleSession {
+  const { databasePath, workspaceRoot, problems, stderr } = context;
   const eventCounts = Object.fromEntries(database.select({ kind: events.kind, total: count() }).from(events)
     .where(eq(events.sessionId, session.sessionId)).groupBy(events.kind).orderBy(asc(events.kind)).all().map(row => [row.kind, row.total]));
   const eventTotal = Object.values(eventCounts).reduce((sum, total) => sum + total, 0);
@@ -548,7 +624,7 @@ function readSession(database: RerailDatabase, databasePath: string, session: ty
   const steered = eventCounts["steering-delivered"] ?? 0;
   if (!found && steered > 0) problems.push(`steers: the session steered ${steered} time${steered === 1 ? "" : "s"} and its ledger was not found, so their text is missing.`);
   const sessionReader = new SqliteSessionReader(databasePath);
-  const auditReader = new SqliteAuditReader(databasePath);
+  const auditReader = new SqliteAuditReader(databasePath, { log: stderr });
   try {
     const { audits, total: auditTotal } = auditReader.list({ sessionId: session.sessionId, limit: MAX_AUDITS });
     return {
@@ -622,6 +698,8 @@ async function readDaemon(pending: Promise<DaemonLookup>, started: number, probl
 }
 
 function daemonSection(lookup: DaemonLookup, started: number): SupportBundle["daemon"] {
+  // A daemon of a release before the engine's proof is asked nothing: its record says which release it is.
+  if (lookup.status === "older") return { status: "older", version: lookup.state.version, ui: lookup.state.ui };
   if (lookup.status !== "running") return { status: lookup.status };
   const { version, ui, uptimeMs, native } = lookup.health;
   return {
@@ -684,6 +762,8 @@ interface CollectInput {
    * writes it, so a caller that stops the command during the wait still has the bundle it had before there was a wait.
    */
   whileWaiting?: (draft: CollectedBundle) => void;
+  /** Where the line that names an audit whose stored lists do not read goes; the process's error output unless given. */
+  stderr?: Pick<NodeJS.WriteStream, "write">;
 }
 
 /** A bundle, scrubbed, and the ids of the rules the person's team wrote, which the summary names. */
@@ -698,7 +778,7 @@ interface CollectedBundle {
  * it can be waited for.
  */
 export async function collectSupportBundle(input: CollectInput): Promise<CollectedBundle> {
-  const { repo, home, databasePath, sessionId, packageVersion, packageRoot, busyDaemonWaitMs = BUSY_DAEMON_WAIT_MS } = input;
+  const { repo, home, databasePath, sessionId, packageVersion, packageRoot, busyDaemonWaitMs = BUSY_DAEMON_WAIT_MS, stderr = process.stderr } = input;
   const problems: string[] = [];
   const attempt = <T>(section: string, read: () => T, fallback: T): T => {
     try {
@@ -720,7 +800,7 @@ export async function collectSupportBundle(input: CollectInput): Promise<Collect
   const catalog = attempt("packs", () => loadRuleCatalog(home), undefined);
 
   if (existsSync(databasePath)) {
-    const context = { attempt, repo, databasePath, sessionId, workspaceRoot, catalog, problems, knownValues, ownRules };
+    const context = { attempt, repo, databasePath, sessionId, workspaceRoot, catalog, problems, knownValues, ownRules, stderr };
     ({ repository, session } = readDatabaseSections(context, repository));
   } else if (sessionId !== undefined) {
     throw new SupportBundleError(SESSION_NOT_FOUND(sessionId));
@@ -772,6 +852,7 @@ interface DatabaseReadContext {
   problems: string[];
   knownValues: KnownValue[];
   ownRules: string[];
+  stderr: Pick<NodeJS.WriteStream, "write">;
 }
 
 /** The bundle's sections from the database: the checkout's repository with its rules, and the session. */
@@ -792,7 +873,7 @@ function readDatabaseSections(context: DatabaseReadContext, repository: SupportB
 
 function readOpenDatabase(database: RerailDatabase, context: DatabaseReadContext, repository: SupportBundle["repository"]): DatabaseSections {
   const { attempt, knownValues } = context;
-  const repositories = attempt("repositories", () => listRepositories(database), []);
+  const repositories = attempt("repositories", () => listRepositories(database, context.stderr), []);
   knownValues.push(...repositories.flatMap(repositoryLiterals));
   knownValues.push(...attempt("session owners", () => database.select({ token: policySessionOwners.token }).from(policySessionOwners).all(), [])
     .map(row => ({ value: row.token, label: REDACTED })));
@@ -823,11 +904,11 @@ function readRules(database: RerailDatabase, context: DatabaseReadContext, check
 
 /** The session the bundle is for, if one is found, with its id and folder added to `context.knownValues`. */
 function readSelectedSession(database: RerailDatabase, context: DatabaseReadContext, historyIds: readonly string[]): SupportBundleSession | null {
-  const { attempt, databasePath, workspaceRoot, problems } = context;
+  const { attempt } = context;
   const selected = attempt("session", () => selectSession(database, historyIds, context.sessionId), undefined);
   if (selected === undefined) return null;
   context.knownValues.push({ value: selected.sessionId, label: "<session>" }, { value: selected.cwd, label: "<checkout>" });
-  return attempt("session", () => readSession(database, databasePath, selected, workspaceRoot, problems), null);
+  return attempt("session", () => readSession(database, context, selected), null);
 }
 
 function summaryOf(path: string, bundle: SupportBundle, ownRules: readonly string[]): SupportBundleSummary {
@@ -896,6 +977,7 @@ export async function runSupportBundleCommand(args: readonly string[], usage: ()
       sessionId: options.get("--session"),
       packageVersion: io.packageVersion,
       packageRoot: io.packageRoot ?? PACKAGE_ROOT,
+      stderr,
       whileWaiting: draft => {
         writeBundle(output, draft.bundle);
         stderr.write(waitingText(output));

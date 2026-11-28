@@ -16,7 +16,7 @@
 use crate::block::{Extent, PAGE};
 use crate::free::MIN_LOG;
 use std::sync::atomic::{AtomicBool, Ordering::*};
-use std::sync::{Arc, Condvar, Mutex, MutexGuard};
+use std::sync::{Arc, Condvar, Mutex, MutexGuard, RwLock, RwLockReadGuard, RwLockWriteGuard};
 
 /// How a GPU use reaches the block.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -171,7 +171,7 @@ fn bit(bits: &[u64], i: usize) -> bool {
 impl Ledger {
     pub(crate) fn new(base: *mut u8, len: usize, pages: bool, ext: Arc<Extent>) -> Arc<Ledger> {
         let l = Arc::new(Ledger { state: Mutex::default(), chunk_uses: std::sync::atomic::AtomicUsize::new(0), uses: std::sync::atomic::AtomicUsize::new(0), root: Mutex::new(std::sync::Weak::new()), base: base as usize, pages, ext });
-        let mut live = blocks();
+        let mut live = blocks_mut();
         // After any at the same address: memory an outer ledger holds (a pooled lease) made a block's (`Block::over`)
         // or `Tracked`, the inner ledger is the one its address finds (`of_address`).
         let i = live.partition_point(|e| e.0 <= l.base);
@@ -181,7 +181,7 @@ impl Ledger {
 
     /// Its block keeps only its first `len` bytes now (a freeze gave the rest of its reservation back).
     pub(crate) fn resized(&self, len: usize) {
-        if let Some(e) = blocks().iter_mut().find(|e| std::ptr::eq(e.2.as_ptr(), self)) {
+        if let Some(e) = blocks_mut().iter_mut().find(|e| std::ptr::eq(e.2.as_ptr(), self)) {
             e.1 = self.base + len;
         }
     }
@@ -375,6 +375,30 @@ impl Ledger {
         chunks.into_iter().map(|(at, size)| self.give_free_pages(s, at, size)).sum()
     }
 
+    /// `free_kept_split` of this block: its free chunks' bytes in pages not given back, by whether a live chunk
+    /// reaches the page.
+    fn free_kept_split(&self) -> (usize, usize) {
+        const PER: usize = PAGE / G;
+        let s = self.lock();
+        if !s.listed {
+            return (0, 0);
+        }
+        let (mut givable, mut pinned) = (0, 0);
+        for (c, l) in s.lists.iter().enumerate() {
+            let size = 1usize << (MIN_LOG as usize + c);
+            for &at in l {
+                for p in at / PAGE..(at + size).div_ceil(PAGE) {
+                    if bit(&s.given, p) {
+                        continue;
+                    }
+                    let overlap = (at + size).min((p + 1) * PAGE) - at.max(p * PAGE);
+                    if any(&s.live, p * PER, (p + 1) * PER) { pinned += overlap } else { givable += overlap }
+                }
+            }
+        }
+        (givable, pinned)
+    }
+
     /// The tail `at + keep..at + size` of a chunk just handed out is not the holder's (never written).
     pub(crate) fn untaken_tail(&self, at: usize, size: usize, keep: usize) {
         let mut s = self.lock();
@@ -561,7 +585,7 @@ impl Ledger {
         let release: Box<dyn FnOnce() + Send> = Box::new(move || {
             // No longer found by its address before another mapping can take it; an outer ledger of the same memory
             // (a lease's) stays.
-            blocks().retain(|e| e.2.as_ptr() as usize != me);
+            blocks_mut().retain(|e| e.2.as_ptr() as usize != me);
             release()
         });
         let now = {
@@ -622,12 +646,51 @@ impl<T: Send + 'static> Drop for Tracked<T> {
 }
 
 /// The live blocks' address ranges, the lowest first, each with its ledger: how a buffer bound for a kernel is found
-/// to be a block's (`Fence::uses_address`), whoever made the buffer.
+/// to be a block's (`Fence::uses_address`), whoever made the buffer. Read by every bind of every dispatch, on every
+/// thread that encodes one, and written only as a block is made, resized or let go: a reader shares it. As a mutex,
+/// the CPU's join programs' binds queued on it (the data-layer rules over 50 files: 20 of 52 s of CPU in its waits
+/// and wakes, 2026-11-25).
 // state: bookkeeping (the blocks in the process, by address: what is mapped, not what a relation has)
-static BLOCKS: Mutex<Vec<(usize, usize, std::sync::Weak<Ledger>)>> = Mutex::new(Vec::new());
+static BLOCKS: RwLock<Vec<(usize, usize, std::sync::Weak<Ledger>)>> = RwLock::new(Vec::new());
 
-fn blocks() -> MutexGuard<'static, Vec<(usize, usize, std::sync::Weak<Ledger>)>> {
-    BLOCKS.lock().unwrap_or_else(|e| e.into_inner())
+type Live = Vec<(usize, usize, std::sync::Weak<Ledger>)>;
+
+fn blocks() -> RwLockReadGuard<'static, Live> {
+    BLOCKS.read().unwrap_or_else(|e| e.into_inner())
+}
+
+fn blocks_mut() -> RwLockWriteGuard<'static, Live> {
+    BLOCKS.write().unwrap_or_else(|e| e.into_inner())
+}
+
+/// The free chunks' bytes the live anonymous blocks keep in memory, split: those in pages no live chunk reaches (a give
+/// would take them: `GIVE_MIN`'s small chunks kept for the next of their class), and those in pages a live chunk
+/// shares (no give takes them: the blocks' fragmentation). A profile's measure.
+pub fn free_kept_split() -> (usize, usize) {
+    let ledgers: Vec<Arc<Ledger>> = blocks().iter().filter_map(|(_, _, l)| l.upgrade()).collect();
+    ledgers.iter().filter(|l| l.pages).map(|l| l.free_kept_split()).fold((0, 0), |(a, b), (c, d)| (a + c, b + d))
+}
+
+/// The bytes in memory of every live ledger's memory (`mem::resident`): the anonymous blocks' by their kind
+/// (`block::kind`, 0 for none set), and the rest's (pooled leases and the blocks over them, file mappings). A range
+/// inside another (a block over a lease) is counted once. A profile's measure.
+pub fn resident_split() -> ([usize; 9], usize) {
+    let ranges: Vec<(usize, usize, Option<u32>)> =
+        blocks().iter().filter_map(|(a, b, l)| l.upgrade().map(|l| (*a, *b, l.pages.then(|| l.ext.kind.load(Relaxed))))).collect();
+    let (mut anon, mut rest, mut end) = ([0; 9], 0, 0);
+    for (a, b, kind) in ranges {
+        if b <= end {
+            continue;
+        }
+        let from = a.max(end);
+        let r = crate::mem::resident(from, b - from);
+        match kind {
+            Some(k) => anon[(k as usize).min(8)] += r,
+            None => rest += r,
+        }
+        end = b;
+    }
+    (anon, rest)
 }
 
 /// Every live block's free chunks' pages to the OS (`Ledger::trim`): a run's end. The bytes given.
@@ -658,13 +721,17 @@ pub struct Fence {
     /// The addresses its binds by address held already (`region::bind_address`), each with the ledger it found, or
     /// none (a buffer of no block's): a program's stack binds the same buffers at each of its thousands of
     /// dispatches (decision 0641).
-    bound: Mutex<std::collections::HashMap<usize, Option<Arc<Ledger>>>>,
+    bound: Mutex<std::collections::HashMap<usize, Option<Arc<Ledger>>, rustc_hash::FxBuildHasher>>,
+    /// The binds by address done already, by address and access (`region::bind_address`): each a bind that held its
+    /// ledger and pinned its region, so a bind of it again does nothing more. A pass binds the same buffers at each of
+    /// its launches: one lookup each, not the ledger's and the pins' (decision 0641).
+    done_binds: Mutex<std::collections::HashSet<(usize, bool), rustc_hash::FxBuildHasher>>,
     signal: Condvar,
 }
 
 impl Fence {
     pub fn new() -> Arc<Fence> {
-        Arc::new(Fence { uses: Mutex::new(Vec::new()), after: Mutex::new(Vec::new()), done: AtomicBool::new(false), committed: AtomicBool::new(false), pinned: Mutex::new(Vec::new()), bound: Mutex::new(std::collections::HashMap::new()), signal: Condvar::new() })
+        Arc::new(Fence { uses: Mutex::new(Vec::new()), after: Mutex::new(Vec::new()), done: AtomicBool::new(false), committed: AtomicBool::new(false), pinned: Mutex::new(Vec::new()), bound: Mutex::new(Default::default()), done_binds: Mutex::new(Default::default()), signal: Condvar::new() })
     }
 
     fn add(&self, ledger: &Arc<Ledger>, access: Access, chunk: Option<(usize, usize)>) {
@@ -683,10 +750,10 @@ impl Fence {
         self.held_at(addr).is_some()
     }
 
-    /// The ledger `addr` lies in, its block's use held by it (once however often it is bound). Found once a fence
-    /// and address: it holds the ledger until it completes, so nothing frees what lies there and puts another block
-    /// there before. An address no ledger held at its first bind is none of a ledger's at the next: the buffer
-    /// bound there, held by its submission, keeps the memory from any block for the fence's life.
+    /// The ledger `addr` lies in, its block's use held by it (once however often it is bound, `uses_ledger`). Found
+    /// once a fence and address: it holds the ledger until it completes, so nothing frees what lies there and puts
+    /// another block there before. An address no ledger held at its first bind is none of a ledger's at the next:
+    /// the buffer bound there, held by its submission, keeps the memory from any block for the fence's life.
     pub(crate) fn held_at(&self, addr: usize) -> Option<Arc<Ledger>> {
         if let Some(l) = self.bound.lock().unwrap_or_else(|e| e.into_inner()).get(&addr) {
             return l.clone();
@@ -695,12 +762,27 @@ impl Fence {
             self.bound.lock().unwrap_or_else(|e| e.into_inner()).insert(addr, None);
             return None;
         };
-        let known = self.uses.lock().unwrap_or_else(|e| e.into_inner()).iter().any(|u| Arc::ptr_eq(&u.0, &l));
-        if !known {
-            self.add(&l, Access::Write, None);
-        }
+        self.uses_ledger(&l);
         self.bound.lock().unwrap_or_else(|e| e.into_inner()).insert(addr, Some(Arc::clone(&l)));
         Some(l)
+    }
+
+    /// Its work reads or writes the block of ledger `l` (found by an address, `of_address`), once however often.
+    pub fn uses_ledger(&self, l: &Arc<Ledger>) {
+        let known = self.uses.lock().unwrap_or_else(|e| e.into_inner()).iter().any(|u| Arc::ptr_eq(&u.0, l));
+        if !known {
+            self.add(l, Access::Write, None);
+        }
+    }
+
+    /// Whether a bind of `addr` for this access (`write`) was done already: its ledger held and its region pinned.
+    pub(crate) fn bound_already(&self, addr: usize, write: bool) -> bool {
+        self.done_binds.lock().unwrap_or_else(|e| e.into_inner()).contains(&(addr, write))
+    }
+
+    /// A bind of `addr` for this access is done: its ledger held and its region pinned (`bound_already`).
+    pub(crate) fn note_bound(&self, addr: usize, write: bool) {
+        self.done_binds.lock().unwrap_or_else(|e| e.into_inner()).insert((addr, write));
     }
 
     /// Whether `key` (a region, with its access) is pinned on it for the first time now.
@@ -754,6 +836,7 @@ impl Fence {
             std::mem::take(&mut *uses)
         };
         self.bound.lock().unwrap_or_else(|e| e.into_inner()).clear();
+        self.done_binds.lock().unwrap_or_else(|e| e.into_inner()).clear();
         // Pins first: a region its work held may go now, its chunk freed while the block's use still holds it.
         let after = std::mem::take(&mut *self.after.lock().unwrap_or_else(|e| e.into_inner()));
         for f in after {
@@ -792,6 +875,22 @@ impl Fence {
 impl Drop for Fence {
     fn drop(&mut self) {
         self.complete();
+    }
+}
+
+/// A block's ledger as a region's guard (`rerail_vector::Region::guarded`): a vector in the block has each CPU read and
+/// write checked against the device's queued uses (R4).
+impl rerail_vector::Guard for Ledger {
+    #[inline]
+    fn cpu_read(&self, at: usize, len: usize) {
+        Ledger::cpu_read(self, at, len)
+    }
+    #[inline]
+    fn cpu_write(&self, at: usize, len: usize) {
+        Ledger::cpu_write(self, at, len)
+    }
+    fn queued(&self) -> &std::sync::atomic::AtomicUsize {
+        &self.chunk_uses
     }
 }
 
@@ -894,6 +993,39 @@ mod tests {
         b.ledger().cpu_read(next, 4096);
         // A use on a complete fence fails.
         assert!(fails(|| r.reads(&b)));
+    }
+
+    /// R4 through a vector in the block (`Region::guarded`): read freely while nothing is queued on the block
+    /// (`Region::device_queued`: no guard call), refused while a device write of its chunk is queued, read again once that
+    /// fence completes.
+    #[test]
+    fn a_vector_in_a_block_is_checked_while_a_use_of_it_is_queued() {
+        struct InBlock(Arc<Block>, std::sync::atomic::AtomicUsize);
+        impl crate::maps::Room for InBlock {
+            fn region(&self, bytes: usize, align: usize, name: &'static str) -> crate::maps::Region {
+                let (at, kept) = self.0.try_alloc_chunk_fit(bytes, align).expect("room in the block");
+                self.1.store(at, Relaxed);
+                // SAFETY: the chunk was taken for this region, `kept` bytes at `at`.
+                let m = unsafe { crate::region::Mutable::<u8>::adopt(&self.0, at, bytes, kept, name) };
+                crate::maps::region_of(m, None).guarded(self.0.ledger().clone(), at)
+            }
+        }
+        let b = Arc::new(listed());
+        let room = Arc::new(InBlock(b.clone(), std::sync::atomic::AtomicUsize::new(0)));
+        let mut v = crate::vector::Vector::<u64>::new_in(room.clone());
+        v.extend_from_slice(&[1, 2, 3]);
+        assert_eq!(v.iter().sum::<u64>(), 6, "nothing queued: read");
+        let other = b.try_alloc_chunk(4096, 64).unwrap();
+        let w = Fence::new();
+        w.writes_chunk(&b, other, 4096);
+        assert_eq!(v.iter().sum::<u64>(), 6, "a use of another chunk queued: read");
+        let mine = Fence::new();
+        mine.writes_chunk(&b, room.1.load(Relaxed), 64);
+        assert!(fails(|| { std::hint::black_box(v.iter().sum::<u64>()); }), "its own chunk written by the device: refused");
+        mine.complete();
+        w.complete();
+        v.push(4);
+        assert_eq!(v.iter().sum::<u64>(), 10, "the fences complete: read and written");
     }
 
     /// A region of a block asks its guard only while the device has uses of the block queued (`device_queued`, an
@@ -1164,21 +1296,5 @@ mod tests {
         let b = Block::anon(kind::FACTS, 1 << 20);
         let (slab, _) = watched();
         drop(b.relocate(slab));
-    }
-}
-
-/// A block's ledger as a region's guard (`rerail_vector::Region::guarded`): a vector in the block has each CPU read and
-/// write checked against the device's queued uses (R4).
-impl rerail_vector::Guard for Ledger {
-    #[inline]
-    fn cpu_read(&self, at: usize, len: usize) {
-        Ledger::cpu_read(self, at, len)
-    }
-    #[inline]
-    fn cpu_write(&self, at: usize, len: usize) {
-        Ledger::cpu_write(self, at, len)
-    }
-    fn queued(&self) -> &std::sync::atomic::AtomicUsize {
-        &self.chunk_uses
     }
 }

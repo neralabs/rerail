@@ -143,9 +143,9 @@ serde = { version = "1.0", features = ["derive"] }
 fancy-regex = "=0.17.0"
 regex = "=1.13.1"
 # The reach index (decision 0119): each start's closure as a compressed bitmap.
-roaring = "=0.11.5"
+roaring = "=0.12.0"
 regex-automata = "=0.4.18"
-regex-syntax = "=0.8.11"
+regex-syntax = "=0.8.12"
 # Held at 0.40.2, not main's 0.41.1: 0.41 registers hooks (`progress_handler`, `commit_hook`,
 # `rollback_hook`, `authorizer`) through `&mut Connection`, and the engine installs them on connections its
 # statements share.
@@ -230,6 +230,8 @@ rerail-device-metal = { path = "../device_metal", default-features = false }
 # The device layer's targets (macOS, Linux and Windows): the GPU lane (decision 0440 step E).
 
 [dev-dependencies]
+# The join program's reads in Rust, held to the JIT's over a batch's directory (`the_join_programs_view_reads_are_the_jits`).
+rerail-ukl-rust = { path = "../ukl_rust" }
 # JSON's parser, measured directly (`tape::tests::json_parse_costs`).
 rerail-simdjson = { path = "../simdjson" }
 # Python's lean parser, measured directly (`tape::tests::python_parse_costs`).

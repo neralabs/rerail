@@ -197,7 +197,7 @@ fn visit_tape<T: rerail_tape_format::tape::Tape>(
                     | (u8::from(missing) << 2)
                     | (u8::from(error) << 3),
             },
-            &code.classes,
+            code.classes,
         );
         open.push(Open {
             id: index as u32,

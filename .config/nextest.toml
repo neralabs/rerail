@@ -38,7 +38,8 @@ default-filter = """not (
   | test(=class_pack::tests::random_needs_are_answered)
   | test(=code_rule_dsl::tools::pack_split_tests::the_data_layer_is_split_with_no_node_crossing_policy_by_policy)
   | package(rerail-c-directives)
-  | (package(rerail-kotlin-parser) & test(/^tests::(walk_lemmas_keep_the_tapes|a_cold_compile_makes_the_shipped_answers_program)$/))
+  | (package(rerail-kotlin-parser) & test(=tests::a_cold_compile_makes_the_shipped_answers_program))
+  | (package(rerail-python-parser) & test(=tests::a_cold_compile_makes_the_shipped_answers_program))
 )"""
 # A test past this is reported as slow; past four periods it is stopped.
 slow-timeout = { period = "60s", terminate-after = 4 }
@@ -61,10 +62,10 @@ platform = "cfg(target_os = \"macos\")"
 filter = "test(/^(content_store::(observe|journal)|tree_watch)::/)"
 test-group = "fsevents"
 
-# Kotlin's grammar compiled cold (no shipped answers, 0414: 41 s on a Linux Spark): without the walk lemmas,
-# and twice to compare programs. The rest of the crate's tests compile with the answers, in 1.5 s (Q371).
+# Kotlin's and Python's grammars compiled cold (no shipped answers, 0414; the budget lifted, 0646), to compare programs. The rest
+# of the crate's tests compile with the answers, in 1.5 s (Q371). The walk lemmas' test is rr's.
 [[profile.default.overrides]]
-filter = "package(rerail-kotlin-parser) & test(/^tests::(walk_lemmas_keep_the_tapes|a_cold_compile_makes_the_shipped_answers_program)$/)"
+filter = "(package(rerail-kotlin-parser) | package(rerail-python-parser)) & test(=tests::a_cold_compile_makes_the_shipped_answers_program)"
 slow-timeout = { period = "60s", terminate-after = 8 }
 
 [profile.default.junit]
@@ -101,10 +102,14 @@ path = "junit.xml"
 
 # The preprocessor's evaluation tests, each stopped at 1 s and failed (the user, 2026-11-20: "you
 # may not run tests over 1 second; none of these cases should take more than a few milliseconds").
-#   cargo nextest run -p rerail-c-directives --lib --profile second
+#   cargo nextest run -p rerail-c-directives --lib --features test-hooks,device-pp --profile second
+# Parked (the user, 2026-11-25): the evaluator and its tests build only with `device-pp`.
 [profile.second]
 default-filter = "package(rerail-c-directives) & test(/^eval::tests::/)"
 slow-timeout = { period = "1s", terminate-after = 1 }
+# A test's process pays its device's setup once (CUDA on a GB10: 0.21 s for the context, 0.21 s for the first unit's
+# kernel load; a unit after it, 1.2 ms, 2026-11-25), and every test shares one device: 8 at once, not a core each.
+test-threads = 8
 failure-output = "final"
 # Past the default profile's override for the package (which every profile takes), the second's.
 [[profile.second.overrides]]

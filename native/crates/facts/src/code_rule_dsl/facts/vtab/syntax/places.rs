@@ -8,7 +8,7 @@
 //! the heap that staged them. [`Places`] binds the view and the span rows as one relation: the view's rows first,
 //! then the spans'.
 //!
-//! A lookup by id goes to the side that holds the id (`Places::is_span`). A node's id never reaches the spans, so a
+//! A lookup by id goes to the side that holds the id (`granules::is_extra`). A node's id never reaches the spans, so a
 //! probe of a node's place makes no document (the made rows' probes made a node's document and every relation of its
 //! group).
 //!
@@ -29,13 +29,18 @@ pub(super) const NAMES: [&str; 5] = ["line", "end_line", "col", "docof", "text"]
 pub struct Places {
     view: Arc<dyn Source>,
     spans: Arc<dyn Source>,
-    /// The view's batch: an id's document and local id, by its page (plan "Chunk node numbers").
-    batch: Option<Arc<super::Batch>>,
     /// Where the device reads it, made on the first ask (`device_view`); `None` where it cannot.
     #[cfg(any(target_os = "macos", target_os = "linux", windows))]
     device: std::sync::OnceLock<Option<OnDevice>>,
+    /// Where the host's join programs read it (`rerail_accel::gpu::shared::on_host`), made on the first ask there.
+    #[cfg(any(target_os = "macos", target_os = "linux", windows))]
+    host: std::sync::OnceLock<Option<OnHost>>,
 }
 
+/// Whether id `id` is one of `Extra`'s spans (`granules::ExtraSpan`), not a node, token or position.
+fn is_span(id: i64) -> bool {
+    granules::is_extra(id as u32)
+}
 
 /// The kernels' `PlacedDir`: the view's directory, the spans' relation where it lies (its block's address and its
 /// descriptor's offset), and the view's rows, which the spans' follow.
@@ -66,28 +71,85 @@ struct OnDevice {
     home: crate::code_rule_dsl::facts::rows::Part,
 }
 
+/// A placed relation as the host reads it: its `PlacedDir` at host addresses (the view's directory's, the spans'
+/// block's), the spans' relation held while it is read, and its relation of no columns, as `OnDevice`'s.
+#[cfg(any(target_os = "macos", target_os = "linux", windows))]
+struct OnHost {
+    dir: Box<PlacedDir>,
+    _spans: crate::code_rule_dsl::facts::rows::InBlock,
+    home: crate::code_rule_dsl::facts::rows::Part,
+}
+
+/// A placed relation whose view's rows are another directory's (`values::Layered`: a chunk's and its values'
+/// documents', of `rows` rows), these spans' rows past them: its `PlacedDir`, where the join programs read it.
+#[cfg(any(target_os = "macos", target_os = "linux", windows))]
+pub(super) enum Over {
+    Host(OnHost),
+    Device(OnDevice),
+}
+
+#[cfg(any(target_os = "macos", target_os = "linux", windows))]
+impl Over {
+    /// `v`, the view read through the other directory, made this placed relation's read.
+    pub(super) fn apply(&self, v: &mut crate::code_rule_dsl::facts::vtab::ViewInPlace) -> Option<()> {
+        match self {
+            Over::Host(on) => v.dir = std::ptr::from_ref::<PlacedDir>(&on.dir) as u64,
+            Over::Device(on) => {
+                v.dir = on.dir.device_address()?;
+                v.buffers.push((*on.dir).clone());
+                v.buffers.push(on.tail.clone());
+            }
+        }
+        v.kind |= VIEW_PLACED;
+        Some(())
+    }
+    /// Its relation of no columns, which its indexes go in, where it keeps it.
+    pub(super) fn home(&self) -> crate::code_rule_dsl::facts::rows::Part {
+        match self {
+            Over::Host(on) => on.home.clone(),
+            Over::Device(on) => on.home.clone(),
+        }
+    }
+}
+
+/// A placed relation's relation of no columns, of `rows` rows, which its probes' indexes go in: room for as many
+/// as a relation takes (`ADDED_INDEXES`, its address space; pages taken as each is written), as a view's home has,
+/// so every probe's index is built there and found again (with room for one, each probe by another key built its
+/// index in a home of its own, never found again).
+#[cfg(any(target_os = "macos", target_os = "linux", windows))]
+fn home(rows: usize) -> Option<crate::code_rule_dsl::facts::rows::Part> {
+    crate::code_rule_dsl::facts::rows::Part::for_device_indexed(0, rows, rerail_blocks::relation::ADDED_INDEXES).ok()
+}
+
 impl Places {
-    pub fn new(view: Arc<dyn Source>, spans: Arc<dyn Source>) -> Self {
-        debug_assert_eq!(view.columns().len(), spans.columns().len());
-        let batch = view.syntax_batch().and_then(|b| b.downcast::<super::Batch>().ok());
-        Places {
-            view,
-            spans,
-            batch,
-            #[cfg(any(target_os = "macos", target_os = "linux", windows))]
-            device: std::sync::OnceLock::new(),
+    /// Its spans' rows, past the view's.
+    pub(super) fn spans_len(&self) -> usize {
+        self.spans.len()
+    }
+
+    /// Its spans past `rows` rows of a view read through the directory at `view_dir` (`values::Layered`'s, of the
+    /// chunk's documents and its values'), where the join programs here read it.
+    #[cfg(any(target_os = "macos", target_os = "linux", windows))]
+    pub(super) fn over(&self, view_dir: u64, rows: usize) -> Option<Over> {
+        if super::device_chunk::ViewsInPlace::read_on_host() {
+            self.on_host(view_dir, rows).map(Over::Host)
+        } else {
+            self.on_device(view_dir, rows).map(Over::Device)
         }
     }
 
-    /// Whether id `id` is one of `Extra`'s spans (`granules::ExtraSpan`), not a node, token or position: a local id
-    /// past its document's nodes' and positions' (`Projected::locs`).
-    fn is_span(&self, id: i64) -> bool {
-        self.batch.as_ref().is_some_and(|b| b.is_span(id))
+    pub fn new(view: Arc<dyn Source>, spans: Arc<dyn Source>) -> Self {
+        debug_assert_eq!(view.columns().len(), spans.columns().len());
+        Places {
+            view,
+            spans,
+            #[cfg(any(target_os = "macos", target_os = "linux", windows))]
+            device: std::sync::OnceLock::new(),
+            #[cfg(any(target_os = "macos", target_os = "linux", windows))]
+            host: std::sync::OnceLock::new(),
+        }
     }
-    /// The key of id `id`'s document; its value where it is no id of the batch.
-    fn key_of(&self, id: i64) -> i64 {
-        self.batch.as_ref().and_then(|b| b.docs.of_id(id).map(|(d, _)| i64::from(b.docs.key(d)))).unwrap_or(id)
-    }
+
     /// The view's rows: the first span row's number.
     fn first(&self) -> usize {
         self.view.len()
@@ -96,7 +158,7 @@ impl Places {
     /// The rows of the ids `values` on `column`, each id from the side that holds it on column 0 (a node's from the
     /// view, a span's from the spans), from both on another column: `None` when a part asked cannot answer.
     fn by_side(&self, column: usize, values: &[i64], of: impl Fn(&dyn Source, &[i64]) -> Option<Vector<usize>>) -> Option<Vector<usize>> {
-        let (spans, nodes): (Vec<i64>, Vec<i64>) = if column == 0 { values.iter().partition(|&&v| self.is_span(v)) } else { (values.to_vec(), values.to_vec()) };
+        let (spans, nodes): (Vec<i64>, Vec<i64>) = if column == 0 { values.iter().partition(|&&v| is_span(v)) } else { (values.to_vec(), values.to_vec()) };
         let mut rows = if nodes.is_empty() { Vector::new() } else { of(&*self.view, &nodes)? };
         if !spans.is_empty() {
             let first = self.first();
@@ -119,19 +181,30 @@ impl Places {
     /// The view's directory and the spans' rows where they lie, in a `PlacedDir` (`view_dir`: the view's, read in
     /// place). `None` where the spans' rows are in no block, or the device's buffers have no addresses.
     #[cfg(any(target_os = "macos", target_os = "linux", windows))]
-    fn on_device(&self, view_dir: u64) -> Option<OnDevice> {
+    fn on_device(&self, view_dir: u64, rows: usize) -> Option<OnDevice> {
         let device = crate::code_rule_dsl::tape::placed::device()?;
         let spans = self.spans.in_block()?;
         let tail = spans.facts.block.device_buffer(device).ok()?;
         let base = tail.device_address()?;
         let dir = rerail_device::device::alloc_uninitialized_array_sync::<u8>(device, std::mem::size_of::<PlacedDir>());
-        let placed = PlacedDir { dir: view_dir, tail: base, at: spans.at as u64, rows: self.first() as u32, pad: 0 };
+        let placed = PlacedDir { dir: view_dir, tail: base, at: spans.at as u64, rows: rows as u32, pad: 0 };
         // SAFETY: the buffer's bytes, shared with the host, `PlacedDir`'s size, read by no stage yet.
         unsafe { dir.contents().cast::<PlacedDir>().write_unaligned(placed) };
         let at = dir.contents().cast::<u8>();
         let dir = rerail_blocks::ledger::Tracked::new(dir, at, std::mem::size_of::<PlacedDir>());
-        let home = crate::code_rule_dsl::facts::rows::Part::for_device(0, self.len()).ok()?;
+        let home = home(rows + self.spans.len())?;
         Some(OnDevice { dir, tail, _spans: spans, home })
+    }
+
+    /// `on_device`'s `PlacedDir` at the host's addresses (`view_dir`: the view's directory's host address), for the
+    /// host's join programs: the spans' block where it lies here, no device buffer.
+    #[cfg(any(target_os = "macos", target_os = "linux", windows))]
+    fn on_host(&self, view_dir: u64, rows: usize) -> Option<OnHost> {
+        let spans = self.spans.in_block()?;
+        let tail = spans.facts.block.base_ptr() as u64;
+        let dir = Box::new(PlacedDir { dir: view_dir, tail, at: spans.at as u64, rows: rows as u32, pad: 0 });
+        let home = home(rows + self.spans.len())?;
+        Some(OnHost { dir, _spans: spans, home })
     }
 }
 
@@ -148,7 +221,17 @@ impl Source for Places {
             return Some(d);
         }
         let v = &mut d.in_place;
-        let on = self.device.get_or_init(|| self.on_device(v.dir)).as_ref()?;
+        // Where the join programs run on the host, the view's directory is at its host address (`device_view` of
+        // the syntax source), and so is this one.
+        if super::device_chunk::ViewsInPlace::read_on_host() {
+            let on = self.host.get_or_init(|| self.on_host(v.dir, self.first())).as_ref()?;
+            v.dir = std::ptr::from_ref::<PlacedDir>(&on.dir) as u64;
+            v.kind |= VIEW_PLACED;
+            d.rows = self.len();
+            d.home = on.home.clone();
+            return Some(d);
+        }
+        let on = self.device.get_or_init(|| self.on_device(v.dir, self.first())).as_ref()?;
         v.dir = on.dir.device_address()?;
         v.kind |= VIEW_PLACED;
         v.buffers.push((*on.dir).clone());
@@ -169,11 +252,15 @@ impl Source for Places {
     fn estimated_len(&self) -> usize {
         self.view.estimated_len() + self.spans.estimated_len()
     }
+    fn known_len(&self) -> Option<usize> {
+        Some(self.view.known_len()? + self.spans.known_len()?)
+    }
     fn value(&self, row: usize, column: usize) -> i64 {
         let first = self.first();
         if row < first { self.view.value(row, column) } else { self.spans.value(row - first, column) }
     }
     fn row_at(&self, row: usize, columns: &[usize], out: &mut [i64]) {
+        let _kind = rerail_prof::work::doing(rerail_prof::work::VIEW);
         let first = self.first();
         if row < first { self.view.row_at(row, columns, out) } else { self.spans.row_at(row - first, columns, out) }
     }
@@ -196,7 +283,7 @@ impl Source for Places {
         }
     }
     /// The view's walk of the keyed rows, then the spans': only at the keys that are `Extra` spans' ids (no node's is:
-    /// `Places::is_span`), their own keyed walk, else the rows of those keys' documents, else every span row with a
+    /// `granules::is_extra`), their own keyed walk, else the rows of those keys' documents, else every span row with a
     /// key. A walk of every span row made the whole batch, every relation of every group: the cross part's count of
     /// `docof` at the exports' nodes, 85 MB of the 300-file batch at the M3's peak (ab200), though no node it was asked
     /// for is a span.
@@ -212,7 +299,7 @@ impl Source for Places {
             return true;
         }
         let first = self.first();
-        let spans: rustc_hash::FxHashSet<i64> = keys.iter().copied().filter(|&k| self.is_span(k)).collect();
+        let spans: rustc_hash::FxHashSet<i64> = keys.iter().copied().filter(|&k| super::granules::is_extra(k as u32)).collect();
         if spans.is_empty() {
             return true;
         }
@@ -222,7 +309,7 @@ impl Source for Places {
         let mut all = columns.to_vec();
         all.push(column);
         let k = columns.len();
-        let docs: BTreeSet<u32> = spans.iter().filter_map(|&s| u32::try_from(self.key_of(s)).ok()).collect();
+        let docs: BTreeSet<u32> = spans.iter().map(|&s| rerail_blocks::located::Located(s).key()).collect();
         if let Some(rows) = self.spans.rows_of_documents(&docs) {
             let mut row = vec![0; all.len()];
             for r in rows {
@@ -282,7 +369,7 @@ impl Source for Places {
         column == 0 && self.view.keys_rows(0)
     }
     fn key_row(&self, column: usize, value: i64) -> Option<usize> {
-        if self.is_span(value) {
+        if is_span(value) {
             let first = self.first();
             return self.spans.lookup(column, &[value])?.first().map(|r| first + r);
         }
@@ -295,13 +382,16 @@ impl Source for Places {
     /// filtered, and read): a place relation's probe reads no row of the view a point read each. By a row's id, the
     /// side that holds it alone (`is_span`). Only the view may refuse, before any row is given; the spans always answer.
     fn lookup_read_at(&self, column: usize, value: i64, columns: &[usize], cursor: &mut super::super::ProbeCursor, each: &mut dyn FnMut(usize, &[i64])) -> bool {
+        let _kind = rerail_prof::work::doing(rerail_prof::work::VIEW);
+        let outer = each;
+        let each: &mut dyn FnMut(usize, &[i64]) = &mut |r, v| { let _caller = _kind.paused(); outer(r, v) };
         let width = columns.len();
         if width > 8 {
             return false;
         }
         let mut row = [0i64; 8];
         let routed = column == 0;
-        if !(routed && self.is_span(value)) {
+        if !(routed && is_span(value)) {
             if !self.view.lookup_read_at(column, value, columns, cursor, each) {
                 let Some(rows) = self.view.lookup(column, &[value]) else { return false };
                 for r in rows {
@@ -325,6 +415,19 @@ impl Source for Places {
         }
         true
     }
+    /// By a row's id (decision 0706 E1): a node's or a position's place is the view's batch read; a span's is probed
+    /// as one row (`found` 2).
+    fn read_own_batch(&self, column: usize, values: &[i64], reads: &[usize], out: &mut [i64], found: &mut [u8], cursor: &mut super::super::ProbeCursor) -> bool {
+        if column != 0 || !self.view.read_own_batch(column, values, reads, out, found, cursor) {
+            return false;
+        }
+        for (f, &v) in found.iter_mut().zip(values) {
+            if is_span(v) {
+                *f = 2;
+            }
+        }
+        true
+    }
     fn made_on_lookup(&self) -> bool {
         self.spans.made_on_lookup()
     }
@@ -337,7 +440,11 @@ impl Source for Places {
     /// Counted in an array in a block of the run's (`place_statistics`). Counted as a view's rows by `RelStats`, its counts took 48 bytes a row on the heap (`line`'s and `col`'s 49.5 MB each at the
     /// M3's 300-file peak, ab160).
     fn statistics(&self) -> Option<Vec<(String, i64, i64, i64, i64)>> {
-        place_statistics(self)
+        place_statistics(self, false)
+    }
+    /// `statistics`, or with its spans not made, their sample's added (`place_statistics`).
+    fn estimated_statistics(&self) -> Option<Vec<(String, i64, i64, i64, i64)>> {
+        place_statistics(self, true)
     }
     fn failure(&self) -> Option<String> {
         self.view.failure().or_else(|| self.spans.failure())
@@ -387,9 +494,9 @@ impl Pairs {
     fn new() -> Pairs {
         Pairs(crate::code_rule_dsl::facts::rows::vector_in(None, 0))
     }
-    /// A row of document `doc` (its first column's) and `value`.
-    fn add(&mut self, doc: i64, value: i64) {
-        self.0.push([value, doc]);
+    /// A row of `id` (the first column: its document is the high half) and `value`.
+    fn add(&mut self, id: i64, value: i64) {
+        self.0.push([value, rerail_blocks::located::Located::key_wide(id)]);
     }
     /// `(rows, distinct values, the sum of their postings' squares, that sum within each document)`.
     fn measure(mut self) -> (i64, i64, i64, i64) {
@@ -413,7 +520,9 @@ impl Pairs {
 /// walk of the spans made the whole batch: `col`'s measure did, ab175). Rows add; the second column's values (lines,
 /// columns, documents) are the view's mostly, the spans' among them, so its distinct values are the more of the two's,
 /// and its postings' squares add with their cross term at its most (each value's postings in both, in proportion).
-fn place_statistics(p: &Places) -> Option<Vec<(String, i64, i64, i64, i64)>> {
+/// With its spans not made, only an estimate (`estimate`) counts them, on their sample: the exact statistics are
+/// counted where the spans lie (the chunks'), and a walk of them here would make them.
+fn place_statistics(p: &Places, estimate: bool) -> Option<Vec<(String, i64, i64, i64, i64)>> {
     let names = p.columns();
     // `text`'s second column is a text: counted by value, every text of the batch would be interned to measure it.
     if names.len() != 2 || names[1] == "s" {
@@ -421,10 +530,13 @@ fn place_statistics(p: &Places) -> Option<Vec<(String, i64, i64, i64, i64)>> {
     }
     let mut view = Pairs::new();
     let unmade = p.spans.as_any().and_then(|a| a.downcast_ref::<super::made::MadeRows>()).is_some_and(|s| !s.is_done());
-    let sampled = if unmade { p.spans.statistics() } else { None };
-    p.view.for_rows(&[0, 1], &mut |_, row| view.add(p.key_of(row[0]), row[1]));
+    if unmade && !estimate {
+        return None;
+    }
+    let sampled = if unmade { p.spans.estimated_statistics() } else { None };
+    p.view.for_rows(&[0, 1], &mut |_, row| view.add(row[0], row[1]));
     if sampled.is_none() {
-        p.spans.for_rows(&[0, 1], &mut |_, row| view.add(p.key_of(row[0]), row[1]));
+        p.spans.for_rows(&[0, 1], &mut |_, row| view.add(row[0], row[1]));
     }
     let (rows, ndv, sq, sqd) = view.measure();
     let (r, ndv, sq, sqd) = match sampled.as_ref().and_then(|s| s.get(1)) {

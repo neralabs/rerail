@@ -5,11 +5,13 @@
  * The public surface of this layer: what code outside `src/` imports from it (`scripts/check/check-boundaries.mjs`).
  */
 export { bindSteerReceipt, type HookInput, type HookOptions, type HookOutput, hookRerailStarted, serveHook } from "./hook-host.js";
-export { withPendingFileLock } from "./hook-adapter.js";
+export { olderNodeStep, withPendingFileLock } from "./hook-adapter.js";
+export { launcherRecordedNode } from "./launcher-node.js";
+export { hookFailureLines } from "./hook-failures.js";
 export { NativeSessionClient } from "./native-session-client.js";
 export { MANAGED_SKILL_MARKER } from "./rerail-command-files.js";
 export { registerHostCommands, type HostCommandContext, type HostCommandHost } from "./host-commands.js";
 export { RERAIL_COMMANDS } from "./rerail-commands.js";
 export { SETUP_CANCELLED } from "./setup-picker.js";
-export { CONFIRM_PACKS_ANSWERS, type DashboardLink, NO_REPO_ANSWERS, READ_REPO_ANSWERS, readRepoQuestion, renderQuestion, type SetupCommand } from "./setup-screens.js";
+export { CONFIRM_PACKS_ANSWERS, type DashboardLink, NO_REPO_ANSWERS, READ_REPO_ANSWERS, readRepoQuestion, renderQuestion, renderRecommendedPacks, type SetupCommand } from "./setup-screens.js";
 export { type SetupQuestion, type SetupStep } from "./setup-step.js";

@@ -192,6 +192,11 @@ impl ProgramPass for Locate {
         // `extensible` tables stated empty made the configuration of a program stating few of them the same.
         let requests: BTreeSet<&str> = crate::code_rule_dsl::logic::rr::WORLD.iter().map(|&(_, q)| q).chain(f.answers().iter().map(|&(q, _)| v.rel_name(q))).collect();
         let outputs: BTreeSet<&str> = f.outputs().collect();
+        // Each relation's rules, by its name.
+        let mut by_head: HashMap<&str, Vec<RuleRef<'_>>> = HashMap::new();
+        for &r in &rules {
+            by_head.entry(head(&r)).or_default().push(r);
+        }
         // The derived relations' columns that hold their row's document, not a node (decisions 0680, 0708): each rule
         // fills the column from a document column of a positive read, an input's (`document_column`) or another such;
         // a relation with stated facts has rows of no document. The greatest such set, so a recursive relation's
@@ -215,7 +220,7 @@ impl ProgramPass for Locate {
                     _ => false,
                 })
             };
-            let bad: Vec<(&str, usize)> = doc_cols.iter().copied().filter(|&(rel, c)| !rules.iter().filter(|r| head(r) == rel).all(|r| fills(r, c, &doc_cols))).collect();
+            let bad: Vec<(&str, usize)> = doc_cols.iter().copied().filter(|&(rel, c)| !by_head.get(rel).into_iter().flatten().all(|r| fills(r, c, &doc_cols))).collect();
             if bad.is_empty() {
                 break;
             }
@@ -269,10 +274,6 @@ impl ProgramPass for Locate {
         };
         // The relations of values a located rule may read its document through (decision 0680): file-local, derived,
         // with no location column (each row one document's), each rule of which finds its document. The greatest such.
-        let mut by_head: HashMap<&str, Vec<RuleRef<'_>>> = HashMap::new();
-        for &r in &rules {
-            by_head.entry(head(&r)).or_default().push(r);
-        }
         let mut twin_ok: BTreeSet<String> = by_head
             .keys()
             .copied()
@@ -326,7 +327,14 @@ impl ProgramPass for Locate {
             let key = split.paths.get(rel.as_str()).and_then(|c| c.first().copied()).filter(|_| read_locally && !f.lattice(rel));
             // A relay made in an earlier round (`r_at…(d, …) :- r(…), doc(…)`) is not made again: a cross-file rule that
             // reads the target now (a reader a later round's move took to the cross-file part, `MoveCrossFile`) reads it.
-            let earlier = rules.iter().find(|r| head(r).starts_with(&format!("{rel}_at")) && reads(r).contains(rel.as_str()) && reads(r).contains("doc"));
+            // Looked for where it is read (`key`) alone, its name made once.
+            let earlier = key.and_then(|_| {
+                let at = format!("{rel}_at");
+                rules.iter().find(|r| head(r).starts_with(&at) && {
+                    let read = reads(r);
+                    read.contains(rel.as_str()) && read.contains("doc")
+                })
+            });
             if let (Some(_), Some(r)) = (key, earlier) {
                 relayed.insert(rel.clone(), head(r).to_owned());
                 rewired = true;

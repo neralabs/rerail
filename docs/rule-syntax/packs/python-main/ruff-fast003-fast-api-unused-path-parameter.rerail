@@ -177,7 +177,7 @@ fast003_pyd_base(n) :- kind(n, "class_definition"), field(n, "superclasses", c1)
 fast003_pyd_field(n, K) :- fast003_pyd_base(n), field(n, "body", c1),
     kind(c1, "block"), child(c1, c2, _), kind(c2, "expression_statement"),
     child(c2, c3, _), kind(c3, "assignment"), field(c3, "type", c4), kind(c4, "type"),
-    field(c3, "left", c5), kind(c5, "identifier"), text(c5, K).
+    field(c3, "left", c5), kind(c5, "identifier"), node(_, c5, _, _, _), N = c5, text(N, K).
 
 // init_has(n, …): the JSON util `init-has`, called with `matches` and arguments K
 .decl fast003_init_has(n: node, k: symbol)
@@ -612,7 +612,7 @@ fast003_demand_alt_13(st2_9_16_17, KT) :- fast003_plain_str(n), fast003_route_ar
 fast003_demand_route_arg(n) :- fast003_plain_str(n), parsed(n, "braceFormat", r1),
     has(r1, c2, "field"),
     match("\\{[a-zA-Z_][a-zA-Z0-9_]*(?::[a-zA-Z_][a-zA-Z0-9_]*)?\\}", c2), F = c2,
-    has(c2, c3, "name"), K = c3, guest_of(c2, h4).
+    has(c2, c3, "name"), K = c3, text(K, KT), guest_of(c2, h4).
 fast003_demand_route_arg(p9) :- fast003_demand_route_arg(n), child(p9, n, _),
     kind(p9, "parenthesized_expression").
 
@@ -637,11 +637,12 @@ fast003_alt_1(n) :- ref_site(n, b22), (st23 = b22 ; within(b22, st23)),
 // alt_2(n): the JSON `any`: n matches if any one of these rules does
 //   K: the text of the calling rule's metavariable, passed in (bound by the caller)
 .decl fast003_alt_2(n: node, k: symbol)
-fast003_alt_2(n, K) :- kind(n, "identifier"), text(n, K).
-fast003_alt_2(n, K) :- kind(n, "typed_parameter"), child(n, c3, _), kind(c3, "identifier"), text(c3, K).
-fast003_alt_2(n, K) :-
-    (kind(n, "default_parameter") ; kind(n, "typed_default_parameter")),
-    field(n, "name", c6), text(c6, K).
+fast003_alt_2(n, K) :- kind(n, "identifier"), node(_, n, _, _, _), N = n,
+    text(N, K).
+fast003_alt_2(n, K) :- kind(n, "typed_parameter"), child(n, c3, _),
+    kind(c3, "identifier"), node(_, c3, _, _, _), N = c3, text(N, K).
+fast003_alt_2(n, K) :- (kind(n, "default_parameter") ; kind(n, "typed_default_parameter")),
+    field(n, "name", c6), node(_, c6, _, _, _), N = c6, text(N, K).
 
 // stop_3(n): the JSON `stopBy` rule: the tree search stops at these nodes
 .decl fast003_stop_3(n: node)

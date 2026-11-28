@@ -8,10 +8,11 @@
 //! when the rules of `python/references.rerail` took its place), made again here so the two can be run side by side
 //! on one program: each in-scope Python file summarized from the run's tape as its document is built
 //! (`calls::summarize`; no parse of its own), the summaries linked by name once every file is built
-//! (`closure::Graph::link_references`), under the program's `.references` setting. `src` and `dst` are
-//! `function_definition` or `class_definition` definitions, in any files, each by its symbol as
-//! `python/reference-defs.rerail`'s `rf_sym` spells it (`path:q#k`: no node crosses into the cross-file part, decision
-//! 0677); `via` is what made the edge, one row per way.
+//! (`closure::Graph::link_references`), under the program's `.references` setting. `src` and `dst` are definitions
+//! (`function_definition` or `class_definition`) of any files, by symbol, as `python/references-defs.rerail`'s rf_sym
+//! names them (decision 0677: no node crosses into the cross-file part): the file's path, the definition's qualified
+//! name (W's `Def::name`, which rf_qn spells alike), and how many of the file's definitions of that name start before
+//! it. `via` is what made the edge, one row per way.
 //! `w_reference_open` holds the definitions whose file was not fully summarized or that refer to something no static
 //! name denotes (`Graph::reference_open`).
 //!
@@ -75,27 +76,8 @@ fn scope(value: Option<&Value>) -> Result<CodeRuleScope> {
     rerail_rules_base::code_rule_dsl::compile::compile_scope(value).map_err(|e| Error::Plan(format!(".references scope: {}", e.reason)))
 }
 
-/// One summarized file: its path, summary, and its definitions' symbols by byte range (`symbols`).
-type File = (Arc<str>, Arc<Summary>, HashMap<(u32, u32), String>);
-
-/// Each definition of `summary` (the file at `path`) by its byte range, as `rf_sym` names it: the file's path, its
-/// qualified name, and how many of the file's definitions of that name start before it (`pkg/m.py:pkg.m.f#0`).
-fn symbols(path: &str, summary: &Summary) -> HashMap<(u32, u32), String> {
-    let mut defs: Vec<(&str, u32, u32)> = summary.defs.iter().map(|d| (summary.names[d.name as usize].text(), d.start, d.end)).collect();
-    defs.sort_unstable_by_key(|&(q, start, _)| (q, start));
-    let mut out = HashMap::with_capacity(defs.len());
-    // The group of one name starts at `group`; a definition's `k` counts those of the group that start before it.
-    let (mut group, mut first_at) = (0, 0);
-    for (i, &(q, start, end)) in defs.iter().enumerate() {
-        if defs[group].0 != q {
-            (group, first_at) = (i, i);
-        } else if defs[first_at].1 != start {
-            first_at = i;
-        }
-        out.insert((start, end), format!("{path}:{q}#{}", first_at - group));
-    }
-    out
-}
+/// One summarized file: its path and summary.
+type File = (Arc<str>, Arc<Summary>);
 
 /// The run's Python files as the graph reads them, added as their documents are built (`add`, from the builder's
 /// jobs, in any order), linked once they all are (`relations`), in path order.
@@ -125,51 +107,72 @@ impl Files {
             return Ok(());
         }
         let _span = crate::code_rule_dsl::logic::profile::span(|| "W's reference graph: a file summarized".into());
+        // Its joins counted, where the run counts them (`RERAIL_W_JOINS`).
+        rerail_prof::code_rule_dsl::w_joins::begin();
         let module = (!self.packages.is_empty()).then(|| python_module_in(path, |directory| self.packages.contains(directory))).flatten();
         let file = FileInput::new(path.to_owned(), "python".to_owned(), Arc::clone(source), module.as_ref(), None, "references").map_err(|e| Error::Plan(format!("{path}: {}", e.reason)))?;
         let root = ast_grep_core::AstGrep::doc(tape.clone());
         let (summary, _) = calls::summarize(root.root(), GrammarDialect::Python, path, file.module.as_deref(), facts.has_syntax_error(), file.source.len(), None);
-        let symbols = symbols(path, &summary);
-        self.files.lock().expect("reference files").push((Arc::from(path), Arc::new(summary), symbols));
+        self.files.lock().expect("reference files").push((Arc::from(path), Arc::new(summary)));
+        rerail_prof::code_rule_dsl::w_joins::flush();
         Ok(())
     }
 
     /// The relations the program reads, as (name, columns, values): the summaries linked as W links them for the
-    /// configured key, each edge and open definition by its definitions' symbols, every text an atom of the store.
+    /// configured key, each edge and open definition by its symbol (`symbols`), symbols and `via` as atoms of the
+    /// store.
     pub(in crate::code_rule_dsl) fn relations(&self, intern: &dyn Fn(&[&str]) -> Result<Vec<i64>>, read: &BTreeSet<String>) -> Result<Vec<Bound>> {
         let _span = crate::code_rule_dsl::logic::profile::span(|| "W's reference graph: the summaries linked".into());
+        rerail_prof::code_rule_dsl::w_joins::begin();
         let key = self.config.key;
         // Taken once, by the cross-file part's binding: the builder's closures still borrow the set.
         let mut files = std::mem::take(&mut *self.files.lock().expect("reference files"));
         files.sort_unstable_by(|a, b| a.0.cmp(&b.0));
-        let graph = Graph::link_references(key, files.iter().map(|(path, summary, _)| (Arc::clone(path), Arc::new(summary.as_references(key)))).collect());
-        let symbols: HashMap<&str, &HashMap<(u32, u32), String>> = files.iter().map(|(path, _, s)| (path.as_ref(), s)).collect();
-        let symbol = |path: &str, def: calls::summary::Def| -> Result<&str> {
-            symbols.get(path).and_then(|s| s.get(&(def.start, def.end))).map(String::as_str).ok_or_else(|| Error::Plan(format!("{path}: no definition at {}..{}", def.start, def.end)))
+        let graph = Graph::link_references(key, files.iter().map(|(path, summary)| (Arc::clone(path), Arc::new(summary.as_references(key)))).collect());
+        let (spans, names) = symbols(&files);
+        let atoms = intern(&names.iter().map(String::as_str).collect::<Vec<_>>())?;
+        let symbol = |path: &str, def: calls::summary::Def| {
+            spans.get(&(path, def.start, def.end)).map(|&i| atoms[i]).ok_or_else(|| Error::Plan(format!("{path}: no definition at {}..{}", def.start, def.end)))
         };
-        let atoms = intern(&VIAS)?;
-        let atom = |via: &str| VIAS.iter().position(|v| *v == via).map(|i| atoms[i]).ok_or_else(|| Error::Plan(format!("w_reference_edge: no label {via}")));
+        let vias = intern(&VIAS)?;
+        let atom = |via: &str| VIAS.iter().position(|v| *v == via).map(|i| vias[i]).ok_or_else(|| Error::Plan(format!("w_reference_edge: no label {via}")));
         let mut out = Vec::new();
         if read.contains(RELATIONS[0]) {
-            let edges = graph.labelled_reference_rows();
-            let texts: Vec<&str> = edges.iter().map(|(e, _)| symbol(&e.path, e.source)).chain(edges.iter().map(|(e, _)| symbol(&e.target_path, e.target))).collect::<Result<_>>()?;
-            let ids = intern(&texts)?;
-            let n = edges.len();
-            let mut rows = edges.iter().enumerate().map(|(i, (_, via))| Ok([ids[i], ids[n + i], atom(via)?])).collect::<Result<Vec<_>>>()?;
+            let mut rows = graph
+                .labelled_reference_rows()
+                .into_iter()
+                .map(|(edge, via)| Ok([symbol(&edge.path, edge.source)?, symbol(&edge.target_path, edge.target)?, atom(via)?]))
+                .collect::<Result<Vec<_>>>()?;
             rows.sort_unstable();
             rows.dedup();
             out.push((RELATIONS[0], columns(3), (0..3).map(|c| Some(rows.iter().map(|r| r[c]).collect())).collect()));
         }
         if read.contains(RELATIONS[1]) {
-            let open = graph.reference_open();
-            let texts: Vec<&str> = open.iter().map(|(path, def)| symbol(path, *def)).collect::<Result<_>>()?;
-            let mut rows = intern(&texts)?;
+            let mut rows = graph.reference_open().into_iter().map(|(path, def)| symbol(&path, def)).collect::<Result<Vec<_>>>()?;
             rows.sort_unstable();
             rows.dedup();
             out.push((RELATIONS[1], columns(1), vec![Some(rows.into_iter().collect())]));
         }
+        rerail_prof::code_rule_dsl::w_joins::write();
         Ok(out)
     }
+}
+
+/// Each file's definitions by span (path, start, end), as an index into the symbols, and the symbols: as rf_sym makes
+/// one (`path:qn#k`, k the file's definitions of that qualified name that start before it; `defs` is in start order).
+fn symbols(files: &[File]) -> (HashMap<(&str, u32, u32), usize>, Vec<String>) {
+    let (mut spans, mut names) = (HashMap::new(), Vec::new());
+    for (path, summary) in files {
+        let mut before: HashMap<&str, usize> = HashMap::new();
+        for def in &summary.defs {
+            let qn = summary.name(def.name);
+            let k = before.entry(qn).or_default();
+            spans.insert((path.as_ref(), def.start, def.end), names.len());
+            names.push(format!("{path}:{qn}#{k}"));
+            *k += 1;
+        }
+    }
+    (spans, names)
 }
 
 /// A library input's columns, by position (`c0`, …): as the cross-file part names a relation core does not shape.

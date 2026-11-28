@@ -398,9 +398,11 @@ impl RulePass for MatcherRelations {
         let before = inputs.len();
         for (k, (text, names)) in self.texts.iter().enumerate() {
             let rel = relation(k, names.len());
-            // A name of the rule's `transform` binds text (a symbol); every other name, and the root, a node.
+            // A name of the rule's `transform` or only a regex's named group binds text (a symbol); every other name (a
+            // metavariable), and the root, a node.
             let made = transformed(text);
-            let types = std::iter::once("node").chain(names.iter().map(|n| if made.contains(n) { "sym" } else { "node" }));
+            let text_of = |n: &String| made.contains(n) || crate::code_rule_dsl::typing::file_local::regex_group_only(text, n);
+            let types = std::iter::once("node").chain(names.iter().map(|n| if text_of(n) { "sym" } else { "node" }));
             let cols: Vec<(&str, &str)> = columns(&rel).iter().copied().zip(types).collect();
             b.fields().declare(&rel, &cols);
             if !inputs.contains(&rel) {

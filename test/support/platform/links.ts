@@ -1,4 +1,4 @@
-import { symlinkSync } from "node:fs";
+import { rmSync, symlinkSync } from "node:fs";
 import { dirname, resolve } from "node:path";
 import type { TestContext } from "vitest";
 
@@ -25,4 +25,15 @@ export function symlinkOrSkip(context: Pick<TestContext, "skip">, target: string
  */
 export function linkFolder(target: string, path: string): void {
   symlinkSync(process.platform === "win32" ? resolve(dirname(path), target) : target, path, "junction");
+}
+
+/**
+ * Puts a link that leads to itself in the place of the file at `path`, so its `stat` and every read of it fail (ELOOP)
+ * for every account on every system: on Windows a junction, which needs no privilege. Rights taken away do not bind
+ * every account: root reads past a folder's mode, and on Windows a token whose backup privilege is on (an elevated
+ * administrator's in Git Bash, as GitHub's Windows runner runs the tests) reads past a deny rule.
+ */
+export function loopInPlace(path: string): void {
+  rmSync(path);
+  symlinkSync(path, path, process.platform === "win32" ? "junction" : null);
 }

@@ -801,7 +801,7 @@ impl ContentStore {
                 "tape identifiers must be nonnegative".to_owned(),
             ));
         }
-        let tape_identity = HashKey::tape_identity(canonical, tape);
+        let tape_identity = HashKey::tape_identity(canonical, grammar_id, grammar_version, tape_format_version);
         let mut placing = Placing::write(&self.database_path, &[source, tape], self.connection.flush())?;
         let (ids, seg) = self.immediate_transaction(|transaction| {
             let created_generation = generation(transaction)?;
@@ -976,27 +976,10 @@ impl ContentStore {
             .connection
             .lock()
             .expect("content store mutex poisoned");
-        let (raw_length, key, source, [seg, seg_at, seg_len]): (i64, HashKey, HashKey, [i64; 3]) = connection.query_row_cached(
-            "SELECT t.raw_length,h.algorithm_id,h.lane0,h.lane1,h.lane2,h.lane3,\
-             sh.algorithm_id,sh.lane0,sh.lane1,sh.lane2,sh.lane3,t.seg,t.seg_at,t.seg_len \
-             FROM tape_objects t JOIN hashes h ON h.hash_id=t.canonical_hash_id \
-             JOIN source_objects s ON s.source_id=t.source_id JOIN hashes sh ON sh.hash_id=s.canonical_hash_id \
-             WHERE t.tape_id=?1",
+        let (raw_length, [seg, seg_at, seg_len]): (i64, [i64; 3]) = connection.query_row_cached(
+            "SELECT t.raw_length,t.seg,t.seg_at,t.seg_len FROM tape_objects t WHERE t.tape_id=?1",
             [tape_id.0],
-            |row| {
-                Ok((
-                    row.get(0)?,
-                    HashKey {
-                        algorithm: row.get(1)?,
-                        lanes: [row.get(2)?, row.get(3)?, row.get(4)?, row.get(5)?],
-                    },
-                    HashKey {
-                        algorithm: row.get(6)?,
-                        lanes: [row.get(7)?, row.get(8)?, row.get(9)?, row.get(10)?],
-                    },
-                    [row.get(11)?, row.get(12)?, row.get(13)?],
-                ))
-            },
+            |row| Ok((row.get(0)?, [row.get(1)?, row.get(2)?, row.get(3)?])),
         )?;
         drop(connection);
         if self.placed_again([(OBJECT_TAPE, tape_id.0, seg)])? {
@@ -1009,8 +992,9 @@ impl ContentStore {
             return Err(StoreError::Corrupt("a tape's segment is not there".to_owned()));
         };
         let bytes = frame.segment().clone();
-        if bytes.len() != raw_length || key != HashKey::tape_identity(source, bytes.bytes()) {
-            return Err(StoreError::Corrupt("tape length or hash does not match metadata".to_owned()));
+        // Its identity names what made it, not its bytes (`HashKey::tape_identity`): only its length is checked here.
+        if bytes.len() != raw_length {
+            return Err(StoreError::Corrupt("tape length does not match metadata".to_owned()));
         }
         Ok(Arc::new(CachedBytes::mapped(bytes)))
     }
@@ -1220,7 +1204,7 @@ pub(super) fn put_tape_tx(
         source_id,
         tape,
         tape.bytes.len(),
-        HashKey::tape_identity(source_hash, tape.bytes),
+        HashKey::tape_identity(source_hash, tape.grammar_id, tape.grammar_version, tape.tape_format_version),
         place,
         created_generation,
     )?;
@@ -1268,7 +1252,7 @@ fn put_documents_tx(
                 whole: false,
             },
             document.tape.len(),
-            HashKey::tape_identity(document_source_hash, document.tape),
+            HashKey::tape_identity(document_source_hash, document.grammar_id, grammar_version, tape_format_version),
             tape_place,
             created_generation,
         )?;

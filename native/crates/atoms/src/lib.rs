@@ -804,6 +804,11 @@ impl Atoms {
 
     /// Makes `path`'s database read and write these atoms in this process: a run's working database
     /// (its SQL's scratch) whose symbols are the store's (decision 0052).
+    /// The database file these are the atoms of (its key, as the registry holds it); `None` for an in-memory one's.
+    pub fn database(&self) -> Option<&Path> {
+        self.path.as_deref()
+    }
+
     pub fn share(self: &Arc<Self>, path: &Path) {
         rerail_prof::code_rule_dsl::logic::profile::shared::<AtomsByFile>().0.lock().insert(key(path), Arc::downgrade(self));
     }
@@ -828,10 +833,13 @@ impl Atoms {
         })
     }
 
-    /// Shared scratch databases borrow the arena; only its owner stores atoms.
+    /// Shared scratch databases borrow the arena; only its owner stores atoms. A connection on the owner's own path
+    /// (canonical: SQLite names a file by its full path) owns it without the canonical paths' cache (`key`), which is
+    /// the shared object's: the arena's drop flushes on such a connection, and may be the shared object's own drop,
+    /// where no thread holds it (decision 0442).
     fn owns(&self, connection: &Connection) -> bool {
         match (&self.path, connection.path()) {
-            (Some(owner), Some(path)) => *owner == key(Path::new(path)),
+            (Some(owner), Some(path)) => owner.as_path() == Path::new(path) || *owner == key(Path::new(path)),
             _ => false,
         }
     }
@@ -1680,6 +1688,9 @@ impl rerail_store_base::content_store::AtomTable for Atoms {
     }
     fn value(&self, atom: Sym) -> StoreResult<Option<String>> {
         Atoms::value(self, atom)
+    }
+    fn database(&self) -> Option<&Path> {
+        Atoms::database(self)
     }
 }
 

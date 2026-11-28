@@ -121,8 +121,8 @@ to the current code, and say in the commit which merge lost it. Don't redo or re
 
 This list is not complete. The decision records are the full set.
 
-- Tapes store only named nodes, and no producer writes a grammar-implied token (RER-131; decision
-  0140 for the writer).
+- Tapes store only named nodes, and no producer writes a grammar-implied token (decisions
+  0161, and 0140 for the writer).
 - One tape format, defined in `native/crates/tape_format` (`FORMAT_VERSION`, `header`), with no
   stored digest. Other crates re-export it.
 - A cache is two ordinary rules in `.rerail`, a key rule and an output rule (0103). Nothing kept

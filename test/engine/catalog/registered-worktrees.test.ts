@@ -7,15 +7,16 @@ import { eq } from "drizzle-orm";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { pruneCheckouts, recordCheckout, recordStartedWorktree } from "../../../src/engine/catalog/repository-registry.js";
 import { repositoryIdentityLocation, worktreeRegistry } from "../../../src/engine/catalog/repository-identity.js";
-import { runGit } from "../../../src/engine/git.js";
+import { runGit, runGitBytes } from "../../../src/engine/git.js";
 import { openRerailDatabase } from "../../../src/engine/storage/database.js";
 import { checkouts } from "../../../src/engine/storage/schema.js";
 import { setRepositoryStarted } from "../../../src/runtime/index.js";
 import { removeFolder, removeFolderSync } from "../../support/platform/remove-folder.js";
+import { runProgram } from "../../support/processes/run-program.js";
 
 vi.mock("../../../src/engine/git.js", async importOriginal => {
   const actual = await importOriginal<typeof import("../../../src/engine/git.js")>();
-  return { ...actual, runGit: vi.fn(actual.runGit) };
+  return { ...actual, runGit: vi.fn(actual.runGit), runGitBytes: vi.fn(actual.runGitBytes) };
 });
 
 const cleanups: Array<() => Promise<void>> = [];
@@ -24,7 +25,7 @@ afterEach(async () => {
 });
 
 function git(cwd: string, ...args: string[]): void {
-  execFileSync("git", ["-c", "user.name=Rerail", "-c", "user.email=rerail@local", ...args], { cwd, stdio: "ignore" });
+  runProgram("git", ["-c", "user.name=Rerail", "-c", "user.email=rerail@local", ...args], { cwd });
 }
 
 /** A started repository's main checkout, recorded, with one `.git` file naming its Git folder. */
@@ -54,16 +55,17 @@ function caseInsensitiveFilesystem(): boolean {
   }
 }
 
-const worktreeLists = () => vi.mocked(runGit).mock.calls.filter(([, args]) => args[0] === "worktree").length;
+// The registry reads Git's list as bytes (`-z`), and as text where another reader asks.
+const worktreeLists = () => [...vi.mocked(runGit).mock.calls, ...vi.mocked(runGitBytes).mock.calls].filter(([, args]) => args[0] === "worktree").length;
 
 describe("recordStartedWorktree", () => {
   it.skipIf(process.platform === "win32").each([false, true])("registers and preserves a worktree with a newline (legacy Git: %s)", async legacy => {
     const { root, main, database } = await startedRepository();
     const path = join(root, "feature\nsecond line");
     git(main, "worktree", "add", "--quiet", "--detach", path);
-    const actual = (await vi.importActual<typeof import("../../../src/engine/git.js")>("../../../src/engine/git.js")).runGit;
-    await vi.mocked(runGit).withImplementation((cwd, args, options) => legacy && args.includes("-z")
-      ? { status: 129, stdout: "", stderr: "unknown switch" } : actual(cwd, args, options), async () => {
+    const actual = (await vi.importActual<typeof import("../../../src/engine/git.js")>("../../../src/engine/git.js")).runGitBytes;
+    await vi.mocked(runGitBytes).withImplementation((cwd, args, options) => legacy && args.includes("-z")
+      ? { status: 129, stdout: Buffer.alloc(0), stderr: "unknown switch" } : actual(cwd, args, options), async () => {
       expect(worktreeRegistry(main)?.worktrees).toEqual([main, path]);
       expect(recordStartedWorktree(database, path, repositoryIdentityLocation(path))).toBe(true);
       database.$client.prepare("INSERT INTO rule_settings(owner_kind,owner_id,folder,target_kind,target_id,\"on\",updated_at) VALUES ('checkout',?,'','rule','r',0,1)").run(path);

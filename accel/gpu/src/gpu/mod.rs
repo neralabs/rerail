@@ -397,7 +397,7 @@ impl GpuBackend {
                     if t * 8 > self.gpu.max_buffer {
                         return Err(format!("launch {i}: {t} pairs do not fit a buffer"));
                     }
-                    let buf = plan.alloc(t * 8);
+                    let buf = plan.room(t * 8);
                     let mut d = rescatter.dispatch.clone();
                     d.set("pairs", Bind::Buf(buf.clone()));
                     d.set("args", Bind::Bytes((rescatter.args)(t as u32)));
@@ -690,9 +690,20 @@ fn u(x: usize) -> u32 {
 }
 
 impl Planner<'_> {
-    /// A zeroed buffer of the pool (the kernels count into some, and read a new buffer as zero).
+    /// A buffer of the pool, written clear: for a kernel that counts, or sets bits, into it (a pooled buffer holds a
+    /// previous user's bytes). One its kernel writes before anything reads it is `room`'s.
     fn alloc(&self, bytes: u64) -> Buffer {
         let lease = shared::lease_zeroed(bytes.max(16) as usize).unwrap_or_else(|e| panic!("gpu lane: {e}"));
+        let b = lease.device_buffer().clone();
+        self.leases.borrow_mut().push(lease);
+        b
+    }
+
+    /// A buffer of the pool as its previous user left it: for a kernel's output, every value read written first (a
+    /// scan's, a scatter's pairs up to their total). Never zeroed: zeroing touched every page of a capacity the
+    /// kernel fills in part.
+    fn room(&self, bytes: u64) -> Buffer {
+        let lease = shared::lease(bytes.max(16) as usize).unwrap_or_else(|e| panic!("gpu lane: {e}"));
         let b = lease.device_buffer().clone();
         self.leases.borrow_mut().push(lease);
         b
@@ -734,7 +745,7 @@ impl Planner<'_> {
     /// The exclusive scan of `n` u32 (their popcounts when `pop`), the UKL library's: a stage appended to `st`.
     /// Returns the scanned values, the total at word `n`.
     fn scan(&self, st: &mut Vec<Stage>, input: &Buffer, n: u64, pop: bool) -> (Buffer, Word) {
-        let ex = self.alloc((n + 1) * 4);
+        let ex = self.room((n + 1) * 4);
         st.push(Stage::one(Step::Scan { input: input.clone(), output: ex.clone(), n: n as u32, pop }));
         (ex.clone(), Word { buf: ex, at: n as usize })
     }
@@ -792,7 +803,7 @@ impl Planner<'_> {
         let mut st = vec![Stage::one(tile(&dummy, &mask, &minb, 1))];
         let (ex, total) = self.scan(&mut st, &mask, nw, true);
         let cap = (n * m).min(PAIRS_CAP);
-        let pairs = self.alloc(cap * 8);
+        let pairs = self.room(cap * 8);
         let args = move |cap: u32| bytes_of(&ScatterArgs { cap, mw: mw as u32, nw: nw as u32 });
         let scatter = Dispatch::per(Pipe::BpScatter, vec![("mask", Bind::Buf(mask.clone())), ("ex", Bind::Buf(ex)), ("pairs", Bind::Buf(pairs.clone())), ("args", Bind::Bytes(args(cap as u32)))], nw);
         st.push(Stage::one(Step::Kernel(scatter.clone())));
@@ -820,7 +831,7 @@ impl Planner<'_> {
         let (ex, total) = self.scan(&mut st, &counts, nl, false);
         let bound: u64 = loff.windows(2).zip(roff.windows(2)).map(|(l, r)| (l[1] - l[0]) as u64 * (r[1] - r[0]) as u64).sum();
         let cap = bound.min(PAIRS_CAP);
-        let pairs = self.alloc(cap * 8);
+        let pairs = self.room(cap * 8);
         let args = |cap: u32| cap.to_ne_bytes().to_vec();
         let scatter = Dispatch::new(
             Pipe::CtScatter,

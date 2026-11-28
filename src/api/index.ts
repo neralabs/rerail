@@ -7,7 +7,7 @@ export { createRerailApi, publicHostSet } from "./http.js";
 export { createRerailMcpHandler } from "./mcp.js";
 export { type RerailApiStores } from "./operation.js";
 export { auditControlsResponseSchema, operations } from "./operations.js";
-export { rulePackListSchema, rulePackRecommendationsSchema } from "./rule-pack-contracts.js";
+export { publishedRulePacksSchema, rulePackListSchema, rulePackRecommendationsSchema } from "./rule-pack-contracts.js";
 export { presentationResponseSchema, type sessionResponseSchema } from "./session-contracts.js";
 export { DatabaseApiStores } from "./stores.js";
 export { invokeOperation } from "./operation.js";

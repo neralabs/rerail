@@ -16,8 +16,20 @@ use rerail_compiler::*;
 #[path = "../../compiler/src/answers.rs"]
 pub mod answers;
 /// Tier 1 as Rust, written from the lexer's statements (decision 0550).
+/// The prover's SAT solver on the circuit (decision 0712): its gates (`bitlex_csat`), its search
+/// (`bitlex_csat_lanes`), and the block its formulas are built in (`bitlex_grown`).
+#[path = "../../compiler/src/bitlex_csat.rs"]
+pub mod bitlex_csat;
+#[path = "../../compiler/src/bitlex_csat_lanes.rs"]
+pub mod bitlex_csat_lanes;
+#[cfg(not(target_family = "wasm"))]
+#[path = "../../compiler/src/bitlex_grown.rs"]
+pub mod bitlex_grown;
 #[path = "../../compiler/src/bitlex_lex_rust.rs"]
 pub mod bitlex_lex_rust;
+/// A lexer's `check`s as Rust, for both tiers' writers.
+#[path = "../../compiler/src/bitlex_check_rust.rs"]
+pub mod bitlex_check_rust;
 #[path = "../../compiler/src/bitlex_masks.rs"]
 pub mod bitlex_masks;
 #[path = "../../compiler/src/bitlex_pair_lookup.rs"]

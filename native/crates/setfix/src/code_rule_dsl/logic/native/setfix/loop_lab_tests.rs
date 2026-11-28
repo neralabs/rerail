@@ -135,19 +135,17 @@ fn a_joins_candidates_cost() {
     keys.sort_unstable();
     let ix = on1.index(&[0]);
     let order = ix.runs(&on1).expect("an order of runs");
-    let store = Store { rels: Vec::new(), syms: symbols(&db).unwrap(), docs: Default::default() };
+    let store = Store { rels: Vec::new(), syms: symbols(&db).unwrap() };
     // The one-row lookup's join, its second step's source: `lab_one` by its first column.
     let spec = JoinSpec::parse(&cases[1].1).unwrap().encode();
     let mut syms = Interner::for_loading(&store.syms);
     let mut j = join_rule_with(&db, &spec, &mut syms, false).unwrap();
     j.indexed();
-    let src = match &j.steps[1] { Step::Atom { src, .. } => src.clone(), _ => panic!("a probe of lab_one") };
+    let src = match &j.steps[1] { Step::Atom { src, .. } => src, _ => panic!("a probe of lab_one") };
     let spec = [(0usize, Key::Slot(0))];
     let need = 0b11u64;
-    // The keys as the scan orders them for a tagged order (`scan_order`): by the lead's tag, then by value.
-    let mut by_tag = keys.clone();
-    by_tag.sort_unstable_by_key(|&k| (runs::tag(k), k));
-    for (what, ks) in [("by value", &keys), ("by tag", &by_tag)] {
+    {
+        let (what, ks) = ("by value", &keys);
         let search = || {
             let mut hints = [0u32; runs::HINTS];
             ks.iter().map(|&k| order.find_at(&on1.rows, on1.k, &[k], None, &mut hints).len() as i64).sum()
@@ -157,22 +155,21 @@ fn a_joins_candidates_cost() {
         search();
         let [probes, rows, marks] = runs::probe_reads::take();
         runs::probe_reads::ON.store(false, AtomicOrdering::Relaxed);
-        println!("parts: keys {what}: a probe {:.2} rows compared, {:.2} tags or fences read", rows as f64 / probes.max(1) as f64, marks as f64 / probes.max(1) as f64);
+        println!("parts: keys {what}: a probe {:.2} rows compared, {:.2} fences read", rows as f64 / probes.max(1) as f64, marks as f64 / probes.max(1) as f64);
         time(&format!("parts: the order's search, keys {what}"), ks.len(), &search);
     }
-    let keys = by_tag;
     time("parts: candidates", keys.len(), &|| {
         let (mut hints, mut last) = ([0u32; runs::HINTS], LastProbe::default());
-        keys.iter().map(|&k| { let (_, c) = cands::candidates(&j, &src, &store, &[k], &spec, &mut hints, &mut last, need, None, false); i64::from(c.any(|_| false)) + 1 }).sum()
+        keys.iter().map(|&k| { let (_, c) = cands::candidates(&j, src, &store, &[k], &spec, &mut hints, &mut last, need, None, false); i64::from(c.any(|_| false)) + 1 }).sum()
     });
     time("parts: candidates, ids walked", keys.len(), &|| {
         let (mut hints, mut last) = ([0u32; runs::HINTS], LastProbe::default());
-        keys.iter().map(|&k| { let (_, c) = cands::candidates(&j, &src, &store, &[k], &spec, &mut hints, &mut last, need, None, false); let mut s = 0i64; c.any(|id| { s += i64::from(id); false }); s }).sum()
+        keys.iter().map(|&k| { let (_, c) = cands::candidates(&j, src, &store, &[k], &spec, &mut hints, &mut last, need, None, false); let mut s = 0i64; c.any(|id| { s += i64::from(id); false }); s }).sum()
     });
     time("parts: candidates, rows read (each)", keys.len(), &|| {
         let (mut hints, mut last) = ([0u32; runs::HINTS], LastProbe::default());
         keys.iter().map(|&k| {
-            let (rows, c) = cands::candidates(&j, &src, &store, &[k], &spec, &mut hints, &mut last, need, None, false);
+            let (rows, c) = cands::candidates(&j, src, &store, &[k], &spec, &mut hints, &mut last, need, None, false);
             let mut s = 0i64;
             rows.each(c, need, &mut LastProbe::default(), |_, row| { if row.at(0) == k { s += row.at(1) } false });
             s

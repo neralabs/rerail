@@ -59,7 +59,7 @@ function capabilitiesJson(): string {
 export const NOT_JSON_REPRESENTABLE = "the document is not JSON representable";
 
 /**
- * How the engine words its refusal of a code rule that reads a token a tape may leave out (RER-131, t31): a form older
+ * How the engine words its refusal of a code rule that reads a token a tape may leave out (decision 0161, t31): a form older
  * packs were written in, which this engine no longer answers.
  */
 const READS_LEFT_OUT_TOKEN = "a token test reads a token the tape may leave out";

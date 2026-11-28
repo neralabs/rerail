@@ -160,8 +160,13 @@ kept, and each round built every file (`a_held_relation_is_never_inlined`). Befo
 `qualname`, `value`, `all_assigned`, `rr_value_req` and the `modname` strata again for each asked file (about
 0.6 s of round 2's CPU over bwh's Django sample): now it runs `ans_def_at` and `ans_pub_at` alone.
 `Report::memo_partial_rules` (`Round::partial_rules`) is the most rules a chunk of partial hits ran:
-`a_later_round_derives_only_the_rules_that_read_its_asks` holds it at 1 for round 2, where without the held `named` its cone
-would be 4 rules (`answer`, `named`, `sig`, `defn`).
+`a_later_round_derives_only_the_rules_that_read_its_asks` holds it at 2 for round 2: `answer`'s rule and its copy
+`resolved`'s, each at the located form the split relays it to (`answer_at`, `resolved_at`). Without the held relations
+its cone was 6 rules (`named`, `sig` and `defn` too). The cone also stops at the exports an ask-reading rule reads: an
+entry holds an export's rows by file as it holds a held relation's. That matters where the split relays a rule to its
+located form and the relay reads what its relation read inlined: `answer_at` reads `sig`, an export, where `answer` read
+`named`, a held relation, so a boundary of held relations alone let the cone reach `sig` and `defn` again
+(`asked_held`'s second set, `asked_bounds`).
 
 A later round reads its chunks' constants as the first round measured them (`phases::RoundsMeasured`, bound for
 the rounds, keyed by the prepared program and the chunk's mix), as a later chunk of a mix reads the first chunk's

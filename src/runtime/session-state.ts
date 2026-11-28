@@ -25,6 +25,30 @@ export interface DroppedEvents {
   lastDroppedAt: number;
 }
 
+/** An event a session's ledger holds whose row a power cut or an operating system crash took: its id, kind and time. */
+export interface LostEvent {
+  eventId: string;
+  kind: string;
+  /** Epoch milliseconds, the time its row recorded. */
+  observedAt: number;
+}
+
+/**
+ * One stretch of a session's events that Rerail processed and recorded, whose rows a power cut or an operating system
+ * crash took after the session's ledger had them (`events-lost`). The session's history is incomplete over it. Each
+ * event's content went with its row: the ledger keeps its id, kind and time, never its content.
+ */
+export interface LostEvents {
+  count: number;
+  /** Lost events by event kind (`user-prompt`, `call`, ...). */
+  kinds: Record<string, number>;
+  firstEventId: string;
+  lastEventId: string;
+  /** Epoch milliseconds. */
+  firstObservedAt: number;
+  lastObservedAt: number;
+}
+
 export type RuleMutation =
   | { operation: "upsert"; rule: ConversationRule; replace: boolean }
   | { operation: "remove"; ids: string[] };

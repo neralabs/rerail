@@ -145,12 +145,31 @@ impl Inline for &Policy {
 /// and the hot reads its body calls, through the pass. A cold read stays a call, of the read the module
 /// defined once (`define_cold`). A function that calls no hot read is left as it is.
 pub fn reads<M: Module>(module: &mut M, context: &mut Context) -> Result<(), ModuleError> {
+    with_helpers(module, context, &HashMap::new())
+}
+
+/// `reads`, with the module's own hot helpers too (`helpers`, by id, each body legalized): every call of one
+/// inlined from its one body, as a hot read's is, and the hot reads and helpers its body calls, through the same
+/// pass. The policy is the helper's mark (that it is in `helpers`), never the call site's.
+pub fn with_helpers<M: Module>(module: &mut M, context: &mut Context, helpers: &HashMap<FuncId, Function>) -> Result<(), ModuleError> {
     let mut work: Vec<(FuncId, &Read)> = called(module, &context.func).into_iter().filter(|(_, read)| read.hot).collect();
-    if work.is_empty() {
+    for body in helpers.values() {
+        work.extend(called(module, body).into_iter().filter(|(_, read)| read.hot));
+    }
+    let calls_helper = |func: &Function| {
+        func.dfg.ext_funcs.values().any(|f| match &f.name {
+            ExternalName::User(name) => {
+                let name = &func.params.user_named_funcs()[*name];
+                name.namespace == 0 && helpers.contains_key(&FuncId::from_u32(name.index))
+            }
+            _ => false,
+        })
+    };
+    if work.is_empty() && !calls_helper(&context.func) {
         return Ok(());
     }
     // The hot reads the function reaches: their bodies call each other.
-    let mut bodies = HashMap::new();
+    let mut bodies: HashMap<FuncId, Function> = helpers.clone();
     while let Some((id, read)) = work.pop() {
         if bodies.contains_key(&id) {
             continue;

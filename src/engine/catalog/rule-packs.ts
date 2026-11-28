@@ -42,6 +42,31 @@ export type RulePackCategory = (typeof RULE_PACK_CATEGORIES)[number];
 
 const nonEmpty = z.string().refine(value => value.trim().length > 0, "must be a non-empty string");
 
+/**
+ * A pack rule's dimensions (`docs/rule-dimensions.md`): what goes wrong when it is broken (`risk`), where the code it
+ * reads lives (`layer`), the worst realistic outcome (`severity`) and, optionally, the hazard it guards against, an id
+ * several packs share when they catch the same thing in different stacks (`pg.index-blocks-writes` for SQL, Alembic and
+ * Django migrations alike). A pack is one stack; dimensions slice the rules across stacks. The dashboard names the risks
+ * in the same order (`RISK_LABELS` in ui/derive.js).
+ */
+export const RULE_RISKS = ["security", "data-safety", "availability", "correctness", "performance", "maintainability", "test-quality"] as const;
+const RULE_LAYERS = ["ui", "server", "data-access", "jobs", "migrations", "tests", "config", "code"] as const;
+const RULE_SEVERITIES = ["critical", "high", "medium", "low"] as const;
+
+/** A hazard id: an area, a dot, then the hazard, each lowercase words joined by dashes (`tx.side-effect-before-commit`). */
+const HAZARD_ID = /^[a-z0-9]+(?:-[a-z0-9]+)*\.[a-z0-9]+(?:-[a-z0-9]+)*$/u;
+
+/** `dimensions` on a `pack.json` rule: all three axes together, and a hazard when the rule names one. */
+export const ruleDimensionsSchema = z
+  .object({
+    risk: z.enum(RULE_RISKS),
+    layer: z.enum(RULE_LAYERS),
+    severity: z.enum(RULE_SEVERITIES),
+    hazard: z.string().regex(HAZARD_ID, "must be <area>.<hazard>, lowercase words joined by dashes").optional(),
+  })
+  .strict();
+type RuleDimensions = Readonly<z.infer<typeof ruleDimensionsSchema>>;
+
 /** Why `path`, a file of an example's repository, cannot be one: it must be relative and stay inside that repository. */
 function examplePathProblem(path: string): string | undefined {
   const normalized = posix.normalize(path.replaceAll("\\", "/"));
@@ -118,6 +143,8 @@ const packRuleFields = {
   heldOff: nonEmpty.optional(),
   /** One example the rule catches and one it lets pass, for the rule panel; tests prove both. */
   examples: z.object({ caught: exampleSchema, passes: exampleSchema }).strict().optional(),
+  /** What goes wrong when the rule is broken, where its code lives and how badly: slices rules across packs. */
+  dimensions: ruleDimensionsSchema.optional(),
 };
 
 const signalSchema: z.ZodType<RulePackSignal> = z.union([
@@ -244,6 +271,8 @@ export interface RulePackRule {
   readonly heldOff?: string;
   /** One example the rule catches and one it lets pass, where the pack has them; tests prove both. */
   readonly examples?: { readonly caught: RuleExample; readonly passes: RuleExample };
+  /** The rule's risk, layer, severity and hazard, where the pack gives them (`docs/rule-dimensions.md`). */
+  readonly dimensions?: RuleDimensions;
 }
 
 /** Where a pack installed from disk came from: a folder, or a tarball, by its absolute path. */
@@ -352,6 +381,7 @@ function packRuleOf(rule: RulePackFile["rules"][number], document: RuleDocument)
     id: rule.id, kind: ruleKindOf(document), title: rule.title, group: rule.group, mode: rule.mode ?? document.rule.mode, on: rule.on ?? true,
     ...(rule.heldOff === undefined ? {} : { heldOff: rule.heldOff }),
     ...(rule.examples === undefined ? {} : { examples: rule.examples }),
+    ...(rule.dimensions === undefined ? {} : { dimensions: rule.dimensions }),
   };
 }
 
@@ -549,6 +579,32 @@ export function explainNoFit(scan: RepositoryScan, packs: readonly RulePack[]): 
   };
 }
 
+/**
+ * A rule pack `rerail packs recommend` offers, installed or not: one published on npm that fits this Rerail, at npm's
+ * version, or at the installed version where that stands in (npm cannot give it, or the one installed is newer).
+ */
+export interface PublishedRulePack {
+  /** The pack as its published version reads it; its match definition is matched against a checkout here, offline. */
+  readonly pack: RulePack;
+  readonly packageName: string;
+  readonly version: string;
+  /** The rules on once the pack is added. */
+  readonly ruleCount: number;
+}
+
+/** The published packs and when npm gave them (epoch ms), or why there are none. */
+export type PublishedRulePacks =
+  | { readonly packs: readonly PublishedRulePack[]; readonly readAt: number }
+  | { readonly unread: string };
+
+export interface PublishedRulePackReader {
+  /**
+   * The packs last read. With `refresh`, which only a person's read passes, a read of npm starts when none is held or
+   * the one held is old; with none held, this waits for it. Without `refresh` npm never runs.
+   */
+  read(refresh: boolean): Promise<PublishedRulePacks>;
+}
+
 /** The packs that fit the repository at `repositoryRoot` (`rulePacksThatFit`) and have a rule that starts on. */
 export function recommendRulePacks(
   repositoryRoot: string,
@@ -558,21 +614,37 @@ export function recommendRulePacks(
   return rulePacksThatFit(scanRepository(repositoryRoot), packs, notRun).filter(found => found.ruleCount > 0);
 }
 
-/** How long a daemon reuses a repository's recommendations before scanning it again. */
+/** How long a daemon reuses a repository's scan, and the recommendations made from it, before scanning it again. */
 export const RECOMMENDATION_CACHE_MS = 60_000;
-const recommendationCache = new Map<string, { at: number; digest: string; recommendations: RulePackRecommendation[] }>();
+/** By the scan they were made from, so they go with it. */
+const recommendationCache = new WeakMap<RepositoryScan, { digest: string; recommendations: RulePackRecommendation[] }>();
+const scanCache = new Map<string, { at: number; scan: RepositoryScan }>();
 
 /**
- * `recommendRulePacks` over the installed packs, for the daemon, which answers synchronously: the scan blocks other
+ * The scan of the repository at `repositoryRoot`, for the daemon, which answers synchronously: the scan blocks other
  * requests while it runs (about 0.3 to 0.5 s on a large repository), so a repository is scanned at most once per
- * `RECOMMENDATION_CACHE_MS` while the installed packs stay the same. A file added or removed within that window shows on
- * the next scan; a pack installed or removed shows at once.
+ * `RECOMMENDATION_CACHE_MS`, whichever packs are matched against it. A file added or removed within that window shows
+ * on the next scan. Scans older than that are dropped, so the daemon holds only those of repositories read lately.
+ */
+export function recentScan(repositoryRoot: string, now = Date.now()): RepositoryScan {
+  for (const [root, entry] of scanCache) if (now - entry.at >= RECOMMENDATION_CACHE_MS) scanCache.delete(root);
+  const cached = scanCache.get(repositoryRoot);
+  if (cached !== undefined) return cached.scan;
+  const scan = scanRepository(repositoryRoot);
+  scanCache.set(repositoryRoot, { at: now, scan });
+  return scan;
+}
+
+/**
+ * `recommendRulePacks` over the installed packs, for the daemon, from the repository's `recentScan`: the same
+ * recommendations while neither the scan nor the installed packs change, so a pack installed or removed shows at once.
  */
 export function cachedRecommendRulePacks(repositoryRoot: string, now = Date.now()): RulePackRecommendation[] {
   const catalog = loadRuleCatalog();
-  const cached = recommendationCache.get(repositoryRoot);
-  if (cached !== undefined && cached.digest === catalog.digest && now - cached.at < RECOMMENDATION_CACHE_MS) return cached.recommendations;
-  const recommendations = recommendRulePacks(repositoryRoot, [...catalog.packs.values()], catalog.notRun);
-  recommendationCache.set(repositoryRoot, { at: now, digest: catalog.digest, recommendations });
+  const scan = recentScan(repositoryRoot, now);
+  const cached = recommendationCache.get(scan);
+  if (cached?.digest === catalog.digest) return cached.recommendations;
+  const recommendations = rulePacksThatFit(scan, [...catalog.packs.values()], catalog.notRun).filter(found => found.ruleCount > 0);
+  recommendationCache.set(scan, { digest: catalog.digest, recommendations });
   return recommendations;
 }

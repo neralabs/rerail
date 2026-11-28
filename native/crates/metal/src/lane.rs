@@ -359,7 +359,7 @@ impl Committed {
                 eprintln!("{}: {e}", self.label);
             }
             // The system took the GPU back (its watchdog, for the display): the work is not at fault.
-            if e.starts_with("preempted: ") {
+            if rerail_accel_gpu::gpu::join::preempted(&e) {
                 return Err(Error::BackendPreempted);
             }
             return Err(Error::BackendFailure);
