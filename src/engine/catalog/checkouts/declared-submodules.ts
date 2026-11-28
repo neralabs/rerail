@@ -23,7 +23,8 @@ interface Answered {
 /**
  * A checkout whose read Git ran past its time limit for, whatever its facts read since: each call answers that it
  * declares none, as for a read Git gave no answer to, and asks Git again off the thread when no ask is in flight
- * ({@link askedAgain}). Git's answer replaces it; a Git that runs past its limit again leaves it.
+ * ({@link askedAgain}). Git's answer replaces it; a Git that runs past its limit again leaves it, and so does a learning
+ * stopped or failed meanwhile ({@link keepLearnt}).
  */
 interface PastLimit {
   readonly common: string;
@@ -78,7 +79,18 @@ export function declaredSubmodulePaths(root: string): readonly string[] {
 export async function learnDeclaredSubmodules(root: string, options: GitReadOptions = {}): Promise<readonly string[]> {
   const facts = submoduleFacts(root);
   if (facts === undefined || facts === NONE) return [];
-  return keptPaths(root, facts) ?? keep(root, facts, await askedWithoutBlocking(root, options));
+  return keptPaths(root, facts) ?? keepLearnt(root, facts, await askedWithoutBlocking(root, options));
+}
+
+/**
+ * What a learning's `answers` give, kept as any answer is ({@link keep}), but where Git did not answer each question to
+ * its end, as where the learning was stopped or its Git failed, a checkout kept past its time limit while it ran stays
+ * so, and it gives none: only the ask again a later call begins ({@link askedAgain}) drops it, by its own Git's end.
+ */
+function keepLearnt(root: string, facts: Facts, answers: readonly GitResult[]): readonly string[] {
+  const known = kept.get(root);
+  if (known !== undefined && pastLimit(known) && !answers.every(answeredToItsEnd)) return [];
+  return keep(root, facts, answers);
 }
 
 /**

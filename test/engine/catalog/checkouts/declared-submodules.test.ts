@@ -203,6 +203,29 @@ describe("a checkout's declared submodules while Git runs past its time limit re
     await submodulesAskedAgain(alpha);
   });
 
+  it.each([
+    ["is stopped as its session closes", "stop"],
+    ["fails as its Git is ended by a signal", "kill"],
+  ] as const)("stays kept past its limit when a placement's learning begun before it %s", async (_, end) => {
+    const { alpha } = await checkoutWithSubmodule();
+    Object.assign(git, { onThread: "pastLimit", offThread: "held" });
+    const session = new AbortController();
+    const learning = learnDeclaredSubmodules(alpha, { signal: session.signal });
+    const held = await git.heldStarted.promise;
+    // While the learning's Git is held, a listing's Git on the thread runs past its limit and keeps the checkout so.
+    const owners = new CheckoutOwners();
+    expect(owners.declaredSubmodules(alpha)).toEqual([]);
+    if (end === "stop") session.abort();
+    else held.kill();
+    expect(await learning).toEqual([]);
+
+    // The next listing answers at once and asks again off the thread, the learning's ask being the first.
+    git.offThread = "pastLimit";
+    expect(owners.declaredSubmodules(alpha)).toEqual([]);
+    expect([git.blocking, git.asks]).toEqual([1, 2]);
+    await submodulesAskedAgain(alpha);
+  });
+
   it("stays kept when an ask runs past its limit again with no fact of the checkout read", async () => {
     const { alpha } = await checkoutWithSubmodule();
     Object.assign(git, { onThread: "pastLimit", offThread: "pastLimit" });
