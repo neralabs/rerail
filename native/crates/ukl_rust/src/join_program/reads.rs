@@ -151,6 +151,13 @@ pub struct At<'a> {
 }
 
 impl At<'_> {
+    /// Its tape node, as found when the row was (`at`, `at_node`): a reader that keeps it finds the row again with
+    /// no select (`Doc::at_node`).
+    #[inline]
+    pub fn node(&self) -> u32 {
+        self.x
+    }
+
     /// Its column `col`.
     #[inline]
     pub unsafe fn col(&self, col: u32) -> u64 {
@@ -236,6 +243,12 @@ impl<'a> Doc<'a> {
     #[inline]
     fn ids_tape(&self) -> bool {
         self.e.preorder == IDS_TAPE
+    }
+
+    /// Tape node `x`'s kind atom (`node`'s column 2), read off the tape: no number, no select.
+    #[inline]
+    pub unsafe fn kind_of(&self, x: u32) -> u64 {
+        Self::item(&self.e.kinds, self.tape.number(x))
     }
 
     /// Numbered node `l`'s tape node.
@@ -613,13 +626,19 @@ impl<'a> Doc<'a> {
 
     /// The numbered node whose id's low 32 bits are `low`, or `NO_ROW` (`view_number`).
     pub unsafe fn number(&self, low: u32) -> u32 {
+        self.number_near(low, &mut { u32::MAX })
+    }
+
+    /// `number`, its slot's entry first looked for at `hint` (`Numbering::number_of_near`: checked before use, any
+    /// hint gives the same number).
+    pub unsafe fn number_near(&self, low: u32, hint: &mut u32) -> u32 {
         let l = if self.local() {
             low
         } else if self.ids_tape() {
             // A tape position: the node there, if it is numbered, is its rank.
             if self.n.is(0, low) { self.n.rank(0, low) } else { NO_ROW }
         } else {
-            match self.n.number_of(low) {
+            match self.n.number_of_near(low, hint) {
                 Some((0, l)) => l,
                 _ => NO_ROW,
             }

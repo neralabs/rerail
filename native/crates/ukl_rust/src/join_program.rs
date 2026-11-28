@@ -552,13 +552,15 @@ struct St<'a> {
     /// The document of the view row last found (`ViewDir::doc_of_row`'s memo): a bucket's rows are in id order, so a
     /// walk's next candidate is mostly in its last's document, found without a search.
     doc: core::cell::Cell<u32>,
+    /// The slot entry of the id last numbered (`Doc::number_near`'s hint): a walk's next ids are mostly in its slot.
+    slot: core::cell::Cell<u32>,
 }
 
 impl<'a> St<'a> {
     /// Stage `s` over bindings `l` and relation `r`, its far base in `rf` (none: `r`'s own block, `rel_b`).
     fn new(s: &'a Stage, l: *const i64, r: *const i64, rf: *const u8) -> Self {
         let rf = if rf.is_null() { r as *const u8 } else { rf };
-        St { s, l, r, rf, last: core::cell::Cell::new((NONE, None)), doc: core::cell::Cell::new(NONE) }
+        St { s, l, r, rf, last: core::cell::Cell::new((NONE, None)), doc: core::cell::Cell::new(NONE), slot: core::cell::Cell::new(NONE) }
     }
 }
 
@@ -700,6 +702,41 @@ impl St<'_> {
         set.binary_search(&k).is_ok()
     }
 
+    /// Whether tape node `x` of document `d` (numbered) has a kind in the stage's set: `has_member` with the node in
+    /// hand, its kind read off the tape (`Doc::kind_of`), no row found and no select.
+    unsafe fn has_kind(&self, d: &reads::Doc, x: u32) -> bool {
+        let s = self.s;
+        if self.has_axis() == 3 {
+            return true;
+        }
+        let set = core::slice::from_raw_parts(s.v_set, (s.v_nset & ((1 << HAS_AXIS) - 1)) as usize);
+        set.binary_search(&(d.kind_of(x) as i64)).is_ok()
+    }
+
+    /// Row `r` of the stage's view kept as its last (`row`) from its tape node `x` (`X_NONE`: not known, nothing
+    /// kept): its document found by the stage's memo, no select (a find the count kept, its scatter's row).
+    unsafe fn seat(&self, r: u32, x: u32) {
+        let s = self.s;
+        let kind = if s.v_has != 0 { 1 } else { s.r_view };
+        if x == X_NONE || kind == 0 || kind & VIEW_PLACED != 0 || matches!(self.last.get(), (q, Some(_)) if q == r) {
+            return;
+        }
+        let (d, k) = (s.v_dir, kind - 1);
+        let a = ViewDir::doc_of_row(d, k, r, self.doc.get());
+        self.doc.set(a);
+        let e = view_rows(d).add(a as usize);
+        let i = r.wrapping_sub((*e).rows[k as usize]);
+        self.last.set((r, Some(Row::View(doc(d, e).at_node(k.min(reads::LAST_VIEW), i, x)))));
+    }
+
+    /// The tape node of row `r` where the stage's last row is `r` and a view's, else `X_NONE` (`seat`).
+    fn last_node(&self, r: u32) -> u32 {
+        match self.last.get() {
+            (q, Some(Row::View(at))) if q == r && at.node() < X_NONE => at.node(),
+            _ => X_NONE,
+        }
+    }
+
     /// Whether a walk's candidate `r` is a row of the axis: of a climb (`v_has` 1), `inside`'s where it is in the set
     /// (the others' candidates are theirs by the probe: `has`'s node is in it, `nearest`'s one); of a subtree (2),
     /// `has`'s where it is in the set (the others' ancestor is in it, by the probe).
@@ -771,7 +808,9 @@ impl St<'_> {
         }
         self.doc.set(a);
         let e = view_rows(d).add(a as usize);
-        let l = doc(d, e).number(key as u32);
+        let mut hint = self.slot.get();
+        let l = doc(d, e).number_near(key as u32, &mut hint);
+        self.slot.set(hint);
         (l != NONE).then_some((e, l))
     }
 
@@ -794,7 +833,8 @@ impl St<'_> {
         }
         let Some((e, l)) = self.doc_node(kv[i]) else { return none };
         let d = doc(s.v_dir, e);
-        if d.node_id(l) != kv[i] as u64 || (k == 1 && l == 0) {
+        // The number is the id's (`number_near` is `node_id`'s inverse, in the key's document): no check of it again.
+        if k == 1 && l == 0 {
             return none;
         }
         let local = l - k;
@@ -845,18 +885,38 @@ impl St<'_> {
             let first = (*e).rows[0];
             let axis = self.has_axis();
             if s.v_has == 1 {
-                // `has`: the node in the set, every ancestor; `nearest`: the first ancestor in the set, alone.
-                if axis == 0 && !self.has_member(first.wrapping_add(l)) {
+                // `has`: the node in the set, every ancestor; `nearest`: the first ancestor in the set, alone. Climbed
+                // on the tape with the node in hand (as `walk_tape`): each ancestor's kind read off the tape, a rank
+                // only at the answer, one select in all.
+                let dd = doc(d, e);
+                let mut x = dd.tape_node(l);
+                if axis == 0 && !self.has_kind(&dd, x) {
                     return none;
                 }
-                let mut u = doc(d, e).up(l);
-                if axis == 2 {
-                    while u != NONE && !self.has_member(first.wrapping_add(u)) {
-                        u = doc(d, e).up(u);
+                let up = |mut p: u32| {
+                    p = dd.tape.parent(p);
+                    while p != rerail_reads::views::NO_ROW && !dd.n.is(0, p) {
+                        p = dd.tape.parent(p);
                     }
-                    return if u == NONE { none } else { Walk { lo: first.wrapping_add(u), hi: first.wrapping_add(u).wrapping_add(1), how: 0, tag: 0 } };
+                    p
+                };
+                x = up(x);
+                if axis == 2 {
+                    while x != rerail_reads::views::NO_ROW && !self.has_kind(&dd, x) {
+                        x = up(x);
+                    }
                 }
-                return if u == NONE { none } else { Walk { lo: first.wrapping_add(u), hi: NONE, how: 3, tag: 0 } };
+                if x == rerail_reads::views::NO_ROW {
+                    return none;
+                }
+                let u = dd.n.rank(0, x);
+                let r = first.wrapping_add(u);
+                if axis == 2 {
+                    self.last.set((r, Some(Row::View(dd.at_node(0, u, x)))));
+                    return Walk { lo: r, hi: r.wrapping_add(1), how: 0, tag: 0 };
+                }
+                // The walk of the ancestors from `x`, its tape node (the tag, one more: 0 none).
+                return Walk { lo: r, hi: NONE, how: 3, tag: x.wrapping_add(1) };
             }
             // `inside` and `nearest`: the ancestor in the set; `nearest`'s subtree less what lies below a nearer member.
             if matches!(axis, 1 | 2) && !self.has_member(first.wrapping_add(l)) {
@@ -953,7 +1013,7 @@ impl St<'_> {
     /// from the tape node in hand (the next sibling, the parent), as the host's walks take them
     /// (`each_child_node`, `Within::containers_on`), and each candidate's row kept as the stage's last (`row`) with
     /// its node, so its columns' reads select none.
-    unsafe fn walk_tape(&self, how: u32, q: u32, mut f: impl FnMut(u32) -> bool) {
+    unsafe fn walk_tape(&self, how: u32, q: u32, x0: u32, mut f: impl FnMut(u32) -> bool) {
         let d = self.s.v_dir;
         let k = if how == 2 { 1 } else { 0 };
         let a = dir_doc_of_row(view_block(d), (*d).at, k, q, self.doc.get());
@@ -963,7 +1023,7 @@ impl St<'_> {
         let dd = doc(d, e);
         let mut i = q.wrapping_sub(first);
         // A `child` row's node is numbered node `i + 1`, a `node` row's node `i`.
-        let mut x = dd.tape_node(i.wrapping_add(k));
+        let mut x = if x0 != NONE { x0 } else { dd.tape_node(i.wrapping_add(k)) };
         // A child's siblings end with its parent's subtree; one with no tape parent (a narrowed projection's) has none
         // (`clif_view_child_next`).
         let parent = if how == 2 { dd.tape.parent(x) } else { 0 };
@@ -999,7 +1059,32 @@ impl St<'_> {
         let mut q = w.lo;
         let known = self.parent_known(w.how);
         if (w.how == 2 || w.how == 3) && q != NONE {
-            self.walk_tape(w.how, q, |r| f(r, r, known));
+            let x0 = if w.how == 3 && w.tag != 0 { w.tag - 1 } else { NONE };
+            self.walk_tape(w.how, q, x0, |r| f(r, r, known));
+            return;
+        }
+        // A subtree's rows (`has`, `inside`, `nearest` by the ancestor): in order on the tape, each one's tape node
+        // the next of the numbering's (`Doc::rows_from`), none selected; `nearest`'s past a member, past its subtree.
+        if self.s.v_has == 2 && (w.how == 0 || w.how == 4) && q < w.hi {
+            let d = self.s.v_dir;
+            let a = dir_doc_of_row(view_block(d), (*d).at, 0, q, self.doc.get());
+            self.doc.set(a);
+            let e = view_rows(d).add(a as usize);
+            let (first, dd) = ((*e).rows[0], doc(d, e));
+            let mut rows = dd.rows_from(0, q.wrapping_sub(first));
+            while q < w.hi {
+                let at = rows.next();
+                self.last.set((q, Some(Row::View(at))));
+                if !f(q, q, known) {
+                    return;
+                }
+                if w.how == 4 && self.has_kind(&dd, at.node()) {
+                    q = first.wrapping_add(dd.n.rank(0, dd.tape.end_of(at.node())));
+                    rows = dd.rows_from(0, q.wrapping_sub(first));
+                } else {
+                    q = q.wrapping_add(1);
+                }
+            }
             return;
         }
         // The walk's last place of the tag: none (0), its key `kv` (1), another (2).
@@ -1116,8 +1201,13 @@ impl St<'_> {
 
 /// A join's binding's finds (`join_stages.uglykl`'s): its candidates' first place and a bit a candidate, where they
 /// are at most `FINDS_MAX` consecutive places; else `FINDS_WALK`.
-const FINDS_MAX: u32 = 32;
+const FINDS_MAX: u32 = 31;
 const FINDS_WALK: i64 = NONE as i64;
+/// A walk's binding with one row out (`FINDS_ONE` set): its row in the low 32 bits, its tape node above (`X_NONE`
+/// unknown: a relation's row, a `Loc` view's), so the scatter writes it with no walk and no select (`St::seat`).
+const FINDS_ONE: u64 = 1 << 63;
+/// No tape node (`FINDS_ONE`'s, `St::seat`).
+const X_NONE: u32 = 0x7fff_ffff;
 
 #[derive(Clone, core::marker::Copy)]
 struct Walk {
@@ -1760,6 +1850,8 @@ unsafe fn stage_count_one(st: &St, j: &Job, b: &Bufs, t: u32, acc: &mut [u32; 17
     // A join's finds (`V`): a bit a candidate of at most `FINDS_MAX` consecutive places, set where it is a row out.
     let kept = s.mode == 0 && s.v_has == 0 && s.v_parent == 0 && w.how <= 1 && w.hi.wrapping_sub(w.lo) <= FINDS_MAX;
     let mut finds = 0u32;
+    // The one row out where the walk's is one (`FINDS_ONE`): its row and its tape node.
+    let mut one = (NONE, X_NONE);
     st.each(w, &kv, |r, q, key| {
         if if s.mode == 3 { !st.row_live(r) } else { !st.matches(r, &kv, key) } {
             return true;
@@ -1777,6 +1869,8 @@ unsafe fn stage_count_one(st: &St, j: &Job, b: &Bufs, t: u32, acc: &mut [u32; 17
         if ok && (s.last == NONE || st.out_bit(v, s.last)) {
             if kept {
                 finds |= 1 << (q.wrapping_sub(w.lo) & 31);
+            } else if c == 0 {
+                one = (r, st.last_node(r));
             }
             c += 1;
         }
@@ -1785,7 +1879,13 @@ unsafe fn stage_count_one(st: &St, j: &Job, b: &Bufs, t: u32, acc: &mut [u32; 17
     if exists {
         c = (found != (s.mode == 2)) as u32;
     } else if s.mode == 0 {
-        *b.v.add(t as usize) = if kept { (u64::from(w.lo) | u64::from(finds) << 32) as i64 } else { FINDS_WALK };
+        *b.v.add(t as usize) = if kept {
+            (u64::from(w.lo) | u64::from(finds) << 32) as i64
+        } else if c == 1 {
+            (FINDS_ONE | u64::from(one.1) << 32 | u64::from(one.0)) as i64
+        } else {
+            FINDS_WALK
+        };
     }
     *counts.add(t as usize) = c;
     if !exists {
@@ -1839,6 +1939,13 @@ unsafe fn stage_scatter_one(st: &St, j: &Job, b: &Bufs, t: u32) {
                     col_put(o, s.bind_slot[0], s.cap_out, a, v.unwrap_or(0));
                 }
             }
+        }
+        0 if *b.v.add(t as usize) as u64 & FINDS_ONE != 0 => {
+            // Its one row out (`stage_count_one`'s), found again from its tape node: no walk, no select.
+            let found = *b.v.add(t as usize) as u64;
+            let (r, x) = (found as u32, (found >> 32) as u32 & X_NONE);
+            st.seat(r, x);
+            st.write_row(t, r, o, a);
         }
         0 if *b.v.add(t as usize) as u32 != NONE => {
             // Its finds (`stage_count_one`'s): its rows out, each found once, none walked again.

@@ -2143,7 +2143,8 @@ use rerail_blocks::vector::Vector;
             let _evaluation_batch = rerail_accel::gpu::launch::LaunchScope::enter();
             let mut batch = mj::Batch::new().expect("the device");
             let mut rep = super::Report::default();
-            let (dev, ix, _, _) = super::resident(rel, &[], &[2], mj::JOIN, &mut batch, &mut rep).expect("resident");
+            // By its start (column 3): a probe by kind reads the kind lists and builds no index (decision 0706 step 0).
+            let (dev, ix, _, _) = super::resident(rel, &[], &[3], mj::JOIN, &mut batch, &mut rep).expect("resident");
             batch.finish().unwrap();
             assert!(dev.view.is_some() && ix.is_some(), "a view read in place, by its index");
             (rep.sorts, rep.sort_hits, rep.in_place)
