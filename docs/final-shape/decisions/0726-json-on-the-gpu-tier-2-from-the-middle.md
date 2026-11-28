@@ -38,27 +38,38 @@ tier 2's form from its loop's text (`run`), appended to the tier:
 - **The walk from any place** (`run_range`): the serial loop with an exit at each place at or past the chunk's end
   (the `'run` and `'ret` loops' heads, and each list's `continue 'lN` made place `N`), its refusals and its end a
   `Stop`, and through `Out` (the writer's cursor, or `Count`, the nodes counted).
-- **A chunk may close more than it opens.** A close below what a lane knows of the nest reads the place the level
-  returns to (`st = ret[depth]`): the lane stops there (`Stop::Read`) and goes on once for each place a level returns
-  to (`RETS`: 3, 6, 7). What it read is its class (`kc`, innermost first); what it leaves open is `p`.
-- **A refused fork is a refusal, not a lane.** Of a level's forks, those that refuse (a level returned to the wrong
-  place: an object's where it was an array's) are kept on the lane that goes on, as a `Refusal` (the level, the
-  places, the byte refused, the nodes then), in pass 1 and in each composition (`fold`): a summary holds a refusal a
-  level it closes. As lanes, each held every level below it again: in a nest 1,023 deep in chunks of a record, a
-  summary of the scan held 513 lanes, its round 2.8 GB of levels, the test 5.2 GB for a 4 KB file. Folded, a
-  summary holds at most 4 lanes and a few entries a record it spans.
-- **The depth is a prefix sum** of each record's opener and closer (`depths`), a fact of the bytes, so a lane's depth
+- **A chunk may close more than it opens: its closers are anti-opens** (the user, 2026-11-27: "closing should be
+  implemented as accumulating anti-opens as a mirror operation, not as something different"; the design page
+  "Closing as anti-opens"). An open pushes a return place that is a fact of the level it is in, not of its opener:
+  the root's 7, an object's 3, an array's 6 (`CONT`, by the level's kind, the root last), and a chunk's first record
+  is at its innermost level's cycle place (`CYCLE`: an object's 2, an array's 5). The generator derives both from
+  the loop's text: a return place's arm takes its kind's closer (the arm with none is the root's), and its separator
+  goes to the kind's cycle place; a grammar where an arm takes two kinds' closers, or a kind lacks either, is refused.
+- **The bracket scan** (`kinds`): each chunk's word (`Word::of`) is its unmatched closers' kinds in file order (its
+  anti-opens) and the openers it leaves open; two words compose by cancelling the second's anti-opens against the
+  first's opens, innermost first (`Word::then`, the bracket monoid), a mismatched pair breaking the word. Down its
+  tree each chunk gets the open levels' kinds at its first record (`kinds_after`), kept to its anti-opens and the
+  innermost one (`kinds_keep`). It reads each record's first byte only, as `depths` does, before any walk.
+- **One walk a chunk** (`span`): from `CYCLE` of its innermost kind, its levels' places `CONT` of the kinds its
+  anti-opens close, so it never reads a level it does not know and never forks. What it leaves is a span of the
+  writer's frames (`Span`): the frames it closes below its entry and what it writes into them (its anti-frames,
+  `fkc`, `touch`), those it leaves open (`pf`), its nodes, its last start, its exit or end. The forked form it
+  replaces walked each chunk once for each of its start places and each place a closed level could return to, and
+  folded the lanes and their refusals; in a nest 1,023 deep its summaries held 513 lanes before the folding.
+- **The refusal is the first chunk that ended.** The chunk holding the first bracket mismatch has the serial walk's
+  entry (every bracket before it is the serial walk's levels), so its walk refuses as the serial walk does; the
+  frame scan goes on from a span that ended as itself, so it never reaches a chunk past it with no kinds.
+- **The depth is a prefix sum** of each record's opener and closer (`depths`), a fact of the bytes, so a walk's depth
   is the file's and the loop's `DEPTH` test is the serial one. A chunk deeper than `DEPTH` is past a refusal.
-- **Pass 3** (`entries`) is Blelloch's work-efficient scan: the summaries' tree up (`tree`, a node the composition of
-  two below: a lane goes on in the next range's lanes entered at its place whose closed levels are the ones it leaves
-  open, `then`), then the states down it (the root's the file's start; a left child's its parent's, a right child's
-  its parent's through its left sibling's summary, `apply`). The lanes carry their nodes, so the scan gives each chunk
-  its first node number with its state. Hillis and Steele's scan, first, made every chunk's prefix a summary in every
-  round: in the 1,023-deep nest its last rounds held the square of the chunks, 148 MB for a 4 KB file.
-- **A state holds what its range reads** (`keep`): the places of as many innermost levels as a lane of its summary
-  closes below its start, and as many innermost frames as a lane closes and then writes into, not the whole nest; a
-  node's children read no more of it. Pass 2 places the levels at their depths. A whole nest a chunk was the chunks
-  times the depth: 12.8 MB for that file, gigabytes at `DEPTH` in a large one.
+- **Pass 3** (`entries`) is Blelloch's work-efficient scan, for both scans (`tree_of`, `down`): the values' tree up,
+  a node the composition of two below; then the states down it (the root's the file's start; a left child's its
+  parent's, a right child's its parent's through its left sibling's value). The frame scan (`Span::then`,
+  `at_after`) gives each chunk its first node number, its open frames and the start before it; each chunk's levels'
+  places are then `CONT` of its kinds. Hillis and Steele's scan, first, made every chunk's prefix a value in every
+  round: in the 1,023-deep nest its last rounds held the square of the chunks.
+- **A state holds what its range reads** (`kinds_keep`, `at_keep`): as many innermost levels as its chunk closes
+  below its start and as many frames as it closes and then writes into, not the whole nest. Pass 2 places the levels
+  at their depths.
 
 The helpers that write (`open`, `leaf`, `leaf_in`, `token`, `close`, `string`, `value_primitive`) are generic over
 `Out`. The serial walk calls them with the cursor, as before.
@@ -66,7 +77,8 @@ The helpers that write (`open`, `leaf`, `leaf_in`, `token`, `close`, `string`, `
 ### 2. Pass 2: the tape from each chunk's entry
 
 The writer's cursor holds the frames of the open nodes (node, children so far, last child, start) and makes and
-settles blocks in node order. So the lanes carry what a range does to them, as they carry the nest:
+settles blocks in node order. So a chunk's span carries what its range does to them, its anti-frames the mirror of
+its frames, as its word carries the nest's brackets:
 
 - the frames it closes of its entry's (`fkc`), what it writes into those (`touch`: children added, the last), and the
   frames it leaves open (`pf`), their nodes from the range's first; the last node's start (`last_start`). `Shadow` is
@@ -177,22 +189,22 @@ labelled loop's `continue` past the innermost loop sets a jump word and leaves e
 has no `goto`). Its kernel `json_t2_write` runs a chunk a thread from its state: its frames copied into the chunk's
 room, as `resume` writes them, its levels into its row of the levels' room.
 
-Pass 1 is printed with them (`json_t2_lanes`): the walk and its helpers again, for `Shadow` (`{p}Sh`, the writer's
-frames kept without writing, the token pass's answers read through its `known`), a thread a chunk. A fork is the walk
-again from the chunk's start with the levels' places chosen so far (a path of choices, each level's next place taken
-once its subtree's lanes are made), in the order the Rust's work list pops them, so the lanes are its, then folded by
-`<ukl/lanes_mid.h>`'s `ukl_lane_fold` as `fold` folds them. A lane is a record of words in a pool taken by an atomic
-bump (its layout in the header); a chunk's frames, its writes into its entry's frames and its path are placed by its
-first record and its number, so no chunk's room meets another's. A chunk past its room (more than 64 lanes before they
-fold, 16 after, its pool, frames or levels) says so in its status, and the run is made again with more.
+The bracket scan and pass 1 are printed with them. `json_t2_words` makes each chunk's word, a thread a chunk, from
+its records' first bytes (`json_t2_bracket`, from the Rust's `bracket`); the words' scan runs on the scan kernels
+below. `json_t2_spans` is a chunk's one walk, a thread a chunk: the walk and its helpers again, for `Shadow`
+(`{p}Sh`, the writer's frames kept without writing, the token pass's answers read through its `known`), from the
+place and levels its kinds give (`json_t2_cycle`, `json_t2_cont`). Every value is a record of words in a pool taken
+by an atomic bump (`<ukl/middle.h>`'s layouts: a word, kinds, a span, a state); a chunk's frames and its writes into
+its entry's are placed by its first record and its number, so no chunk's room meets another's. A value past the pool
+is `FULL`, and the run is made again with more.
 
-Pass 3 runs on those lanes (`json_t2_up`, `json_t2_root`, `json_t2_down`): the summaries' tree up, a level a launch,
-a node the composition of two below (`ukl_lane_compose`: each lane then each, `ukl_lane_then`, each once, folded),
-the last of an odd level its header taken (the same lanes, not a copy of them); the file's start at the top and the
+Pass 3 is one set of scan kernels for both scans (`json_t2_up`, `json_t2_root`, `json_t2_down`, `op` naming the
+scan): the tree up, a level a launch, a node the composition of two below (`ukl_word_then`, `ukl_span_then`), the
+last of an odd level its child's offset (the same record, not a copy of it); the file's start at the top and the
 file's end through the root; then the states down it, a level a launch, a right child's through its left sibling
-(`ukl_lane_apply`), each as its range reads it (`ukl_lane_keep`). A state is a record of words in the same pool
-(`At`'s fields; its levels innermost last, its frames outermost first); one no lane meets is `NONE`, one past the room
-`FULL`. The launches are a tree's height twice, plus one: the phases on one persistent grid make them a fixed count.
+(`ukl_kinds_after`, `ukl_at_after`), each as its range reads it (`ukl_kinds_keep`, `ukl_at_keep`). `json_t2_levels`
+puts each chunk's levels' places into its state. A state no scan meets is `NONE`, one past the room `FULL`. The
+launches are each tree's height twice, plus three: the phases on one persistent grid make them a fixed count.
 
 Pass 2 reads each chunk's state where pass 3 left it in the pool (`json_t2_write`): its frames into the chunk's room
 (placed by its first record and its number, as pass 1's), its levels into its row. The blocks are made on the device
@@ -213,7 +225,7 @@ runs them), and each round of every scan too (`each`, `scan`: Hillis and Steele'
   writes (`lex_typed_in`);
 - tier 2: the chunks' starts (each run of `size` records finds its own first record after a separator, placed by a
   prefix sum of the runs that have one), the depths (each chunk's sum of openers and closers, then their scan), pass
-  1 (`summaries`), pass 3 (`entries`), and pass 2's count and writes (`parse_middle`).
+  the bracket scan (`kinds`), pass 1 and pass 3 (`entries`), and pass 2's count and writes (`parse_middle`).
 
 The tests run them in seeded random orders, a new permutation at each ask: the answers are the serial ones. So no
 chunk reads what another wrote but through a scan's rounds, and the shape is the device's: one launch a pass or a
@@ -232,21 +244,22 @@ scan round, each chunk a thread or a group.
 objects and arrays, nests 40, 1,023 and 1,025 deep, empty levels, and the closer, separator and value refusals), in
 chunks of 1, 2, 3 and 16 records, 11,972 chunks, every pass in a random order. Each chunk's state from pass 3
 (place, record, depth, levels' places, nodes before, the file's end) is the serial walk's there, and the walk chunk
-after chunk ends as `parse` does. Every summary of the scan's tree holds at most 8 lanes and 4 entries a record it
-spans plus 8 a lane, and the states at most 4 levels and frames a record (the tree's summaries 4 lanes and 6 entries a
-record in the cases). The tests peak at 27 and 15 MB (were 5.2 GB). `rerail-parser-tests`' `json_rust_is_current` holds the tier to the generator, its
+after chunk ends as `parse` does; one walk a chunk. Each chunk's kinds from the bracket scan are the serial walk's
+levels there (5,479 anti-opens; the longest word of the tree 1,025 brackets, the 1,025-deep nest's), and the states
+hold at most 4 levels and frames a record (0 in the cases, rounded down). The tests peak at about 1 GB under Relax. `rerail-parser-tests`' `json_rust_is_current` holds the tier to the generator, its
 text checks on the serial walk. `tier2_tape_from_the_middle_is_the_serial_tape`: every file that parses, in chunks of 1, 3 and 16
 records, every pass in order and in two random orders (270 tapes, 13,800 chunks), gives the serial walk's tape byte for byte, and
 every refusal the serial one; the slot and length lists hold up to 991 entries a block there. The entries test also runs the token pass in a random order (16,684 tokens): its answers are the same in any order,
-and every chunk's summary from them is the summary of pass 1 reading each token itself. `typed_records_are_the_records_split_by_type`: 390 files in chunks of
+and every chunk's state from them is that of pass 1 reading each token itself. `typed_records_are_the_records_split_by_type`: 390 files in chunks of
 1, 2, 3 and 16 blocks (8,784 records), every pass in a random order, the records `lex`'s and each type's the records split by their first byte.
 `rerail-gpu`'s `json_tier2_writes_from_the_middle_as_its_rust`: passes 1, 3 and 2, the blocks made and the tape ended
 on the device in one command buffer, 21 tapes (the same files that parse) in chunks of 1, 3 and 16 records (12,369
-chunks): the serial walk's tape byte for byte, on the CPU backend and on Metal on the M3 Max and the M1 Max. `rerail-gpu`'s `json_tier2_lanes_are_its_rust`: pass 1 on the device, 9 files (the tier 1 cases and nests 60 deep,
-mixed, and closers that do not match) in chunks of 1, 3 and 16 records (12,381 chunks, 28,944 lanes, 3,749
-refusals): each chunk's lanes are `summaries`', lane for lane, on UKL's CPU backend and on Metal on the M3 Max and
-the M1 Max. `json_tier2_entries_are_its_rust`: pass 3 on the device on pass 1's lanes there, the same runs (12,408
-states): each chunk's state and the file's end are `entries`', state for state, on the same three. `rerail-gpu`'s `lz4_blocks_encode_greedily`: 26 blocks (0 to 70,000 bytes: matches at every distance, short and long,
+chunks): the serial walk's tape byte for byte, on the CPU backend and on Metal on the M3 Max and the M1 Max. `rerail-gpu`'s `json_tier2_spans_are_its_rust`: the bracket scan and pass 1 on the device, 9 files (the tier 1 cases
+and nests 60 deep, mixed, and closers that do not match) in chunks of 1, 3 and 16 records (12,381 chunks, 3,981
+anti-opens, 2 broken words): each chunk's word, kinds and one walk's span are Rust's (`Word::of`, `kinds`, `span`),
+on UKL's CPU backend (compiled and on the vector path) and on Metal on the M3 Max and the M1 Max.
+`json_tier2_entries_are_its_rust`: pass 3 on the device on those, the same runs (12,408 states, 635 launches): each
+chunk's state and the file's end are `entries`', state for state, on the same three. `rerail-gpu`'s `lz4_blocks_encode_greedily`: 26 blocks (0 to 70,000 bytes: matches at every distance, short and long,
 runs, noise, and one byte repeated), each encoded by a group to the bytes of the serial parse (`lz4_greedy`), which
 LZ4's `LZ4_decompress_safe` decodes to the block; on UKL's CPU backend, compiled and on the vector path. The tape test also stores each tape from the middle (90, in order) as 16z by `z_of` and the greedy encoder (129,819
 bytes to 69,804): each loads as a 16z tape and decodes to its tape. `rerail-gpu`'s `z_pieces_encode_in_place`: JSON

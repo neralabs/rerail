@@ -239,7 +239,7 @@ fn same_state(a: &crate::middle::At, b: &crate::middle::At) -> bool {
 
 #[test]
 fn tier2_entries_are_the_serial_walks() {
-    let (mut chunks, mut most, mut composed, mut per_record, mut states, mut read) = (0, 0, 0, 0, 0, 0);
+    let (mut chunks, mut states, mut read, mut anti, mut most_word) = (0, 0, 0, 0, 0);
     let all: Vec<Vec<u8>> = files().into_iter().chain(trees()).collect();
     let entries = crate::ENTRIES.iter().map(|&(kind, field, classes)| rerail_tape_format::tape::Entry { kind, field, flags: 0, alias: None, classes: classes.to_vec() }).collect();
     let lang = rerail_tape_format::f16::Lang::new(rerail_tape_format::tape::CodeTable::new(entries), crate::WIDTHS, 1).expect("a language");
@@ -253,7 +253,7 @@ fn tier2_entries_are_the_serial_walks() {
         let mut w = rerail_tape_format::f16::Writer::new(&lang, f, rerail_tape_format::newlines::Terminators::Newlines, 0, false, true, f.len() / 2 + 16);
         let parsed = crate::parse_lexed(&buf, &lx, &mut w);
         for size in [1, 2, 3, 16] {
-            // Every pass's chunks and every scan round's in a random order.
+            // Every pass's chunks and every scan level's in a random order.
             let order = shuffled((k * 31 + size) as u64);
             // Stage 2: every token on its own, in a random order; pass 1 reads them, and is the walk that reads each
             // token itself.
@@ -261,9 +261,8 @@ fn tier2_entries_are_the_serial_walks() {
             let toks = crate::middle::tokens(&buf, &lx, &ty.types, &order);
             assert_eq!(toks, crate::middle::tokens(&buf, &lx, &ty.types, &crate::middle::in_order), "file {k}: the tokens in any order");
             read += toks.iter().filter(|t| t.kind != crate::middle::NONE || t.err != crate::middle::NONE).count();
-            let sums = crate::middle::summaries(&buf, &lx, &toks, size, &order);
-            assert!(sums == crate::middle::summaries(&buf, &lx, &[], size, &order), "file {k}, chunks of {size}: pass 1 on the token pass's answers is pass 1 reading each token");
-            let got = crate::middle::entries(&sums, &order);
+            let got = crate::middle::entries(&buf, &lx, &toks, size, &order);
+            assert!(got == crate::middle::entries(&buf, &lx, &[], size, &crate::middle::in_order), "file {k}, chunks of {size}: passes 1 and 3 on the token pass's answers, in any order, are those reading each token in order");
             let want = crate::middle::serial_entries(&buf, &lx, size);
             assert_eq!(want.last().and_then(|a| a.end), Some(parsed), "file {k}: the chunks walked one after another are the serial walk");
             assert_eq!(got.len(), want.len());
@@ -272,26 +271,29 @@ fn tier2_entries_are_the_serial_walks() {
             states = states.max(held / (lx.count + 1));
             assert!(held <= 4 * (lx.count + 1) + 2 * got.len(), "file {k}, chunks of {size}: the states hold {held} levels and frames for {} records", lx.count);
             for (c, (g, w)) in got.iter().zip(&want).enumerate() {
-                let g = g.as_ref().unwrap_or_else(|| panic!("file {k}, chunks of {size}: no lane meets chunk {c}'s entry"));
+                let g = g.as_ref().unwrap_or_else(|| panic!("file {k}, chunks of {size}: no state at chunk {c}"));
                 assert!(same_state(g, w), "file {k}, chunks of {size}, chunk {c}: {g:?}, the serial walk's {w:?}");
             }
-            chunks += sums.len();
-            most = most.max(sums.iter().map(|s| s.lanes.len()).max().unwrap_or(0));
-            // Every summary of the scan's tree stays as long as the records it spans: a few lanes, each holding a few
-            // entries a record (its levels, frames and refusals) and a few of its own, never the square of the levels
-            // it closes.
-            for level in crate::middle::tree(&sums, &order) {
-                for x in &level {
-                    let held: usize = x.lanes.iter().map(|l| l.kc.len() + l.p.len() + l.pf.len() + l.touch.len() + l.refuse.len()).sum();
-                    let span = x.end - x.start;
-                    composed = composed.max(x.lanes.len());
-                    per_record = per_record.max(held / (span + 1));
-                    assert!(x.lanes.len() <= 8 && held <= 4 * (span + 1) + 8 * x.lanes.len(), "file {k}, chunks of {size}: a summary of {span} records holds {} lanes and {held} entries", x.lanes.len());
+            // The bracket scan: each chunk's kinds are the serial walk's levels there (where it has not ended), and
+            // every word of the scan's tree is as long as the brackets it spans leave unmatched.
+            let cs = crate::middle::chunk_starts(&buf, &lx, size, &order);
+            let (words, kinds) = crate::middle::kinds(&buf, &lx, &cs, &order);
+            for (c, w) in want.iter().enumerate().take(cs.len()) {
+                if w.end.is_some() {
+                    break;
                 }
+                let kc = kinds[c].as_ref().unwrap_or_else(|| panic!("file {k}, chunks of {size}: no kinds at chunk {c}, before the file's end"));
+                let places: Vec<u8> = kc[..kc.len() - 1].iter().map(|&x| crate::middle::CONT[x as usize]).collect();
+                assert!(w.ret.ends_with(&places), "file {k}, chunks of {size}, chunk {c}: the kinds' places {places:?}, the serial walk's levels {:?}", w.ret);
+                anti += words[c].anti.len();
             }
+            for level in crate::middle::tree_of(&words, &order, crate::middle::Word::then) {
+                most_word = most_word.max(level.iter().map(|x| x.anti.len() + x.opens.len()).max().unwrap_or(0));
+            }
+            chunks += cs.len();
         }
     }
-    eprintln!("{} files in chunks of 1, 2, 3 and 16 records ({chunks} chunks, {read} tokens read by the token pass): the serial walk's states; at most {most} lanes a chunk, {composed} a composed summary, {per_record} entries a record; the states {states} levels and frames a record", all.len());
+    eprintln!("{} files in chunks of 1, 2, 3 and 16 records ({chunks} chunks, {read} tokens read by the token pass, {anti} anti-opens): the serial walk's states, one walk a chunk; the longest word {most_word} brackets; the states {states} levels and frames a record", all.len());
 }
 
 /// Pass 2: each chunk's nodes written from its state, every pass's chunks (and every scan round's) in order and in two

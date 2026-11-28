@@ -22,9 +22,10 @@ pub const TIER1_UKL: &str = include_str!("tier1.uglykl");
 /// Tier 2's passes as UKL, printed from its Rust (decision 0726): kernels `json_t2_tokens` and `json_t2_write`.
 pub const TIER2_UKL: &str = include_str!("tier2.uglykl");
 
-/// Tier 2 from the middle (decision 0726): the walk from any place, and the three passes over chunks of records.
+/// Tier 2 from the middle (decision 0726): the walk from any place, the bracket scan, and the three passes over chunks
+/// of records.
 pub mod middle {
-    pub use crate::tier2::{At, CYCLES, Entry, Frame, Lane, NONE, NO_START, Out, RETS, Refusal, SEPS, Shadow, Stop, Summary, TOKEN_FIRSTS, Token, Touch, apply, chunk_starts, compose, depths, each, entries, in_order, lanes, parse_middle, run_range, scan, serial_entries, summaries, token_at, tokens, tree, write_range, Order};
+    pub use crate::tier2::{At, CONT, CYCLE, CYCLES, Entry, Frame, Kinds, NONE, Out, RETS, ROOT, SEPS, Shadow, Span, Stop, TOKEN_FIRSTS, Token, Touch, Word, chunk_starts, depths, down, each, entries, in_order, kinds, parse_middle, run_range, scan, serial_entries, span, token_at, tokens, tree_of, write_range, Order};
 }
 
 /// The tape of `buf[..n]` into `w` (a format 16 writer of a language whose table is `ENTRIES`), or the byte the parser

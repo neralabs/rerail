@@ -617,9 +617,9 @@ rerail_simd8::kernel! {
 }
 
 // Parsing from the middle (decision 0726): the walk's state at a place (`Entry`), the walk from any place to the
-// first place at or past a record (`run_range`), and the three passes over chunks of records. Pass 1 walks each chunk
-// from each place its first record can be at, forking where it closes a level below its entry (`lanes`); pass 3
-// composes the chunks' summaries by a prefix scan (`entries`); pass 2 walks each chunk from its entry.
+// first place at or past a record (`run_range`), the bracket scan (`kinds`), and the three passes over chunks of
+// records. Pass 1 walks each chunk once, from the place and levels its open levels' kinds give (`span`); pass 3
+// scans the walks' spans of the writer's frames (`entries`); pass 2 walks each chunk from its entry.
 
 /// What the walk writes through: the writer's cursor, or pass 1's count of the nodes.
 pub trait Out {
@@ -888,7 +888,8 @@ fn delta(b: u8) -> isize {
 }
 
 /// The walk from `en` to the first place at or past record `stop`, through `d`: the levels' places `ret[low..depth]`
-/// known, those below `low` read where the walk closes to them (`Stop::Read`).
+/// known; a close below `low` stops it (`Stop::Read`), which no walk of a chunk from its kinds meets but past a broken
+/// word, where the chunk is past the file's refusal.
 #[inline(always)]
 pub unsafe fn run_range<D: Out>(src: &[u8], lx: &crate::tier1::Lexed, d: &mut D, en: Entry, ret: &mut [u8; DEPTH], low: usize, stop: usize) -> Stop {
 let (starts, count, len) = (&lx.starts[..], lx.count, lx.len);
@@ -1270,17 +1271,148 @@ pub fn depths(src: &[u8], lx: &crate::tier1::Lexed, chunks: &[usize], order: Ord
     each(n, order, |c| if c == 0 { 0 } else { inc[c - 1].max(0) as usize })
 }
 
-/// One lane of a summary: what a range does for the entries at place `st0` whose innermost levels return to `kc`
-/// (innermost first; those it closed). It leaves `p` open above what is left of them (outermost first), and leaves at
-/// `exit`, or the file ends in it (`end`), having written `nodes`. Of the writer's frames: it closes `fkc` of its
-/// entry's, writes `touch` into those (innermost first, the last the one it is in then), leaves `pf` open (their nodes
-/// and last children from the range's first node), and its last node starts at `last_start`. Where a level it closed
-/// returns to another place than `kc`'s and the walk refuses there, a refusal (`refuse`, by level), not a lane.
+/// Each level kind's return place: the place after a value in a level of that kind, which an open in it pushes
+/// (`ret[depth]`), by the kind's bracket, the root's last.
+pub const CONT: &[u8] = &[6, 3, 7];
+
+/// Each level kind's cycle place: where its list's loop is after its separator, a chunk's first record's place.
+pub const CYCLE: &[u8] = &[5, 2];
+
+/// The root's kind: past every bracket's.
+pub const ROOT: u8 = (CONT.len() - 1) as u8;
+
+/// A record's bracket by its first byte: its level's kind, and whether it opens one.
+#[inline(always)]
+fn bracket(b: u8) -> Option<(u8, bool)> {
+    match b {
+        0x5b => Some((0, true)),
+        0x5d => Some((0, false)),
+        0x7b => Some((1, true)),
+        0x7d => Some((1, false)),
+        _ => None,
+    }
+}
+
+/// A range's brackets reduced (the bracket monoid): the closers it cannot match, their kinds in file order (its
+/// anti-opens, the mirror of its opens), then the openers it leaves open, their kinds outermost first. `broken`: a
+/// closer met an opener of another kind (the serial walk refuses there or before).
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct Word {
+    pub anti: Vec<u8>,
+    pub opens: Vec<u8>,
+    pub broken: bool,
+}
+
+impl Word {
+    /// Records `start..stop`'s word, by their first bytes.
+    pub fn of(src: &[u8], lx: &crate::tier1::Lexed, start: usize, stop: usize) -> Word {
+        let mut w = Word::default();
+        for t in start..stop.min(lx.count) {
+            match bracket(src[lx.starts[t] as usize]) {
+                Some((k, true)) => w.opens.push(k),
+                Some((k, false)) => w.cancel(k),
+                None => {}
+            }
+        }
+        w
+    }
+
+    /// A closer of kind `k` after the word: it cancels the innermost open, or is an anti-open.
+    fn cancel(&mut self, k: u8) {
+        match self.opens.pop() {
+            Some(o) if o == k => {}
+            Some(_) => self.broken = true,
+            None => self.anti.push(k),
+        }
+    }
+
+    /// Word `a` then word `b`: `b`'s anti-opens cancelled against `a`'s opens, innermost first. Associative.
+    pub fn then(a: &Word, b: &Word) -> Word {
+        let mut w = a.clone();
+        w.broken |= b.broken;
+        for &k in &b.anti {
+            w.cancel(k);
+        }
+        w.opens.extend_from_slice(&b.opens);
+        w
+    }
+}
+
+/// The open levels' kinds at a range's start, outermost first, the root's at the bottom: as many as the range reads
+/// (its anti-opens and the innermost level, `Kinds::keep`). `None` past a broken word.
+pub type Kinds = Option<Vec<u8>>;
+
+/// The kinds range `w` leaves after kinds `a` at its start: its anti-opens cancel `a`'s levels, its opens follow.
+fn kinds_after(a: &Kinds, w: &Word) -> Kinds {
+    let mut k = a.clone()?;
+    if w.broken {
+        return None;
+    }
+    for &x in &w.anti {
+        // The root closes to nothing: the serial walk refuses there.
+        match k.pop() {
+            Some(o) if o == x && o != ROOT => {}
+            _ => return None,
+        }
+    }
+    k.extend_from_slice(&w.opens);
+    Some(k)
+}
+
+/// Kinds `a` as range `w` reads them: its anti-opens' levels and the innermost one.
+fn kinds_keep(a: Kinds, w: &Word) -> Kinds {
+    let mut k = a?;
+    let cut = k.len().saturating_sub(w.anti.len() + 1);
+    k.drain(..cut);
+    Some(k)
+}
+
+/// A balanced tree of `xs` by `op` (Blelloch's up-sweep), level 0 `xs`, each next level's node the composition of two
+/// of the level below (the last alone where they are odd), each level's nodes in `order`'s order.
+pub fn tree_of<T: Clone>(xs: &[T], order: Order<'_>, op: impl Fn(&T, &T) -> T) -> Vec<Vec<T>> {
+    let mut levels: Vec<Vec<T>> = vec![xs.to_vec()];
+    while levels[levels.len() - 1].len() > 1 {
+        let low = &levels[levels.len() - 1];
+        let up = each(low.len().div_ceil(2), order, |i| if 2 * i + 1 < low.len() { op(&low[2 * i], &low[2 * i + 1]) } else { low[2 * i].clone() });
+        levels.push(up);
+    }
+    levels
+}
+
+/// The down-sweep of a tree (`tree_of`): each leaf's state at its start from `start`, a node's left child's its own,
+/// its right child's its state through its left child's value (`after`), each as its node reads it (`keep`); then the
+/// state after the root. Each level's nodes in `order`'s order.
+pub fn down<T, S: Clone>(levels: &[Vec<T>], start: S, order: Order<'_>, after: impl Fn(&S, &T) -> S, keep: impl Fn(S, &T) -> S) -> Vec<S> {
+    let top = levels.len() - 1;
+    let end = after(&start, &levels[top][0]);
+    let mut states: Vec<S> = vec![keep(start, &levels[top][0])];
+    for r in (0..top).rev() {
+        let (low, up) = (&levels[r], &states);
+        states = each(low.len(), order, |c| {
+            let parent = &up[c / 2];
+            let at = if c % 2 == 0 { parent.clone() } else { after(parent, &low[c - 1]) };
+            keep(at, &low[c])
+        });
+    }
+    states.push(end);
+    states
+}
+
+/// Each chunk's open levels' kinds at its first record (the bracket scan), then after the file: the chunks' words,
+/// their tree, and the kinds down it. No walk: each record's first byte.
+pub fn kinds(src: &[u8], lx: &crate::tier1::Lexed, chunks: &[usize], order: Order<'_>) -> (Vec<Word>, Vec<Kinds>) {
+    let words = each(chunks.len(), order, |c| Word::of(src, lx, chunks[c], chunks.get(c + 1).copied().unwrap_or(lx.count)));
+    let levels = tree_of(&words, order, Word::then);
+    let ks = down(&levels, Some(vec![ROOT]), order, kinds_after, kinds_keep);
+    (words, ks)
+}
+
+/// A range's span of the writer's frames (pass 1's summary): it closes `fkc` of the frames open at its entry (its
+/// anti-frames, the mirror of those it opens), writes `touch` into those (innermost first, the last the one it is in
+/// then), leaves `pf` open (their nodes and last children from the range's first node), writes `nodes`, and its last
+/// node starts at `last_start`. It leaves at `exit`, or the file ends in it (`end`).
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub struct Lane {
-    pub st0: u8,
-    pub kc: Vec<u8>,
-    pub p: Vec<u8>,
+pub struct Span {
     pub exit: Entry,
     pub nodes: u32,
     pub end: Option<Result<(), u32>>,
@@ -1288,194 +1420,85 @@ pub struct Lane {
     pub touch: Vec<Touch>,
     pub pf: Vec<Frame>,
     pub last_start: Option<u64>,
-    pub refuse: Vec<Refusal>,
 }
 
-/// A refusal of a lane's: the walk, having closed the levels below `level` as the lane did (`kc[..level]`), reads at
-/// level `level` a place in `places` (a bit a place) and refuses the file at byte `err`, having written `nodes`, its
-/// last node starting at `last_start`. One a level the lane closed, so a summary is as long as the levels it closes,
-/// not their square.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub struct Refusal {
-    pub level: u32,
-    pub places: u32,
-    pub err: u32,
-    pub nodes: u32,
-    /// `NO_START`: no node yet.
-    pub last_start: u32,
-}
-
-/// A refusal's `last_start` where the walk wrote no node before it.
-pub const NO_START: u32 = u32::MAX;
-
-impl Refusal {
-    fn start(&self) -> Option<u64> {
-        (self.last_start != NO_START).then_some(u64::from(self.last_start))
-    }
-}
-
-impl Lane {
-    /// A lane from where its walk stopped: its frames from what `sh` kept (where the file ends in it, only how many of
-    /// its entry's it closes: what its state must hold, `keep`).
-    fn of(st0: u8, kc: Vec<u8>, p: Vec<u8>, exit: Entry, end: Option<Result<(), u32>>, sh: Shadow<'_>) -> Lane {
-        let (fkc, touch, pf) = if end.is_some() {
-            (sh.closed, vec![Touch::default(); sh.closed + 1], Vec::new())
+impl Span {
+    /// The span of a walk that stopped at `exit` (or ended, `end`), from what `sh` kept.
+    fn of(exit: Entry, end: Option<Result<(), u32>>, sh: Shadow<'_>) -> Span {
+        let (touch, pf) = if end.is_some() {
+            (vec![Touch::default(); sh.closed + 1], Vec::new())
         } else {
             let mut touch = sh.touch;
             touch.resize(sh.closed + 1, Touch::default());
-            (sh.closed, touch, sh.own)
+            (touch, sh.own)
         };
-        Lane { st0, kc, p, exit, nodes: sh.n, end, fkc, touch, pf, last_start: sh.last_start, refuse: Vec::new() }
+        Span { exit, nodes: sh.n, end, fkc: sh.closed, touch, pf, last_start: sh.last_start }
     }
 
-    /// The lane ended where refusal `x` holds, after `a`.
-    fn refused(a: &Lane, x: &Refusal) -> Lane {
-        Lane { st0: a.st0, kc: a.kc.clone(), p: Vec::new(), exit: Entry::default(), nodes: a.nodes + x.nodes, end: Some(Err(x.err)), fkc: 0, touch: vec![Touch::default()], pf: Vec::new(), last_start: x.start().or(a.last_start), refuse: a.refuse.clone() }
+    /// Span `a` then span `b`: `b`'s anti-frames cancel the frames `a` leaves open, the rest closed below `a`'s
+    /// entry; what `b` wrote into the one it is then in, that frame's. A span that ended goes on as itself.
+    pub fn then(a: &Span, b: &Span) -> Span {
+        if a.end.is_some() {
+            return a.clone();
+        }
+        let at = |x: u32| x + a.nodes;
+        let (n, fm) = (a.pf.len(), b.fkc.min(a.pf.len()));
+        let mut pf = a.pf[..n - fm].to_vec();
+        let mut touch = a.touch.clone();
+        if b.fkc < n {
+            let (f, t) = (pf.last_mut().expect("a frame left open"), b.touch[b.fkc]);
+            f.kids += t.kids;
+            if let Some(l) = t.last {
+                f.last = at(l);
+            }
+        } else {
+            let (s, t) = (touch.last_mut().expect("the frame `a` is in"), b.touch[n]);
+            s.kids += t.kids;
+            if let Some(l) = t.last {
+                s.last = Some(at(l));
+            }
+            touch.extend(b.touch[n + 1..].iter().map(|t| Touch { kids: t.kids, last: t.last.map(at) }));
+        }
+        pf.extend(b.pf.iter().map(|f| Frame { node: at(f.node), last: if f.last == NONE { NONE } else { at(f.last) }, ..*f }));
+        Span { exit: b.exit, nodes: a.nodes + b.nodes, end: b.end, fkc: a.fkc + b.fkc - fm, touch, pf, last_start: b.last_start.or(a.last_start) }
     }
 }
 
-/// A range's summary: its lanes, its first record and the record past it.
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub struct Summary {
-    pub lanes: Vec<Lane>,
-    pub start: usize,
-    pub end: usize,
-}
-
-/// Pass 1: chunk `start..stop`'s summary, its first record at depth `depth0`: from each place its first record can be
-/// at, the walk forked where it closes a level below its entry, once for each place a level returns to.
-pub fn lanes(src: &[u8], lx: &crate::tier1::Lexed, toks: &[Token], start: usize, stop: usize, depth0: usize) -> Summary {
-    let places: &[u8] = if start == 0 { &[0] } else { CYCLES };
-    // Deeper than the walk goes: the serial walk refused the file before this chunk.
-    if depth0 > DEPTH {
-        let lanes = places.iter().map(|&st0| Lane::of(st0, Vec::new(), Vec::new(), Entry::default(), Some(Err(lx.starts[start])), Shadow::default())).collect();
-        return Summary { lanes, start, end: stop };
-    }
-    let mut work: Vec<(u8, Vec<u8>, std::boxed::Box<[u8; DEPTH]>, usize, Entry, Shadow<'_>)> =
-        places.iter().map(|&st| (st, Vec::new(), std::boxed::Box::new([0u8; DEPTH]), depth0, Entry { i: start, e: 0, depth: depth0, st }, Shadow { toks, ..Shadow::default() })).collect();
-    let mut out = Summary { lanes: Vec::new(), start, end: stop };
-    while let Some((st0, kc, mut ret, low, en, mut count)) = work.pop() {
-        // SAFETY: the records and the padded source are tier 1's, as the serial walk's.
-        match unsafe { run_range(src, lx, &mut count, en, &mut *ret, low, stop) } {
-            Stop::At(x) => {
-                let p = ret[low..x.depth].to_vec();
-                out.lanes.push(Lane::of(st0, kc, p, x, None, count));
-            }
-            Stop::Done(r) => out.lanes.push(Lane::of(st0, kc, Vec::new(), Entry::default(), Some(r), count)),
-            Stop::Read(x) => {
-                for &k in RETS {
-                    let mut kc = kc.clone();
-                    kc.push(k);
-                    let mut r = ret.clone();
-                    r[x.depth] = k;
-                    work.push((st0, kc, r, x.depth, Entry { st: k, ..x }, count.clone()));
-                }
-            }
-        }
-    }
-    out.lanes = fold(std::mem::take(&mut out.lanes));
-    out
-}
-
-/// A lane refused where its last level returned to a place a kept lane's did not, the levels below as that lane's:
-/// that lane's refusal, with the refusals it had (each of the levels below, so the kept lane's too). So the levels
-/// below are kept once, and a summary holds a refusal a level, not a lane.
-fn fold(mut lanes: Vec<Lane>) -> Vec<Lane> {
-    lanes.sort_by(|a, b| b.kc.len().cmp(&a.kc.len()));
-    let mut kept: Vec<Lane> = Vec::new();
-    for l in lanes {
-        if let (Some(Err(err)), Some(j)) = (l.end, l.kc.len().checked_sub(1)) {
-            if let Some(m) = kept.iter_mut().find(|m| m.st0 == l.st0 && m.kc.len() > j && m.kc[..j] == l.kc[..j] && m.kc[j] != l.kc[j]) {
-                m.refuse.extend_from_slice(&l.refuse);
-                m.refuse.push(Refusal { level: j as u32, places: 1 << l.kc[j], err, nodes: l.nodes, last_start: l.last_start.map_or(NO_START, |s| s as u32) });
-                continue;
-            }
-        }
-        kept.push(l);
-    }
-    for m in &mut kept {
-        m.refuse.sort_by_key(|x| (x.level, x.places, x.err, x.nodes, x.last_start));
-        m.refuse.dedup();
-    }
-    kept
-}
-
-/// Lane `a` then lane `b`, entered where `a` leaves: `b`'s closed levels matched against those `a` leaves open, the
-/// rest of them closed below `a`'s entry. None where they do not meet.
-fn then(a: &Lane, b: &Lane) -> Option<Lane> {
-    if a.end.is_some() {
-        return Some(a.clone());
-    }
-    if b.st0 != a.exit.st {
-        return None;
-    }
-    let m = b.kc.len().min(a.p.len());
-    // `b`'s closed levels that `a` left open: their places known, each a refusal of `b`'s there or its lane's place.
-    let mut r = 0;
-    for j in 0..m {
-        let place = a.p[a.p.len() - 1 - j];
-        while r < b.refuse.len() && b.refuse[r].level as usize == j {
-            if b.refuse[r].places >> place & 1 != 0 {
-                return Some(Lane::refused(a, &b.refuse[r]));
-            }
-            r += 1;
-        }
-        if b.kc[j] != place {
-            return None;
-        }
-    }
-    // The rest, closed below `a`'s entry: refusals at the levels they are of the two.
-    let mut refuse = a.refuse.clone();
-    refuse.extend(b.refuse[r..].iter().map(|x| Refusal { level: (a.kc.len() + x.level as usize - m) as u32, nodes: a.nodes + x.nodes, last_start: x.start().or(a.last_start).map_or(NO_START, |s| s as u32), ..*x }));
-    let mut kc = a.kc.clone();
-    kc.extend_from_slice(&b.kc[m..]);
-    let mut p = a.p[..a.p.len() - m].to_vec();
-    p.extend_from_slice(&b.p);
-    // The frames: `b`'s closed ones matched against those `a` leaves open, the rest closed below `a`'s entry; what
-    // `b` wrote into the one it is then in, that frame's.
-    let at = |x: u32| x + a.nodes;
-    let (n, fm) = (a.pf.len(), b.fkc.min(a.pf.len()));
-    let mut pf = a.pf[..n - fm].to_vec();
-    let mut touch = a.touch.clone();
-    if b.fkc < n {
-        let (f, t) = (pf.last_mut().expect("a frame left open"), b.touch[b.fkc]);
-        f.kids += t.kids;
-        if let Some(l) = t.last {
-            f.last = at(l);
-        }
+/// Pass 1: chunk `start..stop`'s span, its first record at depth `depth0` with the open levels' kinds `kinds` (the
+/// bracket scan's): one walk, from the place and the levels' places they give, so it never reads a level it does not
+/// know. A chunk with no kinds is after the file's refusal (a broken word), as one deeper than the walk goes.
+pub fn span(src: &[u8], lx: &crate::tier1::Lexed, toks: &[Token], start: usize, stop: usize, depth0: usize, kinds: &Kinds, anti: usize) -> Span {
+    let refused = || Span::of(Entry::default(), Some(Err(lx.starts[start])), Shadow::default());
+    let Some(k) = kinds.as_ref().filter(|_| depth0 <= DEPTH) else {
+        return refused();
+    };
+    // The levels it closes that its kinds hold (all but where it closes past the root, which the walk refuses).
+    let known = anti.min(k.len() - 1).min(depth0);
+    let inner = k[k.len() - 1];
+    let st = if start == 0 {
+        0
+    } else if inner == ROOT {
+        return refused();
     } else {
-        let (s, t) = (touch.last_mut().expect("the frame `a` is in"), b.touch[n]);
-        s.kids += t.kids;
-        if let Some(l) = t.last {
-            s.last = Some(at(l));
-        }
-        touch.extend(b.touch[n + 1..].iter().map(|t| Touch { kids: t.kids, last: t.last.map(at) }));
+        CYCLE[inner as usize]
+    };
+    let mut ret = std::boxed::Box::new([0u8; DEPTH]);
+    for j in 0..known {
+        ret[depth0 - 1 - j] = CONT[k[k.len() - 2 - j] as usize];
     }
-    pf.extend(b.pf.iter().map(|f| Frame { node: at(f.node), last: if f.last == NONE { NONE } else { at(f.last) }, ..*f }));
-    let last_start = b.last_start.or(a.last_start);
-    Some(Lane { st0: a.st0, kc, p, exit: b.exit, nodes: a.nodes + b.nodes, end: b.end, fkc: a.fkc + b.fkc - fm, touch, pf, last_start, refuse })
-}
-
-/// Two ranges' summaries, one after the other. Associative, so a prefix scan composes them in any tree.
-pub fn compose(a: &Summary, b: &Summary) -> Summary {
-    let mut lanes: Vec<Lane> = Vec::new();
-    for la in &a.lanes {
-        if la.end.is_none() {
-            debug_assert_eq!(la.exit.i, b.start, "a lane leaves at the next range's first record");
-        }
-        let next: Vec<Lane> = if la.end.is_some() { vec![la.clone()] } else { b.lanes.iter().filter_map(|lb| then(la, lb)).collect() };
-        for l in next {
-            if !lanes.contains(&l) {
-                lanes.push(l);
-            }
-        }
+    let mut sh = Shadow { toks, ..Shadow::default() };
+    // SAFETY: the records and the padded source are tier 1's, as the serial walk's.
+    match unsafe { run_range(src, lx, &mut sh, Entry { i: start, e: 0, depth: depth0, st }, &mut *ret, depth0 - known, stop) } {
+        Stop::At(x) => Span::of(x, None, sh),
+        Stop::Done(r) => Span::of(Entry::default(), Some(r), sh),
+        // A level its word does not close: the walk closes a level only at a closer.
+        Stop::Read(_) => refused(),
     }
-    Summary { lanes: fold(lanes), start: a.start, end: b.end }
 }
 
 /// The walk's state at a range's start: its place, the levels' places, the nodes before it; or the file's end. Its
-/// levels and frames are the innermost ones, as many as the range reads (`keep`): the places of the levels below
-/// `entry.depth`, the frames of the open nodes inside, outermost first.
+/// levels and frames are the innermost ones, as many as the range reads: the places of the levels below
+/// `entry.depth` it closes, the frames of the open nodes it closes and the one it then writes into, outermost first.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct At {
     pub entry: Entry,
@@ -1494,109 +1517,59 @@ impl At {
     }
 }
 
-/// The state range `s` leaves after state `a` at its start: the lane of `a`'s place whose closed levels are `a`'s.
-/// None where no lane meets it.
-pub fn apply(s: &Summary, a: &At) -> Option<At> {
+/// The frames' state range `s` leaves after state `a` (nodes, frames, last start, end; its place `s`'s exit): its
+/// anti-frames cancel `a`'s innermost frames, its opens follow. None where `a` holds fewer frames than it closes.
+fn at_after(a: &Option<At>, s: &Span) -> Option<At> {
+    let a = a.as_ref()?;
     if a.end.is_some() {
         return Some(a.clone());
     }
-    let d = a.ret.len();
-    let mut found = None;
-    'lanes: for l in s.lanes.iter().filter(|l| l.st0 == a.entry.st && l.kc.len() <= d) {
-        let mut r = 0;
-        for j in 0..l.kc.len() {
-            let place = a.ret[d - 1 - j];
-            while r < l.refuse.len() && l.refuse[r].level as usize == j {
-                let x = &l.refuse[r];
-                if x.places >> place & 1 != 0 {
-                    return Some(At { entry: Entry::default(), ret: Vec::new(), nodes: a.nodes + x.nodes, end: Some(Err(x.err)), frames: Vec::new(), prev_start: x.start().unwrap_or(a.prev_start) });
-                }
-                r += 1;
-            }
-            if l.kc[j] != place {
-                continue 'lanes;
-            }
-        }
-        found = Some(l);
-        break;
-    }
-    let l = found?;
-    let mut ret = a.ret[..d - l.kc.len()].to_vec();
-    ret.extend_from_slice(&l.p);
     let at = |x: u32| x + a.nodes;
-    let nf = a.frames.len().checked_sub(l.fkc)?;
+    let nf = a.frames.len().checked_sub(s.fkc)?;
     let mut frames = a.frames[..nf].to_vec();
     if let Some(f) = frames.last_mut() {
-        let t = l.touch[l.fkc];
+        let t = s.touch[s.fkc];
         f.kids += t.kids;
         if let Some(x) = t.last {
             f.last = at(x);
         }
     }
-    frames.extend(l.pf.iter().map(|f| Frame { node: at(f.node), last: if f.last == NONE { NONE } else { at(f.last) }, ..*f }));
-    Some(At { entry: l.exit, ret, nodes: a.nodes + l.nodes, end: l.end, frames, prev_start: l.last_start.unwrap_or(a.prev_start) })
+    frames.extend(s.pf.iter().map(|f| Frame { node: at(f.node), last: if f.last == NONE { NONE } else { at(f.last) }, ..*f }));
+    Some(At { entry: s.exit, ret: Vec::new(), nodes: a.nodes + s.nodes, end: s.end, frames, prev_start: s.last_start.unwrap_or(a.prev_start) })
 }
 
-/// Pass 3's up-sweep: the summaries' tree, level 0 the chunks', each next level's node the composition of two of
-/// the level below (the last alone where they are odd), each level's nodes in `order`'s order. Each level holds as
-/// much as the records it spans, so the tree holds that times its height: never a prefix of every chunk.
-pub fn tree(sums: &[Summary], order: Order<'_>) -> Vec<Vec<Summary>> {
-    let mut levels: Vec<Vec<Summary>> = vec![sums.to_vec()];
-    while levels[levels.len() - 1].len() > 1 {
-        let low = &levels[levels.len() - 1];
-        let up = each(low.len().div_ceil(2), order, |i| if 2 * i + 1 < low.len() { compose(&low[2 * i], &low[2 * i + 1]) } else { low[2 * i].clone() });
-        levels.push(up);
+/// State `a` as span `s` reads it: the frames it closes and the one it then writes into.
+fn at_keep(a: Option<At>, s: &Span) -> Option<At> {
+    let mut a = a?;
+    if a.end.is_none() {
+        let cut = a.frames.len().saturating_sub(s.fkc + 1);
+        a.frames.drain(..cut);
     }
-    levels
+    Some(a)
 }
 
-/// Pass 3: each chunk's state at its start, then the file's end, from the chunks' summaries, by Blelloch's
-/// work-efficient scan: the summaries' tree up (`tree`), then the states down it, the root's the file's start, a
-/// node's left child's its own and its right child's its state through its left child's summary (`apply`). Each
-/// level's nodes in `order`'s order. No prefix of the chunks is made as a summary, only as the state it leaves.
-pub fn entries(sums: &[Summary], order: Order<'_>) -> Vec<Option<At>> {
-    if sums.is_empty() {
-        return vec![Some(At::start())];
-    }
-    let levels = tree(sums, order);
-    let top = levels.len() - 1;
-    let end = apply(&levels[top][0], &At::start());
-    let mut states: Vec<Option<At>> = vec![Some(At::start())];
-    for r in (0..top).rev() {
-        let (low, up) = (&levels[r], &states);
-        states = each(low.len(), order, |c| {
-            let parent = up[c / 2].as_ref()?;
-            let at = if c % 2 == 0 { parent.clone() } else { apply(&low[c - 1], parent)? };
-            Some(keep(at, &low[c]))
-        });
-    }
-    states.push(end);
-    states
-}
-
-/// State `a` as range `s` reads it: its innermost levels' places, as many as a lane of `s` closes below its start, and
-/// its innermost frames, as many as a lane closes and the one it then writes into. A node's children read no more of
-/// its state than it does (a left child's lanes close no more than its parent's; a right child's levels are the left
-/// child's, or the parent's), so each state holds what its range reads, not the whole nest.
-fn keep(mut a: At, s: &Summary) -> At {
-    if a.end.is_some() {
-        return a;
-    }
-    let levels = s.lanes.iter().map(|l| l.kc.len()).max().unwrap_or(0);
-    let frames = s.lanes.iter().map(|l| l.fkc + 1).max().unwrap_or(0);
-    let cut = a.ret.len().saturating_sub(levels);
-    a.ret.drain(..cut);
-    let cut = a.frames.len().saturating_sub(frames);
-    a.frames.drain(..cut);
-    a
-}
-
-/// Every chunk's summary (pass 1), of chunks of about `size` records, in `order`, its tokens read by the token pass
-/// (`tokens`).
-pub fn summaries(src: &[u8], lx: &crate::tier1::Lexed, toks: &[Token], size: usize, order: Order<'_>) -> Vec<Summary> {
+/// Passes 1 and 3: each chunk's state at its start, then the file's end. The bracket scan gives each chunk's open
+/// levels' kinds, so its place and the levels it closes; one walk a chunk from there gives its span (pass 1); the
+/// frame scan down the spans' tree gives each chunk's nodes before it, its frames and the start before it. Every
+/// pass's chunks, and each level of its scans, in `order`'s order.
+pub fn entries(src: &[u8], lx: &crate::tier1::Lexed, toks: &[Token], size: usize, order: Order<'_>) -> Vec<Option<At>> {
     let chunks = chunk_starts(src, lx, size, order);
     let ds = depths(src, lx, &chunks, order);
-    each(chunks.len(), order, |c| lanes(src, lx, toks, chunks[c], chunks.get(c + 1).copied().unwrap_or(lx.count + 1), ds[c]))
+    let (words, ks) = kinds(src, lx, &chunks, order);
+    let n = chunks.len();
+    let spans = each(n, order, |c| span(src, lx, toks, chunks[c], chunks.get(c + 1).copied().unwrap_or(lx.count + 1), ds[c], &ks[c], words[c].anti.len()));
+    let levels = tree_of(&spans, order, Span::then);
+    let mut ats = down(&levels, Some(At::start()), order, at_after, at_keep);
+    // Each chunk's levels' places, those it closes, from its kinds.
+    for c in order(n) {
+        if let (Some(a), Some(k)) = (ats[c].as_mut(), ks[c].as_ref()) {
+            let known = words[c].anti.len().min(k.len() - 1).min(a.entry.depth);
+            if a.end.is_none() {
+                a.ret = (0..known).rev().map(|j| CONT[k[k.len() - 2 - j] as usize]).collect();
+            }
+        }
+    }
+    ats
 }
 
 /// The serial walk's state at each chunk's start, walked chunk after chunk from the file's, then at the file's end
@@ -1613,7 +1586,7 @@ pub fn serial_entries(src: &[u8], lx: &crate::tier1::Lexed, size: usize) -> Vec<
         }
         let stop = chunks.get(c + 1).copied().unwrap_or(lx.count + 1);
         let mut sh = Shadow { n: at.nodes, base: at.frames.clone(), ..Shadow::default() };
-        // SAFETY: as `lanes`'.
+        // SAFETY: as `span`'s.
         let stopped = unsafe { run_range(src, lx, &mut sh, at.entry, &mut *ret, 0, stop) };
         let mut frames = sh.base[..sh.base.len() - sh.closed].to_vec();
         frames.extend_from_slice(&sh.own);
@@ -1662,8 +1635,7 @@ pub fn parse_middle(src: &[u8], lx: &crate::tier1::Lexed, types: &[Vec<u32>], w:
     }
     let chunks = chunk_starts(src, lx, size, order);
     let toks = tokens(src, lx, types, order);
-    let sums = summaries(src, lx, &toks, size, order);
-    let ats = entries(&sums, order);
+    let ats = entries(src, lx, &toks, size, order);
     let last = ats.last().cloned().flatten().ok_or(0u32)?;
     match last.end {
         Some(Ok(())) => {}

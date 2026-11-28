@@ -190,8 +190,9 @@ struct T2WArgs {
 }
 unsafe impl Pod for T2WArgs {}
 
-/// Tier 2 from the middle on the device, passes 1, 3 and 2 there: each chunk's summary (`json_t2_lanes`), their tree
-/// and each chunk's state (`json_t2_up`, `_root`, `_down`), the tape's blocks made (`json_t2_blocks`), each chunk's
+/// Tier 2 from the middle on the device, passes 1, 3 and 2 there: the bracket scan (`json_t2_words`, then the words'
+/// tree up and the kinds down it), each chunk's one walk (`json_t2_spans`), the spans' scan and each chunk's state
+/// (`json_t2_up`, `_root`, `_down`, `_levels`), the tape's blocks made (`json_t2_blocks`), each chunk's
 /// nodes written from its state by a cursor from the middle (`<ukl/writer_mid.h>`) on the writer's region, every chunk
 /// at once, counting its side-list entries then writing them (`json_t2_write`), and the tape ended (`json_t2_ended`).
 /// The region taken back and finished is the serial walk's tape, byte for byte. The host reads nothing between the
@@ -224,8 +225,8 @@ fn json_tier2_writes_from_the_middle_as_its_rust() {
         for size in [1usize, 3, 16] {
             let chunks = middle::chunk_starts(&buf, &lx, size, &middle::in_order);
             let nc = chunks.len();
-            let run = Pass1::run(&q, p, &buf, &lx, &toks, size, nc);
-            let sb = run.pass3(&q, p, nc);
+            let run = Mid::run(&q, p, &buf, &lx, &toks, size);
+            let sb = &run.ats;
             // The writer's room for the most nodes a file of its records and bytes can have.
             let most = 1 + lx.count + lx.len;
             let mut m = writer(&f);
@@ -237,8 +238,8 @@ fn json_tier2_writes_from_the_middle_as_its_rust() {
             let (sb_, stb, tb, cb) = (buffer_of(&buf).unwrap(), buffer_of(&lx.starts).unwrap(), buffer_of(&region).unwrap(), buffer_of(&cw).unwrap());
             let room = lx.count + 1 + nc;
             let (roomb, rb, ob) = (alloc::<u32>(room * 25).unwrap(), alloc::<u8>(nc * DEPTH).unwrap(), alloc::<u32>(nc * 2).unwrap());
-            let bargs = T2BArgs { most: blocks as u32, end: run.nodes as u32 };
-            launch(&q, p.function("json_t2_blocks").unwrap()).value("args", &bargs).buffer("t", &tb).buffer("pool", &run.pool).buffer("states", &sb).run(&[blocks as u64], &[1]).unwrap();
+            let bargs = T2BArgs { most: blocks as u32, end: nc as u32 };
+            launch(&q, p.function("json_t2_blocks").unwrap()).value("args", &bargs).buffer("t", &tb).buffer("pool", &run.pool).buffer("states", sb).run(&[blocks as u64], &[1]).unwrap();
             for write in [0u32, 1] {
                 let args = T2WArgs { chunks: nc as u32, count: lx.count as u32, len: n as u32, write };
                 launch(&q, p.function("json_t2_write").unwrap())
@@ -248,14 +249,14 @@ fn json_tier2_writes_from_the_middle_as_its_rust() {
                     .buffer("t", &tb)
                     .buffer("chunks", &cb)
                     .buffer("pool", &run.pool)
-                    .buffer("states", &sb)
+                    .buffer("states", sb)
                     .buffer("f", &roomb)
                     .buffer("rets", &rb)
                     .buffer("out", &ob)
                     .run(&[nc as u64], &[1])
                     .unwrap();
             }
-            launch(&q, p.function("json_t2_ended").unwrap()).value("args", &bargs).buffer("t", &tb).buffer("pool", &run.pool).buffer("states", &sb).run(&[blocks as u64], &[1]).unwrap();
+            launch(&q, p.function("json_t2_ended").unwrap()).value("args", &bargs).buffer("t", &tb).buffer("pool", &run.pool).buffer("states", sb).run(&[blocks as u64], &[1]).unwrap();
             q.flush().await_().unwrap();
             let out: Vec<u32> = read(&ob, nc * 2);
             for c in 0..nc {
@@ -294,7 +295,7 @@ struct T2LArgs {
 unsafe impl Pod for T2LArgs {}
 
 /// Nested JSON for pass 1: levels closed far below a chunk's entry, objects in arrays in objects, and closers that
-/// do not match their openers (a refusal in a lane).
+/// do not match their openers (a broken word).
 fn nested() -> Vec<Vec<u8>> {
     let mut v = Vec::new();
     let mut f = String::new();
@@ -313,144 +314,38 @@ fn nested() -> Vec<Vec<u8>> {
     v
 }
 
-/// Tier 2's pass 1 as UKL (`json_t2_lanes`) on the device: each chunk's summary, its lanes from each place its first
-/// record can be at, forked at each level it closes below its entry and folded, is Rust's (`summaries`) lane for lane,
-/// every chunk at once, the token pass's answers read.
-#[test]
-fn json_tier2_lanes_are_its_rust() {
-    use rerail_json_aot::middle;
-    let Some(shared) = crate::shared::get() else {
-        eprintln!("no device: tier 2's pass 1 as UKL did not run");
-        return;
-    };
-    let mut q = crate::device::ComputeQueue::new(&shared.queue);
-    let p = program("json_tier2.uglykl", rerail_json_aot::TIER2_UKL).unwrap_or_else(|e| panic!("{}: {e}", crate::device::backend()));
-    let (mut runs, mut chunks_run, mut lanes, mut refusals) = (0usize, 0usize, 0usize, 0usize);
-    for (k, f) in files().into_iter().chain(nested()).enumerate() {
-        let buf = rerail_json_aot::padded(&f);
-        let n = f.len();
-        let lx = rerail_json_aot::lex(&buf, n);
-        if lx.refused || lx.count == 0 {
-            continue;
-        }
-        let types = rerail_json_aot::lex_typed(&buf, n, 16).types;
-        let toks = middle::tokens(&buf, &lx, &types, &middle::in_order);
-        for size in [1usize, 3, 16] {
-            let want = middle::summaries(&buf, &lx, &toks, size, &middle::in_order);
-            let nc = want.len();
-            let run = Pass1::run(&q, p, &buf, &lx, &toks, size, nc);
-            let pool_words = run.pool_words;
-            let (mb, ob) = (&run.pool, &run.tree);
-            q.flush().await_().unwrap();
-            let m: Vec<u32> = read(mb, pool_words);
-            let s: Vec<u32> = read(ob, nc * (2 + LANES));
-            for c in 0..nc {
-                let h = &s[c * (2 + LANES)..(c + 1) * (2 + LANES)];
-                assert_eq!(h[0], 0, "{}: file {k}, chunks of {size}: chunk {c}'s status", crate::device::backend());
-                let have: Vec<middle::Lane> = h[2..2 + h[1] as usize].iter().map(|&at| lane_at(&m, at as usize)).collect();
-                assert_eq!(have, want[c].lanes, "{}: file {k}, chunks of {size}: chunk {c}'s lanes", crate::device::backend());
-                lanes += have.len();
-                refusals += have.iter().map(|l| l.refuse.len()).sum::<usize>();
-            }
-            runs += 1;
-            chunks_run += nc;
-        }
-    }
-    eprintln!("{}: tier 2's pass 1 as UKL, {runs} files' runs in chunks of 1, 3 and 16 records ({chunks_run} chunks, {lanes} lanes, {refusals} refusals): each chunk's summary Rust's", crate::device::backend());
-}
-
-/// The lane at word `at` of a pass 1 pool (`<ukl/lanes_mid.h>`'s layout).
-fn lane_at(m: &[u32], at: usize) -> rerail_json_aot::middle::Lane {
-    use rerail_json_aot::middle::{Entry, Frame, Lane, Refusal, Touch};
-    const NONE: u32 = u32::MAX;
-    let h = &m[at..at + 17];
-    let (nkc, np, nt, npf, nr) = (h[1] as usize, h[2] as usize, h[11] as usize, h[12] as usize, h[16] as usize);
-    let mut w = at + 17;
-    let mut take = |n: usize| {
-        let v = m[w..w + n].to_vec();
-        w += n;
-        v
-    };
-    let kc = take(nkc).iter().map(|&x| x as u8).collect();
-    let p = take(np).iter().map(|&x| x as u8).collect();
-    let touch = take(2 * nt).chunks(2).map(|t| Touch { kids: t[0], last: (t[1] != NONE).then_some(t[1]) }).collect();
-    let pf = take(5 * npf).chunks(5).map(|f| Frame { node: f[0], kids: f[1], last: f[2], start: u64::from(f[3]) | (u64::from(f[4]) << 32) }).collect();
-    let refuse = take(5 * nr).chunks(5).map(|r| Refusal { level: r[0], places: r[1], err: r[2], nodes: r[3], last_start: r[4] }).collect();
-    Lane {
-        st0: h[0] as u8,
-        kc,
-        p,
-        exit: Entry { i: h[3] as usize, e: h[4] as usize, depth: h[5] as usize, st: h[6] as u8 },
-        nodes: h[7],
-        end: match h[8] {
-            0 => None,
-            1 => Some(Ok(())),
-            _ => Some(Err(h[9])),
-        },
-        fkc: h[10] as usize,
-        touch,
-        pf,
-        last_start: (h[15] != 0).then(|| u64::from(h[13]) | (u64::from(h[14]) << 32)),
-        refuse,
-    }
-}
-
-const LANES: usize = 16;
-
-/// Pass 1 run on the device for one file in chunks of `size` records: its pool, and the tree's headers with room for
-/// every level's (the chunks' first).
-struct Pass1 {
+/// Tier 2 from the middle on the device for one file in chunks of `size` records: the bracket scan, each chunk's one
+/// walk, and the spans' scan, a level of each tree a launch. Its pool, each scan's tree and states (a word a node,
+/// the chunks' first; the states then the file's end), and each chunk's state with its levels (`ats`).
+struct Mid {
     pool: crate::device::Buffer,
-    tree: crate::device::Buffer,
     pool_words: usize,
-    nodes: usize,
+    nc: usize,
+    words: crate::device::Buffer,
+    kinds: crate::device::Buffer,
+    spans: crate::device::Buffer,
+    ats: crate::device::Buffer,
+    launches: usize,
 }
 
-impl Pass1 {
-    fn run(q: &crate::device::ComputeQueue, p: &crate::kernels::Program, buf: &[u8], lx: &rerail_json_aot::Lexed, toks: &[rerail_json_aot::middle::Token], size: usize, nc: usize) -> Pass1 {
+impl Mid {
+    fn run(q: &crate::device::ComputeQueue, p: &crate::kernels::Program, buf: &[u8], lx: &rerail_json_aot::Lexed, toks: &[rerail_json_aot::middle::Token], size: usize) -> Mid {
         use rerail_json_aot::middle;
         const DEPTH: usize = 1024;
-        const RAW: usize = 64;
         let n = lx.len;
         let chunks = middle::chunk_starts(buf, lx, size, &middle::in_order);
         let depths = middle::depths(buf, lx, &chunks, &middle::in_order);
-        assert_eq!(chunks.len(), nc);
+        let nc = chunks.len();
         let tw: Vec<u32> = toks.iter().flat_map(|t| [t.end, t.kind, t.nodes, t.last, t.err]).chain([0]).collect();
         let room = lx.count + 1 + nc;
         let cw: Vec<u32> = chunks.iter().map(|&x| x as u32).collect();
         let dw: Vec<u32> = depths.iter().map(|&x| x as u32).collect();
-        let pool_words = 256 * (lx.count + 1) + 8192 * nc;
+        let pool_words = 64 * (lx.count + 1) + 64 * nc + 4096;
         let mut pool = vec![0u32; pool_words];
         pool[0] = 4;
         pool[1] = pool_words as u32;
-        let nodes = levels(nc).iter().sum::<usize>();
-        let (sb, stb, tb, cb, db) = (buffer_of(buf).unwrap(), buffer_of(&lx.starts).unwrap(), buffer_of(&tw).unwrap(), buffer_of(&cw).unwrap(), buffer_of(&dw).unwrap());
-        let (rb, fb, thb, pb) = (alloc::<u8>(nc * DEPTH).unwrap(), alloc::<u32>(room * 10).unwrap(), alloc::<u32>(room * 2).unwrap(), alloc::<u32>(room * 2).unwrap());
-        let (wb, mb, ob) = (alloc::<u32>(nc * RAW * 2).unwrap(), buffer_of(&pool).unwrap(), alloc::<u32>(nodes * (2 + LANES)).unwrap());
-        let args = T2LArgs { chunks: nc as u32, count: lx.count as u32, len: n as u32, ntoks: toks.len() as u32 };
-        launch(q, p.function("json_t2_lanes").unwrap())
-            .value("args", &args)
-            .buffer("src", &sb)
-            .buffer("starts", &stb)
-            .buffer("toks", &tb)
-            .buffer("chunks", &cb)
-            .buffer("depths", &db)
-            .buffer("rets", &rb)
-            .buffer("f", &fb)
-            .buffer("touch", &thb)
-            .buffer("path", &pb)
-            .buffer("raw", &wb)
-            .buffer("pool", &mb)
-            .buffer("sums", &ob)
-            .run(&[nc as u64], &[1])
-            .unwrap();
-        Pass1 { pool: mb, tree: ob, pool_words, nodes }
-    }
-
-    /// Pass 3 on this run's summaries: the tree up, a level a launch, the root, then the states down it. The states'
-    /// buffer: a word a node of the tree (the chunks' first), then the file's end.
-    fn pass3(&self, q: &crate::device::ComputeQueue, p: &crate::kernels::Program, nc: usize) -> crate::device::Buffer {
         let lv = levels(nc);
+        let nodes = lv.iter().sum::<usize>();
         let bases: Vec<usize> = lv
             .iter()
             .scan(0, |a, &x| {
@@ -459,24 +354,55 @@ impl Pass1 {
                 Some(b)
             })
             .collect();
-        let raw = alloc::<u32>(nc.div_ceil(2).max(1) * 2 * LANES * LANES).unwrap();
-        let sb = alloc::<u32>(self.nodes + 1).unwrap();
-        let top = lv.len() - 1;
-        for r in 0..top {
-            let args = T2SArgs { n: lv[r] as u32, low: bases[r] as u32, up: bases[r + 1] as u32, end: 0 };
-            launch(q, p.function("json_t2_up").unwrap()).value("args", &args).buffer("pool", &self.pool).buffer("tree", &self.tree).buffer("raw", &raw).run(&[lv[r + 1] as u64], &[1]).unwrap();
-        }
-        let args = T2SArgs { n: 1, low: 0, up: bases[top] as u32, end: self.nodes as u32 };
-        launch(q, p.function("json_t2_root").unwrap()).value("args", &args).buffer("pool", &self.pool).buffer("tree", &self.tree).buffer("states", &sb).run(&[1], &[1]).unwrap();
-        for r in (0..top).rev() {
-            let args = T2SArgs { n: lv[r] as u32, low: bases[r] as u32, up: bases[r + 1] as u32, end: 0 };
-            launch(q, p.function("json_t2_down").unwrap()).value("args", &args).buffer("pool", &self.pool).buffer("tree", &self.tree).buffer("states", &sb).run(&[lv[r] as u64], &[1]).unwrap();
-        }
-        sb
+        let (sb, stb, tb, cb, db) = (buffer_of(buf).unwrap(), buffer_of(&lx.starts).unwrap(), buffer_of(&tw).unwrap(), buffer_of(&cw).unwrap(), buffer_of(&dw).unwrap());
+        let (rb, fb, thb, mb) = (alloc::<u8>(nc * DEPTH).unwrap(), alloc::<u32>(room * 10).unwrap(), alloc::<u32>(room * 2).unwrap(), buffer_of(&pool).unwrap());
+        let (wt, ks, st, ss, ats) = (alloc::<u32>(nodes).unwrap(), alloc::<u32>(nodes + 1).unwrap(), alloc::<u32>(nodes).unwrap(), alloc::<u32>(nodes + 1).unwrap(), alloc::<u32>(nc + 1).unwrap());
+        let args = T2LArgs { chunks: nc as u32, count: lx.count as u32, len: n as u32, ntoks: toks.len() as u32 };
+        let mut launches = 0;
+        launch(q, p.function("json_t2_words").unwrap()).value("args", &args).buffer("src", &sb).buffer("starts", &stb).buffer("chunks", &cb).buffer("pool", &mb).buffer("words", &wt).run(&[nc as u64], &[1]).unwrap();
+        launches += 1;
+        // A scan: its tree up, its root, its states down.
+        let scan = |op: u32, tree: &crate::device::Buffer, states: &crate::device::Buffer| {
+            let top = lv.len() - 1;
+            for r in 0..top {
+                let a = T2SArgs { n: lv[r] as u32, low: bases[r] as u32, up: bases[r + 1] as u32, end: 0, op };
+                launch(q, p.function("json_t2_up").unwrap()).value("args", &a).buffer("pool", &mb).buffer("tree", tree).run(&[lv[r + 1] as u64], &[1]).unwrap();
+            }
+            let a = T2SArgs { n: 1, low: 0, up: bases[top] as u32, end: nodes as u32, op };
+            launch(q, p.function("json_t2_root").unwrap()).value("args", &a).buffer("pool", &mb).buffer("tree", tree).buffer("states", states).run(&[1], &[1]).unwrap();
+            for r in (0..top).rev() {
+                let a = T2SArgs { n: lv[r] as u32, low: bases[r] as u32, up: bases[r + 1] as u32, end: 0, op };
+                launch(q, p.function("json_t2_down").unwrap()).value("args", &a).buffer("pool", &mb).buffer("tree", tree).buffer("states", states).run(&[lv[r] as u64], &[1]).unwrap();
+            }
+            2 * top + 1
+        };
+        launches += scan(0, &wt, &ks);
+        launch(q, p.function("json_t2_spans").unwrap())
+            .value("args", &args)
+            .buffer("src", &sb)
+            .buffer("starts", &stb)
+            .buffer("toks", &tb)
+            .buffer("chunks", &cb)
+            .buffer("depths", &db)
+            .buffer("words", &wt)
+            .buffer("kinds", &ks)
+            .buffer("rets", &rb)
+            .buffer("f", &fb)
+            .buffer("touch", &thb)
+            .buffer("pool", &mb)
+            .buffer("spans", &st)
+            .run(&[nc as u64], &[1])
+            .unwrap();
+        launches += 1;
+        launches += scan(1, &st, &ss);
+        let a = T2SArgs { n: nc as u32, low: 0, up: 0, end: nodes as u32, op: 0 };
+        launch(q, p.function("json_t2_levels").unwrap()).value("args", &a).buffer("pool", &mb).buffer("words", &wt).buffer("kinds", &ks).buffer("states", &ss).buffer("ats", &ats).run(&[nc as u64 + 1], &[1]).unwrap();
+        launches += 1;
+        Mid { pool: mb, pool_words, nc, words: wt, kinds: ks, spans: st, ats, launches }
     }
 }
 
-/// The scan tree's level sizes over `n` summaries: the chunks', then each level half the one below, to one.
+/// The scan tree's level sizes over `n` values: the chunks', then each level half the one below, to one.
 fn levels(n: usize) -> Vec<usize> {
     let mut v = vec![n.max(1)];
     while v[v.len() - 1] > 1 {
@@ -492,10 +418,52 @@ struct T2SArgs {
     low: u32,
     up: u32,
     end: u32,
+    op: u32,
 }
 unsafe impl Pod for T2SArgs {}
 
-/// The state at word `at` of a pass 3 pool (`<ukl/lanes_mid.h>`'s `At`).
+/// A value of a pool (`<ukl/middle.h>`'s records), `None` for `UKL_MID_NONE`; past the pool's room, a failure.
+fn offset(x: u32, what: &str) -> Option<usize> {
+    assert_ne!(x, u32::MAX - 1, "{}: {what} past the pool's room", crate::device::backend());
+    (x != u32::MAX).then_some(x as usize)
+}
+
+/// The word at `at` of a pool.
+fn word_at(m: &[u32], at: usize) -> rerail_json_aot::middle::Word {
+    let (na, no) = (m[at] as usize, m[at + 1] as usize);
+    rerail_json_aot::middle::Word { anti: m[at + 3..at + 3 + na].iter().map(|&x| x as u8).collect(), opens: m[at + 3 + na..at + 3 + na + no].iter().map(|&x| x as u8).collect(), broken: m[at + 2] != 0 }
+}
+
+/// The kinds at `at` of a pool.
+fn kinds_at(m: &[u32], at: usize) -> Vec<u8> {
+    m[at + 1..at + 1 + m[at] as usize].iter().map(|&x| x as u8).collect()
+}
+
+/// The span at `at` of a pool.
+fn span_at(m: &[u32], at: usize) -> rerail_json_aot::middle::Span {
+    use rerail_json_aot::middle::{Entry, Frame, Span, Touch};
+    let h = &m[at..at + 13];
+    let (nt, npf) = (h[8] as usize, h[9] as usize);
+    let t0 = at + 13;
+    let touch = m[t0..t0 + 2 * nt].chunks(2).map(|t| Touch { kids: t[0], last: (t[1] != u32::MAX).then_some(t[1]) }).collect();
+    let f0 = t0 + 2 * nt;
+    let pf = m[f0..f0 + 5 * npf].chunks(5).map(|f| Frame { node: f[0], kids: f[1], last: f[2], start: u64::from(f[3]) | (u64::from(f[4]) << 32) }).collect();
+    Span {
+        exit: Entry { i: h[0] as usize, e: h[1] as usize, depth: h[2] as usize, st: h[3] as u8 },
+        nodes: h[4],
+        end: match h[5] {
+            0 => None,
+            1 => Some(Ok(())),
+            _ => Some(Err(h[6])),
+        },
+        fkc: h[7] as usize,
+        touch,
+        pf,
+        last_start: (h[12] != 0).then(|| u64::from(h[10]) | (u64::from(h[11]) << 32)),
+    }
+}
+
+/// The state at `at` of a pool.
 fn at_at(m: &[u32], at: usize) -> rerail_json_aot::middle::At {
     use rerail_json_aot::middle::{At, Entry, Frame};
     let h = &m[at..at + 11];
@@ -516,9 +484,61 @@ fn at_at(m: &[u32], at: usize) -> rerail_json_aot::middle::At {
     }
 }
 
-/// Tier 2's pass 3 as UKL (`json_t2_up`, `json_t2_root`, `json_t2_down`) on the device, on pass 1's summaries there:
-/// the summaries' tree up, a level a launch, each node the composition of two below; then the states down it, each
-/// chunk's state at its start and the file's end Rust's (`entries`), state for state.
+/// Tier 2's bracket scan and pass 1 as UKL on the device (`json_t2_words`, the words' tree up and the kinds down it,
+/// `json_t2_spans`): each chunk's word, its open levels' kinds at its first record, and its one walk's span are Rust's
+/// (`Word::of`, `kinds`, `span`), every chunk at once, the token pass's answers read.
+#[test]
+fn json_tier2_spans_are_its_rust() {
+    use rerail_json_aot::middle;
+    let Some(shared) = crate::shared::get() else {
+        eprintln!("no device: tier 2's pass 1 as UKL did not run");
+        return;
+    };
+    let mut q = crate::device::ComputeQueue::new(&shared.queue);
+    let p = program("json_tier2.uglykl", rerail_json_aot::TIER2_UKL).unwrap_or_else(|e| panic!("{}: {e}", crate::device::backend()));
+    let (mut runs, mut chunks_run, mut anti, mut broken) = (0usize, 0usize, 0usize, 0usize);
+    for (k, f) in files().into_iter().chain(nested()).enumerate() {
+        let buf = rerail_json_aot::padded(&f);
+        let n = f.len();
+        let lx = rerail_json_aot::lex(&buf, n);
+        if lx.refused || lx.count == 0 {
+            continue;
+        }
+        let types = rerail_json_aot::lex_typed(&buf, n, 16).types;
+        let toks = middle::tokens(&buf, &lx, &types, &middle::in_order);
+        for size in [1usize, 3, 16] {
+            let chunks = middle::chunk_starts(&buf, &lx, size, &middle::in_order);
+            let ds = middle::depths(&buf, &lx, &chunks, &middle::in_order);
+            let (words, kinds) = middle::kinds(&buf, &lx, &chunks, &middle::in_order);
+            let run = Mid::run(&q, p, &buf, &lx, &toks, size);
+            q.flush().await_().unwrap();
+            let nc = run.nc;
+            assert_eq!(nc, chunks.len());
+            let m: Vec<u32> = read(&run.pool, run.pool_words);
+            assert!((m[0] as usize) <= run.pool_words, "{}: file {k}, chunks of {size}: the pool's room passed", crate::device::backend());
+            let (wt, ks, st): (Vec<u32>, Vec<u32>, Vec<u32>) = (read(&run.words, nc), read(&run.kinds, nc), read(&run.spans, nc));
+            for c in 0..nc {
+                let w = word_at(&m, offset(wt[c], "a word").expect("a word"));
+                assert_eq!(w, words[c], "{}: file {k}, chunks of {size}: chunk {c}'s word", crate::device::backend());
+                let kd = offset(ks[c], "kinds").map(|x| kinds_at(&m, x));
+                assert_eq!(kd, kinds[c], "{}: file {k}, chunks of {size}: chunk {c}'s kinds", crate::device::backend());
+                let stop = chunks.get(c + 1).copied().unwrap_or(lx.count + 1);
+                let want = middle::span(&buf, &lx, &toks, chunks[c], stop, ds[c], &kinds[c], words[c].anti.len());
+                let have = span_at(&m, offset(st[c], "a span").expect("a span"));
+                assert_eq!(have, want, "{}: file {k}, chunks of {size}: chunk {c}'s span", crate::device::backend());
+                anti += w.anti.len();
+                broken += usize::from(w.broken);
+            }
+            runs += 1;
+            chunks_run += nc;
+        }
+    }
+    eprintln!("{}: tier 2's bracket scan and pass 1 as UKL, {runs} files' runs in chunks of 1, 3 and 16 records ({chunks_run} chunks, {anti} anti-opens, {broken} broken words): each chunk's word, kinds and one walk's span Rust's", crate::device::backend());
+}
+
+/// Tier 2's pass 3 as UKL on the device, on the bracket scan and pass 1 there: the spans' tree up, a level a launch,
+/// and the states down it, each chunk's state at its start with its levels and the file's end Rust's (`entries`),
+/// state for state.
 #[test]
 fn json_tier2_entries_are_its_rust() {
     use rerail_json_aot::middle;
@@ -539,27 +559,20 @@ fn json_tier2_entries_are_its_rust() {
         let types = rerail_json_aot::lex_typed(&buf, n, 16).types;
         let toks = middle::tokens(&buf, &lx, &types, &middle::in_order);
         for size in [1usize, 3, 16] {
-            let sums = middle::summaries(&buf, &lx, &toks, size, &middle::in_order);
-            let want = middle::entries(&sums, &middle::in_order);
-            let nc = sums.len();
-            let run = Pass1::run(&q, p, &buf, &lx, &toks, size, nc);
-            let sb = run.pass3(&q, p, nc);
+            let want = middle::entries(&buf, &lx, &toks, size, &middle::in_order);
+            let run = Mid::run(&q, p, &buf, &lx, &toks, size);
             q.flush().await_().unwrap();
             let m: Vec<u32> = read(&run.pool, run.pool_words);
-            let st: Vec<u32> = read(&sb, run.nodes + 1);
             assert!((m[0] as usize) <= run.pool_words, "{}: file {k}, chunks of {size}: the pool's room passed", crate::device::backend());
-            let have: Vec<Option<middle::At>> = (0..nc).map(|c| st[c]).chain([st[run.nodes]]).map(|x| {
-                assert_ne!(x, u32::MAX - 1, "{}: file {k}, chunks of {size}: a state past its room", crate::device::backend());
-                (x != u32::MAX).then(|| at_at(&m, x as usize))
-            }).collect();
+            let have: Vec<Option<middle::At>> = read::<u32>(&run.ats, run.nc + 1).into_iter().map(|x| offset(x, "a state").map(|x| at_at(&m, x))).collect();
             assert_eq!(have.len(), want.len());
             for (c, (h, w)) in have.iter().zip(&want).enumerate() {
                 assert_eq!(h, w, "{}: file {k}, chunks of {size}: chunk {c}'s state", crate::device::backend());
             }
             runs += 1;
             states += have.len();
-            launches += 2 * (levels(nc).len() - 1) + 2;
+            launches += run.launches;
         }
     }
-    eprintln!("{}: tier 2's pass 3 as UKL, {runs} files' runs in chunks of 1, 3 and 16 records ({states} states, {launches} launches with pass 1's): each chunk's state and the file's end Rust's", crate::device::backend());
+    eprintln!("{}: tier 2's pass 3 as UKL, {runs} files' runs in chunks of 1, 3 and 16 records ({states} states, {launches} launches with the bracket scan and pass 1): each chunk's state and the file's end Rust's", crate::device::backend());
 }
