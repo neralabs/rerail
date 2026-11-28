@@ -8,7 +8,7 @@
 //! starts, whether the line has a token, whether it is a block's header, the indents open). A text B reads wrongly is
 //! read serially by variant A (`Chunked::NotB`), as `lex_with` reads it.
 
-use super::{B, Masks, RB, S1, Stack, Text, Walk, classes_in};
+use super::{B, Masks, RB, S1, Stack, Text, Walk, classes_in, classes_into};
 use rerail_simd::prelude::*;
 use super::{Variant, b_reads, lex_with};
 use crate::lex::{Extra, Lexed, Refusal, T, Tok};
@@ -140,6 +140,76 @@ pub fn lex_chunk(src: &[u8], from: usize, to: usize, e: &Entry, toks: &mut Vec<T
             Chunked::Lexed(Entry { s1, rb, depth, p, open, header, indents, done })
         }
     }
+}
+
+/// `lex_chunk` over the text's masks `b` (`text_masks`): the entry of the chunk at `to` without the strata's carries
+/// (`text_masks` checked those), its `s1`, `rb` and `depth` the defaults.
+fn lex_chunk_on(src: &[u8], b: &[B], to: usize, e: &Entry, toks: &mut Vec<Tok>, extras: &mut Vec<Extra>) -> Chunked {
+    let short = core::cell::Cell::new(false);
+    let w = walk(Masks { src, b, first: 0, short: &short }, e.p, e.open, e.header, e.indents.clone(), e.done, stop_of(src, to));
+    if short.get() {
+        return Chunked::Past;
+    }
+    match w {
+        (_, _, _, _, _, _, true) => Chunked::NotB,
+        (Err(r), ..) => Chunked::Refused(r),
+        (Ok((open, header)), mut t, mut x, p, indents, done, false) => {
+            toks.append(&mut t);
+            extras.append(&mut x);
+            Chunked::Lexed(Entry { s1: S1::default(), rb: RB::default(), depth: 0, p, open, header, indents, done })
+        }
+    }
+}
+
+/// The strata's masks of a text's blocks (and one past its end), each block's made once, by the chunk of `blocks`
+/// blocks it is in, from the chunk's entries `strata`: what the walk's passes read. A chunk's blocks run from its
+/// entries' block (`firsts`) to the next chunk's. A string's prefix in the block below a chunk's first is written
+/// after every chunk's strata 2 (that block is the chunk before's), and stratum 3 after that (it reads code). Each
+/// chunk's carries out are checked against the next chunk's entries. `Err(Ok(c))`: the strata do not read chunk
+/// `c`; `Err(Err(_))`: a chunk's carries out are not the next chunk's entries.
+fn text_masks(src: &[u8], blocks: usize, strata: &[(RB, i8)], order: Order<'_>) -> Result<Vec<B>, Result<usize, String>> {
+    let n = src.len().div_ceil(64);
+    let k = strata.len();
+    let span = |c: usize| (firsts(c * blocks).1.min(n), if c + 1 >= k { n } else { firsts((c + 1) * blocks).1.min(n) });
+    let mut t = Text { src, b: vec![B::default(); n + 1], first: 0 };
+    // Stratum 1, each chunk's from the carries into its first block.
+    for c in order(k) {
+        let (a, z) = span(c);
+        let mut s1 = s1_at(src, a);
+        classes_into(src, a, &mut s1, &mut t.b[a..z]);
+        if c + 1 < k && s1 != s1_at(src, z) {
+            return Err(Err(format!("chunk {c}'s stratum 1 out {s1:?}, chunk {}'s in {:?}", c + 1, s1_at(src, z))));
+        }
+    }
+    // Stratum 2, each chunk's from its entry.
+    let mut held = vec![(0u64, 0u64); k];
+    for c in order(k) {
+        let (a, z) = span(c);
+        let mut rb = strata[c].0;
+        if !t.regions_b_held(a, z, &mut rb, &mut held[c]) || (z == n && (rb.t0 != 0 || rb.s0 != 0)) {
+            return Err(Ok(c));
+        }
+        if c + 1 < k && rb != strata[c + 1].0 {
+            return Err(Err(format!("chunk {c}'s stratum 2 out {rb:?}, chunk {}'s in {:?}", c + 1, strata[c + 1].0)));
+        }
+    }
+    for (c, &(pre, starts)) in held.iter().enumerate() {
+        let a = span(c).0;
+        if a > 0 {
+            t.b[a - 1].code &= !pre;
+            t.b[a - 1].sstart |= starts;
+        }
+    }
+    // Stratum 3, each chunk's from its entry.
+    for c in order(k) {
+        let (a, z) = span(c);
+        let mut depth = strata[c].1;
+        t.depth_in(a, z, &mut depth).map_err(|_| Ok(c))?;
+        if c + 1 < k && depth != strata[c + 1].1 {
+            return Err(Err(format!("chunk {c}'s depth out {depth}, chunk {}'s in {}", c + 1, strata[c + 1].1)));
+        }
+    }
+    Ok(t.b)
 }
 
 /// `src` lexed in chunks of `blocks` blocks, each from the entry the one before leaves: the serial lexer's records
@@ -876,12 +946,12 @@ pub struct Place(pub usize, pub bool);
 /// its blocks' tops, none where it has none (the chunk after's is then its own). And the first content its blocks'
 /// windows read in their upper halves (`Far::upper`: blocks `from + 1..=to`). None where the strata do not read the
 /// chunk.
-fn chunk_firsts(src: &[u8], from: usize, to: usize, rb: RB, depth: i8) -> Option<(Option<usize>, Far)> {
-    let (c0, _) = firsts(from);
+fn chunk_firsts(m: &Masks<'_>, from: usize, to: usize) -> (Option<usize>, Far) {
+    let src = m.src;
     let n = src.len().div_ceil(64);
-    over_window(src, from, to, s1_at(src, c0), rb, depth, |m| {
+    {
         (from..to.min(n)).rev().fold((None, Far::NONE), |(after, far), bi| {
-            let (t, at_end) = super::starts::tops(&m, bi);
+            let (t, at_end) = super::starts::tops(m, bi);
             let top = if t != 0 {
                 Some(64 * bi + t.trailing_zeros() as usize)
             } else if at_end {
@@ -893,28 +963,28 @@ fn chunk_firsts(src: &[u8], from: usize, to: usize, rb: RB, depth: i8) -> Option
             let up = if n < 2 { Far::NONE } else { Far::upper(&m.win::<false>(bi)) };
             (top, up.first(far))
         })
-    })
-    .ok()
-    .map(|(x, ..)| x)
+    }
 }
 
 /// What the walk's pass 1 by masks takes from the chunks after each: its place, the next chunk's, and the first
-/// content past its blocks' windows (`Far`, in the blocks above its last's window).
+/// content past its blocks' windows (`Far`, in the blocks above its last's window). With them the strata's masks of
+/// the text's blocks (`text_masks`), which every pass of the walk reads.
 pub struct WalkInputs {
     pub places: Vec<Place>,
     pub afters: Vec<Far>,
+    b: Vec<B>,
 }
 
 /// The walk's inputs from each chunk's firsts (`chunk_firsts`): a chunk's place is its first loop top, else the
 /// chunk after's (past the last, the text's end read); the content after it is the first of the chunks' after it.
-/// Err: the first chunk the strata do not read.
-pub fn walk_inputs(src: &[u8], blocks: usize, strata: &[(RB, i8)], order: Order<'_>) -> Result<WalkInputs, usize> {
+/// Err: `text_masks`'s.
+pub fn walk_inputs(src: &[u8], blocks: usize, strata: &[(RB, i8)], order: Order<'_>) -> Result<WalkInputs, Result<usize, String>> {
     let blocks = blocks.max(1);
     let k = strata.len();
-    let own = each(k, order, |c| chunk_firsts(src, c * blocks, (c + 1) * blocks, strata[c].0, strata[c].1));
-    if let Some(c) = own.iter().position(Option::is_none) {
-        return Err(c);
-    }
+    let b = text_masks(src, blocks, strata, order)?;
+    let short = core::cell::Cell::new(false);
+    let m = Masks { src, b: &b, first: 0, short: &short };
+    let own = each(k, order, |c| Some(chunk_firsts(&m, c * blocks, (c + 1) * blocks)));
     let mut places = vec![Place(src.len(), true); k];
     let mut afters = vec![Far::NONE; k];
     for c in (0..k).rev() {
@@ -929,14 +999,19 @@ pub fn walk_inputs(src: &[u8], blocks: usize, strata: &[(RB, i8)], order: Order<
             _ => Far::NONE,
         };
     }
-    Ok(WalkInputs { places, afters })
+    Ok(WalkInputs { places, afters, b })
 }
 
 impl WalkInputs {
     /// Chunk `c`'s walk summary by masks.
-    pub fn summary(&self, src: &[u8], blocks: usize, strata: &[(RB, i8)], c: usize) -> (WalkSummary, [u32; 3]) {
+    pub fn summary(&self, src: &[u8], blocks: usize, c: usize) -> (WalkSummary, [u32; 3]) {
         let blocks = blocks.max(1);
-        walk_summary_masks(src, c * blocks, (c + 1) * blocks, strata[c].0, strata[c].1, self.places[c], self.places.get(c + 1).copied(), self.afters[c])
+        walk_summary_masks(src, &self.b, (c + 1) * blocks, self.places[c], self.places.get(c + 1).copied(), self.afters[c])
+    }
+
+    /// Chunk `c` of `blocks` blocks lexed from `e` over the text's masks (`lex_chunk_on`).
+    fn lex(&self, src: &[u8], blocks: usize, c: usize, e: &Entry, toks: &mut Vec<Tok>, extras: &mut Vec<Extra>) -> Chunked {
+        lex_chunk_on(src, &self.b, (c + 1) * blocks.max(1), e, toks, extras)
     }
 }
 
@@ -1664,13 +1739,12 @@ fn walk_more<const S: bool>(r: &Win<'_, S>, far: Far, acc: &mut WalkAcc) {
     acc.bad |= layout_more(r.src, &em, r.bi, acc.rest, acc.k, &mut acc.lanes, &mut acc.last);
 }
 
-/// Pass 1 of the walk by masks: chunk `from..to`'s summary from its place `p` to the chunk after's (`next`), over
-/// the strata from `rb` and `depth`, for each of `COMBOS`: its tokens and extras the popcounts of their starts in
-/// its range, its layout from its events (`layout_block`). A lane masks do not know is `Unknown`.
-/// With it, why masks do not know each lane (`WHY_*`; none: known). `after` is the first content past the windows
-/// of the chunk's blocks (`WalkInputs`).
-#[allow(clippy::too_many_arguments)]
-pub fn walk_summary_masks(src: &[u8], from: usize, to: usize, rb: RB, depth: i8, p: Place, next: Option<Place>, after: Far) -> (WalkSummary, [u32; 3]) {
+/// Pass 1 of the walk by masks: the summary of the chunk that ends at block `to` from its place `p` to the chunk
+/// after's (`next`), over the text's masks `b` (`text_masks`), for each of `COMBOS`: its tokens and extras the
+/// popcounts of their starts in its range, its layout from its events (`layout_block`). A lane masks do not know is
+/// `Unknown`. With it, why masks do not know each lane (`WHY_*`; none: known). `after` is the first content past the
+/// windows of the chunk's blocks (`WalkInputs`).
+fn walk_summary_masks(src: &[u8], b: &[B], to: usize, p: Place, next: Option<Place>, after: Far) -> (WalkSummary, [u32; 3]) {
     let unknown = || (core::array::from_fn(|_| WalkLane::Unknown), [WHY_WINDOW; 3]);
     let n = src.len();
     let nb = n.div_ceil(64);
@@ -1680,8 +1754,9 @@ pub fn walk_summary_masks(src: &[u8], from: usize, to: usize, rb: RB, depth: i8,
     let (lo, eof) = (p.0, next.is_none_or(|x| x.1));
     let hi = if eof { n + 1 } else { next.map_or(n + 1, |x| x.0) };
     let last_block = (hi.min(n).saturating_sub(1) / 64).max(lo / 64);
-    let (c0, _) = firsts(from);
-    let r = over_window(src, from, to.max(last_block + 2).min(nb.max(1)), s1_at(src, c0), rb, depth, |m| {
+    let short = core::cell::Cell::new(false);
+    let m = Masks { src, b, first: 0, short: &short };
+    let r = {
         let mut acc = WalkAcc {
             lanes: Lanes::new(),
             last: LastToks { k: [NO_KIND; 2], colon: false },
@@ -1746,11 +1821,9 @@ pub fn walk_summary_masks(src: &[u8], from: usize, to: usize, rb: RB, depth: i8,
             if whys[i] != 0 { WalkLane::Unknown } else { WalkLane::Goes { exit: combo(l.open, l.header), toks: toks + l.toks - l.phantom, extras, sym: l.sym() } }
         });
         (sum, whys)
-    });
-    match r {
-        Ok((s, ..)) => s,
-        _ => unknown(),
-    }
+    };
+    // A read past the text's end: a walk from a place that is not the serial walk's.
+    if short.get() { unknown() } else { r }
 }
 
 /// Walk summary `a` then `b`.
@@ -2080,13 +2153,14 @@ pub fn lex_middle_to(src: &[u8], blocks: usize, order: Order<'_>, stop: Stage, c
     // Each chunk's place and the first content after it, from the chunks after it.
     let inputs = match walk_inputs(src, blocks, &strata, order) {
         Ok(x) => x,
-        Err(c) => return Ok(Middle::Unknown(c, "a chunk's strata")),
+        Err(Ok(c)) => return Ok(Middle::Unknown(c, "a chunk's strata")),
+        Err(Err(e)) => return Err(e),
     };
     let places = &inputs.places;
     if stop == Stage::WalkInputs {
         return Ok(Middle::Stopped(places.iter().map(|p| p.0).sum::<usize>() ^ inputs.afters.iter().map(|f| f.at).fold(0, usize::wrapping_add)));
     }
-    let wsums = each(k, order, |c| inputs.summary(src, blocks, &strata, c));
+    let wsums = each(k, order, |c| inputs.summary(src, blocks, c));
     counts.unknown_lanes += wsums.iter().flat_map(|(_, w)| w).filter(|&&w| w != 0).count();
     let wsums: Vec<_> = wsums.into_iter().map(|(s, _)| s).collect();
     if stop == Stage::WalkSummaries {
@@ -2104,7 +2178,7 @@ pub fn lex_middle_to(src: &[u8], blocks: usize, order: Order<'_>, stop: Stage, c
         let Place(p, done) = places[c - 1];
         let e = Entry { s1: s1_at(src, firsts(range(c - 1).0).0), rb: strata[c - 1].0, depth: strata[c - 1].1, p, open, header, indents, done };
         let (mut t, mut x) = (Vec::new(), Vec::new());
-        match lex_chunk(src, range(c - 1).0, range(c - 1).1, &e, &mut t, &mut x) {
+        match inputs.lex(src, blocks, c - 1, &e, &mut t, &mut x) {
             Chunked::Lexed(next) => Ok(WalkEntry::At { open: next.open, header: next.header, indents: next.indents, toks: toks + t.len(), extras: extras + x.len() }),
             Chunked::Refused(r) => Ok(WalkEntry::Refused(r)),
             Chunked::NotB => Err(Ok(Middle::NotB)),
@@ -2133,13 +2207,14 @@ pub fn lex_middle_to(src: &[u8], blocks: usize, order: Order<'_>, stop: Stage, c
     };
     let lexed = each(k, order, |c| {
         let (mut toks, mut extras) = (Vec::new(), Vec::new());
-        (lex_chunk(src, range(c).0, range(c).1, &entry(c), &mut toks, &mut extras), toks, extras)
+        (inputs.lex(src, blocks, c, &entry(c), &mut toks, &mut extras), toks, extras)
     });
     let (mut toks, mut extras) = (Vec::new(), Vec::new());
     for (c, (r, t, x)) in lexed.into_iter().enumerate() {
         match r {
             Chunked::Lexed(next) => {
-                if c + 1 < k && next != entry(c + 1) {
+                // The walk's part of the exit (`text_masks` checked the strata's carries).
+                if c + 1 < k && next != (Entry { s1: S1::default(), rb: RB::default(), depth: 0, ..entry(c + 1) }) {
                     return Err(format!("chunk {c}'s exit {next:?}, chunk {}'s entry {:?}", c + 1, entry(c + 1)));
                 }
             }
@@ -2250,7 +2325,7 @@ pub fn layout_is_the_walks(src: &[u8], blocks: usize) -> Option<(usize, usize, O
     for c in 0..k {
         let Place(p, done) = places[c];
         let walk = walk_summary(src, range(c).0, range(c).1, strata[c].0, strata[c].1, p, done);
-        let masks = inputs.summary(src, blocks, &strata, c).0;
+        let masks = inputs.summary(src, blocks, c).0;
         for l in 0..3 {
             match (&masks[l], &walk[l]) {
                 (WalkLane::Unknown, _) => unknown += 1,
@@ -2275,7 +2350,7 @@ pub fn walk_scan_is_syms(src: &[u8], blocks: usize, order: Order<'_>) -> Option<
     let strata = strata_of(src, blocks)?;
     let k = strata.len();
     let inputs = walk_inputs(src, blocks, &strata, &in_order).ok()?;
-    let wsums: Vec<_> = (0..k).map(|c| inputs.summary(src, blocks, &strata, c).0).collect();
+    let wsums: Vec<_> = (0..k).map(|c| inputs.summary(src, blocks, c).0).collect();
     let by_sym = walk_entries_by_sym(&wsums, order);
     let (fixed, waits) = walk_entries_look_back(&wsums, |c, e| Ok::<_, core::convert::Infallible>(walk_after_by_sym(&wsums[c - 1], e).unwrap_or(WalkEntry::Unknown))).unwrap_or_else(|x| match x {});
     let mut same = 0;
@@ -2304,7 +2379,7 @@ pub fn walk_why_counts(src: &[u8], blocks: usize) -> Option<WhyCounts> {
     let inputs = walk_inputs(src, blocks, &strata, &in_order).ok()?;
     let (mut lanes, mut any, mut alone, mut first) = (0, [0; 13], [0; 13], [None; 13]);
     for c in 0..k {
-        let (_, whys) = inputs.summary(src, blocks, &strata, c);
+        let (_, whys) = inputs.summary(src, blocks, c);
         for w in whys {
             lanes += 1;
             for (b, (a, o)) in any.iter_mut().zip(alone.iter_mut()).enumerate() {

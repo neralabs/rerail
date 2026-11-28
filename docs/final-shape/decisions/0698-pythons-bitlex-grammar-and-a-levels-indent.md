@@ -1282,3 +1282,41 @@ statements and blocks end.
     - **As measured** (30 passes, 16 blocks a chunk, the M1 Max at load 4 to 9; both builds there, two runs
       each): the walk's summaries went from 63797M and 63582M instructions to 59693M and 59882M (6% fewer),
       and from 12610M and 12586M cycles to 11466M and 12009M.
+124. **The strata's masks made once for the text, read by every pass of the walk** (as built: `middle::text_masks`,
+    `strata::classes_into`, `Text::regions_b_held`, `lex_chunk_on`).
+    - **Before:** the strata's pass 1 is superposed and makes no masks. Each pass of the walk made a chunk's
+      masks again from its entries over a window of its own (`over_window`): the walk's inputs (`chunk_firsts`),
+      its summaries, and the records (with the waits lexed again). Some windows were made again, twice as long,
+      where a walk read past them. In a profile of the whole `lex_middle` (Time Profiler, M1 Max, 16 blocks a
+      chunk), strata 1 to 3 made again were 4660 of 24818 samples: 1058 in the walk's inputs, 1175 in its
+      summaries, 2427 in the records.
+    - **As built:** once the scan gives each chunk its entries, `text_masks` makes the masks of the text's blocks
+      (and one past its end) in one array. Each block's are made once, by the chunk it is in, from the chunk's
+      entries. A chunk's blocks run from its entries' block (`firsts`) to the next chunk's. Each stratum runs
+      chunk by chunk, in the order's order: stratum 1 from `s1_at`, then stratum 2, then stratum 3.
+    - **The one write across chunks:** stratum 2 writes a string's prefix into the block below the block whose
+      opener it starts. Below a chunk's first block, that block is the chunk before's, which writes the block
+      itself. So `regions_b_held` keeps that prefix, and it is written after every chunk's stratum 2. Stratum 3
+      reads code, so it runs after that. Stratum 2 reads only stratum 1's masks of the blocks next to its own.
+    - **The carries checked:** each chunk's carries out of its blocks must be the next chunk's entries: stratum 1's
+      against `s1_at`, stratum 2's and the depth against the scan's. Before, the records' check of each chunk's
+      exit against the next chunk's entry held these. A chunk the strata do not read is a chunk not known, as
+      before.
+    - **The readers:** the walk's inputs, its summaries, the waits lexed again and the records all read the one
+      array (`Masks` from block 0). A read past it is a walk from a place that is not the serial walk's (`Past`),
+      as at the text's end before. The array is 216 bytes a block of 64 bytes, for the text being lexed.
+    - **As tested:** the 30 tests pass on AArch64 and x86-64. All the branch check's functions keep their counts
+      (0, and stratum 1's loop its 2). On the corpus, in the build with the tests' asserts, `lex_middle`'s check
+      ("from the middle, every pass on its own") gives the serial lexer's records in 1644 of 1644 files, 0 wrong,
+      at 1, 2, 3 and 16 blocks a chunk. Items 119 to 123 quoted the corpus run's line for the chunked lexer
+      (`lex_chunked`, 1641 the serial lexer's and 3 read by A), not this one. At this commit both hold.
+    - **As measured** (10 passes, 16 blocks a chunk, the M1 Max at load 6 to 13, both builds there, two runs each;
+      instructions, the setup's subtracted):
+
+      | Stage | Before | After |
+      |---|---|---|
+      | The walk's inputs (with the masks made) | 3670M, 3695M | 3306M, 3172M |
+      | The walk's summaries | 19899M, 20107M | 16874M, 16867M |
+      | The look-back and the records | 14029M, 13699M | 5210M, 5365M |
+      | All of `lex_middle` | 56347M, 56272M | 44158M, 44137M |
+      | All of `lex_middle`, cycles | 12049M, 12460M | 9316M, 9488M |

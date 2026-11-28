@@ -364,34 +364,52 @@ fn classes_in(src: &[u8], from: usize, to: usize, c: &mut S1, out: &mut Vec<B>, 
 fn classes_over<const SHORT: bool>(src: &[u8], from: usize, to: usize, c: &mut S1, out: &mut Vec<B>, at: usize, at_c: &mut S1) {
     let n = src.len();
     let Some(last) = n.checked_sub(1) else { return };
-    let (mut carry, mut cr_carry, mut lb_carry) = (c.carry, c.cr, c.lb);
+    let mut k = *c;
     let end = (to * 64).min(n);
     // One reservation and a write per block (a range's `extend`: no test of the room per block).
     out.extend((from * 64..end).step_by(64).map(|at_b| {
         // The carries into block `at` kept, by a select.
         let here = 0u64.wrapping_sub(u64::from(at_b >> 6 == at));
-        *at_c = S1 { carry: (carry & here) | (at_c.carry & !here), cr: (cr_carry & here) | (at_c.cr & !here), lb: (lb_carry & here) | (at_c.lb & !here) };
-        // The block's bytes by one load that ends at the text's end at most (`window`), its masks shifted down by
-        // the bytes below the block it starts at. The bytes one on: the same lanes one on, and the byte after them
-        // (none past the text's end: a clamped index and a mask).
-        let base = if SHORT { 0 } else { at_b.min(n - 64) };
-        // SAFETY: not `SHORT`, the text has 64 bytes or more and `base + 64 <= n`.
-        let v = if SHORT { short_text(src) } else { unsafe { V::from_slice(src.get_unchecked(base..base + 64)) } };
-        let sh = at_b - base;
-        let after = base + 64;
-        // SAFETY: `after.min(last) <= last < n`.
-        let nb = unsafe { *src.get_unchecked(after.min(last)) } & 0u8.wrapping_sub(u8::from(after < n));
-        let vn = v.shift_elements_left::<1>(nb);
-        let mut b = block(v, vn).shifted(sh);
-        b.esc = escaped(b.bs, &mut carry);
-        // `bare_lf` held the block's `'\r'`s: a `'\n'` after an escaped one is escaped too.
-        let esc_cr = b.bare_lf & b.esc;
-        b.bare_lf = b.lf & !b.esc & !((esc_cr << 1) | cr_carry);
-        cr_carry = esc_cr >> 63;
-        b.lbu = b.lb & !escaped(b.lb, &mut lb_carry);
-        b
+        *at_c = S1 { carry: (k.carry & here) | (at_c.carry & !here), cr: (k.cr & here) | (at_c.cr & !here), lb: (k.lb & here) | (at_c.lb & !here) };
+        class_block::<SHORT>(src, last, at_b, &mut k)
     }));
-    *c = S1 { carry, cr: cr_carry, lb: lb_carry };
+    *c = k;
+}
+
+/// The classes of the block at byte `at_b` from stratum 1's carries `k` into it (left as those out of it).
+#[inline(always)]
+fn class_block<const SHORT: bool>(src: &[u8], last: usize, at_b: usize, k: &mut S1) -> B {
+    let n = src.len();
+    // The block's bytes by one load that ends at the text's end at most (`window`), its masks shifted down by the
+    // bytes below the block it starts at. The bytes one on: the same lanes one on, and the byte after them (none
+    // past the text's end: a clamped index and a mask).
+    let base = if SHORT { 0 } else { at_b.min(n - 64) };
+    // SAFETY: not `SHORT`, the text has 64 bytes or more and `base + 64 <= n`.
+    let v = if SHORT { short_text(src) } else { unsafe { V::from_slice(src.get_unchecked(base..base + 64)) } };
+    let sh = at_b - base;
+    let after = base + 64;
+    // SAFETY: `after.min(last) <= last < n`.
+    let nb = unsafe { *src.get_unchecked(after.min(last)) } & 0u8.wrapping_sub(u8::from(after < n));
+    let vn = v.shift_elements_left::<1>(nb);
+    let mut b = block(v, vn).shifted(sh);
+    b.esc = escaped(b.bs, &mut k.carry);
+    // `bare_lf` held the block's `'\r'`s: a `'\n'` after an escaped one is escaped too.
+    let esc_cr = b.bare_lf & b.esc;
+    b.bare_lf = b.lf & !b.esc & !((esc_cr << 1) | k.cr);
+    k.cr = esc_cr >> 63;
+    b.lbu = b.lb & !escaped(b.lb, &mut k.lb);
+    b
+}
+
+/// Blocks `from..from + out.len()`'s classes written in `out`, from the carries `c` into block `from` (left as those
+/// out of its last): a text's blocks each written once by the chunk they are in, in place.
+fn classes_into(src: &[u8], from: usize, c: &mut S1, out: &mut [B]) {
+    let Some(last) = src.len().checked_sub(1) else { return };
+    let short = src.len() < 64;
+    for (j, b) in out.iter_mut().enumerate() {
+        let at_b = 64 * (from + j);
+        *b = if short { class_block::<true>(src, last, at_b, c) } else { class_block::<false>(src, last, at_b, c) };
+    }
 }
 
 /// The bracket depth's bound: a file past it is refused (decision 0698, item 93).
@@ -1104,6 +1122,17 @@ impl<'s> Text<'s> {
     /// reading is wrong.
     #[inline(always)]
     fn regions_b_in(&mut self, from: usize, to: usize, c: &mut RB) -> bool {
+        self.regions_b_over(from, to, c, None)
+    }
+
+    /// `regions_b_in`, where a string's prefix in the block below `from` is not written but kept in `held` (its
+    /// bytes not code, and its starts): that block is another chunk's, which writes its own.
+    fn regions_b_held(&mut self, from: usize, to: usize, c: &mut RB, held: &mut (u64, u64)) -> bool {
+        self.regions_b_over(from, to, c, Some(held))
+    }
+
+    #[inline(always)]
+    fn regions_b_over(&mut self, from: usize, to: usize, c: &mut RB, mut held: Option<&mut (u64, u64)>) -> bool {
         let RB { mut t0, mut s0, mut ccarry, mut cext_prev, mut tr_taken } = *c;
         let mut prev = if from > 0 { self.b[from - 1 - self.first] } else { B::default() };
         for bi in from..to {
@@ -1162,9 +1191,13 @@ impl<'s> Text<'s> {
             let s_open = (qs | qd) & !tr & !sb & !comment;
             let s_region = (sb | sa) & !comment & !tr;
             let Some((pre, starts)) = self.prefixes_b(bi, s_open | t_open) else { return false };
-            if bi > 0 {
-                self.b[bi - 1 - self.first].code &= !(pre as u64);
-                self.b[bi - 1 - self.first].sstart |= starts as u64;
+            match held.as_deref_mut() {
+                Some(h) if bi == from => *h = (pre as u64, starts as u64),
+                _ if bi > 0 => {
+                    self.b[bi - 1 - self.first].code &= !(pre as u64);
+                    self.b[bi - 1 - self.first].sstart |= starts as u64;
+                }
+                _ => {}
             }
             self.b[bi - self.first].code = !(comment | s_region | tr | (pre >> 64) as u64);
             self.b[bi - self.first].sstart = (starts >> 64) as u64;
