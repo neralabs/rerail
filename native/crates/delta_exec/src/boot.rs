@@ -538,6 +538,8 @@ pub struct Ran {
     pub after: Pins,
     pub doc: Doc,
     pub work: Work,
+    /// The world's reads, loads, parses and interns in the run.
+    pub asked: crate::files::Asked,
     pub launches: u64,
     pub cache: u64,
     pub kform: Vec<std::collections::BTreeSet<Vec<i64>>>,
@@ -549,6 +551,13 @@ pub struct Ran {
 /// modification time, older than the racy window), so an unchanged version is the same file with the same stat.
 #[cfg(any(test, feature = "test-hooks"))]
 pub fn boot_chain(bench: &mut Bench, base: &std::path::Path, versions: &[&str]) -> Result<Vec<Ran>, String> {
+    boot_chain_touched(bench, base, versions, &[])
+}
+
+/// `boot_chain`, the file also written again before each run of `touched` (by its place in `versions`): the same bytes
+/// under a new modification time.
+#[cfg(any(test, feature = "test-hooks"))]
+pub fn boot_chain_touched(bench: &mut Bench, base: &std::path::Path, versions: &[&str], touched: &[usize]) -> Result<Vec<Ran>, String> {
     const PATH: &str = "bootstrap-l0.rerail";
     let root = base.join("root");
     std::fs::create_dir_all(&root).map_err(|e| e.to_string())?;
@@ -560,20 +569,22 @@ pub fn boot_chain(bench: &mut Bench, base: &std::path::Path, versions: &[&str]) 
     let (mut last, mut text): (Option<Pins>, Option<&str>) = (None, None);
     let mut out = Vec::with_capacity(versions.len()); // copy: not block data (the chain's runs)
     for (k, &v) in versions.iter().enumerate() {
-        if text != Some(v) {
+        if text != Some(v) || touched.contains(&k) {
             std::fs::write(root.join(PATH), v).map_err(|e| e.to_string())?;
             let f = std::fs::File::options().write(true).open(root.join(PATH)).map_err(|e| e.to_string())?;
             f.set_modified(std::time::SystemTime::now() - std::time::Duration::from_secs(600 - 10 * k as u64)).map_err(|e| e.to_string())?;
             text = Some(v);
         }
-        let launched = bench.ops.launches();
+        let (launched, a0) = (bench.ops.launches(), docs.world.asked);
         let (pins, doc, work) = run(&L1, &mut inst, PATH, "bootstrap-l0", atoms, &mut docs, bench, last.as_ref())?;
         let launches = bench.ops.launches() - launched;
+        let a = docs.world.asked;
+        let asked = crate::files::Asked { reads: a.reads - a0.reads, loads: a.loads - a0.loads, parses: a.parses - a0.parses, interns: a.interns - a0.interns };
         let cache = rerail_blocks::maps::hash_bytes(bench.dir.read("L1's cache", &[inst.cache.0])?.block(0));
         let kform = inst.outs.iter().map(|t| crate::contract::oracle_rows(&bench.dir, t, t.head())).collect::<Result<_, _>>()?;
         let globals = [Global { block: atoms.0, count: u64::from(atoms.count(&bench.dir)) }];
         let plain = crate::contract::apply(&L1, &mut bench.cx(), &[(&docs.tape, docs.tape.head())], &globals)?;
-        out.push(Ran { before: last.replace(pins.clone()), after: pins, doc, work, launches, cache, kform, plain });
+        out.push(Ran { before: last.replace(pins.clone()), after: pins, doc, work, asked, launches, cache, kform, plain });
     }
     Ok(out)
 }

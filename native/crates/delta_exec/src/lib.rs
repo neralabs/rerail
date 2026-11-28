@@ -43,6 +43,8 @@ pub mod files;
 pub mod intern;
 pub mod k0;
 pub mod l1;
+#[cfg(any(test, feature = "test-hooks"))]
+pub mod laws;
 pub mod kform;
 pub mod op;
 pub mod residency;

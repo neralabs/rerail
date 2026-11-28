@@ -294,6 +294,32 @@ fn the_harness_passes_l1_over_edits_of_l0_on_the_device_or_mixed() {
     }
 }
 
+/// L6, L7, L8 and P1's drivers (`rerail_delta_exec::laws`) on the tests' device and on a mixed runner: each gives the
+/// CPU's verdicts, work and launches (the CPU's tests hold those to the laws).
+#[test]
+fn the_laws_hold_on_the_device_or_mixed() {
+    use rerail_delta_exec::contract::Bench;
+    use rerail_delta_exec::laws::{coalescing, composition_and_cutoff, edit_among};
+    device();
+    let base = |name: &str| std::env::temp_dir().join(format!("rerail-laws-dev-{}-{name}", std::process::id()));
+    let versions = rerail_delta_exec::boot::chain_versions();
+    let versions = versions.each_ref().map(String::as_str);
+    let laws = |bench: &mut Bench, name: &str| {
+        let c = composition_and_cutoff(bench, &base(&format!("{name}-l6")), &versions).unwrap_or_else(|e| panic!("{name}: {e}"));
+        let among = [0, 3].map(|n| edit_among(bench, &base(&format!("{name}-among-{n}")), n).unwrap_or_else(|e| panic!("{name}: {e}")));
+        let l8 = coalescing(bench, &base(&format!("{name}-l8"))).unwrap_or_else(|e| panic!("{name}: {e}"));
+        (c.same_as_cold, (c.touched.asked, c.touched.launches, c.touched.work), among, l8)
+    };
+    let want = laws(&mut Bench::new().unwrap(), "cpu");
+    assert!(want.0.iter().all(|&s| s), "the CPU's runs are the cold composed runs");
+    let on = Runner::on(Box::new(Gpu::host().expect("the tests' device"))).unwrap_or_else(|e| panic!("{e}"));
+    assert_eq!(laws(&mut Bench::on(on), "device"), want, "the device's are the CPU's");
+    let mut bench = Bench::on(Runner::mixed(Box::new(Gpu::host().expect("the tests' device")), 7).unwrap_or_else(|e| panic!("{e}")));
+    assert_eq!(laws(&mut bench, "mixed"), want, "a mixed runner's are the CPU's");
+    let [cpu, dev] = bench.ops.mixed_launches().expect("a mixed runner");
+    assert!(cpu > 0 && dev > 0, "launches on both ({cpu} on the CPU, {dev} on the device)");
+}
+
 /// The boot chain (0686: Shape and Invariants, §3) on the tests' device and on three mixed runners: cold, unchanged,
 /// comments only and a rule added, each from the last run's pins. Every run shows what the CPU's must
 /// (`check_boot_chain`), and its K-form, its pins' changes and its launches are the CPU run's.

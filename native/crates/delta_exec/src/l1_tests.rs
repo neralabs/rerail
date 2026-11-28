@@ -426,3 +426,59 @@ fn the_boot_runs_as_a_delta() {
     let atoms = crate::sym::Atoms(runs[0].after.atoms.block);
     crate::boot::check_boot_chain(&runs, |x| atoms.find(&bench.dir, x));
 }
+
+/// The laws' drivers' scratch roots, one a test.
+fn laws_base(name: &str) -> PathBuf {
+    std::env::temp_dir().join(format!("rerail-laws-{}-{name}", std::process::id()))
+}
+
+/// L6: the boot run threaded over l0's edits and the comments' versions is, run by run, the composed plain functions
+/// run cold on that version's text; and a stage whose input is the identity cuts off: l0 touched (its bytes the same)
+/// is answered by its load alone, not parsed nor interned, and L1, given the identity, does its checks alone.
+#[test]
+fn a_run_is_the_composed_reference_and_cuts_off() {
+    let mut bench = Bench::new().unwrap();
+    let [added, changed, removed] = edits();
+    let [_, _, comments, commented_rule] = crate::boot::chain_versions();
+    let versions = [L0, &added, &changed, &removed, &comments, &commented_rule];
+    let c = crate::laws::composition_and_cutoff(&mut bench, &laws_base("l6"), &versions).unwrap_or_else(|e| panic!("{e}"));
+    assert_eq!(c.same_as_cold, vec![true; versions.len()], "each run is the cold composed run on its text");
+    let (u, t) = (&c.unchanged, &c.touched);
+    assert!(u.doc.is_identity() && t.doc.is_identity());
+    assert_eq!(t.asked, crate::files::Asked { reads: 1, loads: 0, parses: 0, interns: 0 }, "touched: read and found the same content, not parsed");
+    assert!(t.work.is_checks_only(), "{:?}", t.work);
+    assert_eq!(t.before.as_ref(), Some(&t.after), "every pin where it was");
+    assert_eq!((t.launches, t.cache, &t.kform), (1, u.cache, &u.kform), "its one launch the load's answer; the cache and output unchanged");
+}
+
+/// L7: one module edited among three: the edit's step changes the edited module's partitions alone, the others' rows
+/// stay, and its work is the edited module's alone (the same edit in a set of it alone).
+#[test]
+fn one_edited_document_among_several_reads_and_writes_only_its_own() {
+    let among = crate::laws::edit_among(&mut Bench::new().unwrap(), &laws_base("l7-among"), 3).unwrap_or_else(|e| panic!("{e}"));
+    let alone = crate::laws::edit_among(&mut Bench::new().unwrap(), &laws_base("l7-alone"), 0).unwrap_or_else(|e| panic!("{e}"));
+    assert_eq!(among.work, alone.work, "the edited module's work alone");
+    assert_eq!(among.asked, crate::files::Asked { reads: 1, loads: 0, parses: 1, interns: 1 }, "the edited file alone read, parsed and interned");
+}
+
+/// L8: two edits of l0 read as one change and stepped once give what stepping each gives; an edit and its undo stepped
+/// once leave the output as it was, its change the identity, though the input's change is the identity by value only
+/// (its tape row gone and back the same values): the module is read again (O3), and the pairs cancel.
+#[test]
+fn edits_coalesce_two_as_one_and_an_undo_as_the_identity() {
+    let c = crate::laws::coalescing(&mut Bench::new().unwrap(), &laws_base("l8")).unwrap_or_else(|e| panic!("{e}"));
+    assert!(c.once_is_twice, "two edits stepped once are the two steps");
+    assert!(c.once.rows_written >= c.least, "{:?} against the least change's {}", c.once, c.least);
+    assert!(c.undo_rows_same && c.undo_out_identity, "an edit and its undo: the output as it was, its change the identity");
+    assert_eq!(c.undo_in_identity, (false, true), "the input's change: not the identity by its counts, the identity by value");
+}
+
+/// P1: the work of one edit does not grow with the rest: one module edited among 1, 2, 4 and 8 unchanged ones, L1's
+/// step reads, writes and launches the same; and the world's read of the set reads the edited file alone.
+#[test]
+fn the_work_of_one_edit_does_not_grow_with_the_rest() {
+    let runs: Vec<crate::laws::EditAmong> = [1, 2, 4, 8].iter().map(|&n| crate::laws::edit_among(&mut Bench::new().unwrap(), &laws_base(&format!("p1-{n}")), n).unwrap_or_else(|e| panic!("{n}: {e}"))).collect();
+    for (r, n) in runs.iter().zip([1, 2, 4, 8]) {
+        assert_eq!((&r.work, r.launches, r.asked), (&runs[0].work, runs[0].launches, runs[0].asked), "{n} unchanged modules beside the edit");
+    }
+}
