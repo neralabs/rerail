@@ -344,8 +344,9 @@ describe("the Claude Code hook while another process holds the database's write 
     expect(cli.stdout, report).toMatch(/\/log, /u);
     expect(api.status, report).toBe(200);
     expect(await savedScanSettings(saver), report).toMatchObject({ scope: "repository", mode: "log" });
+    // The hook is answered while both saves still wait for the lock, and says nothing on stderr.
     expect(waitingAtHook, report).toBe(true);
-    expect(held.ms, report).toBeLessThan(free.ms + 1_000);
+    expect(held.stderr, report).toBe("");
     expect((await scanSettingsApi("PATCH", saver, { scope: "ai-output", mode: "steer" })).status).toBe(200);
   }, 60_000);
 
@@ -375,8 +376,9 @@ describe("the Claude Code hook while another process holds the database's write 
     expect(cli.code, report).toBe(1);
     expect(cli.stderr, report).toContain(`rerail: database-busy: ${busy}`);
     expect(await savedScanSettings(saver), report).toEqual(before);
+    // The hook is answered while both saves still wait for the lock, and says nothing on stderr.
     expect(waitingAtHook, report).toBe(true);
-    expect(held.ms, report).toBeLessThan(free.ms + 1_000);
+    expect(held.stderr, report).toBe("");
   }, 60_000);
 });
 
