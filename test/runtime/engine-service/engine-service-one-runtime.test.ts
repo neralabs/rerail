@@ -44,17 +44,18 @@ async function service() {
     ({ storageRoot: join(root, "state"), modelPath: resolve("model"), databasePath, workspaceRoot: first, ...change });
   const session = (sessionId: string, cwd: string) => ({ host: "claude-code" as const, sessionId, cwd });
   const send = (event: AdapterEvent, configuration: EngineRuntimeConfiguration) => ingestEngineEvent({ socketPath }, event, configuration);
-  /** `sessionId`'s start (`name` tells a second one apart) or prompt `text`, in the checkout `configuration` names. */
+  /** `sessionId`'s start (`name` tells a second one apart), prompt `text` or end, in the checkout `configuration` names. */
   const startEvent = (sessionId: string, configuration: EngineRuntimeConfiguration, name = "start"): AdapterEvent =>
     ({ kind: "session-start", eventId: `${sessionId}:${name}`, session: session(sessionId, configuration.workspaceRoot!) });
   const promptEvent = (sessionId: string, text: string, configuration: EngineRuntimeConfiguration): AdapterEvent =>
     ({ kind: "user-prompt", eventId: `${sessionId}:${text}`, sessionId, session: session(sessionId, configuration.workspaceRoot!), text });
+  const endEvent = (sessionId: string, configuration: EngineRuntimeConfiguration): AdapterEvent =>
+    ({ kind: "session-end", eventId: `${sessionId}:end`, sessionId, session: session(sessionId, configuration.workspaceRoot!) });
   /** `sessionId`'s start, prompt `text` or end, sent with `configuration`, in the checkout it names. */
   const start = (sessionId: string, configuration: EngineRuntimeConfiguration, name = "start") => send(startEvent(sessionId, configuration, name), configuration);
   const prompt = (sessionId: string, text: string, configuration: EngineRuntimeConfiguration) => send(promptEvent(sessionId, text, configuration), configuration);
-  const end = (sessionId: string, configuration: EngineRuntimeConfiguration) =>
-    send({ kind: "session-end", eventId: `${sessionId}:end`, sessionId, session: session(sessionId, configuration.workspaceRoot!) }, configuration);
-  return { root, databasePath, first, second, otherModel, clock, engine, configured, startEvent, promptEvent, start, prompt, end };
+  const end = (sessionId: string, configuration: EngineRuntimeConfiguration) => send(endEvent(sessionId, configuration), configuration);
+  return { root, databasePath, first, second, otherModel, clock, engine, configured, startEvent, promptEvent, endEvent, start, prompt, end };
 }
 
 /**
@@ -111,6 +112,16 @@ describe("one session's runtime in the engine service", () => {
     await Promise.all([p.engine.ingest(p.startEvent("s", p.configured()), p.configured()), p.engine.ingest(p.promptEvent("s", "one", other(p)), other(p))]);
     expect(recorded(p.databasePath, "s")).toEqual(["s:start", "s:one"]);
     expect(p.engine.openRuntimes()).toBe(1);
+  }, 30_000);
+
+  // The same with the session's end second: it went to a runtime of its own, which did not hold the session, so the
+  // session stayed open and owned in the first one, and two runtimes stayed open.
+  it("ends a session whose start and end are routed together, the end under another model folder, in one runtime", async () => {
+    const p = await service();
+    const other = p.configured({ modelPath: p.otherModel });
+    await Promise.all([p.engine.ingest(p.startEvent("s", p.configured()), p.configured()), p.engine.ingest(p.endEvent("s", other), other)]);
+    expect(recorded(p.databasePath, "s")).toEqual(["s:start", "s:end"]);
+    expect([p.engine.openRuntimes(), ownedLive(p.databasePath, "s")]).toEqual([1, false]);
   }, 30_000);
 
   it("opens another session whose hooks name another model folder in that folder's runtime, beside the one a session holds", async () => {
