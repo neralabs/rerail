@@ -582,7 +582,10 @@ pub fn lower_bound(keys: &[u32], key: u32) -> u32 {
 /// A view's number in a kernel's reads (`ViewDir`'s rows' and `vread`'s): `node`, `child`, `field`, `core_node`,
 /// `line`, then core.rerail's places (`Loc`): `line`, `end_line`, `col`, `docof`; then `tape`, `ast_depth` and
 /// `node_order`; then `op`, then `doc` (a row per file: its key, its path's and module's atoms).
-pub const VIEWS: [&str; 14] = ["view_node", "view_child", "view_field", "view_core", "view_line", "view_loc_line", "view_loc_end", "view_loc_col", "view_loc_docof", "view_tape", "view_depth", "view_order", "view_op", "view_doc"];
+/// A token's `Loc` views (`view_tok_*`, decision 0724 §3: a token has reads of its own) are the positions the tape
+/// stores, its nodes then its tokens (a named leaf's token is its node), no line, span or end point; the others'
+/// (`view_loc_*`) every position, a `place`'s reads taking any.
+pub const VIEWS: [&str; 18] = ["view_node", "view_child", "view_field", "view_core", "view_line", "view_loc_line", "view_loc_end", "view_loc_col", "view_loc_docof", "view_tape", "view_depth", "view_order", "view_op", "view_tok_line", "view_tok_end", "view_tok_col", "view_tok_docof", "view_doc"];
 /// `doc`'s slot (`VIEWS`' last): its first rows, one a file.
 pub const DOC_VIEW: usize = VIEWS.len() - 1;
 

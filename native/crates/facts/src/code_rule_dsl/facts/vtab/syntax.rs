@@ -208,12 +208,13 @@ impl Projection {
         let shape = if core_shape { Shape::Core } else { Shape::T };
         let verdict = shape == Shape::T && error_triple;
         let mut reads: BTreeSet<String> = reads.into_iter().filter(|r| !derived.contains(r)).collect();
-        // A typed read of a line or a token is its node counterpart's relation (`places::typed`): made where either is
-        // read. A match's are its own in core.rerail's shape (`Extra::match_reads`, decision 0724 §3).
+        // A typed read of a token is its node counterpart's relation (`places::typed`): made where either is read. A
+        // match's and a line's are their own in core.rerail's shape (`Extra::match_reads`, `line_reads`, decision 0724
+        // §3).
         let counterparts: Vec<String> = reads
             .iter()
             .filter_map(|r| crate::code_rule_dsl::facts::core::typed(r))
-            .filter(|(ty, _)| !(shape == Shape::Core && *ty == crate::code_rule_dsl::facts::core::PlaceType::Match))
+            .filter(|(ty, _)| !(shape == Shape::Core && matches!(ty, crate::code_rule_dsl::facts::core::PlaceType::Match | crate::code_rule_dsl::facts::core::PlaceType::Line)))
             .map(|(_, n)| n.to_owned())
             .collect();
         reads.extend(counterparts);
@@ -261,7 +262,7 @@ impl Projection {
 
     fn wants_span_text(&self, within: crate::code_rule_dsl::logic::front::ast::SpanIn) -> bool {
         use crate::code_rule_dsl::logic::front::ast::SpanIn;
-        self.wants("text") && self.text_spans.as_ref().map_or_else(
+        (self.wants("text") || self.wants("line_text")) && self.text_spans.as_ref().map_or_else(
             || self.wants(match within { SpanIn::Source => "source", SpanIn::Line => "src_line", _ => "text" }),
             |spans| spans.contains(&within),
         )
@@ -2651,6 +2652,18 @@ impl Projected {
     pub fn locs(&self) -> u32 {
         self.len() + self.extra.as_ref().map_or(0, |x| x.positions())
     }
+    /// A `Loc` view's row `r`'s position: its row (decision 0724 §3, `view_reads::Doc::token_loc`).
+    #[inline]
+    pub fn loc_position(&self, _token: bool, r: u32) -> u32 {
+        r
+    }
+    /// Position `l`'s row in a `Loc` view: a token's view (`token`) has the positions the tape stores alone, its
+    /// nodes then its tokens (a named leaf's token is its node); the others every position (a `place`'s reads take
+    /// any).
+    #[inline]
+    pub fn loc_row(&self, token: bool, l: u32) -> Option<u32> {
+        (!token || l < self.len() + self.tokens()).then_some(l)
+    }
     /// The byte span of node or span `local`.
     pub fn span(&self, local: u32) -> [u32; 2] {
         match local.checked_sub(self.len()) {
@@ -3431,6 +3444,29 @@ pub enum Place {
     Col,
     Docof,
     Report,
+    /// A token's (decision 0724 §3): `token_line_number`, `token_end_line_number`, `token_start_column` and
+    /// `token_document`, over its document's tokens alone, which a node's `Loc` views leave out.
+    TokenLine,
+    TokenEndLine,
+    TokenCol,
+    TokenDocof,
+}
+
+impl Place {
+    /// Whether it is a token's place.
+    pub fn token(self) -> bool {
+        matches!(self, Place::TokenLine | Place::TokenEndLine | Place::TokenCol | Place::TokenDocof)
+    }
+    /// The place it reads: a token's, its node's counterpart.
+    pub fn base(self) -> Place {
+        match self {
+            Place::TokenLine => Place::Line,
+            Place::TokenEndLine => Place::EndLine,
+            Place::TokenCol => Place::Col,
+            Place::TokenDocof => Place::Docof,
+            p => p,
+        }
+    }
 }
 
 /// The relations of core.rerail a batch makes only for a program that reads them (its `reads`), T's exporter having
@@ -3506,6 +3542,9 @@ struct Extra {
     /// `match_line_number`, `match_end_line_number`, `match_start_column`. A match's id is its number in its document,
     /// in no node's space, so its rows are these, never a node read's.
     match_reads: MatchReads,
+    /// A line's own reads (decision 0724 §3, step 3), in core.rerail's shape: `line_number`, `line_document`,
+    /// `line_text`. A line's id is its number in its document (0 its whole source, `source`), in no node's space.
+    line_reads: LineReads,
     sources: Vector<[i64; 2]>,
     src_lines: Vector<[i64; 3]>,
     line_counts: Vector<[i64; 2]>,
@@ -3551,6 +3590,18 @@ struct MatchReads {
     cols: Vector<[i64; 2]>,
 }
 
+/// Which of a line's own reads are made, and their rows (`Extra::line_reads`): each `[line, value]`.
+#[derive(Default)]
+struct LineReads {
+    own: bool,
+    number: bool,
+    document: bool,
+    text: bool,
+    numbers: Vector<[i64; 2]>,
+    documents: Vector<[i64; 2]>,
+    texts: Vector<[i64; 2]>,
+}
+
 /// A text's matches of one pattern: each match's groups as (match, group, start, end), offsets in the text.
 type GroupSpans = Arc<[(u32, u32, u32, u32)]>;
 
@@ -3588,8 +3639,8 @@ impl Extra {
             src_line: read("src_line"),
             line_count: read("line_count"),
             text: read("text"),
-            source_text: read("text") && source_text,
-            line_text: read("text") && line_text,
+            source_text: (read("text") || read("line_text")) && source_text,
+            line_text: (read("text") || read("line_text")) && line_text,
             line: read("line"),
             end_line: read("end_line"),
             col: read("col"),
@@ -3604,6 +3655,13 @@ impl Extra {
             comment: shape == Shape::T && read("comment"),
             rx_span: shape == Shape::Core && read("rx_span"),
             node_places: shape != Shape::Core,
+            line_reads: LineReads {
+                own: shape == Shape::Core,
+                number: read("line_number"),
+                document: read("line_document"),
+                text: read("line_text"),
+                ..LineReads::default()
+            },
             match_reads: MatchReads {
                 own: shape == Shape::Core,
                 text: read("match_text"),
@@ -3658,6 +3716,26 @@ impl Extra {
         }
         if self.col {
             self.cols.push([sp, col as i64]);
+        }
+    }
+
+    /// Line `sp`'s rows, starting on line `first` (the whole source on its first), its text `body` made where
+    /// `text_too` (`span`'s, a line's own reads where its ids are its own: `LineReads`).
+    #[allow(clippy::too_many_arguments)]
+    fn line_span(&mut self, sp: i64, first: usize, last: usize, body: &str, text_too: bool, text: &mut Vector<[i64; 2]>, string: &mut dyn FnMut(&str) -> usize) {
+        if !self.line_reads.own {
+            return self.span(sp, first, last, 0, body, text_too, text, string);
+        }
+        let r = &mut self.line_reads;
+        // Its number is the line it starts on: its own, and the whole source's first (`LineTable::place`).
+        if r.number {
+            r.numbers.push([sp, first as i64]);
+        }
+        if r.document {
+            r.documents.push([sp, self.file]);
+        }
+        if r.text && text_too {
+            r.texts.push([sp, string(body) as i64]);
         }
     }
 
@@ -3822,7 +3900,12 @@ impl Extra {
         self.file = i64::from(p.file());
         let key = i64::from(p.key());
         use granules::ExtraSpan;
-        let span = |kind: ExtraSpan, i: usize| extra_span(key, kind, u32::try_from(i).unwrap_or(u32::MAX));
+        // A line's id is its number where its reads are its own (decision 0724 §3), else a span's.
+        let own_lines = self.line_reads.own;
+        let span = |kind: ExtraSpan, i: usize| match kind {
+            ExtraSpan::Line if own_lines => Ok(rerail_blocks::located::Located::of(key, u32::try_from(i).unwrap_or(u32::MAX)).0),
+            _ => extra_span(key, kind, u32::try_from(i).unwrap_or(u32::MAX)),
+        };
         let source = f.source.as_str();
         self.later = 0;
         if self.comment && let Some(dialect) = dialect {
@@ -3865,8 +3948,8 @@ impl Extra {
         if self.source {
             let sp = span(ExtraSpan::Line, 0)?;
             self.sources.push([key, sp]);
-            let (first, last, col) = lines.place([0, source.len() as u32]);
-            self.span(sp, first as usize, last as usize, col as usize, source, self.source_text, text, string);
+            let (first, last, _) = lines.place([0, source.len() as u32]);
+            self.line_span(sp, first as usize, last as usize, source, self.source_text, text, string);
             source_at = Some(made.len());
             made.push((sp, 0..source.len()));
         }
@@ -3876,7 +3959,7 @@ impl Extra {
                 let sp = span(ExtraSpan::Line, l)?;
                 let [a, b] = lines.text_of(l, source.as_bytes()).map(|at| at as usize);
                 self.src_lines.push([key, l as i64, sp]);
-                self.span(sp, l, l, 0, &source[a..b], self.line_text, text, string);
+                self.line_span(sp, l, l, &source[a..b], self.line_text, text, string);
                 made.push((sp, a..b));
             }
             lines_at.end = made.len();
@@ -4088,6 +4171,14 @@ impl Extra {
         }
         if self.rx_span {
             out.push(("rx_span", relation(&["p", "c", "j", "g", "m"], &mut self.rx_spans.iter().map(|&[p, c, j, g, m]| rerail_facts_base::row![atom(p), c, j, atom(g), m])).with_atoms(&[true, false, false, true, false])));
+        }
+        let l = &self.line_reads;
+        for (on, name, rows) in [(l.number, "line_number", &l.numbers), (l.document, "line_document", &l.documents), (l.text, "line_text", &l.texts)] {
+            if on && l.own {
+                let columns = crate::code_rule_dsl::facts::core::input_columns(name).expect("a typed read's columns");
+                let made = relation(columns, &mut rows.iter().map(|&[x, v]| if name == "line_text" { rerail_facts_base::row![x, atom(v)] } else { rerail_facts_base::row![x, v] }));
+                out.push((name, if name == "line_text" { made.with_atoms(&[false, true]) } else { made }));
+            }
         }
         let r = &self.match_reads;
         for (on, name, rows) in [(r.text, "match_text", &r.texts), (r.document, "match_document", &r.documents), (r.line, "match_line_number", &r.lines), (r.end_line, "match_end_line_number", &r.end_lines), (r.col, "match_start_column", &r.cols)] {
@@ -5175,12 +5266,16 @@ impl Batch {
                 let [nodes, fielded, siblings, locs] = [c[0], c[1], c[2], c[3]];
                 let own = [nodes, nodes.saturating_sub(1), if wants_field { fielded } else { 0 }, if wants_sibling { siblings } else { 0 }, locs];
                 // `ROWS`' order: node, child, field, core_node, line, the four `Loc` views, tape, ast_depth,
-                // node_order, `op`, `doc` (a free slot, written above), then siblings; then the host's alone: the token
+                // node_order, `op`, a token's four `Loc` views, `doc` (a free slot, written above), then siblings; then the host's alone: the token
                 // order's four, `spread`, `end_point`, `text`, and the tape's other relations (`tape_rows`), whose token
                 // order's four it counts too.
+                // A token's `Loc` views have the positions the tape stores alone, its nodes then its tokens (decision
+                // 0724 §3).
+                let (node_locs, tokens) = (own[4], if own[4] == 0 { 0 } else { nodes + c[4] });
                 let views: [usize; TAPE] = [
-                    own[0], own[1], own[2], own[0], own[0], own[4], own[4], own[4], own[4], own[0], own[0], own[0], c[9], 0,
-                    own[3], 0, 0, 0, 0, if wants_spread { c[5] } else { 0 }, if wants_end { nodes } else { 0 }, c[11],
+                    own[0], own[1], own[2], own[0], own[0], node_locs, node_locs, node_locs, node_locs, own[0], own[0], own[0], c[9],
+                    tokens, tokens, tokens, tokens, 0, own[3], 0, 0, 0, 0, if wants_spread { c[5] } else { 0 }, if wants_end { nodes } else { 0 },
+                    c[11],
                 ];
                 let mut by: [usize; ROWS] = std::array::from_fn(|k| views.get(k).copied().unwrap_or(0));
                 tape_rows::count(self, i, &counts, &mut by);
@@ -5446,7 +5541,8 @@ impl Batch {
     /// `row`, the node's tape node `x` known (read only by the `field` view: its rows are the fielded nodes).
     fn row_of_node(&self, view: View, doc: usize, local: u32, x: u32) -> Option<usize> {
         let within = match view {
-            View::Node | View::Line | View::Tape | View::Core | View::Depth | View::Order | View::Unit | View::End | View::Loc(_) => Some(local as usize),
+            View::Node | View::Line | View::Tape | View::Core | View::Depth | View::Order | View::Unit | View::End => Some(local as usize),
+            View::Loc(place) => self.docs[doc].loc_row(place.token(), local).map(|r| r as usize),
             View::Child => (local > 0).then(|| local as usize - 1),
             View::Field => self.docs[doc].ranks().local(Item::Field, x).map(|r| r as usize),
             View::Sibling => self.docs[doc].ranks().local(Item::Sibling, x).map(|r| r as usize),
@@ -5508,9 +5604,9 @@ impl Viewed {
             View::Op | View::Text => &["n", "s"],
             View::End => &["n", "p"],
             View::Spread => &["n"],
-            View::Loc(Place::Line | Place::EndLine) => &["n", "l"],
-            View::Loc(Place::Col) => &["n", "c"],
-            View::Loc(Place::Docof) => &["n", "d"],
+            View::Loc(Place::Line | Place::EndLine | Place::TokenLine | Place::TokenEndLine) => &["n", "l"],
+            View::Loc(Place::Col | Place::TokenCol) => &["n", "c"],
+            View::Loc(Place::Docof | Place::TokenDocof) => &["n", "d"],
             View::Loc(Place::Report) => &["n", "line", "column", "end_line", "end_column"],
         }
     }
@@ -5523,8 +5619,8 @@ impl Viewed {
         use made::ColKind;
         match (self.view, *Self::columns(self.view).get(column)?) {
             (View::Tape, "par") => None,
-            (View::Node | View::Core | View::Loc(Place::Docof), "d") => Some(ColKind::Key),
-            (View::Loc(Place::Col), "c") => Some(ColKind::U32),
+            (View::Node | View::Core | View::Loc(Place::Docof | Place::TokenDocof), "d") => Some(ColKind::Key),
+            (View::Loc(Place::Col | Place::TokenCol), "c") => Some(ColKind::U32),
             // -1 for none: no sibling before (`prev_id`), no end point made (`end_id`).
             (View::Sibling, "a") | (View::End, "p") => Some(ColKind::NodeOrNone),
             // A text's atom (`Projected::text_atom`), an anonymous child's name's (`ViewDoc::names`).
@@ -5536,7 +5632,7 @@ impl Viewed {
             | (View::Tape, "size" | "depth")
             | (View::Core, "t")
             | (View::Depth, "k")
-            | (View::Line | View::Loc(Place::Line | Place::EndLine), "l")
+            | (View::Line | View::Loc(Place::Line | Place::EndLine | Place::TokenLine | Place::TokenEndLine), "l")
             | (View::Loc(Place::Report), "line" | "column" | "end_line" | "end_column") => Some(ColKind::U32),
             _ => None,
         }
@@ -5628,7 +5724,7 @@ impl Source for Viewed {
     /// input names it (`Docs::file`, as a made one's): no document is made, where walking the made documents made
     /// every one.
     fn column_counts(&self, c: usize) -> Option<Vec<(i64, u64)>> {
-        if !matches!((self.view, c), (View::Loc(Place::Docof), 1)) {
+        if !matches!((self.view, c), (View::Loc(Place::Docof | Place::TokenDocof), 1)) {
             return None;
         }
         let offsets = self.batch.firsts(self.view);
@@ -5692,8 +5788,8 @@ impl Source for Viewed {
     /// children listed (`child` 2, `field` 1.7): decision 0312. The rest about one.
     fn lookup_cost(&self, column: usize) -> f64 {
         match (self.view, column) {
-            (View::Loc(Place::Docof), 0) => 4.0,
-            (View::Loc(Place::Col), 0) => 3.5,
+            (View::Loc(Place::Docof | Place::TokenDocof), 0) => 4.0,
+            (View::Loc(Place::Col | Place::TokenCol), 0) => 3.5,
             (View::Child, 0) => 2.0,
             (View::Field, 0) => 1.7,
             _ => 1.0,
@@ -5727,7 +5823,7 @@ impl Source for Viewed {
             || matches!(self.view, View::Op) && column == 0
             || matches!(self.view, View::Text) && column == 1
             || matches!(self.view, View::End) && column == 1
-            || matches!(self.view, View::Loc(Place::Docof)) && column == 1
+            || matches!(self.view, View::Loc(Place::Docof | Place::TokenDocof)) && column == 1
     }
     fn range_indexed(&self, column: usize) -> bool {
         column == self.own()
@@ -5955,7 +6051,7 @@ impl Source for Viewed {
         column == self.own()
     }
     fn keys_documents(&self, column: usize) -> bool {
-        matches!((self.view, column), (View::Node | View::Core, 0) | (View::Loc(Place::Docof), 1))
+        matches!((self.view, column), (View::Node | View::Core, 0) | (View::Loc(Place::Docof | Place::TokenDocof), 1))
     }
     /// A column of a known kind other than a node's (a kind, a position, an atom, a key) holds no node id.
     fn keys_nodes(&self, column: usize) -> bool {
@@ -6328,7 +6424,7 @@ impl Viewed {
             for doc in b.doc(v, memo).into_iter().chain(b.programs_of(file)) {
                 each(b.nodes().at(doc)..b.nodes().at(doc + 1));
             }
-        } else if matches!(self.view, View::Loc(Place::Docof)) && column == 1 {
+        } else if matches!(self.view, View::Loc(Place::Docof | Place::TokenDocof)) && column == 1 {
             // A file's places, then its programs' (decision 0431 §4): at their documents' offsets, none made, where
             // an index of the view's every row made every document.
             let Ok(file) = u32::try_from(v) else { return true };
@@ -6400,7 +6496,7 @@ impl Viewed {
                 let p = &b.docs[doc];
                 let mut vals = [0i64; 8];
                 for (o, &c) in vals.iter_mut().zip(columns) {
-                    *o = match (c, place) {
+                    *o = match (c, place.base()) {
                         (0, _) => value,
                         (_, Place::Docof) => i64::from(p.file()),
                         _ => Self::loc_value(p, place, 0, p.span(local), c),
@@ -6717,17 +6813,16 @@ impl Viewed {
             View::Order => d.order_row(i, c),
             View::Sibling => d.sibling(i, c),
             View::Op => d.op(i, c),
-            View::Loc(place) => d.loc(
-                match place {
+            View::Loc(place) => {
+                let base = match place.base() {
                     Place::Line => P::Line,
                     Place::EndLine => P::EndLine,
                     Place::Col => P::Col,
                     Place::Docof => P::Docof,
-                    Place::Report => P::Report,
-                },
-                i,
-                c,
-            ),
+                    _ => P::Report,
+                };
+                if place.token() { d.token_loc(base, i, c) } else { d.loc(base, i, c) }
+            }
             View::Spread | View::End | View::Unit | View::Text => unreachable!("a view the host reads alone has no directory read (`kernel_view`)"),
         }
     }
@@ -6765,11 +6860,17 @@ impl Viewed {
         let b = &*self.batch;
         let mut vals = vec![0i64; columns.len()];
         if let View::Loc(place) = self.view {
-            for ((i, (_, span)), (_, g)) in p.spans().enumerate().zip(p.loc_ids()).take(n) {
+            // Each position by its row (`Projected::loc_row`): a node's view leaves the tokens out, a token's takes
+            // them alone.
+            for ((l, (_, span)), (_, g)) in p.spans().enumerate().zip(p.loc_ids()) {
+                let Some(i) = p.loc_row(place.token(), l as u32) else { continue };
+                if i as usize >= n {
+                    break;
+                }
                 for (o, &c) in vals.iter_mut().zip(columns) {
                     *o = Self::loc_value(p, place, g, span, c);
                 }
-                row(i, &vals);
+                row(i as usize, &vals);
             }
             return;
         }
@@ -6924,6 +7025,7 @@ impl Viewed {
 
     /// Column `column` of a `Loc` view's row: a node's or span's id `g`, and its place from its byte span.
     fn loc_value(p: &Projected, place: Place, g: i64, span: [u32; 2], column: usize) -> i64 {
+        let place = place.base();
         if column == 0 {
             return g;
         }
@@ -6941,16 +7043,15 @@ impl Viewed {
             Place::Line => i64::from(line),
             Place::EndLine => i64::from(last),
             Place::Col => i64::from(col),
-            Place::Docof => i64::from(p.file()),
-            Place::Report => unreachable!(),
+            _ => unreachable!(),
         }
     }
 
     /// Column `column` of row `i` of document `p` in this view.
     fn value_at(&self, p: &Projected, i: usize, column: usize) -> i64 {
         if let View::Loc(place) = self.view {
-            let local = i as u32;
-            return match (column, place) {
+            let local = p.loc_position(place.token(), i as u32);
+            return match (column, place.base()) {
                 (0, _) => p.global(local),
                 (_, Place::Docof) => i64::from(p.file()),
                 _ => Self::loc_value(p, place, 0, p.span(local), column),
@@ -6969,7 +7070,8 @@ impl Viewed {
     /// `field` view's: a select among the fielded nodes), else `NONE`.
     fn local_of_row(&self, p: &Projected, i: usize) -> (u32, u32) {
         match self.view {
-            View::Node | View::Line | View::Tape | View::Core | View::Depth | View::Order | View::Unit | View::End | View::Loc(_) => (i as u32, NONE),
+            View::Node | View::Line | View::Tape | View::Core | View::Depth | View::Order | View::Unit | View::End => (i as u32, NONE),
+            View::Loc(place) => (p.loc_position(place.token(), i as u32), NONE),
             View::Child => (i as u32 + 1, NONE),
             View::Field => {
                 let x = p.ranks().select(Item::Field, i as u32).expect("a field row");
@@ -7074,6 +7176,13 @@ fn named_views(shape: Shape) -> Vec<(&'static str, View)> {
             ("col", View::Loc(Place::Col)),
             // `core.rerail`'s `docof(x: loc, d)` is an input (`rr::lower`): nodes' and spans' documents.
             ("docof", View::Loc(Place::Docof)),
+            // A token's own places (decision 0724 §3), over its document's tokens alone.
+            ("token_line_number", View::Loc(Place::TokenLine)),
+            ("token_end_line_number", View::Loc(Place::TokenEndLine)),
+            ("token_start_column", View::Loc(Place::TokenCol)),
+            ("token_document", View::Loc(Place::TokenDocof)),
+            // A token's text: the `text` view's, which reads it off the tape (a token is a position it stores).
+            ("token_text", View::Text),
             ("next_sibling", View::Sibling),
             ("end_point", View::End),
             ("spread", View::Spread),
@@ -7858,6 +7967,7 @@ fn slot_of(view: View) -> usize {
         View::Node | View::Line | View::Tape | View::Core | View::Depth | View::Order => 0,
         View::Child => 1,
         View::Field => 2,
+        View::Loc(place) if place.token() => 13,
         View::Loc(_) => 5,
         View::Sibling => rerail_clif::view_reads::SIBLING,
         View::Unit => 0,

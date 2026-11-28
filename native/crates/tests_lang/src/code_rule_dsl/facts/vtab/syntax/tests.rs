@@ -750,7 +750,7 @@ fn core_rows(docs: Vec<Document>) -> HashMap<String, BTreeSet<String>> {
     let reads = [
         "node", "text", "comment", "op", "op_at", "str", "strprefix", "value", "value_type", "name", "spread", "next_sibling", "syntax_error",
         "src_line", "line_count", "str_part", "first_token", "last_token", "token_before", "token_after", "child", "line", "end_line", "col",
-        "visit_index", "ast_depth", "structural_before", "structural_after", "end_point",
+        "visit_index", "ast_depth", "structural_before", "structural_after", "end_point", "line_text",
     ];
     let projection = Projection { shape: Shape::Core, reads: Some(reads.iter().map(|r| (*r).to_owned()).collect()), ..Projection::core() };
     let sources = shaped(&store, docs, &projection).unwrap();
@@ -778,13 +778,16 @@ fn core_rows(docs: Vec<Document>) -> HashMap<String, BTreeSet<String>> {
         assert!(kinds.contains_key(&r[0]) && !kinds.contains_key(&r[1]), "{r:?}");
         assert_eq!(lines.get(&r[1]), end_lines.get(&r[0]), "{r:?}: the point's line is the node's end line");
     }
+    // A line's text is its own relation's (`line_text`, decision 0724 step 3): a line's id is its number, in no node's
+    // space.
+    let line_texts: HashMap<i64, String> = read("line_text").into_iter().map(|r| (r[0], sym(r[1]))).collect();
     let loc = |v: i64| match (kinds.get(&v), texts.get(&v)) {
         (Some(k), Some(t)) if !t.contains('\n') => format!("{k}'{t}'"),
         (Some(k), _) => k.clone(),
         (None, Some(t)) => format!("'{t}'"),
         (None, None) => format!("#{v}"),
     };
-    // Per relation, which columns are locations (`l`), symbols (`s`) and numbers (`i`).
+    // Per relation, which columns are locations (`l`), lines (`n`, by their text), symbols (`s`) and numbers (`i`).
     let shapes = [
         ("comment", "ls"),
         ("op", "ls"),
@@ -799,7 +802,7 @@ fn core_rows(docs: Vec<Document>) -> HashMap<String, BTreeSet<String>> {
         ("spread", "l"),
         ("next_sibling", "ll"),
         ("syntax_error", "iis"),
-        ("src_line", "iil"),
+        ("src_line", "iin"),
         ("line_count", "ii"),
         ("str_part", "lisli"),
         ("first_token", "ll"),
@@ -823,6 +826,7 @@ fn core_rows(docs: Vec<Document>) -> HashMap<String, BTreeSet<String>> {
                         .zip(shape.chars())
                         .map(|(&v, c)| match c {
                             'l' => loc(v),
+                            'n' => format!("'{}'", line_texts.get(&v).map_or("?", |t| t.as_str())),
                             's' => sym(v),
                             _ => v.to_string(),
                         })
@@ -1371,18 +1375,20 @@ fn long_container_text_is_materialized_only_for_the_consumers_that_demand_it() {
     let prelude = std::fs::read_to_string(crate::code_rule_dsl::logic::rr::library().join("core.rerail")).unwrap();
     for (body, source_needed, line_needed) in [
         ("out(t) :- document_source(_, sp), kind(n, \"identifier\"), text(n, t).", false, false),
-        (".decl copied(sp: place)\ncopied(s) :- document_source(_, s).\nout(t) :- copied(s), alias = s, place_text(alias, t).", true, false),
-        (".decl copied(sp: place)\ncopied(s) :- document_line(_, s).\nout(t) :- copied(s), place_text(s, t).", false, true),
-        (".decl copied(sp: place)\ncopied(s) :- document_source(_, s).\ncopied(s) :- document_line(_, s).\nout(t) :- copied(s), place_text(s, t).", true, true),
+        // A line's text, its document's source's too, is its own relation's (`line_text`, decision 0724 step 3).
+        (".decl copied(sp: line)\ncopied(s) :- document_source(_, s).\nout(t) :- copied(s), alias = s, line_text(alias, t).", true, false),
+        (".decl copied(sp: line)\ncopied(s) :- document_line(_, s).\nout(t) :- copied(s), line_text(s, t).", false, true),
+        (".decl copied(sp: line)\ncopied(s) :- document_source(_, s).\ncopied(s) :- document_line(_, s).\nout(t) :- copied(s), line_text(s, t).", true, true),
         ("out(\"missing\") :- document_source(_, sp), !line_text(sp, _).", true, false),
         ("out(t) :- document_source(_, sp), match_all(\"(?<hit>items)\", sp), text(hit, t).", false, false),
     ] {
         let program = crate::code_rule_dsl::logic::rr::parse_version(&format!("{prelude}\n.decl out(t: symbol)\n{body}\n.output out\n")).unwrap();
-        let projection = crate::code_rule_dsl::logic::plan::text_demand::projection_of(&program, ["source", "src_line", "text", "rx_span"].into_iter().map(str::to_owned).collect());
+        let projection = crate::code_rule_dsl::logic::plan::text_demand::projection_of(&program, ["source", "src_line", "text", "line_text", "rx_span"].into_iter().map(str::to_owned).collect());
         let rows = shaped(&store, vec![doc.clone()], &projection).unwrap();
         let relation = |name| &rows.iter().find(|(n, _)| *n == name).unwrap().1;
-        let text = relation("text");
-        let has_text = |loc| (0..text.len()).any(|row| text.value(row, 0) == loc);
+        // A line's text made is a `line_text` row of its id, none where no rule reads it.
+        let line_text = rows.iter().find(|(n, _)| *n == "line_text").map(|(_, s)| Arc::clone(s));
+        let has_text = |loc| line_text.as_ref().is_some_and(|t| (0..t.len()).any(|row| t.value(row, 0) == loc));
         assert_eq!(has_text(relation("source").value(0, 1)), source_needed, "source: {body}");
         assert_eq!(has_text(relation("src_line").value(0, 2)), line_needed, "line: {body}");
     }
@@ -1842,10 +1848,11 @@ fn text_of_a_bound_node_is_read_in_place() {
         // A column a rule fills with the empty value (FAST002's `fast_param` of an unannotated parameter).
         (".decl t_ann(p: node, a: loc)\nt_ann(p, a) :- kind(p, \"typed_parameter\"), field(p, \"type\", a).\nt_ann(p, a) :- kind(p, \"identifier\"), unset(a).\nout(t) :- t_ann(_, a), text(a, t).", 1),
         ("out(t) :- text(n, t).", 0),
-        // A document's source and its lines are read off the source too (row 7); a match's span is not.
-        ("out(t) :- document_line(_, s), place_text(s, t).", 1),
-        ("out(t) :- document_source(_, s), place_text(s, t).", 1),
-        (".decl t_line(s: place)\nt_line(s) :- document_line(_, s), line_number(s, l), l > 1.\nout(t) :- t_line(s), place_text(s, t).", 1),
+        // A line's text, and its document's source's, is its own relation's (`line_text`, made where it is read:
+        // decision 0724 step 3, 7622dea3e2), no node read's; nor is a match's.
+        ("out(t) :- document_line(_, s), line_text(s, t).", 0),
+        ("out(t) :- document_source(_, s), line_text(s, t).", 0),
+        (".decl t_line(s: line)\nt_line(s) :- document_line(_, s), line_number(s, l), l > 1.\nout(t) :- t_line(s), line_text(s, t).", 0),
         ("out(t) :- document_line(_, s), line_regex_match(\"x+\", s, m), place_text(m, t).", 0),
     ] {
         let program = crate::code_rule_dsl::logic::rr::parse_version(&format!("{prelude}\n.decl out(t: symbol)\n{rules}\n.output out\n")).unwrap();
@@ -3591,14 +3598,14 @@ fn a_made_relations_membership_test_is_its_rows() {
     assert!(tried >= 3, "made relations with a membership test: {tried}");
 }
 
-/// Decision 0353: core.rerail's places are the `Loc` view's with span rows only where a span relation is read
-/// (`places::Places`), and their statistics, counted in a block, are what their rows measure: the view's and the
-/// span rows' together, as one relation's.
+/// Decision 0353: core.rerail's places are the `Loc` view's (`places::Places`), and their statistics, counted in a
+/// block, are what their rows measure. A line, which a span relation reads (`src_line`), is placed by its own reads
+/// (`line_number`, decision 0724 step 3): its id is its number in its document, no row of the node places.
 #[test]
 fn places_are_the_view_and_the_spans_rows_measured_in_a_block() {
     let store = ContentStore::open(&temp("places")).unwrap();
     let docs: Vec<Document> = (1..=3).map(|k| document(k, &format!("m{k}.py"), "python", &format!("def f{k}(x):\n    # c{k}\n    return g(x,\n      {k})\n"))).collect();
-    let reads = ["node", "line", "end_line", "col", "docof", "src_line", "source", "comment", "doc"];
+    let reads = ["node", "line", "end_line", "col", "docof", "src_line", "source", "comment", "doc", "line_number"];
     let projection = Projection { shape: Shape::Core, reads: Some(reads.iter().map(|r| (*r).to_owned()).collect()), ..Projection::core() };
     let sources = shaped(&store, docs, &projection).unwrap();
     let of = |name: &str| Arc::clone(&sources.iter().find(|(n, _)| *n == name).unwrap_or_else(|| panic!("{name} bound")).1);
@@ -3607,24 +3614,23 @@ fn places_are_the_view_and_the_spans_rows_measured_in_a_block() {
     for name in ["line", "end_line", "col", "docof"] {
         let s = of(name);
         assert!(s.as_any().is_some_and(|a| a.downcast_ref::<places::Places>().is_some()), "{name}: the view and the spans' rows");
-        // Every node has a place, and so does every line span.
+        // Every node has a place.
         let ids: BTreeSet<i64> = (0..s.len()).map(|r| s.value(r, 0)).collect();
         assert!((0..node.len()).all(|r| ids.contains(&node.value(r, 1))), "{name}: every node's place");
-        assert!((0..src_line.len()).all(|r| ids.contains(&src_line.value(r, 2))), "{name}: every line span's place");
         let got = s.statistics().expect("counted in a block");
         assert_eq!(got, measured(&*s), "{name}: its statistics, as its rows measure");
     }
-    let line = of("line");
-    let at = |n: i64| (0..line.len()).find(|&r| line.value(r, 0) == n).map(|r| line.value(r, 1));
-    // `src_line(d, l, sp)`: line span `sp` is on line `l`.
+    let number = of("line_number");
+    let at = |sp: i64| (0..number.len()).find(|&r| number.value(r, 0) == sp).map(|r| number.value(r, 1));
+    // `src_line(d, l, sp)`: line `sp` is line `l`, by its own read.
     for r in 0..src_line.len() {
-        assert_eq!(at(src_line.value(r, 2)), Some(src_line.value(r, 1)), "a line span's line");
+        assert_eq!(at(src_line.value(r, 2)), Some(src_line.value(r, 1)), "a line's number");
     }
 }
 
 /// A place relation's keyed walk (`Places::for_rows_keyed`: the cross part's count of `docof` at the exports' nodes,
-/// decision 0458) gives the rows a per-row read finds at node and span keys alike, and at nodes alone makes no group
-/// of its batch: a span's id is never a node's (`granules::is_extra`). It made the whole batch before (ab200).
+/// decision 0458) gives the rows a per-row read finds, and at nodes makes no group of its batch. It made the whole
+/// batch before (ab200). A line read (`src_line`) adds no key: a line is placed by its own reads (decision 0724 step 3).
 #[test]
 fn a_places_keyed_walk_at_nodes_makes_no_span_row() {
     let store = ContentStore::open(&temp("places-keyed")).unwrap();
@@ -3640,17 +3646,16 @@ fn a_places_keyed_walk_at_nodes_makes_no_span_row() {
         got.sort();
         walked.then_some(got)
     };
-    // Node keys and span keys: the rows a per-row read finds.
+    // Node keys: the rows a per-row read finds.
     let sources = shaped(&store, docs(), &projection).unwrap();
     let of = |name: &str| Arc::clone(&sources.iter().find(|(n, _)| *n == name).unwrap().1);
-    let (node, src_line) = (of("node"), of("src_line"));
+    let node = of("node");
     for name in ["line", "docof"] {
         let s = of(name);
-        let keys: rustc_hash::FxHashSet<i64> = (0..node.len()).step_by(2).map(|r| node.value(r, 1)).chain((0..src_line.len()).step_by(2).map(|r| src_line.value(r, 2))).collect();
-        assert!(keys.iter().any(|&k| granules::is_extra(k as u32)), "{name}: span keys among them");
+        let keys: rustc_hash::FxHashSet<i64> = (0..node.len()).step_by(2).map(|r| node.value(r, 1)).collect();
         let per_row: Vec<(usize, Vec<i64>)> = (0..s.len()).filter(|&r| keys.contains(&s.value(r, 0))).map(|r| (r, vec![s.value(r, 0), s.value(r, 1)])).collect();
         let places = s.as_any().is_some_and(|a| a.downcast_ref::<places::Places>().is_some());
-        assert_eq!(walk(&s, &keys), Some(per_row), "{name} (places: {places}): the keyed walk at nodes and spans");
+        assert_eq!(walk(&s, &keys), Some(per_row), "{name} (places: {places}): the keyed walk at nodes");
     }
     // Node keys alone: no group of the batch made.
     let batch = Batch::new(&store, docs(), &projection, &[], &[], false, None, &HashMap::new()).unwrap();
@@ -3910,17 +3915,16 @@ fn text_is_a_view_of_the_nodes_and_positions_with_text() {
         assert_eq!(positions as u32, p.extra.as_ref().map_or(0, |x| x.tokens), "a row a token (`token_text`)");
         assert_eq!(batch.groups(), 0, "no rows made");
     }
-    // A program reading the source's text: its position's row in the view, and `Extra`'s span of it after the view's
-    // rows (`places::join`), made with the spans.
+    // A program reading the source's text: its position's row in the view, and no `Extra` span of it: a line's text,
+    // its source's too, is its own relation's (`line_text`, decision 0724 step 3).
     let projection = Projection { shape: Shape::Core, reads: Some(["text".to_owned(), "source".to_owned()].into()), ..Projection::core() };
     let batch = Batch::new(&store, vec![document(1, "m.py", "python", &source)], &projection, &[], &[], false, None, &HashMap::new()).unwrap();
     let t = text_of(&batch);
-    assert!(t.as_any().is_some_and(|a| a.downcast_ref::<places::Places>().is_some()), "the view, then the spans' rows");
     let p = &batch.docs[0];
     let ids: Vec<i64> = t.lookup(1, &[atom(&source)]).unwrap().iter().map(|&r| t.value(r, 0)).collect();
     let position = p.global(p.len() + p.extra.as_ref().unwrap().tokens);
     assert!(ids.contains(&position), "the source's position: {ids:?}");
-    assert!(ids.iter().any(|&n| granules::is_extra(n as u32)), "`Extra`'s span of the source: {ids:?}");
+    assert!(!ids.iter().any(|&n| granules::is_extra(n as u32)), "no `Extra` span of the source: {ids:?}");
 }
 
 /// Decision 0656 step 4: in core.rerail's shape the `node` view's columns' counts are read off the documents'
@@ -4058,7 +4062,6 @@ fn a_probe_by_a_document_key_makes_that_document_alone() {
     let docs = || -> Vec<Document> {
         (1..=4).map(|k| document(k, &format!("m{k}.py"), "python", &format!("def f{k}(x, y={k}):\n    return g(x)\n\nclass C{k}:\n    pass\n"))).collect()
     };
-    // A span read (`src_line`) makes `docof` rows of the batch's documents, not a view of the tape.
     let reads = ["node", "child", "docof", "src_line", "doc"];
     let projection = Projection { shape: Shape::Core, reads: Some(reads.iter().map(|r| (*r).to_owned()).collect()), ..Projection::core() };
     let eager = Batch::new(&store, docs(), &projection, &[], &[], false, None, &HashMap::new()).unwrap();
@@ -4066,7 +4069,14 @@ fn a_probe_by_a_document_key_makes_that_document_alone() {
     let totals: HashMap<String, usize> = made_sources(&eager).into_iter().map(|(n, _, s)| (n.to_owned(), s.len())).collect();
     let lazy = Batch::new(&store, docs(), &projection, &[], &[], false, None, &counts).unwrap();
     lazy.give_totals(&totals);
-    let of = |b: &Arc<Batch>| Arc::clone(&made_sources(b).into_iter().find(|(n, _, _)| *n == "docof").expect("docof made as rows").2);
+    // `docof` as a program binds it: the `Loc` view (core.rerail's shape makes no row of it, a line's place is its own:
+    // decision 0724 step 3), joined as `places::join` binds it.
+    let of = |b: &Arc<Batch>| {
+        let mut made: Vec<(&'static str, Arc<dyn Source>)> = made_sources(b).into_iter().filter_map(|(_, name, source)| Some((name?, source))).collect();
+        made.extend(views(b));
+        places::join(&mut made, b);
+        Arc::clone(&made.iter().find(|(n, _)| *n == "docof").expect("docof bound").1)
+    };
     let (want, got) = (of(&eager), of(&lazy));
     let key = i64::from(lazy.docs.key(2));
     let rows = |s: &Arc<dyn Source>, found: Vector<usize>| -> BTreeSet<(i64, i64)> { found.into_iter().map(|r| (s.value(r, 0), s.value(r, 1))).collect() };
@@ -4086,7 +4096,9 @@ fn a_probe_by_a_node_and_another_document_makes_no_document() {
         (1..=4).map(|k| document(k, &format!("m{k}.py"), "python", &format!("def f{k}(x, y={k}):\n    return g(x)\n\nclass C{k}:\n    pass\n"))).collect()
     };
     let reads = ["node", "child", "docof", "src_line", "doc"];
-    let projection = Projection { shape: Shape::Core, reads: Some(reads.iter().map(|r| (*r).to_owned()).collect()), ..Projection::core() };
+    // T's shape: `docof` made as rows of the batch's documents, a document's when first read (decision 0494). In
+    // core.rerail's it is the `Loc` view, a line's place its own (decision 0724 step 3), and no row is made.
+    let projection = Projection { shape: Shape::T, reads: Some(reads.iter().map(|r| (*r).to_owned()).collect()), ..Projection::core() };
     let eager = Batch::new(&store, docs(), &projection, &[], &[], false, None, &HashMap::new()).unwrap();
     let counts: HashMap<u32, made::ViewCounts> = eager.view_counts().into_iter().collect();
     let totals: HashMap<String, usize> = made_sources(&eager).into_iter().map(|(n, _, s)| (n.to_owned(), s.len())).collect();
@@ -4097,10 +4109,11 @@ fn a_probe_by_a_node_and_another_document_makes_no_document() {
     let (home, other) = (i64::from(lazy.docs.key(1)), i64::from(lazy.docs.key(2)));
     let node = want.lookup(1, &[home]).unwrap().into_iter().map(|r| want.value(r, 0)).min().expect("a node of the document");
     let rows = |s: &Arc<dyn Source>, found: Vector<usize>| -> BTreeSet<(i64, i64)> { found.into_iter().map(|r| (s.value(r, 0), s.value(r, 1))).collect() };
-    let none = got.lookup_columns(&[0, 1], &[node, other]).expect("a probe the batch keeps to its documents");
+    let probe = |n: i64, d: i64| got.lookup_columns(&[0, 1], &[n, d]).expect("a probe the batch keeps to its documents");
+    let none = probe(node, other);
     assert!(none.is_empty(), "a node of another document: no row");
     assert_eq!(lazy.docs.made_count(), 0, "and no document made");
-    let found = rows(&got, got.lookup_columns(&[0, 1], &[node, home]).unwrap());
+    let found = rows(&got, probe(node, home));
     assert_eq!(lazy.docs.made_count(), 1, "its own document's probe made that document alone");
     assert_eq!(found, BTreeSet::from([(node, home)]), "its row");
 }
@@ -4340,8 +4353,8 @@ fn an_answer_s_values_are_admitted_as_one_batch() {
 
 /// Decision 0707: a chunk with a value admitted (decision 0431 §8: `values::Layered`, its base the chunk's batch and
 /// its parts the value's) is read where it lies by the host's join programs: `within` is the axis solved on the host
-/// into one relation in its block, the batch's rows then the value's, and `docof`, a placed relation (the `Loc` view's
-/// rows, then its spans'), is a placed read over the values' directory. Each was refused in place before, and each
+/// into one relation in its block, the batch's rows then the value's, and `docof`, the `Loc` view's rows (a line's
+/// place is its own, decision 0724 step 3: no span past them), is read over the values' directory. Each was refused in place before, and each
 /// stratum that read it uploaded every row: 1 GB of `within` and 284 MB of `docof` over the data layer's 50 files.
 #[test]
 fn a_chunks_axis_and_places_with_a_value_admitted_are_read_where_they_lie_on_the_host() {
@@ -4389,50 +4402,49 @@ fn a_chunks_axis_and_places_with_a_value_admitted_are_read_where_they_lie_on_the
     let (_, base) = sources.iter().find(|(n, _)| n == "docof").unwrap();
     let base_view = base.device_view().expect("docof: the chunk's view read through the views");
     let base_read = &base_view.in_place;
-    assert!(base_read.kind & places::VIEW_PLACED != 0, "docof: the chunk's spans past its view's rows");
+    // The chunk's own `docof` is its view alone: a line's place is its own (decision 0724 step 3), no span past it.
+    assert!(base_read.kind & places::VIEW_PLACED == 0, "docof: the chunk's view, no span past its rows");
     let view = docof.device_view().expect("docof: read through the views");
     let read = &view.in_place;
-    assert!(read.kind & places::VIEW_PLACED != 0, "docof: its spans past the view's rows");
+    assert!(read.kind & places::VIEW_PLACED == 0, "docof: the chunk's and the value's views, no span past them");
     assert_eq!(view.rows, docof.len(), "docof: every row, the value's too");
 }
 
 /// Q216 (decision 0353 step 3): where a program reads spans, a node's and a token's places are the `Loc` view's, and
-/// the place rows made are the spans' alone. The bound relation is the view's rows, then the spans', and a span's
-/// place is read by its id: a line's own line, its start's column 0.
+/// no place row is made for them. A line's are its own reads (decision 0724 step 3: `line_number`, `line_document`),
+/// by its id, its number in its document: no row of the node places is a line's, and the bound relation is the view's.
 #[test]
 fn a_span_reader_s_places_are_the_view_s_then_the_spans() {
     let store = ContentStore::open(&temp("span-places")).unwrap();
     let docs = || vec![document(1, "a.py", "python", "x = 1\n# c\ny = 2\n")];
     let projection = |reads: &[&str]| Projection { shape: Shape::Core, reads: Some(reads.iter().map(|r| (*r).to_owned()).collect()), ..Projection::core() };
     let places = ["line", "end_line", "col", "docof"];
-    let spans = projection(&["node", "line", "end_line", "col", "docof", "source", "src_line"]);
+    let spans = projection(&["node", "line", "end_line", "col", "docof", "source", "src_line", "line_number", "line_document"]);
     let batch = Batch::new(&store, docs(), &spans, &[], &[], false, None, &HashMap::new()).unwrap();
-    let mut made: HashMap<&str, usize> = HashMap::new();
     for (name, _, s) in made_sources(&batch) {
         if places.contains(&name) {
-            assert!(s.len() > 0, "{name}: the spans' places are made");
-            assert!((0..s.len()).all(|r| granules::is_extra(s.value(r, 0) as u32)), "{name}: no node's or token's place is made");
-            made.insert(name, s.len());
+            assert_eq!(s.len(), 0, "{name}: no line's place is a row of it");
         }
     }
     let out = shaped(&store, docs(), &spans).unwrap();
     let views = shaped(&store, docs(), &projection(&["node", "line", "end_line", "col", "docof"])).unwrap();
-    let bound = |name: &str| Arc::clone(&out.iter().find(|(n, _)| *n == name).unwrap().1);
+    let bound = |name: &str| Arc::clone(&out.iter().find(|(n, _)| *n == name).unwrap_or_else(|| panic!("{name} bound")).1);
     for name in places {
         let (whole, view) = (bound(name), Arc::clone(&views.iter().find(|(n, _)| *n == name).unwrap().1));
-        assert_eq!(whole.len(), view.len() + made[name], "{name}: the view's rows, then the spans'");
-        assert!((0..view.len()).all(|r| whole.value(r, 0) == view.value(r, 0) && whole.value(r, 1) == view.value(r, 1)), "{name}: the view's rows first");
+        assert_eq!(whole.len(), view.len(), "{name}: the view's rows alone");
+        assert!((0..view.len()).all(|r| whole.value(r, 0) == view.value(r, 0) && whole.value(r, 1) == view.value(r, 1)), "{name}: the view's rows");
         let node = view.value(0, 0);
         assert_eq!(whole.lookup(0, &[node]).unwrap(), view.lookup(0, &[node]).unwrap(), "{name}: a node's place is the view's");
     }
+    let key = bound("docof").value(0, 1);
     let src_line = bound("src_line");
     assert_eq!(src_line.len(), 4, "every line, the empty last one too");
     for r in 0..src_line.len() {
         let (l, sp) = (src_line.value(r, 1), src_line.value(r, 2));
-        for (name, want) in [("line", l), ("end_line", l), ("col", 0)] {
+        for (name, want) in [("line_number", l), ("line_document", key)] {
             let s = bound(name);
             let rows = s.lookup(0, &[sp]).unwrap();
-            assert_eq!(rows.iter().map(|&row| s.value(row, 1)).collect::<Vec<_>>(), [want], "{name} of line {l}'s span");
+            assert_eq!(rows.iter().map(|&row| s.value(row, 1)).collect::<Vec<_>>(), [want], "{name} of line {l}");
         }
     }
 }
@@ -4684,7 +4696,7 @@ fn the_join_programs_view_reads_are_the_jits() {
                 let place = format!("{} document {m}", format.name());
                 for k in 0..VIEWS.len() {
                     let n = firsts[m as usize + 1].rows[k] - firsts[m as usize].rows[k];
-                    let cols = [5, 3, 3, 3, 2, 2, 2, 2, 2, 4, 2, 2, 2, 3][k];
+                    let cols = [5, 3, 3, 3, 2, 2, 2, 2, 2, 4, 2, 2, 2, 2, 2, 2, 2, 3][k];
                     for r in 0..n {
                         let found = at(doc.clone(), k as u32, r);
                         for col in 0..cols {

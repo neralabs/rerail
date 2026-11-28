@@ -686,10 +686,23 @@ impl<'a> Doc<'a> {
     fn loc_line(&self, at: u32) -> u32 {
         lines_line(self.lines, at)
     }
-    /// A `Loc` view's row `l`: the id, then its place (`view_loc_line`, `view_loc_end`, `view_loc_col`,
-    /// `view_loc_docof`; `rr_report_location`'s four).
+    /// A `Loc` view's row `l`, its position (every one: a `place`'s reads, `place_*` and `rr_report_location`, take a
+    /// token as well as a node, whose ids are distinct tape positions): the id, then its place (`view_loc_line`,
+    /// `view_loc_end`, `view_loc_col`, `view_loc_docof`; `rr_report_location`'s four).
     #[inline]
     pub fn loc(&self, place: Place, l: u32, col: u32) -> i64 {
+        self.position_loc(place, l, col)
+    }
+    /// A token's `Loc` view's row `r` (`view_tok_line`, `view_tok_end`, `view_tok_col`, `view_tok_docof`): position
+    /// `r`'s id, then its place. Its rows are the positions the tape stores, its nodes then its tokens (a named leaf's
+    /// token is its node), no line, span or end point.
+    #[inline]
+    pub fn token_loc(&self, place: Place, r: u32, col: u32) -> i64 {
+        self.position_loc(place, r, col)
+    }
+    /// Position `l`'s id, then its place.
+    #[inline]
+    fn position_loc(&self, place: Place, l: u32, col: u32) -> i64 {
         if col == 0 {
             return self.loc_id(l);
         }

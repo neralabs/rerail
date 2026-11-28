@@ -148,6 +148,10 @@ pub fn col(d: &Doc<'_>, k: u32, r: u32, col: u32) -> u64 {
         10 => d.depth_row(r, col),
         11 => d.order_row(r, col),
         12 => d.op(r, col),
+        13 => d.token_loc(Place::Line, r, col),
+        14 => d.token_loc(Place::EndLine, r, col),
+        15 => d.token_loc(Place::Col, r, col),
+        16 => d.token_loc(Place::Docof, r, col),
         _ => d.doc(col),
     }) as u64
 }

@@ -550,8 +550,10 @@ impl RulePass for HeadReads {
 /// `core.rerail`'s per-node relations a node read answers (decision 0353 step 3), each with its read: `text`'s at any
 /// length, and the values `CoreRows::node` makes (`syntax::LongTexts`). (`structural_*` is a view of the tape,
 /// `tape_rows`: its lookup by node reads it in place.)
-const NODE_READ_OF: [(&str, &str); 4] = [
+const NODE_READ_OF: [(&str, &str); 5] = [
     ("text", "rr_node_text_any"),
+    // A token's own read of its text (decision 0724 §3): the same read, of the token's id.
+    ("token_text", "rr_node_text_any"),
     ("name", "rr_node_name"),
     ("comment", "rr_node_comment"),
     ("strprefix", "rr_node_strprefix"),
@@ -664,20 +666,18 @@ fn node_tests(v: &Version, of: &[(&'static str, &'static str)]) -> HashMap<Strin
     tests
 }
 
-/// core.rerail's base columns of the spans `text_any` reads off the source: a document's `source` and its lines, by
-/// the engine's names and by the typed ones a rule writes (decision 0724 §4: `document_source`, `document_line`,
-/// `document_line_by_number`), which the lowering reads as the engine's after this pass (`lower::core`).
-const LINE_SPANS: [(&str, usize); 5] = [("source", 1), ("src_line", 2), ("document_source", 1), ("document_line", 1), ("document_line_by_number", 2)];
+/// core.rerail's base columns of the spans `text_any` reads off the source: a document's `source`, its lines, and
+/// the token relations' tokens (`token_text`'s, decision 0724 §3: a token is a position the tape stores). A rule reads
+/// a line's text as its own relation's (`line_text`, made where it is read: `Extra::line_reads`, 0724 step 3), no
+/// node read's.
+const LINE_SPANS: [(&str, usize); 6] = [("source", 1), ("src_line", 2), ("first_token", 1), ("last_token", 1), ("token_before", 1), ("token_after", 1)];
 
-/// The typed readers of a place's text that are the engine's `text` to the lowering (decision 0724 §4, `lower::core::
-/// ALIASES`): `line_text`, `token_text`, `place_text`. This pass reads them as `text`, so a line's text a rule binds is
-/// read in place as the engine's name of it is. Not `match_text`: a match's id is its number in its document and its
-/// text its own relation's (`Extra::match_reads`, 932e507f14), no node read's.
-const TEXT_ALIASES: [&str; 3] = ["line_text", "token_text", "place_text"];
-
-/// Relation `name`, as the engine's per-node read where it is a typed reader of one (`TEXT_ALIASES`).
+/// Relation `name`, as the engine's per-node read where it is a typed name of one: `place_text`, which the lowering
+/// reads as `text` (`lower::core::ALIASES`), a node's text where its place is a node. A line's and a match's texts
+/// (`line_text`, `match_text`) are their own relations' (0724 step 3), read as rows; a token's (`token_text`) is its
+/// own per-node read.
 fn read_name(name: &str) -> &str {
-    if TEXT_ALIASES.contains(&name) { "text" } else { name }
+    if name == "place_text" { "text" } else { name }
 }
 
 /// The columns of `v`'s relations that hold nodes alone (and, with `more`, those base columns too): a base relation's, `core.rerail`'s declared `node`
@@ -701,10 +701,8 @@ fn node_columns(v: &Version, matchers: &BTreeSet<String>, local: &BTreeSet<Strin
     // A line's span (`src_line`'s): no node, but the reads answer it in place (`LongTexts::text_any` its text, the
     // others none), so `text(sp, t)` of a line a rule binds reads that line, and no line's text is made for it
     // (`text_demand`: a `text` row of a line made every line's text, D411's docstring lines all of a file's).
-    for (rel, c) in [("src_line", 2), ("document_line", 1), ("document_line_by_number", 2)] {
-        if !derived.contains(rel) && v.declares(rel) {
-            cols.insert(rel.to_owned(), BTreeSet::from([c]));
-        }
+    if !derived.contains("src_line") && v.declares("src_line") {
+        cols.insert("src_line".to_owned(), BTreeSet::from([2]));
     }
     for rel in matchers.iter().filter(|r| !derived.contains(r.as_str())) {
         if let Some(d) = v.decl_of(rel) {
@@ -889,7 +887,7 @@ impl RulePass for NodeReads {
                 let read = self.of.iter().find(|(x, _)| *x == rel).expect("a per-node relation").1;
                 let a = args(a);
                 let arity = if self.tests.contains_key(written) { 1 } else { 2 };
-                let bound = if rel == "text" { &spans_bound } else { &bound };
+                let bound = if matches!(rel, "text" | "token_text") { &spans_bound } else { &bound };
                 Some((rel, read, a.len() == arity && matches!(a[0], TermRef::Var(x) if bound.contains(&x))))
             }
             _ => None,

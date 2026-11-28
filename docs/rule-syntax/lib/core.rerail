@@ -250,7 +250,7 @@
 .decl document_line(d: number, l: line)                  // each line of document d (src_line's)
 .decl document_source(d: number, l: line)                // d's whole source, a line of its own (source's)
 .decl document_line_by_number(d: number, k: number, l: line)  // line l of document d, numbered k (src_line's)
-.decl line_number(l: line, k: number)                    // l's 1-based number; 0 for a document's whole source
+.decl line_number(l: line, k: number)                    // l's 1-based number; a document's whole source's is 1
 .decl line_text(l: line, s: symbol)                      // l's text, without its terminator
 .decl line_document(l: line, d: number)
 .decl token_text(t: token, s: symbol)

@@ -39,7 +39,7 @@ const SCAN_ITEMS: u32 = 4;
 /// A sort's tile (`UKL_RADIX_TILE`) and its digits.
 const RADIX_TILE: u32 = 1024;
 const RADIX_DIGITS: usize = 256;
-const VIEW_PLACED: u32 = 16;
+const VIEW_PLACED: u32 = 64;
 const IX_LIVE: u32 = 0x8000_0000;
 
 // What an item runs (`Item::what >> 24`).
@@ -153,8 +153,8 @@ struct PlacedDir {
     rows: u32,
     pad: u32,
 }
-const _: () = assert!(size_of::<ViewRow>() == 304 && size_of::<ViewDir>() == 192 && size_of::<PlacedDir>() == 32);
-const _: () = assert!(core::mem::offset_of!(ViewRow, source) == 24 && core::mem::offset_of!(ViewRow, homes) == 32 && core::mem::offset_of!(ViewRow, view) == 156);
+const _: () = assert!(size_of::<ViewRow>() == 320 && size_of::<ViewDir>() == 208 && size_of::<PlacedDir>() == 32);
+const _: () = assert!(core::mem::offset_of!(ViewRow, source) == 24 && core::mem::offset_of!(ViewRow, homes) == 32 && core::mem::offset_of!(ViewRow, view) == 172);
 
 #[repr(C)]
 struct Copy {

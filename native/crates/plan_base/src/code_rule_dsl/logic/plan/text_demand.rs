@@ -94,7 +94,22 @@ fn is_var(t: Option<&TermRef<'_>>, s: Slot) -> bool {
 /// A regex capture's match (`rx_span`'s `m`, bit 8) is a span too: its text row is made with it, at its length (`Extra::document`'s
 /// scan of a pattern), so a rule reading it (UP009's `match("…coding[:=](?<xs>…)", sp), text(xs, x)`) reads
 /// no node's text. Read as a node's, it made `text` a row a node for every node of every file.
-const SPAN_COLUMNS: [(&str, usize); 7] = [("source", 1), ("src_line", 2), ("first_token", 1), ("last_token", 1), ("token_before", 1), ("token_after", 1), ("rx_span", 4)];
+/// A token's relations are read by their own names too (`node_to_first_token`, `token_previous`, …: decision 0724 §3).
+const SPAN_COLUMNS: [(&str, usize); 13] = [
+    ("source", 1),
+    ("src_line", 2),
+    ("first_token", 1),
+    ("last_token", 1),
+    ("token_before", 1),
+    ("token_after", 1),
+    ("node_to_first_token", 1),
+    ("node_to_last_token", 1),
+    ("node_to_token_before", 1),
+    ("node_to_token_after", 1),
+    ("token_previous", 1),
+    ("token_next", 1),
+    ("rx_span", 4),
+];
 
 /// The spans whose text a rule reads (a document's source, a line), and whether a token's. Plan-time provenance, not
 /// a per-file scan: only copying a span (including variable equality) carries its origin. Regex captures have their
@@ -117,7 +132,7 @@ pub fn span_text_demand(v: &Version) -> (BTreeSet<SpanIn>, bool) {
 /// column of the four token relations), 8 a regex capture's match, carried by the rules that copy them (including variable equality), to a
 /// fixpoint.
 fn span_columns(v: &Version) -> HashMap<(&str, usize), u8> {
-    let mut columns: HashMap<(&str, usize), u8> = SPAN_COLUMNS.iter().zip([1, 2, 4, 4, 4, 4, 8]).map(|(&c, bit)| (c, bit)).collect();
+    let mut columns: HashMap<(&str, usize), u8> = SPAN_COLUMNS.iter().zip([1, 2, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 8]).map(|(&c, bit)| (c, bit)).collect();
     loop {
         let mut changed = false;
         for rule in v.rules() {

@@ -208,6 +208,12 @@ pub const READS: &[Read] = &[
     // A `Loc` view probed by its id (`docof`'s, decision 0706 step 0): the id's position, no index of the view. Last,
     // so no other read's number moves.
     Read { family: Family::View, name: "view_loc_number", params: &[I32], ret: I32, hot: false, body: crate::view_reads::loc_number },
+    // A token's `Loc` views (decision 0724 §3): its document's tokens alone, which a node's leave out. Last, so no other
+    // read's number moves.
+    Read { family: Family::View, name: "view_tok_line", params: &[I32, I32], ret: I64, hot: true, body: crate::view_reads::tok_line },
+    Read { family: Family::View, name: "view_tok_end", params: &[I32, I32], ret: I64, hot: true, body: crate::view_reads::tok_end },
+    Read { family: Family::View, name: "view_tok_col", params: &[I32, I32], ret: I64, hot: true, body: crate::view_reads::tok_col },
+    Read { family: Family::View, name: "view_tok_docof", params: &[I32, I32], ret: I64, hot: true, body: crate::view_reads::tok_docof },
 ];
 
 /// The reads of format 16 alone: a side list's value, and a node's slot (16z's parent steps read it block by
