@@ -8,6 +8,7 @@
  *   node --import tsx scripts/host/host-lifecycle.ts pi -- --provider <provider> --model <model>
  *                                                    # anything after `--` goes to the host verbatim
  *   LIFECYCLE_KEEP=1 ...                             # keep the scratch project and print its path
+ *                                                    # (an OMP run's daemon is stopped either way)
  *   LIFECYCLE_DUMP=1 ...                             # print every host transcript entry (truncated)
  *
  * The host runs with extension discovery off and exactly this checkout's `dist/` build loaded, and
@@ -46,7 +47,7 @@ import {
   approve,
   ruleSubject,
 } from "../../src/engine/index.js";
-import { setRepositoryStarted, SqliteSessionReader, type SessionEventRecord } from "../../src/runtime/index.js";
+import { setRepositoryStarted, SqliteSessionReader, stopDaemon, type SessionEventRecord } from "../../src/runtime/index.js";
 import { DIST, ensureFresh, jsonlFiles } from "./host-harness.js";
 
 type Host = "omp" | "pi";
@@ -129,7 +130,7 @@ const HostEntry = z.union([
 
 type Assertion = { name: string; passed: boolean; detail: string };
 type Run = { exitCode: number; stdout: string; stderr: string; ms: number; startedAt: number };
-type Workspace = { root: string; env: NodeJS.ProcessEnv; databasePath: string; sessionDir: string };
+type Workspace = { root: string; rerailHome: string; env: NodeJS.ProcessEnv; databasePath: string; sessionDir: string };
 /** Rerail's SQLite records for the run: every event, the shape of each session, and how fast it started. */
 type RerailRecords = {
   events: SessionEventRecord[];
@@ -272,7 +273,7 @@ async function project(host: Host): Promise<Workspace> {
   } finally {
     database.$client.close();
   }
-  return { root, env: hostEnvironment(host, rerailHome), databasePath, sessionDir: join(root, ".host-sessions") };
+  return { root, rerailHome, env: hostEnvironment(host, rerailHome), databasePath, sessionDir: join(root, ".host-sessions") };
 }
 
 function textOf(content: z.infer<typeof Content>): string {
@@ -452,14 +453,26 @@ function report(host: Host, { run, rerail, steer, transcript }: Evidence): void 
   print(assertions, infos);
 }
 
+/**
+ * Ends a run, passed or failed: stops the daemon the OMP session's attach started in the run's Rerail home (Pi's run
+ * starts none), then removes the scratch project, or keeps it with LIFECYCLE_KEEP. A daemon left running holds the
+ * removed home open, writes its session's record back into the project, and on Windows makes the removal fail; a kept
+ * project is read through its files, which the stopped daemon has finished writing.
+ */
+async function leave(host: Host, { root, rerailHome }: Workspace): Promise<void> {
+  try {
+    if (host === "omp") await stopDaemon(rerailHome);
+  } finally {
+    if (process.env.LIFECYCLE_KEEP) process.stdout.write(`kept ${root} (its daemon was stopped)\n`);
+    else await rm(root, { recursive: true, force: true });
+  }
+}
+
 async function main(): Promise<void> {
   const { host, extra } = parseArgs(process.argv);
   await ensureFresh(EXTENSION[host]);
   const workspace = await project(host);
-  const evidence = await gather(host, extra, workspace).finally(async () => {
-    if (process.env.LIFECYCLE_KEEP) process.stdout.write(`kept ${workspace.root}\n`);
-    else await rm(workspace.root, { recursive: true, force: true });
-  });
+  const evidence = await gather(host, extra, workspace).finally(async () => await leave(host, workspace));
   report(host, evidence);
 }
 
