@@ -3647,7 +3647,7 @@ fn a_capture_naming_a_regex_group_binds_its_text() {
 }
 
 /// A matcher whose captures are its root's field children (as `Absorb` writes them, decision 0106 §4) has its rows
-/// read from the tape at the transducer's roots (`ast_wave::field_captures`, t50 step 6): the same rows as W's matcher
+/// read from the tape at the transducer's roots (`ast_wave::direct_captures`, t50 step 6): the same rows as W's matcher
 /// at each root (`RERAIL_AST_DIRECT_CAPTURES=off`), a capture in a field holding two kinds and a root with none.
 #[test]
 fn field_captures_read_from_the_tape_are_ws() {
