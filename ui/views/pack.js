@@ -9,11 +9,12 @@ import { h, setAttr, setClass, setContent, setText, icon } from "../dom.js";
 import { fmt } from "../format.js";
 import { isWorktreePack } from "../derive.js";
 import { data, ui, packById, repoName, totalFires, rangeLabel, fires, filtering, isAttached, RISK_FILTER } from "../state.js";
-import { writes } from "../shell.js";
+import { invalidate, writes } from "../shell.js";
 import { enforcementCounts, pageKey, pageRiskFilters, pageRules, packSwitch, runningOf, shownRules, switchTurnsOn } from "../pack-model.js";
 import { CREATE_COMMAND, renderRuleTable } from "../render/rules.js";
 import { ruleControls, ruleControlActions, ruleControlInput, ruleControlChange } from "../render/rule-controls.js";
 import { removePackControl } from "../render/pack-panel.js";
+import { dismissPackEdits, packEditsKey, packEditsNotice } from "../render/rule-changes.js";
 
 export const needs = ["rules", "packs", "activity"];
 
@@ -29,7 +30,9 @@ function build() {
   const packAll = h("div.packall", null, packAllText, h("button.sw", { role: "switch", "data-act": "ptoggle" }));
   const controls = h("div");
   const table = h("div");
-  page = { root: h("div.ppage", null, head, controls, table), title, removeButton, count, share, ask, pitch, packAll, controls, table };
+  // Under the heading: the pack's rules that are off while their edited copy runs in their place.
+  const edits = h("div.banners");
+  page = { root: h("div.ppage", null, head, edits, controls, table), title, removeButton, count, share, ask, pitch, packAll, edits, controls, table };
   notice = h("div.ppage");
 }
 
@@ -106,6 +109,7 @@ export function render(root) {
   const riskFilters = keptRiskFilters(all);
   const pack = ui.view === "created" ? null : packById(ui.pack), shown = shownRules(all);
   renderHead(all, shown, pack);
+  setContent(page.edits, packEditsKey(pack), () => packEditsNotice(pack));
   renderControls(all, pack, riskFilters);
   renderRuleTable(page.table, shown);
 }
@@ -124,6 +128,10 @@ function togglePage() {
   else writes.setEnabled(all.map(r => r.rule.id), turnOn, label, failure);
 }
 
-export const actions = { ...ruleControlActions, ptoggle: togglePage };
+export const actions = {
+  ...ruleControlActions,
+  ptoggle: togglePage,
+  dismisspackedits: id => { dismissPackEdits(id); invalidate(); },
+};
 export const onInput = ruleControlInput;
 export const onChange = ruleControlChange;

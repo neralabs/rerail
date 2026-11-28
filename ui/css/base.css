@@ -238,6 +238,9 @@ body[data-panel="open"] .panel{display:flex}
 /* A link-style button set in running text or beside a button: the brand's colour, no box. */
 .textlink{color:var(--brand-foreground);white-space:nowrap}
 .textlink:hover{text-decoration:underline;text-underline-offset:3px}
+/* A link inside a sentence (a rule's title, Created by you): it wraps with the sentence. */
+.textlink.inline{white-space:normal;cursor:pointer;border-radius:3px}
+.textlink.inline:focus-visible{outline:2px solid var(--brand);outline-offset:2px}
 .btn.danger{background:var(--danger-subtle);color:var(--danger-foreground);border-color:transparent}
 .btn.danger:hover{background:var(--danger-subtle);filter:brightness(.97)}
 /* Remove pack on its page: an outline, danger text and a 45% danger stroke, no fill until hovered. */
@@ -275,7 +278,7 @@ body[data-panel="open"] .panel{display:flex}
 .welcome{display:flex;align-items:flex-start;gap:12px;margin:16px 0 0;padding:14px 16px;background:var(--info-subtle);border-radius:var(--radius-xl);color:var(--info-foreground)}
 .welcome .ico{margin-top:1px}
 .welcome b{font-size:14px}
-.welcome p{margin:4px 0 0;font-size:13px;line-height:1.5;color:var(--info-foreground);opacity:.9}
+.welcome p{margin:2px 0 0;font-size:13px;line-height:1.4;color:var(--info-foreground);opacity:.9}
 .welcome p.acts{display:flex;flex-wrap:wrap;gap:8px;margin-top:10px;opacity:1}
 .welcome p.acts:has(> .textlink){align-items:center;column-gap:16px}
 .welcome .x{margin-left:auto;width:28px;height:28px;border-radius:6px;display:grid;place-items:center;color:var(--info-foreground);flex:none}

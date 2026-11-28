@@ -39,7 +39,7 @@ describe("the Edit with coding agent prompts", () => {
 
 describe("the What the agent sees hint", () => {
   const reaches = "Reaches open sessions once your agent saves it.";
-  const copy = "Saved as your copy. This one turns off.";
+  const copy = "Added to Created by you as your edited copy. This one turns off.";
 
   it.each([
     [{ fromPack: false, log: false }, reaches],
@@ -54,7 +54,7 @@ describe("the What the agent sees hint", () => {
 describe("the prompt box's hint", () => {
   it("says a change applies once saved, and first that a pack rule's edit is a copy", () => {
     expect(askHint({ fromPack: false })).toBe("Applies in open sessions once your agent saves it.");
-    expect(askHint({ fromPack: true })).toBe("Saved as your copy. This one turns off. Applies in open sessions once your agent saves it.");
+    expect(askHint({ fromPack: true })).toBe("Added to Created by you as your edited copy. This one turns off. Applies in open sessions once your agent saves it.");
   });
 });
 

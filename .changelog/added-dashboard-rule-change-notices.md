@@ -1,0 +1,1 @@
+The dashboard says what changed in the rules created by you. Overview counts the rules added and edited since you last dismissed its notice, a pack's page names a rule that was edited and turned off, and a rule's details show when it was last edited and from which rule.

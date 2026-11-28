@@ -10,6 +10,7 @@ import { fmt, plural, whenLabel, clock, violationOwner } from "../format.js";
 import { ruleMode, modeLabel, isLog, isFromPack, packOriginName, UNKNOWN_PACK_ORIGIN, awaitingApproval, awaitingYourApproval, notRunningReason, scopeText, conditionText, messageText, MODE_PLAIN } from "../derive.js";
 import { data, ui, rangeCaption, fires, allFires, isMeasured, ruleFindings, ruleFindingsTotal, titleOf, packOfRule, attachedPackOf, repoName } from "../state.js";
 import { renderPackPanel } from "./pack-panel.js";
+import { editRows, editRowsKey } from "./rule-changes.js";
 import { MODE_READ_ONLY, enforcementTag, updateEnforcementTag } from "./enforcement.js";
 import { outcomesOf } from "../history-model.js";
 import { ASK, ASK_OPEN, LOG_NOTE, askPrompt, agentSeesHint, askHint, fmtDay, canDelete, deleteConsequences, splitPath } from "./rule-sheet-model.js";
@@ -193,18 +194,19 @@ function renderApproval(stored) {
     : yours ? yourRuleNotice(stored, subject, caught) : otherNotice(stored, subject, pack)));
 }
 
-/** Where the rule comes from (its pack, or created by you) and when it was added here and last edited. */
+/**
+ * Where the rule comes from (its pack, or created by you), when it was added here and last edited, and, for a rule
+ * that was edited, what it was edited from or that its edited copy runs in its place (`rule-changes.js`).
+ */
 function renderSource(stored, id) {
   const pack = attachedPackOf(stored) ?? packOfRule(stored);
   // A third party's pack names its publisher beside it: Rerail has not reviewed it.
   const from = pack ? ["Rule pack", packOriginName(pack)]
     : ["Origin", isFromPack(stored) ? `${UNKNOWN_PACK_ORIGIN}, added on its own` : "Created by you"];
-  const updated = stored.updatedAt ?? null;
-  setContent(p.source, JSON.stringify([id, from, stored.addedAt, updated]), () => kv([
+  setContent(p.source, JSON.stringify([id, from, editRowsKey(stored)]), () => kv([
     from,
     ["Rule id", id, "mono"],
-    ["Added", fmtDay(stored.addedAt)],
-    ...(updated === null ? [] : [["Updated", fmtDay(updated)]]),
+    ...editRows(stored, fmtDay),
   ]));
 }
 
