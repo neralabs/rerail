@@ -195,27 +195,31 @@ describe("the Claude Code hook while another process holds the database's write 
     await hook({ session_id: sessionId, cwd: repo, hook_event_name: "UserPromptSubmit", prompt_id: "prompt-1", prompt: "Add it." }, repo);
     await untilRulesCheck(sessionId);
     const free = await editTurn(sessionId, join(repo, "src", "app", "free_edit.py"));
+    // The holder gives the lock back only once the clean turn's Stop has answered, so every hook of both turns answers
+    // while it is held. A hook whose daemon waited for the lock on its thread would wait out SQLite's busy timeout and
+    // fail with the lock's error on stderr; one that waited until the lock is free would never answer.
     const lock = await holdWriteLock(join(process.env.RERAIL_HOME!, "rerail.sqlite"));
     let held;
     let clean;
+    let auditedWhileHeld;
     try {
       held = await editTurn(sessionId, join(repo, "src", "app", "held_edit.py"));
       clean = await editTurn(sessionId, join(repo, "src", "app", "clean_edit.py"), simple);
+      auditedWhileHeld = auditedFiles(sessionId);
     } finally {
       await lock.release();
     }
-    const times = (turn: typeof free): string => `PreToolUse ${turn.pre.ms} ms, PostToolUse ${turn.post.ms} ms, Stop ${turn.stop.ms} ms`;
+    const said = (answer: HookAnswer): string => `${String(answer.ms)} ms${answer.stderr === "" ? "" : ` (stderr: ${answer.stderr.trim()})`}`;
+    const times = (turn: typeof free): string => `PreToolUse ${said(turn.pre)}, PostToolUse ${said(turn.post)}, Stop ${said(turn.stop)}`;
     const report = `lock free: ${times(free)}; lock held, rule broken: ${times(held)}; lock held, clean edit: ${times(clean)}`;
     expect(contextOf(free.post), report).toContain(`[${RULE}]`);
-    // The steer reaches the agent while the lock is held. Its hook then records the steer's receipt itself, on a
-    // connection of its own that waits for the lock up to 5 s; handing the receipt to the daemon removes that wait.
+    // The steer reaches the agent while the lock is held, and its hook hands the steer's receipt to the daemon, which
+    // records it once the lock is given back; a receipt neither taken nor recorded fails the hook, which says so on stderr.
     expect(contextOf(held.post), report).toContain(`[${RULE}]`);
     expect(contextOf(clean.post), report).not.toContain(`[${RULE}]`);
-    for (const turn of [held, clean]) {
-      expect(turn.pre.ms, report).toBeLessThan(free.pre.ms + 2_000);
-      expect(turn.stop.ms, report).toBeLessThan(free.stop.ms + 2_000);
-    }
-    expect(clean.post.ms, report).toBeLessThan(free.post.ms + 2_000);
+    for (const answer of [held.pre, held.post, held.stop, clean.pre, clean.post, clean.stop]) expect(answer.stderr, report).toBe("");
+    // The held edit's audit waits in the daemon's record writer while the lock is held.
+    expect(auditedWhileHeld, report).not.toContain("held_edit.py");
     // The records the daemon took while the lock was held: the session's events and the edit's audit with its violation.
     // The daemon makes them once its lock wait finds the lock given back, which another process learns only from the
     // database: the bundle is read once the held edit's audit is there, within twice the waiting write's own 5 s bound.
@@ -236,17 +240,21 @@ describe("the Claude Code hook while another process holds the database's write 
     const free = await start("started-free");
     const lock = await holdWriteLock(join(process.env.RERAIL_HOME!, "rerail.sqlite"));
     let held;
+    let claimedWhileHeld;
     try {
       held = await start("started-held");
+      claimedWhileHeld = openAndClaimed("started-held");
     } finally {
       await lock.release();
     }
     const report = `lock free: ${String(free.ms)} ms; lock held: ${String(held.ms)} ms, stderr: ${held.stderr}`;
     expect(contextOf(free), report).toMatch(/Rerail is on in this repo/u);
+    // Answered while the holder still holds the lock, which it gives back only after this answer.
     expect(contextOf(held), report).toMatch(/Rerail is on in this repo/u);
-    expect(held.ms, report).toBeLessThan(free.ms + 1_000);
+    expect(held.stderr, report).toBe("");
     // The session's row and its claim wait in the daemon's record writer until its lock wait finds the lock given back,
     // which another process learns only from the database.
+    expect(claimedWhileHeld, report).toBe(false);
     await vi.waitFor(() => expect(openAndClaimed("started-held")).toBe(true), { timeout: 10_000, interval: 20 });
   }, 60_000);
 
@@ -260,15 +268,18 @@ describe("the Claude Code hook while another process holds the database's write 
     const free = await end("ended-free");
     const lock = await holdWriteLock(join(process.env.RERAIL_HOME!, "rerail.sqlite"));
     let held;
+    let endedWhileHeld;
     try {
       held = await end("ended-held");
+      endedWhileHeld = endedAndLetGo("ended-held");
     } finally {
       await lock.release();
     }
     const report = `lock free: ${String(free.ms)} ms; lock held: ${String(held.ms)} ms, stderr: ${held.stderr}`;
+    // Answered while the holder still holds the lock, which it gives back only after this answer.
     expect(held.stderr, report).toBe("");
-    expect(held.ms, report).toBeLessThan(free.ms + 1_000);
     // The end's writes wait in the daemon's record writer until its lock wait finds the lock given back.
+    expect(endedWhileHeld, report).toBe(false);
     await vi.waitFor(() => expect(endedAndLetGo("ended-held")).toBe(true), { timeout: 10_000, interval: 20 });
   }, 60_000);
 
@@ -285,17 +296,22 @@ describe("the Claude Code hook while another process holds the database's write 
     const lock = await holdWriteLock(join(process.env.RERAIL_HOME!, "rerail.sqlite"));
     let saving;
     let held;
+    const save = { answered: false };
+    let answeredBeforeSave;
     try {
-      saving = saveRuleMode("log");
+      saving = saveRuleMode("log").finally(() => { save.answered = true; });
       held = await read();
+      answeredBeforeSave = !save.answered;
     } finally {
       await lock.release();
     }
     const saved = await saving;
-    const report = `hook with the lock free: ${String(free.ms)} ms; beside the held save: ${String(held.ms)} ms; save: ${saved.status} ${saved.body}`;
+    const report = `hook with the lock free: ${String(free.ms)} ms; beside the held save: ${String(held.ms)} ms, stderr: ${held.stderr}; save: ${saved.status} ${saved.body}`;
     expect(saved.status, report).toBe(200);
     expect(JSON.parse(saved.body), report).toMatchObject({ settings: [{ mode: "log" }] });
-    expect(held.ms, report).toBeLessThan(free.ms + 1_000);
+    expect(held.stderr, report).toBe("");
+    // The hook is answered while the save still waits for the lock, which the holder gives back only after that answer.
+    expect(answeredBeforeSave, report).toBe(true);
     // The rule back to its start, as the other cases read it.
     expect((await saveRuleMode(null)).status).toBe(200);
   }, 60_000);
