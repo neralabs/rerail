@@ -225,4 +225,20 @@ describe("the checkout kept for an MCP bridge's folder", () => {
     expect(counted(web, stores.checkouts())).toMatchObject({ answer: { checkout: web, folder: "" }, starts: 0 });
     expect(await call("repository_context_get", {}, web)).toMatchObject({ checkout: { checkoutPath: web, folder: "" } });
   });
+
+  it("opens no database and builds no checkout resolver for a request with no caller header", async () => {
+    const stores = daemonStores(dirname(await recordedCheckout()));
+    const opened = vi.spyOn(stores, "database");
+    const resolvers = vi.spyOn(stores, "checkouts");
+    const mcp = createRerailMcpHandler(stores, operations, { version: "0.0.0-test" });
+    // The tool list, as an MCP client connected to the daemon's URL with no bridge asks for it.
+    const response = await mcp(new Request("http://localhost:4737/mcp", {
+      method: "POST",
+      headers: { host: "localhost:4737", "content-type": "application/json", accept: "application/json, text/event-stream" },
+      body: JSON.stringify({ jsonrpc: "2.0", id: 1, method: "tools/list" }),
+    }));
+
+    expect((await response.json() as { result: { tools: unknown[] } }).result.tools.length).toBeGreaterThan(0);
+    expect({ opened: opened.mock.calls.length, resolvers: resolvers.mock.calls.length }).toEqual({ opened: 0, resolvers: 0 });
+  });
 });

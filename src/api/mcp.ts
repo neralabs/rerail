@@ -192,7 +192,7 @@ export function createRerailMcpHandler(
     const duplicate = duplicateJsonKeyError(text, "request body");
     if (duplicate !== undefined) return invalidParams(requestId(text), duplicate);
     const header = request.headers.get(CALLER_CWD_HEADER);
-    const caller = callerFromHeader(header, header === null ? undefined : recordedCheckoutsVersion(stores.database()), stores.checkouts());
+    const caller = header === null ? callerFromHeader(null) : callerFromHeader(header, recordedCheckoutsVersion(stores.database()), stores.checkouts());
     if (typeof caller === "string") return invalidParams(requestId(text), caller);
     const server = createRerailMcpServer(stores, operations, info, caller);
     const transport = new WebStandardStreamableHTTPServerTransport({ enableJsonResponse: true });
