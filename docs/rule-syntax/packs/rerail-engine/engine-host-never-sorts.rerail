@@ -1,7 +1,7 @@
 .policy "engine-host-never-sorts" revision 1
 .description "Leave every sort to the program: the delta executor and its device runner take runs as they lie and sort nothing."
 .language rust
-.mode log
+.mode steer
 .scope include "native/crates/delta_exec/src/**/*.rs", "native/crates/delta_device/src/**/*.rs"
 #include "rust/rerail-engine.rerail"
 // The user (2026-11-24), after the host sorted a device's placed head: "the host should not be sorting ANYTHING".

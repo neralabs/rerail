@@ -93,11 +93,11 @@ fn an_identity_run_is_its_checks_alone() {
     let mut cx = Cx { ops: &reg, dir: &mut dir, blobs: &crate::files::BlobRows::new() };
     let mut inst = Instance::new(&Toy(Flaw::None), cx.dir).unwrap();
     inst.step(&Toy(Flaw::None), &mut cx, &[(&t, None, Some(h))], &[], None).unwrap();
-    let (heads, cache) = (inst.heads(), cache_facts(&cx.dir.read("t", &[inst.cache.0]).unwrap().table(), 0, cx.dir.read("t", &[inst.cache.0]).unwrap().block(0)));
+    let (heads, cache) = (inst.heads(), crate::op::Facts::of(cache_facts(&cx.dir.read("t", &[inst.cache.0]).unwrap().table(), 0, cx.dir.read("t", &[inst.cache.0]).unwrap().block(0))));
     let w = inst.step(&Toy(Flaw::None), &mut cx, &[(&t, Some(h), Some(h))], &[], None).unwrap();
     assert!(w.is_checks_only(), "{w:?}");
     assert_eq!(inst.heads(), heads);
-    assert_eq!(cache_facts(&cx.dir.read("t", &[inst.cache.0]).unwrap().table(), 0, cx.dir.read("t", &[inst.cache.0]).unwrap().block(0)), cache);
+    assert_eq!(crate::op::Facts::of(cache_facts(&cx.dir.read("t", &[inst.cache.0]).unwrap().table(), 0, cx.dir.read("t", &[inst.cache.0]).unwrap().block(0))), cache);
 }
 
 /// A run's cache reads as ∅ when its header was left open (a run that died part-way) or names another state than the

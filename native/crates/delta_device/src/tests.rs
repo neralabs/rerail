@@ -113,8 +113,7 @@ fn a_ukl_version_checked_in(gpu: &Gpu) {
     let c = square_case(gpu, &mut dir);
     Runner::of(reg).run_on(&dir, sig, gpu, &c.slots, &[], Tiling { tile: 100, seed: 9 }).unwrap();
     let got = written_facts(sig, &dir, &c.slots).unwrap();
-    let mut want: Vec<Vec<i64>> = (0..1000).map(|i: i64| (i * 7919 % 5000) - 2500).enumerate().map(|(k, x)| vec![k as i64, x * x]).collect();
-    want.sort();
+    let want = Facts::of((0..1000).map(|i: i64| (i * 7919 % 5000) - 2500).enumerate().map(|(k, x)| vec![k as i64, x * x]));
     assert_eq!(got, vec![want], "run_on ran the device's version");
 }
 

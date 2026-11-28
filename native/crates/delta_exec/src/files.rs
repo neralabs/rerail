@@ -217,17 +217,25 @@ pub struct Store {
     pub objects: ContentStore,
 }
 
+/// The content store's provider registered once in a test's process, which has no boot to register it (a second
+/// registration panics: `rerail_registry::Slot::register`). The process's one registration, as boot's is.
+#[cfg(any(test, feature = "test-hooks"))]
+fn register_store_for_tests() {
+    static REGISTER: std::sync::Once = std::sync::Once::new();
+    REGISTER.call_once(|| {
+        if rerail_store_base::content_store::observer_store::base::STORE.try_get().is_none() {
+            rerail_store::content_store::observer_store::register();
+        }
+    });
+}
+
 impl Store {
     /// The store in `folder`, made when there is none, the user's alone.
     pub fn open(folder: &Path) -> Result<Store, String> {
         // The observer keeps its answers in the content store's facts (`STORE`), which boot registers as the program
-        // loads; a process without boot (a test's) registers it here, once.
-        static REGISTER: std::sync::Once = std::sync::Once::new();
-        REGISTER.call_once(|| {
-            if rerail_store_base::content_store::observer_store::base::STORE.try_get().is_none() {
-                rerail_store::content_store::observer_store::register();
-            }
-        });
+        // loads; a test's process, without boot, registers it on its first open.
+        #[cfg(any(test, feature = "test-hooks"))]
+        register_store_for_tests();
         // The user's alone (decision 0574): each folder made `0700`, and checked.
         rerail_blocks::mapped::make_folder(&folder.join("kept")).map_err(|e| format!("{}: {e}", folder.display()))?;
         let objects = ContentStore::open(&folder.join("objects.db")).map_err(|e| format!("{}: {e}", folder.display()))?;
@@ -496,10 +504,9 @@ impl World {
         let root = self.root.clone();
         let named = observe::with(Some(&self.store.observer()), |o| o.changed_since("", std::slice::from_ref(&root), &cursors))?;
         let real = std::fs::canonicalize(&root).unwrap_or_else(|_| root.clone());
-        let mut rel: Vec<PathBuf> = named.iter().filter_map(|p| p.strip_prefix(&root).or_else(|_| p.strip_prefix(&real)).ok().map(Path::to_path_buf)).collect();
-        rel.sort();
-        rel.dedup();
-        Some(rel)
+        // Each once, in the journal's order (the host orders nothing).
+        let mut seen = std::collections::HashSet::new();
+        Some(named.iter().filter_map(|p| p.strip_prefix(&root).or_else(|_| p.strip_prefix(&real)).ok().map(Path::to_path_buf)).filter(|p| seen.insert(p.clone())).collect())
     }
 
     /// Ends a run: the observer's answers written, the journal's cursor kept, and this run's taken as the one the

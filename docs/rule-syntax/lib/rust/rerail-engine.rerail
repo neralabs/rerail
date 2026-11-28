@@ -2,8 +2,10 @@
 // native/crates/{blocks,delta_core,delta_exec,delta_device,delta_twins}).
 //
 // What a rule gets from this library:
-//   engine_test_doc(d)        document d is test code by its name: tests.rs, *_tests.rs, tests_*.rs, or under
-//                             tests/, examples/ or benches/
+//   engine_test_doc(d)        document d is test code: by its name (tests.rs, *_tests.rs, tests_*.rs, or under tests/,
+//                             examples/ or benches/), or the file of a module its parent declares under a test
+//                             attribute (`#[cfg(test)] mod heap_watch;` in lib.rs: heap_watch.rs, heap_watch/mod.rs
+//                             and everything under heap_watch/)
 //   engine_test_item(n)       n is an item #[test], #[cfg(test)], #[cfg(all(test, …))] or #[cfg(any(test, …))] applies
 //                             to (a test-hooks item is test support, run by tests only)
 //   in_engine_test(n)         n is in a test document, or is or is inside an engine_test_item
@@ -20,6 +22,17 @@
 .decl engine_test_doc(d: number)
 engine_test_doc(d) :- doc(d, p, _),
     match("(?s:.*?)(?:^|/)(?:tests|[a-z0-9_]+_tests|tests_[a-z0-9_]+)\\.rs|(?s:.*?)(?:^|/)(?:tests|examples|benches)/(?s:.*)", p).
+
+// A module declared out of line (`mod x;`) under a test attribute: its file, and its folder's files, are test code.
+// Its file lies beside its parent's (lib.rs, main.rs, mod.rs: in their folder; a.rs: in a/).
+engine_test_doc(d) :- doc(d, p, _), test_mod_path(f), (p = cat(f, ".rs") ; prefix(cat(f, "/"), p)).
+.decl test_mod_path(f: symbol) cross_file  // the path of a test module's file, without `.rs`: "src/heap_watch"
+test_mod_path(cat(b, cat("/", x))) :- engine_test_item(m), kind(m, "mod_item"), !field(m, "body", _), field(m, "name", i),
+    text(i, x), docof(m, d), mod_base(d, b).
+.decl mod_base(d: number, b: symbol)  // the folder a document's out-of-line modules lie in
+mod_base(d, @dir(p)) :- doc(d, p, _), (suffix("/lib.rs", p) ; suffix("/main.rs", p) ; suffix("/mod.rs", p)).
+mod_base(d, substr(p, 0, strlen(p) - 3)) :- doc(d, p, _), suffix(".rs", p), !suffix("/lib.rs", p), !suffix("/main.rs", p),
+    !suffix("/mod.rs", p).
 
 .decl engine_test_item(n: node)
 engine_test_item(n) :- kind(a, "attribute_item"), match("#\\[cfg\\((?:test|(?:all|any)\\(\\s*test\\b[^\\]]*)\\)\\]", a), attached(a, n).

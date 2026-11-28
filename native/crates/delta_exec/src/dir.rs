@@ -609,7 +609,8 @@ impl Directory {
         }
     }
 
-    /// `ids` and every block they refer to, transitively, each once, ascending.
+    /// `ids` and every block they refer to, transitively, each once, in the order reached (the host orders nothing:
+    /// a launch's descriptor table is the table's to order, `gens::write_table`).
     pub fn reach(&self, ids: &[BlockId]) -> Vec<BlockId> {
         let mut seen: Vec<BlockId> = Vec::new();
         let mut todo: Vec<BlockId> = ids.to_vec();
@@ -620,7 +621,6 @@ impl Directory {
             seen.push(id);
             todo.extend(self.refs(id));
         }
-        seen.sort();
         seen
     }
 

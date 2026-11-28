@@ -23,13 +23,11 @@ pub static DROP_PARTS: Signature = Signature::of(
     drop_facts,
 );
 
-/// The written slot's facts by meaning: its `(row, diff)`s, sorted.
+/// The written slot's facts by meaning: its `(row, diff)`s, as they lie (compared as `Facts`).
 pub fn drop_facts(_: &Table<'_>, _: usize, bytes: &[u8]) -> Vec<Vec<i64>> {
     let r = Runs::new(bytes);
     let arity = r.head.shape.arity();
-    let mut rows: Vec<Vec<i64>> = (0..r.len()).map(|i| (0..arity).map(|c| r.get(i, c)).chain([i64::from(r.diff(i))]).collect()).collect(); // copy: derived (a check's reading of facts)
-    rows.sort();
-    rows
+    (0..r.len()).map(|i| (0..arity).map(|c| r.get(i, c)).chain([i64::from(r.diff(i))]).collect()).collect() // copy: derived (a check's reading of facts)
 }
 
 /// The module's operations declared, each from its UKL interface, and their twins registered as references: the

@@ -295,9 +295,65 @@ impl ParamsLayout {
     }
 }
 
-/// The facts a written slot holds, read by meaning (F1): rows compared as a set, so two versions agree when they
-/// wrote the same facts, whatever their order or ids. Given the slot's index, its bytes and the launch's table.
+/// The facts a written slot holds, read by meaning (F1): its rows as they lie, compared as a multiset (`Facts`), so
+/// two versions agree when they wrote the same facts, whatever their order or ids. Given the slot's index, its bytes
+/// and the launch's table.
 pub type FactsFn = fn(&Table<'_>, usize, &[u8]) -> Vec<Vec<i64>>;
+
+/// A slot's facts by meaning (F1): each row, with how many times the slot holds it, in no order. Two versions'
+/// facts compare without sorting either (the host sorts nothing).
+#[derive(Clone, Default, PartialEq, Eq)]
+pub struct Facts(std::collections::HashMap<Vec<i64>, u32>);
+
+impl Facts {
+    pub fn of(rows: impl IntoIterator<Item = Vec<i64>>) -> Facts {
+        rows.into_iter().collect()
+    }
+
+    /// The rows held, each as many times as held.
+    pub fn len(&self) -> usize {
+        self.0.values().map(|&n| n as usize).sum()
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.0.is_empty()
+    }
+
+    /// How many times `row` is held.
+    pub fn count(&self, row: &[i64]) -> u32 {
+        self.0.get(row).copied().unwrap_or(0)
+    }
+
+    /// Where `self` and `other` differ, for a refusal: a few rows each holds more times than the other.
+    pub fn differ(&self, other: &Facts) -> String {
+        let more = |a: &Facts, b: &Facts| a.0.iter().filter(|&(r, &n)| n > b.count(r)).map(|(r, _)| format!("{r:?}")).take(3).collect::<Vec<_>>().join(", ");
+        format!("{} rows against {}; held more here: [{}]; there: [{}]", self.len(), other.len(), more(self, other), more(other, self))
+    }
+}
+
+/// Where two launches' facts differ, slot by slot (`Facts::differ`).
+fn slots_differ(got: &[Facts], want: &[Facts]) -> String {
+    if got.len() != want.len() {
+        return format!("{} written slots against {}", got.len(), want.len());
+    }
+    got.iter().zip(want).enumerate().filter(|(_, (g, w))| g != w).map(|(i, (g, w))| format!("slot {i}: {}", g.differ(w))).collect::<Vec<_>>().join("; ")
+}
+
+impl FromIterator<Vec<i64>> for Facts {
+    fn from_iter<I: IntoIterator<Item = Vec<i64>>>(rows: I) -> Facts {
+        let mut held = std::collections::HashMap::new();
+        for r in rows {
+            *held.entry(r).or_insert(0) += 1;
+        }
+        Facts(held)
+    }
+}
+
+impl std::fmt::Debug for Facts {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_set().entries(self.0.iter().flat_map(|(r, &n)| std::iter::repeat_n(r, n as usize))).finish()
+    }
+}
 
 /// An operation's interface, as UKL declares it (`operations.uglykl`, `<ukl/operation.h>`'s `DECLARE_KERNEL2`): its
 /// name, its slots (each a buffer row: its access the slot's mode, its type its block's kind) and its params'
@@ -673,7 +729,7 @@ impl Registry {
             Impl::Ukl { .. } => Self::fits_shape(sig, candidate)?,
             Impl::Compiled(_) => return Err(format!("{}: {} is compiled ahead, which is not built", sig.name, candidate.name)),
         }
-        let run = |v: &Version, tiling: Tiling| -> Result<Vec<Vec<Vec<i64>>>, String> {
+        let run = |v: &Version, tiling: Tiling| -> Result<Vec<Facts>, String> {
             let mut dir = Directory::default();
             let c = case(&mut dir);
             execute(sig, v, &dir, &[(&c.slots, &c.params)], tiling, device)?;
@@ -683,12 +739,12 @@ impl Registry {
         for &t in tilings {
             let got = run(candidate, t)?;
             if got != want {
-                return Err(format!("{}: {} at {t:?} wrote other facts than the reference", sig.name, candidate.name));
+                return Err(format!("{}: {} at {t:?} wrote other facts than the reference ({})", sig.name, candidate.name, slots_differ(&got, &want)));
             }
         }
         // Wide: the case made twice, run as one launch of two instances; each writes what the reference wrote when
         // the same two are made the same way (a fact may name a block) and each run alone.
-        let two = |wide: bool, v: &Version| -> Result<Vec<Vec<Vec<Vec<i64>>>>, String> {
+        let two = |wide: bool, v: &Version| -> Result<Vec<Vec<Facts>>, String> {
             let mut dir = Directory::default();
             let (a, b) = (case(&mut dir), case(&mut dir));
             if wide {
@@ -702,14 +758,14 @@ impl Registry {
         };
         let (want, got) = (two(false, reference)?, two(true, candidate)?);
         if let Some(k) = (0..2).find(|&k| got[k] != want[k]) {
-            return Err(format!("{}: {} wrote other facts than the reference as instance {k} of a wide launch", sig.name, candidate.name));
+            return Err(format!("{}: {} wrote other facts than the reference as instance {k} of a wide launch ({})", sig.name, candidate.name, slots_differ(&got[k], &want[k])));
         }
         Ok(Checked { op: candidate.op, name: candidate.name })
     }
 }
 
-/// The facts each written slot of a launch holds, each slot's rows sorted (F1: compared by meaning).
-pub fn written_facts(sig: &Signature, dir: &Directory, slots: &[BlockId]) -> Result<Vec<Vec<Vec<i64>>>, String> {
+/// The facts each written slot of a launch holds, by meaning (F1).
+pub fn written_facts(sig: &Signature, dir: &Directory, slots: &[BlockId]) -> Result<Vec<Facts>, String> {
     let mut out = Vec::new();
     for (i, (spec, &id)) in sig.slots.iter().zip(slots).enumerate() {
         if !matches!(spec.mode, Mode::Write | Mode::ReadWrite) {
@@ -717,9 +773,7 @@ pub fn written_facts(sig: &Signature, dir: &Directory, slots: &[BlockId]) -> Res
         }
         let mut l = dir.launch("facts", &[(id, false)])?;
         let (pins, table) = l.parts();
-        let mut rows = (sig.facts)(&table, i, pins[0].bytes());
-        rows.sort();
-        out.push(rows);
+        out.push(Facts::of((sig.facts)(&table, i, pins[0].bytes())));
     }
     Ok(out)
 }

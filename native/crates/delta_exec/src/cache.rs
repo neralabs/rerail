@@ -70,15 +70,14 @@ pub static ORDER: Signature = Signature::of(
 );
 
 /// A cache's facts by meaning: its header's state, open mark and what the last open found; then each order it holds,
-/// by its layer and columns, as its ids and fences; and each document's sizes, by the document.
+/// by its layer and columns, as its ids and fences; and each document's sizes, by the document. Compared as `Facts`.
 pub fn cache_facts(_: &Table<'_>, _: usize, bytes: &[u8]) -> Vec<Vec<i64>> {
     let mut out = vec![vec![-1, twin::state(bytes) as i64, i64::from(twin::is_open(bytes)), i64::from(twin::held(bytes))]];
-    let mut docs: Vec<Vec<i64>> = twin::entries(bytes)
-        .filter(|e| !e.index && e.cols.is_empty() && e.layer != twin::DEAD)
-        .map(|e| std::iter::once(-2).chain(std::iter::once(i64::from(e.layer))).chain(twin::sizes(bytes, e.layer).unwrap_or(&[]).iter().map(|&n| i64::from(n))).collect())
-        .collect();
-    docs.sort();
-    out.extend(docs);
+    out.extend(
+        twin::entries(bytes)
+            .filter(|e| !e.index && e.cols.is_empty() && e.layer != twin::DEAD)
+            .map(|e| std::iter::once(-2).chain(std::iter::once(i64::from(e.layer))).chain(twin::sizes(bytes, e.layer).unwrap_or(&[]).iter().map(|&n| i64::from(n))).collect()),
+    );
     // The index is how they are found, not one of them.
     out.extend(twin::entries(bytes).filter(|e| !e.index && !e.cols.is_empty()).map(|e| {
         let o = twin::order(bytes, e.layer, &e.cols).expect("an entry the cache holds");

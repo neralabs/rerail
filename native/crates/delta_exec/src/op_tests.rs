@@ -190,9 +190,7 @@ fn each_shape_gives_the_same_facts_at_two_tilings_in_shuffled_order() {
             let (c, want) = case(sig.name, &mut dir);
             run_cpu(&reg, &dir, op, &c.slots, &c.params, t).unwrap_or_else(|e| panic!("{}: {e}", sig.name));
             let got = written_facts(sig, &dir, &c.slots).unwrap();
-            let mut want = want;
-            want.sort();
-            assert_eq!(got[0], want, "{} at {t:?} wrote the right facts", sig.name);
+            assert_eq!(got[0], Facts::of(want), "{} at {t:?} wrote the right facts", sig.name);
             match &first {
                 None => first = Some(got),
                 Some(f) => assert_eq!(&got, f, "{}: the same facts at every tiling and order", sig.name),
@@ -419,7 +417,7 @@ fn the_independence_axis_is_kept_and_checked() {
         let (i, o) = (values_block(dir, &v), dir.make(kind::FACTS, samples::vals_bytes(v.len())));
         Case { slots: vec![i, o], params: vec![] }
     };
-    let want: Vec<Vec<i64>> = (1..=600i64).map(|i| vec![i - 1, i * (i + 1) / 2]).collect();
+    let want = Facts::of((1..=600i64).map(|i| vec![i - 1, i * (i + 1) / 2]));
     let tilings = [Tiling::WHOLE, Tiling { tile: 7, seed: 3 }, Tiling { tile: 1, seed: 11 }];
 
     let mut reg = Registry::default();

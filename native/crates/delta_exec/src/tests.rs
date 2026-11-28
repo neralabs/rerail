@@ -412,8 +412,8 @@ fn one_k0_pass_launch_reads_every_document() {
             each[k].extend(r);
         }
     }
-    each.iter_mut().for_each(|r| r.sort());
-    assert_eq!(one, each);
+    let by_meaning = |rows: &[Vec<Vec<i64>>]| rows.iter().map(|r| crate::op::Facts::of(r.iter().cloned())).collect::<Vec<_>>();
+    assert_eq!(by_meaning(&one), by_meaning(&each));
     assert!(one[0].len() == 40, "two rules a document");
     // A refusal names its own document.
     let bad = fx.doc("n(c) :- c = count : { e(_, _) }.\n", "bad.rerail");

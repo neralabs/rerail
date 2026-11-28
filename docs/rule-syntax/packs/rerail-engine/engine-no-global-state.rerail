@@ -1,7 +1,7 @@
 .policy "engine-no-global-state" revision 1
 .description "Keep the delta executor and its twins free of process state: no mutable static, cell, lock, atomic or thread-local."
 .language rust
-.mode log
+.mode steer
 .scope include "native/crates/delta_core/src/**/*.rs", "native/crates/delta_exec/src/**/*.rs", "native/crates/delta_device/src/**/*.rs", "native/crates/delta_twins/src/**/*.rs"
 #include "rust/rerail-engine.rerail"
 // Decision 0442: the engine is re-entrant and holds no global state; two runs in one process, on any threads, never
@@ -40,6 +40,23 @@ GLOBAL_STATE(s) :- global_state(s), docof(s, d), !engine_test_doc(d), !in_engine
         #[cfg(test)]
         static SEEN: AtomicU64 = AtomicU64::new(0);
         ```
+    .fixture "native/crates/delta_exec/src/lib.rs" ```
+        #[cfg(test)]
+        mod heap_watch;
+        mod live;
+        ```
+    .fixture "native/crates/delta_exec/src/heap_watch.rs" ```
+        thread_local! { static ON: std::cell::Cell<bool> = const { std::cell::Cell::new(false) }; }
+        ```
+    .fixture "native/crates/delta_exec/src/live.rs" ```
+        static N: std::sync::atomic::AtomicU32 = std::sync::atomic::AtomicU32::new(0);
+        mod inner;
+        #[cfg(any(test, feature = "test-hooks"))]
+        mod toys;
+        ```
+    .fixture "native/crates/delta_exec/src/live/toys/deep.rs" ```
+        static M: std::sync::atomic::AtomicU32 = std::sync::atomic::AtomicU32::new(0);
+        ```
     .fixture "native/crates/blocks/src/ledger.rs" ```
         static BLOCKS: std::sync::Mutex<u32> = std::sync::Mutex::new(0);
         ```
@@ -47,4 +64,5 @@ GLOBAL_STATE(s) :- global_state(s), docof(s, d), !engine_test_doc(d), !in_engine
     .expect GLOBAL_STATE at "native/crates/delta_exec/src/a.rs":3
     .expect GLOBAL_STATE at "native/crates/delta_exec/src/a.rs":5
     .expect GLOBAL_STATE at "native/crates/delta_exec/src/a.rs":7
+    .expect GLOBAL_STATE at "native/crates/delta_exec/src/live.rs":1
 .end

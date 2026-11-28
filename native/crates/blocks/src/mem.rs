@@ -38,6 +38,7 @@ pub fn reserve(len: usize) -> *mut u8 {
     #[cfg(not(any(unix, windows)))]
     {
         let layout = std::alloc::Layout::from_size_align(len, PAGE).expect("a page-aligned reservation");
+        // zeroing: fresh memory (a reservation reads zero, as the OS's mappings above; no OS mapping here)
         let p = unsafe { std::alloc::alloc_zeroed(layout) };
         assert!(!p.is_null(), "an allocation of {len} bytes failed");
         p

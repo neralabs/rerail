@@ -22,8 +22,8 @@ fn the_live_rows_of_the_listed_partitions_through_every_layer() {
     assert_eq!(drop_parts(&reg, &mut dir, head, &parts, -1, runs).unwrap(), 3);
     parts.release(&mut dir);
     let l = dir.read("t", &[runs]).unwrap();
-    let got = drop_facts(&l.table(), 2, l.block(0));
-    assert_eq!(got, vec![vec![1, 10, -1], vec![3, 30, -1], vec![3, 31, -1]]);
+    let got = crate::op::Facts::of(drop_facts(&l.table(), 2, l.block(0)));
+    assert_eq!(got, crate::op::Facts::of([vec![1, 10, -1], vec![3, 30, -1], vec![3, 31, -1]]));
 }
 
 /// Past the runs block's room: the claims past it counted as needed, so the driver runs again at the size it needed.

@@ -185,13 +185,21 @@ unsafe impl Send for Mem {}
 unsafe impl Sync for Mem {}
 
 impl Mem {
+    /// A region of `bytes` for a structure, as its room hands it: not zeroed, so the structure writes each byte
+    /// before it reads it (its descriptor whole, its arrays as they fill).
     fn new(room: &dyn Room, bytes: usize, align: usize, name: &'static str) -> Mem {
         let bytes = bytes.max(8);
         let mut region = room.region(bytes, align, name);
         let base = region.as_mut_ptr();
-        // SAFETY: the region's `bytes`, this structure's alone: zeroed, as a chunk from a free list may not be.
-        unsafe { std::ptr::write_bytes(base, 0, bytes) };
         Mem { region, base }
+    }
+
+    /// A region of `bytes` zeroed, for a structure whose reads of zero are its contract (`BlockArray::zeroed`).
+    fn zeroed(room: &dyn Room, bytes: usize, align: usize, name: &'static str) -> Mem {
+        let m = Mem::new(room, bytes, align, name);
+        // SAFETY: the region's bytes, this structure's alone.
+        unsafe { std::ptr::write_bytes(m.base, 0, bytes.max(8)) };
+        m
     }
 
     /// Points the span at `s` (in its region) at the `n` `T`s from `target` (in its region), as `Block::span`.
@@ -393,11 +401,12 @@ impl<K: Key, V: Pod + Copy> BlockHash<K, V> {
         let (kat, vat) = (up8(size_of::<HashDesc>()), up8(size_of::<HashDesc>()) + up8(n * size_of::<K>()));
         let mem = Mem::new(room, vat + n * size_of::<V>(), align_of::<K>().max(align_of::<V>()), "a hash map");
         let (d, keys, vals) = (mem.at::<HashDesc>(0), mem.at::<K>(kat), mem.at::<V>(vat));
-        // SAFETY: the region was just taken, zeroed, for these.
+        // SAFETY: the region was just taken for these; each field of its descriptor written here.
         unsafe {
             for i in 0..n {
                 keys.add(i).write(K::GUARD);
             }
+            ((*d).len, (*d).guard, (*d).pad) = (0, 0, 0);
             (*d).log = log;
             (*d).kbytes = size_of::<K>() as u32;
             (*d).vbytes = size_of::<V>() as u32;
@@ -789,7 +798,7 @@ impl<K: Pod + Copy + Ord, V: Pod + Copy> BlockSorted<K, V> {
                 }
             }
             len = w;
-            (*d).len = len as u32;
+            ((*d).len, (*d).pad) = (len as u32, 0);
             (*d).kbytes = size_of::<K>() as u32;
             (*d).vbytes = size_of::<V>() as u32;
             mem.span(&raw const (*d).keys, keys.cast::<u8>(), len * size_of::<K>());
@@ -963,6 +972,7 @@ impl BlockStrings {
             mem.span(&raw const (*d).bytes, mem.at::<u8>(bat), bytes);
             (*d).ends.set_len(0);
             (*d).bytes.set_len(0);
+            ((*d).len, (*d).pad) = (0, 0);
         }
         mem
     }
@@ -1332,7 +1342,7 @@ unsafe impl<T: Pod + Sync> Sync for BlockArray<T> {}
 
 impl<T: Pod> BlockArray<T> {
     pub fn zeroed(room: &dyn Room, n: usize) -> Self {
-        BlockArray { mem: Mem::new(room, n * size_of::<T>(), align_of::<T>(), "an array"), len: n, _t: PhantomData }
+        BlockArray { mem: Mem::zeroed(room, n * size_of::<T>(), align_of::<T>(), "an array"), len: n, _t: PhantomData }
     }
 
     pub fn place(&self) -> (&Arc<Block>, usize) {
@@ -1343,10 +1353,11 @@ impl<T: Pod> BlockArray<T> {
 impl<T: Pod + Copy> BlockArray<T> {
     /// The `T`s of `items` (exactly `n`).
     pub fn from_iter(room: &dyn Room, n: usize, items: impl IntoIterator<Item = T>) -> Self {
-        let mut a = BlockArray::zeroed(room, n);
+        let a = BlockArray { mem: Mem::new(room, n * size_of::<T>(), align_of::<T>(), "an array"), len: n, _t: PhantomData };
         let mut i = 0;
         for v in items.into_iter().take(n) {
-            a[i] = v;
+            // SAFETY: below its `n`; each `T` written once, before any read.
+            unsafe { a.mem.at::<T>(0).add(i).write(v) };
             i += 1;
         }
         assert_eq!(i, n, "an array of {n} given {i}");
@@ -1357,7 +1368,7 @@ impl<T: Pod + Copy> BlockArray<T> {
 impl<T: Pod> std::ops::Deref for BlockArray<T> {
     type Target = [T];
     fn deref(&self) -> &[T] {
-        // SAFETY: `len` `T`s, zeroed or written.
+        // SAFETY: `len` `T`s, written (or zeroed, `zeroed`).
         unsafe { std::slice::from_raw_parts(self.mem.at::<T>(0), self.len) }
     }
 }
@@ -1380,7 +1391,8 @@ unsafe impl<T: Pod + Send> Send for Rec<T> {}
 unsafe impl<T: Pod + Sync> Sync for Rec<T> {}
 
 impl<T: Pod> Rec<T> {
-    /// A zeroed record, filled by `fill` (the record, and the `bytes_after` zeroed bytes after it for its children).
+    /// A record, filled by `fill`: the record, and the `bytes_after` bytes after it for its children, not zeroed, so
+    /// `fill` writes every byte that is read.
     pub fn new(room: &dyn Room, bytes_after: usize, fill: impl FnOnce(*mut T, *mut u8)) -> Self {
         let at = up8(size_of::<T>());
         let mem = Mem::new(room, at + bytes_after, align_of::<T>(), "a record");

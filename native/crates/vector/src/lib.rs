@@ -126,9 +126,8 @@ impl Region {
 }
 
 /// Where a structure lives: a region of `bytes` bytes in a block of the right life, its first byte at a multiple of
-/// `align` (at least 8). A thread's rooms and the heap's read zero (the stack's region and a large room's chunk
-/// zeroed, the heap's `alloc_zeroed`); a relation block's (`facts::rows`' `LifeRoom`, a home's room) is a chunk taken
-/// unzeroed (`try_alloc_chunk_fit`), so a structure writes each byte before it reads it.
+/// `align` (at least 8). A region is handed out as it lies, not zeroed (a thread's stack and long rooms, a relation
+/// block's chunk): a structure writes each byte before it reads it, and one that needs a clear start writes it itself.
 pub trait Room: Send + Sync {
     fn region(&self, bytes: usize, align: usize, name: &'static str) -> Region;
 }

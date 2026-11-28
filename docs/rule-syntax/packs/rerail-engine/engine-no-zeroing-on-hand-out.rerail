@@ -1,7 +1,7 @@
 .policy "engine-no-zeroing-on-hand-out" revision 1
 .description "Hand out memory as it was: the block allocator, rooms, chunks and regions never zero what they give."
 .language rust
-.mode log
+.mode steer
 .scope include "native/crates/blocks/src/alloc.rs", "native/crates/blocks/src/chunk.rs", "native/crates/blocks/src/free.rs", "native/crates/blocks/src/long.rs", "native/crates/blocks/src/maps.rs", "native/crates/blocks/src/mem.rs", "native/crates/blocks/src/region.rs", "native/crates/blocks/src/scratch.rs", "native/crates/blocks/src/ledger.rs", "native/crates/blocks/src/mapped.rs", "native/crates/blocks/src/block.rs", "native/crates/delta_core/src/flat/arena.rs", "native/crates/delta_core/src/flat/grow.rs", "native/crates/delta_core/src/flat/pool.rs", "native/crates/slabs/src/**/*.rs"
 #include "rust/rerail-engine.rerail"
 // The user (2026-11-26), after a run zeroed 16 GB of reused chunks: no memset, write_bytes or zeroed take of reused
@@ -16,6 +16,10 @@
 //   std::ptr::write_bytes(p, 0xab, n)  (a poison fill)     not reported
 //   pub fn zeroed(&self, n) { … write_bytes(s, 0, n) … }   not reported: the caller asks for zeros
 //   write_bytes(base, 0, size_of::<Header>())             not reported: a header's own clear start
+//   // zeroing: fresh memory (…)
+//   std::alloc::alloc_zeroed(layout)                      not reported: a reservation's fresh memory, as an OS
+//                                                         mapping reads zero (only on a fresh allocation's call;
+//                                                         a write_bytes or fill of memory is never excused)
 
 .violation ZEROED_HAND_OUT(at: node) code "ZEROED_HAND_OUT" "This zeroes memory as it is handed out, which touches and pins every page: hand the bytes out as they are, and let the structure write before it reads (a structure that needs a clear start asks for it: an explicit zeroing call over the part it uses)."
 .decl zero_literal(a: node)
@@ -30,8 +34,12 @@ in_zeroing_api(n) :- kind(f, "function_item"), field(f, "name", i), match("(?s:.
 // A fixed structure's own clear start: its length is `size_of::<T>()`.
 .decl header_clear(c: node)
 header_clear(c) :- call_name(c, "write_bytes", _), call_arg(c, 2, n), call_name(n, "size_of", _).
+// A reservation's fresh memory, read as an OS mapping reads (zero, untouched): a fresh allocation's call, marked.
+engine_mark("//[/!]?\\s*zeroing: fresh memory(?s:.*)").
+.decl fresh(at: node)
+fresh(at) :- call_name(_, x, at), (x = "alloc_zeroed" ; x = "calloc"), marked_by(at, "//[/!]?\\s*zeroing: fresh memory(?s:.*)").
 ZEROED_HAND_OUT(at) :- zeroing(c, at), docof(c, d), !engine_test_doc(d), !in_engine_test(c), !in_zeroing_api(c),
-    !header_clear(c).
+    !header_clear(c), !fresh(at).
 
 .test zeroing exactly
     .fixture "native/crates/blocks/src/maps.rs" ```
@@ -44,6 +52,12 @@ ZEROED_HAND_OUT(at) :- zeroing(c, at), docof(c, d), !engine_test_doc(d), !in_eng
         }
         pub fn zeroed(p: *mut u8, n: usize) { unsafe { std::ptr::write_bytes(p, 0, n) } }
         fn over(base: *mut u8) { unsafe { std::ptr::write_bytes(base, 0, size_of::<Header>()) } }
+        fn reserve(layout: std::alloc::Layout, p: *mut u8) {
+            // zeroing: fresh memory (a reservation reads zero, as an OS mapping)
+            let q = unsafe { std::alloc::alloc_zeroed(layout) };
+            // zeroing: fresh memory (not an excuse for a fill)
+            unsafe { std::ptr::write_bytes(p, 0, 64) };
+        }
         #[cfg(test)]
         mod tests {
             fn t(p: *mut u8) { unsafe { std::ptr::write_bytes(p, 0, 8) } }
@@ -55,4 +69,5 @@ ZEROED_HAND_OUT(at) :- zeroing(c, at), docof(c, d), !engine_test_doc(d), !in_eng
     .expect ZEROED_HAND_OUT at "native/crates/blocks/src/maps.rs":2
     .expect ZEROED_HAND_OUT at "native/crates/blocks/src/maps.rs":3
     .expect ZEROED_HAND_OUT at "native/crates/blocks/src/maps.rs":4
+    .expect ZEROED_HAND_OUT at "native/crates/blocks/src/maps.rs":14
 .end

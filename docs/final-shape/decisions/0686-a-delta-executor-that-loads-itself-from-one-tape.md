@@ -2072,3 +2072,39 @@ empty span (`Block::offset_of` past the block). An index of no rows now claims n
 `a_chunk_under_the_resident_size_keeps_its_pages` was red here and on a farm Mac: its big chunk, 8 pages, was under
 the ledger's `GIVE_MIN` (256 KB merged, t57 §8), which a free must reach to give pages back. It is that size now.
 `rerail-blocks --lib` 159 of 159, `rerail-delta-exec --lib` 113 of 113, `rerail-delta-device --lib` 13 of 13.
+
+## Three logged rules hold (2026-11-28)
+
+`engine-host-never-sorts`, `engine-no-global-state` and `engine-no-zeroing-on-hand-out` found nothing more once the
+code they named was fixed, and now steer: a finding fails `check_engine_rules.py`. One rule still logs: 41 copies
+without a 0353 mark.
+
+- **Facts by meaning, unsorted (F1).** A slot's facts are a `Facts` multiset (`op.rs`: each row and how many times it
+  is held). `written_facts` gives one a slot. The facts readers (`k0_facts`, `cache_facts`, `drop_facts`,
+  `runs_facts`) give their rows as they lie. Each test that compares rows compares them as `Facts`, so nothing sorts
+  them. A version that writes other facts is refused with what differs: each slot's row counts, and a few rows that
+  either side holds more often (`Facts::differ`).
+- **`Directory::reach`** gives the blocks in the order it reached them. Its one ordered reader, a launch's descriptor
+  table, is ordered by its writer (`gens::write_table`), and the clean-up's reader only asks `contains`. The file
+  layer's `changed` gives each path once, in the journal's order.
+- **No global state in the delta crates.** The store's observer is registered by `Store::open` only in a test or
+  `test-hooks` build (`register_store_for_tests`): every caller of `Store::open` is a test or a test driver, and only
+  `delta_device` depends on `delta_exec`. The library's test detection now covers test-gated out-of-line modules
+  (`#[cfg(test)] mod heap_watch;`): `engine_test_doc` takes the module's file and everything under its directory.
+- **No zeroing on hand-out.** The stack's and the long room's regions are handed out as they lie, and the `Room`
+  contract says so (`rerail_vector::Room`). The maps no longer zero their region (`maps.rs`'s `Mem::new`):
+  - the hash map, the sorted map and the string table each write every field of their descriptor;
+  - `BlockArray::from_iter` writes each item once;
+  - `BlockArray::zeroed` is the one structure that asks for zeros, and it asks for them by name (`Mem::zeroed`).
+
+  A structure's only other reads of unwritten bytes are behind a tag that says they were written (`maps.rs`'s
+  values). `mem.rs`'s fallback for a platform with no OS mapping takes fresh memory with `alloc_zeroed`, so a
+  reservation reads zero there as a mapping does. Its mark, `// zeroing: fresh memory`, is accepted on a fresh
+  allocation's call only. `long.rs`'s test now holds that a reused slot keeps the earlier region's bytes.
+
+`rerail-blocks` 159 of 159, `rerail-vector` 11 of 11, `rerail-delta-core` 35 of 35, `rerail-facts-base` 84 of 84,
+`rerail-delta-exec` 113 of 113. `rerail-delta-device` 13 of 13 on Metal (`RERAIL_GPU=` set and empty, on a farm Mac).
+The device tests' default is the CPU device (`RERAIL_GPU=cpu`, `RERAIL_CPU_EXEC=vec`). There, eight of them fail the
+same way at this commit and at c579632582, on two farm Macs: `k0_pass`'s UKL version writes other facts than its
+twin, rows that read as addresses. So the CPU device's run of that UKL version reads its inputs wrongly. It is open,
+apart from this work.

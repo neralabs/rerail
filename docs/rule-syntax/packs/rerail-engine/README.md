@@ -22,28 +22,27 @@ comment's mark on a line or the line above.
 |---|---|---|---|
 | `engine-block-copies-marked` | Decision 0353: a call that copies values into another structure says which allowed kind it is (`// copy: load \| growth \| derived \| not block data`, `// copy (0353 step N)`) | Log | 41 |
 | `engine-copy-mark-kinds` | 0353: a copy's mark names one of those five kinds, nothing else | Steer | 0 |
-| `engine-no-zeroing-on-hand-out` | The user, 2026-11-26: no allocator, room, chunk or region zeroes what it hands out; no "a region reads zero" contract | Log | 5 |
-| `engine-host-never-sorts` | The user, 2026-11-24: "the host should not be sorting ANYTHING" (the executor's crates) | Log | 7 |
-| `engine-no-global-state` | Decision 0442, the twins' B1: no mutable static, cell, lock, atomic, `Once` or thread-local in the delta crates | Log | 2 |
+| `engine-no-zeroing-on-hand-out` | The user, 2026-11-26: no allocator, room, chunk or region zeroes what it hands out; no "a region reads zero" contract | Steer | 0 |
+| `engine-host-never-sorts` | The user, 2026-11-24: "the host should not be sorting ANYTHING" (the executor's crates) | Steer | 0 |
+| `engine-no-global-state` | Decision 0442, the twins' B1: no mutable static, cell, lock, atomic, `Once` or thread-local in the delta crates | Steer | 0 |
 | `engine-block-layout-fields` | `Pod` holds no address; 32 bits where they fit; references across blocks are (descriptor, offset): no `usize`, `isize`, pointer or reference in a `Pod` struct | Steer | 0 |
 | `engine-no-git-processes` | Decision 0497: gix, never a git process | Steer | 0 |
 | `engine-no-machine-paths` | AGENTS.md: no machine's details in the tree: no home directory in a literal, tests included | Steer | 0 |
 | `engine-no-language-labels` | No language knowledge in the generic layers (the user, 2026-11-26; REVIEW.md) | Steer | 0 |
 
-The counts are this tree's at the commit that added the rules.
+The counts are this tree's. Three rules logged at first (5 zeroed hand-outs, 7 host sorts, 2 global states) and steer
+since the code was fixed (decision 0686, "Three logged rules hold").
 
-## What the Log rules name today
+One mark excuses a zeroing: `// zeroing: fresh memory (…)` on a fresh allocation's call (`alloc_zeroed`, `calloc`),
+where a reservation must read zero as an OS mapping does (`mem.rs`'s fallback for a platform with no mapping). It
+never excuses a `write_bytes` or `fill`.
+
+## What the Log rule names today
 
 - **Unmarked copies (41).** Mostly in `blocks` (`kept.rs`, `chunk.rs`, `col.rs`, `relation.rs`, `sort.rs`, `block.rs`) and
   in `delta_twins` and `delta_core`, which `check_no_block_copies.py`'s directory list leaves out: a twin's output written
   into its block, a key built in a stack array, a block grown. Each takes its kind's mark, or is a read in place.
   `blocks/src/region.rs`'s `m.upload(…)` is a device upload, a kind 0353 names as a copy.
-- **Zeroed hand-outs (5).** `long.rs` and `scratch.rs` zero each region they hand out "as every room's region reads";
-  `maps.rs`'s `Mem::new` zeroes its region because a free-list chunk may not; `mem.rs` reserves with `alloc_zeroed` on
-  other platforms; `BlockArray::from_iter` zeroes the array it then writes whole.
-- **Host sorts (7).** The facts readers the version checks compare by (`k0_facts`, `cache_facts`, `drop_facts`,
-  `runs_facts`, `written_facts`), `Directory::reach`, and the file layer's `changed`.
-- **Global state (2).** `files.rs`'s `REGISTER` (`std::sync::Once`), and `heap_watch.rs`'s thread-local.
 
 ## What the rules do not see
 

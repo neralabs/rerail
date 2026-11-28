@@ -4,7 +4,7 @@
 //! - **A region** is a 16-byte header (the previous header's offset, a state word) and its bytes, bumped from the
 //!   top. Its going sets the state free, one atomic store, from any thread. The owning thread pops freed headers off
 //!   the top (`settle`) at its next take, or at the going itself when it is the owner's, and moves the top back. A
-//!   room's region is zeroed, as every room's reads (`Room`); a use's takes are not (`zeroed` where it needs it).
+//!   room's region is not zeroed, as no room's is (`Room`), nor a use's takes (`zeroed` where it needs it).
 //! - **A use** (`with`) takes slices tagged with the use; its end frees them, and it may nest. A slice is a region:
 //!   a freeze's temporaries and the room's structures are one memory.
 //! - **The room** (`StackRoom`) gives a structure a region of the calling thread's stack. Where a region lies is a
@@ -231,9 +231,7 @@ impl crate::maps::Room for StackRoom {
         let (head, at) = stack.push(bytes, align, LIVE);
         // SAFETY: the stack's bytes past the header just pushed, this region's alone until it goes.
         let ptr = unsafe { stack.base.add(at) };
-        // Zeroed, as every room's region reads (a free list's chunk, the heap's `alloc_zeroed`).
-        // SAFETY: the region's own `bytes`.
-        unsafe { std::ptr::write_bytes(ptr, 0, bytes) };
+        // Not zeroed (the stack's earlier regions' bytes): its structure writes before it reads.
         let census = crate::census::counted(crate::census::STACK, name, bytes);
         // SAFETY: `bytes` writable bytes at `ptr`, aligned as asked, held by `OnStack` while the region lives.
         unsafe { crate::maps::Region::new(ptr, bytes, Box::new(OnStack { stack, head, at, _census: census })) }

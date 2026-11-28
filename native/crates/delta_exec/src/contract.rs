@@ -1319,7 +1319,7 @@ pub fn harness_on<O: DeltaOp>(op: &O, bench: &mut Bench, ins: &mut [Trace], head
         let rows_before = outs_of(&cx, &threaded).map_err(|e| fail("L1", k, e))?;
         let cache_before = {
             let l = cx.dir.read("the harness", &[threaded.cache.0]).map_err(setup)?;
-            cache_facts(&l.table(), 0, l.block(0))
+            crate::op::Facts::of(cache_facts(&l.table(), 0, l.block(0)))
         };
         let w = move_want(&mut cx, &mut threaded, k).map_err(|e| fail("L1", k, e))?;
         let work = threaded.step(op, &mut cx, &step, &gstep, w).map_err(|e| fail("L1", k, e))?;
@@ -1375,7 +1375,7 @@ pub fn harness_on<O: DeltaOp>(op: &O, bench: &mut Bench, ins: &mut [Trace], head
             }
             let cache_after = {
                 let l = cx.dir.read("the harness", &[threaded.cache.0]).map_err(setup)?;
-                cache_facts(&l.table(), 0, l.block(0))
+                crate::op::Facts::of(cache_facts(&l.table(), 0, l.block(0)))
             };
             if cache_after != cache_before {
                 return Err(fail("L4", k, "every input the identity, and its cache changed".into()));
