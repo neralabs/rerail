@@ -205,3 +205,41 @@ fn a_nearest_scopes_form_gives_its_rules_rows() {
     assert_eq!(formed, ruled);
     assert!(formed.iter().any(|r| r[1] == "function_definition"), "{formed:?}");
 }
+
+/// `place(n, t)`, python/points-to-file's `pt_tm_place`: a node's term by its place under its nearest scope, here
+/// with each scope named by its start.
+const PLACES: &str = r#"
+.decl node(d: number, n: node, kind: symbol, start: number, end: number)
+.decl child(p: node, n: node, i: number)
+.decl kind(n: node, k: symbol)
+.decl host_node(n: node, h: node)
+.input node, child, kind, host_node
+.decl def(k: symbol)
+def("function_definition"). def("class_definition").
+.decl scope(k: symbol)
+scope("module"). scope("function_definition"). scope("class_definition").
+.decl scope_tm(s: node, q: symbol)
+scope_tm(s, cat("s", to_string(b))) :- node(_, s, k, b, _), scope(k).
+.decl same(n: node, c: number)
+same(n, 0) :- node(_, n, _, _, _), !child(_, n, _).
+same(n, 0) :- child(p, n, _), node(_, p, _, pb, _), node(_, n, _, b, _), pb != b.
+same(n, 0) :- child(p, n, _), node(_, p, _, _, pe), node(_, n, _, _, e), pe != e.
+same(n, c + 1) :- child(p, n, _), node(_, p, _, b, e), node(_, n, _, b, e), same(p, c).
+.decl place(n: node, t: symbol)
+place(n, cat(q, "@", to_string(b - sb), "+", to_string(e - b), "^", to_string(c))) :- node(_, n, k, b, e), !def(k),
+    k != "module", !host_node(n, _), nearest(n, s, scope), node(_, s, _, sb, _), scope_tm(s, q), same(n, c).
+.decl placed(b: number, k: symbol, t: symbol)
+placed(b, k, t) :- place(n, t), node(_, n, k, b, _).
+.output placed
+"#;
+
+/// `pt_tm_place`'s form gives its rule's rows, its scopes' terms read from the relation it reads.
+#[test]
+fn a_place_terms_form_gives_its_rules_rows() {
+    let form = ".form place python.place_term reads scope_tm host_node args function_definition class_definition module / module function_definition class_definition\n";
+    let formed = rows(&format!("{PLACES}{form}"), &corpus("place-term"), "placed");
+    let ruled = rows(PLACES, &corpus("place-term-rules"), "placed");
+    assert_eq!(formed, ruled);
+    assert!(formed.iter().any(|r| r[2].starts_with("s") && !r[2].starts_with("s0@")), "{formed:?}");
+    assert!(formed.iter().any(|r| r[2].ends_with("^1")), "{formed:?}");
+}

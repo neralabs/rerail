@@ -195,6 +195,8 @@ pub fn install_languages(tests: bool) {
     register_family_columns();
     // The families' tables over a bound `node` relation (Python's semantic producers).
     facts::vtab::install_node_tables(vec![facts::vtab::python::register]);
+    // The languages' Rust forms of node functions, with the tape's (Python's points-to terms).
+    facts::vtab::syntax::forms::install_forms(facts::vtab::syntax::python_forms::FORMS.to_vec());
     // The semantic facts a program's native steps demand (Python's).
     facts::vtab::syntax::install_semantic_producer(&facts::vtab::syntax::python_demand::Semantic);
     // What each family reads of its own core.rerail facts.

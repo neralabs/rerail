@@ -1046,6 +1046,7 @@ pub mod code_rule_dsl {
                     #[allow(unused_imports)]
                     use std::{ collections::{BTreeMap, BTreeSet}, sync::Arc, };
                 }
+                pub use rerail_lang_python::code_rule_dsl::facts::vtab::syntax::python_forms;
                 pub mod python_parts {
                     #[cfg(any(test, feature = "test-hooks"))]
                     pub use rerail_lang_python::code_rule_dsl::facts::vtab::syntax::python_parts::*;

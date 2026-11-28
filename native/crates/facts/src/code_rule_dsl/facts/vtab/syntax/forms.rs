@@ -12,12 +12,14 @@ use rerail_clif::ids::NONE;
 use std::sync::{Arc, OnceLock};
 
 /// What a form is asked for: the batch, the keyed column's values asked (`None`: every row), the relations it reads
-/// (as the run holds them, in their declared order) and its words.
+/// (as the run holds them, in their declared order), its words, and the texts of symbols those relations hold.
 pub struct FormCall<'a> {
     pub batch: &'a Batch,
     pub keys: Option<&'a [i64]>,
     pub reads: &'a [Arc<dyn crate::code_rule_dsl::facts::vtab::Source>],
     pub args: &'a [&'a str],
+    /// Each symbol's text, of the atoms a read relation's symbol columns hold.
+    pub texts: &'a dyn Fn(&[i64]) -> Result<Vec<String>, String>,
 }
 
 /// A form's rows, flat, `width` cells each. A symbol cell holds `text`'s index of its text until the caller interns

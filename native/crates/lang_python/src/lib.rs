@@ -284,6 +284,7 @@ pub mod code_rule_dsl {
                 pub mod py_families;
                 pub mod python_core;
                 pub mod python_demand;
+                pub mod python_forms;
                 pub mod python_parts;
                 pub mod python_syntax;
                 #[allow(unused_imports)]

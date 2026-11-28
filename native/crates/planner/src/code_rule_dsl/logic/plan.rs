@@ -903,8 +903,10 @@ impl<'a> Run<'a, '_> {
             let source = vtab::bound_source(self.db, "node").ok_or_else(|| Error::Plan(format!("{rel}: form {name} needs bound syntax facts")))?;
             let batch = source.python_batch().ok_or_else(|| Error::Plan(format!("{rel}: form {name} needs a syntax batch")))?;
             let _span = super::profile::span(|| format!("form {name}: {rel}"));
+            let db = &self.db;
+            let texts = |atoms: &[i64]| super::native::symbol_texts(db, atoms).map_err(|e| e.to_string());
             for (column, keys) in &calls {
-                let call = forms::FormCall { batch: &batch, keys: keys.as_deref(), reads: &held, args };
+                let call = forms::FormCall { batch: &batch, keys: keys.as_deref(), reads: &held, args, texts: &texts };
                 form.rows(&call, *column, &mut out).map_err(|e| Error::Plan(format!("{rel}: form {name}: {e}")))?;
             }
         }
