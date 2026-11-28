@@ -81,6 +81,12 @@ fn fork_of(v: &Version, rel: RelId, key: &[usize]) -> Option<Fork> {
         d.get_or_insert(pick);
     }
     let (d, at) = d?;
+    // No fork where a reader makes the driver: `walk`'s recursive rules read `scope_up(s, p)` beside `walk(n, x, s)`,
+    // and the fork stored `pn_scope_up`, a copy of every `walk` row and its parent, in the recursion (E7: 7,629 units of
+    // `walk` and 2,306 of `pn_scope_up`, against 3,241 of `walk` alone, the same rows).
+    if reads.iter().any(|(r, _)| r.head().rel() == d) {
+        return None;
+    }
     Some(Fork { r: rel, key: key.to_vec(), d, at, readers: ids })
 }
 
@@ -210,4 +216,58 @@ pub fn fork(base: &Placed) -> Result<Option<(Vec<String>, Placed)>, String> {
     let done: Vec<String> = names.into_iter().filter(|n| !got.unfinished.contains(n)).collect();
     super::super::super::profile::decision("one pass a name (the design's S1)", || format!("{} chains made once a driver row: {}", done.len(), done.join(", ")));
     Ok(Some((done, Placed::new(cur, order, base.whole))))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::super::super::super::program_image::{Builder, T};
+
+    /// A chain keyed by `s` read by two rules beside one driver atom `d(s)` forks; read by a recursive relation's two
+    /// rules beside its own atom (`walk(n, x, s)` reading `up(s, p)`, as `walk` reads `scope_up`), it does not: the
+    /// fork would store a copy of the recursion's rows.
+    #[test]
+    fn a_chain_a_recursive_reader_drives_is_not_forked() {
+        let mut b = Builder::base();
+        for (rel, cols) in [
+            ("d", &[("s", "node")][..]),
+            ("c", &[("s", "node")]),
+            ("up", &[("s", "node"), ("p", "node")]),
+            ("a", &[("s", "node"), ("p", "node")]),
+            ("b", &[("s", "node"), ("p", "node")]),
+            ("start", &[("n", "node"), ("s", "node")]),
+            ("walk", &[("n", "node"), ("s", "node")]),
+        ] {
+            b.fields().declare(rel, cols);
+        }
+        let v = |x: &'static str| T::Var(x);
+        b.rule().head("a", &[v("s"), v("p")]).atom("d", &[v("s")]).atom("up", &[v("s"), v("p")]).finish().unwrap();
+        b.rule().head("b", &[v("s"), v("p")]).atom("d", &[v("s")]).atom("up", &[v("s"), v("p")]).atom("c", &[v("s")]).finish().unwrap();
+        b.rule().head("walk", &[v("n"), v("s")]).atom("start", &[v("n"), v("s")]).finish().unwrap();
+        b.rule().head("walk", &[v("n"), v("p")]).atom("walk", &[v("n"), v("s")]).atom("up", &[v("s"), v("p")]).finish().unwrap();
+        b.rule().head("walk", &[v("n"), v("p")]).atom("walk", &[v("n"), v("s")]).atom("up", &[v("s"), v("p")]).atom("c", &[v("s")]).finish().unwrap();
+        let ver = b.finish().unwrap().0;
+        let up = ver.rel("up").unwrap();
+        // Read by a, b and walk's two rules: the drivers differ (d, walk), so no fork of them all.
+        assert!(super::fork_of(&ver, up, &[0]).is_none());
+        // Read by walk's two rules alone: walk drives them and makes them.
+        let mut b = Builder::base();
+        for (rel, cols) in [("c", &[("s", "node")][..]), ("up", &[("s", "node"), ("p", "node")]), ("start", &[("n", "node"), ("s", "node")]), ("walk", &[("n", "node"), ("s", "node")])] {
+            b.fields().declare(rel, cols);
+        }
+        b.rule().head("walk", &[v("n"), v("s")]).atom("start", &[v("n"), v("s")]).finish().unwrap();
+        b.rule().head("walk", &[v("n"), v("p")]).atom("walk", &[v("n"), v("s")]).atom("up", &[v("s"), v("p")]).finish().unwrap();
+        b.rule().head("walk", &[v("n"), v("p")]).atom("walk", &[v("n"), v("s")]).atom("up", &[v("s"), v("p")]).atom("c", &[v("s")]).finish().unwrap();
+        let ver = b.finish().unwrap().0;
+        assert!(super::fork_of(&ver, ver.rel("up").unwrap(), &[0]).is_none(), "a recursive reader drives the chain");
+        // The near miss: two rules of other relations beside d(s) fork.
+        let mut b = Builder::base();
+        for (rel, cols) in [("d", &[("s", "node")][..]), ("c", &[("s", "node")]), ("up", &[("s", "node"), ("p", "node")]), ("a", &[("s", "node"), ("p", "node")]), ("b", &[("s", "node"), ("p", "node")])] {
+            b.fields().declare(rel, cols);
+        }
+        b.rule().head("a", &[v("s"), v("p")]).atom("d", &[v("s")]).atom("up", &[v("s"), v("p")]).finish().unwrap();
+        b.rule().head("b", &[v("s"), v("p")]).atom("d", &[v("s")]).atom("up", &[v("s"), v("p")]).atom("c", &[v("s")]).finish().unwrap();
+        let ver = b.finish().unwrap().0;
+        let f = super::fork_of(&ver, ver.rel("up").unwrap(), &[0]).expect("two readers beside d(s) fork");
+        assert_eq!((ver.rel_name(f.d), f.at.as_slice(), f.readers.len()), ("d", &[0][..], 2));
+    }
 }
