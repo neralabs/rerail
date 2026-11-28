@@ -3222,6 +3222,10 @@ fn open_spec_within(conn: impl Scoped, section: &Spec) -> Result<String> {
             }
             syms.check()?;
             comp.device = None;
+            // Never dropped silently: the profile names it (no device refusal goes unreported).
+            if let Some(dev) = solver() {
+                dev.refuse("a closure on the host, run in its closure form (decision 0098 §1)".to_owned());
+            }
         }
     }
     // A negation of the component's own relation (a fork's tails, the design's S1: `!cls_early` in `cls_late`) is
