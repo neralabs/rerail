@@ -133,15 +133,18 @@ impl ViewEntry {
             // A node's place, read in its tape's auxiliary index (`tape_place`, `tape_place_past_comments`).
             (*d).place = p.place_kind() as u32;
             // The tape's rows' derived columns made by now (`tape_rows::derive`: those its program reads).
-            let (columns, named) = p.derived.made();
-            let [before, after, visits, digests] = columns;
-            for (run, cells) in [(&raw mut (*d).gaps[0], before), (&raw mut (*d).gaps[1], after), (&raw mut (*d).visits, visits), (&raw mut (*d).digests, digests)] {
+            let (columns, named, digests) = p.derived.made();
+            let [before, after, visits] = columns;
+            for (run, cells) in [(&raw mut (*d).gaps[0], before), (&raw mut (*d).gaps[1], after), (&raw mut (*d).visits, visits)] {
                 if let Some(c) = cells {
                     Run::set(run, c.as_ptr(), c.len());
                 }
             }
             if let Some(c) = named {
                 Run::set(&raw mut (*d).named, c.as_ptr(), c.len());
+            }
+            if let Some(c) = digests {
+                Run::set(&raw mut (*d).digests, c.as_ptr(), c.len());
             }
             // core.rerail's positions (`Locs`), for the `Loc` views: their places are read in the lines the document's
             // row points at (`ViewRow::lines`: the file's `LineTable`, a guest's host's).

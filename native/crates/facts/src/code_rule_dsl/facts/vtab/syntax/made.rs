@@ -475,6 +475,17 @@ impl Docs {
         }
         d
     }
+    /// Document `i` projected again in core.rerail's shape over its whole tree, no anchors, its guest placed as the
+    /// batch places it: the granules node paths are cut over (decision 0722), where the batch's projection is narrowed
+    /// or in T's shape. `None` for a text with no grammar.
+    pub fn whole(&self, i: usize) -> Option<Projected> {
+        let d = self.input(i);
+        let tag = crate::code_rule_dsl::facts::core::facts_tag(&d.facts);
+        let dialect = if tag == TEXT { None } else { self.context.dialects.get(tag) }?;
+        let placed = d.guest.as_deref().map(|g| (g, self.file_lines(g.host).unwrap_or_else(|| Arc::clone(&d.facts.lines))));
+        let block = super::cells::block(Projected::bytes(&d.facts));
+        Some(Projected::narrowed(d.key, Arc::clone(&d.facts), Some(dialect), Shape::Core, false, placed, None, false, None, &block, super::alone_cache(&d.facts)))
+    }
     /// Document `i`'s module as the corpus names it; none is built for it.
     pub fn module(&self, i: usize) -> Option<&str> {
         self.slots[i].input.module()

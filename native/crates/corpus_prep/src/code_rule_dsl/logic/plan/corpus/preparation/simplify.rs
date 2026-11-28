@@ -2149,6 +2149,11 @@ impl ProgramPass for FunctionKeys {
                     if fname.starts_with("git_") || fname == "str_between" || args.clone().any(|a| !matches!(a, TermRef::Var(_) | TermRef::Str(_) | TermRef::Int(_))) {
                         continue;
                     }
+                    // A key of a node id (`@path_node(p)`'s, decision 0722): a key relation holds no node (decision
+                    // 0677), and the node is its file's alone, read where the path is decoded.
+                    if fname == crate::code_rule_dsl::typing::file_local::MAKES_A_NODE {
+                        continue;
+                    }
                     let mut vars = BTreeSet::new();
                     term_slots(call, &mut vars);
                     if vars.is_empty() || vars.contains(&x) {

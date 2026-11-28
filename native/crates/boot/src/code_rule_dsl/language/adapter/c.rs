@@ -61,6 +61,13 @@ impl Adapter for C {
     const STRIPS_BOM: bool = false;
     /// tree-sitter-c and tree-sitter-cpp's comments, which walks pass over.
     const COMMENT_KINDS: &'static [&'static str] = &["comment"];
+    // Node paths' tables (decision 0722): the slots generated into `c_paths.rs` by `rerail-engine node-path-table`,
+    // the kinds whose children are a list of statements, and the language's own labels.
+    const NODE_PATH: rerail_lang::code_rule_dsl::path_tables::PathTables = rerail_lang::code_rule_dsl::path_tables::PathTables {
+        parents: include!("c_paths.rs"),
+        lists: &["translation_unit", "compound_statement", "field_declaration_list", "declaration_list"],
+        labels: &[],
+    };
     const PREAMBLE_KINDS: &'static [&'static str] = &[];
     const BODY_KINDS: &'static [&'static str] = &[];
     type Scope = Self;

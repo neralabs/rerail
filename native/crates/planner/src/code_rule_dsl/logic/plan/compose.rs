@@ -588,6 +588,9 @@ impl Compiled {
                                 Some(lower::Domain::Name) => {
                                     super::super::native::symbol_text(db, n).map(super::Shown::Text)
                                 }
+                                // A node path by its text (`path_tables::path_text`, decision 0722).
+                                Some(lower::Domain::Path) => super::super::native::symbol_text(db, n >> 32)
+                                    .map(|base| super::Shown::Text(rerail_lang::code_rule_dsl::path_tables::path_text(&base, n))),
                                 Some(lower::Domain::Kind) => {
                                     let (tag, code) = (
                                         crate::code_rule_dsl::facts::core::kind_tag(n as u32),

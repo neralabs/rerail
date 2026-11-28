@@ -1,0 +1,30 @@
+.policy "rr-strlen-of-a-text" revision 1
+.description "A rule makes a node's text only to measure it: `text(n, t)` whose `t` is read by `strlen` alone. `@text_len(n)` counts the same characters in the source and makes no text."
+.language rr
+.mode steer
+.scope include "**/*.rerail"
+// A rule's performance, checked with rules (decision 0061). `text(n, t)` makes n's text a string, interned in the
+// store; `@text_len(n)` is a number, counted where the text lies in the source (a node's, a token's or a line's):
+//   w(n, k) :- line(n), text(n, t), k = strlen(t).        RR102: `k = @text_len(n)`
+//   w(n, k) :- line(n), k = @text_len(n).                 fine
+//   w(n, t, k) :- line(n), text(n, t), k = strlen(t).     fine: the head reads t too
+//   w(n) :- line(n), text(n, t), match("#.*", t), strlen(t) > 3.   fine: match reads t too
+
+.violation strlen_of_text(at: node) code "RR102" "this text is made only for strlen: @text_len counts it in the source, making no text"
+
+.decl var_use(c: node, s: symbol, v: node)              // v is a use of the variable s in the clause c
+var_use(c, s, v) :- kind(c, "clause"), within(v, c), kind(v, "variable"), name(v, s).
+.decl text_bound(c: node, a: node, s: symbol, v: node)  // the atom a is `text(_, s)` in c; v is its s
+text_bound(c, a, s, v) :- kind(a, "atom"), field(a, "relation", r), name(r, "text"), field(a, "arguments", l),
+    child(l, v, 1), var_use(c, s, v).
+.decl text_arg(v: node)
+text_arg(v) :- text_bound(_, _, _, v).
+.decl measured(v: node)                             // v is strlen's argument
+measured(v) :- kind(k, "call"), field(k, "function", f), name(f, "strlen"), field(k, "arguments", l),
+    child(l, v, 0), kind(v, "variable").
+.decl read_else(c: node, s: symbol)                 // something but strlen and its text reads s in c
+read_else(c, s) :- var_use(c, s, v), !measured(v), !text_arg(v).
+.decl texts_twice(c: node, s: symbol)               // two texts bound to one s: an equality test
+texts_twice(c, s) :- text_bound(c, a, s, _), text_bound(c, b, s, _), a != b.
+strlen_of_text(a) :- text_bound(c, a, s, _), var_use(c, s, m), measured(m), !read_else(c, s),
+    !texts_twice(c, s).

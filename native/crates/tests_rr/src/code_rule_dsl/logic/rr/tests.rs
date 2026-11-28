@@ -218,6 +218,80 @@ Bad(n, "second", 8) :- kind(n, "identifier").
     }
 }
 
+/// A message's node path (decision 0722 §4, §7): `{p}` spelled, `{p.file}` and `{p.line}`, each read in the path's own
+/// file's tape, though the finding is in another file: a call in a.py names the function it calls in b.py.
+#[test]
+fn a_message_spells_a_node_path_of_another_file() {
+    let root = crate::code_rule_dsl::fixtures::temp().with_extension("rr-paths");
+    std::fs::create_dir_all(&root).unwrap();
+    std::fs::write(root.join("a.py"), "from b import g\n\ndef f():\n    return g(1)\n").unwrap();
+    std::fs::write(root.join("b.py"), "class K:\n    def m(self):\n        return 0\n\ndef g(x):\n    return x\n").unwrap();
+    let rule = root.join("rule.rerail");
+    std::fs::write(&rule, r#"
+.policy "contract:paths" revision 1
+.language python
+.decl def_at(s: symbol, p: node_path)
+def_at(s, @node_path(n)) :- kind(n, "function_definition"), field(n, "name", x), text(x, s).
+.decl ret_at(s: symbol, p: node_path)
+ret_at(s, @node_path(r)) :- kind(n, "function_definition"), field(n, "name", x), text(x, s), field(n, "body", b), child(b, r, _), kind(r, "return_statement").
+.decl callee(c: node, s: symbol)
+callee(c, s) :- kind(c, "call"), field(c, "function", f), text(f, s).
+.decl target(s: symbol, p: node_path, r: node_path) cross_file
+target(s, p, r) :- def_at(s, p), ret_at(s, r), callee(_, s).
+.violation Calls(at: node, p: node_path, r: node_path) "calls {p} in {p.file} at line {p.line}, returning at {r} (line {r.line})"
+Calls(c, p, r) :- callee(c, s), target(s, p, r).
+"#).unwrap();
+    let report = crate::code_rule_dsl::tools::run_rr(&rule, &root, &root.join("out"), &serde_json::Value::Null).unwrap();
+    let rows = report["diagnostics"].as_array().unwrap().clone();
+    std::fs::remove_dir_all(root).unwrap();
+    let messages: Vec<&str> = rows.iter().map(|r| r["message"].as_str().unwrap()).collect();
+    assert_eq!(messages, ["calls b.py::g in b.py at line 5, returning at b.py::g/body.return (line 6)"], "{rows:#?}");
+}
+
+/// A program a file holds (decision 0431 §4) has paths too: rooted at its file's path and its document key, spelled
+/// in its own tape and placed at its file's lines, as the writer makes the file's programs again.
+#[test]
+fn a_message_spells_a_node_path_of_a_program_a_file_holds() {
+    let root = crate::code_rule_dsl::fixtures::temp().with_extension("rr-guest-paths");
+    std::fs::create_dir_all(&root).unwrap();
+    std::fs::write(root.join("a.html"), "<!doctype html>\n<script>\nlet a = f(1);\n</script>\n<script type=\"module\">g(2)</script>\n").unwrap();
+    let rule = root.join("rule.rerail");
+    std::fs::write(&rule, r#"
+.policy "contract:guest-paths" revision 1
+.language html
+#include "html/embeds.rerail"
+.violation Call(at: node, p: node_path) "{p} at {p.file}:{p.line}"
+Call(c, @node_path(c)) :- kind(t, "raw_text"), parsed(t, "javascript", p), within(c, p), kind(c, "call_expression").
+"#).unwrap();
+    let report = crate::code_rule_dsl::tools::run_rr(&rule, &root, &root.join("out"), &serde_json::Value::Null).unwrap();
+    let rows = report["diagnostics"].as_array().unwrap().clone();
+    std::fs::remove_dir_all(root).unwrap();
+    let mut messages: Vec<String> = rows.iter().map(|r| r["message"].as_str().unwrap().to_owned()).collect();
+    messages.sort_by_key(|m| m.rsplit(':').next().unwrap().to_owned());
+    assert_eq!(messages.len(), 2, "{rows:#?}");
+    for (m, line) in messages.iter().zip(["3", "5"]) {
+        assert!(m.starts_with("a.html#") && m.contains("::") && m.ends_with(&format!(" at a.html:{line}")), "{messages:?}");
+        assert!(!m.contains('\t') && !m.contains("not in") && !m.contains("no tape"), "{messages:?}");
+    }
+}
+
+/// A string a rule parses is a tape value (decision 0431), one per grammar and text: its paths are rooted at that
+/// identity (decision 0722 §7), spelled `annotation:List[int]::/…`, the same whichever string holds it, and the writer
+/// parses it again to spell them. It is no file's: `{p.file}` and `{p.line}` are empty.
+#[test]
+fn a_message_spells_a_node_path_of_a_parsed_string() {
+    let rows = finding_contract("x: \"List[int]\" = []\ny: \"List[int]\" = []\n", r#"
+.policy "contract:tape-paths" revision 1
+.language python
+.violation Ann(at: node, p: node_path) "{p}|{p.file}|{p.line}"
+Ann(s, @node_path(i)) :- kind(s, "string"), parsed(s, "annotation", _), guest_of(i, s), kind(i, "identifier"), text(i, "int").
+"#);
+    let messages: std::collections::BTreeSet<&str> = rows.iter().map(|r| r["message"].as_str().unwrap()).collect();
+    assert_eq!(messages.len(), 1, "both strings' tape value is one: {rows:#?}");
+    let m = messages.first().unwrap();
+    assert!(m.starts_with("annotation:List[int]::") && m.ends_with("||") && !m.contains("not in") && !m.contains("no tape"), "{m}");
+}
+
 /// O111: `{{` and `}}` are braces of a message's text, as the converter writes them; a lone `}` stays text.
 #[test]
 fn doubled_braces_in_a_message_are_text() {
@@ -1918,6 +1992,95 @@ same(l, m) :- rhs(l, r), rhs(m, s), l < m, @tree_digest(r) = @tree_digest(s).
     let out = dir.join("out");
     crate::code_rule_dsl::logic::plan::corpus::run(&program, &dir, None, &out, "program", crate::code_rule_dsl::typing::file_local::Binding::Cpu, 1 << 18).unwrap();
     assert_eq!(crate::code_rule_dsl::logic::plan::output::shown(&out, "same").unwrap(), [["a", "b"], ["c", "d"], ["e", "f"], ["g", "h"]]);
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// `@tree_digest(n)` is a number, the digest's 64-bit value, and `@tree_digest_hex(n)` the same digest's 64 hex
+/// digits, the number's 16 first: equal subtrees have one text, and a node's digest is no atom unless a rule asks its
+/// text.
+#[test]
+fn tree_digest_is_a_number_and_its_hex_the_whole_digest() {
+    let dir = crate::code_rule_dsl::fixtures::temp().with_extension("digesthex");
+    std::fs::create_dir_all(&dir).unwrap();
+    std::fs::write(dir.join("a.py"), "a = (1, 2)\nb = (1, 2,)\nc = 'x'\n").unwrap();
+    let rule = dir.join("digest.rerail");
+    std::fs::write(&rule, r#"
+.decl dig(l: symbol, h: symbol, v: number)
+dig(l, @tree_digest_hex(r), @tree_digest(r)) :- field(a, "left", x), text(x, l), field(a, "right", r), kind(a, "assignment").
+.output dig
+"#).unwrap();
+    let program = crate::code_rule_dsl::logic::rr::print_version(&crate::code_rule_dsl::logic::rr::parse_file_version(&rule).unwrap()).unwrap();
+    let out = dir.join("out");
+    crate::code_rule_dsl::logic::plan::corpus::run(&program, &dir, None, &out, "program", crate::code_rule_dsl::typing::file_local::Binding::Cpu, 1 << 18).unwrap();
+    let rows = crate::code_rule_dsl::logic::plan::output::shown(&out, "dig").unwrap();
+    assert_eq!(rows.iter().map(|r| r[0].as_str()).collect::<Vec<_>>(), ["a", "b", "c"], "{rows:?}");
+    for r in &rows {
+        assert!(r[1].len() == 64 && r[1].bytes().all(|b| b.is_ascii_hexdigit()), "64 hex digits: {r:?}");
+        let v: i64 = r[2].parse().unwrap_or_else(|_| panic!("a number: {r:?}"));
+        assert_eq!(format!("{:016x}", v as u64), r[1][..16], "the number is the digest's first 8 bytes: {r:?}");
+    }
+    assert_eq!(rows[0][1..], rows[1][1..], "(1, 2) and (1, 2,) are one tree");
+    assert_ne!(rows[0][1], rows[2][1]);
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// `@text_len(n)` is `strlen` of `n`'s text, a node's or a line's, in characters (`é` one, `漢` one), and `@indent(n)`
+/// the spaces, tabs and form feeds it starts with, each counted in the source: rules measure a text without reading
+/// it. Read in a head alone too (`HeadReads`), of a rule whose document is `_` (its located form's cross part).
+#[test]
+fn text_len_is_strlen_of_the_text_of_a_node_or_a_line() {
+    let dir = crate::code_rule_dsl::fixtures::temp().with_extension("textlen");
+    std::fs::create_dir_all(&dir).unwrap();
+    std::fs::write(dir.join("a.py"), "a = 'é漢'\nbb = 12345\n\nif bb:\n  \tc = 1\n").unwrap();
+    let rule = dir.join("len.rerail");
+    std::fs::write(&rule, r#"
+.decl node_len(l: symbol, k: number, s: number)
+node_len(l, @text_len(r), strlen(t)) :- field(a, "left", x), text(x, l), field(a, "right", r), kind(a, "assignment"), text(r, t).
+.decl line_len(l: number, k: number, s: number)
+line_len(l, @text_len(sp), strlen(t)) :- src_line(_, l, sp), line_text(sp, t).
+.decl line_ind(l: number, k: number, w: number)
+line_ind(l, @indent(sp), @text_len(sp)) :- src_line(_, l, sp).
+.output node_len, line_len, line_ind
+"#).unwrap();
+    let program = crate::code_rule_dsl::logic::rr::print_version(&crate::code_rule_dsl::logic::rr::parse_file_version(&rule).unwrap()).unwrap();
+    let out = dir.join("out");
+    crate::code_rule_dsl::logic::plan::corpus::run(&program, &dir, None, &out, "program", crate::code_rule_dsl::typing::file_local::Binding::Cpu, 1 << 18).unwrap();
+    let shown = |r: &str| crate::code_rule_dsl::logic::plan::output::shown(&out, r).unwrap().into_iter().map(|row| row.join(" ")).collect::<std::collections::BTreeSet<_>>();
+    assert_eq!(shown("node_len"), ["a 4 4", "bb 5 5", "c 1 1"].map(str::to_owned).into());
+    // The empty line between the two terminators, and the one after the last.
+    assert_eq!(shown("line_len"), ["1 8 8", "2 10 10", "3 0 0", "4 6 6", "5 8 8", "6 0 0"].map(str::to_owned).into());
+    assert_eq!(shown("line_ind"), ["1 0 8", "2 0 10", "3 0 0", "4 0 6", "5 3 8", "6 0 0"].map(str::to_owned).into());
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// A node path (decision 0722) names a node by its granule's key and its steps: `@path_node` gives back the node
+/// `@node_path` made it of, `@path_unit` its granule's own path, and an output shows a path as its text (its base's
+/// text, `/` and its steps), the same in every process.
+#[test]
+fn node_paths_name_nodes_and_decode_back_in_rules() {
+    let dir = crate::code_rule_dsl::fixtures::temp().with_extension("nodepaths");
+    std::fs::create_dir_all(&dir).unwrap();
+    std::fs::write(dir.join("a.py"), "def f(x):\n    return g(x, 1)\n\nclass C:\n    def m(self):\n        return g(2)\n").unwrap();
+    let rule = dir.join("paths.rerail");
+    std::fs::write(&rule, r#"
+.decl named(t: symbol, p: node_path)
+named(t, @node_path(n)) :- kind(n, "call"), text(n, t).
+.decl back(t: symbol, u: symbol)
+back(t, u) :- named(t, p), n = @path_node(p), text(n, u).
+.decl unit(t: symbol, u: node_path)
+unit(t, @path_unit(p)) :- named(t, p).
+.output named, back, unit
+"#).unwrap();
+    let program = crate::code_rule_dsl::logic::rr::print_version(&crate::code_rule_dsl::logic::rr::parse_file_version(&rule).unwrap()).unwrap();
+    let out = dir.join("out");
+    crate::code_rule_dsl::logic::plan::corpus::run(&program, &dir, None, &out, "program", crate::code_rule_dsl::typing::file_local::Binding::Cpu, 1 << 18).unwrap();
+    let shown = |r: &str| crate::code_rule_dsl::logic::plan::output::shown(&out, r).unwrap();
+    assert_eq!(shown("back").into_iter().map(|row| row.join(" | ")).collect::<std::collections::BTreeSet<_>>(), ["g(x, 1) | g(x, 1)", "g(2) | g(2)"].map(str::to_owned).into());
+    let named: std::collections::BTreeMap<String, String> = shown("named").into_iter().map(|row| (row[0].clone(), row[1].clone())).collect();
+    assert!(named["g(x, 1)"].starts_with("a.py\t/function_definition:f#0\t/"), "{named:?}");
+    assert!(named["g(2)"].starts_with("a.py\t/class_definition:C#0/function_definition:m#0\t/"), "{named:?}");
+    let unit: std::collections::BTreeMap<String, String> = shown("unit").into_iter().map(|row| (row[0].clone(), row[1].clone())).collect();
+    assert_eq!(unit["g(x, 1)"], "a.py\t/function_definition:f#0\t/1");
     let _ = std::fs::remove_dir_all(&dir);
 }
 

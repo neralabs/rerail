@@ -63,18 +63,18 @@ fits(c) :- one_line(c), new_width(c, w), (w <= 88 ; old_width(c, o), w < o).
 .decl one_line(c: node)
 one_line(c) :- format_call(c, _), node_line_number(c, l), node_end_line_number(c, l).
 .decl new_width(c: node, w: number)
-new_width(c, col0 + 1 + strlen(t) + g + a) :- one_line(c), fmt_str(c, s), text(s, t), node_start_column(c, col0), grow(c, g),
+new_width(c, col0 + 1 + @text_len(s) + g + a) :- one_line(c), fmt_str(c, s), node_start_column(c, col0), grow(c, g),
     after(c, a).
 .decl fmt_str(c: node, s: node)  // the literal of format call c
 fmt_str(c, s) :- format_call(c, _), field(c, "function", f), attr_of(f, s0, _), unparen(s0, s).
 .decl grow(c: node, g: number)  // how much longer the fields get: `{}` becomes `{name}`
-grow(c, g) :- one_line(c), format_call(c, v), g = sum strlen(x) - strlen(a) : { refers(c, k, e), text(e, x),
+grow(c, g) :- one_line(c), format_call(c, v), g = sum @text_len(e) - strlen(a) : { refers(c, k, e),
     brace_arg(c, k, a) }.
 .decl after(c: node, a: number)  // the length of the line after the call's `)`
-after(c, strlen(ln) - zc - 1) :- one_line(c), node_end_line_number(c, l), docof(c, d), node_to_last_token(c, z), token_start_column(z, zc),
-    document_line(d, sp), line_number(sp, l), line_text(sp, ln).
+after(c, @text_len(sp) - zc - 1) :- one_line(c), node_end_line_number(c, l), docof(c, d), node_to_last_token(c, z),
+    token_start_column(z, zc), document_line_by_number(d, l, sp).
 .decl old_width(c: node, o: number)
 old_width(c, o) :- one_line(c), call_lines(c, d, l1, l2),
-    o = max strlen(t) : { document_line(d, sp), line_number(sp, l), l >= l1, l <= l2, line_text(sp, t) }.
+    o = max @text_len(sp) : { document_line_by_number(d, l, sp), l >= l1, l <= l2 }.
 .decl call_lines(c: node, d: number, l1: number, l2: number)
 call_lines(c, d, l1, l2) :- one_line(c), node_line_number(c, l1), node_end_line_number(c, l2), docof(c, d).

@@ -859,3 +859,30 @@ fn a_second_write_in_one_batch_keeps_the_committed_chains_files() {
         assert!(named.contains(f) || !space_dir(&path, &SPACE).join(f).exists(), "{f}, which the batch replaced, is swept");
     }
 }
+
+/// A forked process's rows are mapped to the parent's atoms (decision 0170): a symbol column's value, and a node path
+/// column's high 32 bits (decision 0722), its steps below kept as they are.
+#[test]
+fn a_node_path_columns_atom_is_mapped_and_its_steps_kept() {
+    struct Rows(Vec<[i64; 3]>);
+    impl rerail_blocks::packed::RowsIn for Rows {
+        fn n(&self) -> usize {
+            self.0.len()
+        }
+        fn arity(&self) -> usize {
+            3
+        }
+        fn get(&self, r: usize, c: usize) -> i64 {
+            self.0[r][c]
+        }
+    }
+    let rows = Rows(vec![[7, 5 << 32 | 0b1011, 9], [8, 5 << 32 | 0b1, 9], [7, 6 << 32 | 0x7fff_ffff, 10]]);
+    let map = |ids: &mut [i64]| -> StoreResult<()> {
+        ids.iter_mut().for_each(|v| *v += 100);
+        Ok(())
+    };
+    let mapped = Mapped::of(&rows, b"spi", &map).unwrap();
+    use rerail_blocks::packed::RowsIn as _;
+    let got: Vec<[i64; 3]> = (0..mapped.n()).map(|r| [mapped.get(r, 0), mapped.get(r, 1), mapped.get(r, 2)]).collect();
+    assert_eq!(got, [[107, 105 << 32 | 0b1011, 9], [108, 105 << 32 | 0b1, 9], [107, 106 << 32 | 0x7fff_ffff, 10]]);
+}

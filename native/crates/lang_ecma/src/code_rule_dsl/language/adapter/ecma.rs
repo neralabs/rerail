@@ -20,6 +20,13 @@ impl Adapter for Ecma {
     const STRIPS_BOM: bool = true;
     /// `html_comment`: a script's `<!--` and line-leading `-->` comments.
     const COMMENT_KINDS: &'static [&'static str] = &["comment", "html_comment"];
+    // Node paths' tables (decision 0722): the slots generated into `ecma_paths.rs` by `rerail-engine node-path-table`,
+    // the kinds whose children are a list of statements, and the language's own labels.
+    const NODE_PATH: rerail_lang::code_rule_dsl::path_tables::PathTables = rerail_lang::code_rule_dsl::path_tables::PathTables {
+        parents: include!("ecma_paths.rs"),
+        lists: &["program", "statement_block", "class_body", "switch_body"],
+        labels: &[("statement_block", "block"), ("expression_statement", "expr")],
+    };
     const IMPORT_TARGETS: bool = true;
     const PREAMBLE_KINDS: &'static [&'static str] = &["hash_bang_line"];
     const BODY_KINDS: &'static [&'static str] = &[];

@@ -110,6 +110,7 @@ pub fn emit(
             lower::Domain::Kind => "kind",
             lower::Domain::Field => "field",
             lower::Domain::Name => "sym",
+            lower::Domain::Path => "node_path",
         }.to_owned()).collect();
         (r.clone(),types)
     }).collect());

@@ -205,8 +205,29 @@ pub const LONG_TEXT_NODES: &str = "rr_long_text_node";
 /// the run's, so `functions::eval` gives none. `rr_node_order` is a node's preorder key, `node_order`'s `k`: what a
 /// comparison of two nodes reads (`lowering_tail::OrderNodes`), with no join. `name`, `comment`, `strprefix`, `op_at`
 /// and T's `text`, `intval` and `op` are core.rerail's and T's per-node values, read where a rule binds the node
-/// (decision 0353 step 3).
-pub const NODE_READS: [&str; 12] = ["rr_node_text", "rr_node_text_any", "rr_node_value", "rr_node_str", "rr_node_name", "rr_node_comment", "rr_node_strprefix", "rr_node_op_at", "rr_node_intval", "rr_node_op_t", "rr_node_t_text", "rr_node_order"];
+/// (decision 0353 step 3). Node paths are decision 0722's.
+pub const NODE_READS: [&str; 20] = [
+    "rr_node_text",
+    "rr_node_text_any",
+    "rr_node_value",
+    "rr_node_str",
+    "rr_node_name",
+    "rr_node_comment",
+    "rr_node_strprefix",
+    "rr_node_op_at",
+    "rr_node_intval",
+    "rr_node_op_t",
+    "rr_node_t_text",
+    "rr_node_order",
+    "tree_digest_hex",
+    "text_len",
+    "indent",
+    "node_path",
+    "path_node",
+    "path_unit",
+    "path_spelling",
+    "path_file",
+];
 
 /// A row a producer hands a relation (`Relation::from_rows`, `staged`): its values on the stack, as the relation
 /// copies them into its block (decision 0687); a row past 8 columns goes on the heap.

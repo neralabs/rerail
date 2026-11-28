@@ -213,6 +213,12 @@ pub mod code_rule_dsl {
                     #[allow(unused_imports)]
                     use std::{ collections::{BTreeMap, BTreeSet}, sync::Arc, };
                 }
+                pub mod paths {
+                    pub use rerail_boot::code_rule_dsl::facts::vtab::syntax::paths::*;
+                    #[cfg(test)]
+                    #[path = "tests.rs"]
+                    pub mod tests;
+                }
                 pub mod python_parts {
                     pub use rerail_boot::code_rule_dsl::facts::vtab::syntax::python_parts::*;
                     #[cfg(test)]

@@ -59,6 +59,7 @@ pub mod normalized;
 use core_rr::Family;
 pub mod guests;
 pub mod granules;
+pub mod paths;
 mod units;
 pub mod ranks;
 pub mod tokens;
@@ -222,9 +223,10 @@ impl Projection {
         });
         crate::code_rule_dsl::logic::profile::decision("nodes with text", || match &read {
             None => format!("every node ({} reads the text of a node it does not narrow)", wide.as_deref().unwrap_or("a rule")),
-            Some(TextNodes { kinds, fields, parents, parent_fields, values }) => {
+            Some(TextNodes { kinds, fields, parents, parent_fields, values, relations }) => {
                 let some = |s: &BTreeSet<String>| s.iter().take(8).cloned().collect::<Vec<_>>().join(", ");
-                format!("{} kinds ({}), the nodes in {} fields ({}), the children of {} kinds ({}) and of the nodes in {} fields ({}), and those whose text is one of {} constants ({})", kinds.len(), some(kinds), fields.len(), some(fields), parents.len(), some(parents), parent_fields.len(), some(parent_fields), values.len(), some(values))
+                let held = if relations.is_empty() { String::new() } else { format!(", and the nodes {} hold ({})", relations.len(), some(relations)) };
+                format!("{} kinds ({}), the nodes in {} fields ({}), the children of {} kinds ({}) and of the nodes in {} fields ({}), and those whose text is one of {} constants ({}){held}", kinds.len(), some(kinds), fields.len(), some(fields), parents.len(), some(parents), parent_fields.len(), some(parent_fields), values.len(), some(values))
             }
         });
         if !std::env::var("RERAIL_TEXT_NODES").is_ok_and(|v| v == "all") {
@@ -269,7 +271,13 @@ pub struct TextNodes {
     pub parents: BTreeSet<String>,
     pub parent_fields: BTreeSet<String>,
     pub values: BTreeSet<String>,
+    /// The per-node relations whose nodes' text a rule reads (`comment(c, _), text(c, s)`: ERA001's and FIX00x's): of
+    /// them only `comment`, whose nodes are those of a comment kind (`core_rr::is_comment`, which makes its rows).
+    pub relations: BTreeSet<String>,
 }
+
+/// The per-node relations `TextNodes::relations` may name: each one's nodes are known by kind, as its rows are made.
+pub const TEXT_NODE_RELATIONS: [&str; 1] = ["comment"];
 
 impl TextNodes {
     /// Whether node `id` of `f` is one of these: of a kind read, in a field read, a child of a kind read or of a node in
@@ -284,6 +292,7 @@ impl TextNodes {
                         || dialect.catalog.field_name(f.field(q)).is_some_and(|name| self.parent_fields.contains(name))
                 })
             || !self.values.is_empty() && self.values.contains(f.text(id))
+            || self.relations.contains("comment") && core_rr::is_comment(dialect.name(f, id))
     }
 }
 
@@ -303,7 +312,13 @@ impl TextNodes {
     pub fn of_dialect(&self, dialect: &Dialect) -> NodesOf {
         let kinds = |names: &BTreeSet<String>| (0..dialect.catalog.kind_count()).map(|k| names.contains(dialect.code_name(k as u16))).collect::<Vec<bool>>();
         let fields = |names: &BTreeSet<String>| (0..=dialect.catalog.field_count()).map(|k| dialect.catalog.field_name(k as u16).is_some_and(|n| names.contains(n))).collect::<Vec<bool>>();
-        NodesOf { tag: dialect.tag, kinds: kinds(&self.kinds), fields: fields(&self.fields), parents: kinds(&self.parents), parent_fields: fields(&self.parent_fields) }
+        // A relation's nodes are of the kinds that make its rows: they join the kinds read.
+        let comments = self.relations.contains("comment");
+        let mut read = kinds(&self.kinds);
+        for (k, r) in read.iter_mut().enumerate() {
+            *r |= comments && core_rr::is_comment(dialect.code_name(k as u16));
+        }
+        NodesOf { tag: dialect.tag, kinds: read, fields: fields(&self.fields), parents: kinds(&self.parents), parent_fields: fields(&self.parent_fields) }
     }
 }
 
@@ -433,6 +448,50 @@ impl LongTexts {
         let core = p.ranks().select(Item::Node, local)?;
         let text = p.f().text(core);
         (text.len() > core_rr::TEXT_INLINE).then_some(text)
+    }
+
+    /// `f` of node, token or span `n`'s text's bytes where its source holds them, so no text is made or interned. A
+    /// line (`src_line`'s span, `granules::line_of`) is its bytes in the document's lines (`LineTable::text_of`), the
+    /// whole source (`source`'s) all of them; a comment no node is, its text (`text_any`). None for another span (a
+    /// match's) or an id of no document of the batch.
+    fn in_source<R>(&self, n: i64, f: impl FnOnce(&[u8]) -> R) -> Option<R> {
+        let (key, low) = (rerail_blocks::located::Located(n).key(), rerail_blocks::located::Located(n).low());
+        if granules::comment_of(low).is_some() {
+            return self.text_any(n).map(|t| f(t.as_bytes()));
+        }
+        let p = &self.batch.docs[*self.docs.get(&key)?];
+        let source = p.facts.source.as_bytes();
+        let [a, b] = match granules::line_of(low) {
+            Some(0) => [0, source.len() as u32],
+            Some(l) if (l as usize) <= p.f().lines.count() => p.f().lines.text_of(l as usize, source),
+            Some(_) => return None,
+            None => p.span(p.local_of(low)?),
+        };
+        source.get(a as usize..b as usize).map(f)
+    }
+
+    /// The length in characters of node, token or span `n`'s text (`@text_len`): strlen of its text, counted in its
+    /// bytes where they lie (`in_source`: the bytes that begin a character).
+    pub fn text_len(&self, n: i64) -> Option<i64> {
+        self.in_source(n, |bytes| bytes.iter().filter(|&&c| (c as i8) >= -0x40).count() as i64)
+    }
+
+    /// How many spaces, tabs and form feeds node, token or span `n`'s text starts with (`@indent`), counted in its
+    /// bytes where they lie (`in_source`): a line's whitespace before column k is `@indent(line) >= k`.
+    pub fn indent(&self, n: i64) -> Option<i64> {
+        self.in_source(n, |bytes| bytes.iter().take_while(|&&c| matches!(c, b' ' | b'\t' | 0x0c)).count() as i64)
+    }
+
+    /// Node `n`'s structural digest's 64 hex digits (`@tree_digest_hex`), read in its projection's hashes
+    /// (`tape_rows::TreeDigest`), the text made only for the node asked; none for a node of a document not in the
+    /// batch. The digest's 64-bit value, `@tree_digest`'s, is its first 16 digits (`core_rr::digest_value`).
+    pub fn digest_hex(&self, n: i64) -> Option<String> {
+        let (key, low) = (rerail_blocks::located::Located(n).key(), rerail_blocks::located::Located(n).low());
+        let doc = *self.docs.get(&key)?;
+        let p = &self.batch.docs[doc];
+        let local = p.local_of(low).filter(|&l| l < p.len())?;
+        let at = tape_rows::At { batch: &self.batch, doc };
+        Some(core_rr::hex(&tape_rows::TreeDigest::hashes(&at)[local as usize]))
     }
 
     /// Node `n`'s exact source text at any length, a comment span's (a comment no node is: `Extra`'s `node_text`
@@ -636,8 +695,9 @@ impl Source for LongTexts {
         // makes there too. `str`'s is `str_any`'s, which answers `str` on request in either shape.
         if let Some(rel) = TRel::ALL.into_iter().find(|r| r.read() == name && *r != TRel::Str).filter(|r| self.batch.shape == Shape::T || matches!(r, TRel::Intval | TRel::Op)) {
             // A comment, declared a node though T's nodes leave it out, is a span whose `text` is its text
-            // (`Extra::document`).
-            if rel == TRel::Text && granules::comment_of(n as u32).is_some() {
+            // (`Extra::document`), and so is a line (`src_line`'s span, read in place: `text`'s rows of it, made
+            // when a rule reads one, are its text whatever its characters).
+            if rel == TRel::Text && (granules::comment_of(n as u32).is_some() || granules::line_of(n as u32).is_some()) {
                 return self.text_any(n).map(Value::Text);
             }
             let (p, x, dialect) = self.node_at(n)?;
@@ -649,6 +709,14 @@ impl Source for LongTexts {
             "rr_node_value" => self.value_any(n).map(Value::Text),
             "rr_node_str" => self.str_any(n).map(Value::Text),
             "rr_node_order" => self.order_any(n).map(Value::Integer),
+            "tree_digest_hex" => self.digest_hex(n).map(Value::Text),
+            "text_len" => self.text_len(n).map(Value::Integer),
+            "indent" => self.indent(n).map(Value::Integer),
+            "node_path" => self.batch.node_path(n).map(Value::Integer),
+            "path_node" => self.batch.path_node(n).map(Value::Integer),
+            "path_unit" => self.batch.path_unit(n).map(Value::Integer),
+            "path_spelling" => self.batch.path_spelling(n).map(Value::Text),
+            "path_file" => self.batch.path_file(n).map(Value::Text),
             // `op_at`'s operator at place `more[0]`, in either shape (`Tree` makes its rows so in both; `""` past the
             // last: an operator is never empty).
             "rr_node_op_at" => {
@@ -1076,6 +1144,25 @@ fn mapped_end(pieces: &[normalized::Piece], x: u32) -> i64 {
         (Some(p), Some(n)) if p.escape => n.s,
         (Some(p), _) => p.s + i64::from(x) - i64::from(p.d),
         (None, _) => i64::from(x),
+    }
+}
+
+/// A document's node paths (`paths::DocPaths`), and the whole projection their granules are cut over where the
+/// batch's is not that (`made::Docs::whole`).
+pub struct NodePaths {
+    paths: paths::DocPaths,
+    whole: Option<Projected>,
+}
+
+/// The run's atoms as node paths' bases are interned in.
+struct RunAtoms<'a>(&'a dyn crate::content_store::AtomTable);
+
+impl paths::Atoms for RunAtoms<'_> {
+    fn atom(&self, text: &str) -> u32 {
+        self.0.intern(text).expect("the run's atoms take a node path's base")
+    }
+    fn text(&self, atom: u32) -> Option<String> {
+        self.0.value(atom).ok().flatten()
     }
 }
 
@@ -1589,6 +1676,10 @@ pub struct Dialect {
     /// Whether W reads values of the dialect's nodes (its family's `ValueRules::SUPPORTED`): `Extra`'s `value` and
     /// `value_type` are W's for its documents, `core_rr`'s literal values for the others (an `.rerail` file's).
     values: bool,
+    /// Its node path tables as its codes (`paths::Codes`, decision 0722).
+    pub paths: paths::Codes,
+    /// The tables themselves: their labels spell a path (`paths::DocPaths::spell`).
+    path_tables: &'static rerail_lang::code_rule_dsl::path_tables::PathTables,
     /// The grammar's token automata: the tokens a named-only tape leaves out, in the gaps between a
     /// parent's stored children (`tree::Tree`'s `token`, `prev_token`; t31).
     grammar: Option<Arc<crate::code_rule_dsl::tape::tokens::TokenGrammar>>,
@@ -1623,11 +1714,21 @@ impl Dialect {
             .collect();
         let family = Family::of(from_tape_tag(tag).and_then(crate::code_rule_dsl::language::label));
         let grammar = crate::code_rule_dsl::tape::tokens::TokenGrammar::of_dialect(dialect);
-        Ok(Self { tag, family, catalog, names, classes, granule_kinds, operator: catalog.field_id("operator"), operators: catalog.field_id("operators"), canonical, values, grammar })
+        let path_tables = crate::code_rule_dsl::language::base(crate::code_rule_dsl::language::Family::of(dialect)).path_tables();
+        let paths = paths::Codes::new(path_tables, &names, &|f| catalog.field_id(f), catalog.field_count());
+        Ok(Self { tag, family, catalog, names, classes, granule_kinds, operator: catalog.field_id("operator"), operators: catalog.field_id("operators"), canonical, values, paths, path_tables, grammar })
     }
     /// What kind code `code` is to the granules (`granules::kind_flags`); ERROR and an unknown code are nothing.
     pub fn granule_kind(&self, code: u16) -> u8 {
         self.granule_kinds.get(usize::from(code)).copied().unwrap_or(0)
+    }
+    /// Its family's node path tables (decision 0722): their labels spell a path's steps (`paths::DocPaths::spell`).
+    pub fn path_tables(&self) -> &'static rerail_lang::code_rule_dsl::path_tables::PathTables {
+        self.path_tables
+    }
+    /// Field `id`'s name in the grammar (`None` for 0, no field).
+    pub fn field_name(&self, id: u16) -> Option<&'static str> {
+        self.catalog.field_name(id)
     }
     /// Node `id`'s kind code (ERROR's is `u16::MAX`).
     pub(super) fn code(&self, f: FactsIn<'_>, id: u32) -> u16 {
@@ -2765,6 +2866,15 @@ pub struct Batch {
     given_passed: parking_lot::Mutex<HashMap<usize, Vec<i64>>>,
     /// Its documents' keys by their paths' atoms (`keys_of_paths`), once a read by a path asked.
     by_path: OnceLock<Option<HashMap<i64, Vec<u32>>>>,
+    /// Each document's node paths (decision 0722), by its place, made on the first path read of it.
+    node_paths: parking_lot::Mutex<HashMap<usize, Option<Arc<NodePaths>>>>,
+    /// The documents by their paths' root text (`path_root`), for a path read back.
+    path_roots: OnceLock<HashMap<String, usize>>,
+    /// Each node path read back (`path_at`): its document and node, decoded the first time a rule reads it.
+    path_words: parking_lot::Mutex<rustc_hash::FxHashMap<u64, Option<(usize, u32)>>>,
+    /// Each node's path (`node_path`), made the first time a rule asks: a rule asks in every derivation that reaches
+    /// the node, and its steps from its granule's start and its base's atom are the same each time.
+    node_words: parking_lot::Mutex<rustc_hash::FxHashMap<i64, Option<i64>>>,
     /// Its documents' keys by their `doc` rows' modules' atoms (`keys_of_modules`), once a read by a module asked.
     by_module: OnceLock<Option<HashMap<i64, Vec<u32>>>>,
     /// Each host's guests' keys (`Batch::guests_of`), once a read by a host's node asked.
@@ -2957,6 +3067,117 @@ fn in_block<T: cells::Cell>(block: &Arc<Block>, items: &[T]) -> Cells<T> {
 }
 
 impl Batch {
+    /// Document `i`'s paths' root text: its path, and a guest's document key after it (a guest shares its host's
+    /// path; its key is a hash of its host node's id, `granules`).
+    ///
+    /// A tape value (a string a rule parsed, decision 0431) or another value document is rooted at its identity instead, its grammar and text
+    /// (`paths::tape_root`): it is one per grammar and text, whichever string holds it, and no file's.
+    fn path_root(&self, i: usize) -> String {
+        match self.docs.guest(i) {
+            // `@parse` and `@splice` make value documents of a grammar and a text too, parsed as a tape value is.
+            Some(g) if matches!(g.made, Made::Tape { .. } | Made::Parse { .. } | Made::Splice { .. }) => {
+                let d = self.docs.input(i);
+                let grammar = d.guest.as_deref().map_or("", |g| g.grammar.as_str());
+                paths::tape_root(grammar, d.facts.source.as_str())
+            }
+            Some(_) => format!("{}\t#{:08x}", self.docs.path(i), self.docs.key(i)),
+            None => self.docs.path(i).to_owned(),
+        }
+    }
+
+    /// Document `i`'s node paths, made on the first read: over its projection where that is core.rerail's whole tree
+    /// numbered by definition, else over the document projected so (`made::Docs::whole`), so a path is the same
+    /// whatever a batch narrowed. `None` where ids are not by definition.
+    fn node_paths(&self, i: usize) -> Option<Arc<NodePaths>> {
+        if let Some(made) = self.node_paths.lock().get(&i) {
+            return made.clone();
+        }
+        let p = &self.docs[i];
+        let own = !p.anchored && p.extra.is_some() && p.len() > 0 && p.table().is_some();
+        let whole = if own { None } else { Some(self.docs.whole(i)?) };
+        let q = whole.as_ref().unwrap_or(p);
+        let made = self.dialects.get(q.tag()).and_then(|d| paths::DocPaths::new(q, d, &self.path_root(i))).map(|paths| Arc::new(NodePaths { paths, whole }));
+        self.node_paths.lock().insert(i, made.clone());
+        made
+    }
+
+    /// Node `n`'s path (`@node_path`, decision 0722): its granule's key atom, then its steps. None for a span, an
+    /// extra or a node of a document not in the batch.
+    pub fn node_path(&self, n: i64) -> Option<i64> {
+        if let Some(&word) = self.node_words.lock().get(&n) {
+            return word;
+        }
+        let word = self.node_path_made(n);
+        self.node_words.lock().insert(n, word);
+        word
+    }
+
+    fn node_path_made(&self, n: i64) -> Option<i64> {
+        let (key, low) = ((n >> 32) as u32, n as u32);
+        let i = self.docs.position(key)?;
+        let p = &self.docs[i];
+        let x = p.ranks().select(Item::Node, p.local_of(low)?)?;
+        let made = self.node_paths(i)?;
+        let q = made.whole.as_ref().unwrap_or(p);
+        let word = made.paths.encode(q, self.dialects.get(q.tag())?, &RunAtoms(&*self.atoms), x)?;
+        Some(word as i64)
+    }
+
+    /// The node path `w` names (`@path_node`): its document is the one of the batch whose root text its base starts
+    /// with; none for another's, or one whose granule or steps the tape no longer has.
+    pub fn path_node(&self, w: i64) -> Option<i64> {
+        let known = self.path_words.lock().get(&(w as u64)).copied();
+        let (i, x) = known.unwrap_or_else(|| self.path_at(w).map(|(i, _, x)| (i, x)))?;
+        let p = &self.docs[i];
+        let local = p.local_of_node(x);
+        (local != NONE).then(|| p.global(local))
+    }
+
+    /// The node path `w` decoded: its document's index, its paths and its node there (in their projection's ids).
+    fn path_at(&self, w: i64) -> Option<(usize, Arc<NodePaths>, u32)> {
+        if let Some(&at) = self.path_words.lock().get(&(w as u64)) {
+            let (i, x) = at?;
+            return Some((i, self.node_paths(i)?, x));
+        }
+        let at = self.path_decoded(w);
+        self.path_words.lock().insert(w as u64, at.as_ref().map(|(i, _, x)| (*i, *x)));
+        at
+    }
+
+    fn path_decoded(&self, w: i64) -> Option<(usize, Arc<NodePaths>, u32)> {
+        let atoms = RunAtoms(&*self.atoms);
+        let text = paths::Atoms::text(&atoms, (w as u64 >> 32) as u32)?;
+        let root = paths::root_of(&text)?;
+        let roots = self.path_roots.get_or_init(|| (0..self.docs.len()).map(|i| (self.path_root(i), i)).collect());
+        let i = *roots.get(root)?;
+        let made = self.node_paths(i)?;
+        let q = made.whole.as_ref().unwrap_or(&self.docs[i]);
+        let x = made.paths.decode(q, self.dialects.get(q.tag())?, &atoms, w as u64)?;
+        Some((i, made, x))
+    }
+
+    /// Node path `w` spelled (`@path_spelling`, a message's `{p}`; decision 0722 §4): `pkg/mod.py::C.m/body.return`.
+    pub fn path_spelling(&self, w: i64) -> Option<String> {
+        let (i, made, x) = self.path_at(w)?;
+        let q = made.whole.as_ref().unwrap_or(&self.docs[i]);
+        made.paths.spell(q, self.dialects.get(q.tag())?, x)
+    }
+
+    /// The file a node path names (`@path_file`, a message's `{p.file}`): its root's path, a guest's key left out.
+    /// Read from its base's text alone.
+    pub fn path_file(&self, w: i64) -> Option<String> {
+        let text = paths::Atoms::text(&RunAtoms(&*self.atoms), (w as u64 >> 32) as u32)?;
+        paths::file_of_text(&format!("{text}\t/1")).map(str::to_owned)
+    }
+
+    /// The path of the granule a node path's base is in (`@path_unit`): its key's atom, no steps.
+    pub fn path_unit(&self, w: i64) -> Option<i64> {
+        let atoms = RunAtoms(&*self.atoms);
+        let text = paths::Atoms::text(&atoms, (w as u64 >> 32) as u32)?;
+        let unit = paths::unit_of(&text)?;
+        Some((i64::from(paths::Atoms::atom(&atoms, unit)) << 32) | 1)
+    }
+
     /// The batch's block: its projections, its views' directory and what the device writes of it (an axis's starts).
     pub fn block(&self) -> &Arc<Block> {
         &self.block
@@ -4279,6 +4500,10 @@ impl Batch {
             given_rows: OnceLock::new(),
             given_passed: Default::default(),
             by_path: OnceLock::new(),
+            node_paths: Default::default(),
+            path_roots: OnceLock::new(),
+            path_words: Default::default(),
+            node_words: Default::default(),
             guests_of: OnceLock::new(),
             by_file_key: OnceLock::new(),
             spike: OnceLock::new(),

@@ -193,6 +193,54 @@ fn order_only(v: &Version, cols: &[usize], proof: &upstream::Proof) -> bool {
     naming
 }
 
+/// Whether a reader's request (`proof`, of a read at the key columns `cols`) names the key only in views every node
+/// has a row of (`text(k, t)`, `kind(k, k2)`, `line(k, l)`, ...), each other argument a wildcard or a variable no
+/// other part of the request reads: it asks for every node, restricts nothing, and costs the view as rows of every
+/// node. UP032's `new_width(c, ..) :- .., fmt_str(c, s), text(s, t), ..` asked `rr_deferred_pairs_fmt_str(s) :-
+/// text(s, t)`: `text` was made, each node's text an atom, for every node of every file (a whole file's statements
+/// and expressions, 47% of the Python pack's string bytes at 300 files). A join left as written is always right.
+fn every_node(v: &Version, cols: &[usize], proof: &upstream::Proof) -> bool {
+    use super::Part;
+    const VIEWS: [&str; 6] = ["text", "kind", "line", "end_line", "col", "end_col"];
+    let Some(reader) = v.rule(proof.rule) else { return false };
+    let Some(read) = reader.body().nth(proof.read).and_then(|l| l.atom()) else { return false };
+    let key: Vec<_> = cols.iter().filter_map(|&c| read.args().nth(c).and_then(|t| t.var())).collect();
+    if key.len() != cols.len() {
+        return false;
+    }
+    let lits: Vec<usize> = proof.parts.iter().filter_map(|p| match *p { Part::Lit(j) => Some(j), Part::Guard => None }).collect();
+    let mut naming = false;
+    for &j in &lits {
+        let Some(l) = reader.body().nth(j) else { return false };
+        // A test of the key alone (the node range's `s < 6917529027641081856` the lowering adds) asks nothing more.
+        let Some(a) = l.atom() else {
+            if lit_vars(l).iter().all(|s| key.contains(&s)) {
+                continue;
+            }
+            return false;
+        };
+        let args: Vec<TermRef<'_>> = a.args().collect();
+        let is_key = |t: &TermRef<'_>| t.var().is_some_and(|s| key.contains(&s));
+        if !args.iter().any(is_key) {
+            return false;
+        }
+        // The other arguments' variables, read by no other part of the request.
+        let others: VarSet = lits.iter().filter(|&&i| i != j).filter_map(|&i| reader.body().nth(i)).fold(VarSet::new(), |mut acc, l| {
+            for s in lit_vars(l).iter() {
+                acc.insert(s);
+            }
+            acc
+        });
+        let free = |t: &TermRef<'_>| matches!(t, TermRef::Wild) || t.var().is_some_and(|s| !key.contains(&s) && !others.contains(s));
+        let view = !a.neg() && !a.gated() && VIEWS.contains(&v.rel_name(a.rel())) && args.split_first().is_some_and(|(n, rest)| is_key(n) && rest.iter().all(free));
+        if !view {
+            return false;
+        }
+        naming = true;
+    }
+    naming
+}
+
 /// Whether a reader's request (`proof`) of `rel`, a context's instance (decision 0597), reads a relation no rule derives:
 /// a scan of the batch, which lists no tape value's nodes (decision 0431 §8: a value's nodes are reached by lookup),
 /// so the request holds none of the context's nodes and the join it guards finds nothing. A join left as written is
@@ -377,7 +425,7 @@ pub fn rewrite(p: &mut Program<'_>, input: &Arc<Version>, adaptive: bool, cache_
     };
     // The requests installed, once every read is classified: in rounds, each one derivation of the program.
     let requests: Vec<(String, &[usize])> = pairs.iter().map(|(rel, cols, _)| (rel.clone(), *cols)).collect();
-    let installed = upstream::install_requests(p, &requests, DEFERRED_PAIRS, &same_doc, &|rel, cols, v, proofs| !proofs.iter().any(|r| void_request(v, rel, cols, r) || order_only(v, cols, r) || blind_in_a_context(v, rel, r)))?;
+    let installed = upstream::install_requests(p, &requests, DEFERRED_PAIRS, &same_doc, &|rel, cols, v, proofs| !proofs.iter().any(|r| void_request(v, rel, cols, r) || order_only(v, cols, r) || every_node(v, cols, r) || blind_in_a_context(v, rel, r)))?;
     let mut no_inline = Vec::new();
     for ((rel, cols, positive), installed) in pairs.into_iter().zip(installed) {
         if !installed {

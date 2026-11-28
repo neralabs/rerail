@@ -2062,6 +2062,23 @@ impl<'v> Program<'v> {
                 }
             }
         }
+        // And every variable equal to one, as `one_document`'s classes hold it: a scope guard's `rr_sd = @doc(a)`, whose
+        // negated read `!rr_scope_not(rr_sd)` is of `a`'s row's document as `a` is.
+        let mut more = true;
+        while more {
+            more = false;
+            for (a, b) in &equal_names {
+                for (x, y) in [(a, b), (b, a)] {
+                    if let Some(anchor) = nullable_row.get(x).cloned()
+                        && !nullable_row.contains_key(y)
+                        && !strict.contains(y)
+                    {
+                        nullable_row.insert(y.clone(), anchor);
+                        more = true;
+                    }
+                }
+            }
+        }
         let head = v.rel_name(rule.head().rel());
         let var = |s: Slot| v.text(rule.var(s)).to_owned();
         let local = |rel: &str| v.rel(rel).is_some_and(|r| local_now[r.0 as usize]);
@@ -3022,8 +3039,10 @@ pub(super) struct Crossing {
     pub(super) projected: BTreeSet<String>,
 }
 
-/// Whether rule `r` reads a node's text or value by a function (`syntax::NODE_READS`, `t = @rr_node_text_any(v)`):
-/// a read of the long-text nodes' binding (`syntax::LONG_TEXT_NODES`), which holds the batch the node is read from.
+/// Whether rule `r` reads a node's text or value by a function (`syntax::NODE_READS`, `t = @rr_node_text_any(v)`), in
+/// its body or its head (`len(n, @text_len(n)) :- …`): a read of the long-text nodes' binding
+/// (`syntax::LONG_TEXT_NODES`), which holds the batch the node is read from. Read in the head alone, the binding was
+/// never made and the read answered nothing.
 pub fn reads_a_node(v: &Version, r: RuleRef<'_>) -> bool {
     fn calls(v: &Version, t: TermRef<'_>) -> bool {
         match t {
@@ -3031,10 +3050,11 @@ pub fn reads_a_node(v: &Version, r: RuleRef<'_>) -> bool {
             _ => false,
         }
     }
-    r.body().any(|l| match l.view() {
-        L::Cmp { l, r, .. } => calls(v, l) || calls(v, r),
-        _ => false,
-    })
+    r.head().args().any(|t| calls(v, t))
+        || r.body().any(|l| match l.view() {
+            L::Cmp { l, r, .. } => calls(v, l) || calls(v, r),
+            _ => false,
+        })
 }
 
 pub(super) fn crossing(v: &Version, f: Fields<'_>, local: &BTreeSet<String>, views: &BTreeSet<String>) -> Crossing {

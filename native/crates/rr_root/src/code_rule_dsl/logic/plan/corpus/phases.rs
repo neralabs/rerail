@@ -1486,6 +1486,8 @@ fn read_exports(name: &str, program: &(impl ProgramFields + ?Sized), declared: &
                 .zip(&types)
                 .map(|(v, t)| match (v, *t) {
                     (output::Value::Text(s), _) => Ok(Value::Str(s.to_owned().into())),
+                    // A node path, as its text: the reader's binding makes its word again (`corpus::atoms_source`).
+                    (v @ output::Value::Path { .. }, _) => Ok(Value::Str(v.to_string().into())),
                     (v, "symbol" | "sym") => Err(Error::Plan(format!("phase {name}: {export}: a symbol column holds {v:?}"))),
                     (v, _) => v.int().map(Value::Int).ok_or_else(|| Error::Plan(format!("phase {name}: {export}: not a number: {v:?}"))),
                 })

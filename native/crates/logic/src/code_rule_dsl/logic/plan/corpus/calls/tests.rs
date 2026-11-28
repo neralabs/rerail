@@ -74,11 +74,16 @@ impl FileState for Files {
     }
 }
 
+/// `touches`' three columns as `atoms_source` takes them: none a node path.
+fn touches_columns() -> Vec<(String, String)> {
+    (0..3).map(|c| (format!("c{c}"), "symbol".to_owned())).collect()
+}
+
 fn files(store: &crate::content_store::ContentStore, touches: &[Vec<Value>]) -> Files {
     let mut by: HashMap<i64, Arc<dyn Source>> = HashMap::new();
     for p in ["a.py", "b.py", "c.py"] {
         let rows: Vec<Vec<Value>> = touches.iter().filter(|r| r[0] == s(p)).cloned().collect();
-        let source = super::super::atoms_source(store, 3, rows.iter()).unwrap();
+        let source = super::super::atoms_source(store, &touches_columns(), rows.iter()).unwrap();
         by.insert(source.value(0, 0), source);
     }
     Files(by, Default::default())
@@ -97,7 +102,7 @@ fn both(n: usize) -> (BTreeSet<Vec<String>>, BTreeSet<Vec<String>>, CallCounts, 
     let whole_v = with_facts(&v, &[("runs_in", &runs)]);
     let whole_l = lowered(&whole_v);
     let state = files(&store, &touches);
-    let all_touches = super::super::atoms_source(&store, 3, touches.iter()).unwrap();
+    let all_touches = super::super::atoms_source(&store, &touches_columns(), touches.iter()).unwrap();
     let mut whole_stats = Stats::empty_of_lowered(&whole_l).unwrap();
     super::measured(&mut whole_stats, "touches", all_touches.as_ref());
     crate::code_rule_dsl::facts::vtab::Modules::default().bind(&db, "touches", all_touches).unwrap();

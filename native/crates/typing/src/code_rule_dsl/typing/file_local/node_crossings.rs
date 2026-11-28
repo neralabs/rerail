@@ -21,8 +21,13 @@ pub(crate) const NODE_TYPES: [&str; 2] = ["node", "place"];
 const VALUES_OF_A_NODE: [&str; 6] = ["doc", "tree_digest", "unparse", "py_unparse", "ast_dump", "place"];
 
 fn value_of_a_node(f: &str) -> bool {
-    VALUES_OF_A_NODE.contains(&f) || crate::code_rule_dsl::facts::vtab::syntax::NODE_READS.contains(&f)
+    f != MAKES_A_NODE && (VALUES_OF_A_NODE.contains(&f) || crate::code_rule_dsl::facts::vtab::syntax::NODE_READS.contains(&f))
 }
+
+/// The function whose value is a node whatever its arguments: `@path_node(p)`, the node a node path names (decision
+/// 0722). A node path may cross (0677 as amended: `@node_path(n)` is one of `NODE_READS`, a value of the node); the node
+/// it decodes to is an id again.
+pub const MAKES_A_NODE: &str = "path_node";
 
 /// Which columns of each relation hold a node id: its declared `node` and `loc` columns, and each column a rule
 /// fills from a node (a variable bound at such a column, by `nearest` or an `ast` pattern, a function of one but
@@ -123,7 +128,12 @@ impl<'v> NodeColumns<'v> {
                                 && !flows.slots[s.index()]
                                 && term_flows(v, from, &flows.slots)
                             {
-                                flows.mark(s, || "computes a value from a node".to_owned());
+                                if decodes(v, from) {
+                                    // The node enters here: a path's node is an id of its file's again.
+                                    flows.enter(s, || "decodes a node path to its node (`@path_node`)".to_owned());
+                                } else {
+                                    flows.mark(s, || "computes a value from a node".to_owned());
+                                }
                                 changed = true;
                             }
                         }
@@ -183,9 +193,18 @@ pub fn regex_group_only(matcher: &str, name: &str) -> bool {
 }
 
 /// Whether term `t` holds a node id: a variable that does, or a function of one but `VALUES_OF_A_NODE`.
+/// Whether term `t` decodes a node path to a node (`MAKES_A_NODE`), at any depth.
+fn decodes(v: &Version, t: TermRef<'_>) -> bool {
+    match t {
+        TermRef::Call(f, mut args) => v.text(f) == MAKES_A_NODE || args.any(|a| decodes(v, a)),
+        _ => false,
+    }
+}
+
 fn term_flows(v: &Version, t: TermRef<'_>, slots: &[bool]) -> bool {
     match t {
         TermRef::Var(s) => slots.get(s.index()).copied().unwrap_or(false),
+        TermRef::Call(f, _) if v.text(f) == MAKES_A_NODE => true,
         TermRef::Call(f, mut args) => !value_of_a_node(v.text(f)) && args.any(|a| term_flows(v, a, slots)),
         _ => false,
     }
@@ -323,7 +342,9 @@ pub fn node_crossings(program: &Version, f: &Fields<'_>, cross: &Version, local:
             continue;
         }
         let flows = nodes.flowing(cross, r, &inherited);
-        let Some(cause) = flows.entry().map(str::to_owned) else { continue };
+        // A node a head decodes from a path enters there too.
+        let decoded = r.head().args().any(|t| decodes(cross, t)).then(|| "decodes a node path to its node (`@path_node`)".to_owned());
+        let Some(cause) = flows.entry().map(str::to_owned).or(decoded) else { continue };
         let held: Vec<String> = r.head().args().enumerate().filter(|(_, t)| term_flows(cross, *t, &flows.slots)).map(|(i, _)| column_name(f, head, i)).collect();
         let what = if held.is_empty() { "reads a node".to_owned() } else { format!("holds a node in {}", held.join(", ")) };
         found.insert(head.to_owned(), format!("{what}: its rule {cause}\n      {}", shown(cross, r)));
