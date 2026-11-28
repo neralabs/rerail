@@ -152,25 +152,26 @@ resolved_names(fq, id) :- resolved_names(t, id), reexport(t, fq).
 .decl base_name(owner: symbol, module: symbol, name: symbol, ordinal: number)
 base_name(id, m, bn, s) :- raw_base(c, r, name), declarations(id, c, _, _, _, m, _), start(r, s),
     bn = @trim(@rx_replace(@rx_replace(name, "(?s)\\[.*$", ""), "^.*\\.", "")).
-.decl base_via_import(owner: symbol, base: symbol)
-base_via_import(id, b) :- base_name(id, m, bn, _), imports(_, m, bn, t, "symbol"), declarations(b, _, _, _, "class", _, t).
-.decl base_via_module(owner: symbol, base: symbol)
-base_via_module(id, b) :- base_name(id, m, bn, _), declarations(b, _, _, bn, "class", m, _).
+// Each base resolves on its own (the SQL's coalesce per raw_bases row): keyed by the class and the base's ordinal.
+.decl base_via_import(owner: symbol, ordinal: number, base: symbol)
+base_via_import(id, s, b) :- base_name(id, m, bn, s), imports(_, m, bn, t, "symbol"), declarations(b, _, _, _, "class", _, t).
+.decl base_via_module(owner: symbol, ordinal: number, base: symbol)
+base_via_module(id, s, b) :- base_name(id, m, bn, s), declarations(b, _, _, bn, "class", m, _).
 .decl class_named(name: symbol, id: symbol)
 class_named(n, id) :- declarations(id, _, _, n, "class", _, _).
 // (SELECT min(c.id) … HAVING count(*) = 1): the one class of that name.
 .decl unique_class(name: symbol, id: symbol)
 unique_class(n, id) :- class_named(n, id), k = count : { class_named(n, _) }, k = 1.
-.decl base_target(owner: symbol, base: symbol)
-base_target(id, b) :- base_via_import(id, b).
-base_target(id, b) :- base_via_module(id, b), !has_base_via_import(id).
-base_target(id, b) :- base_name(id, _, bn, _), unique_class(bn, b), !has_base_via_import(id), !has_base_via_module(id).
-.decl has_base_via_import(owner: symbol)
-has_base_via_import(id) :- base_via_import(id, _).
-.decl has_base_via_module(owner: symbol)
-has_base_via_module(id) :- base_via_module(id, _).
+.decl base_target(owner: symbol, ordinal: number, base: symbol)
+base_target(id, s, b) :- base_via_import(id, s, b).
+base_target(id, s, b) :- base_via_module(id, s, b), !has_base_via_import(id, s).
+base_target(id, s, b) :- base_name(id, _, bn, s), unique_class(bn, b), !has_base_via_import(id, s), !has_base_via_module(id, s).
+.decl has_base_via_import(owner: symbol, ordinal: number)
+has_base_via_import(id, s) :- base_via_import(id, s, _).
+.decl has_base_via_module(owner: symbol, ordinal: number)
+has_base_via_module(id, s) :- base_via_module(id, s, _).
 .decl base_edges(owner: symbol, base: symbol, ordinal: number)
-base_edges(id, b, s) :- base_name(id, _, _, s), base_target(id, b).
+base_edges(id, b, s) :- base_target(id, s, b).
 
 // ---- hierarchy: every base of a class, at the least (depth, route) ----
 // The SQL enumerates every simple path (`seen` guards cycles) and keeps row_number() = 1 by (depth, route). Each hop

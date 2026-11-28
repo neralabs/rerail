@@ -3642,6 +3642,35 @@ fn substr_counts_from_zero_as_the_programs_write_it() {
     assert_eq!(got, [["impl", "_async", "impl/x", "x_async"]]);
 }
 
+/// internal_dead_code resolves each base of a class on its own, as the SQL's `coalesce` does per `raw_bases` row: a
+/// class with an imported base and a base of its own module has both edges, each at its own ordinal. (The fallback
+/// was keyed by the class: one imported base hid every module-local one, and every edge took every base's ordinal.)
+#[test]
+fn idc_resolves_each_base_of_a_class_on_its_own() {
+    let dir = crate::code_rule_dsl::fixtures::temp().with_extension("idc-bases");
+    std::fs::create_dir_all(dir.join("impl")).unwrap();
+    std::fs::write(dir.join("impl/__init__.py"), "").unwrap();
+    std::fs::write(dir.join("impl/base.py"), "class Imported:\n    pass\n").unwrap();
+    std::fs::write(dir.join("impl/a.py"), "from impl.base import Imported\n\n\nclass _Mixin:\n    pass\n\n\nclass Sub(_Mixin, Imported):\n    pass\n").unwrap();
+    let programs = crate::source_tree::native().join("src/code_rule_dsl/logic/programs/data_layer");
+    let read = |name: &str| std::fs::read_to_string(programs.join(name)).unwrap();
+    // The prelude's `reference_edge` has no producer yet (it is W's linker's); the bases do not read it, so it is
+    // derived empty here.
+    let prelude = read("prelude.rerail").replace(".input reference_edge\n", "reference_edge(n, n) :- kind(n, \"\\u0000\").\n");
+    let program = format!("{prelude}\n{}\n.output base_edges\n", read("internal_dead_code.rerail"));
+    super::TEST_TAPE_CACHE.with(|p| *p.borrow_mut() = Some(dir.join("store.sqlite")));
+    let out = dir.join("out");
+    let ran = super::run_all(&[program.as_str()], &dir, &out, "program", crate::code_rule_dsl::typing::file_local::Binding::Cpu, 1 << 20);
+    let got = crate::code_rule_dsl::logic::plan::output::shown(&out, "base_edges").unwrap_or_default();
+    super::TEST_TAPE_CACHE.with(|p| *p.borrow_mut() = None);
+    let _ = std::fs::remove_dir_all(&dir);
+    ran.unwrap_or_else(|e| panic!("{e}"));
+    let mut pairs: Vec<(String, String)> = got.iter().map(|r| (r[0].clone(), r[1].clone())).collect();
+    pairs.sort();
+    assert_eq!(pairs, [("impl.a::Sub".to_owned(), "impl.a::_Mixin".to_owned()), ("impl.a::Sub".to_owned(), "impl.base::Imported".to_owned())], "{got:?}");
+    assert_ne!(got[0][2], got[1][2], "each base at its own ordinal: {got:?}");
+}
+
 /// An `ast` atom's capture naming a group of a regex on the root node binds the group's text, as the data layer's
 /// `capture.BASE` reads it: none where the group takes no part (`import z`), one row per binding under `each`
 /// (`ENTRY` twice in one module), and a name W binds stays W's.
