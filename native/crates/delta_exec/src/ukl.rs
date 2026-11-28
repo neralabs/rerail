@@ -63,13 +63,13 @@ const VERSIONS: &[Ukl] = &[
     Ukl { sig: &CACHE_OPEN, module: "cache", cases: &[cache_open_case], shape: None },
     Ukl { sig: &CACHE_COMMIT, module: "cache", cases: &[cache_commit_case], shape: None },
     Ukl { sig: &ORDER, module: "cache", cases: &[order_case], shape: None },
-    Ukl { sig: &DROP_PARTS, module: "drop", cases: &[drop_parts_case], shape: None },
+    Ukl { sig: &DROP_PARTS, module: "drop", cases: &[drop_parts_case, drop_parts_large_case], shape: None },
     Ukl { sig: &SEMI_CHANGE, module: "semi", cases: &[semi_change_case, semi_change_large_case], shape: None },
     Ukl { sig: &CHANGE_ROWS, module: "semi", cases: &[change_rows_case, change_rows_large_case], shape: None },
     Ukl { sig: &REPLACE_ROWS, module: "semi", cases: &[replace_rows_case, replace_rows_large_case], shape: None },
-    Ukl { sig: &DOCS_OF, module: "k0", cases: &[docs_of_case], shape: None },
+    Ukl { sig: &DOCS_OF, module: "k0", cases: &[docs_of_case, docs_of_large_case], shape: None },
     Ukl { sig: &ROOM_OF, module: "k0", cases: &[room_of_case], shape: None },
-    Ukl { sig: &NAMED_BLOCKS, module: "k0", cases: &[named_blocks_case], shape: None },
+    Ukl { sig: &NAMED_BLOCKS, module: "k0", cases: &[named_blocks_case, named_blocks_large_case], shape: None },
     Ukl { sig: &INTERN, module: "intern", cases: &[intern_case, intern_cold_case], shape: Some(&crate::intern::INTERN_UKL) },
     Ukl { sig: &K0_PASS, module: "k0", cases: &[k0_pass_case, k0_refused_case, k0_large_case, k0_refused_large_case], shape: Some(&crate::k0::K0_UKL) },
     Ukl { sig: &CONSOLIDATE, module: "trace", cases: &[consolidate_first_case, consolidate_case, consolidate_one_col_case, consolidate_wide_case, consolidate_large_case], shape: Some(&crate::trace::TRACE_UKL) },
@@ -149,6 +149,17 @@ fn drop_parts_case(dir: &mut Directory) -> Case {
     let head = push_layer(&cpu, dir, &mut t, &[(vec![1, 11], -1), (vec![3, 31], 1), (vec![4, 40], 1)]).expect("a layer");
     let runs = t.open(dir, 16);
     let parts = Parts::write(dir, 2, |put| [3, 1].into_iter().for_each(put)).expect("a parts block");
+    Case { slots: vec![head, parts.id(), runs], params: params(DropP { head: u64::from(head.0), diff: -1 }) }
+}
+
+/// `drop_parts` at scale: 150 partitions of two rows over two layers, 100 of them dropped.
+fn drop_parts_large_case(dir: &mut Directory) -> Case {
+    let cpu = Runner::new().expect("the CPU's runner");
+    let mut t = Trace::new(&Shape::run(vec![ColType::I32, ColType::I64], vec![0, 1], Some(0))).expect("a trace").with_roll_up(RollUp::Never);
+    push_layer(&cpu, dir, &mut t, &(0..150).flat_map(|d| [(vec![d, 10 * d], 1), (vec![d, 10 * d + 1], 1)]).collect::<Vec<_>>()).expect("a layer");
+    let head = push_layer(&cpu, dir, &mut t, &(0..150).step_by(4).flat_map(|d| [(vec![d, 10 * d], -1), (vec![d, 10 * d + 5], 1)]).collect::<Vec<_>>()).expect("a layer");
+    let runs = t.open(dir, 400);
+    let parts = Parts::write(dir, 100, |put| (0..150).filter(|d| d % 3 != 1).take(100).for_each(put)).expect("a parts block");
     Case { slots: vec![head, parts.id(), runs], params: params(DropP { head: u64::from(head.0), diff: -1 }) }
 }
 
@@ -329,6 +340,43 @@ fn docs_block(dir: &mut Directory, n: usize, fill: &[DocAt]) -> crate::dir::Bloc
     }
     k0_twin::seal_docs(bytes, fill.len());
     id
+}
+
+/// The blobs' rows of documents `1..=n`: every blob, but a document divisible by 7 has its source alone.
+fn blob_rows_of(cpu: &Runner, dir: &mut Directory, n: i64) -> crate::dir::BlockId {
+    let mut t = Trace::new(&crate::files::blobs_shape()).expect("a trace");
+    let rows: Vec<_> = (1..=n).flat_map(|d| (1..=if d % 7 == 0 { 1 } else { 3 }).map(move |k| (vec![d, k, 0, 0, 100 + 10 * d + k, 8 * k, 64 + d], 1))).collect();
+    push_layer(cpu, dir, &mut t, &rows).expect("the blobs' rows")
+}
+
+/// `docs_of` at scale: 200 documents selected (a few retracted, those divisible by 7 missing their tape).
+fn docs_of_large_case(dir: &mut Directory) -> Case {
+    let cpu = Runner::new().expect("the CPU's runner");
+    let blobs = blob_rows_of(&cpu, dir, 200);
+    let rows = doc_trace().open(dir, 200);
+    let b = dir.block(rows).expect("just made");
+    let pin = pin_block(&b, "the selection", true).expect("a write pin");
+    for d in 1..=200 {
+        rerail_blocks::layer::RunsW::new(&pin).push(&doc_row(d), if d % 11 == 0 { -1 } else { 1 }).expect("room for the selection");
+    }
+    drop(pin);
+    let (docs, list) = (docs_block(dir, 200, &[]), Parts::open(dir, 600).expect("a parts block"));
+    let c = DOC_ROW;
+    let p = DocsOfP { blobs: u64::from(blobs.0), module: c.module as u32, source: c.source as u32, tape: c.tape as u32, syms: c.syms as u32 };
+    Case { slots: vec![rows, blobs, docs, list], params: params(p) }
+}
+
+/// `named_blocks` at scale: a set of 200 documents over two layers (every ninth gone), some missing their tape.
+fn named_blocks_large_case(dir: &mut Directory) -> Case {
+    let cpu = Runner::new().expect("the CPU's runner");
+    let blobs = blob_rows_of(&cpu, dir, 200);
+    let mut t = doc_trace();
+    push_layer(&cpu, dir, &mut t, &(1..=180).map(|d| (doc_row(d), 1)).collect::<Vec<_>>()).expect("a layer");
+    let set = push_layer(&cpu, dir, &mut t, &(1..=180).step_by(9).map(|d| (doc_row(d), -1)).chain((181..=200).map(|d| (doc_row(d), 1))).collect::<Vec<_>>()).expect("a layer");
+    let (blocks, missing) = (Parts::open(dir, 600).expect("a parts block"), Parts::open(dir, 200).expect("a parts block"));
+    let c = DOC_ROW;
+    let p = NamedP { set: u64::from(set.0), blobs: u64::from(blobs.0), arity: 13, module: c.module as u32, source: c.source as u32, tape: c.tape as u32, syms: c.syms as u32, pad: 0 };
+    Case { slots: vec![set, blobs, blocks, missing], params: params(p) }
 }
 
 /// A selection reading documents 1, 2 and 3 (3's tape in no blobs' row: missing) and retracting 4: the docs of 1 and

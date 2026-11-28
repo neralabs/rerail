@@ -21,12 +21,13 @@ typedef struct Blob {
     uint64_t at, len;
 } Blob;
 
-// The blob named `w` (four words) by the blobs' rows at `blobs`: false when no live row names it.
+// The blob named `w` (four words) by the blobs' rows at `blobs`: false when no live row names it. Found by a probe of
+// the state on the name's first word (`state_first`'s probe), then its other three.
 UKL_INLINE bool blob_find(CBlk t, uint32_t blobs, UKL_PRIVATE const int64_t* w, UKL_PRIVATE Blob* b) {
-    for (uint32_t id = 0u, end = state_end(t, blobs); id < end; id++) {
-        if (!state_live(t, blobs, id)) continue;
+    Probe p = probe_of(t, blobs, 0u, w[0]);
+    for (uint32_t id = probe_next(&p); id != NONE; id = probe_next(&p)) {
         bool same = true;
-        for (uint32_t c = 0u; c < 4u && same; c++) same = state_get(t, blobs, id, c) == w[c];
+        for (uint32_t c = 1u; c < 4u && same; c++) same = state_get(t, blobs, id, c) == w[c];
         if (!same) continue;
         b->block = (uint32_t)state_get(t, blobs, id, 4u);
         b->at = (uint64_t)state_get(t, blobs, id, 5u);

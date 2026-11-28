@@ -17,33 +17,44 @@ UKL_INLINE bool row_blob(CBlk t, uint32_t blobs, CBlk rows, uint32_t k, uint32_t
 
 // Each +1 row of the selection a document, its blobs found by their names, written into the docs block in the
 // selection's order; the blocks it names, `(block << 32) | the furthest offset referred to`, into the blocks' list.
-DELTA_ONE(docs_of_docs_of)
+// One threadgroup: a lane a row, a round of rows placed by an exclusive scan; the first row missing a blob (the least)
+// names the missing document.
+DELTA_COUNT(docs_of_docs_of_items) { return 1u; }
+DELTA_GROUPS(docs_of_docs_of)
 {
-    if (i != 0u) return;
+    DELTA_GROUP_ITEM(one);
     DocsOfP q = PARAMS(DocsOfP);
     CBlk rows = SLOT(0);
     Blk docs = SLOT(2), blocks = SLOT(3);
-    uint32_t blobs = (uint32_t)q.blobs, n = 0u, nb = 0u;
-    for (uint32_t k = 0u, len = runs_len(rows); k < len; k++) {
-        if (runs_sign(rows, k) <= 0) continue;
-        int64_t module = runs_get(rows, k, q.module);
+    uint32_t blobs = (uint32_t)q.blobs, n = 0u, len = runs_len(rows);
+    uint64_t missing = 0x7FFFFFFFFFFFFFFFull;
+    for (uint32_t base = 0u; base < len; base += lsz) {
+        uint32_t k = base + lid;
         Blob s, tp, y;
-        bool found = row_blob(t, blobs, rows, k, q.source, &s);
-        found = row_blob(t, blobs, rows, k, q.tape, &tp) && found;
-        found = row_blob(t, blobs, rows, k, q.syms, &y) && found;
-        if (!found) {
-            if (I64(docs, DOCS_MISSING_AT) == NO_DOC) I64(docs, DOCS_MISSING_AT) = module;
-            continue;
+        bool row = k < len && runs_sign(rows, k) > 0, found = false;
+        if (row) {
+            found = row_blob(t, blobs, rows, k, q.source, &s);
+            found = row_blob(t, blobs, rows, k, q.tape, &tp) && found;
+            found = row_blob(t, blobs, rows, k, q.syms, &y) && found;
         }
-        uint64_t w[8] = {(uint64_t)module, s.block, tp.block, y.block, s.at, s.len, tp.at, tp.len};
-        for (uint32_t c = 0u; c < DOC_WORDS; c++) DOC(docs, n, c) = w[c];
-        n++;
-        parts_put(blocks, nb++, (int64_t)(((uint64_t)s.block << 32) | s.at));
-        parts_put(blocks, nb++, (int64_t)(((uint64_t)tp.block << 32) | tp.at));
-        parts_put(blocks, nb++, (int64_t)(((uint64_t)y.block << 32) | BODY_AT));
+        UklScan e = ukl_tg_exclusive_sum(found ? 1u : 0u, lid, lsz, scratch __UKL_ARGS);
+        uint64_t m = ukl_tg_reduce64(UKL_MIN_I64, row && !found ? (uint64_t)k : 0x7FFFFFFFFFFFFFFFull, lid, lsz, scratch __UKL_ARGS);
+        missing = m < missing ? m : missing;
+        if (found) {
+            uint32_t d = n + e.exclusive;
+            uint64_t w[8] = {(uint64_t)runs_get(rows, k, q.module), s.block, tp.block, y.block, s.at, s.len, tp.at, tp.len};
+            for (uint32_t c = 0u; c < DOC_WORDS; c++) DOC(docs, d, c) = w[c];
+            parts_put(blocks, 3u * d, (int64_t)(((uint64_t)s.block << 32) | s.at));
+            parts_put(blocks, 3u * d + 1u, (int64_t)(((uint64_t)tp.block << 32) | tp.at));
+            parts_put(blocks, 3u * d + 2u, (int64_t)(((uint64_t)y.block << 32) | BODY_AT));
+        }
+        n += e.total;
     }
+    ukl_tg_barrier_device();
+    if (lid != 0u) return;
+    if (missing != 0x7FFFFFFFFFFFFFFFull && I64(docs, DOCS_MISSING_AT) == NO_DOC) I64(docs, DOCS_MISSING_AT) = runs_get(rows, (uint32_t)missing, q.module);
     docs_seal(docs, n);
-    parts_seal(blocks, nb);
+    parts_seal(blocks, 3u * n);
 }
 
 // Document `d`'s sizes, if the cache holds them, added to `need`, by relation.
@@ -55,40 +66,64 @@ UKL_INLINE void room_add(CBlk cache, uint32_t d, UKL_PRIVATE uint64_t* need) {
 }
 
 // The room a run's runs need, by relation: each gone document's kept rows and each read one's as they were, an eighth
-// more for an edit that grew.
-DELTA_ONE(room_of_room_of)
+// more for an edit that grew. One threadgroup: a lane a document, the sums by the group's reductions.
+DELTA_COUNT(room_of_room_of_items) { return 1u; }
+DELTA_GROUPS(room_of_room_of)
 {
-    if (i != 0u) return;
+    DELTA_GROUP_ITEM(one);
     CBlk cache = SLOT(0), gone = SLOT(1), docs = SLOT(2);
     Blk room = SLOT(3);
     uint64_t need[K0_RELATIONS];
     for (uint32_t r = 0u; r < K0_RELATIONS; r++) need[r] = 0u;
-    for (uint32_t k = 0u; k < parts_len(gone); k++) room_add(cache, (uint32_t)parts_get(gone, k), need);
-    for (uint32_t k = 0u; k < docs_len(docs); k++) room_add(cache, (uint32_t)docs_module(docs, k), need);
-    for (uint32_t r = 0u; r < K0_RELATIONS; r++) U64(room, BODY_AT + 8u * r) = need[r] + need[r] / 8u;
+    uint32_t ng = parts_len(gone), nd = docs_len(docs);
+    for (uint32_t k = lid; k < ng + nd; k += lsz) room_add(cache, k < ng ? (uint32_t)parts_get(gone, k) : (uint32_t)docs_module(docs, k - ng), need);
+    for (uint32_t r = 0u; r < K0_RELATIONS; r++) {
+        uint64_t v = ukl_tg_reduce64(UKL_SUM_U64, need[r], lid, lsz, scratch __UKL_ARGS);
+        if (lid == 0u) U64(room, BODY_AT + 8u * r) = v + v / 8u;
+    }
+}
+
+// Row `id`'s blobs (source, tape, symbols) found: a bit each, their blocks into `b`.
+UKL_INLINE uint32_t named_row(CBlk t, NamedP q, uint32_t id, UKL_PRIVATE uint32_t* b) {
+    uint32_t at[3] = {q.source, q.tape, q.syms}, found = 0u;
+    for (uint32_t k = 0u; k < 3u; k++) {
+        int64_t w[4];
+        for (uint32_t c = 0u; c < 4u; c++) w[c] = state_get(t, (uint32_t)q.set, id, at[k] + c);
+        Blob x;
+        if (blob_find(t, (uint32_t)q.blobs, w, &x)) {
+            found |= 1u << k;
+            b[k] = x.block;
+        }
+    }
+    return found;
 }
 
 // Every live row of the document set, its blobs found by their names: the blocks they lie in, and the documents whose
-// source or tape no blobs' row names (to load), each a parts block.
-DELTA_ONE(named_blocks_named_blocks)
+// source or tape no blobs' row names (to load), each a parts block. One threadgroup: a lane a row, a round of rows
+// placed by exclusive scans.
+DELTA_COUNT(named_blocks_named_blocks_items) { return 1u; }
+DELTA_GROUPS(named_blocks_named_blocks)
 {
-    if (i != 0u) return;
+    DELTA_GROUP_ITEM(one);
     NamedP q = PARAMS(NamedP);
     Blk blocks = SLOT(2), missing = SLOT(3);
-    uint32_t set = (uint32_t)q.set, blobs = (uint32_t)q.blobs, nb = 0u, nm = 0u;
-    uint32_t at[3] = {q.source, q.tape, q.syms};
-    for (uint32_t id = 0u, end = state_end(t, set); id < end; id++) {
-        if (!state_live(t, set, id)) continue;
-        bool found[3];
-        for (uint32_t k = 0u; k < 3u; k++) {
-            int64_t w[4];
-            for (uint32_t c = 0u; c < 4u; c++) w[c] = state_get(t, set, id, at[k] + c);
-            Blob b;
-            found[k] = blob_find(t, blobs, w, &b);
-            if (found[k]) parts_put(blocks, nb++, b.block);
-        }
-        if (!found[0] || !found[1]) parts_put(missing, nm++, state_get(t, set, id, q.module));
+    uint32_t set = (uint32_t)q.set, nb = 0u, nm = 0u;
+    for (uint32_t base = 0u, end = state_end(t, set); base < end; base += lsz) {
+        uint32_t id = base + lid, b[3] = {0u, 0u, 0u}, found = 0u;
+        bool live = id < end && state_live(t, set, id);
+        if (live) found = named_row(t, q, id, b);
+        uint32_t nf = (found & 1u) + (found >> 1 & 1u) + (found >> 2 & 1u);
+        bool miss = live && (found & 3u) != 3u;
+        UklScan e = ukl_tg_exclusive_sum(nf, lid, lsz, scratch __UKL_ARGS);
+        UklScan m = ukl_tg_exclusive_sum(miss ? 1u : 0u, lid, lsz, scratch __UKL_ARGS);
+        for (uint32_t k = 0u, j = 0u; k < 3u; k++)
+            if ((found >> k & 1u) != 0u) parts_put(blocks, nb + e.exclusive + j++, b[k]);
+        if (miss) parts_put(missing, nm + m.exclusive, state_get(t, set, id, q.module));
+        nb += e.total;
+        nm += m.total;
     }
+    ukl_tg_barrier_device();
+    if (lid != 0u) return;
     parts_seal(blocks, nb);
     parts_seal(missing, nm);
 }

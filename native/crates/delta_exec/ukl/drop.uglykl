@@ -1,6 +1,6 @@
 // `drop_parts` (`rerail_delta_twins::drop`): each live row of a trace's state in the listed partitions, emitted with a
 // sign into a δ runs block, in the canonical order a partition. One item: every partition's rows counted, claimed at
-// once, then written in order.
+// once, then written in the parts' order.
 #include <ukl/delta/trace.h>
 #include <ukl/delta/runs.h>
 #include <ukl/delta/parts.h>
@@ -29,16 +29,27 @@ UKL_INLINE uint32_t drop_part(UKL_PRIVATE const Layer* ls, uint32_t n, int64_t q
     }
 }
 
-DELTA_ONE(drop_parts_drop)
+// One threadgroup: a lane a partition, its rows counted, claimed at once by one thread, then each round's partitions
+// written at their places (an exclusive scan) in the parts' order.
+DELTA_COUNT(drop_parts_drop_items) { return 1u; }
+DELTA_GROUPS(drop_parts_drop)
 {
-    if (i != 0u) return;
+    DELTA_GROUP_ITEM(one);
     DropP q = PARAMS(DropP);
     CBlk ps = SLOT(1);
     Blk r = SLOT(2);
     Layer ls[MAX_LAYERS];
     uint32_t n = state_layers(t, (uint32_t)q.head, ls), np = parts_len(ps), count = 0u;
-    for (uint32_t k = 0u; k < np; k++) count += drop_part(ls, n, parts_get(ps, k), (Blk)0, 0u, 0);
-    uint32_t at = runs_claim(r, count);
+    for (uint32_t k = lid; k < np; k += lsz) count += drop_part(ls, n, parts_get(ps, k), (Blk)0, 0u, 0);
+    count = ukl_tg_sum(count, lid, lsz, scratch __UKL_ARGS);
+    if (lid == 0u) sh[0] = runs_claim(r, count);
+    ukl_tg_barrier();
+    uint32_t at = sh[0], run = 0u;
     if (at == NONE) return;
-    for (uint32_t k = 0u; k < np; k++) at += drop_part(ls, n, parts_get(ps, k), r, at, (int32_t)q.diff);
+    for (uint32_t base = 0u; base < np; base += lsz) {
+        uint32_t k = base + lid, c = k < np ? drop_part(ls, n, parts_get(ps, k), (Blk)0, 0u, 0) : 0u;
+        UklScan e = ukl_tg_exclusive_sum(c, lid, lsz, scratch __UKL_ARGS);
+        if (c != 0u) drop_part(ls, n, parts_get(ps, k), r, at + run + e.exclusive, (int32_t)q.diff);
+        run += e.total;
+    }
 }
