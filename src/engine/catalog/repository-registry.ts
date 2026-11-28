@@ -19,7 +19,7 @@ import {
   outsideGit,
   readCloneIdAt,
   readRemoteAnswer,
-  remoteAnswerKept,
+  remoteAnswerAwaited,
   repositoryFolderName,
   repositoryIdentityLocation,
   resolveCloneId,
@@ -469,7 +469,8 @@ function remoteFilesOf(location: RepositoryIdentityLocation): readonly string[] 
  * ({@link remoteKeyOf}). A read whose Git gave no answer otherwise (it could not start, was killed or failed) is kept by
  * nothing, so the next lookup asks Git again. A read whose Git ran to its time limit is kept with no key, as that lookup
  * answered, until a fact says Git answers for the clone again ({@link servingRemote}), so a Git that keeps running to
- * its limit holds the daemon's thread once, not at every lookup.
+ * its limit holds the daemon's thread once, not at every lookup; for a clone whose remote no answer of Git's is kept
+ * for, which no such fact can reach, the next lookup asks Git again.
  */
 function keptRemoteKey(kept: KeptLocation): RepositoryKey | undefined {
   const files = kept.remote?.files ?? remoteFilesOf(kept.location);
@@ -485,12 +486,12 @@ function keptRemoteKey(kept: KeptLocation): RepositoryKey | undefined {
 
 /**
  * `kept`'s remote where it serves with no Git: read when the config files held `text`, what they hold now, and either
- * answered by Git or, where its Git ran to its time limit, with no answer of Git's for the clone's remote kept since
- * ({@link remoteAnswerKept}), as a session's open learns it off the thread or a recording reads it.
+ * answered by Git or, where its Git ran to its time limit, while an answer of Git's for the clone's remote can be kept
+ * and none is yet ({@link remoteAnswerAwaited}), as a session's open learns it off the thread or a recording reads it.
  */
 function servingRemote(kept: KeptLocation, text: string): KeptRemote | undefined {
   const { remote } = kept;
-  return remote?.text === text && (remote.answered || !remoteAnswerKept(kept.location.workspaceRoot)) ? remote : undefined;
+  return remote?.text === text && (remote.answered || remoteAnswerAwaited(kept.location.workspaceRoot)) ? remote : undefined;
 }
 
 /**

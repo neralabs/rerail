@@ -557,6 +557,22 @@ describe("a remote changed in place in a checkout not recorded, while the daemon
     expect(counted(resolveCheckout, checkout)).toEqual({ named: first, remotes: 1, starts: 0, stamps: 0 });
     expect(counted(resolveCheckout, checkout)).toEqual({ named: first, remotes: 0, starts: 0, stamps: 0 });
   });
+
+  it("asks a Git that ran to its time limit again at the next read for a clone whose remote no answer of Git's is kept for, and names the repository once Git answers", async () => {
+    const { root, first, resolveCheckout } = await twoRepositories();
+    const checkout = cloneAt(join(root, "fresh"), APP);
+    // A config that includes another file, as a person's may: no answer of Git's for this clone's remote is kept.
+    gitIn(checkout, "config", "include.path", "more.config");
+    Object.assign(noAnswer, { remotes: true, pastLimit: true, failed: 0 });
+    try {
+      expect(resolveCheckout(checkout)?.repositoryKey).toBeUndefined();
+      expect(counted(resolveCheckout, checkout)).toEqual({ named: undefined, remotes: 1, starts: 1, stamps: 0 });
+    } finally {
+      Object.assign(noAnswer, { remotes: false, pastLimit: false });
+    }
+
+    expect(counted(resolveCheckout, checkout)).toEqual({ named: first, remotes: 1, starts: 1, stamps: 0 });
+  });
 });
 
 describe("a folder of a checkout made a repository of its own, while the daemon runs", () => {

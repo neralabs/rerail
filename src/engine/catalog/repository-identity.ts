@@ -968,9 +968,13 @@ export function readRemoteAnswer(root: string): RemoteAnswer {
   return answeredRemote(source, answers);
 }
 
-/** Whether Git's answer for `root`'s remote is kept ({@link keptRemote}), so {@link readRemoteAnswer} starts no Git for it. */
-export function remoteAnswerKept(root: string): boolean {
-  return keptRemote(remoteSource(root)) !== undefined;
+/**
+ * Whether an answer of Git's for `root`'s remote can be kept ({@link remoteSource}), as a session's open keeps one, and
+ * none is kept yet ({@link keptRemote}): false once one is, and for a clone whose remote no answer of Git's is kept for.
+ */
+export function remoteAnswerAwaited(root: string): boolean {
+  const source = remoteSource(root);
+  return source !== undefined && keptRemote(source) === undefined;
 }
 
 /** Whether `error` ended a Git that ran past its time limit, which {@link runGit} gives as `spawnSync` does: `ETIMEDOUT`. */
