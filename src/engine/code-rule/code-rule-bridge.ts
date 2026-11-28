@@ -2153,7 +2153,8 @@ function sessionPath(root: string, absolute: string): string {
 /**
  * `sessionPath` of a path `walk` reached: the walk joins each name a listing gives to the path of its folder, from its
  * root, so the part after the root and a separator is the path, and no `relative` resolves both paths again for each
- * file. A path that does not start so (none the walk builds) is worked out by `sessionPath`.
+ * file. A path that does not start so (none the walk builds) is worked out by `sessionPath`. The part is made a string
+ * of its own (`ownString`), since the observations, folder lists and refusals that keep it outlive the absolute path.
  */
 function walkPath(walk: SourceWalk, absolute: string): string {
   const { root } = walk.discovery;
@@ -2161,7 +2162,15 @@ function walkPath(walk: SourceWalk, absolute: string): string {
   const prefix = root.endsWith(sep) ? root : `${root}${sep}`;
   if (!absolute.startsWith(prefix)) return sessionPath(root, absolute);
   const below = absolute.slice(prefix.length);
-  return sep === "/" ? below : below.replaceAll(sep, "/");
+  return ownString(sep === "/" ? below : below.replaceAll(sep, "/"));
+}
+/**
+ * `text` as a new string holding its characters alone. V8 makes a slice of 13 characters or more a view that keeps the
+ * whole string it was cut from, and a `replaceAll` that finds nothing returns its string as it is: a kept path cut from
+ * an absolute path kept that absolute path too, one a file a worktree. A join of two parts copies them into one string.
+ */
+function ownString(text: string): string {
+  return [text.slice(0, 1), text.slice(1)].join("");
 }
 /** `configuredPath` (as a tool names it) relative to the session folder `root`, `/`-separated; undefined for the folder itself or another drive. */
 function sessionRelativePath(root: string, configuredPath: string): string | undefined {
