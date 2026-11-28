@@ -1264,3 +1264,21 @@ statements and blocks end.
     - **As measured** (Time Profiler, M1 Max, 16 blocks a chunk; the load was 12 to 15, too high for totals of
       cycles): the operators' machine's samples went from 551 to 306, and the walk's share of the run's samples
       from 47.4% to 45.8%.
+123. **Two layout lanes stepped, the third by the first** (as built: `middle::Lanes`).
+    - **Why they agree:** the lanes from `(false, false)` and `(true, false)` differ only in `open` until the
+      first token read or line out of brackets. A line in brackets reads neither `open` nor `header`. A read
+      sets both lanes' `open` and `header` alike. At a line, the second writes one token more (its `open`'s),
+      and then both close `open`. A line's `m` is a width, below `t`'s `i64::MAX` there, so the first writes a
+      phantom's token too, and their `lay_since` is the same. So from then on the two differ only in their
+      count of tokens.
+    - **As built:** the walk steps the lanes from `(false, false)` and `(true, true)`. For the third it keeps
+      whether it is still before that first read or line, and its tokens more than the first lane's. The
+      summary's three lanes are made from these at the chunk's end. The tests' builds step the third lane too,
+      and assert after each step that it is the one made from the first. The corpus also passed in that build,
+      with every carry's assert on, at 1, 2, 3 and 16 blocks a chunk.
+    - **As tested:** the 30 tests pass on AArch64 and x86-64. From the middle is still the serial lexer's in
+      1644 of 1644 files. `walk_block`'s instances have 5920 to 8624 instructions on AArch64 (6448 to 8960
+      before) and 7270 to 9646 on x86-64. All have 0 conditional branches and 0 calls.
+    - **As measured** (30 passes, 16 blocks a chunk, the M1 Max at load 4 to 9; both builds there, two runs
+      each): the walk's summaries went from 63797M and 63582M instructions to 59693M and 59882M (6% fewer),
+      and from 12610M and 12586M cycles to 11466M and 12009M.

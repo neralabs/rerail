@@ -1144,7 +1144,7 @@ const NO_KIND: u8 = 127;
 
 /// A lane of the walk's layout by masks: what `Sym` keeps of the indents, in a fixed size, and the layout's tokens,
 /// `open` and `header`. Each step is selections: no branch.
-#[derive(Clone, Copy, Debug)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 struct LayoutLane {
     own: [u32; OWN],
     len: usize,
@@ -1478,9 +1478,66 @@ fn lane_step(l: &mut LayoutLane, last: &LastToks, n: u32, e: Ev) {
     l.cond(a | b, pick(a, lo, lo2), pick(a, hi, hi2));
 }
 
+/// The layout's lanes from `COMBOS`, two stepped: those from `(false, false)` and `(true, true)`. The one from
+/// `(true, false)` is the first's but for `open` until the first token read or line out of brackets (a line in
+/// brackets reads neither `open` nor `header`), and after it but for its tokens: one more where that was a line
+/// (its `open`'s token). A line's `m` is a width, below `t` there (`i64::MAX`), so the first lane writes a token at
+/// it too (a phantom's) and their `lay_since` is the same.
+#[derive(Clone, Copy, Debug)]
+struct Lanes {
+    l: [LayoutLane; 2],
+    /// The lane from `(true, false)` not yet past its first token read or line out of brackets.
+    pending: bool,
+    /// Its tokens more than the first lane's.
+    more: usize,
+    /// The tests' builds: that lane stepped, to check it.
+    #[cfg(debug_assertions)]
+    full: LayoutLane,
+}
+
+impl Lanes {
+    fn new() -> Lanes {
+        const _: () = assert!(matches!(COMBOS, [(false, false), (true, false), (true, true)]));
+        Lanes {
+            l: [LayoutLane::new(false, false), LayoutLane::new(true, true)],
+            pending: true,
+            more: 0,
+            #[cfg(debug_assertions)]
+            full: LayoutLane::new(true, false),
+        }
+    }
+
+    /// The lane from `(true, false)`.
+    #[inline(always)]
+    fn second(&self) -> LayoutLane {
+        let l = self.l[0];
+        LayoutLane { toks: l.toks + self.more, open: l.open | self.pending, ..l }
+    }
+
+    /// `n` tokens read where `read`, then a line out of brackets where `line`: the second lane's difference on.
+    #[inline(always)]
+    fn track(&mut self, n: u32, line: bool) {
+        let first = self.pending & (n == 0);
+        self.more += usize::from(first & line);
+        self.pending = first & !line;
+    }
+
+    /// The tests' builds: the second lane by the first is the lane stepped.
+    #[inline(always)]
+    fn check(&self) {
+        #[cfg(debug_assertions)]
+        assert_eq!(self.second(), self.full, "the second layout lane by the first is not its own");
+    }
+
+    /// The three lanes, in `COMBOS`'s order.
+    fn all(&self) -> [LayoutLane; 3] {
+        [self.l[0], self.second(), self.l[1]]
+    }
+}
+
 /// The block's next event (the lowest of `rest`, where there is one): the tokens before it read, and each lane's step.
 #[inline(always)]
-fn event_step(src: &[u8], em: &EventMasks, bi: usize, rest: &mut u128, k: &mut u64, lanes: &mut [LayoutLane; 3], last: &mut LastToks) -> u32 {
+fn event_step(src: &[u8], em: &EventMasks, bi: usize, rest: &mut u128, k: &mut u64, lanes: &mut Lanes, last: &mut LastToks) -> u32 {
     let on = *rest != 0;
     let e = rest.trailing_zeros();
     *rest &= rest.wrapping_sub(1);
@@ -1489,11 +1546,26 @@ fn event_step(src: &[u8], em: &EventMasks, bi: usize, rest: &mut u128, k: &mut u
     let n = read_toks(src, em, bi, before, last);
     let (brackets, w, m, quote, ebad) = em.event(e);
     let ev = Ev { on, brackets, w, m, quote };
-    let [a, b, c] = lanes;
+    let [a, c] = &mut lanes.l;
     lane_step(a, last, n, ev);
-    lane_step(b, last, n, ev);
     lane_step(c, last, n, ev);
+    lanes.track(n, on & !brackets);
+    #[cfg(debug_assertions)]
+    lane_step(&mut lanes.full, last, n, ev);
+    lanes.check();
     why(on, ebad)
+}
+
+/// Each lane's read of `n` tokens, the last a header's `:` where `colon`.
+#[inline(always)]
+fn lanes_read(lanes: &mut Lanes, n: u32, colon: bool) {
+    let [a, c] = &mut lanes.l;
+    a.read(n, colon);
+    c.read(n, colon);
+    lanes.track(n, false);
+    #[cfg(debug_assertions)]
+    lanes.full.read(n, colon);
+    lanes.check();
 }
 
 /// The steps `layout_block` takes: a block of more events (6.7% of the corpus's at 16 blocks a chunk) goes on in
@@ -1505,7 +1577,7 @@ const FIRST_EVENTS: usize = 2;
 /// steps of selections, written out. Why masks do not know it (`WHY_*`), and the events and tokens left (none
 /// where it took them all). No branch: pass 1 runs it for every lane at once.
 #[inline(always)]
-fn layout_block(src: &[u8], em: &EventMasks, bi: usize, tk: u64, tops: u128, lanes: &mut [LayoutLane; 3], last: &mut LastToks) -> (u32, u128, u64) {
+fn layout_block(src: &[u8], em: &EventMasks, bi: usize, tk: u64, tops: u128, lanes: &mut Lanes, last: &mut LastToks) -> (u32, u128, u64) {
     let (events, mut bad) = em.events(tops);
     let (mut rest, mut k) = (events, tk);
     // The steps written out (a loop of them may stay a loop).
@@ -1515,17 +1587,14 @@ fn layout_block(src: &[u8], em: &EventMasks, bi: usize, tk: u64, tops: u128, lan
     // The tokens after the last event, where no event is left (else `layout_more` reads them).
     let done = rest == 0;
     let n = read_toks(src, em, bi, pick(done, k, 0), last);
-    let [a, b, c] = lanes;
-    a.read(n, last.colon);
-    b.read(n, last.colon);
-    c.read(n, last.colon);
+    lanes_read(lanes, n, last.colon);
     (bad, rest, pick(done, 0, k))
 }
 
 /// The rest of a block's layout by masks after `layout_block`: its events `rest` and tokens `k` left, in
 /// `EVENTS - FIRST_EVENTS` more steps, then the tokens after them. No branch.
 #[inline(always)]
-fn layout_more(src: &[u8], em: &EventMasks, bi: usize, mut rest: u128, mut k: u64, lanes: &mut [LayoutLane; 3], last: &mut LastToks) -> u32 {
+fn layout_more(src: &[u8], em: &EventMasks, bi: usize, mut rest: u128, mut k: u64, lanes: &mut Lanes, last: &mut LastToks) -> u32 {
     let mut bad = 0;
     const _: () = assert!(EVENTS - FIRST_EVENTS == 4);
     bad |= event_step(src, em, bi, &mut rest, &mut k, lanes, last);
@@ -1533,16 +1602,13 @@ fn layout_more(src: &[u8], em: &EventMasks, bi: usize, mut rest: u128, mut k: u6
     bad |= event_step(src, em, bi, &mut rest, &mut k, lanes, last);
     bad |= event_step(src, em, bi, &mut rest, &mut k, lanes, last);
     let n = read_toks(src, em, bi, k, last);
-    let [a, b, c] = lanes;
-    a.read(n, last.colon);
-    b.read(n, last.colon);
-    c.read(n, last.colon);
+    lanes_read(lanes, n, last.colon);
     bad | why(rest != 0, WHY_MANY)
 }
 
 /// What the walk's pass 1 by masks carries from a block to the next in a chunk.
 struct WalkAcc {
-    lanes: [LayoutLane; 3],
+    lanes: Lanes,
     last: LastToks,
     carry: super::starts::StrCarry,
     toks: usize,
@@ -1617,7 +1683,7 @@ pub fn walk_summary_masks(src: &[u8], from: usize, to: usize, rb: RB, depth: i8,
     let (c0, _) = firsts(from);
     let r = over_window(src, from, to.max(last_block + 2).min(nb.max(1)), s1_at(src, c0), rb, depth, |m| {
         let mut acc = WalkAcc {
-            lanes: COMBOS.map(|(o, h)| LayoutLane::new(o, h)),
+            lanes: Lanes::new(),
             last: LastToks { k: [NO_KIND; 2], colon: false },
             carry: super::starts::StrCarry::default(),
             toks: usize::from(eof),
@@ -1673,6 +1739,7 @@ pub fn walk_summary_masks(src: &[u8], from: usize, to: usize, rb: RB, depth: i8,
             }
         }
         let WalkAcc { lanes, toks, extras, bad, .. } = acc;
+        let lanes = lanes.all();
         let whys = lanes.map(|l| bad | l.bad);
         let sum = core::array::from_fn(|i| {
             let l = &lanes[i];
