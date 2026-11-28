@@ -1,8 +1,9 @@
 /**
  * `rerail start` and `rerail start --json` in a repository set up and started before, through the built CLI and a real
- * daemon, as a person runs them: autostart on, a Rerail home and a user home of their own, no browser. `--json` changes
- * the form of the answer only: each form ends on the dashboard's link and leaves the daemon as the other does. In OMP
- * and Pi the extension attaches its session again right after `/rerail-start`, and the link it showed still answers.
+ * daemon, as a person runs them: autostart on unless a case turns it off, a Rerail home and a user home of their own, no
+ * browser. `--json` changes the form of the answer only: each form ends on the dashboard's link and leaves the daemon as
+ * the other does. In OMP and Pi the extension attaches its session again right after `/rerail-start`, and the link it
+ * showed still answers.
  */
 import { execFile, execFileSync } from "node:child_process";
 import { cpSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, realpathSync, symlinkSync, writeFileSync } from "node:fs";
@@ -102,9 +103,9 @@ async function start(place: Place, json: boolean): Promise<Outcome> {
   return { code, lines: lines.map(line => line.replace(daemon.url, "<daemon>/")), daemon: `${whose} package's, pid ${daemon.pid}` };
 }
 
-/** The rules page's link as a start shows it, scoped to the repository and its checkout. */
-function rulesLink(place: Place): string {
-  return `  <daemon>/?${new URLSearchParams({ repository: place.repositoryKey, checkout: place.repo })}#rules`;
+/** The rules page's link as a start shows it, scoped to the repository and its checkout, on `origin`. */
+function rulesLink(place: Place, origin = "<daemon>/"): string {
+  return `  ${origin}?${new URLSearchParams({ repository: place.repositoryKey, checkout: place.repo })}#rules`;
 }
 
 /** What daemon-port.json, the port a start without `--port` comes back on, holds in the place's Rerail home. */
@@ -208,5 +209,15 @@ describe("rerail start in a repository set up before, with and without --json", 
     await attachAsTheExtension(place);
     expect({ link: await answerOf(link), daemon: daemonServing(place, link), remembered: rememberedPort(place) })
       .toEqual({ link: "answers", daemon: "this package's, on the link's origin", remembered });
+  }, TEST_TIMEOUT_MS);
+
+  // A person who starts the daemon themselves: the link opens only once one runs, and each form says why it may not.
+  test("with RERAIL_AUTOSTART=0 and none running, ends on the link and why no daemon serves it", async () => {
+    const place = makePlace();
+    place.env.RERAIL_AUTOSTART = "0";
+    const notStarted = "  △ The dashboard did not start: RERAIL_AUTOSTART=0 keeps set-up from starting it";
+    const ended = { code: 0, lines: [ALREADY_ON, rulesLink(place, "http://127.0.0.1:4737/"), notStarted], daemon: "none" };
+    expect(await start(place, false)).toEqual(ended);
+    expect(await start(place, true)).toEqual(ended);
   }, TEST_TIMEOUT_MS);
 });

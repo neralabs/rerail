@@ -238,6 +238,17 @@ describe("rerail start --json", { timeout: SETUP_TIMEOUT_MS }, () => {
     expect(environment.pages.at(-1)).toEqual({ repoRoot: setup.repo, repositoryKey, page: "rules", open: false, daemon: "running" });
   });
 
+  // Autostart off with none running, or a daemon that refused or failed its start: the link opens only once one runs.
+  it("ends on the link and why no daemon serves it, where none could be had", async () => {
+    const setup = await fixture();
+    await runSetup({ lane: "agent", say: () => {} }, request(setup, fakeSetupEnvironment(), { answer: "start", repo: setup.repo, packs: TYPESCRIPT }));
+    const reason = "The dashboard did not start: RERAIL_AUTOSTART=0 keeps set-up from starting it";
+
+    const step = await startRerailStep(setup.repo, { databasePath: setup.databasePath, environment: fakeSetupEnvironment({ noDaemon: reason }) });
+    expect(step).toMatchObject({ step: "done", question: null });
+    expect(step.screen.split("\n").slice(-2)).toEqual(["  http://127.0.0.1:4737/#rules", `  △ ${reason}`]);
+  });
+
   it("takes `--relay`, as `/rerail-start` passes it, and answers in JSON", async () => {
     const setup = await fixture();
     const home = join(setup.root, "home");

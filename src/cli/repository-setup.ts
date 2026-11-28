@@ -1032,8 +1032,8 @@ const rulesNoun = (count: number): string => `${count} ${count === 1 ? "rule is"
  * Start Rerail in the checkout `workspace` is in and the checkouts inside it, or with `repository` in every
  * checkout of its repository. A repository that is not set up runs set-up's questions first, which end on the
  * dashboard's link; one set up before ends on it too, shown without opening a browser: the running daemon's, of
- * whichever package, or the active install's started for it (`running`, {@link DashboardDaemon}). Both forms of
- * `rerail start` end here, so `--json` changes only the form of the answer.
+ * whichever package, or the active install's started for it (`running`, {@link DashboardDaemon}), and where none could
+ * be had, why. Both forms of `rerail start` end here, so `--json` changes only the form of the answer.
  */
 export async function startRerail(workspace: string, io: RepositorySetupIo, options: RepositorySetupOptions): Promise<RepositoryStartReport> {
   const databasePath = options.databasePath ?? defaultRerailDatabasePath();
@@ -1057,7 +1057,10 @@ export async function startRerail(workspace: string, io: RepositorySetupIo, opti
   io.say(previous === "started"
     ? `● Rerail is already on in ${name}. ${rulesNoun(ruleCount)}.`
     : `● Rerail is on in ${name}. ${rulesNoun(ruleCount)}, as you left them.`);
-  io.say(`  ${(await options.environment.dashboard(scope, "rules", false, "running")).url}`);
+  const link = await options.environment.dashboard(scope, "rules", false, "running");
+  io.say(`  ${link.url}`);
+  // A link shown without opening a browser carries a reason only where no daemon could be had for it.
+  if (link.noBrowserReason !== undefined) io.say(`  △ ${link.noBrowserReason}`);
   return { previous, setUpRan: false, repositoryName: name, ruleCount, cancelled: false, status: "started" };
 }
 

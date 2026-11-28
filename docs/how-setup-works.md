@@ -467,7 +467,8 @@ In a repository set up before, `rerail start` ends on the dashboard link, with o
 running daemon's, even one of another installed version, which a coding agent's next hook replaces. In OMP and Pi
 that comes as soon as `/rerail-start` ends, when the extension attaches its session again, and the new daemon tries
 the port the old one had first, so the link still opens unless another program took that port. Where no daemon runs,
-`rerail start` starts the active version's, unless `RERAIL_AUTOSTART` is `0` or `false`.
+`rerail start` starts the active version's, unless `RERAIL_AUTOSTART` is `0` or `false`. Where no daemon could be had,
+it shows the link with the reason after it.
 
 Every coding agent also gets slash commands, from `/rerail` to `/rerail-bug-report`. Restart the coding agent after
 installing or rebuilding to load them.

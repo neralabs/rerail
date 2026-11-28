@@ -1257,7 +1257,7 @@ export function setupEnvironment(context: SetupContext, port?: number): SetupEnv
         origin = (await dashboardDaemon(context, port, daemon)).url;
       } catch (error) {
         // Rerail may be on already; the link works once a session brings the daemon up.
-        const reason = `the dashboard did not start: ${error instanceof Error ? error.message : String(error)}`;
+        const reason = `The dashboard did not start: ${error instanceof Error ? error.message : String(error)}`;
         return { url: pageUrl(`http://127.0.0.1:${port ?? DEFAULT_DAEMON_PORT}/`, scope, page), browserOpened: false, noBrowserReason: reason };
       }
       const url = pageUrl(origin, scope, page);
