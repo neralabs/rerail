@@ -77,6 +77,8 @@ pub(in crate::code_rule_dsl) const AGG_MAX: u32 = 3;
 pub(in crate::code_rule_dsl) const STRCMP: u32 = 6;
 pub(in crate::code_rule_dsl) const NAMES_CMP: u32 = 0;
 pub(in crate::code_rule_dsl) const NAMES_LEN: u32 = 1;
+/// `sql_instr`: where the second name first is in the first, in characters from 1, else 0.
+pub(in crate::code_rule_dsl) const NAMES_INSTR: u32 = 2;
 /// A literal text test of a pattern and a subject (keys 0 and 1, 2 and 3), each a symbol or a cat's text never made
 /// (`OPND_*`, `agg[1]`: the pattern's kind, the subject's << 4): `agg[0]` is the want (bit 0), the test (`TEXT_*`
 /// << 1), `TEXT_SPLIT` when it is a text test (whose pattern a set separator would split), and `TEXT_BOUND` when its
@@ -130,6 +132,8 @@ pub(in crate::code_rule_dsl) const ROW_VERDICT: u32 = 5;
 /// A string join (decision 0661): each binding's matching rows of the stage's relation, their names (column
 /// `col_idx[0]`) ordered by a number (`col_idx[1]`) and joined by the separator `par_const[0]` into the arena.
 pub(in crate::code_rule_dsl) const ROW_STRJOIN: u32 = 6;
+/// The most columns a string join reads: its x and its `by` columns (`agg[1]` a bit each, whether it holds symbols).
+pub(in crate::code_rule_dsl) const STRJOIN_COLS: usize = 8;
 /// With a text function (`ROW_MAP`, `ROW_REPLACE`) of constant arguments of a symbol, or a chain of them: its text kept
 /// in the one rolling cache (decision 0478 step 2e) by the functions' id (`P[5]`) and the source symbol (key 7). A
 /// kept text is copied into the arena; one made is kept, up to `atoms::TEXT_MOST` bytes.
@@ -167,6 +171,13 @@ pub(in crate::code_rule_dsl) const TEXTFN_RX_GROUP: u32 = 14;
 /// node the directory does not hold (another batch's, a comment span) sets `TEXTFN_UNHELD`: the stratum on the host.
 pub(in crate::code_rule_dsl) const TEXTFN_NODE_TEXT_ANY: u32 = 15;
 pub(in crate::code_rule_dsl) const TEXTFN_NODE_TEXT: u32 = 16;
+/// SQL's trims (`sql_trim`, `sql_ltrim`: spaces; `sql_trim2`, `sql_ltrim2`, `sql_rtrim2`: the characters of key 2's
+/// text, a set past ASCII the host's, `TEXTFN_HOST`): x less them at both ends, its start, its end.
+pub(in crate::code_rule_dsl) const TEXTFN_TRIM: u32 = 17;
+pub(in crate::code_rule_dsl) const TEXTFN_LTRIM: u32 = 18;
+pub(in crate::code_rule_dsl) const TEXTFN_TRIM_SET: u32 = 19;
+pub(in crate::code_rule_dsl) const TEXTFN_LTRIM_SET: u32 = 20;
+pub(in crate::code_rule_dsl) const TEXTFN_RTRIM_SET: u32 = 21;
 // `row_text_one`'s bound for `TEXTFN_NODE_TEXT` (its `256u`) is `text`'s inline bound.
 const _: () = assert!(crate::code_rule_dsl::facts::vtab::syntax::core_rr::TEXT_INLINE == 256);
 pub(in crate::code_rule_dsl) const TEXTFN_HOST: u32 = 2;

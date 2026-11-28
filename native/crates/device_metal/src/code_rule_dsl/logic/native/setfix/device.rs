@@ -133,8 +133,9 @@ enum RowAuto {
     Test { table: Arc<crate::code_rule_dsl::text::table::Table>, key: String },
     /// `replace_all` of regex `pattern` by `with` (symbols).
     Replace { pattern: i64, with: i64 },
-    /// `rx_group` of regex `pattern`'s group `name` (symbols): its program (decision 0688).
-    Group { pattern: i64, name: i64 },
+    /// `rx_group` of regex `pattern`'s group `name` (symbols), or `rx_extract`'s by its number (`index`): its program
+    /// (decision 0688).
+    Group { pattern: i64, name: i64, index: bool },
 }
 
 /// Whether a stage makes texts into the arena (its counter word says when the arena was full).
@@ -271,8 +272,14 @@ fn text_function(name: &str) -> Option<(u32, usize, usize)> {
         // where the head or a key reads it; this, its text made, where a text function's text is (a chain of them).
         NodeTextAny => mj::TEXTFN_NODE_TEXT_ANY,
         NodeText => mj::TEXTFN_NODE_TEXT,
-        RxGroup => mj::TEXTFN_RX_GROUP,
+        // `rx_extract` is `rx_group` of the group by its number: its program is the stage's automaton.
+        RxGroup | RxExtract => mj::TEXTFN_RX_GROUP,
         Replace => mj::TEXTFN_REPLACE,
+        Trim => mj::TEXTFN_TRIM,
+        LTrim => mj::TEXTFN_LTRIM,
+        TrimSet => mj::TEXTFN_TRIM_SET,
+        LTrimSet => mj::TEXTFN_LTRIM_SET,
+        RTrimSet => mj::TEXTFN_RTRIM_SET,
     };
     Some((f, texts, nums))
 }
@@ -849,7 +856,9 @@ pub(in crate::code_rule_dsl) fn compile(j: &JoinRule, spec: &str, own_texts: &[(
                 if !x.1 {
                     return Err("a string join of numbers has no device form".into());
                 }
-                let [(byc, false)] = by[..] else { return Err("a string join not ordered by one number column has no device form".into()) };
+                if by.len() + 1 > mj::STRJOIN_COLS {
+                    return Err("a string join ordered by more columns than a stage holds".into());
+                }
                 if keys.len() > mj::MAX_KEYS || tests.len() > mj::MAX_TESTS {
                     return Err("a string join with more keys or tests than a stage holds".into());
                 }
@@ -867,11 +876,17 @@ pub(in crate::code_rule_dsl) fn compile(j: &JoinRule, spec: &str, own_texts: &[(
                     d.test_b[k] = b as u32;
                 }
                 d.ntests = tests.len() as u32;
+                // Column 0 its x, then its `by` columns in order; `agg[1]` bit c: column c holds symbols (ordered by
+                // their names' bytes), else numbers (by value).
                 (d.col_kind[0], d.col_idx[0]) = (mj::RIGHT, x.0 as u32);
-                (d.col_kind[1], d.col_idx[1]) = (mj::RIGHT, byc as u32);
-                d.ncols = 2;
+                let mut syms = u32::from(x.1);
+                for (k, &(c, sym)) in by.iter().enumerate() {
+                    (d.col_kind[1 + k], d.col_idx[1 + k]) = (mj::RIGHT, c as u32);
+                    syms |= u32::from(sym) << (1 + k);
+                }
+                d.ncols = 1 + by.len() as u32;
                 d.par_const[0] = *sep;
-                d.agg = [mj::ROW_STRJOIN, 0];
+                d.agg = [mj::ROW_STRJOIN, syms];
                 d.bind_slot[0] = *out as u32;
                 if *out >= bound.len() {
                     bound.resize(*out + 1, false);
@@ -1086,7 +1101,7 @@ pub(in crate::code_rule_dsl) fn compile(j: &JoinRule, spec: &str, own_texts: &[(
                 // A function of names: the order of two (compared a word of eight bytes at a time) or one's
                 // characters, their texts those of the columns that bound the slots (and the constants').
                 let Some(caps::DeviceFn::Names { f, .. }) = caps::device_fn(name) else { unreachable!("a function of names") };
-                let f = match f { caps::Names::Cmp => mj::NAMES_CMP, caps::Names::Len => mj::NAMES_LEN };
+                let f = match f { caps::Names::Cmp => mj::NAMES_CMP, caps::Names::Len => mj::NAMES_LEN, caps::Names::Instr => mj::NAMES_INSTR };
                 let y = args.get(1).copied().unwrap_or(args[0]);
                 let mut st = text_stage(mj::STRCMP, i, f, args[0], y, &deferred, &origin, &known)?;
                 st.desc.bind_slot[0] = *out as u32;
@@ -1279,9 +1294,9 @@ pub(in crate::code_rule_dsl) fn compile(j: &JoinRule, spec: &str, own_texts: &[(
                 // A capture group's program is the stage's automaton (decision 0688): its regex and group constants.
                 let auto = if f == mj::TEXTFN_RX_GROUP {
                     let (Some(pattern), Some(group)) = (konst(&args[1]), konst(&args[2])) else {
-                        return Err("the function rx_group of a regex or group name that is not a constant has no device form".into());
+                        return Err(format!("the function {name} of a regex or group that is not a constant has no device form"));
                     };
-                    RowAuto::Group { pattern, name: group }
+                    RowAuto::Group { pattern, name: group, index: name.as_str() == "rx_extract" }
                 } else {
                     RowAuto::None
                 };
@@ -2011,8 +2026,10 @@ fn row_automaton(auto: &RowAuto, names: &Interner) -> Result<Option<(Rc<mj::DevB
             let (a, states) = automata(&names.name(*pattern))?;
             Some((a, [states, 0, 0, 0]))
         }
-        RowAuto::Group { pattern, name } => {
-            let g = crate::code_rule_dsl::text::table::group_program(&names.name(*pattern), &names.name(*name)).map_err(|e| format!("rx_group has no device form: {e}"))?;
+        RowAuto::Group { pattern, name, index } => {
+            use crate::code_rule_dsl::text::table::{Group, group_program};
+            let group = if *index { Group::Index(usize::try_from(*name).map_err(|_| "rx_extract of a negative group has no device form")?) } else { Group::Name(names.name(*name).to_string()) };
+            let g = group_program(&names.name(*pattern), &group).map_err(|e| format!("a regex's group has no device form: {e}"))?;
             Some((Rc::new(mj::DevBytes::of(&g.automaton).map_err(|e| format!("{e:?}"))?), [g.scratch, 0, 0, 0]))
         }
         RowAuto::Test { table, .. } => {

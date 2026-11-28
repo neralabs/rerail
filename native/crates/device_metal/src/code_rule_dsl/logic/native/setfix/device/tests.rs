@@ -851,8 +851,9 @@ use rerail_blocks::vector::Vector;
     /// Decision 0661: a string join on the device. Each group's parts are joined in their order by a number, with a
     /// separator, into the canonical arena; a group of no parts has "". The joins are copied along alias edges, a
     /// recursive set head's text column. Clean, the component runs on the device; with a group of more parts than a
-    /// SIMD group's lanes, two names at one place and a part twice, those are the host's. Either way its rows are the
-    /// CPU's, each once.
+    /// SIMD group's lanes, those are the host's; two names at one place are ordered by their bytes, a part twice kept
+    /// once. Ordered by one number, by none (the names alone), by a symbol, and by a number then a symbol (each a
+    /// number by value, a symbol by its name's bytes). Either way its rows are the CPU's, each once.
     #[test]
     fn a_string_join_on_the_device_is_the_cpus() {
         if !crate::code_rule_dsl::transducer::packed::metal_join::available() {
@@ -890,8 +891,9 @@ use rerail_blocks::vector::Vector;
             let g = format!("t:x:{}:{}:i", hex("temp.g"), hex("c0"));
             let pv = format!("t:x:{}:{}:iis", hex("temp.p"), hex("c0, c1, c2"));
             let a = format!("t:x:{}:{}:ii", hex("temp.a"), hex("c0, c1"));
+            for by in ["1:0", "-", "2:1", "1:0,2:1"] {
             // q(e, v) :- g(e), v = join s by i sep ", " : { p(e, i, s) }.  q(y, v) :- q(x, v), a(x, y).
-            let join = format!("pos {g} v0\nstrjoin {pv} v0 _ _ 2:1 1:0 x:{} v1\nhead v0 v1", hex(", "));
+            let join = format!("pos {g} v0\nstrjoin {pv} v0 _ _ 2:1 {by} x:{} v1\nhead v0 v1", hex(", "));
             let alias = format!("pos d0 v0 v1\npos {a} v0 v2\nhead v2 v1");
             let mut got = Vec::new();
             for device in [false, true] {
@@ -906,7 +908,7 @@ use rerail_blocks::vector::Vector;
                 super::super::run(&db, &name, 0).unwrap();
                 if device {
                     let r = super::take_report().expect("a device report");
-                    assert!(r.refused.is_none(), "dirty {dirty}: a string join has a device form: {r:?}");
+                    assert!(r.refused.is_none(), "dirty {dirty}, by {by}: a string join has a device form: {r:?}");
                     if !dirty {
                         assert!(!r.handed && r.rounds >= 2, "the component on the device: {r:?}");
                     }
@@ -921,7 +923,8 @@ use rerail_blocks::vector::Vector;
             }
             assert!(got[0].len() > 2 * groups as usize, "the CPU's rows: {}", got[0].len());
             assert!(got[0].contains(&(0, String::new())), "a group of no parts has \"\"");
-            assert_eq!(got[1], got[0], "dirty {dirty}: the device's joins are the CPU's");
+            assert_eq!(got[1], got[0], "dirty {dirty}, by {by}: the device's joins are the CPU's");
+            }
         }
     }
 
@@ -1729,7 +1732,7 @@ use rerail_blocks::vector::Vector;
             x = x.wrapping_mul(6364136223846793005).wrapping_add(1442695040888963407);
             (x >> 33) % m
         };
-        let parts = ["foo", "Bar", "SRC", "src/lib", "a.b", "_", ".ts", "αβ", "x9", "TODO", "a_b", "/", "é"];
+        let parts = ["foo", "Bar", "SRC", "src/lib", "a.b", "_", ".ts", "αβ", "x9", "TODO", "a_b", "/", "é", " ", " _ "];
         db.execute_batch("CREATE TEMP TABLE n (c0, c1); CREATE TEMP TABLE m (c0); CREATE TEMP TABLE a (c0, c1);").unwrap();
         for k in 0..2000 {
             let len = 1 + next(if k % 50 == 0 { 30 } else { 6 });
@@ -1807,8 +1810,24 @@ use rerail_blocks::vector::Vector;
             format!("pos {m} v0\npos {n} v1 v2\ncat v3 v0 {}\nfunc str_between v4 v1 v3 {}\nhead v4 v2", sym("b"), sym("")),
             format!("pos {n} v0 v1\nfunc head v2 v0\nfunc str_between v3 v0 v2 {}\nhead v3 v1", sym("")),
             format!("pos {m} v0\npos {n} v1 v2\nfunc str_concat v3 {} v0\nfunc str_between v4 v1 {} v3\nhead v4 v2", sym("_"), sym("")),
+            // SQL's `instr` (in characters from 1, 0 where it is not; of a made text too), `length`, an ASCII lower,
+            // and its trims: of spaces, and of a set of characters at both ends, the start, the end.
+            format!("pos {n} v0 v1\nfunc sql_instr v2 v0 {}\nhead v0 v2", sym("b")),
+            format!("pos {n} v0 v1\nfunc sql_instr v2 v0 {}\nlt i:0 v2\nhead v0 v1", sym("x9")),
+            format!("pos {n} v0 v1\nfunc sql_lower v3 v0\nfunc sql_instr v2 v3 {}\nhead v0 v2", sym("src")),
+            format!("pos {n} v0 v1\nfunc sql_length v2 v0\nhead v0 v2"),
+            format!("pos {n} v0 v1\nfunc ascii_lower v2 v0\nhead v2 v1"),
+            format!("pos {n} v0 v1\nfunc sql_trim v2 v0\nhead v2 v1"),
+            format!("pos {n} v0 v1\nfunc sql_ltrim v2 v0\nhead v2 v1"),
+            format!("pos {n} v0 v1\nfunc sql_trim2 v2 v0 {}\nhead v2 v1", sym("_. ")),
+            format!("pos {n} v0 v1\nfunc sql_ltrim2 v2 v0 {}\nhead v2 v1", sym("fo")),
+            format!("pos {n} v0 v1\nfunc sql_rtrim2 v2 v0 {}\nhead v2 v1", sym("9x/")),
+            // `rx_extract`: a group by its number, 0 the whole match; no row where the regex does not match.
+            format!("pos {n} v0 v1\nfunc rx_extract v2 v0 {} i:0\nhead v2 v1", sym("^[^.]+")),
+            format!("pos {n} v0 v1\nfunc rx_extract v2 v0 {} i:1\nhead v2 v1", sym("^_?\\s*([^\\s(]+)")),
         ];
-        let lowered = [format!("pos {n} v0 v1\nfunc lower v2 v0\nhead v2 v1")];
+        // A trim of characters past ASCII is the host's (its characters, not its bytes).
+        let lowered = [format!("pos {n} v0 v1\nfunc lower v2 v0\nhead v2 v1"), format!("pos {n} v0 v1\nfunc sql_trim2 v2 v0 {}\nhead v2 v1", sym("é"))];
         // A made text as one of an atom's keys (as `ann_private` looks a name up): the names already lower case, and
         // a range of a name that is a name. Its value is the atom the text is, found by the store's hash in the atoms
         // directory (`ROW_FIND`, decision 0666), and the row is dropped at the function where none is, as the CPU drops

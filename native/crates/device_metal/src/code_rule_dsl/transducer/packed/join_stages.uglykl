@@ -867,6 +867,16 @@ UKL_LARGE bool textop_pass(StageP s, Longs L, uint32_t t, JSPACE const uint8_t* 
     return r == ((s->agg[0] & 1) != 0);
 }
 
+// Whether a trim takes byte c: a space (`spaces`), else one of y's bytes.
+UKL_INLINE bool trim_has(Txt y, bool spaces, uint8_t c) {
+    if (spaces) return c == (uint8_t)' ';
+    uint32_t ly = txt_len(y);
+    for (uint32_t i = 0; i < ly; i++) {
+        if (txt_byte(y, i) == c) return true;
+    }
+    return false;
+}
+
 // The characters of x: its bytes less the UTF-8 continuation bytes (`10xxxxxx`), counted a word at a time.
 UKL_INLINE uint32_t txt_chars(Txt x) {
     uint32_t n = txt_len(x), cont = 0;
@@ -879,13 +889,25 @@ UKL_INLINE uint32_t txt_chars(Txt x) {
 
 // A function of names (mode 6), of operands X (keys 0, 1) and Y (keys 2, 3) as mode 7's (kinds agg[1] & 15 and
 // agg[1] >> 4), its value into `bind_slot[0]`: by agg[0], 0 `str_cmp` (their order by bytes, a word of eight at a
-// time, then their lengths, as Rust's `str::cmp`), 1 `strlen` of X (its characters).
+// time, then their lengths, as Rust's `str::cmp`), 1 `strlen` of X (its characters), 2 `instr` (where Y first is in X,
+// in characters from 1, as `str::find`; 0 where it is not).
 UKL_INLINE int64_t strcmp_value(StageP s, Longs L, uint32_t t, JSPACE const uint8_t* D, JSPACE uint32_t* A, UKL_PRIVATE bool* unheld) {
     Txt x = txt_of(s, L, t, D, A, 0, s->agg[1] & 15, unheld);
     if (s->agg[0] == 1) return (int64_t)txt_chars(x);
     uint32_t lx = txt_len(x);
     Txt y = txt_of(s, L, t, D, A, 2, s->agg[1] >> 4, unheld);
     uint32_t ly = txt_len(y), m = ukl_min(lx, ly);
+    if (s->agg[0] == 2) {
+        for (uint32_t at = 0; at + ly <= lx; at++) {
+            bool same = true;
+            for (uint32_t j = 0; j < ly && same; j++) same = txt_byte(x, at + j) == txt_byte(y, j);
+            if (!same) continue;
+            uint32_t c = 0;
+            for (uint32_t i = 0; i < at; i++) c += (txt_byte(x, i) & 0xc0u) != 0x80u ? 1u : 0u;
+            return (int64_t)c + 1;
+        }
+        return 0;
+    }
     for (uint32_t at = 0; at < m; at += 8) {
         uint64_t u = txt_word(x, at, m), v = txt_word(y, at, m);
         if (u != v) return u < v ? -1 : 1;
@@ -1312,11 +1334,36 @@ UKL_INLINE uint64_t pow10_of(uint32_t k) {
 // classes, start), kept as agg[0] bit 8 wants; 5 the same test of a symbol, its verdict kept in the rolling cache VC
 // (P[5]: the test's id). Symbols are read through the atoms directory D (decision 0478 step 2e); R is unused. P[0]: the
 // groups (persistent, a threadgroup each), P[1]: the states a group's scratch holds.
+// A string join's order of rows a and b of R (NONE past the matches, last): by its `by` columns (col_idx[1..ncols]),
+// then x (col_idx[0]), each a number by value or, where agg[1] has its bit, a symbol by its name's bytes (as the
+// host's `Sortable`); 0 where every column is equal. A symbol not held: `unheld`.
+UKL_INLINE int strjoin_cmp(StageP s, RelB R, JSPACE const uint8_t* D, uint32_t a, uint32_t b, UKL_PRIVATE bool* unheld) {
+    if (a == b) return 0;
+    if (a == NONE) return 1;
+    if (b == NONE) return -1;
+    uint32_t nc = s->ncols;
+    for (uint32_t i = 1; i <= nc; i++) {
+        uint32_t c = i < nc ? i : 0u;
+        int64_t va = rget(s, R, a, s->col_idx[c]), vb = rget(s, R, b, s->col_idx[c]);
+        if (va == vb) continue;
+        if (((s->agg[1] >> c) & 1u) == 0u) return va < vb ? -1 : 1;
+        uint32_t la = 0, lb = 0;
+        JSPACE const uint8_t* ta = sym_text(D, va, &la, unheld);
+        JSPACE const uint8_t* tb = sym_text(D, vb, &lb, unheld);
+        uint32_t m = ukl_min(la, lb);
+        for (uint32_t j = 0; j < m; j++) {
+            if (ta[j] != tb[j]) return ta[j] < tb[j] ? -1 : 1;
+        }
+        if (la != lb) return la < lb ? -1 : 1;
+        return va < vb ? -1 : 1;
+    }
+    return 0;
+}
+
 // A string join (`ROW_STRJOIN`, decision 0661): each binding's matching rows of R (its candidates, as an aggregate's),
-// their distinct (by, x) ordered by `by` (column col_idx[1], a number) then x (column col_idx[0], a symbol), their x's
-// names joined by the separator's (par_const[0]) into the arena; "" for none. A SIMD group a binding: a match a lane,
-// ordered by a bitonic sort over the group. More matches than lanes, or two names at one `by` (ordered by their bytes,
-// which their ids are not): the counter's bit 2, and the stratum runs on the host.
+// their distinct (by..., x) ordered by `strjoin_cmp`, their x's names joined by the separator's (par_const[0]) into
+// the arena; "" for none. A SIMD group a binding: a match a lane, ordered by a bitonic sort over the group. More
+// matches than lanes: the counter's bit 2, and the stratum runs on the host.
 UKL_INLINE void row_strjoin(Longs L, Longs R_rows, JSPACE const uint8_t* R_far, JSPACE const uint8_t* F, JSPACE uint32_t* A, JSPACE const uint32_t* totals, JSPACE uint32_t* counters,
                             JSPACE uint32_t* counts, JSPACE int64_t* V, JSPACE const uint32_t* P, JSPACE const uint8_t* D, JSPACE uint32_t* T,
                             UKL_GLOBAL uint32_t* ctl, StageP s, uint32_t sg, uint32_t lane __UKL_PARAMS)
@@ -1327,7 +1374,6 @@ UKL_INLINE void row_strjoin(Longs L, Longs R_rows, JSPACE const uint8_t* R_far, 
     bool canon = P[6] != 0u;
     for (uint32_t r = n + sg * SGW + lane; r <= s->cap_in; r += groups * SGW) counts[r] = 0;
     if (sg >= groups) return;
-    const int64_t top = (int64_t)0x7fffffffffffffff;
     bool unheld = false;
     uint32_t lsep = 0;
     JSPACE const uint8_t* sep = sym_text(D, s->par_const[0], &lsep, &unheld);
@@ -1338,7 +1384,7 @@ UKL_INLINE void row_strjoin(Longs L, Longs R_rows, JSPACE const uint8_t* R_far, 
         // Every lane walks the candidates alike; the k-th match is lane k's.
         uint32_t k = 0;
         bool over = false;
-        int64_t by = top, x = top;
+        uint32_t mine = NONE;
         for (uint32_t q = lo; q < hi; q = cand_next(s, how, q)) {
             uint32_t r = cand_row(s, R, how, q);
             if (!matches(s, R, r, kv)) continue;
@@ -1346,40 +1392,34 @@ UKL_INLINE void row_strjoin(Longs L, Longs R_rows, JSPACE const uint8_t* R_far, 
                 over = true;
                 break;
             }
-            if (lane == k) {
-                by = rget(s, R, r, s->col_idx[1]);
-                x = rget(s, R, r, s->col_idx[0]);
-            }
+            if (lane == k) mine = r;
             k++;
         }
-        // Ordered by (by, x): a bitonic sort over the group's lanes, the lanes past the matches last.
+        // Ordered by `strjoin_cmp`: a bitonic sort of the matches' rows over the group's lanes, the lanes past the
+        // matches last.
+        bool cu = false;
         for (uint32_t size = 2; size <= SGW; size <<= 1) {
             for (uint32_t stride = size >> 1; stride > 0; stride >>= 1) {
                 uint32_t other = lane ^ stride;
-                int64_t oby = sg_shuffle64(by, other __UKL_ARGS), ox = sg_shuffle64(x, other __UKL_ARGS);
+                uint32_t theirs = ukl_sg_shuffle(mine, other __UKL_ARGS);
+                int c = strjoin_cmp(s, R, D, theirs, mine, &cu);
                 bool up = (lane & size) == 0;
-                bool less = oby < by || (oby == by && ox < x);
-                bool greater = oby > by || (oby == by && ox > x);
-                bool take = (lane < other) == up ? less : greater;
-                if (take) {
-                    by = oby;
-                    x = ox;
-                }
+                bool take = (lane < other) == up ? c < 0 : c > 0;
+                if (take) mine = theirs;
             }
         }
-        int64_t pby = sg_shuffle64(by, lane > 0 ? lane - 1 : 0 __UKL_ARGS), px = sg_shuffle64(x, lane > 0 ? lane - 1 : 0 __UKL_ARGS);
+        uint32_t before = ukl_sg_shuffle(mine, lane > 0 ? lane - 1 : 0 __UKL_ARGS);
         bool in = lane < k;
-        bool dup = in && lane > 0 && pby == by && px == x;
-        bool tie = in && lane > 0 && pby == by && px != x;
+        bool dup = in && lane > 0 && strjoin_cmp(s, R, D, before, mine, &cu) == 0;
         uint32_t len = 0;
         JSPACE const uint8_t* xt = D;
-        bool held = true;
+        bool held = !cu;
         if (in && !dup) {
             bool u = false;
-            xt = sym_text(D, x, &len, &u);
-            held = !u;
+            xt = sym_text(D, rget(s, R, mine, s->col_idx[0]), &len, &u);
+            held = held && !u;
         }
-        if (ukl_sg_ballot(over || tie || !held || unheld __UKL_ARGS) != 0u) {
+        if (ukl_sg_ballot(over || !held || unheld __UKL_ARGS) != 0u) {
             if (lane == 0) {
                 if (s->counter != NONE) ukl_atomic_or(&counters[s->counter], held && !unheld ? 2u : 4u);
                 V[row] = -1;
@@ -1741,6 +1781,28 @@ UKL_INLINE void row_text_one(Longs L, JSPACE uint32_t* A, JSPACE const uint32_t*
             from = 0;
             to = lx;
             len = lx;
+        } else if (f >= 17u && f <= 21u) {
+            // The trims: spaces (17 both ends, 18 its start) or the characters of y (19 both ends, 20 its start, 21
+            // its end), a byte at a time; a set past ASCII is the host's (its characters, not its bytes).
+            bool high = false;
+            uint32_t ly = f >= 19u ? txt_len(y) : 0u;
+            for (uint32_t i = lane; i < ly; i += SGW) high = high || txt_byte(y, i) >= 0x80u;
+            if (ukl_sg_ballot(high __UKL_ARGS) != 0u) {
+                if (lane == 0) {
+                    if (s->counter != NONE) ukl_atomic_or(&counters[s->counter], 2u);
+                    V[row] = -1;
+                    counts[row] = 1;
+                }
+                continue;
+            }
+            uint32_t a0 = 0, b0 = lx;
+            if (lane == 0) {
+                if (f != 21u) while (a0 < b0 && trim_has(y, f < 19u, txt_byte(x, a0))) a0++;
+                if (f == 17u || f == 19u || f == 21u) while (b0 > a0 && trim_has(y, f < 19u, txt_byte(x, b0 - 1))) b0--;
+            }
+            from = ukl_sg_shuffle(a0, 0u __UKL_ARGS);
+            to = ukl_sg_shuffle(b0, 0u __UKL_ARGS);
+            len = to - from;
         } else if (f == 6) {
             // replace_all of a literal pattern (key 2) by key 4's text.
             y = txt_of(s, L, row, D, A, 2, 0, &unheld);

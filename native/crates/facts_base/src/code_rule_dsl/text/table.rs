@@ -378,17 +378,26 @@ pub const GROUP_CAPTURE: u32 = 4;
 pub const GROUP_LOOK: u32 = 5;
 pub const GROUP_MATCH: u32 = 6;
 
-/// The program of group `name` of regex `pattern`, made once per pattern and group. Refused (the group is the CPU's):
+/// A regex's capture group: by its name (`rx_group`), or its number (`rx_extract`, 0 the whole match).
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum Group {
+    Name(String),
+    Index(usize),
+}
+
+/// The program of group `group` of regex `pattern`, made once per pattern and group. Refused (the group is the CPU's):
 /// a regex not anchored at the text's start (the device runs from the start alone), a look other than the text's
-/// start and end, a group it does not name, a program past `GROUP_MAX_STATES`.
-pub fn group_program(pattern: &str, name: &str) -> Result<Arc<GroupProgram>, String> {
-    let a = super::automata::get_or_make(&format!("group:{pattern}\u{0}{name}"), || {
-        build_group(pattern, name).map(|(bytes, scratch)| (bytes, [scratch, 0, 0, 0]))
-    })?;
+/// start and end, a group it does not have, a program past `GROUP_MAX_STATES`.
+pub fn group_program(pattern: &str, group: &Group) -> Result<Arc<GroupProgram>, String> {
+    let key = match group {
+        Group::Name(name) => format!("group:{pattern}\u{0}{name}"),
+        Group::Index(i) => format!("group:{pattern}\u{0}#{i}"),
+    };
+    let a = super::automata::get_or_make(&key, || build_group(pattern, group).map(|(bytes, scratch)| (bytes, [scratch, 0, 0, 0])))?;
     Ok(Arc::new(GroupProgram { automaton: a, scratch: a.words[0] }))
 }
 
-fn build_group(pattern: &str, name: &str) -> Result<(Vec<u8>, u32), String> {
+fn build_group(pattern: &str, group: &Group) -> Result<(Vec<u8>, u32), String> {
     use regex_automata::util::look::Look as LookKind;
     use regex_automata::util::primitives::PatternID;
     let hir = regex_syntax::ParserBuilder::new().build().parse(pattern).map_err(|e| format!("its regex: {e}"))?;
@@ -396,7 +405,10 @@ fn build_group(pattern: &str, name: &str) -> Result<(Vec<u8>, u32), String> {
         return Err("a regex not anchored at the text's start".into());
     }
     let nfa = thompson::Compiler::new().build_from_hir(&hir).map_err(|e| format!("its automaton: {e}"))?;
-    let index = nfa.group_info().to_index(PatternID::ZERO, name).ok_or_else(|| format!("a group it does not name ({name})"))?;
+    let index = match group {
+        Group::Name(name) => nfa.group_info().to_index(PatternID::ZERO, name).ok_or_else(|| format!("a group it does not name ({name})"))?,
+        Group::Index(i) => Some(*i).filter(|&i| i < nfa.group_info().group_len(PatternID::ZERO)).ok_or_else(|| format!("a group it does not have ({i})"))?,
+    };
     let slot = 2 * index;
     let states = nfa.states();
     if states.len() > GROUP_MAX_STATES {
@@ -580,16 +592,25 @@ mod tests {
         for &(p, names) in cases {
             let re = regex::Regex::new(p).unwrap();
             for &name in names {
-                let g = super::group_program(p, name).unwrap_or_else(|e| panic!("{p} {name}: {e}"));
+                let g = super::group_program(p, &super::Group::Name(name.to_owned())).unwrap_or_else(|e| panic!("{p} {name}: {e}"));
                 for t in texts {
                     let want = re.captures(t).and_then(|c| c.name(name)).map(|m| (m.start(), m.end()));
                     assert_eq!(g.range(t), want, "group {name} of {p:?} in {t:?}");
                 }
             }
+            // By number (`rx_extract`): 0 the whole match, then each group's.
+            for i in 0..re.captures_len() {
+                let g = super::group_program(p, &super::Group::Index(i)).unwrap_or_else(|e| panic!("{p} #{i}: {e}"));
+                for t in texts {
+                    let want = re.captures(t).and_then(|c| c.get(i)).map(|m| (m.start(), m.end()));
+                    assert_eq!(g.range(t), want, "group {i} of {p:?} in {t:?}");
+                }
+            }
         }
         for (p, name) in [("(?<d>a)/", "d"), ("^(?<d>a)\\b", "d"), ("^(?m)(?<d>a)$", "d"), ("^(?<d>a)$", "e")] {
-            assert!(super::group_program(p, name).is_err(), "{p} {name}");
+            assert!(super::group_program(p, &super::Group::Name(name.to_owned())).is_err(), "{p} {name}");
         }
+        assert!(super::group_program("^(a)", &super::Group::Index(2)).is_err(), "a group past its groups");
     }
 
     /// The replacement automaton replaces as Rust's `regex` does, over the packs' patterns; the empty-matching and
