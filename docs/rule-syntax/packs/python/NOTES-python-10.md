@@ -29,7 +29,7 @@ New library: `lib/python/python-10.rerail` (UP006, UP007): typing names inside s
 - A parenthesised base is the base: `class A((object))` and `class B(( builtins.object ), metaclass=object)` are
   UP004, at the inner expression.
 
-## UP006 non-pep585-annotation: follows Ruff; left: 3 lines where the JSON is wrong, 1 where the translation is
+## UP006 non-pep585-annotation: follows Ruff; since: three JSON misses, no translation misses
 
 - The JSON original misses pyflakes/F401_0.py 44 (`foo: Type["NamedTuple"]` in a class body), 59 (`TypeVar("Y",
   bound="Dict")`) and 60 (`TypeVar("Z", "List", "Set")`); Ruff reports all three, and so does the translation.
@@ -52,18 +52,18 @@ New library: `lib/python/python-10.rerail` (UP006, UP007): typing names inside s
   does-not-shadow-base.py 12). `sym_at` does not know type parameters; the rule leaves out names read inside a
   definition declaring a type parameter of that name (python/ast's `tparam_named`). Library change proposed:
   upgrade's `sym_at` should honour type-parameter scopes, as names' `tp_ref` does.
-- Left: flake8_pyi/PYI036.pyi:82, Ruff right. In a deferred annotation inside a function (a stub, `from
+- Fixed since: flake8_pyi/PYI036.pyi:82, the previous remaining translation miss. In a deferred annotation inside a function (a stub, `from
   __future__ import annotations`, or a string), Ruff resolves a name to the module's binding even when the
   function rebinds it before the use: 
 
   ```python
   from typing import List
   def h(List):                 # or `List = list` in the body; in a stub, `from collections import deque as List`
-      z: "List[int]" = []      # Ruff 0.17.6: UP006; Python's scoping (and the translation): the parameter
+      z: "List[int]" = []      # Ruff 0.17.6: UP006; before the fix, the translation read the parameter
   ```
 
   With no module binding, the function's own import is used (`def h(): from typing import List; x: "List[int]"`
-  is UP006). The rule this follows is not clear enough from these cases to write it; one corpus line.
+  is UP006). This was the remaining corpus line before the semantic-model rule below was implemented.
 
   Fixed since (rule fixes on #1120's line). The rule is PEP 563's, in Ruff's semantic model: `resolve_load` and
   `lookup_symbol_in_scope` ask the module scope first when `in_forward_reference()` (a string type definition, or a

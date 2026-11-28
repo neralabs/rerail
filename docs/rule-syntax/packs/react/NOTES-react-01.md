@@ -156,7 +156,7 @@ Left, samples: 2 original-only, useResizeObserver.test.tsx:71/73 (`elementRef.cu
 lists elementRef): the original's deps-frozen clause reports them, ESLint does not. 1 translation-only, DataFrame.tsx:445,
 under `eslint-disable-next-line react-hooks/immutability`.
 
-### react-hooks-refs: different (the suppression gap; one shorthand the original reports; five lines it misses)
+### react-hooks-refs: originally different; since: no translation misses, five original misses (translation right)
 
 Rewritten after the original's model (98 original-only lines before). What the compiler reports is a ref's value
 used, at the place it was loaded:
@@ -186,19 +186,20 @@ used, at the place it was loaded:
 Left out of the original: two literals holding two different refs (`literal-lost` by ref name), `literal-passed`
 (the same lines as literal-element on the corpora), `ref-beside-lost-load`, `alias-prop-load`, `alias-lost-load`.
 
-Left, samples: 1 original-only, Modal.tsx:335, the shorthand `modalRef` (a useRef) in the object of a context value:
+Before these fixes, samples had 1 original-only line, Modal.tsx:335, the shorthand `modalRef` (a useRef) in the object of a context value:
 the original's literal-element clause reports it, and ESLint does; no value relation of the original's that I could
 trace makes a bare useRef binding a ref value, so it is not modelled. Right: original. 6 translation-only:
 UnitAmountInput.tsx:49, under `eslint-disable-next-line react-hooks/refs -- …` (original right); and 5 the review
 fixes added, which ESLint reports with inline comments honoured and the original misses: mui Ad.tsx:131/135/139
 (`const { current: randomAdblock } = React.useRef(Math.random())`, then `randomAdblock < 0.2`) and react-bootstrap
-Offcanvas.tsx:341 (`manager={getModalManager()}`, a function that reads and writes `modalManager.current`). Right:
-neither.
+Offcanvas.tsx:341 and the other copy's :344 (`manager={getModalManager()}`, a function that reads and writes
+`modalManager.current`). Right then: neither.
 
 Since (rule fixes on #1120's line): Modal.tsx:335 is reported. `modalRef` there is no useRef: it is `let modalRef =
 props.modalRef`, and the compiler's temporaries sidemap (ValidateNoRefAccessInRender's collectTemporariesSidemap)
 folds a LoadLocal, a StoreLocal and a PropertyLoad into the place they read, so modalRef has props's ref state.
 props is a ref once `ref={props.overlayRef}` is loaded, and a ref value from the next load from it (`props.isExiting`)
 on. The rule's holder_alias models that fold, with the compiler's two passes; `let { modalRef } = props` (the other
-copy of the file) destructures and is not folded, as ESLint agrees. samples-react: 0 original-only, the same 5
+copy of the file) destructures and is not folded, as ESLint agrees. UnitAmountInput.tsx:49 is now suppressed by
+its inline `eslint-disable-next-line react-hooks/refs` comment. samples-react: 0 original-only, the same 5
 translation-only; right: translation.
