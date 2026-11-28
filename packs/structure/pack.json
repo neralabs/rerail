@@ -1,0 +1,122 @@
+{
+  "format": "rerail.rule-pack/v1",
+  "id": "structure",
+  "name": "Structure",
+  "category": "repository",
+  "covers": "Keeps a codebase's shape as it grows: file length, layers that import downward, exports that are used and tested, and file names that say what they hold.",
+  "reason": "matches TypeScript or JavaScript source",
+  "match": {
+    "any": [
+      {
+        "files": [
+          "**/*.ts",
+          "**/*.tsx"
+        ],
+        "exclude": [
+          "**/node_modules/**",
+          "**/dist/**",
+          "**/build/**",
+          "**/*.d.ts"
+        ],
+        "label": "*.ts files"
+      },
+      {
+        "files": [
+          "**/*.js",
+          "**/*.jsx",
+          "**/*.mjs",
+          "**/*.cjs"
+        ],
+        "exclude": [
+          "**/node_modules/**",
+          "**/dist/**",
+          "**/build/**",
+          "**/*.d.ts"
+        ],
+        "label": "*.js files"
+      }
+    ]
+  },
+  "rules": [
+    {
+      "id": "structure-file-line-limit",
+      "document": "rules/structure-file-line-limit.json",
+      "title": "Keep files at 500 lines or fewer",
+      "group": "Size",
+      "examples": {
+        "caught": {
+          "path": "src/report.ts",
+          "text": "export const first = 1;\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\nexport const last = 2;\n"
+        },
+        "passes": {
+          "path": "src/report.ts",
+          "text": "export const first = 1;\nexport const last = 2;\n"
+        }
+      }
+    },
+    {
+      "id": "structure-layers-depend-downward",
+      "document": "rules/structure-layers-depend-downward.json",
+      "title": "Keep imports pointing down the layers",
+      "group": "Layering",
+      "examples": {
+        "caught": {
+          "path": "src/lib/totals.ts",
+          "text": "import { loadAccounts } from \"@/app/accounts/page\";\n\nexport const totals = loadAccounts;\n"
+        },
+        "passes": {
+          "path": "src/lib/totals.ts",
+          "text": "import type { Account } from \"@/app/accounts/page\";\n\nexport const count = (accounts: Account[]) => accounts.length;\n"
+        }
+      }
+    },
+    {
+      "id": "structure-untested-exports",
+      "document": "rules/structure-untested-exports.json",
+      "title": "Keep exported functions under test",
+      "group": "Tests",
+      "examples": {
+        "caught": {
+          "path": "src/lib/money.ts",
+          "text": "export function toCents(dollars: number): number {\n  return Math.round(dollars * 100);\n}\n"
+        },
+        "passes": {
+          "path": "src/lib/money.ts",
+          "text": "function toCents(dollars: number): number {\n  return Math.round(dollars * 100);\n}\n\nexport const ONE_DOLLAR = toCents(1);\n"
+        }
+      }
+    },
+    {
+      "id": "structure-unused-exports",
+      "document": "rules/structure-unused-exports.json",
+      "title": "Keep every export in use",
+      "group": "Dead code",
+      "examples": {
+        "caught": {
+          "path": "src/lib/money.ts",
+          "text": "export function toCents(dollars: number): number {\n  return Math.round(dollars * 100);\n}\n"
+        },
+        "passes": {
+          "path": "src/lib/money.ts",
+          "text": "export function toCents(dollars: number): number {\n  return Math.round(dollars * 100);\n}\n\nconsole.log(toCents(1));\n"
+        }
+      }
+    },
+    {
+      "id": "structure-vague-file-names",
+      "document": "rules/structure-vague-file-names.json",
+      "title": "Keep file names specific to what the code does",
+      "group": "Naming",
+      "examples": {
+        "caught": {
+          "path": "src/lib/money copy.ts",
+          "text": "export const currency = \"CAD\";\n"
+        },
+        "passes": {
+          "path": "src/lib/money.ts",
+          "text": "export const currency = \"CAD\";\n"
+        }
+      }
+    }
+  ]
+}

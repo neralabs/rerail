@@ -1,0 +1,217 @@
+{
+  "format": "rerail.policy/v1",
+  "id": "structure-directory-file-limit",
+  "revision": 1,
+  "mode": "steer",
+  "description": "Keep each directory at 20 source files or fewer per language, not counting tests, generated code or flat sets like icons; large flat folders hide structure.",
+  "scope": {
+    "include": [
+      "**/*.ts",
+      "**/*.tsx",
+      "**/*.js",
+      "**/*.jsx",
+      "**/*.mjs",
+      "**/*.cjs",
+      "**/*.py",
+      "**/*.rs"
+    ],
+    "exclude": [
+      "**/*.test.*",
+      "**/*.spec.*",
+      "**/*.stories.*",
+      "**/*.d.ts",
+      "**/test_*.py",
+      "**/*_test.py",
+      "**/conftest.py",
+      "**/__init__.py",
+      "**/__tests__/**",
+      "**/tests/**",
+      "**/test/**",
+      "**/e2e/**",
+      "**/fixtures/**",
+      "**/__mocks__/**",
+      "**/migrations/**",
+      "**/generated/**",
+      "**/__generated__/**",
+      "**/vendor/**",
+      "**/node_modules/**",
+      "**/dist/**",
+      "**/build/**",
+      "**/components/ui/**",
+      "**/icons/**",
+      "**/target/**",
+      "**/tests.rs",
+      "**/benches/**"
+    ]
+  },
+  "clauses": [
+    {
+      "id": "typescript-files-per-directory",
+      "violation": {
+        "code": "DIRECTORY_TOO_MANY_FILES",
+        "anchor": "witness.span",
+        "message": "Keep directories at 20 source files or fewer. Put a new file in a subfolder named for its feature; don't move existing ones unless asked. Leave flat sets of one kind, like icons."
+      },
+      "budget": {
+        "query": {
+          "evidence": {
+            "as": "file",
+            "paths": {
+              "include": [
+                "**/*.ts",
+                "**/*.tsx"
+              ]
+            },
+            "query": {
+              "ast": {
+                "language": "typescript",
+                "rule": {
+                  "kind": "program"
+                }
+              }
+            },
+            "project": {
+              "dir": "file.directory",
+              "path": "file.path"
+            }
+          }
+        },
+        "group_by": [
+          "file.dir"
+        ],
+        "count": {
+          "lte": 20,
+          "distinct": [
+            "file.path"
+          ]
+        }
+      }
+    },
+    {
+      "id": "javascript-files-per-directory",
+      "violation": {
+        "code": "DIRECTORY_TOO_MANY_FILES",
+        "anchor": "witness.span",
+        "message": "Keep directories at 20 source files or fewer. Put a new file in a subfolder named for its feature; don't move existing ones unless asked. Leave flat sets of one kind, like icons."
+      },
+      "budget": {
+        "query": {
+          "evidence": {
+            "as": "file",
+            "paths": {
+              "include": [
+                "**/*.js",
+                "**/*.jsx",
+                "**/*.mjs",
+                "**/*.cjs"
+              ]
+            },
+            "query": {
+              "ast": {
+                "language": "javascript",
+                "rule": {
+                  "kind": "program"
+                }
+              }
+            },
+            "project": {
+              "dir": "file.directory",
+              "path": "file.path"
+            }
+          }
+        },
+        "group_by": [
+          "file.dir"
+        ],
+        "count": {
+          "lte": 20,
+          "distinct": [
+            "file.path"
+          ]
+        }
+      }
+    },
+    {
+      "id": "python-files-per-directory",
+      "violation": {
+        "code": "DIRECTORY_TOO_MANY_FILES",
+        "anchor": "witness.span",
+        "message": "Keep directories at 20 source files or fewer. Put a new file in a subfolder named for its feature; don't move existing ones unless asked. Leave flat sets of one kind, like icons."
+      },
+      "budget": {
+        "query": {
+          "evidence": {
+            "as": "file",
+            "paths": {
+              "include": [
+                "**/*.py"
+              ]
+            },
+            "query": {
+              "ast": {
+                "language": "python",
+                "rule": {
+                  "kind": "module"
+                }
+              }
+            },
+            "project": {
+              "dir": "file.directory",
+              "path": "file.path"
+            }
+          }
+        },
+        "group_by": [
+          "file.dir"
+        ],
+        "count": {
+          "lte": 20,
+          "distinct": [
+            "file.path"
+          ]
+        }
+      }
+    },
+    {
+      "id": "rust-files-per-directory",
+      "violation": {
+        "code": "DIRECTORY_TOO_MANY_FILES",
+        "anchor": "witness.span",
+        "message": "Keep directories at 20 source files or fewer. Put a new file in a subfolder named for its feature; don't move existing ones unless asked. Leave flat sets of one kind, like icons."
+      },
+      "budget": {
+        "query": {
+          "evidence": {
+            "as": "file",
+            "paths": {
+              "include": [
+                "**/*.rs"
+              ]
+            },
+            "query": {
+              "ast": {
+                "language": "rust",
+                "rule": {
+                  "kind": "source_file"
+                }
+              }
+            },
+            "project": {
+              "dir": "file.directory",
+              "path": "file.path"
+            }
+          }
+        },
+        "group_by": [
+          "file.dir"
+        ],
+        "count": {
+          "lte": 20,
+          "distinct": [
+            "file.path"
+          ]
+        }
+      }
+    }
+  ]
+}

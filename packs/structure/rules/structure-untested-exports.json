@@ -1,0 +1,278 @@
+{
+  "format": "rerail.policy/v1",
+  "id": "structure-untested-exports",
+  "revision": 1,
+  "mode": "steer",
+  "description": "Add a test that imports each exported TypeScript function, outside components, server actions, client modules, entry files, config and scripts.",
+  "scope": {
+    "include": [
+      "**/*.ts",
+      "**/*.tsx",
+      "**/*.mts",
+      "**/*.cts"
+    ],
+    "exclude": [
+      "**/node_modules/**",
+      "**/dist/**",
+      "**/build/**",
+      "**/out/**",
+      "**/.next/**",
+      "**/coverage/**",
+      "**/vendor/**"
+    ]
+  },
+  "clauses": [
+    {
+      "id": "untested-export",
+      "violation": {
+        "code": "UNTESTED_EXPORT",
+        "anchor": "witness.span",
+        "message": "No test file imports this function. Add a test beside this file that calls it and checks the result. If a test already covers it through its caller, leave it."
+      },
+      "require_each": {
+        "subject": {
+          "evidence": {
+            "as": "exported",
+            "paths": {
+              "exclude": [
+                "**/*.config.*",
+                "**/*.d.cts",
+                "**/*.d.mts",
+                "**/*.d.ts",
+                "**/*.gen.*",
+                "**/*.generated.*",
+                "**/*.jsx",
+                "**/*.setup.*",
+                "**/*.spec.*",
+                "**/*.stories.*",
+                "**/*.test.*",
+                "**/*.tsx",
+                "**/+*",
+                "**/.storybook/**",
+                "**/__fixtures__/**",
+                "**/__generated__/**",
+                "**/__mocks__/**",
+                "**/__tests__/**",
+                "**/apple-icon.*",
+                "**/cypress/**",
+                "**/default.*",
+                "**/e2e/**",
+                "**/entry.client.*",
+                "**/entry.server.*",
+                "**/error.*",
+                "**/generated/**",
+                "**/global-error.*",
+                "**/hooks.client.*",
+                "**/hooks.server.*",
+                "**/icon.*",
+                "**/index.*",
+                "**/instrumentation-client.*",
+                "**/instrumentation.*",
+                "**/layout.*",
+                "**/loading.*",
+                "**/main.*",
+                "**/manifest.*",
+                "**/middleware.*",
+                "**/migrations/**",
+                "**/not-found.*",
+                "**/opengraph-image.*",
+                "**/page.*",
+                "**/pages/**",
+                "**/playwright/**",
+                "**/proxy.*",
+                "**/robots.*",
+                "**/root.*",
+                "**/route.*",
+                "**/routes.*",
+                "**/routes/**",
+                "**/scripts/**",
+                "**/seed/**",
+                "**/seeders/**",
+                "**/seeds/**",
+                "**/sitemap.*",
+                "**/template.*",
+                "**/template/**",
+                "**/templates/**",
+                "**/test/**",
+                "**/testing/**",
+                "**/tests/**",
+                "**/twitter-image.*"
+              ]
+            },
+            "query": {
+              "ast": {
+                "language": "typescript",
+                "rule": {
+                  "pattern": "$NAME",
+                  "kind": "identifier",
+                  "all": [
+                    {
+                      "any": [
+                        {
+                          "inside": {
+                            "kind": "function_declaration"
+                          }
+                        },
+                        {
+                          "inside": {
+                            "kind": "generator_function_declaration"
+                          }
+                        },
+                        {
+                          "inside": {
+                            "kind": "variable_declarator",
+                            "has": {
+                              "field": "value",
+                              "any": [
+                                {
+                                  "kind": "arrow_function"
+                                },
+                                {
+                                  "kind": "function_expression"
+                                }
+                              ]
+                            }
+                          }
+                        }
+                      ]
+                    },
+                    {
+                      "not": {
+                        "any": [
+                          {
+                            "inside": {
+                              "stopBy": "end",
+                              "kind": "export_statement",
+                              "has": {
+                                "regex": "^default$"
+                              }
+                            }
+                          },
+                          {
+                            "inside": {
+                              "kind": "function_signature"
+                            }
+                          },
+                          {
+                            "inside": {
+                              "stopBy": "end",
+                              "kind": "program",
+                              "has": {
+                                "kind": "expression_statement",
+                                "regex": "^['\\\"]use (?:server|client)['\\\"]"
+                              }
+                            }
+                          }
+                        ]
+                      }
+                    }
+                  ],
+                  "binds": {
+                    "scope": "module",
+                    "exported": true
+                  }
+                }
+              }
+            },
+            "project": {
+              "name": "capture.NAME",
+              "path": "file.path",
+              "stem": "file.stem"
+            }
+          }
+        },
+        "evidence": {
+          "evidence": {
+            "as": "tested",
+            "paths": {
+              "include": [
+                "**/*.test.*",
+                "**/*.spec.*",
+                "**/__tests__/**",
+                "**/tests/**",
+                "**/test/**"
+              ]
+            },
+            "query": {
+              "ast": {
+                "language": "typescript",
+                "rule": {
+                  "any": [
+                    {
+                      "pattern": "$NAME",
+                      "kind": "identifier",
+                      "not": {
+                        "follows": {
+                          "stopBy": "end",
+                          "kind": "identifier"
+                        }
+                      },
+                      "inside": {
+                        "kind": "import_specifier"
+                      }
+                    },
+                    {
+                      "pattern": "$NAME",
+                      "kind": "identifier",
+                      "not": {
+                        "follows": {
+                          "stopBy": "end",
+                          "kind": "identifier"
+                        }
+                      },
+                      "inside": {
+                        "kind": "export_specifier",
+                        "inside": {
+                          "kind": "export_clause",
+                          "inside": {
+                            "kind": "export_statement",
+                            "has": {
+                              "kind": "string"
+                            }
+                          }
+                        }
+                      }
+                    },
+                    {
+                      "kind": "export_statement",
+                      "regex": "^export\\s+(?:type\\s+)?\\*[^;]*?from\\s+[\"'](?:[^\"']*/)?(?<STEM>[^/\"'.]+)[^/\"']*[\"']"
+                    },
+                    {
+                      "kind": "import_statement",
+                      "regex": "^import\\s+(?:type\\s+)?(?:[\\w$]+\\s*,\\s*)?\\*\\s+as\\s[^;]*?from\\s+[\"'](?:[^\"']*/)?(?<STEM>[^/\"'.]+)[^/\"']*[\"']"
+                    },
+                    {
+                      "kind": "call_expression",
+                      "regex": "^(?:import|require)\\s*\\(\\s*(?:/\\*[^*]*\\*/\\s*)*[\"'](?:[^\"']*/)?(?<STEM>[^/\"'.]+)[^/\"']*[\"']"
+                    }
+                  ]
+                }
+              }
+            },
+            "project": {
+              "name": "capture.NAME",
+              "path": "file.path",
+              "stem": "capture.STEM"
+            },
+            "where": {
+              "any": [
+                {
+                  "eq": [
+                    "exported.name",
+                    "tested.name"
+                  ]
+                },
+                {
+                  "eq": [
+                    "exported.stem",
+                    "tested.stem"
+                  ]
+                }
+              ]
+            }
+          }
+        }
+      }
+    }
+  ]
+}
