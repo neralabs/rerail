@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { exportRulesDump, importRulesDump } from "../../../src/engine/catalog/rule-bootstrap.js";
 import { approve, isApproved, ruleSubject } from "../../../src/engine/catalog/rule-approval.js";
 import {
@@ -96,6 +96,34 @@ describe("library rules", () => {
     expect(getLibraryRule(db, "python-this")).toBeUndefined();
     expect(quarantinedLibraryRules(db)).toEqual([{ ruleId: "python-this", kind: "code", owner: "library", reason: expect.stringMatching(/this/u) }]);
     expect(() => exportRulesDump(db)).toThrow(/cannot export 1 quarantined library rule/u);
+  });
+
+  it("quarantines a row whose stored document is no JSON, names it once, reads the others and lets a write mend it", async () => {
+    const db = await temporaryDatabase();
+    for (const id of ["good", "broken"]) upsertLibraryRule(db, ruleCatalog, codeRule(id), "code");
+    upsertLibraryRule(db, ruleCatalog, conversation("chat"), "conversation");
+    // Its first byte changed, as a damaged file leaves it.
+    const text = db.$client.prepare("SELECT document_json FROM library_rules WHERE rule_id = 'broken'").pluck().get() as string;
+    db.$client.prepare("UPDATE library_rules SET document_json = ? WHERE rule_id = 'broken'").run(`[${text.slice(1)}`);
+    const log = vi.spyOn(process.stderr, "write").mockReturnValue(true);
+    try {
+      expect(listLibraryRules(db).map(rule => rule.document.rule.id)).toEqual(["chat", "good"]);
+      expect(getLibraryRule(db, "broken")).toBeUndefined();
+      expect(quarantinedLibraryRules(db)).toEqual([{
+        ruleId: "broken", kind: "code", owner: "library",
+        reason: expect.stringMatching(/^its document in the database is no JSON object \(.+\), which only a damaged file or a hand edit leaves$/u),
+      }]);
+      expect(() => exportRulesDump(db)).toThrow(/cannot export 1 quarantined library rule/u);
+      expect(log.mock.calls.map(([line]) => String(line))).toEqual([expect.stringMatching(
+        /^rerail: .+rerail\.sqlite: library rule broken is quarantined and runs nowhere: the document_json of its row is no JSON object \(.+\)/u,
+      )]);
+    } finally {
+      log.mockRestore();
+    }
+
+    upsertLibraryRule(db, ruleCatalog, codeRule("broken"), "code");
+    expect(listLibraryRules(db).map(rule => rule.document.rule.id)).toEqual(["broken", "chat", "good"]);
+    expect(quarantinedLibraryRules(db)).toEqual([]);
   });
 });
 
