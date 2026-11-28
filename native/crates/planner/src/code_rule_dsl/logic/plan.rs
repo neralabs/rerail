@@ -382,6 +382,9 @@ pub struct Run<'a, 'b> {
     /// relation (`answer_logs`): a native step's answers are among what its stratum read, kept with its frames.
     logging: Option<usize>,
     answer_logs: HashMap<usize, BTreeMap<String, BTreeSet<Vector<i64>>>>,
+    /// Whether a posted request's answers are logged by its stratum when they come (`take_answers`), as `logging`
+    /// logs those answered in place: where strata are kept across runs, which read them with the stratum's frames.
+    logs_posted: bool,
     /// The run's quiet strata, shared with its strands (`QuietTally`).
     quiet: Arc<QuietTally>,
     /// The static check of the program the run's part is of (decision 0364 §5): given by the caller
@@ -394,6 +397,64 @@ pub struct Run<'a, 'b> {
 /// A request's answerer: given a request relation's rows (read where they lie, `component::Asked`), the rows each
 /// produced relation gains.
 pub type Answer<'a> = &'a mut dyn FnMut(&str, &super::native::component::Asked) -> Result<Vec<(String, Vec<Vector<i64>>)>>;
+
+/// A request relation's rows where they are: the engine's (a relation it holds, read where its rows lie, decision
+/// 0353 step 8), none (one still to be made: no table, no rows), or its table's (SQL's rows, a relation the engine
+/// does not hold).
+fn request_asked(run: &mut Run<'_, '_>, db: &Connection, f0: Fields<'_>, req: &str) -> Result<super::native::component::Asked> {
+    let width = f0.width(req);
+    let native = run.native_rels.contains(req).then(|| super::native::component::kept_rel(db, req)).flatten();
+    Ok(if let Some(rel) = native.filter(|_| width > 0) {
+        super::native::component::Asked::of_rel(&rel)
+    } else if run.pending.contains_key(req) && !run.native_rels.contains(req) {
+        super::native::component::Asked::default()
+    } else {
+        run.materialize(&[req.to_owned()])?;
+        let cols = (0..width).map(|c| format!("c{c}")).collect::<Vec<_>>().join(", ");
+        super::native::component::Asked::rows(
+            db.prepare(&format!("SELECT {cols} FROM {}", crate::code_rule_dsl::logic::sql::ident(req)))?
+                .query_map([], |r| (0..width).map(|c| r.get::<_, i64>(c)).collect::<rusqlite::Result<Vector<_>>>())?
+                .collect::<rusqlite::Result<_>>()?,
+        )
+    })
+}
+
+/// Complete requests (`asks`) posted together, then their answers waited for (`answer_complete`'s, for several at
+/// once): the rows each produced relation gains, the rows an answer held back asked again until none is. Answers
+/// that come meanwhile for strata suspended on their own requests are kept for them (`arrived`).
+fn posted_together(run: &mut Run<'_, '_>, asks: Vec<(String, super::native::component::Asked)>, arrived: &mut HashMap<u64, Vec<(String, Vec<Vector<i64>>)>>) -> Result<BTreeMap<String, Vec<Vector<i64>>>> {
+    use super::native::component::Asked;
+    let asking = run.asking.as_deref_mut().ok_or_else(|| Error::Plan("requests posted, and no one to answer them".into()))?;
+    let mut mine: HashSet<u64> = HashSet::new();
+    for (req, rows) in &asks {
+        mine.insert(asking.post(req, rows)?);
+    }
+    let mut produced: BTreeMap<String, Vec<Vector<i64>>> = BTreeMap::new();
+    while !mine.is_empty() {
+        let mut held: BTreeMap<String, Vec<Vector<i64>>> = BTreeMap::new();
+        for (ticket, given) in asking.arrived(std::time::Duration::from_millis(1))? {
+            if !mine.remove(&ticket) {
+                arrived.insert(ticket, given);
+                continue;
+            }
+            for (rel, rows) in given {
+                match rel.strip_prefix(super::answers::HELD_BACK) {
+                    Some(request) => {
+                        if !rows.is_empty() {
+                            held.entry(request.to_owned()).or_default().extend(rows);
+                        }
+                    }
+                    None => produced.entry(rel).or_default().extend(rows),
+                }
+            }
+        }
+        // The rows an answer held back, asked again: rows the answers made.
+        for (req, rows) in held {
+            mine.insert(asking.post(&req, &Asked::rows(rows))?);
+        }
+    }
+    Ok(produced)
+}
 
 /// A complete request relation has no pending recursive work before its consumer. Resume held keys at once,
 /// grouped by request family, as a quiet recursive component does. Never publish the protocol rows as facts.
@@ -2010,6 +2071,7 @@ impl<'a> Run<'a, '_> {
             answered: BTreeMap::new(),
             logging: None,
             answer_logs: HashMap::new(),
+            logs_posted: false,
             quiet: Arc::clone(&self.quiet),
             proofs: self.proofs.clone(),
         }, arena, (0, 0), keep))
@@ -6951,7 +7013,7 @@ fn run_within(program: &body::Placed, db: &Connection, inputs: Inputs, lowering:
     let mut unread: BTreeSet<String> = BTreeSet::new();
     let mut prepared_to = 0usize;
     let projections0: HashMap<String, Vec<(usize, i64)>> = super::program_image::analyses::projections(&p0.v).into_iter().map(|(r, eqs)| (p0.v.rel_name(r).to_owned(), eqs)).collect();
-    let mut run = Run { db: crate::code_rule_dsl::facts::vtab::Db::of(db), model, views: Default::default(), made: HashSet::new(), orders: HashMap::new(), keyless: HashSet::new(), native_rels: adopted, device_views: HashSet::new(), proofs: Default::default(), mode_reads: Default::default(), demands: Default::default(), pending: HashMap::new(), why_not: None, projections: Arc::new(projections0), inputs: Arc::new(RunInputs { program: f0.inputs().collect(), added: Default::default() }), versions: Arc::new(body::Versions::of_placed(placed)), version: 0, answer: hooks.answer.take(), texts: hooks.texts.take(), asking: None, why_class: None, answered: BTreeMap::new(), logging: None, answer_logs: HashMap::new(), quiet: Default::default() };
+    let mut run = Run { db: crate::code_rule_dsl::facts::vtab::Db::of(db), model, views: Default::default(), made: HashSet::new(), orders: HashMap::new(), keyless: HashSet::new(), native_rels: adopted, device_views: HashSet::new(), proofs: Default::default(), mode_reads: Default::default(), demands: Default::default(), pending: HashMap::new(), why_not: None, projections: Arc::new(projections0), inputs: Arc::new(RunInputs { program: f0.inputs().collect(), added: Default::default() }), versions: Arc::new(body::Versions::of_placed(placed)), version: 0, answer: hooks.answer.take(), texts: hooks.texts.take(), asking: None, why_class: None, answered: BTreeMap::new(), logging: None, answer_logs: HashMap::new(), logs_posted: false, quiet: Default::default() };
     if let Some(p) = maintaining.as_deref().and_then(|m| m.proofs()) {
         let _ = run.proofs.set(p);
     }
@@ -7180,6 +7242,8 @@ fn run_within(program: &body::Placed, db: &Connection, inputs: Inputs, lowering:
     let mut waiting: Vec<(usize, String, Box<Driving>)> = Vec::new();
     // Strata suspended on their requests (decision 0114 §3), and the answers come for them so far, by ticket.
     let mut asked: Vec<Asked> = Vec::new();
+    // Each relation's stratum, by its index in the run's order: where a produced relation's request is made.
+    let stratum_of: HashMap<String, usize> = sccs.iter().enumerate().flat_map(|(j, s)| s.iter().map(move |r| (r.to_owned(), j))).collect();
     let mut arrived: HashMap<u64, Vec<(String, Vec<Vector<i64>>)>> = HashMap::new();
     // Relations no stratum reads, of strata that finished after the stratum following them ran: released or read
     // out at the next stratum, as they would have been at the one following them.
@@ -7212,9 +7276,14 @@ fn run_within(program: &body::Placed, db: &Connection, inputs: Inputs, lowering:
         slots = (0..sccs.len()).map(|_| Slot::Base).collect();
     }
     let ambient = Ambient::here();
-    // Requests are posted, not waited for, where strata retire from the scoreboard (`RERAIL_ASK_ASYNC=off`: waited).
-    if board.is_some() && std::env::var("RERAIL_ASK_ASYNC").as_deref() != Ok("off") {
+    // Requests are posted, not waited for (`RERAIL_ASK_ASYNC=off`: waited), where strata retire from the scoreboard,
+    // and in the loop where strata are kept across runs (no scoreboard, decision 0077 §4): a stratum that asks is
+    // suspended, the strata that do not read it run meanwhile, and its answers come when one does or the run ends.
+    // So every stratum's requests made before the run waits are posted together (a callable's are answered then in
+    // one call, `calls::Calls::answer_all`). A maintained run waits for each.
+    if (board.is_some() || (strata_kept.is_some() && maintaining.is_none())) && std::env::var("RERAIL_ASK_ASYNC").as_deref() != Ok("off") {
         run.asking = hooks.asking.take();
+        run.logs_posted = strata_kept.is_some();
     }
     // What the strata suspended on their requests read: kept until they finish (their fixpoints read them again).
     let held_by_asked = |asked: &[Asked]| -> HashSet<String> { asked.iter().flat_map(|a| stratum_reads(f0, &run_vs, &sccs[a.at], &by_stratum[a.at])).collect() };
@@ -7270,7 +7339,7 @@ fn run_within(program: &body::Placed, db: &Connection, inputs: Inputs, lowering:
         }
         super::lanes::prof::level(Some(level_of[at]));
         if let Some(ks) = strata_kept.as_deref_mut() {
-            let (done, still): (Vector<usize>, Vector<usize>) = std::mem::take(&mut evaluated).into_iter().partition(|k| !waiting.iter().any(|w| w.0 == *k));
+            let (done, still): (Vector<usize>, Vector<usize>) = std::mem::take(&mut evaluated).into_iter().partition(|k| !waiting.iter().any(|w| w.0 == *k) && !asked.iter().any(|a| a.at == *k));
             evaluated = still;
             for k in done {
                 let reads = with_answers(f0, db, &sccs[k], stratum_read_digests.remove(&k).flatten(), run.answer_logs.remove(&k));
@@ -7803,28 +7872,41 @@ fn run_within(program: &body::Placed, db: &Connection, inputs: Inputs, lowering:
         // A produced relation above its request (decision 0065 §2a): its request is whole, so it is answered once, or
         // holds what a component's pauses answered. An input's rows are the caller's to write.
         if scc.iter().all(|r| f0.produced(r)) {
+            // Every produced relation whose request is made (its stratum before this one) and not answered, this
+            // stratum's and those above, asked together: posted, then waited for once, so their requests reach the
+            // runner before it answers any (a callable's: one call into each file for them all,
+            // `calls::Calls::answer_all`). Where requests are posted (`Run::asking`).
+            if run.asking.is_some() {
+                let ready: Vec<String> = sccs
+                    .iter()
+                    .skip(at)
+                    .filter(|s| s.iter().all(|r| f0.produced(r)))
+                    .flat_map(|s| s.iter())
+                    .filter(|r| !run.answered.contains_key(*r))
+                    .filter(|r| f0.request_of(r).and_then(|q| stratum_of.get(q)).is_some_and(|&j| j < at))
+                    .map(str::to_owned)
+                    .collect();
+                if !ready.is_empty() {
+                    let mut asks: Vec<(String, super::native::component::Asked)> = Vec::new();
+                    for rel in &ready {
+                        let req = f0.request_of(rel).expect("a produced relation's request").to_owned();
+                        let asked = request_asked(&mut run, db, f0, &req)?;
+                        asks.push((req, asked));
+                    }
+                    for (p, rows) in posted_together(&mut run, asks, &mut arrived)? {
+                        run.answered.entry(p).or_default().extend(rows);
+                    }
+                    for rel in &ready {
+                        run.answered.entry(rel.clone()).or_default();
+                    }
+                }
+            }
             for rel in scc {
                 let rows = match run.answered.remove(rel) {
                     Some(rows) => rows,
                     None => {
                         let req = f0.request_of(rel).expect("a produced relation's request").to_owned();
-                        let width = f0.width(&req);
-                        // The request's rows where they are: the engine's (a relation it holds), none (one still to be
-                        // made: no table, no rows), or its table's.
-                        // The engine's relation read where its rows lie (decision 0353 step 8).
-                        let native = run.native_rels.contains(&req).then(|| super::native::component::kept_rel(db, &req)).flatten();
-                        let asked = if let Some(rel) = native.filter(|_| width > 0) {
-                            super::native::component::Asked::of_rel(&rel)
-                        } else if run.pending.contains_key(&req) && !run.native_rels.contains(&req) {
-                            super::native::component::Asked::default()
-                        } else {
-                            run.materialize(std::slice::from_ref(&req))?;
-                            let cols = (0..width).map(|c| format!("c{c}")).collect::<Vec<_>>().join(", ");
-                            // SQL's rows (a relation the engine does not hold).
-                            super::native::component::Asked::rows(db.prepare(&format!("SELECT {cols} FROM {}", crate::code_rule_dsl::logic::sql::ident(&req)))?
-                                .query_map([], |r| (0..width).map(|c| r.get::<_, i64>(c)).collect::<rusqlite::Result<Vector<_>>>())?
-                                .collect::<rusqlite::Result<_>>()?)
-                        };
+                        let asked = request_asked(&mut run, db, f0, &req)?;
                         let answer = run.answer.as_deref_mut().ok_or_else(|| Error::Plan(format!("{req}: a request, and no one to answer it")))?;
                         let mut mine = Vec::new();
                         for (p, got) in answer_complete(answer, &req, asked)? {
@@ -8728,7 +8810,8 @@ fn take_answers<'a>(
         run_counts().ask_suspended.fetch_add(a.since.elapsed().as_nanos() as u64, std::sync::atomic::Ordering::Relaxed);
         let given: Vec<(String, Vec<Vector<i64>>)> = a.tickets.iter().flat_map(|t| arrived.remove(t).unwrap_or_default()).collect();
         let _stratum = super::profile::span(|| format!("stratum {} (after its answers)", if a.key.len() > 80 { format!("{}…", &a.key[..80]) } else { a.key.clone() }));
-        add_answers(&run.db, &mut run.answered, None, &a.d.name, &a.d.scc, given)?;
+        let log = run.logs_posted.then(|| run.answer_logs.entry(a.at).or_default());
+        add_answers(&run.db, &mut run.answered, log, &a.d.name, &a.d.scc, given)?;
         match run.native_resume(a.d)? {
             Native::Ran => {
                 outcome.native.insert(a.key);

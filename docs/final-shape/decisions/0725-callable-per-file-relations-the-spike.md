@@ -214,3 +214,20 @@ own time (requests answered inside the fixpoint 0.57 s, an input's frames 0.49 s
 cross part 0.16 s), about 250 µs a request answered; joins 1.2 s more. Each file still makes the callee's memo entry
 (`pt_vopen_l_8_at`) whole. Tests: `callable_tests` (a routed call, under demand, and a router's table of the files
 exported).
+
+**Calls in bulk: every callable's requests, one call into each file.** The callees are lowered together, one program
+(`Split::program`: every callable's rules, every request an input, the union of what they read in a file), and the
+runner answers a list of requests at once (`Calls::answer_all`): their new keys grouped by the file holding them, each
+file entered once, every request bound in it (the ones with no key there empty), one run of the program, each
+request given the rows its keys select. The cone thread holds a callable's posted requests, not answering each as it
+comes: when the run is about to wait (`Asks::waits`, a marker posted once after posts, before the run blocks), every
+held request is answered in the one call, and each ticket gets its rows. The run posts its requests, so they
+accumulate, in both its loops: the scoreboard's, and the serial loop of a run whose strata are kept across runs
+(decision 0077 §4), which had waited for each; there a stratum still asking is not taken as evaluated until it has
+resumed, and its posted answers are logged with its stratum's reads (`Run::logs_posted`). A produced relation's
+stratum (decision 0065 §2a) posts, with its own request, the requests of every produced relation whose request is
+made and not yet answered, and waits once for them all (`posted_together`). Two callables, each routed, asked in one
+program (`callable_tests::two_callables_asked_together_are_answered_in_one_call`): 1 batch, 24 requests, 2 files
+entered (2 batches, 4 files entered before), the findings and both readers' rows the whole program's. PostHog's 291
+files, get-handler-writes (one callable): 1 batch, 2,260 requests to 163 files, 3 holders entered, 1,193 answer rows,
+the same 5 findings. Tests: `rerail-tests-rr` (298 passed), `calls::tests`, `answers::tests`, `complete_answer_tests`.

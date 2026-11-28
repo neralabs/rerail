@@ -129,6 +129,29 @@ fn a_call_routed_by_its_key_is_answered_in_the_file_the_key_names() {
     assert_eq!(called, [["run", "f0", "f2", "x"], ["run", "f2", "f0", "x"]]);
 }
 
+/// Two callables asked before the caller waits are answered in one call (`Calls::answer_all`): one batch, each
+/// holder entered once for both, and each reader's answers those of its relation made whole.
+#[test]
+fn two_callables_asked_together_are_answered_in_one_call() {
+    let files = [("a.py", A), ("b.py", B), ("c.py", C)];
+    let second = ".decl qtouched(q: symbol, v: symbol)\n.callable qtouched bf by qhome\nqtouched(q, v) :- qtouch(_, q, v).\n\
+        .decl touch_any(b: symbol, f: symbol, v: symbol)\ntouch_any(b, f, v) :- runs_in(b, d, f), qf = cat(to_string(d), \":\", f), qtouched(qf, v).\n.output touch_any\n";
+    let program = format!("{ROUTED}{second}");
+    let dir = corpus("callable-together", &files);
+    let prof = dir.join("prof");
+    crate::code_rule_dsl::logic::profile::set(true);
+    crate::code_rule_dsl::logic::profile::set_directory(&prof);
+    let called = findings(&program, &dir);
+    let touched = crate::code_rule_dsl::logic::plan::output::shown(&dir.join("out"), "touch_any").unwrap();
+    let calls = decided(&prof, &["callable relations' calls"]);
+    assert!(calls.iter().any(|l| l.contains(": 1 batches") && !l.contains("batches, 0 requests")), "{calls:?}");
+    let whole = program.replace(".callable qsame bbf by qhome\n", "").replace(".callable qtouched bf by qhome\n", "");
+    let made_dir = corpus("callable-together-whole", &files);
+    assert_eq!(called, findings(&whole, &made_dir));
+    assert_eq!(touched, crate::code_rule_dsl::logic::plan::output::shown(&made_dir.join("out"), "touch_any").unwrap());
+    assert!(!touched.is_empty());
+}
+
 /// Demand (`.pragma "magic-transform"`) keeps a callable's router: no output reads it, only the request the callable
 /// split writes after demand, so demand roots it as an output, free. Left out, it dropped the router's rules and the
 /// request read an empty router: no call, and `qsame` empty.

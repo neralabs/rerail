@@ -3032,17 +3032,13 @@ fn run_observed_within(
     // among their own reads. An entry holds their rows, so a later round's partial hit derives the asks' rules alone.
     // Callable relations (the spike): their callees, from the prepared program's source (the prepared program is the
     // caller alone, as the store keeps it), lowered as the run's program is.
-    let callees: Vec<preparation::callable::Callee> = match preparation::callable::split(source).map_err(|e| Error::Plan(format!("the prepared program's callees: {e}")))? {
-        None => Vec::new(),
-        Some(s) => s
-            .callees
-            .into_iter()
-            .map(|mut c| -> Result<preparation::callable::Callee> {
-                let (v, _, _) = lower::lower_version(c.program.clone(), dialect, &mut |s| Ok(store.intern_atoms(s).map_err(|e| Error::Plan(e.to_string()))?.into_iter().collect()))?;
-                c.program = v;
-                Ok(c)
-            })
-            .collect::<Result<_>>()?,
+    // Every callee's rules are one program (`Split::program`), lowered once.
+    let (callees, callee_program): (Vec<preparation::callable::Callee>, Option<Arc<crate::code_rule_dsl::logic::program_image::Version>>) = match preparation::callable::split(source).map_err(|e| Error::Plan(format!("the prepared program's callees: {e}")))? {
+        None => (Vec::new(), None),
+        Some(s) => {
+            let (v, _, _) = lower::lower_version(s.program.clone(), dialect, &mut |s| Ok(store.intern_atoms(s).map_err(|e| Error::Plan(e.to_string()))?.into_iter().collect()))?;
+            (s.callees, Some(v))
+        }
     };
     // What the callees read of a file: held to the cross part's end, each chunk's where its engine made it (`calls::Held`),
     // and in the entries as an asked phase's held relations are (decision 0705), for a file the memo gives.
@@ -6835,7 +6831,8 @@ fn run_observed_within(
             false => {
                 let at = db.path().ok_or_else(|| Error::Plan("callable relations: the run's store has no path".to_owned()))?;
                 let conn = rusqlite::Connection::open(at).map_err(|e| Error::Plan(format!("callable relations: {e}")))?;
-                Some(calls::Calls::new(&callees, lowered.ops, dialect, conn, &modes)?)
+                let program = callee_program.as_ref().ok_or_else(|| Error::Plan("callable relations: the callees have no program".to_owned()))?;
+                Some(calls::Calls::new(&callees, program, lowered.ops, dialect, conn, &modes)?)
             }
         };
         let modes = modes.to_owned();
@@ -6885,7 +6882,7 @@ fn run_observed_within(
             // O-cone-kept-plans).
             let _whole = cone_kept.is_some().then(super::demand::whole_relations);
             // Requests go to the main thread with a ticket, and their answers come back with it (decision 0114 §3).
-            let asks = std::cell::RefCell::new(Asks { tx: ask_tx, rx: reply_rx, next: 0, early: BTreeMap::new(), posted: HashMap::new(), recorded: None });
+            let asks = std::cell::RefCell::new(Asks { tx: ask_tx, rx: reply_rx, next: 0, early: BTreeMap::new(), posted: HashMap::new(), recorded: None, unsaid: false });
             // A request answered in place (the rounds, a stratum needed at once): it waits for its own ticket.
             let mut answer = |rel: &str, rows: &crate::code_rule_dsl::logic::native::component::Asked| -> Result<Vec<(String, Vec<Vector<i64>>)>> { asks.borrow_mut().ask(rel, rows) };
             // The rounds from the last run's final round, kept in the store.
@@ -7099,13 +7096,6 @@ fn run_observed_within(
         let mut payloads = git_content::Reader::default();
         let mut answer_one = |rel: &str, rows: &crate::code_rule_dsl::logic::native::component::Asked, process: &mut dyn FnMut(Step) -> Result<Option<(Task, Ctx)>>| -> Result<Vec<(String, Vec<Vector<i64>>)>> {
             pauses += 1;
-            if let Some(c) = calls.as_mut().filter(|c| c.answers(rel)) {
-                let held = call_held.borrow();
-                if let Some(at) = held.unheld_of(rows) {
-                    return Err(Error::Plan(format!("{rel}: a call into document {}, a partial memo hit (decision 0225 §2), whose rows are not held for calls", memo::document_of(at))));
-                }
-                return c.answer(rel, rows, &*held);
-            }
             let t_call = std::time::Instant::now();
             let _counted = Finally(|| {
                 let mut t = times.borrow_mut();
@@ -7423,6 +7413,7 @@ fn run_observed_within(
             Ok(out)
         };
         let mut idle = 0.0;
+        let mut held_calls: Vec<(u64, String, crate::code_rule_dsl::logic::native::component::Asked)> = Vec::new();
         while let Some((ticket, rel, rows)) = {
             let t = std::time::Instant::now();
             let got = cone.wait_for("the main thread: the cone's requests", || match ask_rx.try_recv() {
@@ -7439,15 +7430,42 @@ fn run_observed_within(
                     rows.clear();
                 }
             }
-            let reply = answer_one(&rel, &rows, &mut process).map_err(|e| e.to_string());
-            if let Ok(given) = &reply {
-                for (r, rows) in given {
-                    if let Some(kept) = answered.get_mut(r) {
-                        kept.extend(rows.iter().cloned());
+            // Callables' requests are held until the cone waits, then answered together (`Calls::answer_all`): one
+            // entry of each holder for every callable's requests of its files.
+            let replies: Vec<(u64, std::result::Result<Vec<(String, Vec<Vector<i64>>)>, String>)> = if rel == CONE_WAITS {
+                if held_calls.is_empty() {
+                    continue;
+                }
+                let held = std::mem::take(&mut held_calls);
+                let c = calls.as_mut().expect("a callable's request held");
+                let state = call_held.borrow();
+                let unheld = held.iter().find_map(|(_, r, rows)| state.unheld_of(rows).map(|at| (r.clone(), at)));
+                let given = match unheld {
+                    Some((r, at)) => Err(format!("{r}: a call into document {}, a partial memo hit (decision 0225 §2), whose rows are not held for calls", memo::document_of(at))),
+                    None => c.answer_all(&held.iter().map(|(_, r, rows)| (r.as_str(), rows)).collect::<Vec<_>>(), &*state).map_err(|e| e.to_string()),
+                };
+                match given {
+                    Ok(given) => held.iter().map(|(t, _, _)| *t).zip(given.into_iter().map(Ok)).collect(),
+                    Err(e) => held.iter().map(|(t, _, _)| (*t, Err(e.clone()))).collect(),
+                }
+            } else if calls.as_ref().is_some_and(|c| c.answers(&rel)) {
+                held_calls.push((ticket, rel, rows));
+                continue;
+            } else {
+                vec![(ticket, answer_one(&rel, &rows, &mut process).map_err(|e| e.to_string()))]
+            };
+            let mut closed = false;
+            for (ticket, reply) in replies {
+                if let Ok(given) = &reply {
+                    for (r, rows) in given {
+                        if let Some(kept) = answered.get_mut(r) {
+                            kept.extend(rows.iter().cloned());
+                        }
                     }
                 }
+                closed |= reply_tx.send((ticket, reply)).is_err();
             }
-            if reply_tx.send((ticket, reply)).is_err() {
+            if closed {
                 break;
             }
         }
@@ -11863,7 +11881,13 @@ struct Asks {
     /// Each ticket's request, until its answer comes.
     posted: HashMap<u64, (String, crate::code_rule_dsl::logic::native::component::Asked)>,
     recorded: Option<cone_rounds::Answers>,
+    /// Requests posted since the cone last said it waits (`waits`).
+    unsaid: bool,
 }
+
+/// The request channel's mark that the cone waits for an answer (no relation is named ""): the requests the answering
+/// thread holds for it (callables', `calls::Calls::answer_all`) are answered then, together.
+const CONE_WAITS: &str = "";
 
 impl Asks {
     fn post(&mut self, rel: &str, rows: &crate::code_rule_dsl::logic::native::component::Asked) -> Result<u64> {
@@ -11872,7 +11896,16 @@ impl Asks {
         // A handle on the request's rows where they lie (`Asked`), not the rows.
         self.tx.send((ticket, rel.to_owned(), rows.clone())).map_err(|_| Error::Plan("the request channel closed".to_owned()))?;
         self.posted.insert(ticket, (rel.to_owned(), rows.clone()));
+        self.unsaid = true;
         Ok(ticket)
+    }
+
+    /// Says the cone waits (`CONE_WAITS`), once after the requests it posted since it last did.
+    fn waits(&mut self) -> Result<()> {
+        if std::mem::take(&mut self.unsaid) {
+            self.tx.send((u64::MAX, CONE_WAITS.to_owned(), crate::code_rule_dsl::logic::native::component::Asked::rows(Vec::new()))).map_err(|_| Error::Plan("the request channel closed".to_owned()))?;
+        }
+        Ok(())
     }
 
     /// An answer come: recorded, and kept until taken.
@@ -11888,6 +11921,7 @@ impl Asks {
     /// What has come, waiting up to `wait` for the first answer when none has.
     fn poll(&mut self, wait: std::time::Duration) -> Result<()> {
         if self.early.is_empty() && !wait.is_zero() {
+            self.waits()?;
             match self.rx.recv_timeout(wait) {
                 Ok((t, r)) => self.came(t, r)?,
                 Err(std::sync::mpsc::RecvTimeoutError::Timeout) => {
@@ -11909,6 +11943,7 @@ impl Asks {
     /// A request answered in place: posted, then its own answer waited for (the others come are kept).
     fn ask(&mut self, rel: &str, rows: &crate::code_rule_dsl::logic::native::component::Asked) -> Result<Vec<(String, Vec<Vector<i64>>)>> {
         let ticket = self.post(rel, rows)?;
+        self.waits()?;
         loop {
             if let Some(given) = self.early.remove(&ticket) {
                 return Ok(given);

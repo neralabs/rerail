@@ -157,8 +157,6 @@ pub fn routed(v: &Version, rel: &str) -> bool {
 #[derive(Clone)]
 pub struct Callee {
     pub callable: Callable,
-    /// R's rules, each reading the request first; its inputs the request and `reads`, its output R.
-    pub program: Arc<Version>,
     /// The relations R's rules read, besides stated facts: the file's state a call reads.
     pub reads: Vec<String>,
 }
@@ -168,6 +166,11 @@ pub struct Callee {
 pub struct Split {
     pub caller: Arc<Version>,
     pub callees: Vec<Callee>,
+    /// Every callee's rules in one program, each reading its request first: its inputs every request and the
+    /// relations any callee reads, its outputs every callable relation. A file entered once answers every callable's
+    /// requests of it at once (one program run over its rows); a callable asked nothing has an empty request and
+    /// makes nothing.
+    pub program: Arc<Version>,
 }
 
 /// The relations each relation's rules read.
@@ -396,8 +399,10 @@ pub fn split(v: &Arc<Version>) -> Result<Option<Split>, String> {
     let derived: BTreeSet<&str> = v.rules().map(|r| v.rel_name(r.head().rel())).collect();
     let inputs: BTreeSet<String> = v.inputs().map(|a| v.text(a).to_owned()).collect();
 
-    // The callees, checked first: what a call reads stands while it answers.
+    // The callees, checked first: what a call reads stands while it answers. Their rules, in one program.
     let mut callees = Vec::new();
+    let mut b = Builder::derive(v);
+    let mut state_all: Vec<String> = Vec::new();
     for c in &callables {
         let own = reads.get(&c.rel).cloned().unwrap_or_default();
         if let Some(other) = own.iter().find(|r| by_name.contains_key(r.as_str())) {
@@ -407,7 +412,6 @@ pub fn split(v: &Arc<Version>) -> Result<Option<Split>, String> {
             return Err(format!("`.callable {} {}`: its rules read {made}, which is made from calls' answers: a call reads its file's relations as they stand", c.rel, c.pattern()));
         }
         let state: Vec<String> = own.iter().filter(|r| derived.contains(r.as_str()) || inputs.contains(*r)).cloned().collect();
-        let mut b = Builder::derive(v);
         for r in v.rules().filter(|r| v.rel_name(r.head().rel()) == c.rel) {
             let head: Vec<TermRef<'_>> = r.head().args().collect();
             let key: Vec<T<'_>> = c.by.iter().map(|_| T::Wild).chain(c.bound.iter().map(|&k| t_of(r, head[k]))).collect();
@@ -419,13 +423,18 @@ pub fn split(v: &Arc<Version>) -> Result<Option<Split>, String> {
         }
         let rc = request_cols(v, c);
         b.fields().declare(&c.request, &rc.iter().map(|(n, t)| (n.as_str(), t.as_str())).collect::<Vec<_>>());
-        let callee_inputs: Vec<String> = std::iter::once(c.request.clone()).chain(state.iter().cloned()).collect();
-        b.fields().set_inputs(&callee_inputs);
-        b.fields().set_outputs(std::slice::from_ref(&c.rel));
-        b.fields().set_field(Field::Answers(&BTreeMap::new()));
-        let (program, _) = b.finish()?;
-        callees.push(Callee { callable: c.clone(), program, reads: state });
+        for r in &state {
+            if !state_all.contains(r) {
+                state_all.push(r.clone());
+            }
+        }
+        callees.push(Callee { callable: c.clone(), reads: state });
     }
+    let callee_inputs: Vec<String> = callables.iter().map(|c| c.request.clone()).chain(state_all.iter().cloned()).collect();
+    b.fields().set_inputs(&callee_inputs);
+    b.fields().set_outputs(&callables.iter().map(|c| c.rel.clone()).collect::<Vec<_>>());
+    b.fields().set_field(Field::Answers(&BTreeMap::new()));
+    let (program, _) = b.finish()?;
 
     // The caller: R's rules gone, each read of R asking for it.
     let mut b = Builder::derive(v);
@@ -494,5 +503,5 @@ pub fn split(v: &Arc<Version>) -> Result<Option<Split>, String> {
     }
     b.fields().set_field(Field::Answers(&answers));
     let (caller, _) = b.finish()?;
-    Ok(Some(Split { caller, callees }))
+    Ok(Some(Split { caller, callees, program }))
 }
