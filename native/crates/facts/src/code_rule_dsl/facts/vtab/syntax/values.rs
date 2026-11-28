@@ -287,6 +287,28 @@ struct Parts {
     sliced: bool,
 }
 
+/// What a column's values name, which the parts holding a value are found by (`Parts::of`).
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+enum Keyed {
+    /// Node ids: a node's document's key is its page's.
+    Nodes,
+    /// Document keys.
+    Documents,
+    /// Neither: any part may hold the value.
+    Values,
+}
+
+/// How `src`'s column `column` keys its rows' documents.
+fn keyed(src: &dyn Source, column: usize) -> Keyed {
+    if src.keys_documents(column) {
+        Keyed::Documents
+    } else if src.keys_nodes(column) {
+        Keyed::Nodes
+    } else {
+        Keyed::Values
+    }
+}
+
 impl Parts {
     /// The part holding row `row` of the parts.
     /// The key of node `v`'s document, by its page in the chunk's numbering; `None` for a value that is no node.
@@ -298,12 +320,19 @@ impl Parts {
         let p = &self.list[i];
         (row < p.start + p.src.len()).then(|| (p, row - p.start))
     }
-    /// The parts that may hold rows whose value is `v`: those that hold node ids of `v`'s key, and those whose rows
-    /// name node `v` of a document not theirs (`hosted`); where the column's values are document keys (`docs`), those
-    /// of the document `v` (a part is found by its documents' keys and their files', `Values::add`): no part is read
-    /// for a key it does not hold. Every part for a value no key names (an atom, a number).
-    fn of(&self, v: i64, docs: bool, each: &mut dyn FnMut(&Part)) {
-        let key = if docs { u32::try_from(v).ok() } else { self.key_of(v) };
+    /// The parts that may hold rows whose value is `v`, as the column keys them (`Keyed`): of a node column, those that
+    /// hold node ids of `v`'s key, and those whose rows name node `v` of a document not theirs (`hosted`); of a column
+    /// of document keys, those of the document `v` (a part is found by its documents' keys and their files',
+    /// `Values::add`): no part is read for a key it does not hold. Every part for a value no key names (an atom, a
+    /// number), and for every value of a column of neither (a kind, a field, a text: a kind's code read as a node id named
+    /// the host's document, and the guest's identifiers were never read).
+    fn of(&self, v: i64, keyed: Keyed, each: &mut dyn FnMut(&Part)) {
+        let docs = keyed == Keyed::Documents;
+        let key = match keyed {
+            Keyed::Documents => u32::try_from(v).ok(),
+            Keyed::Nodes => self.key_of(v),
+            Keyed::Values => None,
+        };
         let Some(key) = key else {
             if !docs {
                 self.list.iter().for_each(each);
@@ -912,7 +941,7 @@ impl Source for Layered {
             self.scanned(|s| values.iter().for_each(|&v| s.holding(at, column, v).for_each(&mut *each)));
             return true;
         }
-        let docs = self.base.keys_documents(column);
+        let docs = keyed(self.base.as_ref(), column);
         self.parts(|p| {
             for &v in values {
                 p.of(v, docs, &mut |part| {
@@ -939,7 +968,7 @@ impl Source for Layered {
         }
         let base = self.base.lookup_seq(column, value)?;
         let mut more = rerail_blocks::vector::Vector::new();
-        let docs = self.base.keys_documents(column);
+        let docs = keyed(self.base.as_ref(), column);
         self.parts(|p| {
             p.of(value, docs, &mut |part| {
                 let at = self.base_len() + part.start;
@@ -990,7 +1019,7 @@ impl Source for Layered {
         if p.list.is_empty() {
             return true;
         }
-        let (base, docs) = (self.base_len(), self.base.keys_documents(column));
+        let (base, docs) = (self.base_len(), keyed(self.base.as_ref(), column));
         let mut row = [0i64; 8];
         let row = &mut row[..columns.len()];
         {
@@ -1025,7 +1054,7 @@ impl Source for Layered {
         }
         // Each part that may hold the value, read as `lookup_read_at` reads it (a value's rows are few).
         let mut found = false;
-        p.of(value, self.base.keys_documents(column), &mut |part| {
+        p.of(value, keyed(self.base.as_ref(), column), &mut |part| {
             if found {
                 return;
             }
@@ -1039,6 +1068,9 @@ impl Source for Layered {
     }
     fn keys_documents(&self, column: usize) -> bool {
         self.base.keys_documents(column)
+    }
+    fn keys_nodes(&self, column: usize) -> bool {
+        self.base.keys_nodes(column)
     }
     fn rows_of_own_documents(&self) -> bool {
         self.base.rows_of_own_documents()
@@ -1111,7 +1143,7 @@ impl Source for Layered {
         }
         let &(_, v) = equal.iter().min_by_key(|e| e.0)?;
         let mut held = Some(false);
-        let docs = self.base.keys_documents(equal.iter().min_by_key(|e| e.0)?.0);
+        let docs = keyed(self.base.as_ref(), equal.iter().min_by_key(|e| e.0)?.0);
         self.parts(|p| {
             p.of(v, docs, &mut |part| {
                 held = match (held, part.src.holds(equal)) {
@@ -1362,27 +1394,44 @@ mod tests {
         }
     }
 
+    /// The chunk's numbering of documents `keys`, as a growth numbers them (plan "Chunk node numbers"): each one's ids
+    /// taken, and set as the values' numbering. The id of a document's local id.
+    fn numbered(values: &Values, keys: impl IntoIterator<Item = u32>) -> impl Fn(u32, u32) -> i64 {
+        let block = Arc::new(rerail_blocks::Block::anon(rerail_blocks::block::kind::FACTS, 64 << 20));
+        let ids = Arc::new(super::super::made::Ids::new(&block));
+        for k in keys {
+            ids.base(&ids.numbered(k), || 16).expect("a document's ids");
+        }
+        assert!(values.ids.set(Arc::clone(&ids)).is_ok(), "the values' first numbering");
+        move |key, local| i64::from(ids.numbered_if(key).and_then(|d| d.id_of(local)).expect("a numbered document's id"))
+    }
+
     /// A part is found by the host nodes its rows name, not by its host's document: a probe of another node of that
     /// document asks no part (t50: every `text` probe of a file with parsed strings asked all of them).
     #[test]
     fn a_hosts_node_finds_only_the_parts_that_name_it() {
         let values = Values::default();
-        let (host, a, b) = (5i64 << 32, 10i64 << 32, 11i64 << 32);
+        let id = numbered(&values, [5, 10, 11]);
+        let (host, a, b) = (|l| id(5, l), |l| id(10, l), |l| id(11, l));
         let rel = |rows: Vec<Vec<i64>>| Arc::new(super::super::Relation::from_rows(&["n", "s"], &mut rows.into_iter().map(|r| r.into_iter().collect()))) as Arc<dyn Source>;
-        values.add(&[10], &[5], vec![("guest_of".to_owned(), rel(vec![vec![a | 1, host | 7], vec![a | 2, host | 7]]))]);
-        values.add(&[11], &[5], vec![("guest_of".to_owned(), rel(vec![vec![b | 1, host | 9]]))]);
+        values.add(&[10], &[5], vec![("guest_of".to_owned(), rel(vec![vec![a(1), host(7)], vec![a(2), host(7)]]))]);
+        values.add(&[11], &[5], vec![("guest_of".to_owned(), rel(vec![vec![b(1), host(9)]]))]);
         let parts = values.parts.load().get("guest_of").cloned().expect("guest_of's parts");
         let asked = |v: i64| {
             let mut starts = Vec::new();
-            parts.of(v, false, &mut |p: &Part| starts.push(p.start));
+            parts.of(v, Keyed::Nodes, &mut |p: &Part| starts.push(p.start));
             starts
         };
-        assert_eq!(asked(host | 7), vec![0], "the string its first part names");
-        assert_eq!(asked(host | 9), vec![2], "the string its second part names");
-        assert!(asked(host | 8).is_empty(), "a host node no part names");
-        assert_eq!(asked(a | 2), vec![0], "a value's own node");
-        assert_eq!(asked(b | 1), vec![2]);
-        assert!(values.source_of("guest_of", host | 8).is_none(), "a host's node is the batch's, not a value's");
+        assert_eq!(asked(host(7)), vec![0], "the string its first part names");
+        assert_eq!(asked(host(9)), vec![2], "the string its second part names");
+        assert!(asked(host(8)).is_empty(), "a host node no part names");
+        assert_eq!(asked(a(2)), vec![0], "a value's own node");
+        assert_eq!(asked(b(1)), vec![2]);
+        assert!(values.source_of("guest_of", host(8)).is_none(), "a host's node is the batch's, not a value's");
+        // A column of no node (a kind, a text) asks every part: its value names no document.
+        let mut every = Vec::new();
+        parts.of(host(7), Keyed::Values, &mut |p: &Part| every.push(p.start));
+        assert_eq!(every, vec![0, 2], "a value of a column of no node is in any part");
     }
 
     /// A layered source's read in place with parts is its lookup's rows with their values: the base's, then each part's
@@ -1390,12 +1439,13 @@ mod tests {
     #[test]
     fn a_layered_read_in_place_is_its_lookups_rows() {
         let values = Arc::new(Values::default());
-        let (host, a) = (5i64 << 32, 10i64 << 32);
+        let id = numbered(&values, [5, 10]);
+        let (host, a) = (|l| id(5, l), |l| id(10, l));
         let rel = |rows: Vec<Vec<i64>>| Arc::new(super::super::Relation::from_rows(&["n", "s"], &mut rows.into_iter().map(|r| r.into_iter().collect()))) as Arc<dyn Source>;
-        let base = rel(vec![vec![host | 1, 3], vec![host | 7, 4], vec![host | 7, 5]]);
-        values.add(&[10], &[5], vec![("r".to_owned(), rel(vec![vec![a | 1, host | 7], vec![host | 7, 6]]))]);
+        let base = rel(vec![vec![host(1), 3], vec![host(7), 4], vec![host(7), 5]]);
+        values.add(&[10], &[5], vec![("r".to_owned(), rel(vec![vec![a(1), host(7)], vec![host(7), 6]]))]);
         let layered = Layered::new("r", base, Arc::clone(&values));
-        for (column, v) in [(0, host | 7), (0, a | 1), (1, host | 7), (0, host | 1), (0, host | 9), (1, 4)] {
+        for (column, v) in [(0, host(7)), (0, a(1)), (1, host(7)), (0, host(1)), (0, host(9)), (1, 4)] {
             let mut read = Vec::new();
             assert!(layered.lookup_read(column, v, &[0, 1], &mut |r, row| read.push((r, row.to_vec()))), "read in place");
             let mut want: Vec<(usize, Vec<i64>)> = layered.lookup(column, &[v]).expect("a lookup").into_iter().map(|r| (r, vec![layered.value(r, 0), layered.value(r, 1)])).collect();
@@ -1412,6 +1462,7 @@ mod tests {
     #[test]
     fn an_add_copies_no_part_or_key_and_a_snapshot_reads_its_own() {
         let values = Values::default();
+        let id = numbered(&values, 1..=201);
         let part = || vec![("r".to_owned(), Arc::new(Counted(AtomicUsize::new(0), false)) as Arc<dyn Source>)];
         for k in 1..=200u32 {
             values.add(&[k], &[], part());
@@ -1429,7 +1480,7 @@ mod tests {
         // Each value's rows are found by its key, and each row in its part.
         assert_eq!(after.list.len(), 201);
         for k in 1..=201u32 {
-            assert!(values.source_of("r", i64::from(k) << 32).is_some(), "value {k}'s source");
+            assert!(values.source_of("r", id(k, 0)).is_some(), "value {k}'s source");
         }
         let (p, row) = after.at(3 * 150 + 1).expect("row 451's part");
         assert_eq!((p.start, row), (450, 1));
@@ -1483,12 +1534,12 @@ mod tests {
     /// a chunk read every probe's rows a point read each.
     #[test]
     fn a_layered_probe_read_as_found_is_its_lookup_and_rows() {
-        let id = |d: i64, l: i64| d << 32 | l;
-        let base = Arc::new(Table { rows: vec![[id(1, 0), 1], [id(1, 1), 1], [id(2, 0), 2], [7, 2]], read: true }) as Arc<dyn Source>;
         let values = Arc::new(Values::default());
+        let id = numbered(&values, [1, 2, 10, 11, 12, 99]);
+        let base = Arc::new(Table { rows: vec![[id(1, 0), 1], [id(1, 1), 1], [id(2, 0), 2], [7, 2]], read: true }) as Arc<dyn Source>;
         for (k, read) in [(10u32, true), (11, false), (12, true)] {
             let k64 = i64::from(k);
-            let part = Arc::new(Table { rows: vec![[id(k64, 0), k64], [id(k64, 1), k64], [7, k64]], read }) as Arc<dyn Source>;
+            let part = Arc::new(Table { rows: vec![[id(k, 0), k64], [id(k, 1), k64], [7, k64]], read }) as Arc<dyn Source>;
             values.add(&[k], &[], vec![("r".to_owned(), part)]);
         }
         let layered = Layered::new("r", base, Arc::clone(&values));
@@ -1557,18 +1608,19 @@ mod tests {
     #[test]
     fn a_values_long_text_nodes_answer_for_its_own_nodes_alone() {
         let values = Values::default();
+        let id = numbered(&values, [1, 7]);
         let nodes = Arc::new(Counted(AtomicUsize::new(0), false)) as Arc<dyn Source>;
         // Another relation's row of the value's node and its host's node 3.
-        let r = Arc::new(super::super::Relation::from_rows(&["n", "s"], &mut [[7i64 << 32 | 1, 1 << 32 | 3]].iter().map(|row| row.iter().copied().collect()))) as Arc<dyn Source>;
+        let r = Arc::new(super::super::Relation::from_rows(&["n", "s"], &mut [[id(7, 1), id(1, 3)]].iter().map(|row| row.iter().copied().collect()))) as Arc<dyn Source>;
         values.add(&[7], &[1], vec![(super::super::LONG_TEXT_NODES.to_owned(), nodes), ("r".to_owned(), r)]);
-        assert!(values.source_of(super::super::LONG_TEXT_NODES, 7 << 32).is_some(), "the value's own node");
-        assert!(values.source_of(super::super::LONG_TEXT_NODES, 1 << 32 | 3).is_none(), "its host's node is the batch's");
+        assert!(values.source_of(super::super::LONG_TEXT_NODES, id(7, 0)).is_some(), "the value's own node");
+        assert!(values.source_of(super::super::LONG_TEXT_NODES, id(1, 3)).is_none(), "its host's node is the batch's");
         // Another relation's too: a host's node is read in the batch. Its rows naming the node are found by a lookup
         // at it (`Parts::of`, `hosted`).
-        assert!(values.source_of("r", 1 << 32 | 3).is_none(), "its host's node is the batch's, for every relation");
+        assert!(values.source_of("r", id(1, 3)).is_none(), "its host's node is the batch's, for every relation");
         let parts = values.parts.load().get("r").cloned().expect("r's parts");
         let mut found = 0;
-        parts.of(1 << 32 | 3, false, &mut |_: &Part| found += 1);
+        parts.of(id(1, 3), Keyed::Nodes, &mut |_: &Part| found += 1);
         assert_eq!(found, 1, "the rows naming its host's node, by a lookup there");
     }
 

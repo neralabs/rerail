@@ -616,6 +616,12 @@ pub trait Source: Send + Sync {
     fn keys_documents(&self, _column: usize) -> bool {
         false
     }
+    /// Whether `column` may hold node ids, whose high bits name their document (an admitted value's rows are found by
+    /// them, `values::Layered`). A source that knows its columns' kinds says which hold none (`node`'s kind, `field`'s
+    /// name, `text`'s atom).
+    fn keys_nodes(&self, _column: usize) -> bool {
+        true
+    }
     /// Whether every row is of the source's own documents: each node id it holds, and each document key, one of
     /// theirs (a view of a batch's tapes), never a host's that a place names. An admitted value's part of such a
     /// relation is found by its own documents' keys alone (`values::Values::add`).

@@ -556,7 +556,7 @@ mixed(v) :- fstr(_, v), v != "#n0".
 up(n) :- imports(n, m, x), exported(m, x), fstr(n, v), mixed(v).
 .output up
 "##;
-    let staging = FileLocal::staging(&branded(read(text)), &Default::default()).unwrap();
+    let staging = FileLocal::staging(&branded(read(text)), &Default::default(), &Default::default()).unwrap();
     let split = &staging.split;
     assert_eq!(staging.staged, ["exported".to_owned(), "first".to_owned()].into_iter().collect(), "causes: {:?}", split.causes);
     assert!(split.local.contains("uses") && split.local.contains("at_first"), "{:?}", split.causes);
@@ -622,7 +622,7 @@ here(c) :- strs(c, v), vok(v).
         "{}{}{}",
         ".decl node(d: number, n: node, kind: symbol, start: number, end: number)\n.decl text(n: node, s: symbol)\n.input node, text\n",
         rules,
-        "strs(c, v) :- node(_, c, \"#k20\", _, _), text(c, v).\n.decl far(c: node, k: node) cross_file\nfar(c, k) :- strs(c, v), vok(v), node(_, k, \"#k21\", _, _), text(k, v).\n"
+        "strs(c, v) :- node(_, c, \"#k20\", _, _), text(c, v).\n.decl kv(v: symbol)\nkv(v) :- node(_, k, \"#k21\", _, _), text(k, v).\n.decl far(v: symbol) cross_file\nfar(v) :- vok(v), kv(v).\n"
     );
     let moved_by_locate = |v: &Version| -> Vec<String> { ProgramFields::qualifiers(v).into_iter().filter(|(_, w)| w.contains(MOVED_CROSS_FILE)).map(|(r, _)| r).collect() };
 
@@ -634,7 +634,7 @@ here(c) :- strs(c, v), vok(v).
     for rel in ["fval", "vok", "here", "vok_at"] {
         assert!(split.local.contains(rel), "{rel}: {:?} {:?}", split.local, split.causes);
     }
-    let p = refused_for(v, &["far", "strs"]);
+    let p = programs_of(v).unwrap();
     let cross = &p.versions.cross;
     assert!(!cross.rules().any(|r| ["fval", "vok"].contains(&cross.rel_name(r.head().rel()))), "the cross-file part derives none of the family:\n{}", cross.show());
     assert!(rules_of(cross, "far").iter().all(|r| r.body().filter_map(|l| l.atom()).any(|a| cross.rel_name(a.rel()).starts_with("vok_at"))), "far reads the twin:\n{}", cross.show());

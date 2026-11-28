@@ -610,6 +610,9 @@ pub fn is_probe(rel: &str) -> bool {
     rel.starts_with(PROBE)
 }
 
+/// A stage's setting: the program it is cut from loads (`stage`), so the stage is prepared as a loading run is.
+pub const STAGE_OF_LOADING: &str = "stage_of_loading";
+
 /// The prefix of a probe's name (`Staged::probes`).
 pub use crate::code_rule_dsl::logic::plan::phased::PROBE;
 
@@ -639,7 +642,9 @@ pub fn stage(v: &std::sync::Arc<Version>, options: &serde_json::Value) -> Result
     // columns it fixes, which a stage may take (§1).
     let projected = existence_reads(v)?;
     let v = projected.as_ref().unwrap_or(v);
-    let staging = crate::code_rule_dsl::typing::file_local::FileLocal::staging(v, &requests).map_err(Error::Plan)?;
+    // What the run folds before the program (decision 0094 §6): facts by the time any stage runs.
+    let constants = super::constants::foldable_of(v)?;
+    let staging = crate::code_rule_dsl::typing::file_local::FileLocal::staging(v, &requests, &constants).map_err(Error::Plan)?;
     // Why each relation of names is not staged, also when none is: the report's cause for a chain it flags.
     for (rel, cause) in &staging.refused {
         crate::code_rule_dsl::logic::profile::decision("staging", || format!("{rel}: {cause}"));
@@ -671,6 +676,26 @@ pub fn stage(v: &std::sync::Arc<Version>, options: &serde_json::Value) -> Result
         }
         below.extend(todo.iter().cloned());
     }
+    // A guest's answer (`parsed`, `sub_tape`: decision 0055) is asked through a demand no staged rule reads
+    // (`rr_embed_req`, which the lowering derives beside the read): a stage reading one holds the demands' rules too, and
+    // asks for its guests itself, as the program would (decision 0727: a relation of names over a quoted annotation's
+    // code, `rr_pass_quoted_ann_ident`, is staged).
+    let guests_read = v.rules().filter(|r| below.contains(v.rel_name(r.head().rel()))).any(|r| r.reads().any(|a| matches!(v.rel_name(a.rel()), "parsed" | "sub_tape")));
+    if guests_read {
+        let mut todo: Vec<String> = crate::code_rule_dsl::logic::rr::lower::DEMANDS.iter().filter(|d| v.rules().any(|q| v.rel_name(q.head().rel()) == **d)).map(|d| (*d).to_owned()).collect();
+        below.extend(todo.iter().cloned());
+        while let Some(rel) = todo.pop() {
+            for r in v.rules().filter(|r| v.rel_name(r.head().rel()) == rel) {
+                for a in r.reads() {
+                    let x = v.rel_name(a.rel());
+                    if v.rules().any(|q| v.rel_name(q.head().rel()) == x) && below.insert(x.to_owned()) {
+                        todo.push(x.to_owned());
+                    }
+                }
+            }
+        }
+    }
+    let loads = super::world::wanted(&**v, &super::shape::Shape::of(v));
     // Its name: a digest of its rules.
     let name = {
         use sha2::Digest as _;
@@ -705,6 +730,13 @@ pub fn stage(v: &std::sync::Arc<Version>, options: &serde_json::Value) -> Result
         b.fields().retain_settings(&|k| !matches!(k, "phase" | "export" | "rounds"));
         b.fields().add_setting("phase", &name);
         b.fields().add_setting("export", &exports.join(", "));
+        // A stage runs over the program's documents, prepared as the program is: where the program loads, its joins are
+        // neither factorized nor deferred (`corpus::prepare`'s `loading_run`), and the stage's are not either. Prepared
+        // as a run that loads nothing, a stage's per-file joins (`ghw_model_instance` over `dj_model_at`) were cut into
+        // factors and pair caches the cross part met, and nodes crossed (decision 0727).
+        if loads {
+            b.fields().add_setting(STAGE_OF_LOADING, "true");
+        }
         b.finish().map(|(v, _)| v).map_err(Error::Plan)
     }).transpose()?;
     // The program it leaves: no rule makes a staged relation, and each read of one reads the stage's export.
@@ -781,7 +813,10 @@ pub fn stage(v: &std::sync::Arc<Version>, options: &serde_json::Value) -> Result
                     match l.view() {
                         Lit::Atom(a) => a.args().for_each(|t| vars_of(t, &mut bound)),
                         Lit::Nearest { n, a, .. } => bound.extend([n, a]),
-                        Lit::Ast { document, node, .. } => bound.extend([document, node]),
+                        Lit::Ast { document, node, captures, .. } => {
+                            bound.extend([document, node]);
+                            bound.extend(captures.map(|(_, slot)| slot));
+                        }
                         _ => {}
                     }
                 }
@@ -823,14 +858,11 @@ pub fn stage(v: &std::sync::Arc<Version>, options: &serde_json::Value) -> Result
                 if !probed(e) {
                     continue;
                 }
-                // The body without this read: the file-local atoms, and the other exports' reads; and a nearest ancestor
-                // or a matcher, which join the rule's nodes (`nearest(c, f, scope)`): without them, a probe of
-                // `pt_def(f, q), nearest(c, f, scope), kind(c, "call")` joined two documents' nodes.
-                let others: Vec<(usize, _)> = r
-                    .body()
-                    .enumerate()
-                    .filter(|(i, l)| *i != at && matches!(l.view(), Lit::Atom(a) if !a.neg()) || *i != at && matches!(l.view(), Lit::Nearest { .. } | Lit::Ast { .. }))
-                    .collect();
+                // The body without this read: the file-local atoms, and the other exports' reads, with the nearest
+                // ancestors and matchers that tie their nodes (`nearest(c, f, dj_region_stop)` between a def and its
+                // call): without them a probe joined two nodes of no relation, and the split put it in the cross part
+                // (decision 0727).
+                let others: Vec<(usize, _)> = r.body().enumerate().filter(|(i, l)| *i != at && matches!(l.view(), Lit::Atom(a) if !a.neg()) || *i != at && matches!(l.view(), Lit::Nearest { .. } | Lit::Ast { .. })).collect();
                 let bound = bound_by(&mut others.iter().map(|(_, l)| l));
                 let tests = tests_over(&bound);
                 let other_names: Vec<String> = others.iter().map(|(_, l)| match l.view() {
