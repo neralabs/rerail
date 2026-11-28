@@ -3,6 +3,7 @@ import { realpathSync } from "node:fs";
 import { mkdir, mkdtemp, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
+import Database from "better-sqlite3";
 import { afterEach, describe, expect, it } from "vitest";
 import { eq } from "drizzle-orm";
 import { z } from "zod/v4";
@@ -10,7 +11,8 @@ import { SqliteAuditControlStore } from "../../../src/engine/audit/audit-control
 import { SqliteSessionStore } from "../../../src/runtime/index.js";
 import { SqliteAuditStore } from "../../../src/engine/audit/audit-store.js";
 import { omittedFailuresSummary, type AuditFailure } from "../../../src/engine/audit/audit.js";
-import { openRerailDatabase } from "../../../src/engine/storage/database.js";
+import { openRerailDatabase, type RerailDatabase } from "../../../src/engine/storage/database.js";
+import { openRecordWriter } from "../../../src/engine/storage/record-writes.js";
 import { auditSettings } from "../../../src/engine/storage/schema.js";
 import { recordCheckout } from "../../../src/engine/catalog/repository-registry.js";
 import { removeFolder } from "../../support/platform/remove-folder.js";
@@ -78,9 +80,36 @@ describe("audit controls", () => {
     expect(controls.updateWorkspaceSettings(unseen, { steerStrategy: "rewind" })).toEqual({ scope: "ai-output", mode: "steer", steerStrategy: "rewind" });
     expect(controls.getWorkspaceSettings(unseen)).toEqual({ scope: "ai-output", mode: "steer", steerStrategy: "rewind" });
     sessionStore.openSession({ host: "pi", sessionId: "c", cwd: unseen });
-    expect(controls.updateSettings("c", { mode: "log" }).settings).toEqual({ scope: "ai-output", mode: "log", steerStrategy: "rewind" });
+    expect(controls.updateSettings("c", { mode: "log" })).toEqual({ scope: "ai-output", mode: "log", steerStrategy: "rewind" });
     expect(() => controls.updateWorkspaceSettings(unseen, { steerStrategy: "undo" as never })).toThrow();
     controls.close(); sessionStore.close();
+  });
+
+  // The daemon saves `rerail settings` this way (`writtenWhenFree`). Before, each save read the saved settings and wrote
+  // them in a transaction of the store's own, and SQLite fails such a transaction's write at once while another
+  // connection holds the write lock: the record writer's transaction, holding the lock, failed it with "database is locked".
+  it.each([
+    { save: "a session's settings change", act: (controls: SqliteAuditControlStore, database: RerailDatabase): unknown => controls.updateSettings("a", { steerStrategy: "rewind" }, database) },
+    { save: "a checkout's settings change by its folder", act: (controls: SqliteAuditControlStore, database: RerailDatabase, root: string): unknown => controls.updateWorkspaceSettings(root, { steerStrategy: "rewind" }, database) },
+  ])("makes $save in the record writer's transaction once another connection gives the write lock back, over the settings it left", async ({ act }) => {
+    const { root, controls, sessionStore } = await fixture();
+    const holder = new Database(sessionStore.path);
+    const records = openRecordWriter(sessionStore.path);
+    const stop = new AbortController();
+    try {
+      holder.exec("BEGIN IMMEDIATE");
+      holder.prepare("INSERT INTO audit_settings (workspace_root, settings_json, updated_at) VALUES (?, ?, 1)")
+        .run(realpathSync(root), JSON.stringify({ scope: "repository", mode: "log" }));
+      let saved: unknown;
+      const saving = records.writeWhenFree(database => { saved = act(controls, database, root); }, stop.signal);
+      // This thread holds the lock's holder too: a save that waited for the lock here failed before this line ran.
+      holder.exec("COMMIT");
+      expect(await saving).toBe(true);
+      expect(saved).toEqual({ scope: "repository", mode: "log", steerStrategy: "rewind" });
+      expect(controls.getSettings("a").settings).toEqual({ scope: "repository", mode: "log", steerStrategy: "rewind" });
+    } finally {
+      stop.abort(); records.close(); holder.close(); controls.close(); sessionStore.close();
+    }
   });
 
   describe.runIf(process.platform === "win32")("on Windows, settings Rerail 0.1.4 saved under the folder as its session spelt it", () => {

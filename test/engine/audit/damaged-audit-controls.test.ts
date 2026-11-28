@@ -1,10 +1,12 @@
 import { mkdtemp } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { setTimeout as delay } from "node:timers/promises";
 import Database from "better-sqlite3";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { SqliteAuditControlStore } from "../../../src/engine/audit/audit-control.js";
 import { DEFAULT_AUDIT_SETTINGS } from "../../../src/engine/audit/audit-control-schema.js";
+import { openRecordWriter } from "../../../src/engine/storage/record-writes.js";
 import { SqliteSessionStore } from "../../../src/runtime/index.js";
 import { removeFolder } from "../../support/platform/remove-folder.js";
 
@@ -103,7 +105,7 @@ describe("a checkout's saved scan settings whose stored text does not read", () 
     expect(logged()).toContain(`: the scan settings saved for ${read.workspaceRoot} read as the defaults: the settings_json of its `
       + `audit_settings row is not JSON (${parseError(left)}).`);
 
-    expect(controls.updateSettings("a", { mode: "log" }).settings).toEqual({ ...DEFAULT_AUDIT_SETTINGS, mode: "log" });
+    expect(controls.updateSettings("a", { mode: "log" })).toEqual({ ...DEFAULT_AUDIT_SETTINGS, mode: "log" });
     expect(controls.getSettings("a").settings).toEqual({ ...DEFAULT_AUDIT_SETTINGS, mode: "log" });
     expect(logged().match(/rerail: /gu)).toHaveLength(1);
     controls.close();
@@ -146,9 +148,10 @@ describe("a checkout's saved scan settings whose stored text does not read", () 
     }
   }, 20_000);
 
-  // The scan settings save takes the write lock on the caller's thread, where the rule settings save waits for it in the
-  // record writer. Its transaction reads the saved row before it writes, and SQLite answers such a transaction's write
-  // with the lock held at once, with no busy wait: the save fails, and the damaged row still reads as the defaults.
+  // A save given no database, as only tests and the benchmark make, takes the write lock on the store's own connection,
+  // where the daemon's waits for it in the record writer (below). Its transaction reads the saved row before it writes,
+  // and SQLite answers such a transaction's write with the lock held at once, with no busy wait: the save fails, and the
+  // damaged row still reads as the defaults.
   it("stay the defaults when a save over them meets another program's write lock, which fails it at once, and the same save is made once that is given back", async () => {
     const { path, controls } = await fixture();
     controls.updateSettings("a", { mode: "log" });
@@ -162,7 +165,7 @@ describe("a checkout's saved scan settings whose stored text does not read", () 
       expect(client.prepare("SELECT settings_json FROM audit_settings").pluck().get()).toBe(left);
       client.close();
       expect(controls.getSettings("a").settings).toEqual(DEFAULT_AUDIT_SETTINGS);
-      expect(controls.updateSettings("a", { scope: "touched-files" }).settings).toEqual({ ...DEFAULT_AUDIT_SETTINGS, scope: "touched-files" });
+      expect(controls.updateSettings("a", { scope: "touched-files" })).toEqual({ ...DEFAULT_AUDIT_SETTINGS, scope: "touched-files" });
       expect(logged().match(/rerail: /gu)).toHaveLength(1);
     } finally {
       lock.release();
@@ -181,7 +184,7 @@ describe("a checkout's saved scan settings that parse to settings this version k
 
     const read = controls.getSettings("a");
     expect(read.settings).toEqual({ ...DEFAULT_AUDIT_SETTINGS, scope: "touched-files", mode: "log" });
-    expect(controls.updateSettings("a", { mode: "steer" }).settings).toEqual({ ...DEFAULT_AUDIT_SETTINGS, scope: "touched-files" });
+    expect(controls.updateSettings("a", { mode: "steer" })).toEqual({ ...DEFAULT_AUDIT_SETTINGS, scope: "touched-files" });
     expect(settingsText(path)).toBe("{\"scope\":\"touched-files\",\"mode\":\"steer\",\"later\":{\"on\":true}}");
     expect(logged().match(/rerail: /gu)).toHaveLength(1);
     expect(logged()).toContain(`: the scan settings saved for ${read.workspaceRoot} read in part: the settings_json of its audit_settings row holds later (`);
@@ -196,9 +199,9 @@ describe("a checkout's saved scan settings that parse to settings this version k
 
     const read = controls.getSettings("a");
     expect(read.settings).toEqual({ ...DEFAULT_AUDIT_SETTINGS, scope: "touched-files" });
-    expect(controls.updateSettings("a", { scope: "ai-output" }).settings).toEqual(DEFAULT_AUDIT_SETTINGS);
+    expect(controls.updateSettings("a", { scope: "ai-output" })).toEqual(DEFAULT_AUDIT_SETTINGS);
     expect(settingsText(path)).toBe("{\"scope\":\"ai-output\",\"mode\":\"later\"}");
-    expect(controls.updateSettings("a", { mode: "log" }).settings).toEqual({ ...DEFAULT_AUDIT_SETTINGS, mode: "log" });
+    expect(controls.updateSettings("a", { mode: "log" })).toEqual({ ...DEFAULT_AUDIT_SETTINGS, mode: "log" });
     expect(settingsText(path)).toBe("{\"scope\":\"ai-output\",\"mode\":\"log\"}");
     expect(logged().match(/rerail: /gu)).toHaveLength(1);
     expect(logged()).toContain(`: the scan settings saved for ${read.workspaceRoot} read in part: the settings_json of its audit_settings row holds mode (mode: `);
@@ -212,7 +215,7 @@ describe("a checkout's saved scan settings that parse to settings this version k
     storeSettings(path, "{\"scope\":\"touched-files\",\"mode\":\"log\",\"constructor\":1,\"toString\":\"later\"}");
     spyOnStderr();
 
-    expect(controls.updateSettings("a", { mode: "steer" }).settings).toEqual({ ...DEFAULT_AUDIT_SETTINGS, scope: "touched-files" });
+    expect(controls.updateSettings("a", { mode: "steer" })).toEqual({ ...DEFAULT_AUDIT_SETTINGS, scope: "touched-files" });
     expect(settingsText(path)).toBe("{\"scope\":\"touched-files\",\"mode\":\"steer\",\"constructor\":1,\"toString\":\"later\"}");
     controls.close();
   });
@@ -235,6 +238,53 @@ describe("a checkout's saved scan settings that parse to settings this version k
     alone.controls.close();
     beside.controls.close();
   });
+});
+
+// The daemon saves `rerail settings` this way (`writtenWhenFree`): in the record writer's transaction, tried again at the
+// pauses of SQLite's busy handler while another program holds the write lock. A try that meets the lock ends before the
+// save runs, so the save reads the row once, as that program left it, and names it once.
+describe("a checkout's saved scan settings that do not read whole, saved in the record writer's transaction", () => {
+  it.each([
+    {
+      row: "is not JSON",
+      text: "{\"scope\":\"repository\",\"mode\":\"log\"",
+      line: "read as the defaults: the settings_json of its audit_settings row is not JSON (",
+      saved: { ...DEFAULT_AUDIT_SETTINGS, mode: "log" },
+      stored: { scope: "ai-output", mode: "log" },
+    },
+    {
+      row: "holds a value and a key this version does not read",
+      text: "{\"scope\":\"repository\",\"mode\":\"later\",\"later\":true}",
+      line: "read in part: the settings_json of its audit_settings row holds ",
+      saved: { ...DEFAULT_AUDIT_SETTINGS, scope: "repository", mode: "log" },
+      stored: { scope: "repository", mode: "log", later: true },
+    },
+  ])("are saved over the row another program left that $row once it gives the write lock back after 2 s, named once", async ({ text, line, saved, stored }) => {
+    const { path, controls } = await fixture();
+    controls.updateSettings("a", { scope: "touched-files" });
+    const logged = spyOnStderr();
+    const holder = new Database(path);
+    const records = openRecordWriter(path);
+    const stop = new AbortController();
+    try {
+      holder.pragma("ignore_check_constraints = ON");
+      holder.exec("BEGIN IMMEDIATE");
+      holder.prepare("UPDATE audit_settings SET settings_json = ?").run(text);
+      let made: unknown;
+      const saving = records.writeWhenFree(database => { made = controls.updateSettings("a", { mode: "log" }, database); }, stop.signal);
+      // The issue's hold: 2 s, across the writer's tries.
+      await delay(2_000);
+      expect(made).toBeUndefined();
+      holder.exec("COMMIT");
+      expect(await saving).toBe(true);
+      expect(made).toEqual(saved);
+      expect(JSON.parse(settingsText(path) as string)).toEqual(stored);
+      expect(logged().match(/rerail: /gu)).toHaveLength(1);
+      expect(logged()).toContain(line);
+    } finally {
+      stop.abort(); records.close(); holder.close(); controls.close();
+    }
+  }, 20_000);
 });
 
 describe("a session's scan requests whose stored text does not read", () => {
