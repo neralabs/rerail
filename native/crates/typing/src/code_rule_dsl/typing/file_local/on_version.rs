@@ -3073,11 +3073,15 @@ pub(super) struct Crossing {
 /// Whether rule `r` reads a node's text or value by a function (`syntax::NODE_READS`, `t = @rr_node_text_any(v)`), in
 /// its body or its head (`len(n, @text_len(n)) :- …`): a read of the long-text nodes' binding
 /// (`syntax::LONG_TEXT_NODES`), which holds the batch the node is read from. Read in the head alone, the binding was
-/// never made and the read answered nothing.
+/// never made and the read answered nothing. A read of a node path's base text alone (`vtab::PATH_ATOM_READS`,
+/// `@path_file(p)`) reads no node: a function of the path's atom.
 pub fn reads_a_node(v: &Version, r: RuleRef<'_>) -> bool {
     fn calls(v: &Version, t: TermRef<'_>) -> bool {
         match t {
-            TermRef::Call(f, mut args) => crate::code_rule_dsl::facts::vtab::syntax::NODE_READS.contains(&v.text(f)) || args.any(|a| calls(v, a)),
+            TermRef::Call(f, mut args) => {
+                let f = v.text(f);
+                (crate::code_rule_dsl::facts::vtab::syntax::NODE_READS.contains(&f) && !crate::code_rule_dsl::facts::vtab::syntax::PATH_ATOM_READS.contains(&f)) || args.any(|a| calls(v, a))
+            }
             _ => false,
         }
     }

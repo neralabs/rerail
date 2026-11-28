@@ -229,6 +229,13 @@ pub const NODE_READS: [&str; 20] = [
     "path_file",
 ];
 
+/// The node reads that read a node path's base text alone (`@path_file`, `@path_unit`, decision 0722): a path's high
+/// 32 bits are an atom of the run's table, the base's text, so each is a function of a value, as a string function is
+/// of a symbol. They read no node, no tape and no batch: the executor answers them from the run's atoms where no
+/// batch is bound, and the split does not count them as node reads (`file_local::reads_a_node`), so the cross part
+/// reads them without the long-text nodes' binding (decision 0727).
+pub const PATH_ATOM_READS: [&str; 2] = ["path_unit", "path_file"];
+
 /// A row a producer hands a relation (`Relation::from_rows`, `staged`): its values on the stack, as the relation
 /// copies them into its block (decision 0687); a row past 8 columns goes on the heap.
 pub type Row = rerail_blocks::frame::InlineVec<i64, 8>;

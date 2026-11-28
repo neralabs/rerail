@@ -407,7 +407,7 @@ pub fn node_crossings(program: &Version, f: &Fields<'_>, cross: &Version, local:
             let by: BTreeSet<String> = cross
                 .rules()
                 .filter(|r| r.body().filter_map(|l| l.atom()).any(|a| cross.rel_name(a.rel()) == rel))
-                .map(|r| format!("{} <- {}", cross.rel_name(r.head().rel()), r.body().filter_map(|l| l.atom()).map(|a| cross.rel_name(a.rel())).filter(|&b| b != rel).collect::<Vec<_>>().join(" ")))
+                .map(|r| cross.show_rule(r))
                 .collect();
             let by: Vec<String> = by.into_iter().collect();
             found.insert(rel.to_owned(), format!("holds a node in {}: a per-file relation the cross-file part reads (in {}), handed on with that column", held.join(", "), by.join(", ")));

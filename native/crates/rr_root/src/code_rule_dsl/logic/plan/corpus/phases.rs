@@ -822,7 +822,12 @@ pub fn stage(v: &std::sync::Arc<Version>, options: &serde_json::Value) -> Result
                 }
             }
         };
-        for r in v.rules().filter(|r| demanded.contains(v.rel_name(r.head().rel())) && r.reads().any(|a| probed(v.rel_name(a.rel())))) {
+        // A rule the stage takes (of a staged relation, or of one the stage alone reads) is no reader of the program: the
+        // program reads the stage's export, not that rule. Probed, `eager(q) :- calls(q, g), def_doc(q, d), def_doc(g,
+        // d), eager(g)`'s probe read `def_doc`, which the program no longer derives, and shared its probe's relation with
+        // a reader's of a node, a document key in its node column (leg_083, 0677).
+        let taken = |head: &str| staging.staged.contains(head) || stage_alone(head);
+        for r in v.rules().filter(|r| demanded.contains(v.rel_name(r.head().rel())) && !taken(v.rel_name(r.head().rel())) && r.reads().any(|a| probed(v.rel_name(a.rel())))) {
             use crate::code_rule_dsl::logic::program_image::{Lit, TermRef, build::t_of};
             fn vars_of(t: TermRef<'_>, out: &mut Vec<crate::code_rule_dsl::logic::program_image::Slot>) {
                 match t {

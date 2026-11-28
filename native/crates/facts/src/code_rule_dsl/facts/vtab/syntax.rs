@@ -831,7 +831,7 @@ pub fn made_sources(batch: &Arc<Batch>) -> Vec<(&str, Option<&'static str>, Arc<
 }
 
 // The node reads' relation and functions are the virtual tables' (`vtab.rs`), which the string functions read.
-pub use super::{LONG_TEXT_NODES, NODE_READS};
+pub use super::{LONG_TEXT_NODES, NODE_READS, PATH_ATOM_READS};
 
 /// `core.rerail`'s per-node rows as `projection` asks for them: what each node's walk skips, and whose text it keeps.
 /// A group's rows are made with it (`make_rows`).

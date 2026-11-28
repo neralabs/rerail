@@ -11004,6 +11004,15 @@ fn run_join_in_each_unframed(j: &JoinRule, head: usize, store: &Store, syms: &mu
                     if let Some(a) = atom {
                         kinds::count_term_atom_for_tests();
                         Some(a)
+                    } else if nodes.is_none() && crate::code_rule_dsl::facts::vtab::syntax::PATH_ATOM_READS.contains(&name.as_str()) {
+                        // A node path's base text read off its atom, with no batch bound (the cross part, decision
+                        // 0727): the path's high 32 bits are the base's atom in the run's table.
+                        use crate::code_rule_dsl::facts::vtab::syntax::paths;
+                        let base = cx.syms.name((val(slots, args[0]) as u64 >> 32) as i64);
+                        match name.as_str() {
+                            "path_file" => paths::file_of_text(&format!("{base}\t/1")).map(str::to_owned).and_then(|t| text_v(cx, &t)),
+                            _ => paths::unit_of(&base).filter(|u| !u.is_empty()).map(str::to_owned).and_then(|u| text_v(cx, &u)).filter(|&a| a >= 0).map(|a| (a << 32) | 1),
+                        }
                     } else { match nodes.and_then(|s| s.node_read_ref(name, val(slots, args[0]), &more)) {
                         Some(NodeRead::Text(t)) => text_v(cx, t),
                         Some(NodeRead::Value(Value::Text(t))) => text_v(cx, &t),

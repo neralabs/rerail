@@ -574,8 +574,10 @@ version(m, v) :- env("lib", r), f = cat(r, "/VERSIONS"), file_line(f, _, l), mat
 resolves(q, f) :- modpath(q, p), env("lib", r), d = cat(r, "/", p), dir_entry(d, "__init__.pyi", 0), f = cat(d, "/__init__.pyi").
 resolves(q, f) :- want(q), split_dot(q, m, x), modpath(m, pm), env("lib", r), d = cat(r, "/", pm), dir_entry(d, n, 0), n = cat(x, ".pyi"), f = cat(d, "/", n).
 load(f, q, "python") :- resolves(q, f), version(@head(q), _).
+.decl doc_pkg(path: symbol, m: symbol, p: symbol)
+doc_pkg(path, m, p) :- doc(d, path, m), pkg(d, p).
 .decl got(m: symbol, p: symbol)
-got(m, p) :- doc(d, path, m), pkg(d, p), loaded(path, _, _).
+got(m, p) :- doc_pkg(path, m, p), loaded(path, _, _).
 .decl own(c: node)
 own(n) :- imp(n, _).
 .output got, own
