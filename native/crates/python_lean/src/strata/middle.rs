@@ -853,8 +853,7 @@ struct EventMasks {
 }
 
 impl EventMasks {
-    /// Block `r.bi`'s window. The depth below it is the block before's last bit, or where that block is not the
-    /// text's (`r.bi == 0`), 0.
+    /// Block `r.bi`'s window. The depth below it is the block below's last bit (at the text's start, 0).
     #[inline(always)]
     fn of<const S: bool>(r: &Win<'_, S>) -> EventMasks {
         let (pb, b, b1, bi) = (&r.pb, &r.b, &r.b1, r.bi);
@@ -866,7 +865,7 @@ impl EventMasks {
         let sf = sptab | ff;
         let cstart = w2(|b| b.cstart);
         let comment = super::starts::fill(cstart, !eol);
-        let below = u128::from(pick(bi > 0, pb.depth0 >> 63 == 1, true));
+        let below = u128::from(pb.depth0 >> 63);
         EventMasks {
             lim,
             valid,

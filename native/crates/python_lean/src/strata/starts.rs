@@ -71,8 +71,8 @@ struct Bytes {
 }
 
 /// A block's reads in the walk's pass 1, by value: the text, and the masks of the block below, the block and the one
-/// after (the loop over blocks reads them from the window). `S`: the text is under 64 bytes. The block functions
-/// read nothing else, and have no branch.
+/// after (the loop over blocks reads them from the window). Below the text's first block, the block below is empty, at
+/// depth 0. `S`: the text is under 64 bytes. The block functions read nothing else, and have no branch.
 #[derive(Clone, Copy)]
 pub(super) struct Win<'a, const S: bool> {
     pub(super) src: &'a [u8],
@@ -108,7 +108,10 @@ impl<'a> Masks<'a> {
     /// Block `bi`'s reads for pass 1.
     #[inline(always)]
     pub(super) fn win<const S: bool>(&self, bi: usize) -> Win<'a, S> {
-        Win { src: self.src, bi, pb: *self.blk(bi.saturating_sub(1)), b: *self.blk(bi), b1: *self.blk(bi + 1) }
+        // The loop over blocks selects the block below: in the block function, a selection of a load against a
+        // constant compiles on x86-64 to a branch around the load (`select_unpredictable` too).
+        let pb = if bi > 0 { *self.blk(bi - 1) } else { B { depth0: !0, ..B::default() } };
+        Win { src: self.src, bi, pb, b: *self.blk(bi), b1: *self.blk(bi + 1) }
     }
 }
 
@@ -242,8 +245,7 @@ pub(super) fn code_starts(t: &Masks<'_>, bi: usize) -> (u64, bool) {
 /// `code_starts` from the block's reads.
 #[inline(always)]
 pub(super) fn code_starts_w<const S: bool>(r: &Win<'_, S>) -> (u64, bool) {
-    let keep = 0u64.wrapping_sub(u64::from(r.bi > 0));
-    starts_in(r, w(r.pb.code & keep, r.b.code), false)
+    starts_in(r, w(r.pb.code, r.b.code), false)
 }
 
 /// What the numbers read: the classes at a byte and the bytes after it, the digits' runs, the `.`s that start a
@@ -331,7 +333,7 @@ fn starts_in<const S: bool>(r: &Win<'_, S>, code: u128, one_by_one: bool) -> (u6
         };
     }
     let (c0, c1, c2, c3) = (at!(0), at!(1), at!(2), at!(3));
-    let m = |f: fn(&B) -> u64| w(f(&pb) & keep, f(&b));
+    let m = |f: fn(&B) -> u64| w(f(&pb), f(&b));
     let k = |f: fn(&Bytes) -> u64| w(f(&c0.0) & keep, f(&c0.1));
     // A class of the byte one, two, three after each (read past the window's top, not shifted in).
     let n1 = |f: fn(&Bytes) -> u64| w(f(&c1.0) & keep, f(&c1.1));
@@ -866,14 +868,13 @@ pub(super) fn tops(t: &Masks<'_>, bi: usize) -> (u64, bool) {
 pub(super) fn tops_w<const S: bool>(r: &Win<'_, S>) -> (u64, bool) {
     let (src, bi) = (r.src, r.bi);
     let (pb, b, b1) = (r.pb, r.b, r.b1);
-    let keep = u128::from(bi > 0);
     let m = |f: fn(&B) -> u64| w(f(&b), f(&b1));
     let lim = src.len().saturating_sub(64 * bi).min(128) as u32;
     let valid = ((1u128 << (lim & 127)) - 1) | 0u128.wrapping_sub(u128::from(lim >> 7));
     let code = m(|b| b.code);
     // Runs: the bytes of code a token is read in, and the runs' stops.
     let nb = code & m(|b| !b.skip & !b.eol & !b.bs) & valid;
-    let nb_below = u128::from(pb.code & !pb.skip & !pb.eol & !pb.bs) >> 63 & keep;
+    let nb_below = u128::from(pb.code & !pb.skip & !pb.eol & !pb.bs) >> 63;
     let stop = !code | m(|b| b.eol) | m(|b| b.skip & !b.sptab & !b.lf) | m(|b| b.bs) | !valid;
     let runs = ((nb << 1) | nb_below) & reaching(stop, m(|b| b.sptab));
     // Strings: after a one-line closer the next byte is code, a string's or a comment's start, or the text's end;
@@ -883,7 +884,7 @@ pub(super) fn tops_w<const S: bool>(r: &Win<'_, S>) -> (u64, bool) {
     let strings = one | ((m(|b| b.send) & !(one >> 1)) << 3);
     let below_strings = {
         // A closer in the block below whose end is in this block.
-        let ps = u128::from(pb.send) & 0u128.wrapping_sub(keep);
+        let ps = u128::from(pb.send);
         let pn = u128::from(pb.code | pb.sstart | pb.cstart) | (code << 64) | (m(|b| b.sstart | b.cstart) << 64) | (!valid << 64);
         let one = (ps << 1) & pn;
         ((one | ((ps & !(one >> 1)) << 3)) >> 64) as u64
@@ -896,7 +897,7 @@ pub(super) fn tops_w<const S: bool>(r: &Win<'_, S>) -> (u64, bool) {
     let at_end = cont & !(valid >> 1);
     let conts = (nl << 2) | (crlf << 3) | (at_end << 1);
     let below_cont = {
-        let pc = u128::from(pb.code & pb.bs) & 0u128.wrapping_sub(keep);
+        let pc = u128::from(pb.code & pb.bs);
         let plf = u128::from(pb.lf) | (lf << 64);
         let pcr = u128::from(pb.eol & !pb.lf) | (cr << 64);
         let (nl, crlf) = (pc & (plf >> 1), pc & (pcr >> 1) & (plf >> 2));

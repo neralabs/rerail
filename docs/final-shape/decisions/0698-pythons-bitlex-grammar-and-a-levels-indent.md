@@ -974,5 +974,12 @@ statements and blocks end.
       0 calls. Every count of items 102 to 107 over the corpus is as before, except 3 lanes not known (blocks of
       more than 6 events). The corpus lexed from the middle is still the serial lexer's in 1644 of 1644 files, at 1,
       2, 3 and 16 blocks a chunk.
-    - **On x86-64 not yet:** the build is baseline x86-64, which has no byte shuffle. So `swizzle_dyn`, in this
-      function and in `block_map`, is a loop of bytes there: 274 branches in `walk_block`, 144 in `block_map`.
+    - **On x86-64:** the baseline the engine targets has AVX2, and the build now says so (`.cargo/config.toml`:
+      `target-cpu=x86-64-v3` for x86-64). Without it a build was SSE2 only, and `rerail_simd`'s `swizzle_dyn` (its
+      `pshufb` path needs SSSE3) was a loop of bytes: 274 branches in `walk_block`, 144 in `block_map`. With it,
+      both are 0, as are `then_block`'s.
+    - **The block below is chosen by the loop over blocks:** below the text's first block it is an empty block at
+      depth 0. A selection of a load against a constant in the block function compiled to a branch around the load
+      on x86-64, `select_unpredictable` too.
+    - **As tested on x86-64** (a Linux host): `check_strata_branch_free.sh` gives 0 conditional branches and 0 calls
+      in `block_map`, `then_block` and both instances of `walk_block`; `classes_over` keeps its loop's two.

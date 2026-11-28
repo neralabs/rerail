@@ -4,6 +4,12 @@
 [target.'cfg(all(windows, target_env = "msvc"))']
 rustflags = ["-C", "target-feature=+crt-static"]
 
+# The x86-64 baseline the engine targets has AVX2: x86-64-v3 (AVX2, BMI1 and BMI2, LZCNT, FMA, MOVBE). Without it a
+# build is SSE2 only, and the vector code's byte shuffles (`rerail_simd`'s `swizzle_dyn`, `pshufb` from SSSE3) and
+# variable shifts compile to loops of bytes, with branches. Cargo joins the flags of every `cfg` table that matches.
+[target.'cfg(target_arch = "x86_64")']
+rustflags = ["-C", "target-cpu=x86-64-v3"]
+
 # SQLite's memory statistics take one process-wide mutex on every allocation and free, which
 # serializes the content store connections that evaluation workers read through. Nothing reads
 # them; SQLite recommends this setting.
