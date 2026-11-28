@@ -78,6 +78,9 @@ fn every_library_header_stands_alone_on_every_backend() {
     }
 }
 
+/// The parameters a header takes from the grammar that includes it, as JSON's printed tier defines them.
+const PARAMETERS: &[(&str, &str, &str)] = &[("ukl/lex_run.h", "UKL_LEX_LANES", "4u"), ("ukl/lex_run.h", "UKL_LEX_TYPES", "3u")];
+
 /// The OpenCL gate (decision 0440 §3.5): each library header, preprocessed for OpenCL, is OpenCL C 1.2 that clang's
 /// front end accepts: with the SIMD group emulated (width 32), and at width 1.
 #[test]
@@ -88,7 +91,14 @@ fn every_library_header_is_opencl_c_1_2() {
     for width in ["32u", "8u", "1u"] {
         for (name, _) in LIBRARY.iter().filter(|(n, _)| !n.starts_with("ukl/body/")) {
             let main = format!("{dir}/{name}");
-            let src = Preprocess::new(Backend::OpenCl).define("UKL_SIMD_WIDTH", Some(width)).run(&main).unwrap_or_else(|e| panic!("{e}"));
+            // A header with a grammar's parameters (the printer defines them before it is included) takes a grammar's.
+            let mut p = Preprocess::new(Backend::OpenCl).define("UKL_SIMD_WIDTH", Some(width));
+            for &(header, n, v) in PARAMETERS {
+                if header == *name {
+                    p = p.define(n, Some(v));
+                }
+            }
+            let src = p.run(&main).unwrap_or_else(|e| panic!("{e}"));
             let file = tmp.join(format!("{}.cl", name.replace('/', "_")));
             std::fs::write(&file, &src).unwrap();
             let Ok(o) = Command::new("clang").args(["-x", "cl", "-cl-std=CL1.2", "-fsyntax-only", "-Werror=implicit-function-declaration"]).arg(&file).output() else {
