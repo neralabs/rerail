@@ -3064,12 +3064,13 @@ mod pack_split_tests {
         let got: Vec<(&str, &str, i64, &str)> =
             found.iter().map(|(c, p, l, m)| (c.as_str(), p.as_str(), *l, m.split(". ").next().unwrap_or(""))).collect();
         // record's first write, fetch's query; lock's bare callers are views.py's zed (line 16) and other.py's alpha (line
-        // 17): alpha's def comes first by name, where the least line was zed's.
+        // 17): alpha's def comes first by name, where the least line was zed's. A select_for_update named by its caller is
+        // `SelectForUpdateOutsideAtomicCalled`, whose caller's place is a node path (df504b3dad, decision 0727).
         assert_eq!(
             got,
             [
                 ("GetHandlerWritesVia", "shop/views.py", 6, "`detail` answers a safe method (GET/HEAD) but writes to the database in `record()`, which it calls: `update()` at shop/services.py:5"),
-                ("SelectForUpdateOutsideAtomic", "shop/services.py", 15, "`select_for_update()` in `lock` runs outside transaction.atomic(): `alpha` calls it outside a transaction at shop/other.py:17"),
+                ("SelectForUpdateOutsideAtomicCalled", "shop/services.py", 15, "`select_for_update()` in `lock` runs outside transaction.atomic(): `alpha` calls it outside a transaction at shop/other.py:17"),
                 ("SyncOrmReached", "shop/views.py", 11, "`fetch()` runs a blocking ORM query (`get()` at shop/services.py:11) inside `async def`, where Django raises SynchronousOnlyOperation"),
             ],
             "{found:#?}"
