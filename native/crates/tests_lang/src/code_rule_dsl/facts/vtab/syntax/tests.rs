@@ -2681,6 +2681,21 @@ fn what_numbering_a_documents_lows_costs_one_by_one_and_sorted() {
         }
         let sort = t.elapsed().as_secs_f64() / (reps * lows.len()) as f64;
         eprintln!("{at}, {} nodes, {label} ({} lows): one by one {:.1} ns a low, sorted pass {:.1} ns, the sort {:.1} ns ({sum})", p.len(), lows.len(), one * 1e9, sorted * 1e9, sort * 1e9);
+        // The slot entry alone, by each way, the lows in order and shuffled.
+        for (order, ls) in [("in order", &lows), ("shuffled", &shuffled)] {
+            let ways: Vec<String> = [(0u8, "stepped"), (1, "window 16"), (2, "window 32")]
+                .iter()
+                .map(|&(how, name)| {
+                    let t = std::time::Instant::now();
+                    for _ in 0..reps {
+                        // SAFETY: as above.
+                        sum = sum.wrapping_add(unsafe { d.slot_entries(ls, how) });
+                    }
+                    format!("{name} {:.2} ns", t.elapsed().as_secs_f64() * 1e9 / (reps * ls.len()) as f64)
+                })
+                .collect();
+            eprintln!("  the slot entry, {order}: {} ({sum})", ways.join(", "));
+        }
     }
 }
 

@@ -110,6 +110,42 @@ const _: () = assert!(std::mem::size_of::<Numbering>() == 64 + 16 * 32);
 /// No number, no node, no granule: a read's answer for none (the CLIF's `NONE`).
 pub const NONE: u32 = u32::MAX;
 
+/// The first of `by_slot`'s entries at or past `slot`, found among the `W` entries about `guess` (the entries below the
+/// slot there counted, no branch on them; the window's edge entries say whether it lies inside, else the table is
+/// bisected): a measurement's, against `slot_entry_stepped`. A window of 16 or 32 took 2.5 ns a low where the steps took
+/// 2.25 (`what_numbering_a_documents_lows_costs_one_by_one_and_sorted`), and in idc's trace `local_of` kept its share.
+#[cfg(feature = "test-hooks")]
+fn slot_entry<const W: usize>(by_slot: &[[u32; 3]], slot: u32, guess: u32) -> u32 {
+    let n = by_slot.len() as u32;
+    let lo = guess.saturating_sub(W as u32 / 2).min(n.saturating_sub(W as u32));
+    if let Some(w) = by_slot[lo as usize..].first_chunk::<W>() {
+        let below = w.iter().fold(0u32, |c, e| c + u32::from(e[0] < slot));
+        let hi = lo + W as u32;
+        let inside = ((lo == 0) | (by_slot[lo.saturating_sub(1) as usize][0] < slot)) & ((hi == n) | (by_slot[hi.min(n - 1) as usize][0] >= slot));
+        if inside {
+            return lo + below;
+        }
+    }
+    bisect(0, n, |i| by_slot[i as usize][0] < slot)
+}
+
+/// The first of `by_slot`'s entries at or past `slot`, stepped to from `guess` one entry at a time, forward while the
+/// entry is below the slot, then back while the one before is not; a run of clashes past eight steps is bisected. The
+/// slots are hashes, about evenly spread: the entry was within 4 of the guess for 70% of 20 M nodes' lows in 8,890
+/// Python files, a mean of 3.45 steps.
+#[inline]
+fn slot_entry_stepped(by_slot: &[[u32; 3]], slot: u32, guess: u32) -> u32 {
+    let n = by_slot.len() as u32;
+    let (mut at, mut steps) = (guess, 0);
+    while at < n && steps < 8 && by_slot[at as usize][0] < slot {
+        (at, steps) = (at + 1, steps + 1);
+    }
+    while at != 0 && steps < 8 && by_slot[at as usize - 1][0] >= slot {
+        (at, steps) = (at - 1, steps + 1);
+    }
+    if steps == 8 { bisect(0, n, |i| by_slot[i as usize][0] < slot) } else { at }
+}
+
 /// The position of `m`'s set bit `k` (`k` below its popcount): the byte by the bytes' running popcounts, then the bit
 /// within it (the CLIF's `select64`).
 #[inline]
@@ -289,6 +325,28 @@ impl Numbering {
         }
     }
 
+    /// The sum of the `by_slot` entries `lows` find, by way `how` (0 stepped, `number_of`'s, 1 a window of 16, 2 of 32): a
+    /// measurement's, to time the ways against each other.
+    ///
+    /// # Safety
+    /// As every read's.
+    #[cfg(feature = "test-hooks")]
+    pub unsafe fn slot_entries(&self, lows: &[u32], how: u8) -> u64 {
+        // SAFETY: the caller's.
+        let by_slot = unsafe { Self::of::<[u32; 3]>(&self.by_slot) };
+        let n = by_slot.len() as u32;
+        lows.iter().fold(0u64, |sum, &low| {
+            let slot = low >> INDEX_BITS;
+            let guess = (((u64::from(slot) * u64::from(n)) >> SLOT_BITS) as u32).min(n.saturating_sub(1));
+            let at = match how {
+                0 => slot_entry_stepped(by_slot, slot, guess),
+                1 => slot_entry::<16>(by_slot, slot, guess),
+                _ => slot_entry::<32>(by_slot, slot, guess),
+            };
+            sum + u64::from(at)
+        })
+    }
+
     /// How far `number_of(low)`'s entry lies from its guess, in entries (signed: past it positive), for a low whose
     /// slot has an entry (a measurement's read).
     ///
@@ -466,7 +524,7 @@ impl Numbering {
 
     /// The item whose id's low 32 bits are `low`, as `(item, number)` (`num_number_of`): the slot's entry, then its
     /// index among the granule's nodes or tokens. The slots are hashes, about evenly spread: the entry is near
-    /// `slot`'s share of them, found among the entries about a guess there; one further off is bisected.
+    /// `slot`'s share of them, a few steps from a guess there; a run of clashes past eight steps is bisected.
     ///
     /// # Safety
     /// As every read's.
@@ -478,26 +536,7 @@ impl Numbering {
         let n = by_slot.len() as u32;
         // The guess: `slot`'s share of the entries, the last one at most.
         let guess = (((u64::from(slot) * u64::from(n)) >> SLOT_BITS) as u32).min(n.saturating_sub(1));
-        // The first entry at or past the slot, in the `WINDOW` entries about the guess: the entries below the slot
-        // there counted, no branch on them. Over 8,890 Python files the entry lay within 16 of the guess for 97% of
-        // the nodes' lows (12% on it, 58% within 4); stepped to it one entry at a time, the steps' exit mispredicted (a
-        // mean of 3.45 steps, and 15% past eight bisected the whole table). Where it lies outside the window (the
-        // entries either side of it say so), the table is bisected.
-        // A window of a fixed length where the table holds one (unrolled, no tail), and its edges' entries read at
-        // clamped places and combined without a branch: as a loop of the window's length and short-circuited tests,
-        // their tail and branches were a fifth of `local_of`'s samples.
-        const WINDOW: u32 = 32;
-        if n == 0 {
-            return None;
-        }
-        let lo = guess.saturating_sub(WINDOW / 2).min(n.saturating_sub(WINDOW));
-        let hi = (lo + WINDOW).min(n);
-        let below = match by_slot[lo as usize..].first_chunk::<{ WINDOW as usize }>() {
-            Some(w) => w.iter().fold(0u32, |c, e| c + u32::from(e[0] < slot)),
-            None => by_slot[lo as usize..hi as usize].iter().fold(0u32, |c, e| c + u32::from(e[0] < slot)),
-        };
-        let inside = ((lo == 0) | (by_slot[lo.saturating_sub(1) as usize][0] < slot)) & ((hi == n) | (by_slot[hi.min(n - 1) as usize][0] >= slot));
-        let at = if inside { lo + below } else { bisect(0, n, |i| by_slot[i as usize][0] < slot) };
+        let at = slot_entry_stepped(by_slot, slot, guess);
         let &[s, g, c] = by_slot.get(at as usize)?;
         if s != slot {
             return None;
