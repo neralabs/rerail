@@ -67,7 +67,7 @@ vi.mock("../../../../src/engine/git.js", async () => {
 });
 
 import { CheckoutOwners } from "../../../../src/engine/catalog/checkout-owner.js";
-import { forgetGoneSubmodules, keptSubmoduleCount, stopAskingSubmodules, submodulesAskedAgain } from "../../../../src/engine/catalog/checkouts/declared-submodules.js";
+import { forgetGoneSubmodules, keptSubmoduleCount, learnDeclaredSubmodules, stopAskingSubmodules, submodulesAskedAgain } from "../../../../src/engine/catalog/checkouts/declared-submodules.js";
 import type { AuditRecorder, AuditInput, AuditResult } from "../../../../src/engine/audit/audit.js";
 import { CheckoutCodeRuleRouter } from "../../../../src/engine/code-rule/checkout-code-rule-router.js";
 import { CheckoutCatalogs, startingCheckout } from "../../../../src/engine/code-rule/code-rule-dsl-catalog.js";
@@ -191,6 +191,15 @@ describe("a checkout's declared submodules while Git runs past its time limit re
     for (let listing = 0; listing < 4; listing += 1) expect(owners.declaredSubmodules(alpha)).toEqual([]);
     expect(git.blocking).toBe(3);
     expect(git.asks).toBe(1);
+    await submodulesAskedAgain(alpha);
+  });
+
+  it("answers a placement's learning at once, through the one ask, while the checkout is kept past its limit", async () => {
+    const { alpha } = await checkoutWithSubmodule();
+    Object.assign(git, { onThread: "pastLimit", offThread: "pastLimit" });
+    expect(new CheckoutOwners().declaredSubmodules(alpha)).toEqual([]);
+    expect(await Promise.all([learnDeclaredSubmodules(alpha), learnDeclaredSubmodules(alpha)])).toEqual([[], []]);
+    expect([git.blocking, git.asks]).toEqual([1, 1]);
     await submodulesAskedAgain(alpha);
   });
 
