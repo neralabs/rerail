@@ -171,12 +171,12 @@ describe("the lifecycle run's end", () => {
   });
 
   it.each([
-    { stop: async () => "stopped" as const, said: "(its daemon was stopped)" },
-    { stop: async () => "not-running" as const, said: "(no daemon was running)" },
-    { stop: async () => "not-daemon" as const, said: "(no daemon was running)" },
-    { stop: async () => "record-changed" as const, said: "(its daemon was not stopped: daemon.json changed during the stop)" },
-    { stop: refused, said: "(its daemon could not be stopped)" },
-  ])("says what the stop did in a kept OMP run's line: $said", async ({ stop, said }) => {
+    { answer: "stopped", stop: async () => "stopped" as const, said: "(its daemon was stopped)" },
+    { answer: "not-running", stop: async () => "not-running" as const, said: "(no daemon was running)" },
+    { answer: "not-daemon", stop: async () => "not-daemon" as const, said: "(no daemon was running)" },
+    { answer: "record-changed", stop: async () => "record-changed" as const, said: "(its daemon was not stopped: daemon.json changed during the stop)" },
+    { answer: "a throw", stop: refused, said: "(its daemon could not be stopped)" },
+  ])("says what the stop did in a kept OMP run's line: $answer", async ({ stop, said }) => {
     const { root, rerailHome, out } = await scratch(true);
     await leave("omp", { root, rerailHome }, stop);
     expect(out).toContain(`kept ${root} ${said}\n`);
