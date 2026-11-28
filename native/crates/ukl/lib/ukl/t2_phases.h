@@ -1,0 +1,105 @@
+// ukl/t2_phases.h: tier 2 as phases on the device (decision 0726 step 4), over `<ukl/phases_run.h>`: from tier 1's
+// records (`starts`, its pool's count) the phases the CPU's `Phases::run` runs, each item a chunk of `size` records,
+// each block operator the grammar's, printed from the Rust the CPU runs (`ukl_t2_*`).
+//
+//   LAY  one item: the layout from the records (each tree's and array's offset in the pool), or the words the file
+//        needs past the pool's room (`UKL_T2_NEED`: every later phase then has no items, the host runs it again).
+//   P1   each chunk's depth summary (`p1_run`), a leaf of P1's tree (`p1_merge`).
+//   P1W  each chunk's sum walked down, its records' depths and items written from it (`p1_write`); item 0 says the
+//        items (P1's root).
+
+#pragma once
+#define UKL_PH_FIELDS UKL_GLOBAL const uint8_t* src; UKL_GLOBAL const uint32_t* starts; UKL_GLOBAL uint32_t* arrays; uint32_t n; bool refused;
+#include <ukl/phases_run.h>
+
+// The program's header, after the runner's: the host's (the records a chunk, the pool's words, the arrays' words), then
+// the layout: the trees in the pool, the arrays (what later phases read: never read in the launch that writes them) in
+// `arrays`.
+#define UKL_T2_SIZE (UKL_PH_H + 0u)
+#define UKL_T2_ROOM (UKL_PH_H + 1u)
+#define UKL_T2_AROOM (UKL_PH_H + 8u)
+#define UKL_T2_NEED (UKL_PH_H + 2u)
+#define UKL_T2_N (UKL_PH_H + 3u)
+#define UKL_T2_CHUNKS (UKL_PH_H + 4u)
+#define UKL_T2_O_DEPTH (UKL_PH_H + 5u)
+#define UKL_T2_O_ITEMS (UKL_PH_H + 6u)
+#define UKL_T2_ITEMS (UKL_PH_H + 7u)
+#define UKL_T2_H (UKL_PH_H + 32u)
+
+#define UKL_T2_PH_LAY 0u
+#define UKL_T2_PH_P1 1u
+#define UKL_T2_PH_P1W 2u
+#define UKL_T2_PHASES 3u
+
+#define UKL_T2_TP1 0u
+#define UKL_T2_OP_P1 0u
+#define UKL_T2_W_P1 3u
+
+// The grammar's block operators (the printer's).
+UKL_INLINE void ukl_t2_p1_run(UKL_GLOBAL const uint8_t* src, UKL_GLOBAL const uint32_t* starts, uint32_t n, uint32_t a, uint32_t b, UKL_COHERENT uint32_t* out);
+UKL_INLINE void ukl_t2_p1_write(UKL_GLOBAL const uint8_t* src, UKL_GLOBAL const uint32_t* starts, uint32_t n, uint32_t a, uint32_t b, UKL_COHERENT const uint32_t* sum,
+                                UKL_GLOBAL uint32_t* depth, UKL_GLOBAL uint32_t* items);
+
+// Tree `t`'s layout at `at`: `leaves` leaves of `w` words, op `op`; past it. Its nodes (`UKL_PH_NODES`: each level's
+// half its level below, rounded up) and two sum records a leaf.
+UKL_INLINE uint32_t ukl_t2_tree(UklPhPool m, uint32_t t, uint32_t at, uint32_t leaves, uint32_t w, uint32_t op)
+{
+    UklPhPool x = m + UKL_PH_TREE + UKL_PH_TW * t;
+    x[0] = at;
+    x[1] = at + UKL_PH_NODES(leaves) * w;
+    x[2] = w;
+    x[3] = leaves;
+    x[4] = op;
+    return x[1] + 2u * leaves * w;
+}
+
+UKL_INLINE void ukl_t2_lay(UKL_PRIVATE UklPh* r)
+{
+    UklPhPool m = r->m;
+    uint32_t n = r->n, size = m[UKL_T2_SIZE];
+    uint32_t chunks = (n + 1u + size - 1u) / size;
+    m[UKL_T2_N] = n;
+    m[UKL_T2_CHUNKS] = chunks;
+    uint32_t at = ukl_t2_tree(m, UKL_T2_TP1, UKL_T2_H, chunks, UKL_T2_W_P1, UKL_T2_OP_P1);
+    uint32_t aw = 0u;
+    m[UKL_T2_O_DEPTH] = aw;
+    aw += n + 1u;
+    m[UKL_T2_O_ITEMS] = aw;
+    aw += 3u * 2u * (n + 1u);
+    // Past a room, or past the arrivals' stride: what it needs (the pool's words, else the arrays').
+    if (at > m[UKL_T2_ROOM] || UKL_PH_NODES(chunks) > m[UKL_PH_MS])
+        m[UKL_T2_NEED] = at;
+    else if (aw > m[UKL_T2_AROOM])
+        m[UKL_T2_NEED] = aw;
+    ukl_fence_device();
+}
+
+UKL_INLINE uint32_t ukl_ph_items(UKL_PRIVATE UklPh* r, uint32_t ph)
+{
+    if (r->refused)
+        return 0u;
+    if (ph == UKL_T2_PH_LAY)
+        return 1u;
+    if (ukl_atomic_poll(&r->m[UKL_T2_NEED]) != 0u)
+        return 0u;
+    return r->m[UKL_T2_CHUNKS];
+}
+
+UKL_INLINE void ukl_ph_item(UKL_PRIVATE UklPh* r, uint32_t ph, uint32_t c)
+{
+    UklPhPool m = r->m;
+    if (ph == UKL_T2_PH_LAY) {
+        ukl_t2_lay(r);
+        return;
+    }
+    uint32_t n = r->n, size = m[UKL_T2_SIZE], a = c * size, b = a + size < n + 1u ? a + size : n + 1u;
+    if (ph == UKL_T2_PH_P1) {
+        ukl_t2_p1_run(r->src, r->starts, n, a, b, ukl_ph_leaf(r, UKL_T2_TP1, c));
+        ukl_ph_up(r, UKL_T2_TP1, c);
+    } else if (ph == UKL_T2_PH_P1W) {
+        UklPhPool s = ukl_ph_sum(r, UKL_T2_TP1, c);
+        ukl_t2_p1_write(r->src, r->starts, n, a, b, s, r->arrays + m[UKL_T2_O_DEPTH], r->arrays + m[UKL_T2_O_ITEMS]);
+        if (c == 0u)
+            m[UKL_T2_ITEMS] = ukl_ph_total(r, UKL_T2_TP1)[2];
+    }
+}

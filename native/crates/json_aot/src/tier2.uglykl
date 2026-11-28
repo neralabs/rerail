@@ -9,6 +9,7 @@
 #include <ukl/middle_run.h>
 #include <ukl/z16_run.h>
 #include <ukl/lex_pool.h>
+#include <ukl/t2_phases.h>
 
 UKL_TABLE uint8_t json_t2_ROWS[256] = {3, 3, 3, 3, 3, 3, 3, 3, 3, 0, 0, 3, 3, 0, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 0, 3, 1, 3, 3, 3, 3, 3, 3, 3, 3, 3, 2, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 2, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 2, 3, 2, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 2, 3, 2, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3};
 UKL_TABLE uint32_t json_t2_HEX_VALUE[256] = {0xffff0000u, 0xffff0000u, 0xffff0000u, 0xffff0000u, 0xffff0000u, 0xffff0000u, 0xffff0000u, 0xffff0000u, 0xffff0000u, 0xffff0000u, 0xffff0000u, 0xffff0000u, 0xffff0000u, 0xffff0000u, 0xffff0000u, 0xffff0000u, 0xffff0000u, 0xffff0000u, 0xffff0000u, 0xffff0000u, 0xffff0000u, 0xffff0000u, 0xffff0000u, 0xffff0000u, 0xffff0000u, 0xffff0000u, 0xffff0000u, 0xffff0000u, 0xffff0000u, 0xffff0000u, 0xffff0000u, 0xffff0000u, 0xffff0000u, 0xffff0000u, 0xffff0000u, 0xffff0000u, 0xffff0000u, 0xffff0000u, 0xffff0000u, 0xffff0000u, 0xffff0000u, 0xffff0000u, 0xffff0000u, 0xffff0000u, 0xffff0000u, 0xffff0000u, 0xffff0000u, 0xffff0000u, 0u, 1u, 2u, 3u, 4u, 5u, 6u, 7u, 8u, 9u, 0xffff0000u, 0xffff0000u, 0xffff0000u, 0xffff0000u, 0xffff0000u, 0xffff0000u, 0xffff0000u, 10u, 11u, 12u, 13u, 14u, 15u, 0xffff0000u, 0xffff0000u, 0xffff0000u, 0xffff0000u, 0xffff0000u, 0xffff0000u, 0xffff0000u, 0xffff0000u, 0xffff0000u, 0xffff0000u, 0xffff0000u, 0xffff0000u, 0xffff0000u, 0xffff0000u, 0xffff0000u, 0xffff0000u, 0xffff0000u, 0xffff0000u, 0xffff0000u, 0xffff0000u, 0xffff0000u, 0xffff0000u, 0xffff0000u, 0xffff0000u, 0xffff0000u, 0xffff0000u, 10u, 11u, 12u, 13u, 14u, 15u, 0xffff0000u, 0xffff0000u, 0xffff0000u, 0xffff0000u, 0xffff0000u, 0xffff0000u, 0xffff0000u, 0xffff0000u, 0xffff0000u, 0xffff0000u, 0xffff0000u, 0xffff0000u, 0xffff0000u, 0xffff0000u, 0xffff0000u, 0xffff0000u, 0xffff0000u, 0xffff0000u, 0xffff0000u, 0xffff0000u, 0xffff0000u, 0xffff0000u, 0xffff0000u, 0xffff0000u, 0xffff0000u, 0xffff0000u, 0xffff0000u, 0xffff0000u, 0xffff0000u, 0xffff0000u, 0xffff0000u, 0xffff0000u, 0xffff0000u, 0xffff0000u, 0xffff0000u, 0xffff0000u, 0xffff0000u, 0xffff0000u, 0xffff0000u, 0xffff0000u, 0xffff0000u, 0xffff0000u, 0xffff0000u, 0xffff0000u, 0xffff0000u, 0xffff0000u, 0xffff0000u, 0xffff0000u, 0xffff0000u, 0xffff0000u, 0xffff0000u, 0xffff0000u, 0xffff0000u, 0xffff0000u, 0xffff0000u, 0xffff0000u, 0xffff0000u, 0xffff0000u, 0xffff0000u, 0xffff0000u, 0xffff0000u, 0xffff0000u, 0xffff0000u, 0xffff0000u, 0xffff0000u, 0xffff0000u, 0xffff0000u, 0xffff0000u, 0xffff0000u, 0xffff0000u, 0xffff0000u, 0xffff0000u, 0xffff0000u, 0xffff0000u, 0xffff0000u, 0xffff0000u, 0xffff0000u, 0xffff0000u, 0xffff0000u, 0xffff0000u, 0xffff0000u, 0xffff0000u, 0xffff0000u, 0xffff0000u, 0xffff0000u, 0xffff0000u, 0xffff0000u, 0xffff0000u, 0xffff0000u, 0xffff0000u, 0xffff0000u, 0xffff0000u, 0xffff0000u, 0xffff0000u, 0xffff0000u, 0xffff0000u, 0xffff0000u, 0xffff0000u, 0xffff0000u, 0xffff0000u, 0xffff0000u, 0xffff0000u, 0xffff0000u, 0xffff0000u, 0xffff0000u, 0xffff0000u, 0xffff0000u, 0xffff0000u, 0xffff0000u, 0xffff0000u, 0xffff0000u, 0xffff0000u, 0xffff0000u, 0xffff0000u, 0xffff0000u, 0xffff0000u, 0xffff0000u, 0xffff0000u, 0xffff0000u, 0xffff0000u, 0xffff0000u, 0xffff0000u, 0xffff0000u, 0xffff0000u, 0xffff0000u, 0xffff0000u, 0xffff0000u, 0xffff0000u, 0xffff0000u, 0xffff0000u, 0xffff0000u, 0xffff0000u, 0xffff0000u, 0xffff0000u, 0xffff0000u, 0xffff0000u, 0xffff0000u, 0xffff0000u, 0xffff0000u, 0xffff0000u, 0xffff0000u, 0xffff0000u, 0xffff0000u, 0xffff0000u, 0xffff0000u, 0xffff0000u, 0xffff0000u, 0xffff0000u, 0xffff0000u, 0xffff0000u, 0xffff0000u, 0xffff0000u, 0xffff0000u};
@@ -1915,6 +1916,36 @@ DEFINE_KERNEL2(tier2, json_t2_run_write,
     ukl_run_worker(&r, 192u, lane __UKL_ARGS);
 }
 
+// Tier 2 as phases (`<ukl/t2_phases.h>`), its phase `args.phase`: SIMD groups take the phase's items by ticket until
+// none is left. Tier 1's pool says the records (`lexed`); the phases' pool holds the host's layout words, the trees and
+// the arrays the phases write.
+typedef struct json_t2_PArgs {
+    uint32_t phase;
+    uint32_t pad;
+} json_t2_PArgs;
+UKL_REFLECT_STRUCT(json_t2_PArgs, phase, pad)
+DEFINE_KERNEL2(tier2, json_t2_phases,
+               ARGS,     json_t2_PArgs, args,    ,
+               ROBUFFER, uint8_t,  src,     "[len + 64]",
+               ROBUFFER, uint32_t, starts,  "[count + 3]",
+               ROBUFFER, uint32_t, lexed,   "[32]",
+               RWBUFFER, uint32_t, pool,    "[pool]",
+               RWBUFFER, uint32_t, meet,    "[trees * ms]",
+               RWBUFFER, uint32_t, arrays,  "[arrays]",
+               LANE,     uint16_t, lane,    )
+{
+    UklPh r;
+    r.m = (UklPhPool)pool;
+    r.meet = meet;
+    r.phase = args.phase;
+    r.src = src;
+    r.starts = starts;
+    r.arrays = arrays;
+    r.n = lexed[UKL_LEX_COUNT];
+    r.refused = lexed[UKL_LEX_REFUSED] != 0u || lexed[UKL_LEX_SHORT] != 0u;
+    ukl_ph_worker(&r, lane __UKL_ARGS);
+}
+
 // The finished tape stored as 16z where it lies (`<ukl/z16_run.h>`), its phase count: SIMD groups, a group a
 // threadgroup, each its LZ4 table in threadgroup memory, taking the phase's items by ticket.
 DEFINE_KERNEL2(tier2, json_t2_z_count,
@@ -1954,3 +1985,104 @@ DEFINE_KERNEL2(tier2, json_t2_z_write,
     r.table = table;
     ukl_z16_worker(&r, lane __UKL_ARGS);
 }
+#define json_t2_D0 1073741824u
+UKL_INLINE uint32_t json_t2_bracket_code(UKL_GLOBAL const uint8_t* src, UKL_GLOBAL const uint32_t* starts, uint32_t n, uint32_t r)
+{
+if ((r >= n)) {
+return json_t2_NONE;
+}
+return json_t2_bracket(src[((uint32_t)(starts[r]))]);
+}
+
+UKL_INLINE bool json_t2_empty_close_at(UKL_GLOBAL const uint8_t* src, UKL_GLOBAL const uint32_t* starts, uint32_t n, uint32_t r)
+{
+if ((r == 0u)) {
+return false;
+}
+uint32_t x = json_t2_bracket_code(src, starts, n, r);
+uint32_t y = json_t2_bracket_code(src, starts, n, (r - 1u));
+return (((x != json_t2_NONE) && ((x % 2u) == 0u)) && (y == (x + 1u)));
+}
+
+UKL_INLINE void json_t2_p1_unit(UKL_COHERENT uint32_t* out)
+{
+(*(out + 0u)) = json_t2_D0;
+(*(out + 1u)) = json_t2_D0;
+(*(out + 2u)) = 0u;
+}
+
+UKL_INLINE void json_t2_p1_run(UKL_GLOBAL const uint8_t* src, UKL_GLOBAL const uint32_t* starts, uint32_t n, uint32_t a, uint32_t b, UKL_COHERENT uint32_t* out)
+{
+uint32_t d = json_t2_D0;
+uint32_t m = json_t2_D0;
+uint32_t k = 0u;
+for (uint32_t r = a; r < b; r++) {
+uint32_t x = json_t2_bracket_code(src, starts, n, r);
+if ((x == json_t2_NONE)) {
+k += 1u;
+} else if (((x % 2u) == 1u)) {
+d += 1u;
+k += 2u;
+} else {
+d -= 1u;
+k += 1u;
+if ((d < m)) {
+m = d;
+}
+}
+}
+(*(out + 0u)) = d;
+(*(out + 1u)) = m;
+(*(out + 2u)) = k;
+}
+
+UKL_INLINE void json_t2_p1_merge(UKL_COHERENT const uint32_t* a, UKL_COHERENT const uint32_t* b, UKL_COHERENT uint32_t* out)
+{
+uint32_t d = ((a[0u] + b[0u]) - json_t2_D0);
+uint32_t mb = ((a[0u] + b[1u]) - json_t2_D0);
+uint32_t m = ((mb < a[1u]) ? mb : a[1u]);
+(*(out + 0u)) = d;
+(*(out + 1u)) = m;
+(*(out + 2u)) = (a[2u] + b[2u]);
+}
+
+UKL_INLINE void json_t2_p1_write(UKL_GLOBAL const uint8_t* src, UKL_GLOBAL const uint32_t* starts, uint32_t n, uint32_t a, uint32_t b, UKL_COHERENT const uint32_t* sum, UKL_GLOBAL uint32_t* depth, UKL_GLOBAL uint32_t* items)
+{
+uint32_t d = sum[0u];
+uint32_t k = ((uint32_t)(sum[2u]));
+for (uint32_t r = a; r < b; r++) {
+(*(depth + r)) = d;
+uint32_t x = json_t2_bracket_code(src, starts, n, r);
+// The level of its item in the level order: its depth (an empty container's closer one less), at least 0.
+uint32_t level = ((d > json_t2_D0) ? (d - json_t2_D0) : 0u);
+if ((((x != json_t2_NONE) && ((x % 2u) == 0u)) && json_t2_empty_close_at(src, starts, n, r))) {
+level = ((d > (json_t2_D0 + 1u)) ? ((d - json_t2_D0) - 1u) : 0u);
+}
+(*(items + (3u * k))) = level;
+(*(items + ((3u * k) + 1u))) = ((uint32_t)(r));
+(*(items + ((3u * k) + 2u))) = 0u;
+k += 1u;
+if (((x != json_t2_NONE) && ((x % 2u) == 1u))) {
+(*(items + (3u * k))) = ((d - json_t2_D0) + 1u);
+(*(items + ((3u * k) + 1u))) = ((uint32_t)(r));
+(*(items + ((3u * k) + 2u))) = 1u;
+k += 1u;
+d += 1u;
+} else if ((x != json_t2_NONE)) {
+d -= 1u;
+}
+}
+}
+
+UKL_INLINE void ukl_ph_merge(uint32_t op, UKL_COHERENT const uint32_t* a, UKL_COHERENT const uint32_t* b, UKL_COHERENT uint32_t* out)
+{
+    if (op == UKL_T2_OP_P1)
+        json_t2_p1_merge(a, b, out);
+}
+UKL_INLINE void ukl_ph_unit(uint32_t op, UKL_COHERENT uint32_t* out)
+{
+    if (op == UKL_T2_OP_P1)
+        json_t2_p1_unit(out);
+}
+UKL_INLINE void ukl_t2_p1_run(UKL_GLOBAL const uint8_t* src, UKL_GLOBAL const uint32_t* starts, uint32_t n, uint32_t a, uint32_t b, UKL_COHERENT uint32_t* out) { json_t2_p1_run(src, starts, n, a, b, out); }
+UKL_INLINE void ukl_t2_p1_write(UKL_GLOBAL const uint8_t* src, UKL_GLOBAL const uint32_t* starts, uint32_t n, uint32_t a, uint32_t b, UKL_COHERENT const uint32_t* sum, UKL_GLOBAL uint32_t* depth, UKL_GLOBAL uint32_t* items) { json_t2_p1_write(src, starts, n, a, b, sum, depth, items); }

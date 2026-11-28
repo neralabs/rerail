@@ -1237,3 +1237,96 @@ fn json_tier2_program_is_its_rust() {
     }
     eprintln!("{}: tier 2 as one program, {runs} files' runs in chunks of 1, 3 and 16 records ({chunks_run} chunks, {anti} anti-opens, {broken} broken words, at most {launches} launches, {ran:?} running): each chunk's start, depth, word, kinds, span and state Rust's, the verdict the serial walk's", crate::device::backend());
 }
+
+#[repr(C)]
+#[derive(Clone, Copy)]
+struct T2PArgs {
+    phase: u32,
+    pad: u32,
+}
+unsafe impl Pod for T2PArgs {}
+
+/// The runner's header and the program's (`<ukl/phases_run.h>`, `<ukl/t2_phases.h>`).
+const PH_H: usize = 96;
+const T2_H: usize = PH_H + 32;
+
+/// Tier 2 as phases on the device (`json_t2_phases`, `<ukl/t2_phases.h>`), P1 from tier 1's records on the device:
+/// the layout laid from the records the device found, each chunk's depth summary a leaf of P1's arrival tree, each
+/// chunk's records' depths and items written from its sum walked down. Each record's depth is the CPU phases'
+/// (`Phases::run`), and the items, ordered by level as P2 orders them, are the CPU's, for the files and the nested
+/// trees, in chunks of 1, 7 and 64 records.
+#[test]
+fn json_tier2_phases_p1_are_the_cpus() {
+    use rerail_json_aot::middle;
+    let Some(shared) = crate::shared::get() else {
+        eprintln!("no device: tier 2 as phases did not run");
+        return;
+    };
+    let mut q = crate::device::ComputeQueue::new(&shared.queue);
+    let mut kept = Kept::default();
+    let p1 = program("json_tier1.uglykl", rerail_json_aot::TIER1_UKL).unwrap_or_else(|e| panic!("{}: {e}", crate::device::backend()));
+    let p2 = program("json_tier2.uglykl", rerail_json_aot::TIER2_UKL).unwrap_or_else(|e| panic!("{}: {e}", crate::device::backend()));
+    let f = p2.function("json_t2_phases").unwrap();
+    let (mut runs, mut records) = (0usize, 0usize);
+    for (k, file) in files().into_iter().chain(nested()).enumerate() {
+        let buf = rerail_json_aot::padded(&file);
+        let n = file.len();
+        let lex = Lex::go(&mut q, &mut kept, p1, p2, &buf, n, LEX_BLOCKS);
+        let (refused, count, _) = lex.said();
+        if refused {
+            continue;
+        }
+        let typed = rerail_json_aot::lex_typed(&buf, n, LEX_BLOCKS);
+        let toks = middle::tokens(&buf, &typed.lexed, &typed.types, &middle::in_order);
+        for size in [1usize, 7, 64] {
+            let at = |what: &str| format!("{}: file {k}, chunks of {size}: {what}", crate::device::backend());
+            // The room from the records' bound (the device's layout says what it takes).
+            let chunks = (lex.records + 1).div_ceil(size);
+            let ms = 2 * chunks + 40;
+            let room = T2_H + 3 * (ms + 2 * chunks);
+            let aroom = 7 * (lex.records + 1);
+            let pb = kept.get("phases pool", 4 * room);
+            let ab = kept.get("phases arrays", 4 * aroom);
+            let meet = kept.meet("phases meet", 12 * ms);
+            let epoch = kept.next_epoch();
+            {
+                let h = words_of(&pb, T2_H);
+                h.fill(0);
+                (h[0], h[1]) = (epoch, ms as u32);
+                (h[PH_H], h[PH_H + 1], h[PH_H + 8]) = (size as u32, room as u32, aroom as u32);
+            }
+            for phase in 0..3u32 {
+                launch(&mut q, f)
+                    .value("args", &T2PArgs { phase, pad: 0 })
+                    .buffer("src", &lex.src)
+                    .buffer("starts", &lex.starts)
+                    .buffer("lexed", &lex.pool)
+                    .buffer("pool", &pb)
+                    .buffer("meet", &meet)
+                    .buffer("arrays", &ab)
+                    .run(&[groups()], &[64])
+                    .unwrap();
+                q.barrier();
+            }
+            q.flush().await_().unwrap();
+            let m: Vec<u32> = read(&pb, room);
+            let arr: Vec<u32> = read(&ab, aroom);
+            assert_eq!(m[PH_H + 2], 0, "{}", at("the room"));
+            assert_eq!(m[PH_H + 3] as usize, count, "{}", at("the records"));
+            let ph = middle::Phases::run(&buf, &typed.lexed, &toks, size, &middle::in_order);
+            let od = m[PH_H + 5] as usize;
+            let depth: Vec<i64> = arr[od..od + count + 1].iter().map(|&d| i64::from(d) - (1i64 << 30)).collect();
+            if let Some(r) = (0..depth.len().max(ph.depth.len())).find(|&r| depth.get(r) != ph.depth.get(r)) {
+                let lo = r.saturating_sub(3);
+                panic!("{}", at(&format!("record {r}'s depth of {}: {:?}, the CPU's {:?}", count + 1, &depth[lo..(r + 3).min(depth.len())], &ph.depth[lo..(r + 3).min(ph.depth.len())])));
+            }
+            let (oi, ni) = (m[PH_H + 6] as usize, m[PH_H + 7] as usize);
+            let mut items: Vec<middle::phases::Item> = arr[oi..oi + 3 * ni].chunks_exact(3).map(|w| middle::phases::Item { level: w[0], record: w[1], head: w[2] != 0 }).collect();
+            items.sort_by_key(|x| x.level);
+            assert_eq!(items, ph.items, "{}", at("the items by level"));
+            runs += 1;
+            records += count;
+        }
+    }
+    eprintln!("{}: tier 2 as phases, P1 on the device: {runs} runs, {records} records' depths and items the CPU phases'", crate::device::backend());
+}

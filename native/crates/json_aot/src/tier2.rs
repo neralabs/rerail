@@ -2294,6 +2294,131 @@ pub struct Phases {
     pub kids: Vec<Kids>,
 }
 
+// ---- The phases' block operators in closed form: u32 words and pointers, as the UKL printer prints them (one
+// source for the CPU's phases and the device's, decision 0726 step 4) ----
+
+/// The bias of a depth held in a u32: depth `d` is `D0 + d`, so a chunk's depths below its start stay unsigned, and
+/// two biased words add to under 2^32 (a merge's `a + b - D0`), for files of under `D0 / 2` records (`MOST_RECORDS`).
+pub const D0: u32 = 1 << 30;
+/// The most records the phases take: past it, every depth's sum would not fit its word.
+pub const MOST_RECORDS: usize = 1 << 29;
+
+/// A word of a phase's record: a chunk's output, a sum (a tree's node on the device, `<ukl/phases_run.h>`).
+pub type Rec = u32;
+
+/// Record `r`'s bracket code (`n` the file's records; `n` its end, none): twice its kind, plus one where it opens;
+/// `NONE` for none.
+pub fn bracket_code(src: &[u8], starts: &[u32], n: usize, r: usize) -> u32 {
+    if r >= n {
+        return NONE;
+    }
+    bracket_byte(src[starts[r] as usize])
+}
+
+/// A byte's bracket code (`bracket`'s, as one word: the printer's `bracket`).
+pub fn bracket_byte(b: u8) -> u32 {
+    match bracket(b) {
+        Some((k, open)) => 2 * u32::from(k) + u32::from(open),
+        None => NONE,
+    }
+}
+
+/// Whether record `r` closes an empty container: its record before opens it (the same kind, opening).
+pub fn empty_close_at(src: &[u8], starts: &[u32], n: usize, r: usize) -> bool {
+    if r == 0 {
+        return false;
+    }
+    let x = bracket_code(src, starts, n, r);
+    let y = bracket_code(src, starts, n, r - 1);
+    x != NONE && x % 2 == 0 && y == x + 1
+}
+
+/// P1's unit: no change of depth, nothing below the start, no items.
+///
+/// # Safety
+/// `out` has room for three words.
+pub unsafe fn p1_unit(out: *mut Rec) {
+    unsafe { *out.add(0) = D0 };
+    unsafe { *out.add(1) = D0 };
+    unsafe { *out.add(2) = 0 };
+}
+
+/// P1, records `a..b` of `n`: the chunk's change of depth (`D0`-biased) and its lowest depth below its start
+/// (biased, at most `D0`), and the items it writes, at `out[0..3]`.
+///
+/// # Safety
+/// `out` has room for three words.
+pub unsafe fn p1_run(src: &[u8], starts: &[u32], n: usize, a: usize, b: usize, out: *mut Rec) {
+    let mut d = D0;
+    let mut m = D0;
+    let mut k = 0u32;
+    for r in a..b {
+        let x = bracket_code(src, starts, n, r);
+        if x == NONE {
+            k += 1;
+        } else if x % 2 == 1 {
+            d += 1;
+            k += 2;
+        } else {
+            d -= 1;
+            k += 1;
+            if d < m {
+                m = d;
+            }
+        }
+    }
+    unsafe { *out.add(0) = d };
+    unsafe { *out.add(1) = m };
+    unsafe { *out.add(2) = k };
+}
+
+/// P1's merge: `(d, m) · (d', m') = (d + d', min(m, d + m'))`, each biased; the items added.
+///
+/// # Safety
+/// `a` and `b` hold three words each, `out` has room for three.
+pub unsafe fn p1_merge(a: &[Rec], b: &[Rec], out: *mut Rec) {
+    let d = a[0] + b[0] - D0;
+    let mb = a[0] + b[1] - D0;
+    let m = if mb < a[1] { mb } else { a[1] };
+    unsafe { *out.add(0) = d };
+    unsafe { *out.add(1) = m };
+    unsafe { *out.add(2) = a[2] + b[2] };
+}
+
+/// P1's writes, records `a..b` from the chunk's sum `sum` (P1's prefix: the depth before it, biased, and its first
+/// item): each record's depth (biased) at `depth[r]`, and its items at `items[3k..]` (level, record, head): an
+/// opener two (its parent's level, and its own level's head), a closer one (an empty container's in its parent's
+/// level), any other record one.
+///
+/// # Safety
+/// `depth` has room for `b` words, `items` for the chunk's items from its first.
+pub unsafe fn p1_write(src: &[u8], starts: &[u32], n: usize, a: usize, b: usize, sum: &[Rec], depth: *mut u32, items: *mut u32) {
+    let mut d = sum[0];
+    let mut k = sum[2] as usize;
+    for r in a..b {
+        unsafe { *depth.add(r) = d };
+        let x = bracket_code(src, starts, n, r);
+        // The level of its item in the level order: its depth (an empty container's closer one less), at least 0.
+        let mut level = if d > D0 { d - D0 } else { 0 };
+        if x != NONE && x % 2 == 0 && empty_close_at(src, starts, n, r) {
+            level = if d > D0 + 1 { d - D0 - 1 } else { 0 };
+        }
+        unsafe { *items.add(3 * k) = level };
+        unsafe { *items.add(3 * k + 1) = r as u32 };
+        unsafe { *items.add(3 * k + 2) = 0 };
+        k += 1;
+        if x != NONE && x % 2 == 1 {
+            unsafe { *items.add(3 * k) = d - D0 + 1 };
+            unsafe { *items.add(3 * k + 1) = r as u32 };
+            unsafe { *items.add(3 * k + 2) = 1 };
+            k += 1;
+            d += 1;
+        } else if x != NONE {
+            d -= 1;
+        }
+    }
+}
+
 /// A record's bracket, by its first byte (`n`: the file's end, none).
 fn bracket_of(src: &[u8], lx: &crate::tier1::Lexed, r: usize) -> Option<(u8, bool)> {
     if r < lx.count { bracket(src[lx.starts[r] as usize]) } else { None }
@@ -2309,49 +2434,36 @@ impl Phases {
     pub fn run(src: &[u8], lx: &crate::tier1::Lexed, toks: &[Token], size: usize, order: Order<'_>) -> Phases {
         let n = lx.count;
         let rc = chunks_of(n + 1, size);
-        // P1: each chunk's depth summary.
-        let p1: Vec<Depth> = each(rc.len(), order, |c| {
-            let mut s = Depth::default();
-            for r in rc[c].0..rc[c].1 {
-                let one = match bracket_of(src, lx, r) {
-                    Some((_, true)) => Depth { d: 1, m: 0, items: 2 },
-                    Some((_, false)) => Depth { d: -1, m: -1, items: 1 },
-                    None => Depth { d: 0, m: 0, items: 1 },
-                };
-                s = Depth::merge(&s, &one);
-            }
-            s
+        // P1: each chunk's depth summary (`p1_run`), their prefix sum (`p1_merge`), each chunk's writes from its sum
+        // (`p1_write`): the block operators the device runs too.
+        let st = &lx.starts[..];
+        let words: Vec<[u32; 3]> = each(rc.len(), order, |c| {
+            let mut w = [0u32; 3];
+            // SAFETY: three words.
+            unsafe { p1_run(src, st, n, rc[c].0, rc[c].1, w.as_mut_ptr()) };
+            w
         });
-        let p1_at = prefix(&p1, Depth::default(), order, Depth::merge);
-        // P1's writes: each record's depth and its items, at the chunk's sum.
-        let total = Depth::merge(&p1_at[rc.len() - 1], &p1[rc.len() - 1]);
-        let mut depth = vec![0i64; n + 1];
-        let mut items = vec![Item::default(); total.items as usize];
-        for c in order(rc.len()) {
-            let (mut d, mut k) = (p1_at[c].d, p1_at[c].items as usize);
-            for r in rc[c].0..rc[c].1 {
-                depth[r] = d;
-                match bracket_of(src, lx, r) {
-                    Some((_, true)) => {
-                        items[k] = Item { level: d as u32, record: r as u32, head: false };
-                        items[k + 1] = Item { level: (d + 1) as u32, record: r as u32, head: true };
-                        k += 2;
-                        d += 1;
-                    }
-                    Some((_, false)) => {
-                        // An empty container's closer is in its parent's level, as its opener's first item.
-                        let level = if empty_close(src, lx, r) { d - 1 } else { d };
-                        items[k] = Item { level: level.max(0) as u32, record: r as u32, head: false };
-                        k += 1;
-                        d -= 1;
-                    }
-                    None => {
-                        items[k] = Item { level: d.max(0) as u32, record: r as u32, head: false };
-                        k += 1;
-                    }
-                }
-            }
-        }
+        let merge3 = |a: &[u32; 3], b: &[u32; 3]| {
+            let mut w = [0u32; 3];
+            // SAFETY: three words each.
+            unsafe { p1_merge(a, b, w.as_mut_ptr()) };
+            w
+        };
+        let mut unit = [0u32; 3];
+        // SAFETY: three words.
+        unsafe { p1_unit(unit.as_mut_ptr()) };
+        let at3 = prefix(&words, unit, order, merge3);
+        let total = merge3(&at3[rc.len() - 1], &words[rc.len() - 1]);
+        let p1: Vec<Depth> = words.iter().map(|w| Depth { d: i64::from(w[0]) - i64::from(D0), m: i64::from(w[1]) - i64::from(D0), items: w[2] }).collect();
+        let mut dw = vec![0u32; n + 1];
+        let mut iw = vec![0u32; 3 * total[2] as usize];
+        let (dp, ip) = (dw.as_mut_ptr(), iw.as_mut_ptr());
+        each(rc.len(), order, |c| {
+            // SAFETY: each chunk its own records' depths and its own items, at its sum.
+            unsafe { p1_write(src, st, n, rc[c].0, rc[c].1, &at3[c], dp, ip) };
+        });
+        let depth: Vec<i64> = dw.iter().map(|&d| i64::from(d) - i64::from(D0)).collect();
+        let items: Vec<Item> = iw.chunks_exact(3).map(|w| Item { level: w[0], record: w[1], head: w[2] != 0 }).collect();
         // P2: the level sort, two 8-bit digits, each a phase of keyed counts over chunks of items. Within a level the
         // items keep their order: by record, an opener's head after its item in its parent's level.
         let items = sort_by_level(items, size, order);
@@ -2619,6 +2731,9 @@ pub fn parse_phases(src: &[u8], lx: &crate::tier1::Lexed, types: &[Vec<u32>], w:
     }
     if lx.count == 0 {
         return Err(lx.len as u32);
+    }
+    if lx.count >= MOST_RECORDS {
+        return Err(u32::MAX);
     }
     let toks = tokens(src, lx, types, order);
     let ph = Phases::run(src, lx, &toks, size, order);
