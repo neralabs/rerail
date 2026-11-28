@@ -122,7 +122,7 @@ csb_long(d, "connection", 900) :- csb_role(d, "connection").
 csb_long(d, "sql", 6000) :- csb_role(d, "sql").
 csb_long(d, "backend", 3000) :- csb_role(d, "backend").
 
-.violation CSB001(at: loc, k: number) "connection.py has {k} lines; target is <= 900"
+.violation CSB001(at: node, k: number) "connection.py has {k} lines; target is <= 900"
 CSB001(@place(p, 1), k) :- csb_long(d, "connection", m), line_count(d, k), k > m, doc(d, p, _).
 .violation CSB002(at: node, x: symbol) "residual non-state/lazy symbol {x} still lives in connection.py"
 CSB002(n, x) :- csb_role(d, "connection"), csb_top(d, n, x), csb_residual("connection", x).
@@ -130,16 +130,16 @@ CSB002(n, x) :- csb_role(d, "connection"), csb_top(d, n, x), csb_residual("conne
 CSB003(c, x) :- csb_role(d, "connection"), csb_class(d, c, "_DatabaseConnectionCore"), csb_base(c, _, x),
     !csb_state_base(x).
 
-.violation CSB010(at: loc, k: number) "sql_connection.py has {k} lines; target is <= 6000"
+.violation CSB010(at: node, k: number) "sql_connection.py has {k} lines; target is <= 6000"
 CSB010(@place(p, 1), k) :- csb_long(d, "sql", m), line_count(d, k), k > m, doc(d, p, _).
-.violation CSB011(at: loc, k: number) "sql_connection.py has {k} top-level blocks; target is <= 90"
+.violation CSB011(at: node, k: number) "sql_connection.py has {k} top-level blocks; target is <= 90"
 CSB011(@place(p, 1), k) :- csb_role(d, "sql"), doc(d, p, _), k = count : { csb_top(d, _, _) }, k > 90.
 .violation CSB012(at: node, x: symbol) "residual SQL service candidate {x} still lives in sql_connection.py"
 CSB012(n, x) :- csb_role(d, "sql"), csb_top(d, n, x), csb_residual("sql", x).
 .violation CSB013(at: node, k: number) "_SqlConnectionCore has {k} direct bases; target is <= 6"
 CSB013(c, k) :- csb_role(d, "sql"), csb_class(d, c, "_SqlConnectionCore"), k = count : { csb_base(c, _, _) }, k > 6.
 
-.violation CSB020(at: loc, k: number) "backend connection.py has {k} lines; target is <= 3000"
+.violation CSB020(at: node, k: number) "backend connection.py has {k} lines; target is <= 3000"
 CSB020(@place(p, 1), k) :- csb_long(d, "backend", m), line_count(d, k), k > m, doc(d, p, _).
 .violation CSB021(at: node, x: symbol) "backend mixin bucket {x} still lives in connection.py"
 CSB021(n, x) :- csb_role(d, "backend"), csb_top(d, n, x), csb_residual("backend", x).

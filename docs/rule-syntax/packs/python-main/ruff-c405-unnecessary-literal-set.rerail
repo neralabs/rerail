@@ -10,7 +10,7 @@
 // C405(n): a finding at node n, from clause `unnecessary-literal-set`.
 // Each rule below is one way the JSON `rule` can match.
 // Columns after `at` are the metavariables the JSON's message, anchor or `each` names: one finding per distinct row.
-.violation C405(at: loc, call: node) "Replace `set([...])` or `set((...))` with the set literal `{{...}}`; an empty sequence becomes `set()`."
+.violation C405(at: node, call: node) "Replace `set([...])` or `set((...))` with the set literal `{{...}}`; an empty sequence becomes `set()`."
     suppress noqa "C405"
 C405(CALL, n) :- c405_target(n), node(_, n, _, _, _), CALL = n.
 C405(CALL, n) :- c405_in_annotation(n, CALL).
@@ -39,7 +39,7 @@ c405_target(n) :- kind(n, "call"), field(n, "function", c1), c405_callee_set(c1)
 
 // in_annotation(n): the JSON util `in-annotation`, used where the JSON says `matches: "in-annotation"`
 //   CALL: metavariable this relation binds for the calling rule
-.decl c405_in_annotation(n: node, call: loc)
+.decl c405_in_annotation(n: node, call: node)
 c405_in_annotation(n, CALL) :- (kind(n, "string") ; kind(n, "concatenated_string")),
     parsed(n, "annotation", r1), within(c2, r1), c405_alt_2(c2, CALL).
 
@@ -50,6 +50,6 @@ c405_alt_1(n) :- node(_, n, _, _, _), glob("[(),]", n).
 
 // alt_2(n): the JSON `any`: n matches if any one of these rules does
 //   CALL: metavariable this relation binds for the calling rule
-.decl c405_alt_2(n: node, call: loc)
+.decl c405_alt_2(n: node, call: node)
 c405_alt_2(n, CALL) :- c405_target(n), CALL = n.
 c405_alt_2(n, CALL) :- c405_in_annotation(n, CALL).

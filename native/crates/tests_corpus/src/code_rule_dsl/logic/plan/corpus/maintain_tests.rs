@@ -398,7 +398,7 @@ imp_at(d, q) :- imp(n, q), docof(n, d).
 .decl used(q: symbol) cross_file
 used(q) :- imp_at(_, q), def_at(_, q).
 .decl placed(f: node, l: number)
-placed(f, l) :- def(f, q), used(q), line(f, l).
+placed(f, l) :- def(f, q), used(q), node_line_number(f, l).
 .output placed
 "#;
     // `used`: 200 functions of z.py that b.py imports, and a0.py's `g0`, and its `h0` once the append defines it

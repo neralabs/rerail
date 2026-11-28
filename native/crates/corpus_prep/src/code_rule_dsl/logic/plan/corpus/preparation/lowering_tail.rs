@@ -331,7 +331,7 @@ impl AggregateDemand {
     /// Item `i`'s places: its variables at a `node`, `loc` or `span` column or a document's column
     /// (`front::document_column`), a nearest's two nodes, a placed demand's place columns.
     fn places(v: &Version, p: &Placement, i: Item) -> VarSet {
-        let place = |ty: &str| matches!(ty, "node" | "loc" | "span");
+        let place = |ty: &str| matches!(ty, "node" | "place");
         let mut out = VarSet::new();
         match i {
             Item::Placed(r) => {
@@ -629,7 +629,7 @@ impl ProgramPass for AggregateDemand {
                         crate::code_rule_dsl::logic::plan::body::term_vars(t, &mut keys);
                     }
                     // Every key a place: the demand is a node's, its guards joined through places.
-                    let by_place = v.columns_of(name).is_some_and(|cols| positions.iter().all(|&k| cols.get(k).is_some_and(|(_, ty)| matches!(ty.as_str(), "node" | "loc" | "span"))));
+                    let by_place = v.columns_of(name).is_some_and(|cols| positions.iter().all(|&k| cols.get(k).is_some_and(|(_, ty)| matches!(ty.as_str(), "node" | "place"))));
                     let Some(body) = guards(v, &p, r, &items, name, &keys, by_place, &deps, &reach) else {
                         refused = true;
                         break 'readers;

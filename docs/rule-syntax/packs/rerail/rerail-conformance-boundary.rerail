@@ -25,7 +25,7 @@ CHILD_PROCESS_IN_CONFORMANCE(n) :- module_literal(n, s), match("[\\\"'`](?:node:
 // path or the pack's package; not a .json or .yaml file.
 AUTHORING_IMPORT_IN_CONFORMANCE(n) :- module_literal(n, s), match("[\\\"'`](?:(?:\\.{1,2}/)+(?:[^\\\"'`\\s]*/)?(?:scripts/(?:pack-data|upstream)|packs/[^\\\"'`/\\s]+/upstream|(?:[^\\\"'`\\s]*/)?recorders)|@neralabs/rerail-pack-[^/\\\"'`\\s]+/upstream)(?:/[^\\\"'`\\s]*)?[\\\"'`]", s), !match("(?s:.*)(?:\\.(?:json|ya?ml)[\\\"'`])(?s:.*)", n).
 
-.violation RECORDER_IN_CONFORMANCE(at: loc) "Recorders and expected-findings generators live on the authoring path: put this in scripts/pack-data/ or the pack's upstream/<tool>/ folder, not under conformance/."
+.violation RECORDER_IN_CONFORMANCE(at: node) "Recorders and expected-findings generators live on the authoring path: put this in scripts/pack-data/ or the pack's upstream/<tool>/ folder, not under conformance/."
 RECORDER_IN_CONFORMANCE(@place(p, 0)) :- doc(_, p, _), match("conformance/(?:.*/)?recorders/(?s:.*)", p).
 
 .violation EXPECTED_FINDINGS_WRITTEN_IN_CONFORMANCE(at: node) "Recorders and expected-findings generators live on the authoring path: put this in scripts/pack-data/ or the pack's upstream/<tool>/ folder, not under conformance/."

@@ -37,14 +37,14 @@ d215_owner(n) :- (kind(n, "module") ; kind(n, "function_definition") ; kind(n, "
 d215_checked(n) :- d215_docstring(n), !d215_directive_hidden(n),
     inside(n, p1, "expression_statement"),
     ( child(p2, p1, _), kind(p2, "module")
-    ; d215_code_before_line(p1, l1), line(p1, l2), k1 = l2 - l1, k1 >= 1
+    ; d215_code_before_line(p1, l1), node_line_number(p1, l2), k1 = l2 - l1, k1 >= 1
     ).
 
 
 // D215(n): findings from clauses `indent-0`, `indent-1`, `indent-2`, `indent-3` and 9 more, which say the same.
 // Each rule is one way a JSON `rule` can match.
 // Columns after `at` are the metavariables the JSON's message, anchor or `each` names: one finding per distinct row.
-.violation D215(at: loc, name: node) "Dedent this section underline to the indentation of the docstring's opening quotes, directly under the section name."
+.violation D215(at: match, name: node) "Dedent this section underline to the indentation of the docstring's opening quotes, directly under the section name."
     suppress noqa "D215"
 D215(NAME, n) :- d215_checked(n), d215_up_1(n, p1),
     match("(?:[ \\t\\f(]*(?:[^ \\t\\f(uUrR\\\"'\\n][^\\n]*|[uUrR]+(?:[^uUrR\\\"'\\n][^\\n]*)?)?\\n)*[ \\t\\f(]{0}[uUrR]*[\\\"'](?s:.*)", p1),
@@ -105,11 +105,11 @@ d215_code_comment_end(p, o) :- child(p, c, _), comment(c, _), node(_, c, _, _, o
 .decl d215_code_before_line(x: node, l: number)
 d215_code_before_line(x, l) :- structural_before(x, g), match("(?s).*\\S\\s*", g),
     ws = @replace_all(g, "(?s)^.*\\S", ""),
-    k = strlen(ws) - strlen(@replace_all(ws, "\n", "")), line(x, lx), l = lx - k.
+    k = strlen(ws) - strlen(@replace_all(ws, "\n", "")), node_line_number(x, lx), l = lx - k.
 d215_code_before_line(x, l) :- structural_before(x, g), match("\\s*", g), child(p, x, _),
     node(_, x, _, s, _), o = s - strlen(g), token(p, _, _, _, o),
     !d215_code_comment_end(p, o), k = strlen(g) - strlen(@replace_all(g, "\n", "")),
-    line(x, lx), l = lx - k.
+    node_line_number(x, lx), l = lx - k.
 d215_code_before_line(x, l) :- structural_before(x, g), match("\\s*", g), child(p, x, _),
     node(_, x, _, s, _), node(_, p, _, ps, _), ps = s - strlen(g),
     d215_code_before_line(p, l).

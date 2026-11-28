@@ -34,7 +34,7 @@
 #include "data-layer/boot-python.rerail"     // callee_name, deco_word, def_walk, ann_top, ann_subscript
 #include "../data-layer/bootstrap-engine-invariants.tables.rerail"
 
-.violation BEI(at: loc, c: symbol, why: symbol) code {c} "{why}"
+.violation BEI(at: node, c: symbol, why: symbol) code {c} "{why}"
 
 // ---- files -------------------------------------------------------------------------------------------------------
 .decl bei_engine(d: number)
@@ -44,7 +44,7 @@ bei_engine(d) :- (option_item("bootstrapPaths", _, p) ; option_item("enginePaths
 bei_doc(d) :- bei_engine(d).
 bei_doc(d) :- file_name(d, n), (n = "schema_transaction.py" ; n = "sql_connection.py" ; n = "bootstrap_interrogation.py").
 bei_doc(d) :- file_name(d, n), contains("bootstrap", n).
-bei_doc(d) :- source(d, sp), (contains("Bootstrap", sp) ; contains("bootstrap", sp) ; contains("schema_transaction", sp) ;
+bei_doc(d) :- document_source(d, sp), (contains("Bootstrap", sp) ; contains("bootstrap", sp) ; contains("schema_transaction", sp) ;
     contains("materialized_pipeline", sp) ; contains("physical_table", sp) ; contains("reconciliation", sp)).
 // bei_node(n, d): node n of scanned document d. bei_fn(f, file, x): def f, named x, in a scanned file so named.
 .decl bei_node(n: node, d: number)
@@ -102,7 +102,7 @@ bei_del(f, s, x) :- kind(s, "delete_statement"), def_walk(s, f), child(s, l, _),
 
 // ---- 1. deleted surfaces, by text ----------------------------------------------------------------------------------
 .decl bei_first(d: number, s: symbol, l: number)  // surface s first occurs on line l
-bei_first(d, s, l) :- bei_doc(d), bei_text_surface(s), l = min k : { src_line(d, k, sp), contains(s, sp) }.
+bei_first(d, s, l) :- bei_doc(d), bei_text_surface(s), l = min k : { document_line(d, sp), line_number(sp, k), contains(s, sp) }.
 .decl bei_text_surface(s: symbol)
 bei_text_surface(s) :- bei_set("DELETED_COLD_BOOTSTRAP_SURFACES", s).
 bei_text_surface(s) :- bei_set("DELETED_SCHEMA_SIDECAR_SURFACES", s).
@@ -335,7 +335,7 @@ BEI(@place(p, t), "BEI012", "cold application final tail must depend on planned 
     bei_last(f, "publish_bootstrap_metadata_lazy", m), m > t.
 .decl bei_last(f: node, x: symbol, l: number)  // the installer's last call of x is on line l
 bei_last(f, x, l) :- bei_installer(f), (x = "bootstrap_schema_tail_lazy" ; x = "publish_bootstrap_metadata_lazy"),
-    bei_calls(f, _, x), l = max k : { bei_calls(f, c, x), line(c, k) }.
+    bei_calls(f, _, x), l = max k : { bei_calls(f, c, x), node_line_number(c, k) }.
 // BEI019: the installer's tail call executes no lifecycle effects.
 BEI(c, "BEI019", "cold application tail must not execute lifecycle effects as ServerPlan callbacks") :- bei_installer(f),
     bei_calls(f, c, "bootstrap_schema_tail_lazy"), bei_kw(c, "lifecycle_effects", _).

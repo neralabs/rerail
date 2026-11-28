@@ -220,8 +220,8 @@ noted(c, x) :- comment(c, x).
             let (made, plan) = rewritten(&v);
             (F::declared_names(&*made).into_iter().any(|r| r.starts_with(DEFERRED_PAIRS)), plan.cross)
         };
-        assert_eq!(deferred("remark(x, l, k) :- noted(c, x), defined(_, x), line(c, l), col(c, k)."), (false, vec!["defined".to_owned()]), "across files");
-        assert_eq!(deferred("remark(x, l, k) :- noted(c, x), defined(d, x), field(d, \"body\", c), line(c, l), col(c, k)."), (true, Vec::new()), "within one document");
+        assert_eq!(deferred("remark(x, l, k) :- noted(c, x), defined(_, x), node_line_number(c, l), node_start_column(c, k)."), (false, vec!["defined".to_owned()]), "across files");
+        assert_eq!(deferred("remark(x, l, k) :- noted(c, x), defined(d, x), field(d, \"body\", c), node_line_number(c, l), node_start_column(c, k)."), (true, Vec::new()), "within one document");
     }
 
     /// A file's join asked for only at columns that hold none of its locations (RUF057's `call_q(c, q)` by `q`, from

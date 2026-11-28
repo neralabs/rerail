@@ -10,7 +10,7 @@
 // SIM113(n): a finding at node n, from clause `enumerate-for-loop`.
 // Each rule below is one way the JSON `rule` can match.
 // Columns after `at` are the metavariables the JSON's message, anchor or `each` names: one finding per distinct row.
-.violation SIM113(at: node, n_mv: loc) "Use `enumerate()` for index variable `{n_mv}` in `for` loop"
+.violation SIM113(at: node, n_mv: node) "Use `enumerate()` for index variable `{n_mv}` in `for` loop"
     suppress noqa "SIM113"
 SIM113(n, N) :- kind(n, "augmented_assignment"), sim113_tok_has_1(n), child(n, c9, _),
     kind(c9, "identifier"), node(_, c9, _, _, _), N = c9, sim113_tok_precedes_2(c9), child(n, c17, _),
@@ -46,7 +46,7 @@ sim113_statement(n) :- kind(n, "module").
 
 // initial_site(n): the JSON util `initial-site`, used where the JSON says `matches: "initial-site"`
 //   LOOP: metavariable of the calling rule, passed in (bound by the caller)
-.decl sim113_initial_site(n: node, loop: loc)
+.decl sim113_initial_site(n: node, loop: node)
 sim113_initial_site(n, LOOP) :- sim113_demand_initial_site(n, LOOP), kind(n, "assignment"),
     within_stop(n, p1, "expression_statement"), kind(p1, "expression_statement"),
     within_stop(p1, p2, sim113_stop_2), sim113_statement(p2), within_stop(c3, p2, sim113_stop_3),
@@ -147,7 +147,7 @@ sim113_tok_precedes_8(n) :- structural_after(n, g64),
     match("(?s)^(?:\\s*(?:\\+=)(?:[^\\-+*/%@\\&|\\^<>=!:.\\~].*)?)$", g64).
 
 // demand_alt_8: the rows of alt_8 its callers ask for (the metavariable columns they pass in)
-.decl sim113_demand_alt_8(n: node, init: loc)
+.decl sim113_demand_alt_8(n: node, init: node)
 sim113_demand_alt_8(c2_8, INIT) :- kind(n, "augmented_assignment"), sim113_tok_has_1(n),
     child(n, c9, _), kind(c9, "identifier"), node(_, c9, _, _, _), N = c9, sim113_tok_precedes_2(c9),
     child(n, c17, _), kind(c17, "identifier"), node(_, c17, _, _, _), N = c17, sim113_tok_precedes_3(c17),
@@ -166,7 +166,7 @@ sim113_demand_alt_8(c2_8, INIT) :- kind(n, "augmented_assignment"), sim113_tok_h
 
 
 // demand_initial_site: the rows of initial_site its callers ask for (the metavariable columns they pass in)
-.decl sim113_demand_initial_site(n: node, loop: loc)
+.decl sim113_demand_initial_site(n: node, loop: node)
 sim113_demand_initial_site(st3_6, LOOP) :- kind(n, "augmented_assignment"), sim113_tok_has_1(n),
     child(n, c9, _), kind(c9, "identifier"), node(_, c9, _, _, _), N = c9, sim113_tok_precedes_2(c9),
     child(n, c17, _), kind(c17, "identifier"), node(_, c17, _, _, _), N = c17, sim113_tok_precedes_3(c17),
@@ -224,7 +224,7 @@ sim113_stop_3(n) :- node(_, n, _, _, _), count : { kind(n, k1), sim113_set_4(k1)
 
 // alt_8(n): the JSON `any`: n matches if any one of these rules does
 //   INIT: metavariable of the calling rule, passed in (bound by the caller)
-.decl sim113_alt_8(n: node, init: loc)
+.decl sim113_alt_8(n: node, init: node)
 sim113_alt_8(n, INIT) :- sim113_demand_alt_8(n, INIT), precedes(s1, n),
     kind(s1, "expression_statement"), child(s1, c2, _), node(_, c2, _, _, _), S4 = c2,
     node(_, S4, _, _, _), node(_, INIT, _, _, _), S4 = INIT.

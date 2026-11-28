@@ -1036,10 +1036,10 @@ lazy_fdiag(f, s, "LA-009", 0) :- lazy_hasdelegatehit(f), s = min s2 : { lazy_del
 lazy_gate(d) :- lazy_doc(d, _), !option_value("entryPoint", "_scan_deleted_cold_bootstrap_surfaces").
 lazy_row(d, s, code) :- lazy_diag(d, s, code), lazy_gate(d), !option_value("entryPoint", "collector-extra").
 lazy_row(d, s, code) :- lazy_diagc(d, s, code), lazy_gate(d), !option_value("entryPoint", "analyzed-functions").
-lazy_line(d, s, l) :- lazy_row(d, s, _), node(d, n, _, s, _), line(n, l).
+lazy_line(d, s, l) :- lazy_row(d, s, _), node(d, n, _, s, _), node_line_number(n, l).
 violation("data-layer-lazy-architecture", "lazy-architecture", code, p, l) :- lazy_row(d, s, code), lazy_doc(d, p), lazy_line(d, s, l).
 deleted_doc(d, p) :- doc(d, p, _), in_scope(d), !out_scope(d), suffix(".py", p), !prefix("scripts/", p), !option_value("entryPoint", "scan_files.ast-component"), !option_value("entryPoint", "collector-extra"), !option_value("entryPoint", "analyzed-functions").
-deleted_at(c, d, l) :- deleted_doc(d, _), src_line(d, l, sp), text(sp, t), deleted_surface(c, s), contains(s, t).
+deleted_at(c, d, l) :- deleted_doc(d, _), document_line(d, sp), line_number(sp, l), line_text(sp, t), deleted_surface(c, s), contains(s, t).
 deleted_has(c, d) :- deleted_at(c, d, _).
 violation("data-layer-lazy-architecture", "deleted-cold-0", "LA-018", p, l) :- deleted_has("deleted-cold-0", d), deleted_doc(d, p), l = min l2 : { deleted_at("deleted-cold-0", d, l2) }.
 violation("data-layer-lazy-architecture", "deleted-cold-1", "LA-018", p, l) :- deleted_has("deleted-cold-1", d), deleted_doc(d, p), l = min l2 : { deleted_at("deleted-cold-1", d, l2) }.

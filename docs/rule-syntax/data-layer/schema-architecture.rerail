@@ -45,7 +45,7 @@ sap_dirs(d) :- doc(d, p, _), glob("{l2000_connection,l3200_metadata,impl/common/
 .decl sap_direct(d: number)   // outside both linters' files: handed to one directly
 sap_direct(d) :- doc(d, p, _), !sap_dirs(d), !sap_target(p).
 .decl sap_triggered(d: number)
-sap_triggered(d) :- sap_dirs(d), source(d, sp),
+sap_triggered(d) :- sap_dirs(d), document_source(d, sp),
     (contains("SchemaTransaction", sp) ; contains("Callable", sp) ; contains("_schema_operation_plan", sp)).
 .decl sap_doc(d: number)      // the plugin reads it
 sap_doc(d) :- sap_triggered(d), !syntax_error(d, _, _).
@@ -58,7 +58,7 @@ sap_in(n) :- docof(n, d), sap_doc(d).
 .decl cli_in(n: node)
 cli_in(n) :- docof(n, d), cli_doc(d).
 
-.violation SAP000(at: loc) "cannot inspect schema lifecycle ownership: the file does not parse"
+.violation SAP000(at: node) "cannot inspect schema lifecycle ownership: the file does not parse"
 SAP000(@place(p, 1)) :- sap_triggered(d), syntax_error(d, _, _), doc(d, p, _).
 
 // sap_method(c, r, a): c is `r.a(…)`.

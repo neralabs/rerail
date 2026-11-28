@@ -8,7 +8,7 @@
 // ISC004(n): a finding at node n, from clause `implicit-string-concatenation-in-collection-literal`.
 // Each rule below is one way the JSON `rule` can match.
 // Columns after `at` are the metavariables the JSON's message, anchor or `each` names: one finding per distinct row.
-.violation ISC004(at: loc, c: node) "Add the missing comma if these strings are separate items; if joining them is intended, wrap the concatenation in parentheses."
+.violation ISC004(at: node, c: node) "Add the missing comma if these strings are separate items; if joining them is intended, wrap the concatenation in parentheses."
     suppress noqa "ISC004"
 ISC004(C, n) :- isc004_target(n), node(_, n, _, _, _), C = n.
 ISC004(C, n) :- isc004_in_string(n, C).
@@ -23,7 +23,7 @@ isc004_target(n) :- kind(n, "concatenated_string"), isc004_alt_2(n).
 
 // in_string(n): the JSON util `in-string`, used where the JSON says `matches: "in-string"`
 //   C: metavariable this relation binds for the calling rule
-.decl isc004_in_string(n: node, c: loc)
+.decl isc004_in_string(n: node, c: node)
 isc004_in_string(n, C) :- (kind(n, "string") ; kind(n, "concatenated_string")),
     parsed(n, "annotation", r1), within(c2, r1), isc004_alt_4(c2, C).
 
@@ -64,7 +64,7 @@ isc004_alt_2(n) :- child(p5, n, _), kind(p5, "type"), child(p6, p5, _),
 
 // alt_4(n): the JSON `any`: n matches if any one of these rules does
 //   C: metavariable this relation binds for the calling rule
-.decl isc004_alt_4(n: node, c: loc)
+.decl isc004_alt_4(n: node, c: node)
 isc004_alt_4(n, C) :- isc004_target(n), C = n.
 isc004_alt_4(n, C) :- isc004_in_string(n, C).
 

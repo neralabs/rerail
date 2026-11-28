@@ -88,7 +88,7 @@ pyi062_in_literal_chain(n) :- kind(n, "parenthesized_expression").
 
 // member_expr(n): the JSON util `member-expr`, used where the JSON says `matches: "member-expr"`
 //   DUP: metavariable this relation binds for the calling rule
-.decl pyi062_member_expr(n: node, dup: loc)
+.decl pyi062_member_expr(n: node, dup: node)
 pyi062_member_expr(n, DUP) :- !kind(n, "type"), !kind(n, "parenthesized_expression"),
     node(_, n, _, _, _), DUP = n.
 pyi062_member_expr(n, DUP) :- (kind(n, "type") ; kind(n, "parenthesized_expression")),
@@ -96,7 +96,7 @@ pyi062_member_expr(n, DUP) :- (kind(n, "type") ; kind(n, "parenthesized_expressi
 
 // equal_expr(n): the JSON util `equal-expr`, used where the JSON says `matches: "equal-expr"`
 //   DUP: metavariable of the calling rule, passed in (bound by the caller)
-.decl pyi062_equal_expr(n: node, dup: loc)
+.decl pyi062_equal_expr(n: node, dup: node)
 pyi062_equal_expr(n, DUP) :- pyi062_demand_equal_expr(n, DUP), !kind(n, "type"), node(_, n, _, _, _), F = n,
     value(F, t1), value(DUP, t1).
 pyi062_equal_expr(n, DUP) :- pyi062_demand_equal_expr(n, DUP), kind(n, "type"), child(n, c3, _),
@@ -104,7 +104,7 @@ pyi062_equal_expr(n, DUP) :- pyi062_demand_equal_expr(n, DUP), kind(n, "type"), 
 
 // deep_slots_have_equal(n): the JSON util `deep-slots-have-equal`, used where the JSON says `matches: "deep-slots-have-equal"`
 //   DUP: metavariable of the calling rule, passed in (bound by the caller)
-.decl pyi062_deep_slots_have_equal(n: node, dup: loc)
+.decl pyi062_deep_slots_have_equal(n: node, dup: node)
 pyi062_deep_slots_have_equal(n, DUP) :- pyi062_demand_deep_slots_have_equal(n, DUP),
     pyi062_slots_have_equal(n, DUP).
 pyi062_deep_slots_have_equal(n, DUP) :- pyi062_demand_deep_slots_have_equal(n, DUP),
@@ -113,7 +113,7 @@ pyi062_deep_slots_have_equal(n, DUP) :- pyi062_demand_deep_slots_have_equal(n, D
 
 // slots_have_equal(n): the JSON util `slots-have-equal`, used where the JSON says `matches: "slots-have-equal"`
 //   DUP: metavariable of the calling rule, passed in (bound by the caller)
-.decl pyi062_slots_have_equal(n: node, dup: loc)
+.decl pyi062_slots_have_equal(n: node, dup: node)
 pyi062_slots_have_equal(n, DUP) :- pyi062_demand_slots_have_equal(n, DUP), pyi062_literal(n), pyi062_alt_5(n, DUP).
 pyi062_slots_have_equal(n, DUP) :- pyi062_demand_slots_have_equal(n, DUP), pyi062_tuple_slot(n),
     kind(n, "tuple"), child(n, c4, _), pyi062_contains_equal(c4, DUP).
@@ -123,7 +123,7 @@ pyi062_slots_have_equal(n, DUP) :- pyi062_demand_slots_have_equal(n, DUP), pyi06
 
 // contains_equal(n): the JSON util `contains-equal`, used where the JSON says `matches: "contains-equal"`
 //   DUP: metavariable of the calling rule, passed in (bound by the caller)
-.decl pyi062_contains_equal(n: node, dup: loc)
+.decl pyi062_contains_equal(n: node, dup: node)
 pyi062_contains_equal(n, DUP) :- pyi062_demand_contains_equal(n, DUP), node(_, n, _, _, _), !kind(n, "comment"),
     pyi062_alt_6(n), pyi062_equal_expr(n, DUP), !pyi062_wraps_container(n), !pyi062_tuple_slot(n).
 pyi062_contains_equal(n, DUP) :- pyi062_demand_contains_equal(n, DUP), node(_, n, _, _, _), !kind(n, "comment"),
@@ -135,13 +135,13 @@ pyi062_contains_equal(n, DUP) :- pyi062_demand_contains_equal(n, DUP), node(_, n
 
 // string_duplicate_member(n): the JSON util `string-duplicate-member`, used where the JSON says `matches: "string-duplicate-member"`
 //   D: metavariable this relation binds for the calling rule
-.decl pyi062_string_duplicate_member(n: node, d: loc)
+.decl pyi062_string_duplicate_member(n: node, d: node)
 pyi062_string_duplicate_member(n, D) :- (kind(n, "string") ; kind(n, "concatenated_string")),
     parsed(n, "annotation", r1), within(c2, r1), pyi062_alt_11(c2, D).
 
 // duplicate_member(n): the JSON util `duplicate-member`, used where the JSON says `matches: "duplicate-member"`
 //   DUP: metavariable this relation binds for the calling rule
-.decl pyi062_duplicate_member(n: node, dup: loc)
+.decl pyi062_duplicate_member(n: node, dup: node)
 pyi062_duplicate_member(n, DUP) :- pyi062_leaf_slot(n), pyi062_member_expr(n, DUP),
     ( precedes(s1, n), pyi062_contains_equal(s1, DUP)
     ; pyi062_up_1(n, p1), precedes(s2, p1), pyi062_contains_equal(s2, DUP)
@@ -151,14 +151,14 @@ pyi062_duplicate_member(n, DUP) :- pyi062_leaf_slot(n), pyi062_member_expr(n, DU
 // PYI062(n): a finding at node n, from clause `duplicate-literal-member`.
 // Each rule below is one way the JSON `rule` can match.
 // Columns after `at` are the metavariables the JSON's message, anchor or `each` names: one finding per distinct row.
-.violation PYI062(at: loc, dup: node) "Remove the repeated member `{dup}` from this Literal; an earlier member already covers it."
+.violation PYI062(at: node, dup: node) "Remove the repeated member `{dup}` from this Literal; an earlier member already covers it."
     suppress noqa "PYI062"
 PYI062(DUP, n) :- pyi062_alt_15(n), pyi062_duplicate_member(n, DUP).
 
 // PYI062_duplicate_literal_member_in_string(n): a finding at node n, from clause `duplicate-literal-member-in-string`.
 // Each rule below is one way the JSON `rule` can match.
 // Columns after `at` are the metavariables the JSON's message, anchor or `each` names: one finding per distinct row.
-.violation PYI062_duplicate_literal_member_in_string(at: loc, d: node) code "PYI062" "Remove the repeated member `{d}` from this Literal; an earlier member already covers it."
+.violation PYI062_duplicate_literal_member_in_string(at: node, d: node) code "PYI062" "Remove the repeated member `{d}` from this Literal; an earlier member already covers it."
     suppress noqa "PYI062"
 PYI062_duplicate_literal_member_in_string(D, n) :- pyi062_string_duplicate_member(n, D).
 
@@ -202,11 +202,11 @@ pyi062_tok_follows_4(n) :- precedes(o12, n), structural_before(o12, g10),
     match("(?s)^(?:.*(?:[\\[(]).*)$", g10).
 
 // demand_alt_5: the rows of alt_5 its callers ask for (the metavariable columns they pass in)
-.decl pyi062_demand_alt_5(n: node, dup: loc)
+.decl pyi062_demand_alt_5(n: node, dup: node)
 pyi062_demand_alt_5(n, DUP) :- pyi062_demand_slots_have_equal(n, DUP), pyi062_literal(n).
 
 // demand_contains_equal: the rows of contains_equal its callers ask for (the metavariable columns they pass in)
-.decl pyi062_demand_contains_equal(n: node, dup: loc)
+.decl pyi062_demand_contains_equal(n: node, dup: node)
 pyi062_demand_contains_equal(c4, DUP) :- pyi062_demand_slots_have_equal(n, DUP), pyi062_tuple_slot(n),
     kind(n, "tuple"), child(n, c4, _).
 pyi062_demand_contains_equal(c6, DUP) :- pyi062_demand_slots_have_equal(n, DUP), pyi062_tuple_slot(n),
@@ -220,18 +220,18 @@ pyi062_demand_contains_equal(c3, DUP) :- pyi062_demand_alt_5(n, DUP), kind(n, "g
     child(n, c2, _), kind(c2, "type_parameter"), child(c2, c3, _).
 
 // demand_deep_slots_have_equal: the rows of deep_slots_have_equal its callers ask for (the metavariable columns they pass in)
-.decl pyi062_demand_deep_slots_have_equal(n: node, dup: loc)
+.decl pyi062_demand_deep_slots_have_equal(n: node, dup: node)
 pyi062_demand_deep_slots_have_equal(c1, DUP) :- pyi062_demand_deep_slots_have_equal(n, DUP),
     (kind(n, "type") ; kind(n, "parenthesized_expression")), child(n, c1, _).
 pyi062_demand_deep_slots_have_equal(n, DUP) :- pyi062_demand_contains_equal(n, DUP), node(_, n, _, _, _),
     pyi062_alt_6(n).
 
 // demand_slots_have_equal: the rows of slots_have_equal its callers ask for (the metavariable columns they pass in)
-.decl pyi062_demand_slots_have_equal(n: node, dup: loc)
+.decl pyi062_demand_slots_have_equal(n: node, dup: node)
 pyi062_demand_slots_have_equal(n, DUP) :- pyi062_demand_deep_slots_have_equal(n, DUP).
 
 // demand_equal_expr: the rows of equal_expr its callers ask for (the metavariable columns they pass in)
-.decl pyi062_demand_equal_expr(n: node, dup: loc)
+.decl pyi062_demand_equal_expr(n: node, dup: node)
 pyi062_demand_equal_expr(n, DUP) :- pyi062_demand_contains_equal(n, DUP), node(_, n, _, _, _), pyi062_alt_6(n).
 
 // up_1(n, p): p is an ancestor of n the `inside` step stops at and matches, from the n the rule allows
@@ -250,7 +250,7 @@ pyi062_alt_2(n) :- precedes(n, s2), pyi062_direct_slot(s2).
 
 // alt_5(n): the JSON `any`: n matches if any one of these rules does
 //   DUP: metavariable of the calling rule, passed in (bound by the caller)
-.decl pyi062_alt_5(n: node, dup: loc)
+.decl pyi062_alt_5(n: node, dup: node)
 pyi062_alt_5(n, DUP) :- pyi062_demand_alt_5(n, DUP), kind(n, "subscript"), child(n, c1, _),
     pyi062_contains_equal(c1, DUP).
 pyi062_alt_5(n, DUP) :- pyi062_demand_alt_5(n, DUP), kind(n, "generic_type"), child(n, c2, _),
@@ -263,7 +263,7 @@ pyi062_alt_6(n) :- pyi062_tok_follows_3(n).
 
 // alt_11(n): the JSON `any`: n matches if any one of these rules does
 //   D: metavariable this relation binds for the calling rule
-.decl pyi062_alt_11(n: node, d: loc)
+.decl pyi062_alt_11(n: node, d: node)
 pyi062_alt_11(n, D) :- pyi062_duplicate_member(n, _), D = n.
 pyi062_alt_11(n, D) :- pyi062_string_duplicate_member(n, D).
 

@@ -16,11 +16,11 @@
 // their regexes are the JSON's, copied exactly. `.language typescript` runs on the .js, .mjs and .cjs files too; the
 // JSON's pattern clause is JavaScript's, so it leaves the .ts files out.
 
-.violation PACK_DATA_HELPER_COPY(at: span) "Import this from scripts/pack-data/eslint-expected.mjs and adapt each call to its parameters instead of defining it here; if it must work differently, rename it to say how."
-PACK_DATA_HELPER_COPY(m) :- source(_, sp), match_all("(?m)^(?:export[ \\t]+)?(?:async[ \\t]+)?(?:function\\*?|const|let|var)[ \\t]+(?:codePointColumn|withUpstreamTestCwd|UPSTREAM_TEST_CWD|assertKnownReportRules|assertPortableCase|machineDirectories|pinnedRequire|gitHead|assertCommit|findingsOf|writeExpectedFindings|unitKey|withOrigins|writeRenameVariants|isVariantPath|RENAMED_DIRECTORY)\\b", sp, m).
+.violation PACK_DATA_HELPER_COPY(at: match) "Import this from scripts/pack-data/eslint-expected.mjs and adapt each call to its parameters instead of defining it here; if it must work differently, rename it to say how."
+PACK_DATA_HELPER_COPY(m) :- document_source(_, sp), line_regex_match("(?m)^(?:export[ \\t]+)?(?:async[ \\t]+)?(?:function\\*?|const|let|var)[ \\t]+(?:codePointColumn|withUpstreamTestCwd|UPSTREAM_TEST_CWD|assertKnownReportRules|assertPortableCase|machineDirectories|pinnedRequire|gitHead|assertCommit|findingsOf|writeExpectedFindings|unitKey|withOrigins|writeRenameVariants|isVariantPath|RENAMED_DIRECTORY)\\b", sp, m).
 
-.violation PACK_DATA_UNOWNED_HELPER_COPY(at: span) "Other generators define this same helper and none is shared yet; if you change it, change theirs too, or move one copy into scripts/pack-data/eslint-expected.mjs."
-PACK_DATA_UNOWNED_HELPER_COPY(m) :- source(_, sp), match_all("(?m)^(?:export[ \\t]+)?(?:const|let|var|function)[ \\t]+(?:ECMA_EXTENSIONS|splitLines)\\b", sp, m).
+.violation PACK_DATA_UNOWNED_HELPER_COPY(at: match) "Other generators define this same helper and none is shared yet; if you change it, change theirs too, or move one copy into scripts/pack-data/eslint-expected.mjs."
+PACK_DATA_UNOWNED_HELPER_COPY(m) :- document_source(_, sp), line_regex_match("(?m)^(?:export[ \\t]+)?(?:const|let|var|function)[ \\t]+(?:ECMA_EXTENSIONS|splitLines)\\b", sp, m).
 
 // The JSON's patterns `process.chdir($$$A)`, `process.cwd = $V` and `Object.defineProperty(process, "cwd", $$$A)`.
 .violation PACK_DATA_OWN_CWD_PIN(at: node) "If this sets the working directory upstream tests see, use withUpstreamTestCwd from scripts/pack-data/eslint-expected.mjs; to run a command elsewhere, pass it a cwd option instead."

@@ -181,7 +181,7 @@ fn may_have_products(version: &Version) -> bool {
         let head = rule.head();
         let Some(decl) = version.decl_of(version.rel_name(head.rel())) else { return false };
         let nodes: BTreeSet<Slot> = head.args().zip(decl.cols())
-            .filter_map(|(term, (_, ty))| matches!(version.text(ty), "node" | "loc").then(|| term.var()).flatten())
+            .filter_map(|(term, (_, ty))| matches!(version.text(ty), "node" | "place").then(|| term.var()).flatten())
             .collect();
         if nodes.len() < 2 {
             return false;
@@ -466,7 +466,7 @@ fn disconnected_nodes(rule: RuleRef<'_>, program: &Program<'_>, varies: &BTreeSe
         .args()
         .zip(&cols)
         .filter_map(|(term, (_, ty))| match term {
-            TermRef::Var(x) if matches!(ty.as_str(), "node" | "loc") && !fixed.contains(&x) => Some(x),
+            TermRef::Var(x) if matches!(ty.as_str(), "node" | "place") && !fixed.contains(&x) => Some(x),
             _ => None,
         })
         .collect();

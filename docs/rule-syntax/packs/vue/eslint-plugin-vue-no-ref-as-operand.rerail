@@ -45,7 +45,7 @@ model_call(c) :- kind(c, "call_expression"), vin_script(c), field(c, "function",
     !ref_site(f, _).
 .decl declared(d: node, k: symbol)
 declared(d, k) :- kind(d, "variable_declarator"), child(v, d, _), (kind(v, "lexical_declaration") ;
-    kind(v, "variable_declaration")), first_token(v, t), text(t, k).
+    kind(v, "variable_declaration")), node_to_first_token(v, t), token_text(t, k).
 // ref_read(r, s, m): identifier r reads the ref variable declared at s.
 .decl ref_read(r: node, s: node, m: symbol)
 ref_read(r, s, m) :- ref_var(s, m, _), !remade(s), ref_site(r, s), kind(r, "identifier").

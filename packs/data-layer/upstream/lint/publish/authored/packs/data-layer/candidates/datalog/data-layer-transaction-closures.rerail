@@ -187,8 +187,8 @@ tc_defcls(s, x) :- node(_, s, "class_definition", _, _), field(s, "name", y), tc
 tc_importk(s) :- node(_, s, "import_statement", _, _).
 tc_importk(s) :- node(_, s, "import_from_statement", _, _).
 inline_ok(m, x) :- inline_cand(m, x, l), inline_invoked(l), !inline_shadow(l, x, m), inline_bound(l, x).
-violation("data-layer-transaction-closures", "inline-mutation", "TXN003", p, l) :- tc_callmut(d, m, x), inline_ok(m, x), tc_doc(d, p), line(m, l).
-violation("data-layer-transaction-closures", "inline-subscript", "TXN004", p, l) :- tc_submut(d, m, x), inline_ok(m, x), tc_doc(d, p), line(m, l).
+violation("data-layer-transaction-closures", "inline-mutation", "TXN003", p, l) :- tc_callmut(d, m, x), inline_ok(m, x), tc_doc(d, p), node_line_number(m, l).
+violation("data-layer-transaction-closures", "inline-subscript", "TXN004", p, l) :- tc_submut(d, m, x), inline_ok(m, x), tc_doc(d, p), node_line_number(m, l).
 named_closure0(c, o, name) :- node(d, c, "function_definition", _, _), tc_doc(d, _), field(c, "name", y), tc_ident(y, name), child(bk, c, _), node(_, bk, "block", _, _), child(o, bk, _), node(_, o, "function_definition", _, _).
 named_invoked(c) :- named_closure0(c, o, name), tc_closarg(i, _, v), tc_ident(v, name), nearest(i, o, tc_def), field(o, "body", ob), node(d, ob, _, bs, be), node(d, i, _, is2, ie2), bs <= is2, ie2 <= be, node(d, c, _, _, ce), ce <= is2.
 named_redef(c) :- named_closure0(c, o, name), field(o, "body", ob), child(ob, c2, _), node(d, c2, "function_definition", s2, _), field(c2, "name", y), tc_ident(y, name), node(d, c, _, _, ce), s2 >= ce.
@@ -209,7 +209,7 @@ named_bound(o, x) :- named_mcand(_, x, c), named_closure(c, o), field(o, "parame
 named_bound(o, x) :- named_mcand(_, x, c), named_closure(c, o), field(o, "body", ob), child(ob, s, _), node(_, s, "expression_statement", _, _), child(s, a, _), tc_modasg(a, x).
 named_bound(o, x) :- named_mcand(_, x, c), named_closure(c, o), field(o, "body", ob), child(ob, a, _), node(_, a, "assignment", _, _), field(a, "left", y), tc_ident(y, x).
 named_ok(m, x) :- named_mcand(m, x, c), named_closure(c, o), !named_shadow(c, x, m), named_bound(o, x).
-violation("data-layer-transaction-closures", "named-mutation", "TXN003", p, l) :- tc_callmut(d, m, x), named_ok(m, x), tc_doc(d, p), line(m, l).
-violation("data-layer-transaction-closures", "named-subscript", "TXN004", p, l) :- tc_submut(d, m, x), named_ok(m, x), tc_doc(d, p), line(m, l).
-violation("data-layer-transaction-closures", "named-nonlocal", "TXN001", p, l) :- named_cand(n, _), child(s, n, _), node(d, s, "nonlocal_statement", _, _), tc_doc(d, p), line(n, l).
-violation("data-layer-transaction-closures", "named-global", "TXN002", p, l) :- named_cand(n, _), child(s, n, _), node(d, s, "global_statement", _, _), tc_doc(d, p), line(n, l).
+violation("data-layer-transaction-closures", "named-mutation", "TXN003", p, l) :- tc_callmut(d, m, x), named_ok(m, x), tc_doc(d, p), node_line_number(m, l).
+violation("data-layer-transaction-closures", "named-subscript", "TXN004", p, l) :- tc_submut(d, m, x), named_ok(m, x), tc_doc(d, p), node_line_number(m, l).
+violation("data-layer-transaction-closures", "named-nonlocal", "TXN001", p, l) :- named_cand(n, _), child(s, n, _), node(d, s, "nonlocal_statement", _, _), tc_doc(d, p), node_line_number(n, l).
+violation("data-layer-transaction-closures", "named-global", "TXN002", p, l) :- named_cand(n, _), child(s, n, _), node(d, s, "global_statement", _, _), tc_doc(d, p), node_line_number(n, l).

@@ -90,7 +90,7 @@ ghw_later_new(kq, fq, hq) :- ghw_new(kq, fq, hq), ghw_new(kq, fq, gq), gq < hq.
 // h's own file.
 .decl ghw_wrote(h: symbol, y: symbol, what: symbol, p: symbol, l: number)
 ghw_wrote(hq, y, what, p, l) :- ghw_write(_, h, _), o = min v : { ghw_write(v, h, _) }, ghw_write(o, h, what),
-    pt_def(h, hq), def_name(h, y), line(o, l), docof(o, d), doc(d, p, _).
+    pt_def(h, hq), def_name(h, y), node_line_number(o, l), docof(o, d), doc(d, p, _).
 // ghw_safe_action(kq, x): view class kq answers a safe method with its method x: get and head on any view, list and
 // retrieve on a DRF class only (its viewsets route GET to them; Django's View.dispatch never does).
 .decl ghw_safe_action(kq: symbol, x: symbol)

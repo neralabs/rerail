@@ -644,7 +644,7 @@ fn infer_rule(v: &Version, r: RuleRef<'_>, known: &Known<'_>, also: &[Vector<usi
 /// Whether a rule's rows are local: every atom is, every node the head holds is an atom's, and the atoms that hold
 /// nodes are one group, joined by their shared nodes or by `nearest`.
 fn local(v: &Version, head_rel: RelId, atoms: &[(RelId, Vec<TermRef<'_>>)], nearest: &[(Var, Var)], head: &[TermRef<'_>], known: &Known<'_>) -> bool {
-    let node_col = |rel: RelId, c: usize| v.decl_of(v.rel_name(rel)).and_then(|d| d.cols().nth(c)).is_some_and(|(_, t)| matches!(v.text(t), "node" | "loc"));
+    let node_col = |rel: RelId, c: usize| v.decl_of(v.rel_name(rel)).and_then(|d| d.cols().nth(c)).is_some_and(|(_, t)| matches!(v.text(t), "node" | "place"));
     // Local: stated or inferred, or by its shape: a relation of one node column at most crosses no documents.
     let is_local = |rel: RelId| {
         known.of(rel).any(|f| *f == LayoutFact::Local)

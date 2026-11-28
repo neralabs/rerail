@@ -3214,7 +3214,7 @@ mod git_revision_tests {
 #include "git.rerail"
 .policy "offline-cache" revision 1
 git_object_request(r, c) :- git_source_commit(r, c).
-.violation Seen(at: span, text: symbol) "{text}"
+.violation Seen(at: place, text: symbol) "{text}"
 Seen(@place("commit", 1), subject) :- git_source_commit(r, c), git_subject(r, c, subject).
 "#).unwrap();
         let store = fixture.path().join("corrupt.sqlite");
@@ -3299,13 +3299,13 @@ Seen(@place("commit", 1), subject) :- git_source_commit(r, c), git_subject(r, c,
 .input title(IO=json, filename="data/value.json", path="/title")
 .decl allowed(path: symbol, line: number, text: symbol)
 .input allowed(IO=lines, dir="allow")
-.violation Seen(at: span, key: symbol, value: symbol) "{key}:{value}"
+.violation Seen(at: place, key: symbol, value: symbol) "{key}:{value}"
 Seen(@place("a.py", 1), "config", value) :- env("mark", value).
 Seen(@place("a.py", 1), "json", value) :- title(value).
 Seen(@place("a.py", 1), "dirinput", value) :- allowed("allow/one.txt", 1, value).
 Seen(@place("a.py", 1), "line", value) :- file_line("allow/one.txt", 1, value).
 Seen(@place("a.py", 1), "listing", value) :- dir_entry("allow", value, 0).
-Seen(@place("a.py", 1), "source", value) :- doc(d, "a.py", _), src_line(d, 1, sp), text(sp, value).
+Seen(@place("a.py", 1), "source", value) :- doc(d, "a.py", _), document_line(d, sp), line_number(sp, 1), place_text(sp, value).
 "#).unwrap();
         let options = serde_json::json!({"revision": commit, "analysisScope": "review"});
         let report = run_rr(&policy, &root, &fixture.path().join("out"), &options).unwrap();
@@ -3336,7 +3336,7 @@ Seen(@place("a.py", 1), "source", value) :- doc(d, "a.py", _), src_line(d, 1, sp
         std::fs::write(&policy, r#"
 .policy "historical-policy" revision 1
 .language python
-.violation Old(at: span) "historical policy ran"
+.violation Old(at: place) "historical policy ran"
 Old(@place("a.py", 1)).
 "#).unwrap();
         git(&["add", "a.py", "rule.rerail"]);
@@ -3353,8 +3353,8 @@ Old(@place("a.py", 1)).
 git_revision_request(r, "HEAD") :- git_root_repo(r).
 git_object_request(r, h) :- git_revision(r, "HEAD", h).
 git_object_request(r, p) :- git_parent(r, _, _, p).
-.violation Seen(at: span, text: symbol, message: symbol, email: symbol, head: symbol) "{text}"
-Seen(@place(p, 1), text, message, email, head) :- doc(d, p, _), src_line(d, 1, sp), text(sp, text),
+.violation Seen(at: place, text: symbol, message: symbol, email: symbol, head: symbol) "{text}"
+Seen(@place(p, 1), text, message, email, head) :- doc(d, p, _), document_line(d, sp), line_number(sp, 1), place_text(sp, text),
     git_source_commit(r, c), git_message(r, c, message), git_author(r, c, _, email, _, _),
     git_revision(r, "HEAD", h), git_parent(r, h, 0, c), git_subject(r, h, head).
 "#).unwrap();
@@ -3373,8 +3373,8 @@ Seen(@place(p, 1), text, message, email, head) :- doc(d, p, _), src_line(d, 1, s
         std::fs::write(&policy, r#"
 .policy "git-tree" revision 1
 .language python
-.violation Seen(at: span, text: symbol, tree: symbol) "{text}"
-Seen(@place(p, 1), text, tree) :- doc(d, p, _), src_line(d, 1, sp), text(sp, text), git_rev("tree", tree).
+.violation Seen(at: place, text: symbol, tree: symbol) "{text}"
+Seen(@place(p, 1), text, tree) :- doc(d, p, _), document_line(d, sp), line_number(sp, 1), place_text(sp, text), git_rev("tree", tree).
 "#).unwrap();
         let result = run_rr(&policy, &root, &fixture.path().join("tree-out"), &serde_json::json!({"revision": tree, "analysisScope": "review"})).unwrap();
         let diagnostics = result["diagnostics"].as_array().unwrap();

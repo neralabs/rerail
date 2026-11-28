@@ -24,7 +24,7 @@ imp_at(d, q) :- imp(n, q), docof(n, d).
 .decl uses(a: number, q: symbol) cross_file
 uses(a, q) :- imp_at(a, q), def_at(_, q).
 .decl shape(f: node, k: symbol, l: number, c: number)
-shape(f, k, l, c) :- def(f, q), uses(_, q), child(f, b, _), kind(b, k), line(b, l), col(b, c).
+shape(f, k, l, c) :- def(f, q), uses(_, q), child(f, b, _), kind(b, k), node_line_number(b, l), node_start_column(b, c).
 .decl named(f: node, t: symbol)
 named(f, t) :- def(f, q), uses(_, q), field(f, "name", c), text(c, t).
 .decl span(f: node, s: number, e: number)
@@ -291,11 +291,11 @@ imp_at(d, q) :- imp(n, q), docof(n, d).
 .decl uses(a: number, q: symbol) cross_file
 uses(a, q) :- imp_at(a, q), def_at(_, q).
 .decl at_line(f: node, l: number)
-at_line(f, l) :- def(f, q), uses(_, q), line(f, l).
+at_line(f, l) :- def(f, q), uses(_, q), node_line_number(f, l).
 .decl at_col(f: node, c: number)
-at_col(f, c) :- def(f, q), uses(_, q), col(f, c).
+at_col(f, c) :- def(f, q), uses(_, q), node_start_column(f, c).
 .decl lines(d: number, l: number)
-lines(d, l) :- src_line(d, l, _).
+lines(d, l) :- document_line(d, Rr_line2), line_number(Rr_line2, l).
 .decl at_home(u: node, p: symbol)
 at_home(u, p) :- imp(u, q), docof(u, a), uses(a, q), def_at(d, q), doc(d, p, _).
 .output at_line

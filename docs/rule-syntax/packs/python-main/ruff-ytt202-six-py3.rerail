@@ -10,7 +10,7 @@
 // YTT202(n): a finding at node n, from clause `six-py3`.
 // Each rule below is one way the JSON `rule` can match.
 // Columns after `at` are the metavariables the JSON's message, anchor or `each` names: one finding per distinct row.
-.violation YTT202(at: loc, c: node) "Replace `{c}` with `not six.PY2` (in a `case` pattern, test `not six.PY2` in a guard instead); `six.PY3` is false on Python 4 and later."
+.violation YTT202(at: place, c: node) "Replace `{c}` with `not six.PY2` (in a `case` pattern, test `not six.PY2` in a guard instead); `six.PY3` is false on Python 4 and later."
     suppress noqa "YTT202"
 YTT202(C, n) :- ytt202_target(n), node(_, n, _, _, _), C = n.
 YTT202(C, n) :- ytt202_splat_target(n),
@@ -25,7 +25,7 @@ ytt202_target(n) :- (kind(n, "identifier") ; kind(n, "attribute")), sym_of(n, "s
 
 // in_string(n): the JSON util `in-string`, used where the JSON says `matches: "in-string"`
 //   C: metavariable this relation binds for the calling rule
-.decl ytt202_in_string(n: node, c: loc)
+.decl ytt202_in_string(n: node, c: node)
 ytt202_in_string(n, C) :- (kind(n, "string") ; kind(n, "concatenated_string")),
     parsed(n, "annotation", r1), within(c2, r1), ytt202_alt_1(c2, C).
 
@@ -59,7 +59,7 @@ ytt202_tok_has_1(n) :- node_text(n, g5), !child(n, _, _),
 
 // alt_1(n): the JSON `any`: n matches if any one of these rules does
 //   C: metavariable this relation binds for the calling rule
-.decl ytt202_alt_1(n: node, c: loc)
+.decl ytt202_alt_1(n: node, c: node)
 ytt202_alt_1(n, C) :- ytt202_target(n), C = n.
 ytt202_alt_1(n, C) :- ytt202_in_string(n, C).
 

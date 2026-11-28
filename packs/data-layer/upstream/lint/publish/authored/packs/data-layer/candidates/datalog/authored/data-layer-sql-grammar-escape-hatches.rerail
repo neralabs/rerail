@@ -43,11 +43,11 @@ esc_forbidden("SqlRawSqlWithParams"). esc_forbidden("SqlUnsafe"). esc_forbidden(
 // `(?:NAMES)\(|import (?:NAMES)|, (?:NAMES)` (W tests the whole physical line holding the node's first byte, as
 // W's layout numbers lines: src_line). match() is a full match, hence the `(?s:.*)` around W's unanchored regex.
 .decl forbidden_class_line_ok(d: number, l: number)
-forbidden_class_line_ok(d, l) :- src_line(d, l, sp), text(sp, s), match("(?s:.*)(?:(?:SqlAdminQuery|SqlBuiltQuery|SqlDdlStatement|SqlLegacy|SqlRawSql|SqlRawSqlWithParams|SqlUnsafe|_SqlPrebuiltCondition|_SqlPrebuiltQuery)\\(|import (?:SqlAdminQuery|SqlBuiltQuery|SqlDdlStatement|SqlLegacy|SqlRawSql|SqlRawSqlWithParams|SqlUnsafe|_SqlPrebuiltCondition|_SqlPrebuiltQuery)|, (?:SqlAdminQuery|SqlBuiltQuery|SqlDdlStatement|SqlLegacy|SqlRawSql|SqlRawSqlWithParams|SqlUnsafe|_SqlPrebuiltCondition|_SqlPrebuiltQuery))(?s:.*)", s).
+forbidden_class_line_ok(d, l) :- document_line(d, sp), line_number(sp, l), line_text(sp, s), match("(?s:.*)(?:(?:SqlAdminQuery|SqlBuiltQuery|SqlDdlStatement|SqlLegacy|SqlRawSql|SqlRawSqlWithParams|SqlUnsafe|_SqlPrebuiltCondition|_SqlPrebuiltQuery)\\(|import (?:SqlAdminQuery|SqlBuiltQuery|SqlDdlStatement|SqlLegacy|SqlRawSql|SqlRawSqlWithParams|SqlUnsafe|_SqlPrebuiltCondition|_SqlPrebuiltQuery)|, (?:SqlAdminQuery|SqlBuiltQuery|SqlDdlStatement|SqlLegacy|SqlRawSql|SqlRawSqlWithParams|SqlUnsafe|_SqlPrebuiltCondition|_SqlPrebuiltQuery))(?s:.*)", s).
 .decl forbidden_class_hit(d: number, n: node)
 forbidden_class_hit(d, n) :-
     node(d, n, "class_definition", _, _), esc_doc(d), field(n, "name", x), node(d, x, "identifier", _, _), text(x, s),
-    esc_forbidden(s), line(n, l), !forbidden_class_line_ok(d, l).
+    esc_forbidden(s), node_line_number(n, l), !forbidden_class_line_ok(d, l).
 
 // ---- unsafe-parameter (a budget over evidence rows with a name closure) ---------------------------------------------
 // Rows, over every file in scope (genuinely cross-file: the closure is global, one partition):
@@ -260,7 +260,7 @@ unsafe_parameter_hit(d, p, owner) :-
     unsafe_grammar_class(d, cls, owner), unsafe_init(cls, f), unsafe_param(f, p, _), unsafe_literal(p).
 // One finding per group: (path, the parameter's line, owner).
 .decl unsafe_group(d: number, l: number, owner: symbol)
-unsafe_group(d, l, owner) :- unsafe_parameter_hit(d, p, owner), line(p, l).
+unsafe_group(d, l, owner) :- unsafe_parameter_hit(d, p, owner), node_line_number(p, l).
 
 // ---- usage-0 … usage-8 --------------------------------------------------------------------------------------------
 // usage-i, for its name X, matches a node that is
@@ -315,7 +315,7 @@ usage_0_hit(d, n) :- node(d, n, k, _, _), usage_import_kind(k), usage_prev(n, "i
 usage_0_hit(d, n) :- node(d, n, k, _, _), usage_comma_kind(k), usage_prev(n, ","), node_text(n, s), prefix("SqlAdminQuery", s).
 .decl usage_0_earlier(n: node)
 usage_0_earlier(n) :-
-    usage_0_hit(d, n), node(d, n, _, ns, _), line(n, l), usage_0_hit(d, m), node(d, m, _, _, me), me <= ns, end_line(m, l).
+    usage_0_hit(d, n), node(d, n, _, ns, _), node_line_number(n, l), usage_0_hit(d, m), node(d, m, _, _, me), me <= ns, node_end_line_number(m, l).
 .decl usage_0_current(d: number, n: node)
 usage_0_current(d, n) :- usage_0_hit(d, n), esc_doc(d), !usage_0_earlier(n).
 // usage-1: SqlBuiltQuery
@@ -325,7 +325,7 @@ usage_1_hit(d, n) :- node(d, n, k, _, _), usage_import_kind(k), usage_prev(n, "i
 usage_1_hit(d, n) :- node(d, n, k, _, _), usage_comma_kind(k), usage_prev(n, ","), node_text(n, s), prefix("SqlBuiltQuery", s).
 .decl usage_1_earlier(n: node)
 usage_1_earlier(n) :-
-    usage_1_hit(d, n), node(d, n, _, ns, _), line(n, l), usage_1_hit(d, m), node(d, m, _, _, me), me <= ns, end_line(m, l).
+    usage_1_hit(d, n), node(d, n, _, ns, _), node_line_number(n, l), usage_1_hit(d, m), node(d, m, _, _, me), me <= ns, node_end_line_number(m, l).
 .decl usage_1_current(d: number, n: node)
 usage_1_current(d, n) :- usage_1_hit(d, n), esc_doc(d), !usage_1_earlier(n).
 // usage-2: SqlDdlStatement
@@ -335,7 +335,7 @@ usage_2_hit(d, n) :- node(d, n, k, _, _), usage_import_kind(k), usage_prev(n, "i
 usage_2_hit(d, n) :- node(d, n, k, _, _), usage_comma_kind(k), usage_prev(n, ","), node_text(n, s), prefix("SqlDdlStatement", s).
 .decl usage_2_earlier(n: node)
 usage_2_earlier(n) :-
-    usage_2_hit(d, n), node(d, n, _, ns, _), line(n, l), usage_2_hit(d, m), node(d, m, _, _, me), me <= ns, end_line(m, l).
+    usage_2_hit(d, n), node(d, n, _, ns, _), node_line_number(n, l), usage_2_hit(d, m), node(d, m, _, _, me), me <= ns, node_end_line_number(m, l).
 .decl usage_2_current(d: number, n: node)
 usage_2_current(d, n) :- usage_2_hit(d, n), esc_doc(d), !usage_2_earlier(n).
 // usage-3: SqlLegacy
@@ -345,7 +345,7 @@ usage_3_hit(d, n) :- node(d, n, k, _, _), usage_import_kind(k), usage_prev(n, "i
 usage_3_hit(d, n) :- node(d, n, k, _, _), usage_comma_kind(k), usage_prev(n, ","), node_text(n, s), prefix("SqlLegacy", s).
 .decl usage_3_earlier(n: node)
 usage_3_earlier(n) :-
-    usage_3_hit(d, n), node(d, n, _, ns, _), line(n, l), usage_3_hit(d, m), node(d, m, _, _, me), me <= ns, end_line(m, l).
+    usage_3_hit(d, n), node(d, n, _, ns, _), node_line_number(n, l), usage_3_hit(d, m), node(d, m, _, _, me), me <= ns, node_end_line_number(m, l).
 .decl usage_3_current(d: number, n: node)
 usage_3_current(d, n) :- usage_3_hit(d, n), esc_doc(d), !usage_3_earlier(n).
 // usage-4: SqlRawSql
@@ -355,7 +355,7 @@ usage_4_hit(d, n) :- node(d, n, k, _, _), usage_import_kind(k), usage_prev(n, "i
 usage_4_hit(d, n) :- node(d, n, k, _, _), usage_comma_kind(k), usage_prev(n, ","), node_text(n, s), prefix("SqlRawSql", s).
 .decl usage_4_earlier(n: node)
 usage_4_earlier(n) :-
-    usage_4_hit(d, n), node(d, n, _, ns, _), line(n, l), usage_4_hit(d, m), node(d, m, _, _, me), me <= ns, end_line(m, l).
+    usage_4_hit(d, n), node(d, n, _, ns, _), node_line_number(n, l), usage_4_hit(d, m), node(d, m, _, _, me), me <= ns, node_end_line_number(m, l).
 .decl usage_4_current(d: number, n: node)
 usage_4_current(d, n) :- usage_4_hit(d, n), esc_doc(d), !usage_4_earlier(n).
 // usage-5: SqlRawSqlWithParams
@@ -365,7 +365,7 @@ usage_5_hit(d, n) :- node(d, n, k, _, _), usage_import_kind(k), usage_prev(n, "i
 usage_5_hit(d, n) :- node(d, n, k, _, _), usage_comma_kind(k), usage_prev(n, ","), node_text(n, s), prefix("SqlRawSqlWithParams", s).
 .decl usage_5_earlier(n: node)
 usage_5_earlier(n) :-
-    usage_5_hit(d, n), node(d, n, _, ns, _), line(n, l), usage_5_hit(d, m), node(d, m, _, _, me), me <= ns, end_line(m, l).
+    usage_5_hit(d, n), node(d, n, _, ns, _), node_line_number(n, l), usage_5_hit(d, m), node(d, m, _, _, me), me <= ns, node_end_line_number(m, l).
 .decl usage_5_current(d: number, n: node)
 usage_5_current(d, n) :- usage_5_hit(d, n), esc_doc(d), !usage_5_earlier(n).
 // usage-6: SqlUnsafe
@@ -375,7 +375,7 @@ usage_6_hit(d, n) :- node(d, n, k, _, _), usage_import_kind(k), usage_prev(n, "i
 usage_6_hit(d, n) :- node(d, n, k, _, _), usage_comma_kind(k), usage_prev(n, ","), node_text(n, s), prefix("SqlUnsafe", s).
 .decl usage_6_earlier(n: node)
 usage_6_earlier(n) :-
-    usage_6_hit(d, n), node(d, n, _, ns, _), line(n, l), usage_6_hit(d, m), node(d, m, _, _, me), me <= ns, end_line(m, l).
+    usage_6_hit(d, n), node(d, n, _, ns, _), node_line_number(n, l), usage_6_hit(d, m), node(d, m, _, _, me), me <= ns, node_end_line_number(m, l).
 .decl usage_6_current(d: number, n: node)
 usage_6_current(d, n) :- usage_6_hit(d, n), esc_doc(d), !usage_6_earlier(n).
 // usage-7: _SqlPrebuiltCondition
@@ -385,7 +385,7 @@ usage_7_hit(d, n) :- node(d, n, k, _, _), usage_import_kind(k), usage_prev(n, "i
 usage_7_hit(d, n) :- node(d, n, k, _, _), usage_comma_kind(k), usage_prev(n, ","), node_text(n, s), prefix("_SqlPrebuiltCondition", s).
 .decl usage_7_earlier(n: node)
 usage_7_earlier(n) :-
-    usage_7_hit(d, n), node(d, n, _, ns, _), line(n, l), usage_7_hit(d, m), node(d, m, _, _, me), me <= ns, end_line(m, l).
+    usage_7_hit(d, n), node(d, n, _, ns, _), node_line_number(n, l), usage_7_hit(d, m), node(d, m, _, _, me), me <= ns, node_end_line_number(m, l).
 .decl usage_7_current(d: number, n: node)
 usage_7_current(d, n) :- usage_7_hit(d, n), esc_doc(d), !usage_7_earlier(n).
 // usage-8: _SqlPrebuiltQuery
@@ -395,24 +395,24 @@ usage_8_hit(d, n) :- node(d, n, k, _, _), usage_import_kind(k), usage_prev(n, "i
 usage_8_hit(d, n) :- node(d, n, k, _, _), usage_comma_kind(k), usage_prev(n, ","), node_text(n, s), prefix("_SqlPrebuiltQuery", s).
 .decl usage_8_earlier(n: node)
 usage_8_earlier(n) :-
-    usage_8_hit(d, n), node(d, n, _, ns, _), line(n, l), usage_8_hit(d, m), node(d, m, _, _, me), me <= ns, end_line(m, l).
+    usage_8_hit(d, n), node(d, n, _, ns, _), node_line_number(n, l), usage_8_hit(d, m), node(d, m, _, _, me), me <= ns, node_end_line_number(m, l).
 .decl usage_8_current(d: number, n: node)
 usage_8_current(d, n) :- usage_8_hit(d, n), esc_doc(d), !usage_8_earlier(n).
 
 // ---- findings ---------------------------------------------------------------------------------------------------------
 // Each clause's findings as keys (a set: J1).
 .decl esc_found(clause: symbol, path: symbol, line: number)
-esc_found("forbidden-class", p, l) :- forbidden_class_hit(d, n), doc(d, p, _), line(n, l).
+esc_found("forbidden-class", p, l) :- forbidden_class_hit(d, n), doc(d, p, _), node_line_number(n, l).
 esc_found("unsafe-parameter", p, l) :- unsafe_group(d, l, _), doc(d, p, _).
-esc_found("usage-0", p, l) :- usage_0_current(d, n), doc(d, p, _), line(n, l).
-esc_found("usage-1", p, l) :- usage_1_current(d, n), doc(d, p, _), line(n, l).
-esc_found("usage-2", p, l) :- usage_2_current(d, n), doc(d, p, _), line(n, l).
-esc_found("usage-3", p, l) :- usage_3_current(d, n), doc(d, p, _), line(n, l).
-esc_found("usage-4", p, l) :- usage_4_current(d, n), doc(d, p, _), line(n, l).
-esc_found("usage-5", p, l) :- usage_5_current(d, n), doc(d, p, _), line(n, l).
-esc_found("usage-6", p, l) :- usage_6_current(d, n), doc(d, p, _), line(n, l).
-esc_found("usage-7", p, l) :- usage_7_current(d, n), doc(d, p, _), line(n, l).
-esc_found("usage-8", p, l) :- usage_8_current(d, n), doc(d, p, _), line(n, l).
+esc_found("usage-0", p, l) :- usage_0_current(d, n), doc(d, p, _), node_line_number(n, l).
+esc_found("usage-1", p, l) :- usage_1_current(d, n), doc(d, p, _), node_line_number(n, l).
+esc_found("usage-2", p, l) :- usage_2_current(d, n), doc(d, p, _), node_line_number(n, l).
+esc_found("usage-3", p, l) :- usage_3_current(d, n), doc(d, p, _), node_line_number(n, l).
+esc_found("usage-4", p, l) :- usage_4_current(d, n), doc(d, p, _), node_line_number(n, l).
+esc_found("usage-5", p, l) :- usage_5_current(d, n), doc(d, p, _), node_line_number(n, l).
+esc_found("usage-6", p, l) :- usage_6_current(d, n), doc(d, p, _), node_line_number(n, l).
+esc_found("usage-7", p, l) :- usage_7_current(d, n), doc(d, p, _), node_line_number(n, l).
+esc_found("usage-8", p, l) :- usage_8_current(d, n), doc(d, p, _), node_line_number(n, l).
 // report_when (count > k, converter-given report_when_gt): nothing unless the rule's witnesses, all files and clauses
 // together, number more than k (eval/mod.rs, workspace/results.rs: W counts violations, one per witness). A forbid
 // clause's witness is its matched node (nested matches, `SqlUnsafe(x)` after a `,` and its `function`, are two); the

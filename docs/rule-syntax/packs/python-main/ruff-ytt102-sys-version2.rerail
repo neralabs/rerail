@@ -10,7 +10,7 @@
 // YTT102(n): a finding at node n, from clause `sys-version2`.
 // Each rule below is one way the JSON `rule` can match.
 // Columns after `at` are the metavariables the JSON's message, anchor or `each` names: one finding per distinct row.
-.violation YTT102(at: loc, c: node) "Use `sys.version_info.minor` instead of `sys.version[2]`; the character is only the first digit of the minor version once it has two digits (3.10 gives \"1\")."
+.violation YTT102(at: place, c: node) "Use `sys.version_info.minor` instead of `sys.version[2]`; the character is only the first digit of the minor version once it has two digits (3.10 gives \"1\")."
     suppress noqa "YTT102"
 YTT102(C, n) :- ytt102_target(n), node(_, n, _, _, _), C = n.
 YTT102(C, n) :- ytt102_splat_target(n),
@@ -43,7 +43,7 @@ ytt102_target(n) :- (kind(n, "identifier") ; kind(n, "attribute")), sym_of(n, "s
 
 // in_string(n): the JSON util `in-string`, used where the JSON says `matches: "in-string"`
 //   C: metavariable this relation binds for the calling rule
-.decl ytt102_in_string(n: node, c: loc)
+.decl ytt102_in_string(n: node, c: node)
 ytt102_in_string(n, C) :- (kind(n, "string") ; kind(n, "concatenated_string")),
     parsed(n, "annotation", r1), within(c2, r1), ytt102_alt_2(c2, C).
 
@@ -85,6 +85,6 @@ ytt102_counted_1(n) :- node(_, n, _, _, _), !kind(n, "comment"),
 
 // alt_2(n): the JSON `any`: n matches if any one of these rules does
 //   C: metavariable this relation binds for the calling rule
-.decl ytt102_alt_2(n: node, c: loc)
+.decl ytt102_alt_2(n: node, c: node)
 ytt102_alt_2(n, C) :- ytt102_target(n), C = n.
 ytt102_alt_2(n, C) :- ytt102_in_string(n, C).

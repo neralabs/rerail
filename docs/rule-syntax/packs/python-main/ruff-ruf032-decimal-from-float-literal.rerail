@@ -42,7 +42,7 @@ ruf032_first_arg(n) :- child(p7, n, _), kind(p7, "parenthesized_expression"), ru
 // RUF032_decimal_from_float_literal_in_string_annotation(n): a finding at node n, from clause `decimal-from-float-literal-in-string-annotation`.
 // Each rule below is one way the JSON `rule` can match.
 // Columns after `at` are the metavariables the JSON's message, anchor or `each` names: one finding per distinct row.
-.violation RUF032_decimal_from_float_literal_in_string_annotation(at: loc, arg: node) code "RUF032" "Pass the number as a string, such as `Decimal(\"1.2345\")`, so it keeps the exact decimal value; keep the float only if its exact binary value is intended."
+.violation RUF032_decimal_from_float_literal_in_string_annotation(at: node, arg: node) code "RUF032" "Pass the number as a string, such as `Decimal(\"1.2345\")`, so it keeps the exact decimal value; keep the float only if its exact binary value is intended."
     suppress noqa "RUF032"
 RUF032_decimal_from_float_literal_in_string_annotation(ARG, n) :- ruf032_in_string(n, ARG).
 
@@ -79,7 +79,7 @@ ruf032_first_arg_decimal_from_float_literal_in_string_annotation(n) :- child(p5,
 
 // in_string(n): the JSON util `in-string`, used where the JSON says `matches: "in-string"`
 //   ARG: metavariable this relation binds for the calling rule
-.decl ruf032_in_string(n: node, arg: loc)
+.decl ruf032_in_string(n: node, arg: node)
 ruf032_in_string(n, ARG) :- (kind(n, "string") ; kind(n, "concatenated_string")),
     parsed(n, "annotation", r1), within(c2, r1), ruf032_alt_3(c2, ARG).
 
@@ -119,7 +119,7 @@ ruf032_alt_2(n) :- node(_, n, _, _, _), glob("(", n).
 
 // alt_3(n): the JSON `any`: n matches if any one of these rules does
 //   ARG: metavariable this relation binds for the calling rule
-.decl ruf032_alt_3(n: node, arg: loc)
+.decl ruf032_alt_3(n: node, arg: node)
 ruf032_alt_3(n, ARG) :- ruf032_float_expr_decimal_from_float_literal_in_string_annotation(n),
     ruf032_first_arg_decimal_from_float_literal_in_string_annotation(n), ARG = n.
 ruf032_alt_3(n, ARG) :- ruf032_in_string(n, ARG).

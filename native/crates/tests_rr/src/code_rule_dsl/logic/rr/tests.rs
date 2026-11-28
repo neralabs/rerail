@@ -121,7 +121,7 @@ Before(a) :- call_name(a, "body"), call_name(b, "decor"), earlier(a, b).
 fn decoded_constant_positions_are_public_typed_rows() {
     let mut rows = finding_contract("x = f\"\"\"json\n{a}\njson\"\"\"\n", r#"
 .language python
-.violation Piece(at: span, ordinal: number, column: number) "{ordinal}:{column}"
+.violation Piece(at: place, ordinal: number, column: number) "{ordinal}:{column}"
 Piece(@place(p, l), i, c) :- str_part_start(n, i, l, c), docof(n, d), doc(d, p, _).
 "#);
     rows.sort_by_key(|r| r["parameters"]["ordinal"].as_i64().unwrap());
@@ -148,7 +148,7 @@ Word(at, i, w) :- str_part_word(_, i, w, at, _).
 fn python_constant_words_use_parsed_interpolation_boundaries() {
     let rows = finding_contract("x = f\"{a:{b:json}}\"\ny = f\"\"\"{a # } : ignored\n}json\"\"\"\nz = \"js\\\r\non\"\r\n", r#"
 .language python
-.violation Word(at: span, ordinal: number, word: symbol) "{word}"
+.violation Word(at: place, ordinal: number, word: symbol) "{word}"
 Word(@place(p, l), i, w) :- str_part_word(n, i, w, _, _), str_part_start(n, i, l, _), docof(n, d), doc(d, p, _).
 "#);
     let mut words: Vec<_> = rows.iter().map(|r| (r["line"].as_i64().unwrap(), r["parameters"]["word"].as_str().unwrap())).collect();
@@ -162,10 +162,10 @@ fn native_python_syntax_verdict_keeps_raw_source_available() {
     for source in ["marker = 1\nprint \"legacy\"\n", "marker = 1\n\"\\x\"\n", "marker = t\"future\"\n", "\u{feff}marker = 1\n"] {
         let rows = finding_contract(source, r#"
 .language python
-.violation ParseFailure(at: span) code "PARSE" "invalid Python"
+.violation ParseFailure(at: place) code "PARSE" "invalid Python"
 ParseFailure(@place(p, l)) :- doc(d, p, _), syntax_error(d, l, _).
-.violation RawText(at: span) code "RAW" "raw input survives"
-RawText(@place(p, 1)) :- doc(d, p, _), source(d, sp), text(sp, t), contains("marker", t).
+.violation RawText(at: place) code "RAW" "raw input survives"
+RawText(@place(p, 1)) :- doc(d, p, _), document_source(d, sp), place_text(sp, t), contains("marker", t).
 "#);
         assert_eq!(rows.iter().filter(|r| r["code"] == "RAW").count(), 1, "{source}");
         assert_eq!(rows.iter().filter(|r| r["code"] == "PARSE").count(), 1, "{source}");
@@ -181,7 +181,7 @@ fn public_rr_report_preserves_compiled_policy_metadata() {
 .policy "contract:metadata" revision 7
 .mode block
 .scope include "impl/**/*.py"
-.violation MetadataProbe(at: span) "nothing"
+.violation MetadataProbe(at: place) "nothing"
 MetadataProbe(@place("input.py", 1)) :- 0 = 1.
 "#).unwrap();
     let report = crate::code_rule_dsl::tools::run_rr(&rule, &root, &root.join("out"), &serde_json::Value::Null).unwrap();
@@ -240,7 +240,7 @@ fn source_span_producers_retain_rows_through_local_planning() {
 #include "python/ast.rerail"
 #include "python/calls.rerail"
 .decl selected(d: number, t: symbol)
-selected(d, t) :- source(d, sp), text(sp, t), contains("marker", t).
+selected(d, t) :- document_source(d, sp), place_text(sp, t), contains("marker", t).
 .violation Seen(at: node, source_text: symbol) "{source_text}"
 Seen(n, t) :- selected(d, t), kind(n, "identifier"), docof(n, d).
 "#);
@@ -689,9 +689,9 @@ fn a_cover_of_two_variables_is_narrowed_by_what_binds_them() {
 #[test]
 fn a_set_of_tests_on_a_span_tests_its_text() {
     let p = parse(concat!(
-        ".decl source(d: number, sp: span)\n.decl text(n: loc, s: symbol)\n.input source, text\n",
+        ".decl source(d: number, sp: place)\n.decl text(n: place, s: symbol)\n.input source, text\n",
         ".decl hit(d: number)\n.output hit\n",
-        "hit(d) :- source(d, sp), (contains(\"a\", sp) ; contains(\"b\", sp)).\n",
+        "hit(d) :- document_source(d, sp), (contains(\"a\", sp) ; contains(\"b\", sp)).\n",
     ))
     .unwrap();
     let rule = shown(&p, |h| h == "hit").remove(0);
@@ -763,8 +763,8 @@ fn unlowered_constructs_are_named() {
     let e = parse(".decl a(x: number)\nmust a(1) :- a(2).").unwrap_err().to_string();
     assert!(e.contains("`must` head a") && e.contains("not declared `must, may`"), "{e}");
     for src in [
-        ".decl t(s: symbol)\n.input t\n.violation v(at: span) \"m\"\nv(m) :- t(s), match(\"(?<m>x+)\", s).",
-        ".decl first_token(n: node, t: span)\n.input first_token\n.violation v(at: loc) \"m\"\nv(t) :- first_token(_, t).",
+        ".decl t(s: symbol)\n.input t\n.violation v(at: place) \"m\"\nv(m) :- t(s), match(\"(?<m>x+)\", s).",
+        ".decl first_token(n: node, t: place)\n.input first_token\n.violation v(at: place) \"m\"\nv(t) :- node_to_first_token(_, t).",
     ] {
         parse(src).unwrap_or_else(|e| panic!("{src}: {e}"));
     }
@@ -807,9 +807,9 @@ fn violation_codes_suppressions_and_places_lower() {
         "    suppress eslint \"@next/next/no-page-custom-font\"\n",
         "    suppress phpcs \"A.B\", \"A.B.C\",\n        \"A.D\"\n",
         "font(n, w) :- text(n, w).\n",
-        ".violation SEC(at: span, c: symbol) code {c} in \"SEC\\d+\" \"{c}\"\n",
+        ".violation SEC(at: place, c: symbol) code {c} in \"SEC\\d+\" \"{c}\"\n",
         "SEC(n, c) :- text(n, c).\n",
-        ".violation missing(at: loc, why: symbol) \"{why}\"\n",
+        ".violation missing(at: place, why: symbol) \"{why}\"\n",
         "missing(@place(p, 1), \"none\") :- doc(_, p, _).\n",
         "missing(n, \"text\") :- text(n, _).\n",
     ))
@@ -1281,14 +1281,14 @@ fn violations_at_places_and_their_lines_lower() {
         ".policy \"p\" revision 1\n",
         ".decl doc(d: number, path: symbol, module: symbol)\n.decl node(d: number, n: node, kind: symbol, start: number, end: number)\n",
         ".decl line(n: node, l: number)\n.input doc, node, line\n",
-        ".violation V(at: loc, x: symbol) code \"@scope/a-b\" \"{x}\"\n",
+        ".violation V(at: place, x: symbol) code \"@scope/a-b\" \"{x}\"\n",
         "    suppress eslint \"@scope/a-b\", \"a-b\" over {x}\n",
         "    suppress oxlint \"a-b\"\n",
         "    fix safe drop \"Remove it\"\n",
         "V(n, \"call\") :- node(_, n, \"call\", _, _).\n",
         "V(@place(p, 0), p) :- doc(_, p, _).\n",
-        ".decl spot(at: loc)\nspot(@place(\"a.json\", 3)) :- doc(_, _, _).\n",
-        ".violation W(at: span) \"w\"\nW(s) :- spot(s).\n",
+        ".decl spot(at: place)\nspot(@place(\"a.json\", 3)) :- doc(_, _, _).\n",
+        ".violation W(at: place) \"w\"\nW(s) :- spot(s).\n",
     ))
     .unwrap();
     let all = ProgramFields::settings(&*p);
@@ -1616,9 +1616,9 @@ fn a_files_lines_are_its_languages() {
         let program = format!(r#"
 .language {language}
 .decl seen(p: symbol, l: number, t: symbol)
-seen(p, l, t) :- doc(d, p, _), src_line(d, l, sp), text(sp, t).
+seen(p, l, t) :- doc(d, p, _), document_line(d, sp), line_number(sp, l), place_text(sp, t).
 .decl call_at(p: symbol, l: number)
-call_at(p, l) :- doc(d, p, _), node(d, n, k, _, _), (k = "call" ; k = "call_expression"), line(n, l), src_line(d, l, sp), text(sp, t), contains("(x)", t).
+call_at(p, l) :- doc(d, p, _), node(d, n, k, _, _), (k = "call" ; k = "call_expression"), node_line_number(n, l), document_line(d, sp), line_number(sp, l), place_text(sp, t), contains("(x)", t).
 .output seen, call_at
 "#);
         let policy = dir.join("lines.rerail");
@@ -1678,7 +1678,7 @@ fn empty_corpora_run_global_absence_findings() {
     let policy = dir.join("rule.rerail");
     std::fs::write(&policy, r#"
 .policy "empty-contract" revision 1
-.violation Missing(at: span) code "MISSING" "required file is absent"
+.violation Missing(at: place) code "MISSING" "required file is absent"
 Missing(@place("required.py", 1)) :- !doc(_, "required.py", _).
 "#).unwrap();
     let result = crate::code_rule_dsl::tools::run_rr(&policy, &corpus, &dir.join("out"), &serde_json::Value::Null).unwrap();
@@ -1701,8 +1701,8 @@ fn explicit_input_files_preserve_the_callers_document_batch() {
     std::fs::write(&policy, r#"
 .policy "explicit-inputs" revision 1
 .language python
-.violation Seen(at: span, t: symbol) "{t}"
-Seen(@place(p, l), t) :- doc(d, p, _), src_line(d, l, sp), text(sp, t).
+.violation Seen(at: place, t: symbol) "{t}"
+Seen(@place(p, l), t) :- doc(d, p, _), document_line(d, sp), line_number(sp, l), place_text(sp, t).
 "#).unwrap();
     let result = crate::code_rule_dsl::tools::run_rr(&policy, &root, &dir.join("out"),
         &serde_json::json!({"inputFiles": [".hidden/a.txt", "included.py"]})).unwrap();
@@ -1726,8 +1726,8 @@ fn a_policy_read_once_still_reads_the_roots_settings() {
     std::fs::write(&policy, r#"
 .policy "settings-read" revision 1
 .language python
-.violation Seen(at: span, m: symbol) "{m}"
-Seen(@place(p, l), m) :- doc(d, p, _), src_line(d, l, _), env("mark", m).
+.violation Seen(at: place, m: symbol) "{m}"
+Seen(@place(p, l), m) :- doc(d, p, _), document_line(d, Rr_line1), line_number(Rr_line1, l), env("mark", m).
 "#).unwrap();
     let marks = |out: &str| -> Vec<String> {
         let result = crate::code_rule_dsl::tools::run_rr(&policy, &root, &dir.join(out), &serde_json::Value::Null).unwrap();
@@ -1768,7 +1768,7 @@ fn signed_allowlist_functor_runs_through_public_rules() {
 .decl candidate(name: symbol, message: symbol)
 candidate("original", "{\"allowlist\":[],\"linter\":\"lint_admin_async_purity\",\"version\":1}").
 candidate("tampered", "{\"allowlist\":[\"added.py\"],\"linter\":\"lint_admin_async_purity\",\"version\":1}").
-.violation Verified(at: span, name: symbol) "{name}"
+.violation Verified(at: place, name: symbol) "{name}"
 Verified(@place("allowlist.json", 1), name) :- candidate(name, message),
     @ed25519_ok("7e9776d87292ab633115bd6c07892a4bf56450fffb2dfcf13b3eba1866b9fbb6", message,
     "xN3ugqWFKXrfdfYHOWH14S9NfLPHCwnni7yf1errzrn17xHvVgd6C3y/QXR7mwfGPnFwpuq/HcCWAx9C2crzDg==") = 1.
@@ -1792,7 +1792,7 @@ fn repository_json_selectors_preserve_typed_rows_and_wildcard_keys() {
 .input entries(IO=json, filename="policy.json", path="/groups/*/entries", records=true)
 .decl title(t: symbol)
 .input title(IO=json, filename="policy.json", path="/title")
-.violation Row(at: span, family: symbol, value: symbol, n: number) "{family}:{value}:{n}"
+.violation Row(at: place, family: symbol, value: symbol, n: number) "{family}:{value}:{n}"
 Row(@place("policy.json", 1), "count", k, n) :- counts(k, n).
 Row(@place("policy.json", 1), g, name, n) :- entries(g, name, n).
 Row(@place("policy.json", 1), "title", t, 0) :- title(t).
@@ -1848,9 +1848,9 @@ fn repository_inputs_report_missing_and_malformed_without_partial_rows() {
 .input bad(IO=json, filename="bad.json")
 .decl missing(t: symbol)
 .input missing(IO=lines, filename="missing.txt")
-.violation Error(at: span, kind: symbol) "{kind}"
+.violation Error(at: place, kind: symbol) "{kind}"
 Error(@place(p, 1), kind) :- input_error(p, kind, _).
-.violation Leaked(at: span) "partial row leaked"
+.violation Leaked(at: place) "partial row leaked"
 Leaked(@place("bad.json", 1)) :- bad(_).
 "#).unwrap();
     let report = crate::code_rule_dsl::tools::run_rr(&rule, &dir, &dir.join("out"), &serde_json::Value::Null).unwrap();
@@ -1868,7 +1868,7 @@ allow_sig("original", "lint_admin_async_purity", "xN3ugqWFKXrfdfYHOWH14S9NfLPHCw
 allow_sig("tampered", "lint_admin_async_purity", "xN3ugqWFKXrfdfYHOWH14S9NfLPHCwnni7yf1errzrn17xHvVgd6C3y/QXR7mwfGPnFwpuq/HcCWAx9C2crzDg==").
 allow_entry("tampered", "added.py").
 allow_sig("unsigned", "lint_admin_async_purity", "UNSIGNED").
-.violation Status(at: span, name: symbol, status: symbol) "{name}:{status}"
+.violation Status(at: place, name: symbol, status: symbol) "{name}:{status}"
 Status(@place("allowlist.json", 1), name, status) :- allow_status(name, status).
 "#);
     let mut actual: Vec<_> = rows.iter().map(|r| r["message"].as_str().unwrap()).collect();
@@ -2001,11 +2001,11 @@ fn match_all_captures_spans_over_source_text_and_symbols_over_symbols() {
     let rule = dir.join("m.rerail");
     std::fs::write(&rule, r#"
 .decl sec(l: number, c: symbol, k: number)
-sec(l, c, k) :- src_line(d, l, sp), match_all("(?<m>SEC\\d+)", sp), text(m, c), line(m, k).
+sec(l, c, k) :- document_line(d, sp), line_number(sp, l), match_all("(?<m>SEC\\d+)", sp), text(m, c), node_line_number(m, k).
 .decl cls(x: symbol, k: number)
-cls(x, k) :- source(d, sp), match_all("(?m)^class\\s+(?<c>\\w+)", sp), text(c, x), line(c, k).
+cls(x, k) :- document_source(d, sp), match_all("(?m)^class\\s+(?<c>\\w+)", sp), text(c, x), node_line_number(c, k).
 .decl whole(x: symbol, k: number)
-whole(x, k) :- src_line(d, k, sp), match("x = (?<v>\\d+).*", sp), text(v, x).
+whole(x, k) :- document_line(d, sp), line_number(sp, k), match("x = (?<v>\\d+).*", sp), place_text(v, x).
 .decl sv(s: symbol)
 sv("a=1 b=22 c=x").
 sv("none here").
@@ -2015,14 +2015,14 @@ kv(k, v) :- sv(s), match_all("(?<k>[a-z]+)=(?<v>[0-9]+)", s).
 hasb(s) :- sv(s), match_all("b=", s).
 .decl nob(s: symbol)
 nob(s) :- sv(s), !match_all("b=", s).
-.decl st(d: number, sp: span)
-st(d, sp) :- source(d, sp).
+.decl st(d: number, sp: place)
+st(d, sp) :- document_source(d, sp).
 .decl via(x: symbol)
 via(x) :- st(_, sp), match_all("(?m)^class\\s+(?<c>\\w+)", sp), text(c, x).
 .output sec, cls, whole, kv, hasb, nob, via
-.decl hit(m: span, c: symbol)
-hit(m, c) :- src_line(d, _, sp), match_all("(?<m>SEC\\d+)", sp), text(m, c).
-.violation NQ(at: span, c: symbol) code {c} "{c} suppression"
+.decl hit(m: place, c: symbol)
+hit(m, c) :- document_line(d, sp), match_all("(?<m>SEC\\d+)", sp), text(m, c).
+.violation NQ(at: place, c: symbol) code {c} "{c} suppression"
 NQ(m, c) :- hit(m, c).
 "#).unwrap();
     let program = crate::code_rule_dsl::logic::rr::print_version(&crate::code_rule_dsl::logic::rr::parse_file_version(&rule).unwrap()).unwrap();
@@ -2089,7 +2089,7 @@ fn a_text_test_of_a_capture_in_its_own_body_tests_the_captured_text() {
     std::fs::write(dir.join("a.py"), "a = \"x\u{211d}y plain\"\nb = \"2\u{211d}6789\"\n").unwrap();
     let rule = dir.join("m.rerail");
     std::fs::write(&rule, r#"
-.decl piece(t: loc)
+.decl piece(t: place)
 piece(p) :- kind(p, "string_content").
 .decl wide(w: symbol)
 wide(x) :- piece(t), match_all("(?<w>[\\p{Alphabetic}\\p{N}]+)", t), match("[\\s\\S]*[^\\x00-\\x7f][\\s\\S]*", w), text(w, x).
@@ -2120,8 +2120,8 @@ fn match_all_over_nodes_of_a_kind_and_over_captures_gives_spans() {
 str_or_comment(s) :- kind(s, "string").
 str_or_comment(s) :- kind(s, "comment").
 .decl param(k: symbol, l: number, c: number)
-param(x, l, c) :- str_or_comment(s), match_all("\\{(?<k>[a-z]+)\\}", s), text(k, x), line(k, l), col(k, c).
-.decl wd(w: span)
+param(x, l, c) :- str_or_comment(s), match_all("\\{(?<k>[a-z]+)\\}", s), text(k, x), node_line_number(k, l), node_start_column(k, c).
+.decl wd(w: place)
 wd(w) :- kind(c, "comment"), match_all("(?<w>[A-Z]+[0-9]+)", c).
 .decl digit(x: symbol)
 digit(x) :- wd(w), match_all("(?<d>[0-9])", w), text(d, x).
@@ -2149,13 +2149,13 @@ fn match_all_captures_spans_over_a_nodes_text_and_over_captures() {
     std::fs::write(dir.join("a.py"), "x = 'ab1 cd22'\ny = 'ab1 cd22'  # ef3\n").unwrap();
     let rule = dir.join("m.rerail");
     std::fs::write(&rule, r#"
-.decl piece(t: loc)
+.decl piece(t: place)
 piece(t) :- kind(t, "string_content").
 piece(t) :- kind(t, "comment").
-.decl piece_word(t: loc, w: span)
+.decl piece_word(t: place, w: place)
 piece_word(t, w) :- piece(t), match_all("(?<w>[a-z]+[0-9]+)", t).
 .decl digits(x: symbol, k: number, c: number)
-digits(x, k, c) :- piece_word(_, w), match_all("(?<d>[0-9]+)", w), text(d, x), line(d, k), col(d, c).
+digits(x, k, c) :- piece_word(_, w), match_all("(?<d>[0-9]+)", w), text(d, x), node_line_number(d, k), node_start_column(d, c).
 .decl per(x: symbol, n: number)
 per(x, n) :- piece_word(_, w), text(w, x), n = count : { match_all("(?<d>[0-9])", w) }.
 .output digits, per
@@ -2182,9 +2182,9 @@ g(d)
     let rule = dir.join("m.rerail");
     std::fs::write(&rule, r#"
 .decl comma(l: number, c: number)
-comma(l, c) :- kind(n, "argument_list"), match_all(",", n, m), line(m, l), col(m, c).
+comma(l, c) :- kind(n, "argument_list"), node_regex_match(",", n, m), place_line_number(m, l), place_start_column(m, c).
 .decl in_node(t: symbol, k: number)
-in_node(t, k) :- kind(n, "argument_list"), text(n, t), k = count : { match_all(",", n, _) }.
+in_node(t, k) :- kind(n, "argument_list"), text(n, t), k = count : { node_regex_match(",", n, _) }.
 .decl in_text(t: symbol, k: number) cross_file   // texts and counts: values of the corpus (decision 0652)
 in_text(t, k) :- kind(n, "argument_list"), text(n, t), k = count : { match_all(",", t, _, _, _) }.
 .output comma, in_node, in_text
@@ -2405,11 +2405,11 @@ marker(1).
 marker(2).
 .decl many()
 many() :- marker(_).
-.violation Boolean(at: span) code "BOOLEAN" "true"
+.violation Boolean(at: place) code "BOOLEAN" "true"
 Boolean(@place(p, 1)) :- doc(_, p, _), enabled(), !absent(), always(), many().
-.violation Bad(at: span) code "BAD" "false"
+.violation Bad(at: place) code "BAD" "false"
 Bad(@place(p, 1)) :- doc(_, p, _), absent().
-.violation Count(at: span, n: number) code "COUNT" "{n}"
+.violation Count(at: place, n: number) code "COUNT" "{n}"
 Count(@place("a.py", 1), n) :- n = count : { many() }.
 "#);
     assert_eq!(rows.len(), 2, "{rows:?}");
@@ -2428,9 +2428,9 @@ pattern(1, "(?i)cache").
 sample(0, "cache").
 sample(1, "notcache").
 sample(2, "CACHE").
-.violation Found(at: span, pattern_id: number, sample_id: number) code "MATCH" "found"
+.violation Found(at: place, pattern_id: number, sample_id: number) code "MATCH" "found"
 Found(@place("a.py", 1), p, i) :- pattern(p, re), sample(i, s), match(re, s).
-.violation Missing(at: span, pattern_id: number, sample_id: number) code "MISS" "missing"
+.violation Missing(at: place, pattern_id: number, sample_id: number) code "MISS" "missing"
 Missing(@place("a.py", 1), p, i) :- pattern(p, re), sample(i, s), !match(re, s).
 "#;
     let parsed = parse(rule).unwrap();
@@ -2450,12 +2450,12 @@ fn requested_source_and_line_text_remain_exact_without_copying_large_subtrees() 
     let source = format!("marker = 1 # {}\npass\n", "é".repeat(5000));
     let rows = finding_contract(&source, r#"
 .language python
-.decl source_copy(sp: span)
-source_copy(sp) :- source(_, sp).
-.violation Whole(at: span, body: symbol) code "SOURCE" "source"
-Whole(sp, body) :- source_copy(sp), text(sp, body).
-.violation Physical(at: span, body: symbol) code "LINE" "line"
-Physical(sp, body) :- src_line(_, _, sp), text(sp, body).
+.decl source_copy(sp: place)
+source_copy(sp) :- document_source(_, sp).
+.violation Whole(at: place, body: symbol) code "SOURCE" "source"
+Whole(sp, body) :- source_copy(sp), place_text(sp, body).
+.violation Physical(at: place, body: symbol) code "LINE" "line"
+Physical(sp, body) :- document_line(_, sp), place_text(sp, body).
 .violation Subtree(at: node) code "TREE" "whole AST text"
 Subtree(n) :- kind(n, "module"), text(n, _).
 "#);
@@ -2586,7 +2586,7 @@ fn a_program_a_file_holds_is_the_files() {
 .decl same(d: number, e: number)
 same(d, e) :- kind(r, "raw_text"), parsed(r, "javascript", p), docof(r, d), docof(p, e).
 .decl calls(x: symbol, l: number)
-calls(x, l) :- kind(r, "raw_text"), parsed(r, "javascript", p), within(c, p), kind(c, "call_expression"), text(c, x), line(c, l).
+calls(x, l) :- kind(r, "raw_text"), parsed(r, "javascript", p), within(c, p), kind(c, "call_expression"), text(c, x), node_line_number(c, l).
 .output same, calls
 "#;
     let [same, calls] = <[Vec<Vec<String>>; 2]>::try_from(guests_run("program-in-file", &[("a.html", html)], rule, &["same", "calls"])).unwrap();
@@ -2623,7 +2623,7 @@ fn guest_of_names_the_string_a_node_was_parsed_from() {
     let py = "x: \"List[int]\" = []\nList = 1\n";
     let rule = r#"
 .decl from(x: symbol, l: number, c: number)
-from(x, l, c) :- kind(s, "string"), parsed(s, "annotation", _), guest_of(i, s), kind(i, "identifier"), text(i, x), line(s, l), col(s, c).
+from(x, l, c) :- kind(s, "string"), parsed(s, "annotation", _), guest_of(i, s), kind(i, "identifier"), text(i, x), node_line_number(s, l), node_start_column(s, c).
 .decl own(x: symbol)
 own(x) :- kind(i, "identifier"), text(i, x), !guest_of(i, _).
 .output from, own
@@ -2648,7 +2648,7 @@ roots(r) :- kind(s, "string"), parsed(s, "annotation", r).
 .decl files(f: symbol)
 files(f) :- kind(s, "string"), parsed(s, "annotation", r), docof(r, d), doc(d, f, _).
 .decl at(f: symbol, l: number)
-at(f, l) :- kind(s, "string"), parsed(s, "annotation", _), line(s, l), docof(s, d), doc(d, f, _).
+at(f, l) :- kind(s, "string"), parsed(s, "annotation", _), node_line_number(s, l), docof(s, d), doc(d, f, _).
 .output tapes, roots, files, at
 "#;
     let [tapes, roots, files, at] = <[Vec<Vec<String>>; 4]>::try_from(guests_run("guest-two-places", &[("a.py", a), ("b.py", b)], rule, &["tapes", "roots", "files", "at"])).unwrap();
@@ -2814,9 +2814,9 @@ fn guests_that_do_not_parse_follow_the_policy() {
 .on syntax_error report BAD000
 {on}
 .decl roots(l: number)
-roots(l) :- kind(s, "string"), parsed(s, "annotation", _), line(s, l).
+roots(l) :- kind(s, "string"), parsed(s, "annotation", _), node_line_number(s, l).
 .decl kept(l: number)
-kept(l) :- kind(s, "string"), sub_tape(s, "annotation", _), line(s, l).
+kept(l) :- kind(s, "string"), sub_tape(s, "annotation", _), node_line_number(s, l).
 .output roots, kept
 "#
         )
@@ -2841,11 +2841,11 @@ fn parsed_strings_are_reached_through_parsed() {
             r#"
 {guests}
 .decl imp(x: symbol, l: number)
-imp(x, l) :- kind(s, "string"), parsed(s, "python", r), within(i, r), kind(i, "import_statement"), text(i, x), line(s, l).
+imp(x, l) :- kind(s, "string"), parsed(s, "python", r), within(i, r), kind(i, "import_statement"), text(i, x), node_line_number(s, l).
 .decl tapes(t: tape)
 tapes(t) :- kind(s, "string"), sub_tape(s, "python", t).
 .decl top(x: symbol, l: number)
-top(x, l) :- kind(i, "import_statement"), text(i, x), line(i, l).
+top(x, l) :- kind(i, "import_statement"), text(i, x), node_line_number(i, l).
 .output imp, tapes, top
 "#
         )
@@ -2982,11 +2982,11 @@ fn html_scripts_and_styles_are_javascript_json_and_css_guests() {
 .language html
 #include "html/embeds.rerail"
 .decl calls(x: symbol, l: number)
-calls(x, l) :- kind(t, "raw_text"), parsed(t, "javascript", p), within(c, p), kind(c, "call_expression"), text(c, x), line(c, l).
+calls(x, l) :- kind(t, "raw_text"), parsed(t, "javascript", p), within(c, p), kind(c, "call_expression"), text(c, x), node_line_number(c, l).
 .decl decls(x: symbol, l: number)
-decls(x, l) :- kind(t, "raw_text"), parsed(t, "css", p), within(n, p), kind(n, "declaration"), text(n, x), line(n, l).
+decls(x, l) :- kind(t, "raw_text"), parsed(t, "css", p), within(n, p), kind(n, "declaration"), text(n, x), node_line_number(n, l).
 .decl pairs(x: symbol, l: number)
-pairs(x, l) :- kind(t, "raw_text"), parsed(t, "json", p), within(n, p), kind(n, "pair"), text(n, x), line(n, l).
+pairs(x, l) :- kind(t, "raw_text"), parsed(t, "json", p), within(n, p), kind(n, "pair"), text(n, x), node_line_number(n, l).
 .decl guests(g: symbol)
 guests(g) :- kind(t, "raw_text"), parsed(t, g, _).
 .decl own(x: symbol)
@@ -3017,10 +3017,10 @@ fn markdown_inline_content_is_a_guest_at_its_host_places() {
 .language markdown
 #include "markdown/embeds.rerail"
 .decl at(k: symbol, x: symbol, l: number, c: number)
-at("emphasis", x, l, c) :- parsed(_, "markdown-inline", p), within(n, p), kind(n, "emphasis"), text(n, x), line(n, l), col(n, c).
-at("strong_emphasis", x, l, c) :- parsed(_, "markdown-inline", p), within(n, p), kind(n, "strong_emphasis"), text(n, x), line(n, l), col(n, c).
-at("code_span", x, l, c) :- parsed(_, "markdown-inline", p), within(n, p), kind(n, "code_span"), text(n, x), line(n, l), col(n, c).
-at("link_destination", x, l, c) :- parsed(_, "markdown-inline", p), within(n, p), kind(n, "link_destination"), text(n, x), line(n, l), col(n, c).
+at("emphasis", x, l, c) :- parsed(_, "markdown-inline", p), within(n, p), kind(n, "emphasis"), text(n, x), node_line_number(n, l), node_start_column(n, c).
+at("strong_emphasis", x, l, c) :- parsed(_, "markdown-inline", p), within(n, p), kind(n, "strong_emphasis"), text(n, x), node_line_number(n, l), node_start_column(n, c).
+at("code_span", x, l, c) :- parsed(_, "markdown-inline", p), within(n, p), kind(n, "code_span"), text(n, x), node_line_number(n, l), node_start_column(n, c).
+at("link_destination", x, l, c) :- parsed(_, "markdown-inline", p), within(n, p), kind(n, "link_destination"), text(n, x), node_line_number(n, l), node_start_column(n, c).
 // A grammar named by a variable asks for nothing (`parsed(h, "markdown-inline", _)` beside `kind(h, k)` would ask
 // for every node's text): this reads the programs the file holds.
 .decl hosts(g: symbol, k: symbol)
@@ -3052,7 +3052,7 @@ fn parse_splice_and_unparse_make_value_documents() {
 .decl q(s: node, x: symbol)
 q(s, x) :- kind(c, "call"), field(c, "arguments", a), child(a, s, _), kind(s, "string"), str(s, x).
 .decl tables(x: symbol, l: number)
-tables(x, l) :- q(_, x0), t = @parse("sql", x0), tape_of(d, t), node(d, n, "object_reference", _, _), text(n, x), line(n, l).
+tables(x, l) :- q(_, x0), t = @parse("sql", x0), tape_of(d, t), node(d, n, "object_reference", _, _), text(n, x), node_line_number(n, l).
 .decl back(x: symbol)
 back(x) :- q(_, x0), t = @parse("sql", x0), x = @unparse(t).
 .decl fixed(x: symbol)
@@ -3076,9 +3076,9 @@ fn match_all_symbol_positions_keep_duplicate_matches_and_unicode_offsets() {
 .language python
 .decl sample(s: symbol)
 sample("é xx xx").
-.violation Found(at: span, ordinal: number, start: number, end: number, capture: symbol) code "MATCH" "found"
+.violation Found(at: place, ordinal: number, start: number, end: number, capture: symbol) code "MATCH" "found"
 Found(@place("a.py", 1), i, a, b, capture) :- sample(s), match_all("(?<capture>xx)", s, i, a, b).
-.violation Bare(at: span, ordinal: number, start: number, end: number) code "BARE" "found"
+.violation Bare(at: place, ordinal: number, start: number, end: number) code "BARE" "found"
 Bare(@place("a.py", 1), i, a, b) :- sample(s), match_all("x", s, i, a, b).
 "#;
     let wanted = |rows: &[serde_json::Value], code: &str| {
@@ -3106,7 +3106,7 @@ fn native_regex_inputs_follow_program_namespaces_and_shared_contexts() {
 .language python
 .decl sample(s: symbol)
 sample("{sample}").
-.violation Found(at: span, ordinal: number) code "{code}" "found"
+.violation Found(at: place, ordinal: number) code "{code}" "found"
 Found(@place("a.py", 1), i) :- sample(s), match_all("{pattern}", s, i, _, _).
 "#);
     let a = complete_rule(&rule("A", "xx xx", "xx"));
@@ -3236,7 +3236,7 @@ fn combined_programs_see_the_same_documents() {
     let py = "a = \"import os\"\nb = \"import sys\"\n";
     let program = r#"
 .decl top(x: symbol, l: number)
-top(x, l) :- kind(i, "import_statement"), text(i, x), line(i, l).
+top(x, l) :- kind(i, "import_statement"), text(i, x), node_line_number(i, l).
 .decl through(x: symbol)
 through(x) :- kind(s, "string"), parsed(s, "python", r), within(i, r), kind(i, "import_statement"), text(i, x).
 .output top, through
@@ -3311,7 +3311,7 @@ body(r) :- kind(s, "string"), parsed(s, "annotation", r).
 .decl attempt(t: node)
 attempt(t) :- kind(t, "try_statement").
 .decl found(l: number)
-found(l) :- attempt(t), body(b), {negated}, line(t, l).
+found(l) :- attempt(t), body(b), {negated}, node_line_number(t, l).
 .output found
 "#
     );
@@ -3396,8 +3396,8 @@ fn scope_takes_option_dirs_text_documents_and_report_dirs() {
 .scope report dirs "impl", "app", "docs"
 .violation Call(at: node) "a call"
 Call(c) :- kind(c, "call").
-.violation Todo(at: loc) "a todo"
-Todo(@place(p, l)) :- doc(d, p, _), src_line(d, l, sp), contains("TODO", sp).
+.violation Todo(at: place) "a todo"
+Todo(@place(p, l)) :- doc(d, p, _), document_line(d, sp), line_number(sp, l), contains("TODO", sp).
 "#;
     // The program with its includes, as the corpus reads it.
     let rule = dir.with_extension("scope-forms.rerail");
@@ -3690,11 +3690,11 @@ fn ordering_nodes_follows_preorder_across_granules() {
 .decl xs(n: node)
 xs(n) :- node(_, n, "identifier", _, _), text(n, "x").
 .decl before(a: number, b: number)
-before(la, lb) :- xs(a), xs(b), a < b, line(a, la), line(b, lb).
+before(la, lb) :- xs(a), xs(b), a < b, node_line_number(a, la), node_line_number(b, lb).
 .decl last(l: number) cross_file
-last(l) :- m = max k : { xs(k) }, line(m, l).
+last(l) :- m = max k : { xs(k) }, node_line_number(m, l).
 .decl first(l: number) cross_file
-first(l) :- m = min k : { xs(k) }, line(m, l).
+first(l) :- m = min k : { xs(k) }, node_line_number(m, l).
 .output before, last, first
 "#;
     let out = dir.join("out");
@@ -3861,7 +3861,7 @@ Call(c) :- kind(c, "call").
         g()
         ```
     .decl called(l: number)
-    called(l) :- Call(c), line(c, l).
+    called(l) :- Call(c), node_line_number(c, l).
     .expect C1 at "a.py":1
     .expect called(7)
     .expect count C1 = 3
@@ -4901,7 +4901,7 @@ cv(n, v) :- pick(n), value(n, v).
 .decl vals(v: symbol)
 vals(v) :- kind(n, "integer"), value(n, v).
 .decl ends(l: number)
-ends(l) :- kind(n, "expression_statement"), last_token(n, t), line(t, l).
+ends(l) :- kind(n, "expression_statement"), node_to_last_token(n, t), place_line_number(t, l).
 // `pick` and `cv` are findings: a node in the cross-file part is a finding's place, or refused (decision 0677).
 .output pick, cv, vals, ends
 "#;
@@ -5366,8 +5366,8 @@ fn grammar_names_and_builtins_are_checked_on_the_version() {
 fn span_patterns_are_found_on_the_version() {
     let src = concat!(
         "#include \"python/compare.rerail\"\n",
-        ".decl r(l: node)\n.decl c(n: node)\n.output r, c\n",
-        "r(l) :- src_line(_, _, l), match(\"TODO.*\", l).\n",
+        ".decl r(l: line)\n.decl c(n: node)\n.output r, c\n",
+        "r(l) :- document_line(_, l), match(\"TODO.*\", l).\n",
         "c(n) :- kind(n, \"comment\"), match(\"#.*fixme\", n).\n",
     );
     let files = super::read_text(src).unwrap().files().expect("a modular text");
@@ -5697,7 +5697,7 @@ fn a_string_at_a_declared_place_is_a_program_of_its_file() {
     let py = "from markupsafe import Markup\n\nx = Markup(\n    \"<p><b>a</b></p>\"\n)\ny = \"<i>not</i>\"\n";
     let rule = r#"
 .decl tags(t: symbol, l: number)
-tags(t, l) :- kind(s, "string"), parsed(s, "html", p), within(e, p), kind(e, "tag_name"), text(e, t), line(e, l).
+tags(t, l) :- kind(s, "string"), parsed(s, "html", p), within(e, p), kind(e, "tag_name"), text(e, t), node_line_number(e, l).
 .output tags
 "#;
     let [tags] = <[Vec<Vec<String>>; 1]>::try_from(guests_run("place-program", &[("a.py", py)], rule, &["tags"])).unwrap();
@@ -5716,12 +5716,12 @@ fn a_run_reads_the_files_holding_its_programs_only_when_asked() {
     let html = "<p>x</p>\n<script>f(1)</script>\n";
     let set = |rows: Vec<Vec<String>>| rows.into_iter().collect::<BTreeSet<Vec<String>>>();
     let want = |rows: &[&[&str]]| rows.iter().map(|r| r.iter().map(|v| (*v).to_owned()).collect()).collect::<BTreeSet<Vec<String>>>();
-    let tags = |embedded: &str| format!(".language html\n{embedded}\n.decl tags(t: symbol, p: symbol, l: number)\ntags(t, p, l) :- kind(e, \"tag_name\"), text(e, t), docof(e, d), doc(d, p, _), line(e, l).\n.output tags\n");
+    let tags = |embedded: &str| format!(".language html\n{embedded}\n.decl tags(t: symbol, p: symbol, l: number)\ntags(t, p, l) :- kind(e, \"tag_name\"), text(e, t), docof(e, d), doc(d, p, _), node_line_number(e, l).\n.output tags\n");
     let [on] = <[Vec<Vec<String>>; 1]>::try_from(guests_run("embedded-on-html", &[("a.py", py), ("b.html", html)], &tags(".embedded on"), &["tags"])).unwrap();
     assert_eq!(set(on), want(&[&["b", "a.py", "4"], &["p", "a.py", "4"], &["p", "b.html", "1"], &["script", "b.html", "2"]]), "an HTML run asked to");
     let [off] = <[Vec<Vec<String>>; 1]>::try_from(guests_run("embedded-off-html", &[("a.py", py), ("b.html", html)], &tags(""), &["tags"])).unwrap();
     assert_eq!(set(off), want(&[&["p", "b.html", "1"], &["script", "b.html", "2"]]), "by default: its own files alone");
-    let calls = |embedded: &str| format!(".language javascript\n{embedded}\n.decl calls(x: symbol, p: symbol, l: number)\ncalls(x, p, l) :- kind(c, \"call_expression\"), text(c, x), docof(c, d), doc(d, p, _), line(c, l).\n.output calls\n");
+    let calls = |embedded: &str| format!(".language javascript\n{embedded}\n.decl calls(x: symbol, p: symbol, l: number)\ncalls(x, p, l) :- kind(c, \"call_expression\"), text(c, x), docof(c, d), doc(d, p, _), node_line_number(c, l).\n.output calls\n");
     let [on] = <[Vec<Vec<String>>; 1]>::try_from(guests_run("embedded-on-js", &[("b.html", html)], &calls(".embedded on"), &["calls"])).unwrap();
     assert_eq!(set(on), want(&[&["f(1)", "b.html", "2"]]), "a JavaScript run asked to");
     let [off] = <[Vec<Vec<String>>; 1]>::try_from(guests_run("embedded-off-js", &[("b.html", html)], &calls(""), &["calls"])).unwrap();
@@ -5733,7 +5733,7 @@ fn a_run_reads_the_files_holding_its_programs_only_when_asked() {
 #[test]
 fn a_rule_files_json_objects_are_json_programs() {
     let rr = "// rules\n.decl a(x: symbol)\na({\"k\": 1,\n  \"m\": 2}).\n";
-    let pairs = |embedded: &str| format!(".language json\n{embedded}\n.decl pairs(x: symbol, p: symbol, l: number)\npairs(x, p, l) :- kind(n, \"pair\"), text(n, x), docof(n, d), doc(d, p, _), line(n, l).\n.output pairs\n");
+    let pairs = |embedded: &str| format!(".language json\n{embedded}\n.decl pairs(x: symbol, p: symbol, l: number)\npairs(x, p, l) :- kind(n, \"pair\"), text(n, x), docof(n, d), doc(d, p, _), node_line_number(n, l).\n.output pairs\n");
     let [on] = <[Vec<Vec<String>>; 1]>::try_from(guests_run("rr-json-on", &[("rules/r.rerail", rr)], &pairs(".embedded on"), &["pairs"])).unwrap();
     let on: BTreeSet<Vec<String>> = on.into_iter().collect();
     let want: BTreeSet<Vec<String>> = [["\"k\": 1", "rules/r.rerail", "3"], ["\"m\": 2", "rules/r.rerail", "4"]].iter().map(|r| r.iter().map(|v| (*v).to_owned()).collect()).collect();
@@ -5826,7 +5826,7 @@ fn every_rule_files_regex_reads_in_the_regex_grammar() {
 #[test]
 fn a_match_regex_is_a_regex_program_at_its_bytes() {
     let rr = ".decl a(x: symbol)\n.decl b(x: symbol)\nb(x) :- a(x), match(\"(?<=q)\\.py\", x).\nb(x) :- a(x), match(\"ok\\\"(?!z)\", x), !match(X, x), X = \"y\".\n";
-    let found = |embedded: &str| format!(".language regex\n{embedded}\n.decl la(t: symbol, p: symbol, l: number)\nla(t, p, l) :- kind(n, \"unsupported\"), text(n, t), docof(n, d), doc(d, p, _), line(n, l).\n.decl lits(t: symbol)\nlits(t) :- kind(n, \"literal\"), text(n, t), t = \"\\\"\".\n.output la, lits\n");
+    let found = |embedded: &str| format!(".language regex\n{embedded}\n.decl la(t: symbol, p: symbol, l: number)\nla(t, p, l) :- kind(n, \"unsupported\"), text(n, t), docof(n, d), doc(d, p, _), node_line_number(n, l).\n.decl lits(t: symbol)\nlits(t) :- kind(n, \"literal\"), text(n, t), t = \"\\\"\".\n.output la, lits\n");
     let [la, lits] = <[Vec<Vec<String>>; 2]>::try_from(guests_run("rr-regex-on", &[("rules/r.rerail", rr)], &found(".embedded on"), &["la", "lits"])).unwrap();
     let la: BTreeSet<Vec<String>> = la.into_iter().collect();
     let want: BTreeSet<Vec<String>> = [["(?<=q)", "rules/r.rerail", "3"], ["(?!z)", "rules/r.rerail", "4"]].iter().map(|r| r.iter().map(|v| (*v).to_owned()).collect()).collect();
@@ -5859,7 +5859,7 @@ fn a_python_pattern_reads_metavariables_as_names() {
 fn a_rule_files_patterns_are_programs_of_its_language() {
     let py = ".language python\n.decl call(c: node)\ncall(c) :- c ~ `subprocess.run($CMD, shell=True)`.\ncall(c) :- c ~ `` os.system($X) ``.\n";
     let ts = ".language typescript\n.decl call(c: node)\ncall(c) :- c ~ `eval($X)`.\n";
-    let calls = |embedded: &str| format!(".language python\n{embedded}\n.decl calls(x: symbol, p: symbol, l: number)\ncalls(x, p, l) :- kind(c, \"call\"), text(c, x), docof(c, d), doc(d, p, _), line(c, l).\n.output calls\n");
+    let calls = |embedded: &str| format!(".language python\n{embedded}\n.decl calls(x: symbol, p: symbol, l: number)\ncalls(x, p, l) :- kind(c, \"call\"), text(c, x), docof(c, d), doc(d, p, _), node_line_number(c, l).\n.output calls\n");
     // The Python rule file holds two programs, the TypeScript one none.
     let held = |src: &str| {
         let grammar = crate::code_rule_dsl::tape::Grammar::embedded(crate::code_rule_dsl::language::GrammarDialect::Rr).unwrap();
@@ -5883,7 +5883,7 @@ fn a_rule_files_patterns_are_programs_of_its_language() {
 #[test]
 fn a_host_files_own_nodes_are_not_shown() {
     let rr = ".decl a(x: symbol)\na({\"k\": 1}).\n";
-    let rule = ".language json\n.embedded on\n.decl pairs(x: symbol, p: symbol, l: number)\npairs(x, p, l) :- kind(n, \"pair\"), text(n, x), docof(n, d), doc(d, p, _), line(n, l).\n.decl own(k: symbol)\nown(k) :- kind(_, k), (k = \"source_file\" ; k = \"clause\").\n.decl lines(p: symbol, l: number, t: symbol)\nlines(p, l, t) :- src_line(d, l, sp), text(sp, t), doc(d, p, _).\n.output pairs, own, lines\n";
+    let rule = ".language json\n.embedded on\n.decl pairs(x: symbol, p: symbol, l: number)\npairs(x, p, l) :- kind(n, \"pair\"), text(n, x), docof(n, d), doc(d, p, _), node_line_number(n, l).\n.decl own(k: symbol)\nown(k) :- kind(_, k), (k = \"source_file\" ; k = \"clause\").\n.decl lines(p: symbol, l: number, t: symbol)\nlines(p, l, t) :- document_line(d, sp), line_number(sp, l), place_text(sp, t), doc(d, p, _).\n.output pairs, own, lines\n";
     let [pairs, own, lines] = <[Vec<Vec<String>>; 3]>::try_from(guests_run("host-own-nodes", &[("rules/r.rerail", rr)], rule, &["pairs", "own", "lines"])).unwrap();
     assert_eq!(pairs, [["\"k\": 1", "rules/r.rerail", "2"]], "the program is shown, at its file's line");
     assert!(own.is_empty(), "the host file's own nodes are not: {own:?}");

@@ -121,20 +121,20 @@ fly002_fs_join(n) :- fly002_join_call(n), child(n, c1, _), kind(c1, "argument_li
 
 // lit_in_type(n): the JSON util `lit-in-type`, used where the JSON says `matches: "lit-in-type"`
 //   C: metavariable this relation binds for the calling rule
-.decl fly002_lit_in_type(n: node, c: loc)
+.decl fly002_lit_in_type(n: node, c: node)
 fly002_lit_in_type(n, C) :- fly002_str_util(n), parsed(n, "annotation", r1), within(c2, r1),
     fly002_alt_10(c2, C).
 
 // fs_in_type(n): the JSON util `fs-in-type`, used where the JSON says `matches: "fs-in-type"`
 //   C: metavariable this relation binds for the calling rule
-.decl fly002_fs_in_type(n: node, c: loc)
+.decl fly002_fs_in_type(n: node, c: node)
 fly002_fs_in_type(n, C) :- fly002_str_util(n), parsed(n, "annotation", r1), within(c2, r1),
     fly002_alt_11(c2, C).
 
 // FLY002(n): a finding at node n, from clause `static-join-of-literals`.
 // Each rule below is one way the JSON `rule` can match.
 // Columns after `at` are the metavariables the JSON's message, anchor or `each` names: one finding per distinct row.
-.violation FLY002(at: loc, c: node) "Replace this `join` of string literals with the single string literal it produces."
+.violation FLY002(at: node, c: node) "Replace this `join` of string literals with the single string literal it produces."
     suppress noqa "FLY002"
 FLY002(C, n) :- fly002_lit_join(n), node(_, n, _, _, _), C = n.
 FLY002(C, n) :- fly002_lit_in_type(n, C).
@@ -142,7 +142,7 @@ FLY002(C, n) :- fly002_lit_in_type(n, C).
 // FLY002_static_join_to_f_string(n): a finding at node n, from clause `static-join-to-f-string`.
 // Each rule below is one way the JSON `rule` can match.
 // Columns after `at` are the metavariables the JSON's message, anchor or `each` names: one finding per distinct row.
-.violation FLY002_static_join_to_f_string(at: loc, c: node) code "FLY002" "Replace this `join` over a fixed list with an f-string such as `f\"{{a}}-{{b}}\"`; keep `join` if an element may be a non-`str` or a `str` subclass, which the f-string would format differently."
+.violation FLY002_static_join_to_f_string(at: node, c: node) code "FLY002" "Replace this `join` over a fixed list with an f-string such as `f\"{{a}}-{{b}}\"`; keep `join` if an element may be a non-`str` or a `str` subclass, which the f-string would format differently."
     suppress noqa "FLY002"
 FLY002_static_join_to_f_string(C, n) :- fly002_fs_join(n), node(_, n, _, _, _), C = n.
 FLY002_static_join_to_f_string(C, n) :- fly002_fs_in_type(n, C).
@@ -273,12 +273,12 @@ fly002_alt_9(n) :- child(n, c2, _), kind(c2, "argument_list"), child(c2, c3, _),
 
 // alt_10(n): the JSON `any`: n matches if any one of these rules does
 //   C: metavariable this relation binds for the calling rule
-.decl fly002_alt_10(n: node, c: loc)
+.decl fly002_alt_10(n: node, c: node)
 fly002_alt_10(n, C) :- fly002_lit_join(n), C = n.
 fly002_alt_10(n, C) :- fly002_lit_in_type(n, C).
 
 // alt_11(n): the JSON `any`: n matches if any one of these rules does
 //   C: metavariable this relation binds for the calling rule
-.decl fly002_alt_11(n: node, c: loc)
+.decl fly002_alt_11(n: node, c: node)
 fly002_alt_11(n, C) :- fly002_fs_join(n), C = n.
 fly002_alt_11(n, C) :- fly002_fs_in_type(n, C).

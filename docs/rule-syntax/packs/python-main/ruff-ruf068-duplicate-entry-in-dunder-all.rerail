@@ -8,7 +8,7 @@
 // RUF068(n): a finding at node n, from clause `duplicate-entry`.
 // Each rule below is one way the JSON `rule` can match.
 // Columns after `at` are the metavariables the JSON's message, anchor or `each` names: one finding per distinct row.
-.violation RUF068(at: loc, ruf068_dup: node) "{{dup}} is already listed earlier in this `__all__` list; remove the repeat, or correct it if another name was meant."
+.violation RUF068(at: node, ruf068_dup: node) "{{dup}} is already listed earlier in this `__all__` list; remove the repeat, or correct it if another name was meant."
     suppress noqa "RUF068"
 RUF068(DUP, n) :- ruf068_dup(n, DUP), child(p1, n, _), ruf068_sequence(p1).
 RUF068(DUP, n) :- ruf068_dup_in_string(n, DUP),
@@ -22,7 +22,7 @@ ruf068_plain_str(n) :- (kind(n, "string") ; kind(n, "concatenated_string")), val
 
 // current(n): the JSON util `current`, used where the JSON says `matches: "current"`
 //   DUP: metavariable this relation binds for the calling rule
-.decl ruf068_current(n: node, ruf068_dup: loc)
+.decl ruf068_current(n: node, ruf068_dup: node)
 ruf068_current(n, DUP) :- ruf068_plain_str(n), node(_, n, _, _, _), DUP = n.
 ruf068_current(n, DUP) :- kind(n, "parenthesized_expression"), child(n, c1, _),
     ruf068_current(c1, DUP).
@@ -97,7 +97,7 @@ ruf068_sequence(n) :- (kind(n, "list") ; kind(n, "tuple") ; kind(n, "expression_
 
 // dup(n): the JSON util `dup`, used where the JSON says `matches: "dup"`
 //   DUP: metavariable this relation binds for the calling rule
-.decl ruf068_dup(n: node, ruf068_dup: loc)
+.decl ruf068_dup(n: node, ruf068_dup: node)
 ruf068_dup(n, DUP) :- ruf068_current(n, DUP), precedes(s1, n), ruf068_alt_4(s1, FIRST),
     value(FIRST, t7), value(DUP, t7).
 
@@ -118,7 +118,7 @@ ruf068_ann_sequence(n) :- (kind(n, "list") ; kind(n, "tuple")), within_stop(n, p
 
 // dup_in_string(n): the JSON util `dup-in-string`, used where the JSON says `matches: "dup-in-string"`
 //   DUP: metavariable this relation binds for the calling rule
-.decl ruf068_dup_in_string(n: node, ruf068_dup: loc)
+.decl ruf068_dup_in_string(n: node, ruf068_dup: node)
 ruf068_dup_in_string(n, DUP) :- (kind(n, "string") ; kind(n, "concatenated_string")),
     parsed(n, "annotation", r1), within(c2, r1), ruf068_alt_8(c2, DUP).
 
@@ -206,7 +206,7 @@ ruf068_stop_1(n) :- node(_, n, _, _, _), !kind(n, "parenthesized_expression").
 
 // alt_4(n): the JSON `any`: n matches if any one of these rules does
 //   FIRST: metavariable this relation binds for the calling rule
-.decl ruf068_alt_4(n: node, first: loc)
+.decl ruf068_alt_4(n: node, first: node)
 ruf068_alt_4(n, FIRST) :- (kind(n, "string") ; kind(n, "concatenated_string")), value(n, v1),
     value_type_of(n, "str"),
     count : { has(n, c2, "string_start"), glob("**[fFtT]**", c2) } = 0, node(_, n, _, _, _), FIRST = n.
@@ -217,7 +217,7 @@ ruf068_alt_4(n, FIRST) :- kind(n, "parenthesized_expression"), within_stop(c3, n
 
 // alt_8(n): the JSON `any`: n matches if any one of these rules does
 //   DUP: metavariable this relation binds for the calling rule
-.decl ruf068_alt_8(n: node, ruf068_dup: loc)
+.decl ruf068_alt_8(n: node, ruf068_dup: node)
 ruf068_alt_8(n, DUP) :- ruf068_dup(n, DUP), child(p1, n, _), ruf068_ann_sequence(p1).
 ruf068_alt_8(n, DUP) :- ruf068_dup_in_string(n, DUP).
 

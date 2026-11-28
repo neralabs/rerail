@@ -10,7 +10,7 @@
 // PIE810(n): a finding at node n, from clause `multiple-starts-ends-with`.
 // Each rule below is one way the JSON `rule` can match.
 // Columns after `at` are the metavariables the JSON's message, anchor or `each` names: one finding per distinct row.
-.violation PIE810(at: node, first: loc, m: loc) "Call `{m}` once with a tuple of all the prefixes or suffixes instead of or-ing several calls."
+.violation PIE810(at: node, first: node, m: node) "Call `{m}` once with a tuple of all the prefixes or suffixes instead of or-ing several calls."
     suppress noqa "PIE810"
 PIE810(n, FIRST, M) :- kind(n, "boolean_operator"), pie810_or_op(n),
     count : { child(p1, n, _), pie810_or_op(p1) } = 0, within_stop(c2, n, pie810_stop_10),
@@ -70,7 +70,7 @@ pie810_plain_target(n) :- kind(n, "parenthesized_expression"), child(n, c1, _),
 
 // affix_call(n): the JSON util `affix-call`, used where the JSON says `matches: "affix-call"`
 //   M, R: metavariables this relation binds for the calling rule
-.decl pie810_affix_call(n: node, m: loc, r: loc)
+.decl pie810_affix_call(n: node, m: node, r: node)
 pie810_affix_call(n, M, R) :- kind(n, "parenthesized_expression"), child(n, c1, _),
     pie810_affix_call(c1, M, R).
 pie810_affix_call(n, M, R) :- kind(n, "call"), field(n, "function", c2),

@@ -24,7 +24,7 @@ c400_gen(n) :- kind(n, "parenthesized_expression"), child(n, c1, _), c400_gen(c1
 
 // target(n): the JSON util `target`, used where the JSON says `matches: "target"`
 //   TARGET: metavariable this relation binds for the calling rule
-.decl c400_target(n: node, c400_target: loc)
+.decl c400_target(n: node, c400_target: node)
 c400_target(n, TARGET) :- node(_, n, _, _, _), TARGET = n, !c400_paren_target(n).
 c400_target(n, TARGET) :- c400_paren_target(n), child(n, c1, _), !c400_trivia(c1), c400_target(c1, TARGET).
 
@@ -35,7 +35,7 @@ c400_paren_target(n) :- kind(n, "tuple_pattern"), !c400_tok_has_1(n), child(n, c
 
 // gen_identity(n): the JSON util `gen-identity`, used where the JSON says `matches: "gen-identity"`
 //   TARGET: metavariable this relation binds for the calling rule
-.decl c400_gen_identity(n: node, c400_target: loc)
+.decl c400_gen_identity(n: node, c400_target: node)
 c400_gen_identity(n, TARGET) :- kind(n, "generator_expression"), field(n, "body", c1),
     node(_, c1, _, _, _), ELT = c1, child(n, c2, _), kind(c2, "for_in_clause"), !c400_tok_has_2(c2),
     field(c2, "left", c11), c400_target(c11, TARGET),
@@ -59,36 +59,36 @@ c400_args_identity(n) :- kind(n, "argument_list"),
 
 // call(n): the JSON util `call`, used where the JSON says `matches: "call"`
 //   CALL: metavariable this relation binds for the calling rule
-.decl c400_call(n: node, c400_call: loc)
+.decl c400_call(n: node, c400_call: place)
 c400_call(n, CALL) :- kind(n, "call"), c400_alt_1(n, CALL).
 
 // identity_call(n): the JSON util `identity-call`, used where the JSON says `matches: "identity-call"`
 //   CALL: metavariable this relation binds for the calling rule
-.decl c400_identity_call(n: node, c400_call: loc)
+.decl c400_identity_call(n: node, c400_call: place)
 c400_identity_call(n, CALL) :- c400_call(n, CALL), field(n, "arguments", c1), c400_args_identity(c1).
 
 // comprehension_call(n): the JSON util `comprehension-call`, used where the JSON says `matches: "comprehension-call"`
 //   CALL: metavariable this relation binds for the calling rule
-.decl c400_comprehension_call(n: node, c400_call: loc)
+.decl c400_comprehension_call(n: node, c400_call: place)
 c400_comprehension_call(n, CALL) :- c400_call(n, CALL), field(n, "arguments", c1), c400_args_gen(c1),
     count : { field(n, "arguments", c2), c400_args_identity(c2) } = 0.
 
 // identity_in_annotation(n): the JSON util `identity-in-annotation`, used where the JSON says `matches: "identity-in-annotation"`
 //   CALL: metavariable this relation binds for the calling rule
-.decl c400_identity_in_annotation(n: node, c400_call: loc)
+.decl c400_identity_in_annotation(n: node, c400_call: place)
 c400_identity_in_annotation(n, CALL) :- (kind(n, "string") ; kind(n, "concatenated_string")),
     parsed(n, "annotation", r1), within(c2, r1), c400_alt_2(c2, CALL).
 
 // comprehension_in_annotation(n): the JSON util `comprehension-in-annotation`, used where the JSON says `matches: "comprehension-in-annotation"`
 //   CALL: metavariable this relation binds for the calling rule
-.decl c400_comprehension_in_annotation(n: node, c400_call: loc)
+.decl c400_comprehension_in_annotation(n: node, c400_call: place)
 c400_comprehension_in_annotation(n, CALL) :- (kind(n, "string") ; kind(n, "concatenated_string")),
     parsed(n, "annotation", r1), within(c2, r1), c400_alt_3(c2, CALL).
 
 // C400(n, detail): findings from clauses `generator-list-identity`, `generator-list`. Their messages differ only in
 // `detail`: each rule's head gives its clause's words. Each rule is one way a JSON `rule` can match.
 // Columns after `at` are the metavariables the JSON's message, anchor or `each` names: one finding per distinct row.
-.violation C400(at: loc, c400_call: node, detail: symbol) "{detail}."
+.violation C400(at: place, c400_call: node, detail: symbol) "{detail}."
     suppress noqa "C400"
 C400(CALL, n, "Replace with `list(<iterable>)`; the generator passes each item through unchanged. Keep it if the target unpacks or assigns to an attribute or subscript, where the rewrite changes behavior") :- c400_identity_call(n, CALL).
 C400(CALL, n, "Replace with `list(<iterable>)`; the generator passes each item through unchanged. Keep it if the target unpacks or assigns to an attribute or subscript, where the rewrite changes behavior") :- c400_identity_in_annotation(n, CALL).
@@ -120,19 +120,19 @@ c400_tok_has_2(n) :- node_text(n, g5), !child(n, _, _),
 
 // alt_1(n): the JSON `any`: n matches if any one of these rules does
 //   CALL: metavariable this relation binds for the calling rule
-.decl c400_alt_1(n: node, c400_call: loc)
+.decl c400_alt_1(n: node, c400_call: place)
 c400_alt_1(n, CALL) :- field(n, "function", c1), c400_callee(c1), node(_, n, _, _, _), CALL = n.
 c400_alt_1(n, CALL) :- field(n, "function", c2), kind(c2, "list_splat"), child(c2, c3, _),
     c400_callee(c3), match("\\*(?:\\s|\\\\\\r?\\n|#[^\\r\\n]*)*(?<CALL>[\\s\\S]+)", n).
 
 // alt_2(n): the JSON `any`: n matches if any one of these rules does
 //   CALL: metavariable this relation binds for the calling rule
-.decl c400_alt_2(n: node, c400_call: loc)
+.decl c400_alt_2(n: node, c400_call: place)
 c400_alt_2(n, CALL) :- c400_identity_call(n, CALL).
 c400_alt_2(n, CALL) :- c400_identity_in_annotation(n, CALL).
 
 // alt_3(n): the JSON `any`: n matches if any one of these rules does
 //   CALL: metavariable this relation binds for the calling rule
-.decl c400_alt_3(n: node, c400_call: loc)
+.decl c400_alt_3(n: node, c400_call: place)
 c400_alt_3(n, CALL) :- c400_comprehension_call(n, CALL).
 c400_alt_3(n, CALL) :- c400_comprehension_in_annotation(n, CALL).

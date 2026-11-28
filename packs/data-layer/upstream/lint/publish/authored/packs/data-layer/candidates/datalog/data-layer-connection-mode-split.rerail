@@ -200,4 +200,4 @@ mode_split_hit(d, n) :- mode_split_symbol(d, n, s), mode_split_core(s), !mode_sp
 mode_split_hit(d, m) :- mode_split_method(_, cn, m, mn), (cn = "_SessionHandleCore" ; cn = "_VersionHandleCore"), mode_split_mixed_entry(mn), node(d, m, _, _, _).
 mode_split_hit(d, m) :- mode_split_method(_, cn, m, mn), prefix("Sync", cn), mode_split_facade(cn), mode_split_async(m), !mode_split_private(mn), node(d, m, _, _, _).
 mode_split_hit(d, m) :- mode_split_method(_, cn, m, mn), prefix("Async", cn), mode_split_facade(cn), !mode_split_async(m), !mode_split_private(mn), !mode_split_async_named(mn), !mode_split_async_allowed(mn), node(d, m, _, _, _).
-violation("data-layer-connection-mode-split", "mode-split", "connection_mode_split", p, l) :- mode_split_hit(d, n), mode_split_enabled(_), mode_split_gate(d), doc(d, p, _), line(n, l).
+violation("data-layer-connection-mode-split", "mode-split", "connection_mode_split", p, l) :- mode_split_hit(d, n), mode_split_enabled(_), mode_split_gate(d), doc(d, p, _), node_line_number(n, l).

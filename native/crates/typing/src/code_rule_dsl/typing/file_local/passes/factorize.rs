@@ -120,7 +120,7 @@ fn relation_keys(v: &Version, f: Fields<'_>, roots: Option<&BTreeSet<String>>) -
             continue;
         }
         let Some(k) = at("n") else { continue };
-        let others_nodes = types.iter().enumerate().any(|(i, (_, t))| i != k && (matches!(*t, "node" | "loc" | "span") || matches!(columns.get(i), Some(&("par" | "a" | "p" | "h")))));
+        let others_nodes = types.iter().enumerate().any(|(i, (_, t))| i != k && (matches!(*t, "node" | "place") || matches!(columns.get(i), Some(&("par" | "a" | "p" | "h")))));
         if !others_nodes {
             keys.insert(rel.to_owned(), vec![rerail_blocks::vector![k]]);
         }

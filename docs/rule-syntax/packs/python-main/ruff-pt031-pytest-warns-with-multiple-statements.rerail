@@ -81,7 +81,7 @@ pt031_unparenthesized_clause_tuple(n) :- child(p1, n, _), kind(p1, "with_item"),
 
 // warns_with(n): the JSON util `warns-with`, used where the JSON says `matches: "warns-with"`
 //   S: metavariable this relation binds for the calling rule
-.decl pt031_warns_with(n: node, s: loc)
+.decl pt031_warns_with(n: node, s: match)
 pt031_warns_with(n, S) :- kind(n, "with_statement"),
     match("(?P<S>(?:[^\"'#]|#[^\\n]*|\"\"\"(?:[^\"\\\\]|\\\\[\\s\\S]|\"\"?(?:[^\"\\\\]|\\\\[\\s\\S]))*\"\"\"|'''(?:[^'\\\\]|\\\\[\\s\\S]|''?(?:[^'\\\\]|\\\\[\\s\\S]))*'''|\"(?:[^\\n\"\\\\]|\\\\[\\s\\S])*\"|'(?:[^\\n'\\\\]|\\\\[\\s\\S])*')*?(?:[^\\s\"'#;]|\"\"\"(?:[^\"\\\\]|\\\\[\\s\\S]|\"\"?(?:[^\"\\\\]|\\\\[\\s\\S]))*\"\"\"|'''(?:[^'\\\\]|\\\\[\\s\\S]|''?(?:[^'\\\\]|\\\\[\\s\\S]))*'''|\"(?:[^\\n\"\\\\]|\\\\[\\s\\S])*\"|'(?:[^\\n'\\\\]|\\\\[\\s\\S])*'))(?:\\s|;|#[^\\n]*)*", n),
     child(n, c1, _), kind(c1, "with_clause"), child(c1, c2, _), pt031_warns_item(c2).
@@ -89,7 +89,7 @@ pt031_warns_with(n, S) :- kind(n, "with_statement"),
 // PT031(n, detail): findings from clauses `several-statements`, `compound-statement`. Their messages differ only in
 // `detail`: each rule's head gives its clause's words. Each rule is one way a JSON `rule` can match.
 // Columns after `at` are the metavariables the JSON's message, anchor or `each` names: one finding per distinct row.
-.violation PT031(at: loc, s: node, detail: symbol) "{detail} needed to trigger the warning."
+.violation PT031(at: match, s: node, detail: symbol) "{detail} needed to trigger the warning."
     suppress noqa "PT031"
 PT031(S, n, "Keep only the statement expected to warn inside this `pytest.warns` block and move the other statements before or after it, unless they are") :- pt031_warns_with(n, S),
     field(n, "body", c1), kind(c1, "block"), !pt031_single_stmt_block(c1).

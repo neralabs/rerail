@@ -32,7 +32,7 @@ rse102_win_error(n) :- sym_of(n, "ctypes.WinError").
 // class_of(n, …): the JSON util `class-of`, called with `matches` and arguments E, K
 //   P: metavariable of the calling rule, passed in (bound by the caller)
 //   I, N, ND, O, Q: metavariables this relation binds for the calling rule
-.decl rse102_class_of(n: node, e: node, k: node, i: loc, n_mv: loc, nd: loc, o: loc, p: loc, q: loc)
+.decl rse102_class_of(n: node, e: node, k: node, i: node, n_mv: node, nd: node, o: node, p: node, q: node)
 // K: not bound by this rule, so empty (unset) here, as in ast-grep.
 rse102_class_of(n, E, K, I, N, ND, O, P, Q) :- rse102_demand_class_of(n, P), node(_, n, _, _, _), E = n,
     rse102_alt_2(n, E, I, N, ND, O, P, Q), unset(K).
@@ -40,7 +40,7 @@ rse102_class_of(n, E, K, I, N, ND, O, P, Q) :- rse102_demand_class_of(n, P), nod
 // member_class(n, …): the JSON util `member-class`, called with `matches` and arguments E, S
 //   P: metavariable of the calling rule, passed in (bound by the caller)
 //   I, N, ND, O, Q: metavariables this relation binds for the calling rule
-.decl rse102_member_class(n: node, e: node, s: node, i: loc, n_mv: loc, nd: loc, o: loc, p: loc, q: loc)
+.decl rse102_member_class(n: node, e: node, s: node, i: node, n_mv: node, nd: node, o: node, p: node, q: node)
 rse102_member_class(n, E, S, I, N, ND, O, P, Q) :- rse102_demand_member_class(n, P),
     kind(n, "attribute"), node(_, n, _, _, _), E = n, field(n, "object", c1), node(_, c1, _, _, _), O = c1,
     rse102_class_of(c1, O, P, I, N, ND, O, P, Q), field(n, "attribute", c2), node(_, c2, _, _, _), N = c2,
@@ -78,7 +78,7 @@ rse102_callee(n) :- rse102_demand_callee(n), !rse102_alt_12(n).
 
 // nonlocal_name(n): the JSON util `nonlocal-name`, used where the JSON says `matches: "nonlocal-name"`
 //   NM: metavariable of the calling rule, passed in (bound by the caller)
-.decl rse102_nonlocal_name(n: node, nm: loc)
+.decl rse102_nonlocal_name(n: node, nm: node)
 rse102_nonlocal_name(n, NM) :- rse102_demand_nonlocal_name(n, NM),
     inside(n, p1, "function_definition"), within_stop(c2, p1, rse102_stop_14),
     kind(c2, "nonlocal_statement"), child(c2, c3, _), kind(c3, "identifier"),
@@ -98,7 +98,7 @@ rse102_demand_callee(c1) :- rse102_demand_callee(n), kind(n, "parenthesized_expr
 rse102_demand_member_def(n) :- rse102_demand_callee(n), kind(n, "attribute"), node(_, n, _, _, _), CAL = n.
 
 // demand_nonlocal_name: the rows of nonlocal_name its callers ask for (the metavariable columns they pass in)
-.decl rse102_demand_nonlocal_name(n: node, nm: loc)
+.decl rse102_demand_nonlocal_name(n: node, nm: node)
 rse102_demand_nonlocal_name(n, NM) :- rse102_demand_callee(n), kind(n, "identifier"), node(_, n, _, _, _), NM = n,
     ref_site(n, b1), site_stop_at_global(b1),
     (st1 = b1, kind(st1, "class_definition") ; inside(b1, st1, "class_definition")).
@@ -110,11 +110,11 @@ rse102_demand_nonlocal_name(n, NM) :- rse102_demand_callee(n), kind(n, "identifi
 
 
 // demand_alt_2: the rows of alt_2 its callers ask for (the metavariable columns they pass in)
-.decl rse102_demand_alt_2(n: node, e: loc, p: loc)
+.decl rse102_demand_alt_2(n: node, e: node, p: node)
 rse102_demand_alt_2(n, E, P) :- rse102_demand_class_of(n, P), node(_, n, _, _, _), E = n.
 
 // demand_class_of: the rows of class_of its callers ask for (the metavariable columns they pass in)
-.decl rse102_demand_class_of(n: node, p: loc)
+.decl rse102_demand_class_of(n: node, p: node)
 rse102_demand_class_of(c1, P) :- rse102_demand_member_class(n, P), kind(n, "attribute"), node(_, n, _, _, _), E = n,
     field(n, "object", c1), node(_, c1, _, _, _), O = c1, field(n, "attribute", c2), node(_, c2, _, _, _), N = c2,
     inside(n, p3, "module"), has(p3, c4, "class_definition"), node(_, c4, _, _, _), Q = c4,
@@ -131,7 +131,7 @@ rse102_demand_class_of(c3, P) :- rse102_demand_alt_2(n, E, P), kind(n, "parenthe
     child(n, c3, _), node(_, c3, _, _, _), I = c3.
 
 // demand_member_class: the rows of member_class its callers ask for (the metavariable columns they pass in)
-.decl rse102_demand_member_class(n: node, p: loc)
+.decl rse102_demand_member_class(n: node, p: node)
 rse102_demand_member_class(n, UNSET_1) :- rse102_demand_callee(n), kind(n, "attribute"), node(_, n, _, _, _), CAL = n,
     unset(UNSET_1).
 rse102_demand_member_class(n, P) :- rse102_demand_alt_2(n, E, P), kind(n, "attribute").
@@ -152,7 +152,7 @@ rse102_stop_1(n) :- node(_, n, _, _, _), !kind(n, "line_continuation").
 // alt_2(n): the JSON `any`: n matches if any one of these rules does
 //   E, P: metavariables of the calling rule, passed in (bound by the caller)
 //   I, N, ND, O, Q: metavariables this relation binds for the calling rule
-.decl rse102_alt_2(n: node, e: loc, i: loc, n_mv: loc, nd: loc, o: loc, p: loc, q: loc)
+.decl rse102_alt_2(n: node, e: node, i: node, n_mv: node, nd: node, o: node, p: node, q: node)
 // I, N, ND, O, Q: not bound by this rule, so empty (unset) here, as in ast-grep.
 rse102_alt_2(n, E, I, N, ND, O, P, Q) :- node(_, K, _, _, _), rse102_demand_alt_2(n, E, P),
     kind(n, "identifier"), ref_site(n, b1), site_stop_at_global(b1),

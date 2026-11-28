@@ -8,7 +8,7 @@
 // N807(n): a finding at node n, from clause `dunder-function-name`.
 // Each rule below is one way the JSON `rule` can match.
 // Columns after `at` are the metavariables the JSON's message, anchor or `each` names: one finding per distinct row.
-.violation N807(at: node, name: loc) "Rename `{name}` without the leading and trailing double underscores and update its callers; only a method of a class should use such a name."
+.violation N807(at: node, name: node) "Rename `{name}` without the leading and trailing double underscores and update its callers; only a method of a class should use such a name."
     suppress noqa "N807"
 N807(n, NAME) :- kind(n, "identifier"), node(_, n, _, _, _), NAME = n,
     match("_[_\\x{FE33}\\x{FE34}\\x{FE4D}-\\x{FE4F}\\x{FF3F}].*", n),

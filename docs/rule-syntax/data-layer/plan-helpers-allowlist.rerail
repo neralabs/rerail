@@ -158,6 +158,6 @@ pha_finding(t, cat("lazy terminal ", h, " assigned to eager alias")) :- assign_v
 PHA001(n, c) :- pha_finding(n, c), !pha_allowed(n).
 
 // PHA000: the allowlist in the linter no longer matches its signature. It replaces every other finding.
-.violation PHA000(at: loc) "Plan helper allowlist signature verification failed."
+.violation PHA000(at: node) "Plan helper allowlist signature verification failed."
 PHA000(@place("scripts/lint_plan_helpers_allowlist.py", 1)) :- !allow_status("plan_helpers", "valid").
 .gate PHA000

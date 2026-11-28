@@ -20,7 +20,7 @@ ruf016_checkable_value(n) :- kind(n, "parenthesized_expression"), child(n, c2, _
 
 // bad_bound(n): the JSON util `bad-bound`, used where the JSON says `matches: "bad-bound"`
 //   B: metavariable this relation binds for the calling rule
-.decl ruf016_bad_bound(n: node, b: loc)
+.decl ruf016_bad_bound(n: node, b: node)
 ruf016_bad_bound(n, B) :- node(_, n, _, _, _), B = n,
     (kind(n, k1), ruf016_set_1(k1) ; kind(n, "integer"), glob("**[jJ]", n)).
 ruf016_bad_bound(n, B) :- kind(n, "parenthesized_expression"), child(n, c2, _),
@@ -28,7 +28,7 @@ ruf016_bad_bound(n, B) :- kind(n, "parenthesized_expression"), child(n, c2, _),
 
 // bad_index(n): the JSON util `bad-index`, used where the JSON says `matches: "bad-index"`
 //   B: metavariable this relation binds for the calling rule
-.decl ruf016_bad_index(n: node, b: loc)
+.decl ruf016_bad_index(n: node, b: node)
 ruf016_bad_index(n, B) :- ruf016_bad_bound(n, B).
 ruf016_bad_index(n, B) :- kind(n, "none"), node(_, n, _, _, _), B = n.
 ruf016_bad_index(n, B) :- kind(n, "list_splat"), node(_, n, _, _, _), B = n.
@@ -41,7 +41,7 @@ ruf016_no_comma(n) :- node(_, n, _, _, _), !ruf016_tok_has_1(n).
 
 // tuple_span(n): the JSON util `tuple-span`, used where the JSON says `matches: "tuple-span"`
 //   I: metavariable this relation binds for the calling rule
-.decl ruf016_tuple_span(n: node, i: loc)
+.decl ruf016_tuple_span(n: node, i: match)
 ruf016_tuple_span(n, I) :- node(_, n, _, _, _),
     match("(?s)(?s:.*)\\[(?:\\s|#[^\\n]*\\n)*(?<I>(?:[^\\[\\]#\"']|\"\"\"(?:[^\"\\\\]|\\\\.|\"{1,2}(?:[^\"\\\\]|\\\\.))*\"\"\"|\\'\\'\\'(?:[^'\\\\]|\\\\.|'{1,2}(?:[^'\\\\]|\\\\.))*\\'\\'\\'|\"(?:[^\"\\\\\\n]|\\\\.)*\"|'(?:[^'\\\\\\n]|\\\\.)*\\'|#[^\\n]*\\n|\\[(?:[^\\[\\]#\"']|\"\"\"(?:[^\"\\\\]|\\\\.|\"{1,2}(?:[^\"\\\\]|\\\\.))*\"\"\"|\\'\\'\\'(?:[^'\\\\]|\\\\.|'{1,2}(?:[^'\\\\]|\\\\.))*\\'\\'\\'|\"(?:[^\"\\\\\\n]|\\\\.)*\"|'(?:[^'\\\\\\n]|\\\\.)*\\'|#[^\\n]*\\n|\\[(?:[^\\[\\]#\"']|\"\"\"(?:[^\"\\\\]|\\\\.|\"{1,2}(?:[^\"\\\\]|\\\\.))*\"\"\"|\\'\\'\\'(?:[^'\\\\]|\\\\.|'{1,2}(?:[^'\\\\]|\\\\.))*\\'\\'\\'|\"(?:[^\"\\\\\\n]|\\\\.)*\"|'(?:[^'\\\\\\n]|\\\\.)*\\'|#[^\\n]*\\n|\\[(?:[^\\[\\]#\"']|\"\"\"(?:[^\"\\\\]|\\\\.|\"{1,2}(?:[^\"\\\\]|\\\\.))*\"\"\"|\\'\\'\\'(?:[^'\\\\]|\\\\.|'{1,2}(?:[^'\\\\]|\\\\.))*\\'\\'\\'|\"(?:[^\"\\\\\\n]|\\\\.)*\"|'(?:[^'\\\\\\n]|\\\\.)*\\'|#[^\\n]*\\n)*\\])*\\])*\\])*(?:[^\\s\\[\\]#\"']|\"\"\"(?:[^\"\\\\]|\\\\.|\"{1,2}(?:[^\"\\\\]|\\\\.))*\"\"\"|\\'\\'\\'(?:[^'\\\\]|\\\\.|'{1,2}(?:[^'\\\\]|\\\\.))*\\'\\'\\'|\"(?:[^\"\\\\\\n]|\\\\.)*\"|'(?:[^'\\\\\\n]|\\\\.)*\\'|\\[(?:[^\\[\\]#\"']|\"\"\"(?:[^\"\\\\]|\\\\.|\"{1,2}(?:[^\"\\\\]|\\\\.))*\"\"\"|\\'\\'\\'(?:[^'\\\\]|\\\\.|'{1,2}(?:[^'\\\\]|\\\\.))*\\'\\'\\'|\"(?:[^\"\\\\\\n]|\\\\.)*\"|'(?:[^'\\\\\\n]|\\\\.)*\\'|#[^\\n]*\\n|\\[(?:[^\\[\\]#\"']|\"\"\"(?:[^\"\\\\]|\\\\.|\"{1,2}(?:[^\"\\\\]|\\\\.))*\"\"\"|\\'\\'\\'(?:[^'\\\\]|\\\\.|'{1,2}(?:[^'\\\\]|\\\\.))*\\'\\'\\'|\"(?:[^\"\\\\\\n]|\\\\.)*\"|'(?:[^'\\\\\\n]|\\\\.)*\\'|#[^\\n]*\\n|\\[(?:[^\\[\\]#\"']|\"\"\"(?:[^\"\\\\]|\\\\.|\"{1,2}(?:[^\"\\\\]|\\\\.))*\"\"\"|\\'\\'\\'(?:[^'\\\\]|\\\\.|'{1,2}(?:[^'\\\\]|\\\\.))*\\'\\'\\'|\"(?:[^\"\\\\\\n]|\\\\.)*\"|'(?:[^'\\\\\\n]|\\\\.)*\\'|#[^\\n]*\\n)*\\])*\\])*\\]))(?:\\s|#[^\\n]*\\n)*\\]", n).
 
@@ -52,13 +52,13 @@ ruf016_checkable_subscript(n) :- kind(n, "subscript"), field(n, "value", c1),
 
 // index_hit(n): the JSON util `index-hit`, used where the JSON says `matches: "index-hit"`
 //   B: metavariable this relation binds for the calling rule
-.decl ruf016_index_hit(n: node, b: loc)
+.decl ruf016_index_hit(n: node, b: node)
 ruf016_index_hit(n, B) :- ruf016_checkable_subscript(n), ruf016_no_comma(n), field(n, "subscript", c1),
     ruf016_bad_index(c1, B).
 
 // slice_hit(n): the JSON util `slice-hit`, used where the JSON says `matches: "slice-hit"`
 //   B: metavariable this relation binds for the calling rule
-.decl ruf016_slice_hit(n: node, b: loc)
+.decl ruf016_slice_hit(n: node, b: node)
 ruf016_slice_hit(n, B) :- kind(n, "slice"), child(p1, n, _), ruf016_checkable_subscript(p1),
     ruf016_no_comma(p1), child(n, c2, _), ruf016_bad_bound(c2, B).
 
@@ -68,7 +68,7 @@ ruf016_tuple_hit(n) :- ruf016_checkable_subscript(n), ruf016_tok_has_1(n).
 
 // tuple_span_hit(n): the JSON util `tuple-span-hit`, used where the JSON says `matches: "tuple-span-hit"`
 //   I: metavariable this relation binds for the calling rule
-.decl ruf016_tuple_span_hit(n: node, i: loc)
+.decl ruf016_tuple_span_hit(n: node, i: match)
 ruf016_tuple_span_hit(n, I) :- ruf016_tuple_hit(n), ruf016_tuple_span(n, I).
 
 // tree_subscript(n): the JSON util `tree-subscript`, used where the JSON says `matches: "tree-subscript"`
@@ -78,32 +78,32 @@ ruf016_tree_subscript(n) :- kind(n, "subscript"), child(n, c1, _), ruf016_checka
 
 // tree_index_hit(n): the JSON util `tree-index-hit`, used where the JSON says `matches: "tree-index-hit"`
 //   B: metavariable this relation binds for the calling rule
-.decl ruf016_tree_index_hit(n: node, b: loc)
+.decl ruf016_tree_index_hit(n: node, b: node)
 ruf016_tree_index_hit(n, B) :- ruf016_tree_subscript(n), ruf016_no_comma(n), child(n, c1, _),
     ruf016_bad_index(c1, B), ruf016_tok_follows_2(c1).
 
 // tree_slice_hit(n): the JSON util `tree-slice-hit`, used where the JSON says `matches: "tree-slice-hit"`
 //   B: metavariable this relation binds for the calling rule
-.decl ruf016_tree_slice_hit(n: node, b: loc)
+.decl ruf016_tree_slice_hit(n: node, b: node)
 ruf016_tree_slice_hit(n, B) :- kind(n, "slice"), child(p1, n, _), ruf016_tree_subscript(p1),
     ruf016_no_comma(p1), child(n, c2, _), ruf016_bad_bound(c2, B).
 
 // index_in_annotation(n): the JSON util `index-in-annotation`, used where the JSON says `matches: "index-in-annotation"`
 //   B: metavariable this relation binds for the calling rule
-.decl ruf016_index_in_annotation(n: node, b: loc)
+.decl ruf016_index_in_annotation(n: node, b: node)
 ruf016_index_in_annotation(n, B) :- (kind(n, "string") ; kind(n, "concatenated_string")),
     parsed(n, "annotation", r1), within(c2, r1), ruf016_alt_4(c2, B).
 
 // slice_in_annotation(n): the JSON util `slice-in-annotation`, used where the JSON says `matches: "slice-in-annotation"`
 //   B: metavariable this relation binds for the calling rule
-.decl ruf016_slice_in_annotation(n: node, b: loc)
+.decl ruf016_slice_in_annotation(n: node, b: node)
 ruf016_slice_in_annotation(n, B) :- (kind(n, "string") ; kind(n, "concatenated_string")),
     parsed(n, "annotation", r1), within(c2, r1), ruf016_alt_5(c2, B).
 
 // RUF016(n, detail): findings from clauses `invalid-index`, `invalid-index-in-annotation`, `invalid-slice-bound`, `invalid-slice-bound-in-annotation`. Their messages differ only in
 // `detail`: each rule's head gives its clause's words. Each rule is one way a JSON `rule` can match.
 // Columns after `at` are the metavariables the JSON's message, anchor or `each` names: one finding per distinct row.
-.violation RUF016(at: loc, b: node, detail: symbol) "{detail} type raises a TypeError."
+.violation RUF016(at: node, b: node, detail: symbol) "{detail} type raises a TypeError."
     suppress noqa "RUF016"
 RUF016(B, n, "Index this list, tuple, string or bytes literal with an integer or a slice; any other index") :- ruf016_index_hit(n, B).
 RUF016(B, n, "Index this list, tuple, string or bytes literal with an integer or a slice; any other index") :- ruf016_index_in_annotation(n, B).
@@ -113,7 +113,7 @@ RUF016(B, n, "Use an integer (or None) for each bound and step of this slice; an
 // RUF016_invalid_tuple_index_span(n): findings from clauses `invalid-tuple-index-fallback`, `invalid-tuple-index-span`, which say the same.
 // Each rule is one way a JSON `rule` can match.
 // Columns after `at` are the metavariables the JSON's message, anchor or `each` names: one finding per distinct row.
-.violation RUF016_invalid_tuple_index_span(at: loc, i: node) code "RUF016" "Index this literal with a single integer or a slice, not a tuple; a tuple index raises a TypeError."
+.violation RUF016_invalid_tuple_index_span(at: place, i: node) code "RUF016" "Index this literal with a single integer or a slice, not a tuple; a tuple index raises a TypeError."
     suppress noqa "RUF016"
 // I: not bound by this rule, so empty (unset) here, as in ast-grep.
 RUF016_invalid_tuple_index_span(rr_at, I) :- ruf016_tuple_hit(n), n ~ `$V[$$$I]`,
@@ -151,12 +151,12 @@ ruf016_set_1("generator_expression"). ruf016_set_1("lambda").
 
 // alt_4(n): the JSON `any`: n matches if any one of these rules does
 //   B: metavariable this relation binds for the calling rule
-.decl ruf016_alt_4(n: node, b: loc)
+.decl ruf016_alt_4(n: node, b: node)
 ruf016_alt_4(n, B) :- ruf016_tree_index_hit(n, B).
 ruf016_alt_4(n, B) :- ruf016_index_in_annotation(n, B).
 
 // alt_5(n): the JSON `any`: n matches if any one of these rules does
 //   B: metavariable this relation binds for the calling rule
-.decl ruf016_alt_5(n: node, b: loc)
+.decl ruf016_alt_5(n: node, b: node)
 ruf016_alt_5(n, B) :- ruf016_tree_slice_hit(n, B).
 ruf016_alt_5(n, B) :- ruf016_slice_in_annotation(n, B).

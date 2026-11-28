@@ -180,13 +180,13 @@ optimizer_flit_lo(h, i, 0) :- optimizer_flit(h, i, _, 0).
 optimizer_flit_lo(h, i, e) :- optimizer_flit(h, i, _, k), k > 0, j = @sub(k, 1), optimizer_fslot(h, j, s), node(_, s, _, _, e).
 optimizer_flit_hi(h, i, st) :- optimizer_flit(h, i, _, k), optimizer_fslot(h, k, s), node(_, s, _, st, _).
 optimizer_flit_hi(h, i, e) :- optimizer_flit(h, i, _, k), !optimizer_fslot(h, k, _), node(_, h, _, _, e).
-optimizer_fcand(h, i, st, l) :- optimizer_flit_lo(h, i, lo), optimizer_flit_hi(h, i, hi), optimizer_fcontent(h, c, st), st >= lo, st < hi, line(c, l).
-optimizer_fcand(h, i, st, l) :- optimizer_flit(h, i, _, k), j = @add(i, 1), fstring_piece(h, j, "debug", _), optimizer_fslot(h, k, s), node(_, s, _, st, _), line(s, l).
+optimizer_fcand(h, i, st, l) :- optimizer_flit_lo(h, i, lo), optimizer_flit_hi(h, i, hi), optimizer_fcontent(h, c, st), st >= lo, st < hi, node_line_number(c, l).
+optimizer_fcand(h, i, st, l) :- optimizer_flit(h, i, _, k), j = @add(i, 1), fstring_piece(h, j, "debug", _), optimizer_fslot(h, k, s), node(_, s, _, st, _), node_line_number(s, l).
 optimizer_fline(h, i, l) :- optimizer_flit(h, i, _, _), optimizer_fstr(h), m = min st : { optimizer_fcand(h, i, st, _) }, optimizer_fcand(h, i, m, l).
-optimizer_fline(h, i, l) :- optimizer_flit(h, i, _, 0), node(_, h, "format_specifier", _, _), line(h, l).
-optimizer_fline(h, i, l) :- optimizer_flit(h, i, _, k), k > 0, node(_, h, "format_specifier", _, _), j = @sub(k, 1), optimizer_fslot(h, j, s), end_line(s, l).
+optimizer_fline(h, i, l) :- optimizer_flit(h, i, _, 0), node(_, h, "format_specifier", _, _), node_line_number(h, l).
+optimizer_fline(h, i, l) :- optimizer_flit(h, i, _, k), k > 0, node(_, h, "format_specifier", _, _), j = @sub(k, 1), optimizer_fslot(h, j, s), node_end_line_number(s, l).
 optimizer_fpiece(h, i, v, l) :- optimizer_flit(h, i, v, _), optimizer_fline(h, i, l).
-optimizer_fpiece(h, i, v, l) :- optimizer_flit(h, i, v, _), !optimizer_fline(h, i, _), line(h, l).
+optimizer_fpiece(h, i, v, l) :- optimizer_flit(h, i, v, _), !optimizer_fline(h, i, _), node_line_number(h, l).
 optimizer_not_name(n) :- field(p, "attribute", n), node(_, p, "attribute", _, _).
 optimizer_not_name(n) :- field(p, "name", n), !node(_, p, "named_expression", _, _).
 optimizer_not_name(n) :- node(_, n, "identifier", _, _), inside(n, _, optimizer_import_kinds).
@@ -223,7 +223,7 @@ ofc_base(d, "effects.py") :- ofc_file(d, p), suffix("/effects.py", p).
 ofc_base(d, "passes.py") :- ofc_file(d, p), p = "passes.py".
 ofc_base(d, "passes.py") :- ofc_file(d, p), suffix("/passes.py", p).
 ofc_core(d) :- ofc_file(d, p), match("(?:.*/)?l2065_plan_core/.*", p).
-ofc_at(n, d, p, l) :- node(d, n, _, _, _), ofc_file(d, p), line(n, l).
+ofc_at(n, d, p, l) :- node(d, n, _, _, _), ofc_file(d, p), node_line_number(n, l).
 rr_agg7(dn, i, x) :- child(dn, c, i), text(c, x).
 ofc_dotted(dn, m) :- node(_, dn, "dotted_name", _, _), m = join x by (i) sep "." : { rr_agg7(dn, i, x) }.
 ofc_import(n, m) :- node(_, n, "import_statement", _, _), field(n, "name", c), ofc_dotted(c, m).
@@ -261,8 +261,8 @@ ofc_not_legality_home(d) :- ofc_file(d, _), !ofc_base(d, "effects.py"), !ofc_bas
 violation("data-layer-plan-optimizer-v2", "optimizer-file-checks", "PV2-060", p, l) :- ofc_def_name(n, x), (x = "can_share_statement_after" ; x = "conflicts_with" ; x = "placement_after" ; x = "repeated_write_keys"), ofc_at(n, d, p, l), ofc_not_legality_home(d).
 violation("data-layer-plan-optimizer-v2", "optimizer-file-checks", "PV2-060", p, l) :- optimizer_attr(n, x), ofc_legality_fact(x), ofc_at(n, d, p, l), ofc_not_legality_home(d).
 violation("data-layer-plan-optimizer-v2", "optimizer-file-checks", "PV2-060", p, l) :- optimizer_callee_attr(n, "can_share_statement_after"), ofc_at(n, d, p, l), ofc_not_legality_home(d).
-ofc_lf(d, k) :- option_value("entryPoint", "scan_file"), ofc_file(d, _), source(d, sp), text(sp, s), k = @add(@count_matches("\n", s), 1).
-ofc_src_lines(d, k) :- !option_value("entryPoint", "scan_file"), ofc_file(d, _), k = count : { src_line(d, _, _) }.
+ofc_lf(d, k) :- option_value("entryPoint", "scan_file"), ofc_file(d, _), document_source(d, sp), line_text(sp, s), k = @add(@count_matches("\n", s), 1).
+ofc_src_lines(d, k) :- !option_value("entryPoint", "scan_file"), ofc_file(d, _), k = count : { document_line(d, Rr_line3) }.
 violation("data-layer-plan-optimizer-v2", "optimizer-file-checks", "PV2-044", p, 1) :- ofc_lf(d, k), k > 600, ofc_file(d, p).
 violation("data-layer-plan-optimizer-v2", "optimizer-file-checks", "PV2-044", p, 1) :- ofc_src_lines(d, k), k > 600, ofc_file(d, p).
 ofc_in_init(n) :- inside(n, f, rr_kind_function_definition), field(f, "name", nm), text(nm, x), (x = "__init__" ; x = "__post_init__").
@@ -295,9 +295,9 @@ oir_verifier_text(d) :- doc(d, "impl/common/l2065_plan_core/verifier.py", _), in
 oir_doc(d) :- doc(d, "docs/design/PLAN_OPTIMIZER_V2_INVARIANTS.md", _), in_scope(d), !out_scope(d).
 oir_registered(n, v) :- optimizer_callee_name(n, "OptimizerInvariant"), node(d, n, _, _, _), oir_verifier(d), field(n, "arguments", al), child(al, kw, _), node(_, kw, "keyword_argument", _, _), field(kw, "name", k), text(k, "code"), field(kw, "value", e), optimizer_unparen(e, c), optimizer_str_const(c, v).
 oir_code(v) :- oir_registered(_, v).
-oir_doc_code(c) :- oir_doc(d), source(d, sp), match_group("`(?P<CODE>(?:scope|schema|effects|cardinality|rewrite)\\.[a-z_0-9]+)`", sp, _, "CODE", g), text(g, c).
-oir_cited(v) :- oir_code(v), oir_verifier(d), source(d, sp), text(sp, s), contains(@concat("(", @concat(v, ")")), s).
-oir_at(n, p, l) :- node(d, n, _, _, _), oir_verifier(d), doc(d, p, _), line(n, l).
+oir_doc_code(c) :- oir_doc(d), document_source(d, sp), line_regex_group("`(?P<CODE>(?:scope|schema|effects|cardinality|rewrite)\\.[a-z_0-9]+)`", sp, _, "CODE", g), match_text(g, c).
+oir_cited(v) :- oir_code(v), oir_verifier(d), document_source(d, sp), line_text(sp, s), contains(@concat("(", @concat(v, ")")), s).
+oir_at(n, p, l) :- node(d, n, _, _, _), oir_verifier(d), doc(d, p, _), node_line_number(n, l).
 oir_mode("gated") :- option_value("entryPoint", e), e != "scan_file", e != "find_violations".
 oir_mode("ungated") :- option_value("entryPoint", "find_violations").
 oir_run(1) :- oir_mode("gated"), oir_verifier_text(_).

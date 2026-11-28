@@ -10,21 +10,21 @@
 // PTH119(n): a finding at node n, from clause `os-path-basename`.
 // Each rule below is one way the JSON `rule` can match.
 // Columns after `at` are the metavariables the JSON's message, anchor or `each` names: one finding per distinct row.
-.violation PTH119(at: loc, f: node) "Use `Path(...).name` instead of `os.path.basename(...)`. Path normalizes the path first (trailing slashes, `.`) and rejects bytes, so keep `basename` where the exact result matters."
+.violation PTH119(at: node, f: node) "Use `Path(...).name` instead of `os.path.basename(...)`. Path normalizes the path first (trailing slashes, `.`) and rejects bytes, so keep `basename` where the exact result matters."
     suppress noqa "PTH119"
 PTH119(F, n) :- pth119_target(n, F).
 PTH119(F, n) :- pth119_in_string(n, F).
 
 // callee(n): the JSON util `callee`, used where the JSON says `matches: "callee"`
 //   F: metavariable this relation binds for the calling rule
-.decl pth119_callee(n: node, f: loc)
+.decl pth119_callee(n: node, f: node)
 pth119_callee(n, F) :- (kind(n, "identifier") ; kind(n, "attribute")),
     sym_of(n, "os.path.basename"), node(_, n, _, _, _), F = n.
 pth119_callee(n, F) :- kind(n, "parenthesized_expression"), child(n, c1, _), pth119_callee(c1, F).
 
 // target(n): the JSON util `target`, used where the JSON says `matches: "target"`
 //   F: metavariable this relation binds for the calling rule
-.decl pth119_target(n: node, f: loc)
+.decl pth119_target(n: node, f: node)
 pth119_target(n, F) :- kind(n, "call"), child(n, c1, _), pth119_callee(c1, F), precedes(c1, s2),
     (kind(s2, "argument_list") ; kind(s2, "generator_expression")), child(n, c3, _),
     ( kind(c3, "generator_expression")
@@ -34,7 +34,7 @@ pth119_target(n, F) :- kind(n, "call"), child(n, c1, _), pth119_callee(c1, F), p
 
 // in_string(n): the JSON util `in-string`, used where the JSON says `matches: "in-string"`
 //   F: metavariable this relation binds for the calling rule
-.decl pth119_in_string(n: node, f: loc)
+.decl pth119_in_string(n: node, f: node)
 pth119_in_string(n, F) :- (kind(n, "string") ; kind(n, "concatenated_string")),
     parsed(n, "annotation", r1), within(c2, r1), pth119_alt_8(c2, F).
 
@@ -89,6 +89,6 @@ pth119_alt_2(n) :- node(_, n, _, _, _), !pth119_alt_1(n).
 
 // alt_8(n): the JSON `any`: n matches if any one of these rules does
 //   F: metavariable this relation binds for the calling rule
-.decl pth119_alt_8(n: node, f: loc)
+.decl pth119_alt_8(n: node, f: node)
 pth119_alt_8(n, F) :- pth119_target(n, F).
 pth119_alt_8(n, F) :- pth119_in_string(n, F).

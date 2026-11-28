@@ -8,7 +8,7 @@
 // F407(n): a finding at node n, from clause `future-feature-not-defined`.
 // Each rule below is one way the JSON `rule` can match.
 // Columns after `at` are the metavariables the JSON's message, anchor or `each` names: one finding per distinct row.
-.violation F407(at: node, name: loc) "Future feature `{name}` is not defined"
+.violation F407(at: node, name: node) "Future feature `{name}` is not defined"
     suppress noqa "F407"
 F407(n, NAME) :- f407_alt_1(n, NAME), child(p2, n, _), f407_future_import(p2).
 
@@ -55,7 +55,7 @@ f407_statement_name(n, q) :- kind(n, "dotted_name"), child(s, n, _),
 
 // alt_1(n): the JSON `any`: n matches if any one of these rules does
 //   NAME: metavariable this relation binds for the calling rule
-.decl f407_alt_1(n: node, name: loc)
+.decl f407_alt_1(n: node, name: node)
 f407_alt_1(n, NAME) :- kind(n, "dotted_name"), !f407_known_feature(n), node(_, n, _, _, _), NAME = n.
 f407_alt_1(n, NAME) :- kind(n, "aliased_import"), child(n, c1, _), kind(c1, "dotted_name"),
     !f407_known_feature(c1), node(_, c1, _, _, _), NAME = c1.

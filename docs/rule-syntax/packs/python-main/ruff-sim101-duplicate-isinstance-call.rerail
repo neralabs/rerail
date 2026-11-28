@@ -10,7 +10,7 @@
 // SIM101(n): a finding at node n, from clause `duplicate-isinstance-call`.
 // Each rule below is one way the JSON `rule` can match.
 // Columns after `at` are the metavariables the JSON's message, anchor or `each` names: one finding per distinct row.
-.violation SIM101(at: node, p: loc, t: loc) "Multiple `isinstance` calls for `{t}`, merge into a single call"
+.violation SIM101(at: node, p: node, t: node) "Multiple `isinstance` calls for `{t}`, merge into a single call"
     suppress noqa "SIM101"
 SIM101(n, P, T) :- kind(n, "boolean_operator"), sim101_or_op(n),
     count : { child(p1, n, _), sim101_or_op(p1) } = 0,
@@ -22,7 +22,7 @@ sim101_or_op(n) :- kind(n, "boolean_operator"), sim101_tok_has_1(n).
 
 // isinstance_a(n): the JSON util `isinstance-a`, used where the JSON says `matches: "isinstance-a"`
 //   A: metavariable this relation binds for the calling rule
-.decl sim101_isinstance_a(n: node, a: loc)
+.decl sim101_isinstance_a(n: node, a: node)
 sim101_isinstance_a(n, A) :- kind(n, "call"), n ~ `$_F($_, $_)`, field(n, "arguments", c1),
     kind(c1, "argument_list"),
     count : { child(c1, c2, _), (kind(c2, "keyword_argument") ; kind(c2, "dictionary_splat")) } = 0,
@@ -33,12 +33,12 @@ sim101_isinstance_a(n, A) :- kind(n, "parenthesized_expression"), child(n, c13, 
 
 // target_a(n): the JSON util `target-a`, used where the JSON says `matches: "target-a"`
 //   A: metavariable this relation binds for the calling rule
-.decl sim101_target_a(n: node, a: loc)
+.decl sim101_target_a(n: node, a: node)
 sim101_target_a(n, A) :- node(_, n, _, _, _), A = n.
 
 // isinstance_t(n): the JSON util `isinstance-t`, used where the JSON says `matches: "isinstance-t"`
 //   T: metavariable this relation binds for the calling rule
-.decl sim101_isinstance_t(n: node, t: loc)
+.decl sim101_isinstance_t(n: node, t: node)
 sim101_isinstance_t(n, T) :- kind(n, "call"), n ~ `$_F($_, $_)`, field(n, "arguments", c1),
     kind(c1, "argument_list"),
     count : { child(c1, c2, _), (kind(c2, "keyword_argument") ; kind(c2, "dictionary_splat")) } = 0,
@@ -49,14 +49,14 @@ sim101_isinstance_t(n, T) :- kind(n, "parenthesized_expression"), child(n, c13, 
 
 // target_t(n): the JSON util `target-t`, used where the JSON says `matches: "target-t"`
 //   T: metavariable this relation binds for the calling rule
-.decl sim101_target_t(n: node, t: loc)
+.decl sim101_target_t(n: node, t: node)
 sim101_target_t(n, T) :- !kind(n, "parenthesized_expression"), node(_, n, _, _, _), T = n.
 sim101_target_t(n, T) :- kind(n, "parenthesized_expression"), child(n, c1, _),
     !glob("[()]", c1), sim101_target_t(c1, T).
 
 // isinstance_b(n): the JSON util `isinstance-b`, used where the JSON says `matches: "isinstance-b"`
 //   B: metavariable this relation binds for the calling rule
-.decl sim101_isinstance_b(n: node, b: loc)
+.decl sim101_isinstance_b(n: node, b: node)
 sim101_isinstance_b(n, B) :- kind(n, "call"), n ~ `$_F($_, $_)`, field(n, "arguments", c1),
     kind(c1, "argument_list"),
     count : { child(c1, c2, _), (kind(c2, "keyword_argument") ; kind(c2, "dictionary_splat")) } = 0,
@@ -67,14 +67,14 @@ sim101_isinstance_b(n, B) :- kind(n, "parenthesized_expression"), child(n, c13, 
 
 // target_b(n): the JSON util `target-b`, used where the JSON says `matches: "target-b"`
 //   B: metavariable this relation binds for the calling rule
-.decl sim101_target_b(n: node, b: loc)
+.decl sim101_target_b(n: node, b: node)
 sim101_target_b(n, B) :- !kind(n, "parenthesized_expression"), node(_, n, _, _, _), B = n.
 sim101_target_b(n, B) :- kind(n, "parenthesized_expression"), child(n, c1, _),
     !glob("[()]", c1), sim101_target_b(c1, B).
 
 // adjacent_pair(n): the JSON util `adjacent-pair`, used where the JSON says `matches: "adjacent-pair"`
 //   A, T: metavariables this relation binds for the calling rule
-.decl sim101_adjacent_pair(n: node, a: loc, t: loc)
+.decl sim101_adjacent_pair(n: node, a: node, t: node)
 sim101_adjacent_pair(n, A, T) :- node(_, T, _, _, _), sim101_or_op(n), field(n, "left", c1),
     ( !sim101_or_op(c1), sim101_isinstance_t(c1, T)
     ; sim101_or_op(c1), field(c1, "right", c2), sim101_isinstance_t(c2, T)
@@ -90,13 +90,13 @@ sim101_isinstance_ref(n) :- kind(n, "parenthesized_expression"), child(n, c1, _)
 
 // last_is_b(n): the JSON util `last-is-b`, used where the JSON says `matches: "last-is-b"`
 //   B: metavariable this relation binds for the calling rule
-.decl sim101_last_is_b(n: node, b: loc)
+.decl sim101_last_is_b(n: node, b: node)
 sim101_last_is_b(n, B) :- !sim101_or_op(n), sim101_isinstance_b(n, B).
 sim101_last_is_b(n, B) :- sim101_or_op(n), field(n, "right", c1), sim101_isinstance_b(c1, B).
 
 // run_start(n): the JSON util `run-start`, used where the JSON says `matches: "run-start"`
 //   P, T: metavariables this relation binds for the calling rule
-.decl sim101_run_start(n: node, p: loc, t: loc)
+.decl sim101_run_start(n: node, p: node, t: node)
 sim101_run_start(n, P, T) :- sim101_adjacent_pair(n, _, T), node(_, n, _, _, _), P = n,
     count : { field(n, "left", c1), sim101_or_op(c1), field(c1, "left", c2), sim101_last_is_b(c2, B), value(B, t3), value(T, t3) } = 0.
 

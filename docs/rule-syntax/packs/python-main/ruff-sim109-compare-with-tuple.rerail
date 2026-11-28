@@ -8,7 +8,7 @@
 // SIM109(n): a finding at node n, from clause `compare-with-tuple`.
 // Each rule below is one way the JSON `rule` can match.
 // Columns after `at` are the metavariables the JSON's message, anchor or `each` names: one finding per distinct row.
-.violation SIM109(at: node, first: loc, n_mv: loc) "Use `{n_mv} in (...)` instead of multiple equality comparisons"
+.violation SIM109(at: node, first: node, n_mv: node) "Use `{n_mv} in (...)` instead of multiple equality comparisons"
     suppress noqa "SIM109"
 SIM109(n, FIRST, N) :- kind(n, "boolean_operator"), sim109_or_op(n), !sim109_alt_1(n),
     within_stop(c11, n, sim109_stop_10),
@@ -24,7 +24,7 @@ sim109_or_op(n) :- kind(n, "boolean_operator"), sim109_tok_has_1(n).
 
 // eq_target(n): the JSON util `eq-target`, used where the JSON says `matches: "eq-target"`
 //   N: metavariable this relation binds for the calling rule
-.decl sim109_eq_target(n: node, n_mv: loc)
+.decl sim109_eq_target(n: node, n_mv: node)
 sim109_eq_target(n, N) :- kind(n, "comparison_operator"), k9 = count : { sim109_tok_has_2(n) },
     k9 <= 3, child(n, c10, _), kind(c10, "identifier"), sim109_tok_precedes_3(c10),
     node(_, c10, _, _, _), N = c10, child(n, c18, _), kind(c18, "identifier"), sim109_tok_follows_4(c18).
@@ -80,10 +80,10 @@ sim109_code_comment_start(p, o) :- child(p, c, _), comment(c, _), node(_, c, _, 
 .decl sim109_code_after_line_c(x: node, l: number)
 sim109_code_after_line_c(x, l) :- structural_after(x, g), match("(?s)\\s*\\S.*", g),
     ws = @replace_all(g, "(?s)\\S.*", ""),
-    k = strlen(ws) - strlen(@replace_all(ws, "\n", "")), end_line(x, lx), l = lx + k.
+    k = strlen(ws) - strlen(@replace_all(ws, "\n", "")), node_end_line_number(x, lx), l = lx + k.
 sim109_code_after_line_c(x, l) :- structural_after(x, g), match("\\s*", g), child(p, x, _),
     node(_, x, _, _, e), o = e + strlen(g), token(p, _, _, o, _),
-    k = strlen(g) - strlen(@replace_all(g, "\n", "")), end_line(x, lx), l = lx + k.
+    k = strlen(g) - strlen(@replace_all(g, "\n", "")), node_end_line_number(x, lx), l = lx + k.
 sim109_code_after_line_c(x, l) :- structural_after(x, g), match("\\s*", g), child(p, x, _),
     node(_, x, _, _, e), node(_, p, _, _, pe), pe = e + strlen(g),
     sim109_code_after_line_c(p, l).
@@ -92,11 +92,11 @@ sim109_code_after_line_c(x, l) :- structural_after(x, g), match("\\s*", g), chil
 .decl sim109_code_after_line(x: node, l: number)
 sim109_code_after_line(x, l) :- structural_after(x, g), match("(?s)\\s*\\S.*", g),
     ws = @replace_all(g, "(?s)\\S.*", ""),
-    k = strlen(ws) - strlen(@replace_all(ws, "\n", "")), end_line(x, lx), l = lx + k.
+    k = strlen(ws) - strlen(@replace_all(ws, "\n", "")), node_end_line_number(x, lx), l = lx + k.
 sim109_code_after_line(x, l) :- structural_after(x, g), match("\\s*", g), child(p, x, _),
     node(_, x, _, _, e), o = e + strlen(g), token(p, _, _, o, _),
     !sim109_code_comment_start(p, o), k = strlen(g) - strlen(@replace_all(g, "\n", "")),
-    end_line(x, lx), l = lx + k.
+    node_end_line_number(x, lx), l = lx + k.
 sim109_code_after_line(x, l) :- structural_after(x, g), match("\\s*", g), child(p, x, _),
     node(_, x, _, _, e), node(_, p, _, _, pe), pe = e + strlen(g),
     sim109_code_after_line(p, l).
@@ -108,8 +108,8 @@ sim109_code_after_line(x, l) :- structural_after(x, g), match("\\s*", g), child(
 .decl sim109_alt_1(n: node)
 sim109_alt_1(n) :- child(p1, n, _), sim109_or_op(p1).
 sim109_alt_1(n) :- has(n, c2, "comment").
-sim109_alt_1(n) :- sim109_code_after_line_c(n, l6), end_line(n, l5), k3 = l6 - l5, k3 = 0,
-    count : { sim109_code_after_line(n, l10), end_line(n, l9), k7 = l10 - l9, k7 = 0 } = 0.
+sim109_alt_1(n) :- sim109_code_after_line_c(n, l6), node_end_line_number(n, l5), k3 = l6 - l5, k3 = 0,
+    count : { sim109_code_after_line(n, l10), node_end_line_number(n, l9), k7 = l10 - l9, k7 = 0 } = 0.
 
 // stop_10(n): the JSON `stopBy` rule: the tree search stops at these nodes
 .decl sim109_stop_10(n: node)

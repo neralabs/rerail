@@ -8,7 +8,7 @@
 // N818(n): a finding at node n, from clause `error-suffix-on-exception-name`.
 // Each rule below is one way the JSON `rule` can match.
 // Columns after `at` are the metavariables the JSON's message, anchor or `each` names: one finding per distinct row.
-.violation N818(at: node, name: loc) "Rename the exception class `{name}` to end in `Error`, e.g. `${{NAME}}Error` or swapping an `Exception` suffix for `Error`, and update references; keep it if it signals control flow, not an error."
+.violation N818(at: node, name: node) "Rename the exception class `{name}` to end in `Error`, e.g. `${{NAME}}Error` or swapping an `Exception` suffix for `Error`, and update references; keep it if it signals control flow, not an error."
     suppress noqa "N818"
 N818(n, NAME) :- kind(n, "identifier"), node(_, n, _, _, _), NAME = n, field(p1, "name", n),
     kind(p1, "class_definition"), field(p1, "superclasses", c2),

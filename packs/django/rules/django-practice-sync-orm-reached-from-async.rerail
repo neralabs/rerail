@@ -83,7 +83,7 @@ sora_start(kq, fq, ct, gq) :- sora_call_at(fq, ct, _, _), !sora_direct_at(fq, ct
 // in f's file. sora_direct_at(f, c): c is a query itself.
 .decl sora_call_at(f: symbol, c: symbol, fx: symbol, l: number)
 sora_call_at(fq, ct, fx, l) :- kind(c, "call"), nearest(c, f, dj_region_stop), is_async(f), docof(c, d),
-    !dj_test_doc(d), pt_def(f, fq), pt_tm(c, ct), def_name(f, fx), line(c, l).
+    !dj_test_doc(d), pt_def(f, fq), pt_tm(c, ct), def_name(f, fx), node_line_number(c, l).
 .decl sora_direct_at(f: symbol, c: symbol)
 sora_direct_at(fq, ct) :- sora_query(c, f, _), kind(c, "call"), pt_def(f, fq), pt_tm(c, ct).
 // sora_frame(f, k): def f runs for class k: its own class or itself when it is no method (sora_home, in f's file), or
@@ -143,7 +143,7 @@ sora_site(x, c, "call") :- kind(c, "call"), nearest(c, x, dj_region_stop), !sora
 // sora_ran(h, what, p, l): def h's first query, `what`, at line l of path p. Stated in h's file.
 .decl sora_ran(h: symbol, what: symbol, p: symbol, l: number)
 sora_ran(hq, what, p, l) :- sora_query(_, h, _), o = min v : { sora_query(v, h, _) }, sora_query(o, h, what),
-    pt_def(h, hq), line(o, l), docof(o, d), doc(d, p, _).
+    pt_def(h, hq), node_line_number(o, l), docof(o, d), doc(d, p, _).
 
 // sora_query(o, h, what): o, in function h's own frame, runs a database query.
 .decl sora_query(o: node, h: node, what: symbol)

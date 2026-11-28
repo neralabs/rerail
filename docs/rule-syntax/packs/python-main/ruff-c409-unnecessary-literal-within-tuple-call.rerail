@@ -10,7 +10,7 @@
 // C409(n, detail): findings from clauses `list-literal-within-tuple-call`, `tuple-literal-within-tuple-call`. Their messages differ only in
 // `detail`: each rule's head gives its clause's words. Each rule is one way a JSON `rule` can match.
 // Columns after `at` are the metavariables the JSON's message, anchor or `each` names: one finding per distinct row.
-.violation C409(at: loc, call: node, detail: symbol) "{detail}."
+.violation C409(at: node, call: node, detail: symbol) "{detail}."
     suppress noqa "C409"
 C409(CALL, n, "Write the elements as a tuple literal `(...)` instead of `tuple([...])`; a single element needs a trailing comma, as in `(x,)`") :- c409_target(n),
     node(_, n, _, _, _), CALL = n.
@@ -43,7 +43,7 @@ c409_target(n) :- kind(n, "call"), field(n, "function", c1), c409_callee(c1),
 
 // in_annotation(n): the JSON util `in-annotation`, used where the JSON says `matches: "in-annotation"`
 //   CALL: metavariable this relation binds for the calling rule
-.decl c409_in_annotation(n: node, call: loc)
+.decl c409_in_annotation(n: node, call: node)
 c409_in_annotation(n, CALL) :- (kind(n, "string") ; kind(n, "concatenated_string")),
     parsed(n, "annotation", r1), within(c2, r1), c409_alt_1(c2, CALL).
 
@@ -75,18 +75,18 @@ c409_target_tuple_literal_within_tuple_call(n) :- kind(n, "call"), field(n, "fun
 
 // in_annotation_tuple_literal_within_tuple_call(n): the JSON util `in-annotation`, used where the JSON says `matches: "in-annotation"`
 //   CALL: metavariable this relation binds for the calling rule
-.decl c409_in_annotation_tuple_literal_within_tuple_call(n: node, call: loc)
+.decl c409_in_annotation_tuple_literal_within_tuple_call(n: node, call: node)
 c409_in_annotation_tuple_literal_within_tuple_call(n, CALL) :- (kind(n, "string") ; kind(n, "concatenated_string")),
     parsed(n, "annotation", r1), within(c2, r1), c409_alt_2(c2, CALL).
 
 // alt_1(n): the JSON `any`: n matches if any one of these rules does
 //   CALL: metavariable this relation binds for the calling rule
-.decl c409_alt_1(n: node, call: loc)
+.decl c409_alt_1(n: node, call: node)
 c409_alt_1(n, CALL) :- c409_target(n), CALL = n.
 c409_alt_1(n, CALL) :- c409_in_annotation(n, CALL).
 
 // alt_2(n): the JSON `any`: n matches if any one of these rules does
 //   CALL: metavariable this relation binds for the calling rule
-.decl c409_alt_2(n: node, call: loc)
+.decl c409_alt_2(n: node, call: node)
 c409_alt_2(n, CALL) :- c409_target_tuple_literal_within_tuple_call(n), CALL = n.
 c409_alt_2(n, CALL) :- c409_in_annotation_tuple_literal_within_tuple_call(n, CALL).

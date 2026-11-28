@@ -62,7 +62,7 @@ pth210_plain_string(n) :- kind(n, "parenthesized_expression"), child(n, c3, _),
 // Each rule below is one way the JSON `rule` can match.
 // Columns after `at` are the metavariables the JSON's message, anchor or `each` names: one finding per distinct row.
 // The JSON `constraints` on S are added to every rule.
-.violation PTH210(at: node, s: loc) "Add a leading dot to the suffix {s}, such as `\".py\"`; `with_suffix` raises ValueError for a non-empty suffix that does not start with a dot."
+.violation PTH210(at: node, s: node) "Add a leading dot to the suffix {s}, such as `\".py\"`; `with_suffix` raises ValueError for a non-empty suffix that does not start with a dot."
     suppress noqa "PTH210"
 PTH210(n, S) :- kind(n, "call"), field(n, "function", c1), pth210_with_suffix(c1),
     pth210_arg_suffix_1(n, a2), S = a2, field(n, "arguments", c3), kind(c3, "argument_list"),

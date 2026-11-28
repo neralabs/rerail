@@ -17,8 +17,8 @@ ERA001(n) :- kind(n, "comment"),
     !match("#[# \\t\\x0C]*(?:TODO|FIXME|XXX)(?:[ :(]|\\s*$).*", n),
     !match("#[# \\t\\x0C]*(?:pyright|pyrefly|ruff\\s*:\\s*(?:disable|enable|ignore|file-ignore)|mypy:|type:\\s*ignore|ty:\\s*ignore|SPDX-License-Identifier:|fmt:\\s*(?:on|off|skip)|region|endregion|(?i:noqa|pylint|nosec|isort:\\s*(?:on|off|skip|skip_file|split|dont-add-imports(?::\\s*\\[.*?\\])?)|(?:en)?coding[:=][ \\t]*[-_.A-Z0-9]+)|language=[-_.a-zA-Z0-9]+).*", n),
     !match("#[# \\t\\x0C]*[^# \\t\\x0C].*#\\d.*", n),
-    ( ( era001_code_before_line_c(n, l1), line(n, l2), k1 = l2 - l1, k1 >= 1 ; count : { era001_code_before_line_c(n, l1) } = 0, line(n, l2), k1 = l2 - 1, k1 >= 1 )
-    ; count : { era001_code_before_line_c(n, l3), line(n, l4), k2 = l4 - l3, k2 >= 0 } = 0
+    ( ( era001_code_before_line_c(n, l1), node_line_number(n, l2), k1 = l2 - l1, k1 >= 1 ; count : { era001_code_before_line_c(n, l1) } = 0, node_line_number(n, l2), k1 = l2 - 1, k1 >= 1 )
+    ; count : { era001_code_before_line_c(n, l3), node_line_number(n, l4), k2 = l4 - l3, k2 >= 0 } = 0
     ),
     node(_, n, _, _, _), C = n, PW = PAIRF,
     ( match(".*\\\\\\s*", n)
@@ -60,10 +60,10 @@ era001_code_comment_end(p, o) :- child(p, c, _), comment(c, _), node(_, c, _, _,
 .decl era001_code_before_line_c(x: node, l: number)
 era001_code_before_line_c(x, l) :- structural_before(x, g), match("(?s).*\\S\\s*", g),
     ws = @replace_all(g, "(?s)^.*\\S", ""),
-    k = strlen(ws) - strlen(@replace_all(ws, "\n", "")), line(x, lx), l = lx - k.
+    k = strlen(ws) - strlen(@replace_all(ws, "\n", "")), node_line_number(x, lx), l = lx - k.
 era001_code_before_line_c(x, l) :- structural_before(x, g), match("\\s*", g), child(p, x, _),
     node(_, x, _, s, _), o = s - strlen(g), token(p, _, _, _, o),
-    k = strlen(g) - strlen(@replace_all(g, "\n", "")), line(x, lx), l = lx - k.
+    k = strlen(g) - strlen(@replace_all(g, "\n", "")), node_line_number(x, lx), l = lx - k.
 era001_code_before_line_c(x, l) :- structural_before(x, g), match("\\s*", g), child(p, x, _),
     node(_, x, _, s, _), node(_, p, _, ps, _), ps = s - strlen(g),
     era001_code_before_line_c(p, l).
@@ -71,22 +71,22 @@ era001_code_before_line_c(x, l) :- structural_before(x, g), match("\\s*", g), ch
 // stop_3(n): the JSON `stopBy` rule: the tree search stops at these nodes
 .decl era001_stop_3(n: node)
 era001_stop_3(n) :- node(_, n, _, _, _),
-    count : { kind(n, "comment"), glob("#{ **,}", n), next_sibling(n, t2), end_line(n, l3), line(t2, l4), k1 = l4 - l3, k1 <= 1 } = 0.
+    count : { kind(n, "comment"), glob("#{ **,}", n), next_sibling(n, t2), node_end_line_number(n, l3), node_line_number(t2, l4), k1 = l4 - l3, k1 <= 1 } = 0.
 
 // alt_4(n): the JSON `any`: n matches if any one of these rules does
 .decl era001_alt_4(n: node)
 era001_alt_4(n) :- node(_, n, _, _, _), glob("# /// script", n).
 era001_alt_4(n) :- precedes_stop(s1, n, era001_stop_3), kind(s1, "comment"),
-    glob("# /// script", s1), next_sibling(s1, t3), end_line(s1, l4), line(t3, l5),
+    glob("# /// script", s1), next_sibling(s1, t3), node_end_line_number(s1, l4), node_line_number(t3, l5),
     k2 = l5 - l4, k2 <= 1.
 
 // stop_6(n): the JSON `stopBy` rule: the tree search stops at these nodes
 .decl era001_stop_6(n: node)
 era001_stop_6(n) :- node(_, n, _, _, _),
-    count : { kind(n, "comment"), glob("#{ **,}", n), next_sibling(t2, n), line(n, l4), end_line(t2, l3), k1 = l4 - l3, k1 <= 1 } = 0.
+    count : { kind(n, "comment"), glob("#{ **,}", n), next_sibling(t2, n), node_line_number(n, l4), node_end_line_number(t2, l3), k1 = l4 - l3, k1 <= 1 } = 0.
 
 // alt_7(n): the JSON `any`: n matches if any one of these rules does
 .decl era001_alt_7(n: node)
 era001_alt_7(n) :- node(_, n, _, _, _), glob("# ///", n).
 era001_alt_7(n) :- precedes_stop(n, s1, era001_stop_6), kind(s1, "comment"), glob("# ///", s1),
-    next_sibling(t3, s1), line(s1, l5), end_line(t3, l4), k2 = l5 - l4, k2 <= 1.
+    next_sibling(t3, s1), node_line_number(s1, l5), node_end_line_number(t3, l4), k2 = l5 - l4, k2 <= 1.

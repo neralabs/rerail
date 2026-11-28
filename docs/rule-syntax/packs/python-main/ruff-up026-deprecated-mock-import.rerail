@@ -20,7 +20,7 @@ UP026(n, "from `unittest.mock` instead of `mock`; `from mock import mock` become
 // UP026_mock_attribute(n): a finding at node n, from clause `mock-attribute`.
 // Each rule below is one way the JSON `rule` can match.
 // Columns after `at` are the metavariables the JSON's message, anchor or `each` names: one finding per distinct row.
-.violation UP026_mock_attribute(at: loc, m: node) code "UP026" "Drop the redundant `.mock`: write `mock.NAME` instead of `mock.mock.NAME`."
+.violation UP026_mock_attribute(at: node, m: node) code "UP026" "Drop the redundant `.mock`: write `mock.NAME` instead of `mock.mock.NAME`."
     suppress noqa "UP026"
 UP026_mock_attribute(M, n) :- kind(n, "attribute"), node(_, n, _, _, _), M = n, up026_seen(n), up026_tok_has_1(n),
     up026_tok_has_2(n), up026_up_1(n, p17), field(p17, "object", f18), (f18 = n ; within(n, f18)).
@@ -70,7 +70,7 @@ up026_seen(n) :- within(n, p10), up026_body(p10),
 
 // in_string(n): the JSON util `in-string`, used where the JSON says `matches: "in-string"`
 //   M: metavariable this relation binds for the calling rule
-.decl up026_in_string(n: node, m: loc)
+.decl up026_in_string(n: node, m: node)
 up026_in_string(n, M) :- up026_demand_in_string(n),
     (kind(n, "string") ; kind(n, "concatenated_string")), parsed(n, "annotation", r1),
     within(c2, r1), up026_alt_20(c2, M).
@@ -133,7 +133,7 @@ up026_alt_11(n) :- !kind(n, "function_definition"), !kind(n, "lambda"),
 
 // alt_20(n): the JSON `any`: n matches if any one of these rules does
 //   M: metavariable this relation binds for the calling rule
-.decl up026_alt_20(n: node, m: loc)
+.decl up026_alt_20(n: node, m: node)
 up026_alt_20(n, M) :- up026_demand_alt_20(n), up026_in_string(n, M).
 up026_alt_20(n, M) :- up026_demand_alt_20(n), kind(n, "attribute"), child(n, c1, _),
     kind(c1, "attribute"), c1 ~ `mock.mock`, M = c1.

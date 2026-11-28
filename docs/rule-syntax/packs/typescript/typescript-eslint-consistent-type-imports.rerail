@@ -29,7 +29,7 @@ consistent_type_imports(i, "someImportsAreOnlyTypes", cat("Imports ", cat(names,
     names = join q by b sep ", " : { type_only(i, b), import_binding(b, x, _, _), q = cat("\"", cat(x, "\"")) }.
 consistent_type_imports(n, "avoidImportType", "Use an `import` instead of an `import type`.") :-
     option("prefer", "no-type-imports"), (kind(n, "import_statement"), op(n, "type") ;
-    kind(n, "import_specifier"), first_token(n, t), text(t, "type"), field(n, "name", m), t != m).
+    kind(n, "import_specifier"), node_to_first_token(n, t), token_text(t, "type"), field(n, "name", m), t != m).
 consistent_type_imports(c, "noImportTypeAnnotations", "`import()` type annotations are forbidden.") :-
     !option("disallowTypeAnnotations", "false"), kind(c, "call_expression"), field(c, "function", f), kind(f, "import"),
     in_type(c).
@@ -47,7 +47,7 @@ checked(i) :- kind(i, "import_statement"), !op(i, "type"), !option("prefer", "no
 .decl spec(i: node, s: node)
 spec(i, s) :- checked(i), import_binding(s, _, _, _), (s = i ; within(s, i)), !inline_type(s).
 .decl inline_type(s: node)
-inline_type(s) :- kind(s, "import_specifier"), first_token(s, t), text(t, "type"), field(s, "name", n), t != n.
+inline_type(s) :- kind(s, "import_specifier"), node_to_first_token(s, t), token_text(t, "type"), field(s, "name", n), t != n.
 // type_only(i, s): s is used, and every use is in a type.
 .decl type_only(i: node, s: node)
 type_only(i, s) :- spec(i, s), used(s), !value_use(s).

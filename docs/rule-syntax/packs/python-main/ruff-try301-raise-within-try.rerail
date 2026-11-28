@@ -36,7 +36,7 @@ try301_handled(n) :- try301_pos(n), !kind(n, "tuple"), !kind(n, "parenthesized_e
 
 // raised(n): the JSON util `raised`, used where the JSON says `matches: "raised"`
 //   X: metavariable this relation binds for the calling rule
-.decl try301_raised(n: node, x: loc)
+.decl try301_raised(n: node, x: node)
 try301_raised(n, X) :- kind(n, "call"), field(n, "function", c1), node(_, c1, _, _, _), X = c1.
 try301_raised(n, X) :- kind(n, "parenthesized_expression"), child(n, c2, _), try301_raised(c2, X).
 try301_raised(n, X) :- !kind(n, "call"), !kind(n, "parenthesized_expression"),

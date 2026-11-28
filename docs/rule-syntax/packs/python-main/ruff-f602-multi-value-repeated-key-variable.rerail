@@ -8,7 +8,7 @@
 // F602(n): a finding at node n, from clause `multi-value-repeated-key-variable`.
 // Each rule below is one way the JSON `rule` can match.
 // Columns after `at` are the metavariables the JSON's message, anchor or `each` names: one finding per distinct row.
-.violation F602(at: node, key: loc) "Remove or merge the repeated key `{key}` in this dict; the later value silently overwrites the earlier one."
+.violation F602(at: node, key: node) "Remove or merge the repeated key `{key}` in this dict; the later value silently overwrites the earlier one."
     suppress noqa "F602"
 F602(n, KEY) :- node(_, n, _, _, _), KEY = n, !kind(n, "parenthesized_expression"),
     kind(n, "identifier"), f602_dict_key(n), f602_up_1(n, p1), precedes(s2, p1),
@@ -21,7 +21,7 @@ f602_dict_key(n) :- child(p9, n, _), kind(p9, "parenthesized_expression"), f602_
 
 // earlier_same(n): the JSON util `earlier-same`, used where the JSON says `matches: "earlier-same"`
 //   KEY: metavariable of the calling rule, passed in (bound by the caller)
-.decl f602_earlier_same(n: node, key: loc)
+.decl f602_earlier_same(n: node, key: node)
 f602_earlier_same(n, KEY) :- f602_demand_earlier_same(n, KEY),
     !kind(n, "parenthesized_expression"), node(_, n, _, _, _), EARLIER = n, kind(n, "identifier"),
     text(EARLIER, t1), text(KEY, t1), @doc(EARLIER) = @doc(KEY).
@@ -47,7 +47,7 @@ f602_tok_follows_2(n) :- structural_before(n, g6), match("\\s*", g6), child(p7, 
 f602_tok_follows_2(n) :- structural_before(n, g6), match("(?s)^.*\\S\\s*$", g6).
 
 // demand_earlier_same: the rows of earlier_same its callers ask for (the metavariable columns they pass in)
-.decl f602_demand_earlier_same(n: node, key: loc)
+.decl f602_demand_earlier_same(n: node, key: node)
 f602_demand_earlier_same(c3, KEY) :- node(_, n, _, _, _), KEY = n, kind(n, "identifier"), f602_dict_key(n),
     f602_up_1(n, p1), precedes(s2, p1), kind(s2, "pair"), child(s2, c3, _).
 f602_demand_earlier_same(c3, KEY) :- f602_demand_earlier_same(n, KEY),

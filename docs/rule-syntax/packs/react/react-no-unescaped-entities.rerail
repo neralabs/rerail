@@ -13,12 +13,12 @@
 #include "tsx/react.rerail"
 
 // The finding sits on the quote itself (a match_all capture is a span with a line), as ESLint reports each quote.
-.violation unescaped(at: span, msg: symbol)
+.violation unescaped(at: match, msg: symbol)
     code "react/no-unescaped-entities"
     "{msg}"
     suppress eslint "react/no-unescaped-entities"
     suppress oxlint "no-unescaped-entities"
-unescaped(Q, m) :- kind(t, "jsx_text"), docof(t, d), react_doc(d), match_all("(?<Q>['\"])", t), text(Q, q),
+unescaped(Q, m) :- kind(t, "jsx_text"), docof(t, d), react_doc(d), match_all("(?<Q>['\"])", t), match_text(Q, q),
     entity_says(q, m).
 .decl entity_says(c: symbol, msg: symbol)
 entity_says("\"", "Write this \" in JSX text as &quot; or wrap it in a {'\"'} string expression.").

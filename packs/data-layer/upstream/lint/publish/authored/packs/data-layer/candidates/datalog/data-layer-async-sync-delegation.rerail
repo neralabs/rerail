@@ -554,8 +554,8 @@ sync_delegation_exempt(f) :- sync_delegation_fn(f, p, nm), suffix("l2550_storage
 sync_delegation_core(f, p, nm) :- sync_delegation_fn(f, p, nm), !sync_delegation_awaits(f), !asd_stub(f), !sync_delegation_stub_body(f), !sync_delegation_toggle(f), !sync_delegation_lazy_only(f), !asd_deco(f, "legacy_async"), !asd_deco(f, "legacy_module_async"), !sync_delegation_exempt(f).
 sync_delegation_delegates(f) :- sync_delegation_core(f, _, nm), suffix("_async", nm), sync_delegation_own(f, c), node(_, c, "call", _, _), field(c, "function", g), node(_, g, "identifier", _, _), text(g, s), nm = @concat(s, "_async").
 sync_delegation_delegates(f) :- sync_delegation_core(f, _, nm), suffix("_async", nm), sync_delegation_own(f, c), node(_, c, "call", _, _), field(c, "function", g), node(_, g, "attribute", _, _), field(g, "attribute", a), text(a, s), nm = @concat(s, "_async").
-violation("data-layer-async-sync-delegation", "sync-delegation", "A", p, l) :- sync_delegation_delegates(f), sync_delegation_core(f, p, _), line(f, l).
-violation("data-layer-async-sync-delegation", "no-await", "B", p, l) :- sync_delegation_core(f, p, _), !sync_delegation_delegates(f), line(f, l).
+violation("data-layer-async-sync-delegation", "sync-delegation", "A", p, l) :- sync_delegation_delegates(f), sync_delegation_core(f, p, _), node_line_number(f, l).
+violation("data-layer-async-sync-delegation", "no-await", "B", p, l) :- sync_delegation_core(f, p, _), !sync_delegation_delegates(f), node_line_number(f, l).
 wrapper_shape_base(f, "__enter__") :- asd_fname(f, "__aenter__").
 wrapper_shape_base(f, "__exit__") :- asd_fname(f, "__aexit__").
 wrapper_shape_pub_base(f, b) :- asd_fname(f, nm), suffix("_async", nm), !prefix("_", nm), k = @sub(@strlen(nm), 6), b = @substr(nm, 0, k).
@@ -636,7 +636,7 @@ wrapper_shape_lazy_name(f, s) :- wrapper_shape_lazy_thin(f, z), asd_compact(z, s
 wrapper_shape_bad(f) :- wrapper_shape_tx(f, _, s), !wrapper_shape_is_lazy_thin(s).
 wrapper_shape_bad(f) :- wrapper_shape_tx(f, _, s), wrapper_shape_is_lazy_thin(s), !wrapper_shape_is_lazy_thin(f).
 wrapper_shape_bad(f) :- wrapper_shape_tx(f, _, s), wrapper_shape_lazy_name(s, a), wrapper_shape_lazy_name(f, b), a != b.
-violation("data-layer-async-sync-delegation", "wrapper-shape", "C", p, l) :- wrapper_shape_bad(f), wrapper_shape_doc(f, p), line(f, l).
+violation("data-layer-async-sync-delegation", "wrapper-shape", "C", p, l) :- wrapper_shape_bad(f), wrapper_shape_doc(f, p), node_line_number(f, l).
 legacy_fn(f, dv, b) :- legacy_variant(dv, _, drop, _), asd_deco_plain(f, dv), asd_fname(f, nm), drop != "", suffix(drop, nm), k = @sub(@strlen(nm), @strlen(drop)), b = @substr(nm, 0, k).
 legacy_fn(f, dv, nm) :- legacy_variant(dv, _, drop, _), asd_deco_plain(f, dv), asd_fname(f, nm), drop != "", !suffix(drop, nm).
 legacy_fn(f, dv, nm) :- legacy_variant(dv, _, "", _), asd_deco_plain(f, dv), asd_fname(f, nm).
@@ -669,15 +669,15 @@ legacy_missing_pair(f, dv) :- legacy_top(f, m), legacy_fn(f, dv, _), legacy_coun
 legacy_missing_pair(f, dv) :- legacy_method(f, dv, _, c), legacy_counterpart(f, cv, nm), !legacy_has_counterpart(c, cv, nm), !legacy_other_class_pair(f).
 legacy_other_class_pair(f) :- legacy_method(f, _, _, c), legacy_class_other(c, o), legacy_counterpart(f, cv, nm), node(d, c, _, _, _), node(d, c2, "class_definition", _, _), asd_top_class(c2), field(c2, "name", n2), text(n2, o), legacy_has_counterpart(c2, cv, nm).
 legacy_doc(f, p) :- legacy_fn(f, _, _), node(d, f, _, _, _), asd_doc(d, p).
-violation("data-layer-async-sync-delegation", "legacy_sync-missing-lazy", "C", p, l) :- legacy_missing_lazy(f, "legacy_sync"), legacy_doc(f, p), line(f, l).
-violation("data-layer-async-sync-delegation", "legacy_sync-missing-pair", "C", p, l) :- legacy_missing_pair(f, "legacy_sync"), legacy_doc(f, p), line(f, l).
-violation("data-layer-async-sync-delegation", "legacy_async-missing-lazy", "C", p, l) :- legacy_missing_lazy(f, "legacy_async"), legacy_doc(f, p), line(f, l).
-violation("data-layer-async-sync-delegation", "legacy_async-missing-pair", "C", p, l) :- legacy_missing_pair(f, "legacy_async"), legacy_doc(f, p), line(f, l).
-violation("data-layer-async-sync-delegation", "legacy_module_sync-missing-lazy", "C", p, l) :- legacy_missing_lazy(f, "legacy_module_sync"), legacy_doc(f, p), line(f, l).
-violation("data-layer-async-sync-delegation", "legacy_module_sync-missing-pair", "C", p, l) :- legacy_missing_pair(f, "legacy_module_sync"), legacy_doc(f, p), line(f, l).
-violation("data-layer-async-sync-delegation", "legacy_module_async-missing-lazy", "C", p, l) :- legacy_missing_lazy(f, "legacy_module_async"), legacy_doc(f, p), line(f, l).
-violation("data-layer-async-sync-delegation", "legacy_module_async-missing-pair", "C", p, l) :- legacy_missing_pair(f, "legacy_module_async"), legacy_doc(f, p), line(f, l).
-violation("data-layer-async-sync-delegation", "mixed-name", "C", p, l) :- node(d, f, "function_definition", _, _), asd_doc(d, p), !prefix("tests/", p), !prefix("conform/", p), !contains("/tests/", p), !contains("/conform/", p), asd_fname(f, nm), icontains("lazy", nm), icontains("sync", nm), line(f, l).
+violation("data-layer-async-sync-delegation", "legacy_sync-missing-lazy", "C", p, l) :- legacy_missing_lazy(f, "legacy_sync"), legacy_doc(f, p), node_line_number(f, l).
+violation("data-layer-async-sync-delegation", "legacy_sync-missing-pair", "C", p, l) :- legacy_missing_pair(f, "legacy_sync"), legacy_doc(f, p), node_line_number(f, l).
+violation("data-layer-async-sync-delegation", "legacy_async-missing-lazy", "C", p, l) :- legacy_missing_lazy(f, "legacy_async"), legacy_doc(f, p), node_line_number(f, l).
+violation("data-layer-async-sync-delegation", "legacy_async-missing-pair", "C", p, l) :- legacy_missing_pair(f, "legacy_async"), legacy_doc(f, p), node_line_number(f, l).
+violation("data-layer-async-sync-delegation", "legacy_module_sync-missing-lazy", "C", p, l) :- legacy_missing_lazy(f, "legacy_module_sync"), legacy_doc(f, p), node_line_number(f, l).
+violation("data-layer-async-sync-delegation", "legacy_module_sync-missing-pair", "C", p, l) :- legacy_missing_pair(f, "legacy_module_sync"), legacy_doc(f, p), node_line_number(f, l).
+violation("data-layer-async-sync-delegation", "legacy_module_async-missing-lazy", "C", p, l) :- legacy_missing_lazy(f, "legacy_module_async"), legacy_doc(f, p), node_line_number(f, l).
+violation("data-layer-async-sync-delegation", "legacy_module_async-missing-pair", "C", p, l) :- legacy_missing_pair(f, "legacy_module_async"), legacy_doc(f, p), node_line_number(f, l).
+violation("data-layer-async-sync-delegation", "mixed-name", "C", p, l) :- node(d, f, "function_definition", _, _), asd_doc(d, p), !prefix("tests/", p), !prefix("conform/", p), !contains("/tests/", p), !contains("/conform/", p), asd_fname(f, nm), icontains("lazy", nm), icontains("sync", nm), node_line_number(f, l).
 escape_hatch_call(c, d) :- node(d, c, "call", _, _), field(c, "function", g), node(_, g, "identifier", _, _), text(g, "run_in_executor").
 escape_hatch_call(c, d) :- node(d, c, "call", _, _), field(c, "function", g), node(_, g, "identifier", _, _), text(g, "to_thread").
 escape_hatch_call(c, d) :- node(d, c, "call", _, _), field(c, "function", g), node(_, g, "identifier", _, _), text(g, "tracked_run_in_executor").
@@ -694,4 +694,4 @@ escape_hatch_exempt(c) :- escape_hatch_call(c, d), doc(d, p, _), suffix("impl/co
 escape_hatch_exempt(c) :- escape_hatch_call(c, d), doc(d, p, _), suffix("impl/common/l2550_storage_backend/backend.py", p), nearest(c, f, asd_fdef), field(f, "name", nmn), text(nmn, "retrieve_async").
 escape_hatch_exempt(c) :- escape_hatch_call(c, d), doc(d, p, _), suffix("impl/common/l2550_storage_backend/backend.py", p), nearest(c, f, asd_fdef), field(f, "name", nmn), text(nmn, "store_async").
 escape_hatch_exempt(c) :- escape_hatch_call(c, d), doc(d, p, _), suffix("impl/sqlite/native_async_wrapper.py", p), nearest(c, f, asd_fdef), field(f, "name", nmn), text(nmn, "_run_sqlite_call_in_thread").
-violation("data-layer-async-sync-delegation", "escape-hatch", "C", p, l) :- escape_hatch_call(c, d), asd_doc(d, p), !asd_test_path(p), !escape_hatch_exempt(c), line(c, l).
+violation("data-layer-async-sync-delegation", "escape-hatch", "C", p, l) :- escape_hatch_call(c, d), asd_doc(d, p), !asd_test_path(p), !escape_hatch_exempt(c), node_line_number(c, l).

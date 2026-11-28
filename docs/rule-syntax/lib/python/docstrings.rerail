@@ -124,7 +124,7 @@ doc_body(s, "") :- doc_of(_, s), !has_content(s).
 .decl has_content(s: node)
 has_content(s) :- child(s, c, _), kind(c, "string_content").
 .decl doc_opener(s: node, p: symbol, q: symbol)
-doc_opener(s, p, q) :- doc_of(_, s), first_token(s, t), text(t, o), match("(?<p>[a-zA-Z]*)(?<q>.*)", o).
+doc_opener(s, p, q) :- doc_of(_, s), node_to_first_token(s, t), token_text(t, o), match("(?<p>[a-zA-Z]*)(?<q>.*)", o).
 .decl doc_triple(s: node)
 doc_triple(s) :- doc_opener(s, _, q), (q = "\"\"\"" ; q = "'''").
 .decl doc_raw(s: node)
@@ -137,17 +137,17 @@ doc_summary(s, t) :- doc_body(s, b), match("\\s*(?<t>\\S[^\\n]*)[\\s\\S]*", b).
 // Body line i is source line line(s) + i. The first and last lines are cut at the quotes, from the body itself;
 // the lines between are whole source lines.
 .decl doc_nlines(s: node, n: number)
-doc_nlines(s, n) :- doc_body(s, _), line(s, a), end_line(s, z), n = z - a + 1.
+doc_nlines(s, n) :- doc_body(s, _), node_line_number(s, a), node_end_line_number(s, z), n = z - a + 1.
 .decl doc_line(s: node, i: number, t: symbol)
 doc_line(s, 0, b) :- doc_nlines(s, 1), doc_body(s, b).
 doc_line(s, 0, t) :- doc_nlines(s, n), n > 1, doc_body(s, b), match("(?<t>[^\\n\\r]*)(\\r\\n|\\n|\\r)[\\s\\S]*", b).
 doc_line(s, i, t) :- doc_nlines(s, n), n > 1, i = n - 1, doc_body(s, b), match("[\\s\\S]*(\\n|\\r)(?<t>[^\\n\\r]*)", b).
-doc_line(s, i, t) :- doc_at(s, i, sp), i > 0, doc_nlines(s, n), i < n - 1, text(sp, t).
-.decl doc_at(s: node, i: number, sp: span)
-doc_at(s, i, sp) :- doc_nlines(s, n), line(s, a), docof(s, d), src_line(d, l, sp), l >= a, l < a + n, i = l - a.
+doc_line(s, i, t) :- doc_at(s, i, sp), i > 0, doc_nlines(s, n), i < n - 1, line_text(sp, t).
+.decl doc_at(s: node, i: number, sp: line)
+doc_at(s, i, sp) :- doc_nlines(s, n), node_line_number(s, a), docof(s, d), document_line(d, sp), line_number(sp, l), l >= a, l < a + n, i = l - a.
 .decl doc_blank(s: node, i: number)
 doc_blank(s, i) :- doc_line(s, i, t), match("\\s*", t).
 .decl doc_lead(s: node, i: number, k: number)
 doc_lead(s, i, k) :- doc_line(s, i, t), match("(?<w>\\s*)[\\s\\S]*", t), k = strlen(w).
 .decl doc_indent(s: node, k: number)
-doc_indent(s, k) :- doc_of(_, s), col(s, k).
+doc_indent(s, k) :- doc_of(_, s), node_start_column(s, k).

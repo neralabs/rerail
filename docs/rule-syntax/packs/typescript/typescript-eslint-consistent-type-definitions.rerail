@@ -38,10 +38,10 @@ object_alias(a, n, b) :- kind(a, "type_alias_declaration"), field(a, "name", n),
 to_interface(n, _, _) :- object_alias(a, n, _), match("(?s)(?<t>type)\\b.*", a), field(a, "value", v), alias_eq(a, v, e)
     => replace(t, `interface`), delete(e).
 // e: the `=` after the name and its type parameters (nested to three levels of `<…>`).
-.decl alias_eq(a: node, v: node, e: span)
+.decl alias_eq(a: node, v: node, e: match)
 alias_eq(a, v, e) :- object_alias(a, _, _), field(a, "value", v), kind(a, "type_alias_declaration"),
     match("(?s)type\\s+[A-Za-z0-9_$]+\\s*(<(?:[^<>]|<(?:[^<>]|<[^<>]*>)*>)*>)?\\s*(?<e>=).*", a).
-to_interface(n, _, _) :- object_alias(a, n, _), last_token(a, s), text(s, ";") => delete(s).
+to_interface(n, _, _) :- object_alias(a, n, _), node_to_last_token(a, s), token_text(s, ";") => delete(s).
 // interface I<X> extends A, B { c: 1 }  →  type I<X> = { c: 1 } & A & B. The body is rewritten once (edits on
 // one node must not overlap): `= `, the body, its heritage, and for `export default interface` the export moved
 // after it.

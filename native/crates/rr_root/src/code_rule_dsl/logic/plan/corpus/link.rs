@@ -131,7 +131,7 @@ fn unstated(p: &dyn ProgramFields, qualifiers: &BTreeMap<String, BTreeSet<String
     let stated: BTreeSet<String> = p.fact_names().into_iter().collect();
     let inputs: BTreeSet<String> = p.input_names().into_iter().collect();
     let core = crate::code_rule_dsl::logic::rr::core_names();
-    let values = |rel: &str| p.columns_of(rel).is_some_and(|cols| cols.iter().all(|(_, t)| !matches!(t.as_str(), "node" | "loc" | "tape")));
+    let values = |rel: &str| p.columns_of(rel).is_some_and(|cols| cols.iter().all(|(_, t)| !matches!(t.as_str(), "node" | "place" | "tape")));
     qualifiers
         .iter()
         .filter(|(rel, words)| words.contains("extensible") && !core.contains(*rel) && p.declares(rel) && !stated.contains(*rel) && !inputs.contains(*rel) && values(rel))

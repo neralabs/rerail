@@ -48,7 +48,7 @@ tc006_unquoted_type(n) :- tc006_type_slot(n), !tc006_alt_4(n).
 
 // cast_in_string(n): the JSON util `cast-in-string`, used where the JSON says `matches: "cast-in-string"`
 //   T: metavariable this relation binds for the calling rule
-.decl tc006_cast_in_string(n: node, t: loc)
+.decl tc006_cast_in_string(n: node, t: node)
 tc006_cast_in_string(n, T) :- (kind(n, "string") ; kind(n, "concatenated_string")),
     parsed(n, "annotation", r1), within(c2, r1), tc006_alt_5(c2, T).
 
@@ -63,7 +63,7 @@ TC006_raw(n) :- tc006_unquoted_type(n).
 // Each rule below is one way the JSON `rule` can match.
 // Columns after `at` are the metavariables the JSON's message, anchor or `each` names: one finding per distinct row.
 // `options` carries JSON settings that have no .rerail form yet.
-.violation TC006_unquoted_cast_type_in_string(at: loc, t: node) code "TC006" "Quote the type expression passed to this `cast()` call, as in `cast(\"list[int]\", value)`."
+.violation TC006_unquoted_cast_type_in_string(at: node, t: node) code "TC006" "Quote the type expression passed to this `cast()` call, as in `cast(\"list[int]\", value)`."
     suppress noqa "TC006"
 TC006_unquoted_cast_type_in_string_raw(T, n) :- tc006_cast_in_string(n, T).
 
@@ -71,7 +71,7 @@ TC006_unquoted_cast_type_in_string_raw(T, n) :- tc006_cast_in_string(n, T).
 // Each rule below is one way the JSON `rule` can match.
 // Columns after `at` are the metavariables the JSON's message, anchor or `each` names: one finding per distinct row.
 // `options` carries JSON settings that have no .rerail form yet.
-.violation TC006_unquoted_cast_type_generator(at: loc, type: node) code "TC006" "Quote the type expression passed to this `cast()` call, as in `cast(\"list[int]\", value)`."
+.violation TC006_unquoted_cast_type_generator(at: match, type: node) code "TC006" "Quote the type expression passed to this `cast()` call, as in `cast(\"list[int]\", value)`."
     suppress noqa "TC006"
 TC006_unquoted_cast_type_generator_raw(TYPE, n) :- kind(n, "generator_expression"),
     match("(?s)\\((?:\\s*#[^\\n]*\\n)*\\s*(?P<TYPE>[^\\s#].*?)(?:\\s*#[^\\n\"']*\\n)*\\s*\\)", n),
@@ -107,7 +107,7 @@ tc006_alt_4(n) :- tc006_plain_string(n).
 
 // alt_5(n): the JSON `any`: n matches if any one of these rules does
 //   T: metavariable this relation binds for the calling rule
-.decl tc006_alt_5(n: node, t: loc)
+.decl tc006_alt_5(n: node, t: node)
 tc006_alt_5(n, T) :- tc006_unquoted_type(n), T = n.
 tc006_alt_5(n, T) :- tc006_cast_in_string(n, T).
 
@@ -116,9 +116,9 @@ tc006_alt_5(n, T) :- tc006_cast_in_string(n, T).
 TC006(v0) :- TC006_raw(v0), rr_d = @doc(v0), doc(rr_d, rr_p, _), !match("\\.pyi$", rr_p).
 
 // main's file condition {"notRegex": "\\.pyi$"}
-.decl TC006_unquoted_cast_type_in_string_raw(at: loc, t: node)
+.decl TC006_unquoted_cast_type_in_string_raw(at: node, t: node)
 TC006_unquoted_cast_type_in_string(v0, v1) :- TC006_unquoted_cast_type_in_string_raw(v0, v1), rr_d = @doc(v0), doc(rr_d, rr_p, _), !match("\\.pyi$", rr_p).
 
 // main's file condition {"notRegex": "\\.pyi$"}
-.decl TC006_unquoted_cast_type_generator_raw(at: loc, type: node)
+.decl TC006_unquoted_cast_type_generator_raw(at: match, type: node)
 TC006_unquoted_cast_type_generator(v0, v1) :- TC006_unquoted_cast_type_generator_raw(v0, v1), rr_d = @doc(v0), doc(rr_d, rr_p, _), !match("\\.pyi$", rr_p).

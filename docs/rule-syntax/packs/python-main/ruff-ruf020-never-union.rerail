@@ -43,14 +43,14 @@ ruf020_union_member(n) :- ruf020_never_like(n), ruf020_alt_13(n).
 
 // pep604_in_string(n): the JSON util `pep604-in-string`, used where the JSON says `matches: "pep604-in-string"`
 //   N: metavariable this relation binds for the calling rule
-.decl ruf020_pep604_in_string(n: node, n_mv: loc)
+.decl ruf020_pep604_in_string(n: node, n_mv: node)
 ruf020_pep604_in_string(n, N) :- kind(n, "string"),
     count : { has(n, c1, "escape_sequence"), node(_, c1, _, _, _) } = 0,
     parsed(n, "annotation", r2), within(c3, r2), ruf020_alt_23(c3, N).
 
 // union_in_string(n): the JSON util `union-in-string`, used where the JSON says `matches: "union-in-string"`
 //   N: metavariable this relation binds for the calling rule
-.decl ruf020_union_in_string(n: node, n_mv: loc)
+.decl ruf020_union_in_string(n: node, n_mv: node)
 ruf020_union_in_string(n, N) :- kind(n, "string"),
     count : { has(n, c1, "escape_sequence"), node(_, c1, _, _, _) } = 0,
     parsed(n, "annotation", r2), within(c3, r2), ruf020_alt_24(c3, N).
@@ -58,7 +58,7 @@ ruf020_union_in_string(n, N) :- kind(n, "string"),
 // RUF020(n): a finding at node n, from clause `never-in-pep604-union`.
 // Each rule below is one way the JSON `rule` can match.
 // Columns after `at` are the metavariables the JSON's message, anchor or `each` names: one finding per distinct row.
-.violation RUF020(at: loc, n_mv: node) "Keep only the other members of this `|` union; `{n_mv}` has no values, so it adds nothing. If that leaves `None | None`, write a single `None`."
+.violation RUF020(at: node, n_mv: node) "Keep only the other members of this `|` union; `{n_mv}` has no values, so it adds nothing. If that leaves `None | None`, write a single `None`."
     suppress noqa "RUF020"
 RUF020(N, n) :- ruf020_pep604_operand(n), node(_, n, _, _, _), N = n.
 RUF020(N, n) :- ruf020_pep604_in_string(n, N).
@@ -66,7 +66,7 @@ RUF020(N, n) :- ruf020_pep604_in_string(n, N).
 // RUF020_never_in_typing_union(n): a finding at node n, from clause `never-in-typing-union`.
 // Each rule below is one way the JSON `rule` can match.
 // Columns after `at` are the metavariables the JSON's message, anchor or `each` names: one finding per distinct row.
-.violation RUF020_never_in_typing_union(at: loc, n_mv: node) code "RUF020" "Keep only the other members of this `Union[...]`; `{n_mv}` has no values, so it adds nothing. If one member is left, use it directly without `Union`."
+.violation RUF020_never_in_typing_union(at: node, n_mv: node) code "RUF020" "Keep only the other members of this `Union[...]`; `{n_mv}` has no values, so it adds nothing. If one member is left, use it directly without `Union`."
     suppress noqa "RUF020"
 RUF020_never_in_typing_union(N, n) :- ruf020_union_member(n), node(_, n, _, _, _), N = n.
 RUF020_never_in_typing_union(N, n) :- ruf020_union_in_string(n, N).
@@ -175,12 +175,12 @@ ruf020_alt_13(n) :- ruf020_demand_alt_13(n), ruf020_up_4(n, p21),
 
 // alt_23(n): the JSON `any`: n matches if any one of these rules does
 //   N: metavariable this relation binds for the calling rule
-.decl ruf020_alt_23(n: node, n_mv: loc)
+.decl ruf020_alt_23(n: node, n_mv: node)
 ruf020_alt_23(n, N) :- ruf020_pep604_operand(n), node(_, n, _, _, _), N = n, N = n.
 ruf020_alt_23(n, N) :- ruf020_pep604_in_string(n, N).
 
 // alt_24(n): the JSON `any`: n matches if any one of these rules does
 //   N: metavariable this relation binds for the calling rule
-.decl ruf020_alt_24(n: node, n_mv: loc)
+.decl ruf020_alt_24(n: node, n_mv: node)
 ruf020_alt_24(n, N) :- ruf020_union_member(n), node(_, n, _, _, _), N = n, N = n.
 ruf020_alt_24(n, N) :- ruf020_union_in_string(n, N).

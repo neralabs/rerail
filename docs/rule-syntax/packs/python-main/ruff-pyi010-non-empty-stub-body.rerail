@@ -60,7 +60,7 @@ PYI010_raw(n) :- pyi010_sole_statement(n), !pyi010_ends_in_comment(n).
 // Each rule below is one way the JSON `rule` can match.
 // Columns after `at` are the metavariables the JSON's message, anchor or `each` names: one finding per distinct row.
 // `options` carries JSON settings that have no .rerail form yet.
-.violation PYI010_non_empty_stub_body_before_comment(at: loc, body: node) code "PYI010" "Replace this function body with `...`; stubs are never executed, so a real body is redundant."
+.violation PYI010_non_empty_stub_body_before_comment(at: match, body: node) code "PYI010" "Replace this function body with `...`; stubs are never executed, so a real body is redundant."
     suppress noqa "PYI010"
 PYI010_non_empty_stub_body_before_comment_raw(BODY, n) :- pyi010_sole_statement(n),
     pyi010_ends_in_comment(n),
@@ -101,5 +101,5 @@ pyi010_alt_6(n) :- pyi010_ends_in_comment(n).
 PYI010(v0) :- PYI010_raw(v0), rr_d = @doc(v0), doc(rr_d, rr_p, _), match("\\.pyi$", rr_p).
 
 // main's file condition {"regex": "\\.pyi$"}
-.decl PYI010_non_empty_stub_body_before_comment_raw(at: loc, body: node)
+.decl PYI010_non_empty_stub_body_before_comment_raw(at: match, body: node)
 PYI010_non_empty_stub_body_before_comment(v0, v1) :- PYI010_non_empty_stub_body_before_comment_raw(v0, v1), rr_d = @doc(v0), doc(rr_d, rr_p, _), match("\\.pyi$", rr_p).

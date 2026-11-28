@@ -11,8 +11,8 @@
     suppress noqa "UP009"
 UP009(n) :- kind(n, "comment"), child(p1, n, _), kind(p1, "module"),
     count : { precedes(s2, n), !kind(s2, "comment") } = 0,
-    ( up009_code_before_line(n, l5), line(n, l6), k3 = l6 - l5, k3 <= 1
-    ; count : { up009_code_before_line(n, l5) } = 0, line(n, l6), k3 = l6 - 1, k3 <= 1
+    ( up009_code_before_line(n, l5), node_line_number(n, l6), k3 = l6 - l5, k3 <= 1
+    ; count : { up009_code_before_line(n, l5) } = 0, node_line_number(n, l6), k3 = l6 - 1, k3 <= 1
     ),
     count : { precedes(s7, n), up009_coding(s7) } = 0,
     count : { next_sibling(n, s8), up009_other_coding(s8) } = 0,
@@ -40,11 +40,11 @@ up009_code_comment_end(p, o) :- child(p, c, _), comment(c, _), node(_, c, _, _, 
 .decl up009_code_before_line(x: node, l: number)
 up009_code_before_line(x, l) :- structural_before(x, g), match("(?s).*\\S\\s*", g),
     ws = @replace_all(g, "(?s)^.*\\S", ""),
-    k = strlen(ws) - strlen(@replace_all(ws, "\n", "")), line(x, lx), l = lx - k.
+    k = strlen(ws) - strlen(@replace_all(ws, "\n", "")), node_line_number(x, lx), l = lx - k.
 up009_code_before_line(x, l) :- structural_before(x, g), match("\\s*", g), child(p, x, _),
     node(_, x, _, s, _), o = s - strlen(g), token(p, _, _, _, o),
     !up009_code_comment_end(p, o), k = strlen(g) - strlen(@replace_all(g, "\n", "")),
-    line(x, lx), l = lx - k.
+    node_line_number(x, lx), l = lx - k.
 up009_code_before_line(x, l) :- structural_before(x, g), match("\\s*", g), child(p, x, _),
     node(_, x, _, s, _), node(_, p, _, ps, _), ps = s - strlen(g),
     up009_code_before_line(p, l).

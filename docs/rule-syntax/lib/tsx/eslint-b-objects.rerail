@@ -23,7 +23,7 @@
 //   cannot_touch(a, b)       texts a and b cannot be written side by side as tokens: `a` `b`, `+` `++`
 //
 // Builds on tsx/eslint-a-expressions (deparen, static_prop), tsx/eslint-a-functions (call_arg, call_arg_count,
-// token_text, token_text_ask), tsx/eslint-b-scope (builtin_ref, expr_name, global_off, and through it
+// node_tokens_text, node_tokens_text_ask), tsx/eslint-b-scope (builtin_ref, expr_name, global_off, and through it
 // eslint-a-globals' null_or_undefined) and tsx/modules (program, source_type), which brings tsx/names (decl_site).
 #include "tsx/eslint-a-functions.rerail"
 #include "tsx/eslint-a-expressions.rerail"
@@ -55,15 +55,15 @@ escaped_id(n) :- id_kind(n), text(n, s), contains("\\", s).
 // One rule per kind: `match_all` over a node scans the node's kind, and a kind is read off a `kind` atom of the rule (a
 // node a derived relation alone binds, id_kind's, is scanned nowhere: 0677 § Open).
 escape_piece(n, o, x) :- kind(n, "identifier"), escaped_id(n),
-    match_all("\\\\u\\{[0-9a-fA-F]+\\}|\\\\u[0-9a-fA-F]{4}|[^\\\\]+|\\\\", n, m), col(m, o), text(m, x).
+    node_regex_match("\\\\u\\{[0-9a-fA-F]+\\}|\\\\u[0-9a-fA-F]{4}|[^\\\\]+|\\\\", n, m), match_start_column(m, o), match_text(m, x).
 escape_piece(n, o, x) :- kind(n, "property_identifier"), escaped_id(n),
-    match_all("\\\\u\\{[0-9a-fA-F]+\\}|\\\\u[0-9a-fA-F]{4}|[^\\\\]+|\\\\", n, m), col(m, o), text(m, x).
+    node_regex_match("\\\\u\\{[0-9a-fA-F]+\\}|\\\\u[0-9a-fA-F]{4}|[^\\\\]+|\\\\", n, m), match_start_column(m, o), match_text(m, x).
 escape_piece(n, o, x) :- kind(n, "shorthand_property_identifier"), escaped_id(n),
-    match_all("\\\\u\\{[0-9a-fA-F]+\\}|\\\\u[0-9a-fA-F]{4}|[^\\\\]+|\\\\", n, m), col(m, o), text(m, x).
+    node_regex_match("\\\\u\\{[0-9a-fA-F]+\\}|\\\\u[0-9a-fA-F]{4}|[^\\\\]+|\\\\", n, m), match_start_column(m, o), match_text(m, x).
 escape_piece(n, o, x) :- kind(n, "shorthand_property_identifier_pattern"), escaped_id(n),
-    match_all("\\\\u\\{[0-9a-fA-F]+\\}|\\\\u[0-9a-fA-F]{4}|[^\\\\]+|\\\\", n, m), col(m, o), text(m, x).
+    node_regex_match("\\\\u\\{[0-9a-fA-F]+\\}|\\\\u[0-9a-fA-F]{4}|[^\\\\]+|\\\\", n, m), match_start_column(m, o), match_text(m, x).
 escape_piece(n, o, x) :- kind(n, "private_property_identifier"), escaped_id(n),
-    match_all("\\\\u\\{[0-9a-fA-F]+\\}|\\\\u[0-9a-fA-F]{4}|[^\\\\]+|\\\\", n, m), col(m, o), text(m, x).
+    node_regex_match("\\\\u\\{[0-9a-fA-F]+\\}|\\\\u[0-9a-fA-F]{4}|[^\\\\]+|\\\\", n, m), match_start_column(m, o), match_text(m, x).
 .decl unescape_piece(n: node, o: number, d: symbol)
 unescape_piece(n, o, p) :- escape_piece(n, o, p), !contains("\\", p).
 unescape_piece(n, o, d) :- hex_piece(n, o, d).
@@ -103,9 +103,9 @@ forwarding(c, f, x, t) :- kind(c, "call_expression"), field(c, "function", e), d
 //   obj.foo.call(obj, 1)    a.b.c.apply(a.b, xs)    foo.call(null, 1)     → natural
 //   obj.foo.call(other)     foo.call(this)                                 → not
 .decl natural_this(c: node)
-natural_this(c) :- forwarding(c, f, _, t), receiver(f, o), token_text(o, s), token_text(t, s).
-token_text_ask(o) :- forwarding(_, f, _, _), receiver(f, o).
-token_text_ask(t) :- forwarding(_, f, _, t), receiver(f, _).
+natural_this(c) :- forwarding(c, f, _, t), receiver(f, o), node_tokens_text(o, s), node_tokens_text(t, s).
+node_tokens_text_ask(o) :- forwarding(_, f, _, _), receiver(f, o).
+node_tokens_text_ask(t) :- forwarding(_, f, _, t), receiver(f, _).
 natural_this(c) :- forwarding(c, f, _, t), !receiver(f, _), null_or_undefined(t).
 .decl receiver(f: node, o: node)  // f is `o.g` or `o[k]`
 receiver(f, o) :- forwarding(_, f, _, _), (kind(f, "member_expression") ; kind(f, "subscript_expression")),

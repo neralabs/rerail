@@ -24,8 +24,8 @@ executor_use(n) :- executor_name(n), field(f, "name", n), node(_, f, "function_d
 
 // The node's first line carries the suppression.
 .decl executor_noqa(n: node)
-executor_noqa(n) :- executor_use(n), node(d, n, _, _, _), line(n, l), src_line(d, l, sp), text(sp, s),
+executor_noqa(n) :- executor_use(n), node(d, n, _, _, _), node_line_number(n, l), document_line(d, sp), line_number(sp, l), line_text(sp, s),
     match("(?s:.*)(?:#\s*noqa:\s*async-executor)(?s:.*)", s).
 
 violation("data-layer-async-executor", "executor", "run_in_executor", p, l) :- executor_use(n), !executor_noqa(n),
-    node(d, n, _, _, _), in_scope(d), !out_scope(d), doc(d, p, _), line(n, l).
+    node(d, n, _, _, _), in_scope(d), !out_scope(d), doc(d, p, _), node_line_number(n, l).

@@ -193,7 +193,7 @@ pub fn core_node_columns() -> &'static std::collections::HashMap<String, Vec<usi
     NODES.get_or_init(|| std::fs::read_to_string(library().join("core.rerail")).map(|src| node_columns_declared(&src)).unwrap_or_default())
 }
 
-/// The columns of type `node` of each relation `.decl`ared in `src` (`.decl r(a: node, b: span)` gives `r: [0]`).
+/// The columns of type `node` of each relation `.decl`ared in `src` (`.decl r(a: node, b: place)` gives `r: [0]`).
 pub fn node_columns_declared(src: &str) -> std::collections::HashMap<String, Vec<usize>> {
     let mut out = std::collections::HashMap::new();
     for line in src.lines() {

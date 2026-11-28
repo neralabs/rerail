@@ -62,7 +62,7 @@ fast002_route_call_expr(n) :- kind(n, "parenthesized_expression"), child(n, c1, 
 
 // route_param(n): the JSON util `route-param`, used where the JSON says `matches: "route-param"`
 //   NAME, TYPE: metavariables this relation binds for the calling rule
-.decl fast002_route_param(n: node, name: loc, type: loc)
+.decl fast002_route_param(n: node, name: node, type: node)
 fast002_route_param(n, NAME, TYPE) :- kind(n, "typed_default_parameter"),
     count : { precedes(n, s1), kind(s1, "positional_separator") } = 0, child(p2, n, _),
     kind(p2, "parameters"), child(p3, p2, _), kind(p3, "function_definition"),
@@ -101,7 +101,7 @@ fast002_depends_marker(n) :- kind(n, "parenthesized_expression"), child(n, c2, _
 // FAST002(n): a finding at node n, from clause `param-default`.
 // Each rule below is one way the JSON `rule` can match.
 // Columns after `at` are the metavariables the JSON's message, anchor or `each` names: one finding per distinct row.
-.violation FAST002(at: node, default: loc, name: loc, type: loc) "Move `{default}` into `{name}: Annotated[{type}, ...]`; if the call has a default argument, take it out of the call and keep it as the plain `= default`, dropping it when it is `...`."
+.violation FAST002(at: node, default: node, name: node, type: node) "Move `{default}` into `{name}: Annotated[{type}, ...]`; if the call has a default argument, take it out of the call and keep it as the plain `= default`, dropping it when it is `...`."
     suppress noqa "FAST002"
 FAST002(n, DEFAULT, NAME, TYPE) :- fast002_route_param(n, NAME, TYPE), field(n, "value", c1),
     node(_, c1, _, _, _), DEFAULT = c1, fast002_param_marker(c1).
@@ -109,7 +109,7 @@ FAST002(n, DEFAULT, NAME, TYPE) :- fast002_route_param(n, NAME, TYPE), field(n, 
 // FAST002_dependency_default(n): a finding at node n, from clause `dependency-default`.
 // Each rule below is one way the JSON `rule` can match.
 // Columns after `at` are the metavariables the JSON's message, anchor or `each` names: one finding per distinct row.
-.violation FAST002_dependency_default(at: node, name: loc, type: loc, default: loc) code "FAST002" "Declare `{name}: Annotated[{type}, {default}]` instead of passing the dependency as the default; move the parameter before any with defaults, or make it keyword-only, if needed."
+.violation FAST002_dependency_default(at: node, name: node, type: node, default: node) code "FAST002" "Declare `{name}: Annotated[{type}, {default}]` instead of passing the dependency as the default; move the parameter before any with defaults, or make it keyword-only, if needed."
     suppress noqa "FAST002"
 FAST002_dependency_default(n, NAME, TYPE, DEFAULT) :- fast002_route_param(n, NAME, TYPE),
     field(n, "value", c1), node(_, c1, _, _, _), DEFAULT = c1, fast002_depends_marker(c1).

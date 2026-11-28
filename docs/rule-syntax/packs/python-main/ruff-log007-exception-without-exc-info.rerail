@@ -10,7 +10,7 @@
 // LOG007(n): a finding at node n, from clause `exception-without-exc-info`.
 // Each rule below is one way the JSON `rule` can match.
 // Columns after `at` are the metavariables the JSON's message, anchor or `each` names: one finding per distinct row.
-.violation LOG007(at: loc, c: node) "Call `error` instead of `exception` and drop the falsy `exc_info` argument: the log output is the same and the intent is clearer."
+.violation LOG007(at: node, c: node) "Call `error` instead of `exception` and drop the falsy `exc_info` argument: the log output is the same and the intent is clearer."
     suppress noqa "LOG007"
 LOG007(C, n) :- log007_bad_call(n), node(_, n, _, _, _), C = n.
 LOG007(C, n) :- log007_call_in_string(n, C).
@@ -97,7 +97,7 @@ log007_exc_info_kw(n) :- kind(n, "keyword_argument"), match("exc_info\\b.*", n).
 
 // call_in_string(n): the JSON util `call-in-string`, used where the JSON says `matches: "call-in-string"`
 //   C: metavariable this relation binds for the calling rule
-.decl log007_call_in_string(n: node, c: loc)
+.decl log007_call_in_string(n: node, c: node)
 log007_call_in_string(n, C) :- (kind(n, "string") ; kind(n, "concatenated_string")),
     parsed(n, "annotation", r1), within(c2, r1), log007_alt_12(c2, C).
 
@@ -545,6 +545,6 @@ log007_alt_11(n) :- log007_alt_11_u7(n).
 
 // alt_12(n): the JSON `any`: n matches if any one of these rules does
 //   C: metavariable this relation binds for the calling rule
-.decl log007_alt_12(n: node, c: loc)
+.decl log007_alt_12(n: node, c: node)
 log007_alt_12(n, C) :- log007_bad_call(n), C = n.
 log007_alt_12(n, C) :- log007_call_in_string(n, C).

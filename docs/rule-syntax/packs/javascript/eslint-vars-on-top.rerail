@@ -16,7 +16,7 @@
 //   if (x) { var a; }   for (var i = 0; ; ) {}   for (var k in o) {}   → reported: not directly in the body
 //   class C { static { f(); var a; } }     → reported, with the static-block message
 // `export var a` is checked as the export statement; TypeScript's `declare var a` as a declaration. No options.
-.violation vars_on_top(at: loc, msg: symbol) code "vars-on-top" "{msg}"
+.violation vars_on_top(at: place, msg: symbol) code "vars-on-top" "{msg}"
     suppress eslint "vars-on-top"
     suppress oxlint "vars-on-top"
     suppress biome "lint/nursery/useVarsOnTop"

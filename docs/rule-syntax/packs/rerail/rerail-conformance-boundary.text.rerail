@@ -10,7 +10,7 @@
 //   conformance/languages/recorders/record.py            RECORDER_IN_CONFORMANCE (the file, at no line)
 //   conformance/languages/fixtures/expected.json         not reported
 
-.violation RECORDER_IN_CONFORMANCE(at: loc) "Recorders and expected-findings generators live on the authoring path: put this in scripts/pack-data/ or the pack's upstream/<tool>/ folder, not under conformance/."
+.violation RECORDER_IN_CONFORMANCE(at: node) "Recorders and expected-findings generators live on the authoring path: put this in scripts/pack-data/ or the pack's upstream/<tool>/ folder, not under conformance/."
 RECORDER_IN_CONFORMANCE(@place(p, 0)) :- doc(_, p, _), match("conformance/(?:.*/)?recorders/(?s:.*)", p).
 
 .test recorders_in_any_language_are_reported exactly

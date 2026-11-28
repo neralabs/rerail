@@ -11,7 +11,7 @@
 // Each rule below is one way the JSON `rule` can match.
 // Columns after `at` are the metavariables the JSON's message, anchor or `each` names: one finding per distinct row.
 // `options` carries JSON settings that have no .rerail form yet.
-.violation PYI026(at: node, name: loc) "Annotate `{name}` as `{name}: TypeAlias = ...`, importing `TypeAlias` from `typing` (`typing_extensions` before 3.10). Leave it unannotated only if it is a variable, not a type alias."
+.violation PYI026(at: node, name: node) "Annotate `{name}` as `{name}: TypeAlias = ...`, importing `TypeAlias` from `typing` (`typing_extensions` before 3.10). Leave it unannotated only if it is a variable, not a type alias."
     suppress noqa "PYI026"
 PYI026_raw(n, NAME) :- kind(n, "identifier"), node(_, n, _, _, _), NAME = n,
     count : { inside(n, p1, "function_definition"), node(_, p1, _, _, _) } = 0,
@@ -137,5 +137,5 @@ pyi026_set_1("enum.Enum"). pyi026_set_1("enum.Flag"). pyi026_set_1("enum.IntEnum
 pyi026_set_1("enum.StrEnum"). pyi026_set_1("enum.ReprEnum"). pyi026_set_1("enum.CheckEnum").
 
 // main's file condition {"regex": "\\.pyi$"}
-.decl PYI026_raw(at: node, name: loc)
+.decl PYI026_raw(at: node, name: node)
 PYI026(v0, v1) :- PYI026_raw(v0, v1), rr_d = @doc(v0), doc(rr_d, rr_p, _), match("\\.pyi$", rr_p).

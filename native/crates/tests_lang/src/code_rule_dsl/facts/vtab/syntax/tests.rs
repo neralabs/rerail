@@ -1364,12 +1364,12 @@ fn long_container_text_is_materialized_only_for_the_consumers_that_demand_it() {
     let doc = document(0, "a.py", "python", &source);
     let prelude = std::fs::read_to_string(crate::code_rule_dsl::logic::rr::library().join("core.rerail")).unwrap();
     for (body, source_needed, line_needed) in [
-        ("out(t) :- source(_, sp), kind(n, \"identifier\"), text(n, t).", false, false),
-        (".decl copied(sp: span)\ncopied(s) :- source(_, s).\nout(t) :- copied(s), alias = s, text(alias, t).", true, false),
-        (".decl copied(sp: span)\ncopied(s) :- src_line(_, _, s).\nout(t) :- copied(s), text(s, t).", false, true),
-        (".decl copied(sp: span)\ncopied(s) :- source(_, s).\ncopied(s) :- src_line(_, _, s).\nout(t) :- copied(s), text(s, t).", true, true),
-        ("out(\"missing\") :- source(_, sp), !text(sp, _).", true, false),
-        ("out(t) :- source(_, sp), match_all(\"(?<hit>items)\", sp), text(hit, t).", false, false),
+        ("out(t) :- document_source(_, sp), kind(n, \"identifier\"), text(n, t).", false, false),
+        (".decl copied(sp: place)\ncopied(s) :- document_source(_, s).\nout(t) :- copied(s), alias = s, place_text(alias, t).", true, false),
+        (".decl copied(sp: place)\ncopied(s) :- document_line(_, s).\nout(t) :- copied(s), place_text(s, t).", false, true),
+        (".decl copied(sp: place)\ncopied(s) :- document_source(_, s).\ncopied(s) :- document_line(_, s).\nout(t) :- copied(s), place_text(s, t).", true, true),
+        ("out(\"missing\") :- document_source(_, sp), !line_text(sp, _).", true, false),
+        ("out(t) :- document_source(_, sp), match_all(\"(?<hit>items)\", sp), text(hit, t).", false, false),
     ] {
         let program = crate::code_rule_dsl::logic::rr::parse_version(&format!("{prelude}\n.decl out(t: symbol)\n{body}\n.output out\n")).unwrap();
         let projection = crate::code_rule_dsl::logic::plan::text_demand::projection_of(&program, ["source", "src_line", "text", "rx_span"].into_iter().map(str::to_owned).collect());
@@ -1835,10 +1835,10 @@ fn text_of_a_bound_node_is_read_in_place() {
         ("out(\"x\") :- text(n, \"x\"), kind(n, \"identifier\").", 1),
         ("out(t) :- text(n, t).", 0),
         // A document's source and its lines are read off the source too (row 7); a match's span is not.
-        ("out(t) :- src_line(_, _, s), text(s, t).", 1),
-        ("out(t) :- source(_, s), text(s, t).", 1),
-        (".decl t_line(s: span)\nt_line(s) :- src_line(_, l, s), l > 1.\nout(t) :- t_line(s), text(s, t).", 1),
-        ("out(t) :- src_line(_, _, s), match_all(\"x+\", s, m), text(m, t).", 0),
+        ("out(t) :- document_line(_, s), place_text(s, t).", 1),
+        ("out(t) :- document_source(_, s), place_text(s, t).", 1),
+        (".decl t_line(s: place)\nt_line(s) :- document_line(_, s), line_number(s, l), l > 1.\nout(t) :- t_line(s), place_text(s, t).", 1),
+        ("out(t) :- document_line(_, s), line_regex_match(\"x+\", s, m), place_text(m, t).", 0),
     ] {
         let program = crate::code_rule_dsl::logic::rr::parse_version(&format!("{prelude}\n.decl out(t: symbol)\n{rules}\n.output out\n")).unwrap();
         let (program, made) = crate::code_rule_dsl::logic::plan::corpus::preparation::text::text_by_node(program, Default::default()).unwrap();
@@ -2046,7 +2046,7 @@ fn text_only_for_the_nodes_read() {
         (".decl pn(n: node)\npn(n) :- field(_, \"name\", n).\npn(n) :- kind(p, \"list_splat_pattern\"), child(p, n, 0).\n.decl pm(n: node)\npm(n) :- pn(n).\nout(t) :- pm(n), text(n, t).".to_owned(),
             Some(TextNodes { fields: BTreeSet::from(["name".to_owned()]), parents: BTreeSet::from(["list_splat_pattern".to_owned()]), ..TextNodes::default() })),
         // A span's text (a document's source): no node's.
-        ("out(t) :- source(_, sp), text(sp, t), contains(\"x\", t).".to_owned(), Some(TextNodes::default())),
+        ("out(t) :- document_source(_, sp), place_text(sp, t), contains(\"x\", t).".to_owned(), Some(TextNodes::default())),
         // One of its rules narrowing nothing: every node.
         (".decl pn(n: node)\npn(n) :- field(_, \"name\", n).\npn(n) :- child(_, n, 0).\nout(t) :- pn(n), text(n, t).".to_owned(), None),
         (format!("out(t) :- ast(d, f, {}, NAME: n), text(n, t).", fun(r#"{"all": [{"kind": "function_definition"}, {"has": {"pattern": "$NAME", "field": "name"}}]}"#)), some(&[], &["name"])),

@@ -58,9 +58,9 @@ er_sym(f, cat(m, ".", q)) :- kind(f, "function_definition"), er_qual(f, q), doco
 // er_body(f, n): n is in f's own body: not in a nested def, class or lambda, and not before the first statement
 // (parameters and annotations on the def's own lines are not body).
 .decl er_body(f: node, n: node)
-er_body(f, n) :- nearest(n, f, er_stop), er_sym(f, _), line(n, l), er_first_line(f, a), l >= a.
+er_body(f, n) :- nearest(n, f, er_stop), er_sym(f, _), node_line_number(n, l), er_first_line(f, a), l >= a.
 .decl er_first_line(f: node, a: number)
-er_first_line(f, a) :- er_sym(f, _), field(f, "body", b), a = min l : { body_stmt(b, s, _), line(s, l) }.
+er_first_line(f, a) :- er_sym(f, _), field(f, "body", b), a = min l : { body_stmt(b, s, _), node_line_number(s, l) }.
 
 // er_cls(f, cs): the classes around f, outermost first ("Outer.Inner"); none for a def outside classes.
 .decl er_cls(f: node, cs: symbol)
@@ -121,7 +121,7 @@ er_terminal("resolve"). er_terminal("resolve_async"). er_terminal("result").
 
 // ---- locals the patterns read -----------------------------------------------------------------------------------
 // er_param(f, x, ann): a plain parameter (not *args, **kwargs) and its annotation.
-.decl er_param(f: node, x: symbol, ann: loc)
+.decl er_param(f: node, x: symbol, ann: node)
 er_param(f, x, a) :- er_sym(f, _), sig_param(f, _, nm, _, k, a, _), (k = "posonly" ; k = "pos" ; k = "kwonly"),
     text(nm, x).
 // er_mentions(a, x): annotation a names x: `x`, `m.x`, `Optional[x]`, `Dict[k, x]`, `x | None`. As the linter,
@@ -389,32 +389,32 @@ er_only_stmt(b, s) :- body_stmt(b, s, 1), count : { body_stmt(b, _, _) } = 2, bo
 // text: a line matching a pattern, not blank, not a comment, not in a multi-line string (an f-string is not a
 // string token in Python 3.12, so it does not hide its lines).
 .decl er_hit(d: number, l: number, c: symbol)
-er_hit(d, l, c) :- er_doc(d, _), src_line(d, l, sp), text(sp, t), er_text_pattern(re, c), match(re, t),
+er_hit(d, l, c) :- er_doc(d, _), document_line(d, sp), line_number(sp, l), line_text(sp, t), er_text_pattern(re, c), match(re, t),
     !match("\\s*#.*", t), !er_in_string(d, l).
 .decl er_in_string(d: number, l: number)
-er_in_string(d, l) :- src_line(d, l, sp), text(sp, t), er_text_pattern(re, _), match(re, t), kind(s, "string"),
-    docof(s, d), line(s, a), end_line(s, b), a < b, a <= l, l <= b, !er_fstring(s).
+er_in_string(d, l) :- document_line(d, sp), line_number(sp, l), line_text(sp, t), er_text_pattern(re, _), match(re, t), kind(s, "string"),
+    docof(s, d), node_line_number(s, a), node_end_line_number(s, b), a < b, a <= l, l <= b, !er_fstring(s).
 .decl er_fstring(s: node)
 er_fstring(s) :- kind(s, "string"), child(s, q, _), kind(q, "string_start"), text(q, x), icontains("f", x).
 // er_line_sym(d, l, s): the innermost def whose lines hold line l, else "module::<module>".
 .decl er_holds(d: number, l: number, f: node)
-er_holds(d, l, f) :- er_hit(d, l, _), er_sym(f, _), docof(f, d), line(f, a), end_line(f, b), a <= l, l <= b.
+er_holds(d, l, f) :- er_hit(d, l, _), er_sym(f, _), docof(f, d), node_line_number(f, a), node_end_line_number(f, b), a <= l, l <= b.
 .decl er_line_sym(d: number, l: number, s: symbol)
 er_line_sym(d, l, s) :- er_holds(d, l, f), er_sym(f, s), !er_holds_inner(d, l, f).
 er_line_sym(d, l, cat(m, "::<module>")) :- er_hit(d, l, _), er_doc(d, m), !er_holds(d, l, _).
 .decl er_holds_inner(d: number, l: number, f: node)
 er_holds_inner(d, l, f) :- er_holds(d, l, f), er_holds(d, l, g), within(g, f).
-er_site(d, l, c, s) :- er_hit(d, l, c), er_line_sym(d, l, s), src_line(d, l, sp), text(sp, t),
+er_site(d, l, c, s) :- er_hit(d, l, c), er_line_sym(d, l, s), document_line(d, sp), line_number(sp, l), line_text(sp, t),
     !er_text_ignored(d, c, s, t).
 
 // preprocess: in `def preprocess(self, resolved)`, eager helpers and reads through `resolved`.
 er_site(d, l, cat("preprocess:", x, "()"), s) :- er_pre(f, s), er_body(f, c), er_cid(c, x), er_pre_helper(x),
-    line(c, l), docof(c, d).
+    node_line_number(c, l), docof(c, d).
 er_site(d, l, cat("preprocess:resolved.", a, "()"), s) :- er_pre(f, s), er_body(f, c), er_cattr(c, a, o),
     (a = "get" ; a = "peek" ; a = "resolve_server_ref"), kind(o, "identifier"), text(o, r), er_resolved(f, r),
-    line(c, l), docof(c, d).
+    node_line_number(c, l), docof(c, d).
 er_site(d, l, "preprocess:*.resolve(resolved)", s) :- er_pre(f, s), er_body(f, c), er_cattr(c, "resolve", _),
-    posarg(c, _, a), kind(a, "identifier"), text(a, r), er_resolved(f, r), line(c, l), docof(c, d).
+    posarg(c, _, a), kind(a, "identifier"), text(a, r), er_resolved(f, r), node_line_number(c, l), docof(c, d).
 .decl er_pre(f: node, s: symbol)
 er_pre(f, s) :- er_sym(f, s), def_name(f, "preprocess").
 // er_resolved(f, "resolved"): a positional parameter after the first is named resolved.
@@ -426,10 +426,10 @@ er_resolved(f, "resolved") :- sig_param(f, _, nm, i, "pos", _, _), text(nm, "res
 .decl er_phase(s: symbol, p: symbol)
 er_phase(s, p) :- er_sym(f, s), def_name(f, p), (p = "preprocess" ; p = "lower" ; p = "compile").
 er_phase(t, p) :- er_phase(s, p), er_edge(_, s, t).
-er_site(d, l, cat(p, ":", k), s) :- er_phase(s, p), er_last_def(s, f), er_ph(f, n, k), line(n, l), docof(n, d).
+er_site(d, l, cat(p, ":", k), s) :- er_phase(s, p), er_last_def(s, f), er_ph(f, n, k), node_line_number(n, l), docof(n, d).
 // er_last_def(s, f): the last def with symbol s, the one the linter's map by symbol keeps.
 .decl er_last_def(s: symbol, f: node)
-er_last_def(s, f) :- er_sym(f, s), line(f, l), l = max a : { er_sym(g, s), line(g, a) }.
+er_last_def(s, f) :- er_sym(f, s), node_line_number(f, l), l = max a : { er_sym(g, s), node_line_number(g, a) }.
 
 // transitive: each def's own patterns, less its exemptions, plus its calls into boundaries; then every caller's.
 // Defs in l2050_transaction.legacy_wrappers and server_ref's deleted_planning_value_helper take no part.
@@ -470,11 +470,11 @@ er_io_exempt(s, c) :- er_io_does(s, c), er_io_symbol(s).
 er_io_pattern(c) :- er_tr(_, k), c = cat("transitive:", k), (prefix("non-lazy-call:", k) ; k = "*.resolve()" ;
     k = "*.resolve_async()" ; k = "*.result()").
 // A dirty symbol is reported at its def (the last def of that name, as the linter's map keeps it).
-er_site(d, l, c, s) :- er_dirty(_, s, c), er_last_def(s, f), docof(f, d), line(f, l), !er_ignored(d, c, s).
+er_site(d, l, c, s) :- er_dirty(_, s, c), er_last_def(s, f), docof(f, d), node_line_number(f, l), !er_ignored(d, c, s).
 
 // io: external-I/O boundary definitions, in files that mention external_io_boundary_eager.
 er_site(d, l, cat("external-io-boundary:", x, "()"), s) :- er_sym(f, s), er_dec_base(f, b), er_io_dec(b),
-    def_name(f, x), line(f, l), docof(f, d), source(d, sp), text(sp, t), contains("external_io_boundary_eager", t).
+    def_name(f, x), node_line_number(f, l), docof(f, d), document_source(d, sp), line_text(sp, t), contains("external_io_boundary_eager", t).
 
 // er_ignored(d, c, s): the linter's per-file exemptions for transitive sites; er_text_ignored for text sites.
 // A facade module's own symbols, by the file's path and the symbol's name, as _should_ignore_pattern_violation tests
@@ -491,7 +491,7 @@ er_ignored(d, c, s) :- er_dirty(_, s, c), er_doc(d, _), !er_serverplan(d),
     (contains("__dict__", c) ; contains("getattr_static(", c) ; prefix("transitive:peek_", c)).
 er_ignored(d, c, s) :- er_dirty(_, s, c), er_doc(d, _), er_io_symbol(s), er_io_pattern(c).
 .decl er_text_ignored(d: number, c: symbol, s: symbol, t: symbol)
-er_text_ignored(d, c, s, t) :- er_hit(d, l, c), er_line_sym(d, l, s), src_line(d, l, sp), text(sp, t),
+er_text_ignored(d, c, s, t) :- er_hit(d, l, c), er_line_sym(d, l, s), document_line(d, sp), line_number(sp, l), line_text(sp, t),
     ( er_facade_site(d, s) ;
       c = ".resolve()", doc(d, "l2055_lazy_result/lazy_result.py", _), s = "l2055_lazy_result.lazy_result.LazyResult.result" ;
       c = ".resolve()", er_nonlazy_resolve_prefix(p), prefix(p, s) ;
@@ -536,9 +536,9 @@ er_grand_fields(g, n, e, p, c, s) :- er_grand_text(g, n, e),
 er_grand(e, p, c, s) :- er_grand_fields(g, n, e, p, c, s), !er_grand_bad(g, n, _).
 allow_entry("eager_resolve", e) :- er_grand(e, _, _, _).
 
-.violation ER(at: span, c: symbol, s: symbol, t: symbol) code {c} "{c}: {s}: {t}"
+.violation ER(at: match, c: symbol, s: symbol, t: symbol) code {c} "{c}: {s}: {t}"
 ER(@place(p, l), c, s, t) :- er_site(d, _, c, s), l = min a : { er_site(d, a, c, s) }, doc(d, p, _),
-    !er_grand(_, p, c, s), !er_io_site_signed(d, c, s), src_line(d, l, sp), text(sp, r),
+    !er_grand(_, p, c, s), !er_io_site_signed(d, c, s), document_line(d, sp), line_number(sp, l), line_text(sp, r),
     match("\\s*(?<t>.*?)\\s*", r).
 // er_io_site_signed(d, c, s): document d's external-I/O site of s is signed. Keyed by the site's document, which ER
 // reads it at: a site of any document (`er_site(_, _, c, s)`) was a read of every file's sites (decision 0695).
@@ -552,7 +552,7 @@ ER(@place("scripts/allowlists/lint_eager_resolve_external_io_boundaries.txt", n)
 
 // EAGER-ALLOWLIST: the lists themselves. Entries that match no site, a ceiling line without its two fields, and
 // either signature not verifying.
-.violation EAGER_ALLOWLIST(at: span, m: symbol) code "EAGER-ALLOWLIST" "{m}"
+.violation EAGER_ALLOWLIST(at: match, m: symbol) code "EAGER-ALLOWLIST" "{m}"
 EAGER_ALLOWLIST(@place("scripts/allowlists/architecture_grandfathered/eager_resolve", 1), cat("spurious allowlist entry: ", e)) :-
     er_grand(e, p, c, s), !er_reported_payload(p, c, s).
 EAGER_ALLOWLIST(@place("scripts/allowlists/architecture_grandfathered/eager_resolve", 1), cat(g, ":", to_string(n), ": ", m)) :-

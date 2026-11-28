@@ -335,7 +335,7 @@ pub enum Item {
     /// `.lattice L<base> { Op -> term, … }`.
     Lattice { name: String, base: String, ops: Vec<(String, Term)> },
     Pragma(Vec<String>),
-    /// `.violation V(at: loc, …) "message"`, its `fix` lines, its `suppress` lines, and `options { … }`.
+    /// `.violation V(at: place, …) "message"`, its `fix` lines, its `suppress` lines, and `options { … }`.
     /// `code {c}` names the column holding the finding's code (`in "re"`: the codes it may produce), `code "X"` gives
     /// it, and `tag {t}` names an extra key field.
     Violation {

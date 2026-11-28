@@ -168,23 +168,23 @@ const CASES: &[(&str, &str)] = &[
     // back after its `)`. The file goes to the engine.
     ("r(x) :- (x + 1) > 1.", "never"),
     // `.violation`: parts in any order, continuation lines, the words as names elsewhere.
-    (".violation v(at: loc, c: symbol) code {c} in \"E[0-9]+\" tag {at} \"m {c}\"\nfix safe v_fix \"a fix\"\nsuppress ruff \"E501\", \"W291\" over {at}\noptions { \"a\": [1, {\"b\": 2}] }\nr(x) :- s(x).", "parses"),
-    (".violation v(at: loc) code \"X1\" \"m\"\n.violation w(at: loc) \"n\" fix safe \"d\" fix f \"e\"\n.decl code(fix: number, tag: t)", "parses"),
+    (".violation v(at: place, c: symbol) code {c} in \"E[0-9]+\" tag {at} \"m {c}\"\nfix safe v_fix \"a fix\"\nsuppress ruff \"E501\", \"W291\" over {at}\noptions { \"a\": [1, {\"b\": 2}] }\nr(x) :- s(x).", "parses"),
+    (".violation v(at: place) code \"X1\" \"m\"\n.violation w(at: place) \"n\" fix safe \"d\" fix f \"e\"\n.decl code(fix: number, tag: t)", "parses"),
     ("r(code, tag, fix, safe, suppress, over, options, in, violation) :- code(x), fix = 1.", "parses"),
-    (".violation\nv(at: loc) tag { t } code { c } \"m\" // c\n/* d */ suppress t \"r\"", "parses"),
+    (".violation\nv(at: place) tag { t } code { c } \"m\" // c\n/* d */ suppress t \"r\"", "parses"),
     // `fix`, `suppress`, `options` starting a clause right after a `.violation`, and `over` a
     // fact after a `suppress` line: the engine reads the word only before what follows it.
-    (".violation v(at: loc) \"m\"\nfix(x) :- s(x).", "parses"),
-    (".violation v(at: loc) \"m\"\nsuppress(x) :- s(x).\n.violation w(at: loc) \"m\"\noptions(x).", "parses"),
-    (".violation v(at: loc) \"m\"\nsuppress t(x) :- s(x).", "never"),
-    (".violation v(at: loc) \"m\"\nsuppress t \"r\"\nover(x).\nfix(1).", "parses"),
-    (".violation v(at: loc) \"m\" fix /* c */ f // d\n \"e\" suppress t /* c */ \"r\" over /* c */ {at}\noptions // c\n{}\nfix(y).", "parses"),
-    (".violation v(at: loc) \"m\"\nfix safe \"d\"\nfix safe s \"e\"\nfix \"x\".", "never"),
-    (".violation v(at: loc) \"m\"\noptions = 1.", "never"),
+    (".violation v(at: place) \"m\"\nfix(x) :- s(x).", "parses"),
+    (".violation v(at: place) \"m\"\nsuppress(x) :- s(x).\n.violation w(at: place) \"m\"\noptions(x).", "parses"),
+    (".violation v(at: place) \"m\"\nsuppress t(x) :- s(x).", "never"),
+    (".violation v(at: place) \"m\"\nsuppress t \"r\"\nover(x).\nfix(1).", "parses"),
+    (".violation v(at: place) \"m\" fix /* c */ f // d\n \"e\" suppress t /* c */ \"r\" over /* c */ {at}\noptions // c\n{}\nfix(y).", "parses"),
+    (".violation v(at: place) \"m\"\nfix safe \"d\"\nfix safe s \"e\"\nfix \"x\".", "never"),
+    (".violation v(at: place) \"m\"\noptions = 1.", "never"),
     // A column in braces that is no single name: one `raw_text` leaf, nested braces counted.
-    (".violation v(at: loc) code {at.code} tag { } \"m\"", "parses"),
-    (".violation v(at: loc) code { /* c */ at } tag {a {b} c} \"m\" suppress t \"r\" over {x y}\n.violation w(at: loc) code {at} \"m\" suppress t \"r\" over { at }", "parses"),
-    (".violation v(at: loc) code {at \"m\"", "never"),
+    (".violation v(at: place) code {at.code} tag { } \"m\"", "parses"),
+    (".violation v(at: place) code { /* c */ at } tag {a {b} c} \"m\" suppress t \"r\" over {x y}\n.violation w(at: place) code {at} \"m\" suppress t \"r\" over { at }", "parses"),
+    (".violation v(at: place) code {at \"m\"", "never"),
     // A `` `` `` with none after it in the file's bytes: the empty literal, read on after it.
     ("r(x) :- x = replace(c, ``).", "parses"),
     ("r(x) :- y = ``a``, z = `b`, x = replace(c, ``). // c", "parses"),

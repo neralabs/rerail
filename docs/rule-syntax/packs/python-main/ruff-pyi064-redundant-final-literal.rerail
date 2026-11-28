@@ -50,7 +50,7 @@ pyi064_plain_literal(n) :- kind(n, "parenthesized_expression"), child(n, c3, _),
 
 // literal_of_plain(n): the JSON util `literal-of-plain`, used where the JSON says `matches: "literal-of-plain"`
 //   LIT: metavariable this relation binds for the calling rule
-.decl pyi064_literal_of_plain(n: node, lit: loc)
+.decl pyi064_literal_of_plain(n: node, lit: node)
 pyi064_literal_of_plain(n, LIT) :- kind(n, "generic_type"), child(n, c1, _), pyi064_literal_ref(c1),
     child(n, c2, _), kind(c2, "type_parameter"), pyi064_single(c2), child(c2, c3, _),
     kind(c3, "type"), child(c3, c4, _), pyi064_plain_literal(c4), node(_, c4, _, _, _), LIT = c4.
@@ -61,7 +61,7 @@ pyi064_literal_of_plain(n, LIT) :- kind(n, "parenthesized_expression"), child(n,
 
 // final_of_literal(n): the JSON util `final-of-literal`, used where the JSON says `matches: "final-of-literal"`
 //   LIT: metavariable this relation binds for the calling rule
-.decl pyi064_final_of_literal(n: node, lit: loc)
+.decl pyi064_final_of_literal(n: node, lit: node)
 pyi064_final_of_literal(n, LIT) :- kind(n, "generic_type"), child(n, c1, _), pyi064_final_ref(c1),
     child(n, c2, _), kind(c2, "type_parameter"), pyi064_single(c2), child(c2, c3, _),
     kind(c3, "type"), child(c3, c4, _), pyi064_literal_of_plain(c4, LIT).
@@ -81,7 +81,7 @@ PYI064(n) :- kind(n, "assignment"), field(n, "type", c1), kind(c1, "type"),
 // PYI064_redundant_final_literal_unassigned(n): a finding at node n, from clause `redundant-final-literal-unassigned`.
 // Each rule below is one way the JSON `rule` can match.
 // Columns after `at` are the metavariables the JSON's message, anchor or `each` names: one finding per distinct row.
-.violation PYI064_redundant_final_literal_unassigned(at: node, lit: loc) code "PYI064" "Annotate with a bare `Final` and assign `{lit}` as the value instead of writing `Final[Literal[{lit}]]`; leave it if `__init__` assigns this attribute instead."
+.violation PYI064_redundant_final_literal_unassigned(at: node, lit: node) code "PYI064" "Annotate with a bare `Final` and assign `{lit}` as the value instead of writing `Final[Literal[{lit}]]`; leave it if `__init__` assigns this attribute instead."
     suppress noqa "PYI064"
 PYI064_redundant_final_literal_unassigned(n, LIT) :- kind(n, "assignment"),
     field(n, "type", c1), kind(c1, "type"), child(c1, c2, _),
@@ -91,7 +91,7 @@ PYI064_redundant_final_literal_unassigned(n, LIT) :- kind(n, "assignment"),
 // PYI064_redundant_final_literal_mismatch(n): a finding at node n, from clause `redundant-final-literal-mismatch`.
 // Each rule below is one way the JSON `rule` can match.
 // Columns after `at` are the metavariables the JSON's message, anchor or `each` names: one finding per distinct row.
-.violation PYI064_redundant_final_literal_mismatch(at: node, lit: loc) code "PYI064" "The value differs from the literal `{lit}`: if it should be `{lit}` (or is a stub's `...` placeholder), assign `{lit}` and annotate with a bare `Final`; otherwise correct the `Literal[...]` type."
+.violation PYI064_redundant_final_literal_mismatch(at: node, lit: node) code "PYI064" "The value differs from the literal `{lit}`: if it should be `{lit}` (or is a stub's `...` placeholder), assign `{lit}` and annotate with a bare `Final`; otherwise correct the `Literal[...]` type."
     suppress noqa "PYI064"
 PYI064_redundant_final_literal_mismatch(n, LIT) :- kind(n, "assignment"),
     field(n, "type", c1), kind(c1, "type"), child(c1, c2, _),

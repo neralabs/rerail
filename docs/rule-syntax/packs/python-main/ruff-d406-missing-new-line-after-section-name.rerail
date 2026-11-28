@@ -8,7 +8,7 @@
 // D406(n): a finding at node n, from clause `section-name-suffix`.
 // Each rule below is one way the JSON `rule` can match.
 // Columns after `at` are the metavariables the JSON's message, anchor or `each` names: one finding per distinct row.
-.violation D406(at: loc, name: node) "Remove the colon or trailing whitespace after the section name `{name}` so the line holds only the name."
+.violation D406(at: match, name: node) "Remove the colon or trailing whitespace after the section name `{name}` so the line holds only the name."
     suppress noqa "D406"
 D406(NAME, n) :- kind(n, "string_content"), d406_numpy_style(n), child(p1, n, _),
     d406_docstring(p1),
@@ -109,7 +109,7 @@ d406_alt_15(n) :- node(_, n, _, _, _),
 
 // alt_16(n): the JSON `any`: n matches if any one of these rules does
 //   NAME: metavariable this relation binds for the calling rule
-.decl d406_alt_16(n: node, name: loc)
+.decl d406_alt_16(n: node, name: match)
 d406_alt_16(n, NAME) :- node(_, n, _, _, _),
     match("(?s:.*)\\n[^\\S\\n]*(?P<NAME>(?i:extended summary|other parameters|short summary|other params|attributes|references|parameters|examples|see also|warnings|receives|methods|returns|raises|yields|notes|warns))(?:[^\\S\\r\\n]+|:[^\\S\\r\\n]*)\\r?(?m:$)\\n[^\\S\\n]*[-=]+[^\\S\\n]*(?m:$)(?s:.*)", n).
 d406_alt_16(n, NAME) :- node(_, n, _, _, _),

@@ -8,7 +8,7 @@
 // B033(n): a finding at node n, from clause `duplicate-value`.
 // Each rule below is one way the JSON `rule` can match.
 // Columns after `at` are the metavariables the JSON's message, anchor or `each` names: one finding per distinct row.
-.violation B033(at: node, v: loc) "Sets should not contain duplicate item `{v}`"
+.violation B033(at: node, v: node) "Sets should not contain duplicate item `{v}`"
     suppress noqa "B033"
 B033(n, V) :- b033_literal(n), node(_, n, _, _, _), V = n, b033_dup_slot(n, V).
 
@@ -26,7 +26,7 @@ b033_literal_p(n) :- kind(n, "parenthesized_expression"), child(n, c1, _), b033_
 
 // dup_slot(n): the JSON util `dup-slot`, used where the JSON says `matches: "dup-slot"`
 //   V: metavariable of the calling rule, passed in (bound by the caller)
-.decl b033_dup_slot(n: node, v: loc)
+.decl b033_dup_slot(n: node, v: node)
 b033_dup_slot(n, V) :- b033_demand_dup_slot(n, V), child(p1, n, _), kind(p1, "set"),
     k5 = count : { precedes(s2, n), b033_literal_p(s2), node(_, s2, _, _, _), F = s2, value(F, t3), value(V, t3) },
     k5 >= 1.
@@ -34,7 +34,7 @@ b033_dup_slot(n, V) :- b033_demand_dup_slot(n, V), child(p6, n, _),
     kind(p6, "parenthesized_expression"), b033_dup_slot(p6, V).
 
 // demand_dup_slot: the rows of dup_slot its callers ask for (the metavariable columns they pass in)
-.decl b033_demand_dup_slot(n: node, v: loc)
+.decl b033_demand_dup_slot(n: node, v: node)
 b033_demand_dup_slot(n, V) :- b033_literal(n), node(_, n, _, _, _), V = n.
 b033_demand_dup_slot(p6, V) :- b033_demand_dup_slot(n, V), child(p6, n, _),
     kind(p6, "parenthesized_expression").

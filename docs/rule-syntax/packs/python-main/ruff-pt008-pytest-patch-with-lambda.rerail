@@ -8,7 +8,7 @@
 // PT008(n): a finding at node n, from clause `patch-with-lambda`.
 // Each rule below is one way the JSON `rule` can match.
 // Columns after `at` are the metavariables the JSON's message, anchor or `each` names: one finding per distinct row.
-.violation PT008(at: loc, f: node) "Pass the lambda's result to `{f}` as `return_value=` instead of a `lambda` that ignores its arguments; keep the lambda if its body must run on every call."
+.violation PT008(at: node, f: node) "Pass the lambda's result to `{f}` as `return_value=` instead of a `lambda` that ignores its arguments; keep the lambda if its body must run on every call."
     suppress noqa "PT008"
 PT008(F, n) :- kind(n, "call"),
     ( field(n, "function", c1), pt008_fn_patch(c1, F), field(n, "arguments", c2), kind(c2, "argument_list"), pt008_alt_17(c2)
@@ -36,14 +36,14 @@ pt008_patch(n) :- kind(n, "attribute"), field(n, "object", c2), pt008_obj(c2), p
 
 // fn_patch(n): the JSON util `fn-patch`, used where the JSON says `matches: "fn-patch"`
 //   F: metavariable this relation binds for the calling rule
-.decl pt008_fn_patch(n: node, f: loc)
+.decl pt008_fn_patch(n: node, f: node)
 pt008_fn_patch(n, F) :- kind(n, "parenthesized_expression"), child(n, c1, _),
     pt008_fn_patch(c1, F).
 pt008_fn_patch(n, F) :- kind(n, "attribute"), pt008_patch(n), node(_, n, _, _, _), F = n.
 
 // fn_patch_object(n): the JSON util `fn-patch-object`, used where the JSON says `matches: "fn-patch-object"`
 //   F: metavariable this relation binds for the calling rule
-.decl pt008_fn_patch_object(n: node, f: loc)
+.decl pt008_fn_patch_object(n: node, f: node)
 pt008_fn_patch_object(n, F) :- kind(n, "parenthesized_expression"), child(n, c1, _),
     pt008_fn_patch_object(c1, F).
 pt008_fn_patch_object(n, F) :- kind(n, "attribute"), field(n, "object", c2), pt008_patch(c2),
@@ -51,7 +51,7 @@ pt008_fn_patch_object(n, F) :- kind(n, "attribute"), field(n, "object", c2), pt0
 
 // param_name(n): the JSON util `param-name`, used where the JSON says `matches: "param-name"`
 //   P: metavariable this relation binds for the calling rule
-.decl pt008_param_name(n: node, p: loc)
+.decl pt008_param_name(n: node, p: node)
 pt008_param_name(n, P) :- kind(n, "identifier"), node(_, n, _, _, _), P = n.
 pt008_param_name(n, P) :- kind(n, "default_parameter"), field(n, "name", c1), node(_, c1, _, _, _), P = c1.
 pt008_param_name(n, P) :- (kind(n, "list_splat_pattern") ; kind(n, "dictionary_splat_pattern")),
@@ -63,7 +63,7 @@ pt008_name_expr(n) :- kind(n, "identifier"), !pt008_alt_1(n).
 
 // reads_p(n): the JSON util `reads-p`, used where the JSON says `matches: "reads-p"`
 //   P: metavariable of the calling rule, passed in (bound by the caller)
-.decl pt008_reads_p(n: node, p: loc)
+.decl pt008_reads_p(n: node, p: node)
 pt008_reads_p(n, P) :- pt008_demand_reads_p(n, P), kind(n, "identifier"), pt008_name_expr(n), node(_, n, _, _, _), U = n,
     text(U, t1), text(P, t1), @doc(U) = @doc(P).
 
@@ -203,7 +203,7 @@ pt008_tok_has_10(n) :- node_text(n, g57), !child(n, _, _),
     match("(?s)^(?:(?:.*\\W)?(?:return_value)(?:\\W.*)?)$", g57).
 
 // demand_reads_p: the rows of reads_p its callers ask for (the metavariable columns they pass in)
-.decl pt008_demand_reads_p(n: node, p: loc)
+.decl pt008_demand_reads_p(n: node, p: node)
 pt008_demand_reads_p(s4, P) :- field(n, "parameters", c1), child(c1, c2, _),
     pt008_param_name(c2, P), child(p3, c2, _), kind(p3, "lambda_parameters"),
     precedes(p3, s4).

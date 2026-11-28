@@ -129,7 +129,7 @@ pub fn message_of(template: &str, values: &[String]) -> String {
 fn column_type(ty: &str) -> &str {
     match ty {
         "symbol" | "sym" => "sym",
-        "node" | "span" | "loc" => "node",
+        t if super::super::place_type::is_place(t) => "node",
         "number" | "int" => "int",
         other => other,
     }
@@ -711,7 +711,7 @@ impl<'p> Findings<'_, 'p> {
     fn error_diagnostic(&mut self, policy: &str, clause: &str, code: &str, body: &dyn Fn(&mut Self, &mut Open)) -> Result<(), Error> {
         let finding = Violation {
             name: clause.to_owned(), arity: 1, code: FindingCode::Constant(code.to_owned()), node: false,
-            places: true, columns: vec![("at".to_owned(), "span".to_owned())], message: String::new(), tag: None,
+            places: true, columns: vec![("at".to_owned(), "place".to_owned())], message: String::new(), tag: None,
         };
         self.diagnostic_rule(policy, &finding, &[Tm::Int(0)], Tm::Int(0), Location::File, body)
     }
@@ -894,7 +894,7 @@ impl<'p> Findings<'_, 'p> {
                 (self.v(&value), Reads::Relation(relation.to_owned(), i, value))
             } else {
                 let i = column(key)?;
-                if matches!(finding.columns[i].1.as_str(), "node" | "span" | "loc") {
+                if super::super::place_type::is_place(&finding.columns[i].1) {
                     if i == 0 && place { (self.s(""), Reads::Nothing) } else { (self.v(&value), Reads::Text(i, value)) }
                 } else { (string_column(self, i), Reads::Nothing) }
             };

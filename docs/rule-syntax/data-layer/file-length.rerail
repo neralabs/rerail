@@ -36,7 +36,7 @@ allow_sig("file_length", "lint_file_length", s) :- script_line(_, t),
 
 // The script checks the signature only when the allowlist has entries (cli_main: `if allowlist and …`).
 // Unsigned and invalid both fail. No signature line at all fails too: the script could not run without one.
-.violation invalid_allowlist_signature(at: loc)
+.violation invalid_allowlist_signature(at: node)
     "The allowlist has been modified without re-signing; sign it with --sign-allowlist"
 invalid_allowlist_signature(@place(".file-length-allowlist.json", 1)) :- allowlisted(_, _),
     !allow_status("file_length", "valid").
@@ -51,7 +51,7 @@ long_file(d, p, n) :- doc(d, p, _), line_count(d, n), n > 2000, count : { path_p
 
 // One code for both cases, as in the script; the message says which. Line 1: the finding is about the whole
 // file, and the script reports it at line 1, so the place is the file's first line.
-.violation FILE_LENGTH(at: loc, path: symbol, n: number, max: number)
+.violation FILE_LENGTH(at: node, path: symbol, n: number, max: number)
     "{path} has {n} lines, above threshold 2000 (allowlisted: {max})"
 .severity FILE_LENGTH warning
 // Not allowlisted: max 0 stands for "none" in the message.

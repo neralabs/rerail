@@ -162,8 +162,8 @@ mixed(e) :- kind(e, "concatenated_string"), child(e, s0, 0), string_kind(s0, t),
 // report_at(c, v, at): where Bandit puts a finding on call c that it moves to the line of argument v
 // (`lineno=get_lineno_for_call_arg(k)`): v's line, at the call's column. at is c when they share a line, else v.
 .decl report_at(c: node, v: node, at: node)
-report_at(c, v, c) :- kwarg(c, _, v), line(c, l), line(v, l).
-report_at(c, v, v) :- kwarg(c, _, v), line(c, l), !line(v, l).
+report_at(c, v, c) :- kwarg(c, _, v), node_line_number(c, l), node_line_number(v, l).
+report_at(c, v, v) :- kwarg(c, _, v), node_line_number(c, l), !node_line_number(v, l).
 // truthy(e): e's literal is true in Python, as `a or b` reads it: not zero or "" (a container is taken as
 // non-empty). "None" is truthy: Bandit has turned None into a string by then.
 .decl truthy(e: node)

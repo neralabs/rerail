@@ -34,7 +34,7 @@
 lao_trigger("Transaction"). lao_trigger("PlanScope"). lao_trigger("legacy_"). lao_trigger("pure_lazy").
 lao_trigger("@lazy").
 .decl lao_doc(d: number)
-lao_doc(d) :- source(d, sp), text(sp, s), lao_trigger(t), contains(t, s).
+lao_doc(d) :- document_source(d, sp), line_text(sp, s), lao_trigger(t), contains(t, s).
 .decl legacy_dec(v: symbol)
 legacy_dec("legacy_sync"). legacy_dec("legacy_async"). legacy_dec("legacy_module_sync").
 legacy_dec("legacy_module_async").

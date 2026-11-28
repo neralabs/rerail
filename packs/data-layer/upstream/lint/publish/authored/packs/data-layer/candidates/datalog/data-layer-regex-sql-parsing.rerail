@@ -108,7 +108,7 @@ rsp_first(a, z) :- rsp_call(_, _, a), child(a, z, i), !rsp_later(a, i).
 rsp_hit(c, m, k) :- rsp_call(c, m, a), rsp_first(a, z), rsp_str(z, v), rsp_cat(k, v).
 rsp_gate(d) :- node(d, _, "module", _, _), !option_on("sourceGate").
 rsp_gate(d) :- option_on("sourceGate"), node(d, m, "module", _, _), node_text(m, s), match("(?s:.*)(?:re\\.|SELECT|INSERT|UPDATE|DELETE|CHECK|ON\\ DELETE)(?s:.*)", s).
-rsp_found(c, m, k, p, l) :- rsp_hit(c, m, k), node(d, c, _, _, _), in_scope(d), !out_scope(d), !tape_syntax_error(d), rsp_gate(d), doc(d, p, _), line(c, l).
+rsp_found(c, m, k, p, l) :- rsp_hit(c, m, k), node(d, c, _, _, _), in_scope(d), !out_scope(d), !tape_syntax_error(d), rsp_gate(d), doc(d, p, _), node_line_number(c, l).
 violation("data-layer-regex-sql-parsing", "category-0", "ERROR_MSG_PARSE", p, l) :- rsp_found(_, _, 0, p, l).
 violation("data-layer-regex-sql-parsing", "category-1", "SQL_COMMENT_STRIP", p, l) :- rsp_found(_, _, 1, p, l).
 violation("data-layer-regex-sql-parsing", "category-2", "SQL_PARAM_NORMALIZE", p, l) :- rsp_found(_, _, 2, p, l).

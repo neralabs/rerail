@@ -17,7 +17,7 @@
 // name's declaration in the module and anything assigned to it), arrays, objects, and classes' members that are
 // not private. A function an exported function only returns is checked as well. Typed places, constructors and
 // setters, and the higher-order and `as const` cases are excused as in explicit-function-return-type.
-.violation explicit_module_boundary_types(at: loc, msg: symbol) code "@typescript-eslint/explicit-module-boundary-types"
+.violation explicit_module_boundary_types(at: place, msg: symbol) code "@typescript-eslint/explicit-module-boundary-types"
     "{msg}"
     suppress eslint "@typescript-eslint/explicit-module-boundary-types"
 explicit_module_boundary_types(h, "Add an explicit return type to this exported function.") :-

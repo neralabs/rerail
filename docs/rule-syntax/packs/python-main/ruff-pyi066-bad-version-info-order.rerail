@@ -38,7 +38,7 @@ pyi066_bool_value(n) :- child(p3, n, _), kind(p3, "parenthesized_expression"), p
 // Columns after `at` are the metavariables the JSON's message, anchor or `each` names: one finding per distinct row.
 // The JSON `constraints` on L are added to every rule.
 // `options` carries JSON settings that have no .rerail form yet.
-.violation PYI066(at: node, l: loc, r: loc) "Rewrite `{l} < {r}` as `{l} >= {r}` and swap this branch's body with the code that runs otherwise, so the newer-version code comes first."
+.violation PYI066(at: node, l: node, r: node) "Rewrite `{l} < {r}` as `{l} >= {r}` and swap this branch's body with the code that runs otherwise, so the newer-version code comes first."
     suppress noqa "PYI066"
 PYI066_raw(n, L, R) :- n ~ `$L < $R`,
     count : { child(n, c1, _), child(p2, c1, _), pyi066_counted_3(c1), k4 = count : { child(p2, s3, _), precedes(s3, c1), pyi066_counted_3(s3) }, k4 = 2 } = 0,
@@ -49,7 +49,7 @@ PYI066_raw(n, L, R) :- n ~ `$L < $R`,
 // Columns after `at` are the metavariables the JSON's message, anchor or `each` names: one finding per distinct row.
 // The JSON `constraints` on L are added to every rule.
 // `options` carries JSON settings that have no .rerail form yet.
-.violation PYI066_bad_version_info_order_in_condition(at: node, l: loc, r: loc) code "PYI066" "Restructure so a `{l} >= {r}` test selects the newer-version branch first, e.g. by nesting the rest of this condition inside it; flipping only `<` and the branches would change behaviour."
+.violation PYI066_bad_version_info_order_in_condition(at: node, l: node, r: node) code "PYI066" "Restructure so a `{l} >= {r}` test selects the newer-version branch first, e.g. by nesting the rest of this condition inside it; flipping only `<` and the branches would change behaviour."
     suppress noqa "PYI066"
 PYI066_bad_version_info_order_in_condition_raw(n, L, R) :- n ~ `$L < $R`,
     count : { child(n, c1, _), child(p2, c1, _), pyi066_counted_4(c1), k4 = count : { child(p2, s3, _), precedes(s3, c1), pyi066_counted_4(s3) }, k4 = 2 } = 0,
@@ -100,9 +100,9 @@ pyi066_counted_4(n) :- node(_, n, _, _, _), !kind(n, "comment"),
     !kind(n, "line_continuation").
 
 // main's file condition {"regex": "\\.pyi$"}
-.decl PYI066_raw(at: node, l: loc, r: loc)
+.decl PYI066_raw(at: node, l: node, r: node)
 PYI066(v0, v1, v2) :- PYI066_raw(v0, v1, v2), rr_d = @doc(v0), doc(rr_d, rr_p, _), match("\\.pyi$", rr_p).
 
 // main's file condition {"regex": "\\.pyi$"}
-.decl PYI066_bad_version_info_order_in_condition_raw(at: node, l: loc, r: loc)
+.decl PYI066_bad_version_info_order_in_condition_raw(at: node, l: node, r: node)
 PYI066_bad_version_info_order_in_condition(v0, v1, v2) :- PYI066_bad_version_info_order_in_condition_raw(v0, v1, v2), rr_d = @doc(v0), doc(rr_d, rr_p, _), match("\\.pyi$", rr_p).

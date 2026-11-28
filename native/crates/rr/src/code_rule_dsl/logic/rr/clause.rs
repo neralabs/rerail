@@ -180,10 +180,28 @@ pub trait Reads {
         }
     }
 
+    /// The relation literal `l` names as written, where it is an atom (negated or not): a typed regex's own name
+    /// (`node_regex_match`), which `lit` reads as the engine's (`match_all`).
+    fn written_rel(&self, l: &LitAt) -> Option<String> {
+        let LitAt::Node(mut n, _) = *l else { return None };
+        let t = self.tape();
+        loop {
+            match t.kind(n) {
+                k if k == Kind::Atom as u16 => return Some(t.text(t.one(n, Field::Relation).ok()?).to_owned()),
+                k if k == Kind::Negation as u16 => n = t.one(n, Field::Operand).ok()?,
+                _ => return None,
+            }
+        }
+    }
+
     fn lit_node(&self, t: &Tape<'_>, n: u32, s: u32) -> L {
         let one = |f| t.one(n, f).expect("a literal's part");
         match t.kind(n) {
-            k if k == Kind::Atom as u16 => L::Atom { rel: t.text(one(Field::Relation)).to_owned(), args: self.args_of(t, one(Field::Arguments), s), neg: false },
+            k if k == Kind::Atom as u16 => {
+                let written = t.text(one(Field::Relation));
+                let rel = regex_read(written).map(|(read, _)| read).or_else(|| super::lower::core::alias(written).map(|(_, read, _)| read)).unwrap_or(written).to_owned();
+                L::Atom { rel, args: self.args_of(t, one(Field::Arguments), s), neg: false }
+            }
             k if k == Kind::Negation as u16 => match self.lit_node(t, one(Field::Operand), s) {
                 L::Atom { rel, args, neg } => L::Atom { rel, args, neg: !neg },
                 L::Pattern { subject, pattern, selector, neg } => L::Pattern { subject, pattern, selector, neg: !neg },
@@ -498,4 +516,18 @@ impl Reads for RrFile {
     fn tape(&self) -> Tape<'_> {
         RrFile::tape(self)
     }
+}
+
+/// The typed regex reads (decision 0724 §4): `<type>_regex_match(re, x, m)`, each match `m` of `re` in `x`'s text,
+/// and `<type>_regex_group(re, x, m, name, g)`, match `m`'s named group: the engine's `match_all` and `match_group`,
+/// and the type their subject `x` is.
+pub(super) fn regex_read(rel: &str) -> Option<(&'static str, &'static str)> {
+    let (ty, read) = rel.split_once("_regex_")?;
+    let read = match read {
+        "match" => "match_all",
+        "group" => "match_group",
+        _ => return None,
+    };
+    let ty = ["node", "line", "match", "token", "place"].into_iter().find(|t| *t == ty)?;
+    Some((read, ty))
 }

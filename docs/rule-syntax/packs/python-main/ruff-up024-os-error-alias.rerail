@@ -43,14 +43,14 @@ up024_alias_site(n) :- up024_os_error_alias(n), up024_atom_site(n).
 
 // alias_in_annotation(n): the JSON util `alias-in-annotation`, used where the JSON says `matches: "alias-in-annotation"`
 //   ALIAS: metavariable this relation binds for the calling rule
-.decl up024_alias_in_annotation(n: node, alias: loc)
+.decl up024_alias_in_annotation(n: node, alias: node)
 up024_alias_in_annotation(n, ALIAS) :- (kind(n, "string") ; kind(n, "concatenated_string")),
     parsed(n, "annotation", r1), within(c2, r1), up024_alt_2(c2, ALIAS).
 
 // UP024(n): a finding at node n, from clause `os-error-alias`.
 // Each rule below is one way the JSON `rule` can match.
 // Columns after `at` are the metavariables the JSON's message, anchor or `each` names: one finding per distinct row.
-.violation UP024(at: loc, alias: node) "Replace `{alias}` with the builtin `OSError`; since Python 3.3 it is the same class. Leave it only if `OSError` is rebound to something else in this scope."
+.violation UP024(at: node, alias: node) "Replace `{alias}` with the builtin `OSError`; since Python 3.3 it is the same class. Leave it only if `OSError` is rebound to something else in this scope."
     suppress noqa "UP024"
 UP024(ALIAS, n) :- up024_alias_site(n), node(_, n, _, _, _), ALIAS = n.
 UP024(ALIAS, n) :- up024_alias_in_annotation(n, ALIAS).
@@ -82,6 +82,6 @@ up024_set_1("select.error"). up024_set_1("socket.error"). up024_set_1("os.error"
 
 // alt_2(n): the JSON `any`: n matches if any one of these rules does
 //   ALIAS: metavariable this relation binds for the calling rule
-.decl up024_alt_2(n: node, alias: loc)
+.decl up024_alt_2(n: node, alias: node)
 up024_alt_2(n, ALIAS) :- up024_alias_site(n), ALIAS = n.
 up024_alt_2(n, ALIAS) :- up024_alias_in_annotation(n, ALIAS).

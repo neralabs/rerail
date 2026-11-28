@@ -38,8 +38,8 @@ use_expect_error(c, "tsIgnoreInsteadOfExpectError", _) :- text(c, t), u = @repla
 live(c, d, s) :- ts_directive(c, d, s), d != "nocheck".
 live(c, "nocheck", s) :- ts_directive(c, "nocheck", s), !after_code(c).
 .decl after_code(c: node)  // a statement of c's program starts on c's line or before it
-after_code(c) :- ts_directive(c, "nocheck", _), docof(c, f), program(f, p), line(c, l), child(p, x, _),
-    !kind(x, "comment"), line(x, m), m <= l.
+after_code(c) :- ts_directive(c, "nocheck", _), docof(c, f), program(f, p), node_line_number(c, l), child(p, x, _),
+    !kind(x, "comment"), node_line_number(x, m), m <= l.
 
 // mode(d, m): "ban", "describe" or "off" for directive d, from its option or the default.
 .decl mode(d: symbol, m: symbol)

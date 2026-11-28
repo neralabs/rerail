@@ -10,7 +10,7 @@
 //   print("Hello", file=sys.stderr)   not reported
 #include "python/pyflakes.rerail"
 
-.violation F633(at: loc) code "F633"
+.violation F633(at: place) code "F633"
     "Replace `>>` with print()'s `file=` argument, as in `print(msg, file=sys.stderr)`."
     suppress ruff "F633"
 // tree-sitter still parses the Python 2 statement: a print_statement with a `>>` chevron. Its `print` is a

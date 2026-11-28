@@ -48,17 +48,17 @@ plain(d) :- declarator(d, v, _), !require_call(v).
 // ---- findings ------------------------------------------------------------------------------------------------
 // Each sits on the declaration's keyword. c names the declarators it is about, as ESLint's message ids do
 // (combine, combineInitialized, …).
-.violation COMBINE(at: span, k: symbol, c: symbol) code "one-var"
+.violation COMBINE(at: match, k: symbol, c: symbol) code "one-var"
     "Combine this with the previous '{k}' statement ({c} variables)."
     suppress eslint "one-var"
     suppress oxlint "one-var"
     suppress biome "lint/style/useSingleVarDeclarator"
-.violation SPLIT(at: span, k: symbol, c: symbol) code "one-var"
+.violation SPLIT(at: match, k: symbol, c: symbol) code "one-var"
     "Split '{k}' declarations into multiple statements ({c} variables)."
     suppress eslint "one-var"
     suppress oxlint "one-var"
     suppress biome "lint/style/useSingleVarDeclarator"
-.violation SPLIT_REQUIRES(at: span, k: symbol) code "one-var"
+.violation SPLIT_REQUIRES(at: match, k: symbol) code "one-var"
     "Move the require() calls into their own '{k}' statement, separate from other variables."
     suppress eslint "one-var"
     suppress oxlint "one-var"

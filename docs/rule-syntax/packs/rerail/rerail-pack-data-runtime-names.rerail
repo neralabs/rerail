@@ -13,8 +13,8 @@
 // The first is a text search over the file (a finding where the match starts); the second tests each string and
 // template literal's text, an unanchored search as ast-grep's `regex`. The regexes are the JSON's, copied exactly.
 
-.violation COMPOSED_RUNTIME_NAME(at: span) "Pass the `upstream.runtime` of `readGatesManifest(root, pack, tool)` instead of a name built from a version, so a bump or a renamed runtime is followed."
-COMPOSED_RUNTIME_NAME(m) :- source(_, sp), match_all("\\b(?:npmRuntime|uvRuntime|composerRuntime|pinnedPhp|runtimeFile)\\(\\s*`[^`]*(?:-\\$\\{|\\}-)|\\bRUNTIMES_DIRECTORY\\s*,\\s*`[^`]*(?:-\\$\\{|\\}-)|(?i:-\\$\\{[^}]*version[^}]*\\}|[\\\"'][a-z][a-z0-9_.-]*-[\\\"']\\s*\\+\\s*[\\w.]*version|\\+\\s*[\\\"']-[\\\"']\\s*\\+\\s*[\\w.]*version)", sp, m).
+.violation COMPOSED_RUNTIME_NAME(at: match) "Pass the `upstream.runtime` of `readGatesManifest(root, pack, tool)` instead of a name built from a version, so a bump or a renamed runtime is followed."
+COMPOSED_RUNTIME_NAME(m) :- document_source(_, sp), line_regex_match("\\b(?:npmRuntime|uvRuntime|composerRuntime|pinnedPhp|runtimeFile)\\(\\s*`[^`]*(?:-\\$\\{|\\}-)|\\bRUNTIMES_DIRECTORY\\s*,\\s*`[^`]*(?:-\\$\\{|\\}-)|(?i:-\\$\\{[^}]*version[^}]*\\}|[\\\"'][a-z][a-z0-9_.-]*-[\\\"']\\s*\\+\\s*[\\w.]*version|\\+\\s*[\\\"']-[\\\"']\\s*\\+\\s*[\\w.]*version)", sp, m).
 
 .violation VERSIONED_RUNTIME_LITERAL(at: node) "Read this runtime from the `upstream.runtime` of `readGatesManifest(root, pack, tool)` instead of writing its release; leave it if it names no folder under scripts/pack-data/runtimes."
 VERSIONED_RUNTIME_LITERAL(n) :- kind(n, "string"),

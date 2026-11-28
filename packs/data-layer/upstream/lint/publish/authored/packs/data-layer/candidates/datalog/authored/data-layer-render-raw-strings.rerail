@@ -115,7 +115,7 @@ literal_special_arg(n) :- child(al, n, _), node(_, al, "argument_list", _, _), c
     field(c, "function", f), literal_special_fn(f), literal_first_pos(al, n).
 violation("data-layer-render-raw-strings", "literal", "string_literal", p, l) :-
     literal_long(n), literal_in_render(n), !literal_docstring(n), !literal_in_raise(n), !literal_allowed(n), !literal_special_arg(n),
-    node(d, n, _, _, _), in_scope(d), !tape_syntax_error(d), !out_scope(d), literal_gate(d), doc(d, p, _), line(n, l).
+    node(d, n, _, _, _), in_scope(d), !tape_syntax_error(d), !out_scope(d), literal_gate(d), doc(d, p, _), node_line_number(n, l).
 
 // ---- fstring-literal ----------------------------------------------------------------------------------------
 // The hosts parsed (`parse: pythonFString`): an f-string not in a concatenation, a concatenation with an f part,
@@ -165,25 +165,25 @@ fstring_literal_content(n, c) :- fstring_literal_parsed(n), literal_part(n, s), 
 fstring_literal_cont(c) :- fstring_literal_content(_, c), literal_content(_, c, "p", t), match("\\\\(?:\\r\\n|\\n|\\r)(?s:.*)", t).
 fstring_literal_cont(c) :- fstring_literal_content(_, c), literal_content(_, c, "f", t), match("\\\\(?:\\r\\n|\\n|\\r)(?s:.*)", t).
 .decl fstring_literal_cnext(c: node, l: number)
-fstring_literal_cnext(c, l) :- fstring_literal_cont(c), node(d, c, _, _, _), line(c, l0), end_line(c, le), src_line(d, l, sp), l > l0, l <= le,
-    text(sp, s), s != "\\".
+fstring_literal_cnext(c, l) :- fstring_literal_cont(c), node(d, c, _, _, _), node_line_number(c, l0), node_end_line_number(c, le), document_line(d, sp), line_number(sp, l), l > l0, l <= le,
+    line_text(sp, s), s != "\\".
 .decl fstring_literal_cnext_later(c: node, l: number)
 fstring_literal_cnext_later(c, l) :- fstring_literal_cnext(c, l), fstring_literal_cnext(c, k), k < l.
-fstring_literal_item0(n, o, l) :- fstring_literal_content(n, c), !fstring_literal_cont(c), node(_, c, _, o, _), line(c, l).
+fstring_literal_item0(n, o, l) :- fstring_literal_content(n, c), !fstring_literal_cont(c), node(_, c, _, o, _), node_line_number(c, l).
 fstring_literal_item0(n, o, l) :- fstring_literal_content(n, c), fstring_literal_cnext(c, l), !fstring_literal_cnext_later(c, l), node(_, c, _, o, _).
 // Debug fields: an anonymous `=` child (W's `debug_end`).
 .decl fstring_literal_debug(f: node)
 fstring_literal_debug(f) :- node(_, f, "interpolation", _, _), token(f, _, "=", _, _).
 fstring_literal_debug(f) :- node(_, f, "format_expression", _, _), token(f, _, "=", _, _).
-fstring_literal_item0(n, o, l) :- fstring_literal_field(n, f, b, _), fstring_literal_debug(f), o = b + 1, line(f, l).
+fstring_literal_item0(n, o, l) :- fstring_literal_field(n, f, b, _), fstring_literal_debug(f), o = b + 1, node_line_number(f, l).
 // A spec's slices: after its `:` (the spec's line) and after each field (the line of the field's `}`), each
 // one holding a byte (no field starts it, the spec does not end there). Residual, blocked on a byte range's text
 // (no relation gives the text of a spec's gap between tokens, where the lexer skips `\<newline>`): a non-raw
 // slice opening with a `\<newline>` continuation, which decodes to nothing (only in a spec over several lines),
 // is placed at the slice's own line, where W's first character is on a later one.
 .decl fstring_literal_slice(n: node, a: number, l: number)
-fstring_literal_slice(n, a, l) :- fstring_literal_parsed(n), node(_, n, "format_specifier", s, _), a = s + 1, line(n, l).
-fstring_literal_slice(n, a, l) :- fstring_literal_parsed(n), node(_, n, "format_specifier", _, _), fstring_literal_field(n, f, _, a), end_line(f, l).
+fstring_literal_slice(n, a, l) :- fstring_literal_parsed(n), node(_, n, "format_specifier", s, _), a = s + 1, node_line_number(n, l).
+fstring_literal_slice(n, a, l) :- fstring_literal_parsed(n), node(_, n, "format_specifier", _, _), fstring_literal_field(n, f, _, a), node_end_line_number(f, l).
 fstring_literal_item0(n, a, l) :- fstring_literal_slice(n, a, l), node(_, n, _, _, e), a < e, !fstring_literal_field(n, _, a, _).
 // Each item's run: the first field ending after it, else the host's end.
 .decl fstring_literal_after(n: node, o: number, b: number)
@@ -207,6 +207,6 @@ violation("data-layer-render-raw-strings", "fstring-literal", "string_literal", 
 .decl template_call(c: node, f: node)
 template_call(c, f) :- node(_, c, "call", _, _), field(c, "function", f), field(c, "arguments", al), literal_first_pos(al, a), literal_str(a), literal_in_render(c).
 violation("data-layer-render-raw-strings", "template", "template_call", p, l) :-
-    template_call(c, f), literal_template_fn(f), node(d, c, _, _, _), in_scope(d), !tape_syntax_error(d), !out_scope(d), literal_gate(d), doc(d, p, _), line(c, l).
+    template_call(c, f), literal_template_fn(f), node(d, c, _, _, _), in_scope(d), !tape_syntax_error(d), !out_scope(d), literal_gate(d), doc(d, p, _), node_line_number(c, l).
 violation("data-layer-render-raw-strings", "static", "static_call", p, l) :-
-    template_call(c, f), literal_static_fn(f), node(d, c, _, _, _), in_scope(d), !tape_syntax_error(d), !out_scope(d), literal_gate(d), doc(d, p, _), line(c, l).
+    template_call(c, f), literal_static_fn(f), node(d, c, _, _, _), in_scope(d), !tape_syntax_error(d), !out_scope(d), literal_gate(d), doc(d, p, _), node_line_number(c, l).

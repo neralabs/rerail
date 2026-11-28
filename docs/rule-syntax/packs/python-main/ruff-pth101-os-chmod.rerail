@@ -11,7 +11,7 @@
 // Each rule below is one way the JSON `rule` can match.
 // Columns after `at` are the metavariables the JSON's message, anchor or `each` names: one finding per distinct row.
 // The JSON `constraints` on S are added to every rule.
-.violation PTH101(at: loc, f: node) "Use `Path(path).chmod(mode)` instead of `os.chmod(path, mode)`; leave it where the path is a file descriptor or bytes, or `dir_fd` comes through `**kwargs`."
+.violation PTH101(at: node, f: node) "Use `Path(path).chmod(mode)` instead of `os.chmod(path, mode)`; leave it where the path is a file descriptor or bytes, or `dir_fd` comes through `**kwargs`."
     suppress noqa "PTH101"
 PTH101(F, n) :- kind(n, "call"), field(n, "function", c1), pth101_callee(c1, F),
     ( kind(n, "call"), pth101_arg_no_path_1(n), unset(S)
@@ -27,7 +27,7 @@ pth101_target(n) :- (kind(n, "identifier") ; kind(n, "attribute")), sym_of(n, "o
 
 // callee(n): the JSON util `callee`, used where the JSON says `matches: "callee"`
 //   F: metavariable this relation binds for the calling rule
-.decl pth101_callee(n: node, f: loc)
+.decl pth101_callee(n: node, f: node)
 pth101_callee(n, F) :- pth101_target(n), node(_, n, _, _, _), F = n.
 pth101_callee(n, F) :- kind(n, "parenthesized_expression"), child(n, c1, _), pth101_callee(c1, F).
 
@@ -106,7 +106,7 @@ pth101_int_def(n) :- kind(n, "decorated_definition"), field(n, "definition", c2)
 
 // int_with(n): the JSON util `int-with`, used where the JSON says `matches: "int-with"`
 //   WN: metavariable of the calling rule, passed in (bound by the caller)
-.decl pth101_int_with(n: node, wn: loc)
+.decl pth101_int_with(n: node, wn: node)
 pth101_int_with(n, WN) :- pth101_demand_int_with(n, WN), kind(n, "as_pattern"), child(n, c1, _),
     child(_, c1, 0), pth101_int_initializer(c1), field(n, "alias", c2), pth101_alt_3(c2, WN).
 
@@ -283,14 +283,14 @@ pth101_tok_has_4(n) :- node_text(n, g7), !child(n, _, _),
     match("(?s)^(?:(?:.*\\W)?(?:dir_fd)(?:\\W.*)?)$", g7).
 
 // demand_int_with: the rows of int_with its callers ask for (the metavariable columns they pass in)
-.decl pth101_demand_int_with(n: node, wn: loc)
+.decl pth101_demand_int_with(n: node, wn: node)
 pth101_demand_int_with(st12, WN) :- node(_, n, _, _, _), WN = n, ref_site(n, b11), site_only(b11),
     main_form(b11, "with"), st12 = b11.
 pth101_demand_int_with(c1, WN) :- node(_, n, _, _, _), WN = n, ref_site(n, b11), site_only(b11),
     main_form(b11, "with"), st12 = b11, within(c1, st12).
 
 // demand_alt_3: the rows of alt_3 its callers ask for (the metavariable columns they pass in)
-.decl pth101_demand_alt_3(n: node, wn: loc)
+.decl pth101_demand_alt_3(n: node, wn: node)
 pth101_demand_alt_3(c2, WN) :- pth101_demand_int_with(n, WN), kind(n, "as_pattern"), child(n, c1, _),
     child(_, c1, 0), pth101_int_initializer(c1), field(n, "alias", c2).
 
@@ -301,7 +301,7 @@ pth101_alt_1(n) :- field(n, "right", c2), pth101_int_t(c2).
 
 // alt_3(n): the JSON `any`: n matches if any one of these rules does
 //   WN: metavariable of the calling rule, passed in (bound by the caller)
-.decl pth101_alt_3(n: node, wn: loc)
+.decl pth101_alt_3(n: node, wn: node)
 pth101_alt_3(n, WN) :- pth101_demand_alt_3(n, WN), text(n, t_wn1), text(WN, t_wn1), @doc(n) = @doc(WN).
 pth101_alt_3(n, WN) :- pth101_demand_alt_3(n, WN), child(n, c1, _), text(c1, t_wn2), text(WN, t_wn2), @doc(c1) = @doc(WN).
 

@@ -84,14 +84,14 @@ signed_ok() :- base_sig(s), s != "", total(t), skipped(k),
 
 // The script's three early returns, in its order; each is the whole report. A malformed file reads as missing
 // (load_baseline returns None).
-.violation missing_baseline(at: loc) "test budget baseline file not found"
+.violation missing_baseline(at: node) "test budget baseline file not found"
 missing_baseline(@place(".test-budget-baseline.json", 1)) :- !file(".test-budget-baseline.json").
 missing_baseline(@place(".test-budget-baseline.json", 1)) :- input_error(".test-budget-baseline.json", k, _),
     k != "missing".
-.violation unsigned_baseline(at: loc) "test budget baseline has no signature"
+.violation unsigned_baseline(at: node) "test budget baseline has no signature"
 unsigned_baseline(@place(".test-budget-baseline.json", 1)) :- file(".test-budget-baseline.json"),
     !input_error(".test-budget-baseline.json", _, _), count : { base_sig(s), s != "" } = 0.
-.violation invalid_signature(at: loc) "test budget baseline signature is invalid"
+.violation invalid_signature(at: node) "test budget baseline signature is invalid"
 invalid_signature(@place(".test-budget-baseline.json", 1)) :- base_sig(s), s != "", !signed_ok().
 .gate missing_baseline, unsigned_baseline, invalid_signature
 
@@ -105,7 +105,7 @@ observed(n) :- ceiling(n), count : { base_dir(_, _) } = 0.
 
 // ---- 4. the findings ---------------------------------------------------------------------------------------------
 // One code, budget_exceeded, at the baseline's first line; the message says which case.
-.violation budget_exceeded(at: loc, why: symbol) "{why}"
+.violation budget_exceeded(at: node, why: symbol) "{why}"
 // The static bound is over: the script reports this without running pytest. This rule does not read the
 // artifact, so it reports on a laptop too.
 budget_exceeded(@place(".test-budget-baseline.json", 1), why) :- static_tests(n), ceiling(c), n > c,
@@ -122,7 +122,7 @@ budget_exceeded(@place(".test-budget-baseline.json", 1), why) :- collected_total
 
 // A failed collection fails the check, as the script exits 1. Not when the static bound is already over:
 // the script would not have collected.
-.violation collection_failed(at: loc, why: symbol) "pytest collection failed: {why}"
+.violation collection_failed(at: node, why: symbol) "pytest collection failed: {why}"
 collection_failed(@place(".test-budget-baseline.json", 1), why) :-
     input_error("artifact:test_collection", "failed", why), ceiling(c), static_tests(n), n <= c.
 

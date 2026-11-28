@@ -1040,36 +1040,36 @@ spt_tail_call(c, m, w) :- spt_method(c, m, o), spt_tail(o, w).
 spt_io_call(c) :- spt_grammar_call(c).
 spt_io_call(c) :- spt_bare_callee(c, s), spt_io_bare(s).
 spt_io_call(c) :- spt_tail_call(c, m, w), spt_io_pair(w, m).
-violation("data-layer-serverplan-state-tripwires", "queue-auth-definitions", "SPT-001", p, l) :- spt_fn_name(n, s), spt_queue_auth_name(s), node(d, n, _, _, _), spt_doc(d, p), !spt_tests_path(d), line(n, l).
-violation("data-layer-serverplan-state-tripwires", "queue-auth-calls", "SPT-001", p, l) :- spt_callee(n, s), spt_queue_auth_name(s), node(d, n, _, _, _), spt_doc(d, p), !spt_tests_path(d), line(n, l).
-violation("data-layer-serverplan-state-tripwires", "terminal-hydration-definitions", "SPT-002", p, l) :- spt_fn_name(n, s), (s = "hydrate_many_post_op" ; s = "hydrate_one_post_op" ; s = "runtime_sql_conn_from_hydrator"), node(d, n, _, _, _), spt_doc(d, p), line(n, l).
-violation("data-layer-serverplan-state-tripwires", "large-column-reentry", "SPT-002", p, l) :- spt_callee(n, s), (s = "explicit_plan_execution_scope" ; s = "hydrate_many_post_op" ; s = "hydrate_one_post_op" ; s = "runtime_sql_conn_from_hydrator"), spt_in_planning(n), node(d, n, _, _, _), spt_doc(d, p), line(n, l).
-violation("data-layer-serverplan-state-tripwires", "large-column-hydration", "SPT-002", p, l) :- spt_callee(n, "convert_row_to_model"), spt_in_planning(n), spt_kwarg(n, "hydrate_large_columns", v), node(_, v, "true", _, _), node(d, n, _, _, _), spt_doc(d, p), line(n, l).
-violation("data-layer-serverplan-state-tripwires", "direct-planning-io", "SPT-003", p, l) :- spt_grammar_call(n), spt_in_planning(n), !spt_in_preprocess(n), node(d, n, _, _, _), spt_doc(d, p), line(n, l).
-violation("data-layer-serverplan-state-tripwires", "query-planning-io", "SPT-003", p, l) :- spt_tail_call(n, m, "query"), (m = "execute" ; m = "execute_async"), spt_in_planning(n), !spt_in_preprocess(n), node(d, n, _, _, _), spt_doc(d, p), !spt_tests_path(d), line(n, l).
-violation("data-layer-serverplan-state-tripwires", "preprocess-io", "SPT-011", p, l) :- spt_io_call(n), spt_in_preprocess(n), node(d, n, _, _, _), spt_doc(d, p), !spt_tests_path(d), line(n, l).
+violation("data-layer-serverplan-state-tripwires", "queue-auth-definitions", "SPT-001", p, l) :- spt_fn_name(n, s), spt_queue_auth_name(s), node(d, n, _, _, _), spt_doc(d, p), !spt_tests_path(d), node_line_number(n, l).
+violation("data-layer-serverplan-state-tripwires", "queue-auth-calls", "SPT-001", p, l) :- spt_callee(n, s), spt_queue_auth_name(s), node(d, n, _, _, _), spt_doc(d, p), !spt_tests_path(d), node_line_number(n, l).
+violation("data-layer-serverplan-state-tripwires", "terminal-hydration-definitions", "SPT-002", p, l) :- spt_fn_name(n, s), (s = "hydrate_many_post_op" ; s = "hydrate_one_post_op" ; s = "runtime_sql_conn_from_hydrator"), node(d, n, _, _, _), spt_doc(d, p), node_line_number(n, l).
+violation("data-layer-serverplan-state-tripwires", "large-column-reentry", "SPT-002", p, l) :- spt_callee(n, s), (s = "explicit_plan_execution_scope" ; s = "hydrate_many_post_op" ; s = "hydrate_one_post_op" ; s = "runtime_sql_conn_from_hydrator"), spt_in_planning(n), node(d, n, _, _, _), spt_doc(d, p), node_line_number(n, l).
+violation("data-layer-serverplan-state-tripwires", "large-column-hydration", "SPT-002", p, l) :- spt_callee(n, "convert_row_to_model"), spt_in_planning(n), spt_kwarg(n, "hydrate_large_columns", v), node(_, v, "true", _, _), node(d, n, _, _, _), spt_doc(d, p), node_line_number(n, l).
+violation("data-layer-serverplan-state-tripwires", "direct-planning-io", "SPT-003", p, l) :- spt_grammar_call(n), spt_in_planning(n), !spt_in_preprocess(n), node(d, n, _, _, _), spt_doc(d, p), node_line_number(n, l).
+violation("data-layer-serverplan-state-tripwires", "query-planning-io", "SPT-003", p, l) :- spt_tail_call(n, m, "query"), (m = "execute" ; m = "execute_async"), spt_in_planning(n), !spt_in_preprocess(n), node(d, n, _, _, _), spt_doc(d, p), !spt_tests_path(d), node_line_number(n, l).
+violation("data-layer-serverplan-state-tripwires", "preprocess-io", "SPT-011", p, l) :- spt_io_call(n), spt_in_preprocess(n), node(d, n, _, _, _), spt_doc(d, p), !spt_tests_path(d), node_line_number(n, l).
 spt_provider_fn(f) :- spt_fn_name(f, s), (contains("component", s) ; contains("score", s)), node(d, f, _, _, _), doc(d, "impl/common/l2070_server_plan/backend_profiles.py", _).
-violation("data-layer-serverplan-state-tripwires", "provider-io", "SPT-019", p, l) :- spt_io_call(n), inside(n, f, spt_fdef), spt_provider_fn(f), node(d, n, _, _, _), spt_doc(d, p), !spt_tests_path(d), line(n, l).
-violation("data-layer-serverplan-state-tripwires", "nested-plan-execution", "SPT-005", p, l) :- spt_callee(n, s), (s = "execute_runtime_nested_steps_async" ; s = "execute_runtime_nested_steps_sync"), spt_in_planning(n), node(d, n, _, _, _), spt_doc(d, p), line(n, l).
-violation("data-layer-serverplan-state-tripwires", "executor-plan-execution", "SPT-005", p, l) :- spt_tail_call(n, m, w), (m = "execute" ; m = "execute_async"), (w = "PlanExecutor" ; w = "executor"), spt_in_planning(n), node(d, n, _, _, _), spt_doc(d, p), !spt_tests_path(d), line(n, l).
-violation("data-layer-serverplan-state-tripwires", "materialized-pipeline", "SPT-012", p, l) :- node(d, n, "attribute", _, _), field(n, "attribute", a), node(_, a, "identifier", _, _), text(a, "materialized_pipeline"), spt_in_planning(n), spt_doc(d, p), line(n, l).
+violation("data-layer-serverplan-state-tripwires", "provider-io", "SPT-019", p, l) :- spt_io_call(n), inside(n, f, spt_fdef), spt_provider_fn(f), node(d, n, _, _, _), spt_doc(d, p), !spt_tests_path(d), node_line_number(n, l).
+violation("data-layer-serverplan-state-tripwires", "nested-plan-execution", "SPT-005", p, l) :- spt_callee(n, s), (s = "execute_runtime_nested_steps_async" ; s = "execute_runtime_nested_steps_sync"), spt_in_planning(n), node(d, n, _, _, _), spt_doc(d, p), node_line_number(n, l).
+violation("data-layer-serverplan-state-tripwires", "executor-plan-execution", "SPT-005", p, l) :- spt_tail_call(n, m, w), (m = "execute" ; m = "execute_async"), (w = "PlanExecutor" ; w = "executor"), spt_in_planning(n), node(d, n, _, _, _), spt_doc(d, p), !spt_tests_path(d), node_line_number(n, l).
+violation("data-layer-serverplan-state-tripwires", "materialized-pipeline", "SPT-012", p, l) :- node(d, n, "attribute", _, _), field(n, "attribute", a), node(_, a, "identifier", _, _), text(a, "materialized_pipeline"), spt_in_planning(n), spt_doc(d, p), node_line_number(n, l).
 spt_ctx_builder_fn(f) :- spt_fn_name(f, s), suffix("sql_builder", s), field(f, "parameters", ps), child(ps, q, _), node(_, q, k, _, _), spt_typed_param_kind(k), field(q, "type", t), node(_, i, "identifier", _, _), text(i, "CompilationContext"), inside(i, t, spt_type_kind).
 spt_ctx_scope(n) :- spt_in_planning(n).
 spt_ctx_scope(n) :- inside(n, f, spt_fdef), spt_ctx_builder_fn(f).
-violation("data-layer-serverplan-state-tripwires", "context-authority", "SPT-020", p, l) :- node(d, n, "attribute", _, _), field(n, "object", o), node(_, o, "identifier", _, _), text(o, "ctx"), field(n, "attribute", a), node(_, a, "identifier", _, _), text(a, s), (s = "materialized_pipeline" ; s = "sql_connection" ; s = "txn"), spt_ctx_scope(n), spt_doc(d, p), !spt_tests_path(d), line(n, l).
+violation("data-layer-serverplan-state-tripwires", "context-authority", "SPT-020", p, l) :- node(d, n, "attribute", _, _), field(n, "object", o), node(_, o, "identifier", _, _), text(o, "ctx"), field(n, "attribute", a), node(_, a, "identifier", _, _), text(a, s), (s = "materialized_pipeline" ; s = "sql_connection" ; s = "txn"), spt_ctx_scope(n), spt_doc(d, p), !spt_tests_path(d), node_line_number(n, l).
 spt_resolved_object(o) :- spt_named(o, s), (s = "resolved" ; s = "resolved_refs").
 spt_resolved_object(o) :- node(_, o, k, _, _), k != "identifier", k != "attribute", node_text(o, s), contains("resolved", s).
-violation("data-layer-serverplan-state-tripwires", "resolved-ref-access", "SPT-010", p, l) :- spt_method(n, m, o), (m = "get" ; m = "peek" ; m = "resolve_server_ref"), spt_resolved_object(o), spt_in_planning(n), node(d, n, _, _, _), spt_doc(d, p), line(n, l).
-violation("data-layer-serverplan-state-tripwires", "production-ir-class", "SPT-006", p, l) :- node(d, n, "class_definition", _, _), field(n, "name", x), !text(x, "SqlStepIR"), field(n, "superclasses", bs), spt_named(b, s), spt_ir_base_name(s), inside(b, bs, spt_arglist_kind), spt_doc(d, p), !spt_tests_path(d), line(n, l).
+violation("data-layer-serverplan-state-tripwires", "resolved-ref-access", "SPT-010", p, l) :- spt_method(n, m, o), (m = "get" ; m = "peek" ; m = "resolve_server_ref"), spt_resolved_object(o), spt_in_planning(n), node(d, n, _, _, _), spt_doc(d, p), node_line_number(n, l).
+violation("data-layer-serverplan-state-tripwires", "production-ir-class", "SPT-006", p, l) :- node(d, n, "class_definition", _, _), field(n, "name", x), !text(x, "SqlStepIR"), field(n, "superclasses", bs), spt_named(b, s), spt_ir_base_name(s), inside(b, bs, spt_arglist_kind), spt_doc(d, p), !spt_tests_path(d), node_line_number(n, l).
 spt_ir_ident(n) :- node(_, n, "identifier", _, _), text(n, s), glob("[A-Za-z_]*IR", s), s != "SqlStepIR".
-violation("data-layer-serverplan-state-tripwires", "production-ir-construction", "SPT-006", p, l) :- node(d, n, "call", _, _), field(n, "function", f), spt_ir_ident(f), spt_doc(d, p), !spt_tests_path(d), line(n, l).
-violation("data-layer-serverplan-state-tripwires", "production-ir-construction", "SPT-006", p, l) :- node(d, n, "call", _, _), field(n, "function", f), node(_, f, "attribute", _, _), field(f, "attribute", a), spt_ir_ident(a), spt_doc(d, p), !spt_tests_path(d), line(n, l).
-violation("data-layer-serverplan-state-tripwires", "compiled-ir-value", "SPT-006", p, l) :- spt_callee(n, "CompiledStep"), spt_kwarg(n, "ir", v), !spt_callee(v, "SqlStepIR"), node(d, n, _, _, _), spt_doc(d, p), !spt_tests_path(d), line(n, l).
-violation("data-layer-serverplan-state-tripwires", "test-only-acknowledgement", "SPT-006", p, l) :- spt_kwarg_name(n, "tripwire_acknowledged_test_only"), node(d, n, _, _, _), spt_doc(d, p), !spt_tests_path(d), line(n, l).
-violation("data-layer-serverplan-state-tripwires", "executor-ir-dispatch", "SPT-006", p, l) :- spt_callee(n, "isinstance"), node(d, n, _, _, _), spt_doc(d, p), (p = "impl/common/l2070_server_plan/sql_backend_executor.py" ; p = "l2070_batching/executor.py"), field(n, "arguments", args), child(args, a, 1), spt_ir_ident(a), line(n, l).
-violation("data-layer-serverplan-state-tripwires", "executor-ir-dispatch", "SPT-006", p, l) :- spt_callee(n, "isinstance"), node(d, n, _, _, _), spt_doc(d, p), (p = "impl/common/l2070_server_plan/sql_backend_executor.py" ; p = "l2070_batching/executor.py"), field(n, "arguments", args), child(args, a, 1), node(d, a, _, a0, a1), spt_ir_ident(x), node(d, x, _, xs, xe), x != a, xs >= a0, xe <= a1, line(n, l).
+violation("data-layer-serverplan-state-tripwires", "production-ir-construction", "SPT-006", p, l) :- node(d, n, "call", _, _), field(n, "function", f), spt_ir_ident(f), spt_doc(d, p), !spt_tests_path(d), node_line_number(n, l).
+violation("data-layer-serverplan-state-tripwires", "production-ir-construction", "SPT-006", p, l) :- node(d, n, "call", _, _), field(n, "function", f), node(_, f, "attribute", _, _), field(f, "attribute", a), spt_ir_ident(a), spt_doc(d, p), !spt_tests_path(d), node_line_number(n, l).
+violation("data-layer-serverplan-state-tripwires", "compiled-ir-value", "SPT-006", p, l) :- spt_callee(n, "CompiledStep"), spt_kwarg(n, "ir", v), !spt_callee(v, "SqlStepIR"), node(d, n, _, _, _), spt_doc(d, p), !spt_tests_path(d), node_line_number(n, l).
+violation("data-layer-serverplan-state-tripwires", "test-only-acknowledgement", "SPT-006", p, l) :- spt_kwarg_name(n, "tripwire_acknowledged_test_only"), node(d, n, _, _, _), spt_doc(d, p), !spt_tests_path(d), node_line_number(n, l).
+violation("data-layer-serverplan-state-tripwires", "executor-ir-dispatch", "SPT-006", p, l) :- spt_callee(n, "isinstance"), node(d, n, _, _, _), spt_doc(d, p), (p = "impl/common/l2070_server_plan/sql_backend_executor.py" ; p = "l2070_batching/executor.py"), field(n, "arguments", args), child(args, a, 1), spt_ir_ident(a), node_line_number(n, l).
+violation("data-layer-serverplan-state-tripwires", "executor-ir-dispatch", "SPT-006", p, l) :- spt_callee(n, "isinstance"), node(d, n, _, _, _), spt_doc(d, p), (p = "impl/common/l2070_server_plan/sql_backend_executor.py" ; p = "l2070_batching/executor.py"), field(n, "arguments", args), child(args, a, 1), node(d, a, _, a0, a1), spt_ir_ident(x), node(d, x, _, xs, xe), x != a, xs >= a0, xe <= a1, node_line_number(n, l).
 spt_step_aware_fn(f) :- node(_, f, "function_definition", _, _), field(f, "body", b), inside(c, b, spt_block_kind), spt_callee(c, s), (s = "in_server_plan_execution" ; s = "in_server_plan_step_execution").
-violation("data-layer-serverplan-state-tripwires", "step-aware-eager-helper", "SPT-025", p, l) :- spt_grammar_call(n), node(d, n, _, _, _), spt_doc(d, p), prefix("impl/common/l5150_fts_polyfill/searcher/", p), nearest(n, f, spt_fdef), spt_step_aware_fn(f), !spt_tests_path(d), line(n, l).
+violation("data-layer-serverplan-state-tripwires", "step-aware-eager-helper", "SPT-025", p, l) :- spt_grammar_call(n), node(d, n, _, _, _), spt_doc(d, p), prefix("impl/common/l5150_fts_polyfill/searcher/", p), nearest(n, f, spt_fdef), spt_step_aware_fn(f), !spt_tests_path(d), node_line_number(n, l).
 spt_gid_loose(t) :- node(_, i, "identifier", _, _), text(i, s), (s = "Any" ; s = "LazyResult" ; s = "object" ; s = "str"), inside(i, t, spt_type_kind).
 spt_gid_server_ref(t) :- node(_, i, "identifier", _, _), text(i, s), suffix("ServerRef", s), inside(i, t, spt_type_kind).
 spt_gid_type(t) :- spt_gid_loose(t).
@@ -1078,13 +1078,13 @@ spt_gid_config(c) :- node(_, c, "class_definition", _, _), field(c, "name", x), 
 spt_gid_config(c) :- node(d, c, "class_definition", _, _), field(c, "name", x), text(x, s), contains("Graph", s), suffix("Config", s), doc(d, p, _), contains("graph_read", p).
 spt_gid_dataclass(c) :- child(w, c, _), node(_, w, "decorated_definition", _, _), child(w, dec, _), node(_, dec, "decorator", _, _), child(dec, x, _), spt_named(x, "dataclass").
 spt_gid_dataclass(c) :- child(w, c, _), node(_, w, "decorated_definition", _, _), child(w, dec, _), node(_, dec, "decorator", _, _), child(dec, x, _), spt_callee(x, "dataclass").
-violation("data-layer-serverplan-state-tripwires", "graph-id-config", "SPT-032", p, l) :- node(d, n, "assignment", _, _), field(n, "left", x), node(_, x, "identifier", _, _), text(x, s), contains("graph_id", s), field(n, "type", t), spt_gid_type(t), nearest(n, c, spt_gid_stop), spt_gid_config(c), spt_gid_dataclass(c), spt_doc(d, p), line(n, l).
-violation("data-layer-serverplan-state-tripwires", "legacy-preop", "SPT-008", p, l) :- spt_callee(n, "CompiledStep"), spt_kwarg_name(n, k), (k = "async_pre_op" ; k = "pre_op"), node(d, n, _, _, _), spt_doc(d, p), !spt_tests_path(d), line(n, l).
-violation("data-layer-serverplan-state-tripwires", "mcp-default-graph", "SPT-034", p, l) :- spt_callee(n, "resolve_defaults"), nearest(n, f, spt_fdef), spt_fn_name(f, s), (s = "_get_neighbors" ; s = "_get_overview" ; s = "_traverse"), node(d, n, _, _, _), spt_doc(d, p), line(n, l).
+violation("data-layer-serverplan-state-tripwires", "graph-id-config", "SPT-032", p, l) :- node(d, n, "assignment", _, _), field(n, "left", x), node(_, x, "identifier", _, _), text(x, s), contains("graph_id", s), field(n, "type", t), spt_gid_type(t), nearest(n, c, spt_gid_stop), spt_gid_config(c), spt_gid_dataclass(c), spt_doc(d, p), node_line_number(n, l).
+violation("data-layer-serverplan-state-tripwires", "legacy-preop", "SPT-008", p, l) :- spt_callee(n, "CompiledStep"), spt_kwarg_name(n, k), (k = "async_pre_op" ; k = "pre_op"), node(d, n, _, _, _), spt_doc(d, p), !spt_tests_path(d), node_line_number(n, l).
+violation("data-layer-serverplan-state-tripwires", "mcp-default-graph", "SPT-034", p, l) :- spt_callee(n, "resolve_defaults"), nearest(n, f, spt_fdef), spt_fn_name(f, s), (s = "_get_neighbors" ; s = "_get_overview" ; s = "_traverse"), node(d, n, _, _, _), spt_doc(d, p), node_line_number(n, l).
 spt_graph_chain(n) :- spt_callee(n, "graph_query_builder_lazy").
 spt_graph_chain(n) :- node(_, n, "attribute", _, _), field(n, "object", o), spt_graph_chain(o).
 spt_graph_chain(n) :- node(_, n, "call", _, _), field(n, "function", f), spt_graph_chain(f).
-violation("data-layer-serverplan-state-tripwires", "graph-terminal-chain", "SPT-031", p, l) :- spt_method(n, m, o), spt_lazy_terminal(m), spt_graph_chain(o), node(d, n, _, _, _), spt_doc(d, p), line(n, l).
+violation("data-layer-serverplan-state-tripwires", "graph-terminal-chain", "SPT-031", p, l) :- spt_method(n, m, o), spt_lazy_terminal(m), spt_graph_chain(o), node(d, n, _, _, _), spt_doc(d, p), node_line_number(n, l).
 spt_lct_mark(n) :- spt_callee(n, s), spt_lazy_terminal(s).
 spt_lct_mark(n) :- spt_callee(n, s), (s = "LazyBuilderContext" ; s = "_add_intent" ; s = "_add_intent_by_ref" ; s = "_get_lazy_plan").
 spt_lct_mark(n) :- node(_, n, "attribute", _, _), field(n, "attribute", a), node(_, a, "identifier", _, _), text(a, "_step_ref_id").
@@ -1095,20 +1095,20 @@ spt_lct_arg(a) :- spt_lct_positional(_, a).
 spt_lct_arg(v) :- spt_lct_keyword(_, v).
 spt_lct_positional(c, a) :- spt_lct_call(c), field(c, "arguments", args), child(args, a, i), i != 0, !node(_, a, "keyword_argument", _, _).
 spt_lct_keyword(c, v) :- spt_lct_call(c), spt_kwarg(c, k, v), (k = "callback" ; k = "fn" ; k = "func" ; k = "transform").
-violation("data-layer-serverplan-state-tripwires", "lazy-callback-terminal", "SPT-030", p, l) :- spt_lct_positional(n, a), spt_lct_holds(a), node(d, n, _, _, _), spt_doc(d, p), line(n, l).
-violation("data-layer-serverplan-state-tripwires", "lazy-callback-terminal", "SPT-030", p, l) :- spt_lct_keyword(n, v), spt_lct_holds(v), node(d, n, _, _, _), spt_doc(d, p), line(n, l).
-violation("data-layer-serverplan-state-tripwires", "queue-udf-symbols", "SPT-004", p, l) :- node(d, n, k, _, _), spt_string_kind(k), value(n, v), (v = "nera_current_queue_token" ; v = "nera_is_authorized_queue_token"), spt_doc(d, p), !spt_tests_path(d), line(n, l).
+violation("data-layer-serverplan-state-tripwires", "lazy-callback-terminal", "SPT-030", p, l) :- spt_lct_positional(n, a), spt_lct_holds(a), node(d, n, _, _, _), spt_doc(d, p), node_line_number(n, l).
+violation("data-layer-serverplan-state-tripwires", "lazy-callback-terminal", "SPT-030", p, l) :- spt_lct_keyword(n, v), spt_lct_holds(v), node(d, n, _, _, _), spt_doc(d, p), node_line_number(n, l).
+violation("data-layer-serverplan-state-tripwires", "queue-udf-symbols", "SPT-004", p, l) :- node(d, n, k, _, _), spt_string_kind(k), value(n, v), (v = "nera_current_queue_token" ; v = "nera_is_authorized_queue_token"), spt_doc(d, p), !spt_tests_path(d), node_line_number(n, l).
 spt_ddl_mark(n) :- node(_, n, "string", _, _), value(n, v), match("(?i)\\s*(?:CREATE|ALTER|DROP)\\b(?s:.*)", v).
 spt_ddl_mark(n) :- spt_callee(n, s), (prefix("SqlCreate", s) ; prefix("SqlAlter", s) ; prefix("SqlDrop", s)).
 spt_ddl_arg(c) :- field(c, "arguments", args), child(args, a, 0), spt_ddl_mark(a).
 spt_ddl_arg(c) :- field(c, "arguments", args), child(args, a, 0), node(d, a, _, a0, a1), spt_ddl_mark(x), node(d, x, _, xs, xe), x != a, xs >= a0, xe <= a1.
-violation("data-layer-serverplan-state-tripwires", "serverplan-ddl", "SPT-009", p, l) :- spt_callee(n, s), (s = "ddl_effect_lazy" ; s = "grammar_effect_lazy"), prefix("ddl_", s), node(d, n, _, _, _), spt_doc(d, p), !spt_tests_path(d), line(n, l).
-violation("data-layer-serverplan-state-tripwires", "serverplan-ddl", "SPT-009", p, l) :- spt_callee(n, s), (s = "ddl_effect_lazy" ; s = "grammar_effect_lazy"), spt_ddl_arg(n), node(d, n, _, _, _), spt_doc(d, p), !spt_tests_path(d), line(n, l).
+violation("data-layer-serverplan-state-tripwires", "serverplan-ddl", "SPT-009", p, l) :- spt_callee(n, s), (s = "ddl_effect_lazy" ; s = "grammar_effect_lazy"), prefix("ddl_", s), node(d, n, _, _, _), spt_doc(d, p), !spt_tests_path(d), node_line_number(n, l).
+violation("data-layer-serverplan-state-tripwires", "serverplan-ddl", "SPT-009", p, l) :- spt_callee(n, s), (s = "ddl_effect_lazy" ; s = "grammar_effect_lazy"), spt_ddl_arg(n), node(d, n, _, _, _), spt_doc(d, p), !spt_tests_path(d), node_line_number(n, l).
 spt_plr_file(d) :- doc(d, p, _), (suffix("l9900_auto_api/graph_read_core.py", p) ; suffix("l7200_versioned_transactions/graph_lazy_sql.py", p) ; suffix("impl/common/l2070_server_plan/steps/intent_graph.py", p) ; suffix("impl/common/l9700_sql_graph_query/sql_graph_query_builder.py", p) ; suffix("l9700_graph_query/graph_pattern.py", p) ; suffix("impl/common/l2100_sql_grammar/domain/graph/graph_select_conditions.py", p)).
 spt_plr_call(c) :- spt_callee(c, "_lazy_result_step_ref_id").
 spt_plr_call(c) :- spt_method(c, "_step_ref_id", _).
 spt_plr_call(c) :- spt_bare_callee(c, "getattr"), field(c, "arguments", args), child(args, a, 1), node(_, a, k, _, _), spt_string_kind(k), value(a, "_step_ref_id").
-violation("data-layer-serverplan-state-tripwires", "private-lazy-ref", "SPT-033", p, l) :- spt_plr_call(n), node(d, n, _, _, _), spt_plr_file(d), spt_doc(d, p), line(n, l).
+violation("data-layer-serverplan-state-tripwires", "private-lazy-ref", "SPT-033", p, l) :- spt_plr_call(n), node(d, n, _, _, _), spt_plr_file(d), spt_doc(d, p), node_line_number(n, l).
 spt_pr_scope_name(f) :- node(_, f, k, _, _), spt_pr_def_kind(k), field(f, "name", x), text(x, s), (contains("alias", s) ; contains("extract", s) ; contains("project", s) ; contains("tuple", s)).
 spt_pr_file(d) :- spt_doc(d, p), (contains("auto_api", p) ; contains("lazy_orm", p) ; contains("query_builder", p)), !spt_tests_path(d), node(d, m, "module", _, _), node_text(m, s), (contains("evaluate", s) ; contains("execute", s) ; contains("resolve", s)), (contains("alias", s) ; contains("extract", s) ; contains("project", s) ; contains("tuple", s)), node(d, f, _, _, _), spt_pr_scope_name(f).
 spt_pr_recovery_call(c) :- spt_callee(c, s), (s = "evaluate" ; s = "execute" ; s = "execute_async" ; s = "resolve" ; s = "resolve_async").
@@ -1127,12 +1127,12 @@ spt_pr_atom_in(c) :- spt_pr_candidate(c), spt_pr_in_condition(x, c), spt_pr_atom
 spt_pr_row_constant(d, s) :- node(d, a, "assignment", _, _), spt_pr_file(d), child(e, a, _), node(_, e, "expression_statement", _, _), child(m, e, _), node(_, m, "module", _, _), field(a, "left", x), node(_, x, "identifier", _, _), text(x, s), field(a, "right", r), spt_pr_row_string(r).
 spt_pr_named_constant(c) :- spt_pr_candidate(c), spt_pr_in_condition(x, c), node(d, x, "identifier", _, _), text(x, s), spt_pr_row_constant(d, s).
 spt_pr_alternative(c) :- spt_pr_candidate(c), child(c, a, _), node(_, a, k, _, _), spt_pr_else_kind(k), spt_pr_has_recovery(a).
-spt_pr_later_recovery(c) :- spt_pr_candidate(c), line(c, cl), nearest(c, f, spt_fdef), field(f, "body", b), child(b, s, _), spt_pr_has_recovery(s), line(s, sl), sl > cl.
+spt_pr_later_recovery(c) :- spt_pr_candidate(c), node_line_number(c, cl), nearest(c, f, spt_fdef), field(f, "body", b), child(b, s, _), spt_pr_has_recovery(s), node_line_number(s, sl), sl > cl.
 spt_pr_local(c) :- spt_pr_atom_in(c).
 spt_pr_local(c) :- spt_pr_named_constant(c).
 spt_pr_recovered(c) :- spt_pr_alternative(c).
 spt_pr_recovered(c) :- spt_pr_later_recovery(c).
-violation("data-layer-serverplan-state-tripwires", "state-projection-recovery", "SPT-029", p, l) :- spt_pr_candidate(n), spt_pr_local(n), spt_pr_recovered(n), node(d, n, _, _, _), spt_doc(d, p), line(n, l).
+violation("data-layer-serverplan-state-tripwires", "state-projection-recovery", "SPT-029", p, l) :- spt_pr_candidate(n), spt_pr_local(n), spt_pr_recovered(n), node(d, n, _, _, _), spt_doc(d, p), node_line_number(n, l).
 spt_sig_source(d) :- node(d, c, "class_definition", _, _), field(c, "superclasses", s), child(s, x, _), node(d, x, k, _, _), k != "keyword_argument", node_text(x, t), match("(?s:.*)(?:ServerPlanStep|IntentStep)(?s:.*)", t).
 spt_sig_source(d) :- node(d, c, "class_definition", _, _), field(c, "superclasses", s), child(s, x, _), node(d, x, k, _, _), spt_sig_string_kind(k), value(x, v), match("(?s:.*)(?:ServerPlanStep|IntentStep)(?s:.*)", v).
 spt_sig_source(d) :- node(d, c, "class_definition", _, _), field(c, "superclasses", s), token(s, _, t, _, _), prefix("#", t), match("(?s:.*)(?:ServerPlanStep|IntentStep)(?s:.*)", t).
@@ -1217,13 +1217,13 @@ spt_sig_shape(d, m, is, ie) :- spt_sig_shape(d, m, s, e), spt_sig_assign(d, a, m
 spt_sig_shape_branch(d, b) :- spt_sig_branch(d, b, m, ts, te), spt_sig_method(d, m, _, "lower"), spt_sig_shape(d, m, s, e), s >= ts, e <= te.
 spt_sig_config_param(p) :- spt_sig_sp(d, p, _, "config", _, _, _), spt_sig_sp_head(p, h), spt_sig_dc_named(d, h).
 spt_sig_alias_name(p) :- spt_sig_sp(_, p, _, s, _, _, _), match("(?s:.*)[aA][lL][iI][aA][sS](?s:.*)", s).
-violation("data-layer-serverplan-state-tripwires", "state-signatures", "SPT-015", p, l) :- spt_sig_sp(d, n, _, _, _, _, _), spt_sig_sp_named(n), spt_sig_sp_rb(n), !spt_sig_config_param(n), spt_sig_doc(d, p), line(n, l).
-violation("data-layer-serverplan-state-tripwires", "state-signatures", "SPT-016", p, l) :- spt_sig_sp_ctor(n), spt_sig_sp(d, n, "default_parameter", _, _, _, _), spt_sig_doc(d, p), line(n, l).
-violation("data-layer-serverplan-state-tripwires", "state-signatures", "SPT-016", p, l) :- spt_sig_sp_ctor(n), spt_sig_sp(d, n, "typed_default_parameter", _, _, _, _), spt_sig_doc(d, p), line(n, l).
-violation("data-layer-serverplan-state-tripwires", "state-signatures", "SPT-017", p, l) :- spt_sig_sp_ctor(n), !spt_sig_allowed(n), spt_sig_sp(d, n, _, _, _, _, _), spt_sig_doc(d, p), line(n, l).
-violation("data-layer-serverplan-state-tripwires", "state-signatures", "SPT-013", p, l) :- spt_sig_sp(d, n, _, s, _, "__init__", _), s != "self", spt_sig_sp_sr(n), spt_sig_sp_un(n), spt_sig_doc(d, p), line(n, l).
-violation("data-layer-serverplan-state-tripwires", "state-signatures", "SPT-014", p, l) :- spt_sig_sp(d, n, _, s, _, "__init__", _), s != "self", match("(?s:.*)[tT][aA][bB][lL][eE](?s:.*)", s), !spt_sig_alias_name(n), spt_sig_sp_hs(n), spt_sig_doc(d, p), line(n, l).
-violation("data-layer-serverplan-state-tripwires", "state-signatures", "SPT-018", p, l) :- spt_sig_shape_branch(d, b), spt_sig_doc(d, p), line(b, l).
+violation("data-layer-serverplan-state-tripwires", "state-signatures", "SPT-015", p, l) :- spt_sig_sp(d, n, _, _, _, _, _), spt_sig_sp_named(n), spt_sig_sp_rb(n), !spt_sig_config_param(n), spt_sig_doc(d, p), node_line_number(n, l).
+violation("data-layer-serverplan-state-tripwires", "state-signatures", "SPT-016", p, l) :- spt_sig_sp_ctor(n), spt_sig_sp(d, n, "default_parameter", _, _, _, _), spt_sig_doc(d, p), node_line_number(n, l).
+violation("data-layer-serverplan-state-tripwires", "state-signatures", "SPT-016", p, l) :- spt_sig_sp_ctor(n), spt_sig_sp(d, n, "typed_default_parameter", _, _, _, _), spt_sig_doc(d, p), node_line_number(n, l).
+violation("data-layer-serverplan-state-tripwires", "state-signatures", "SPT-017", p, l) :- spt_sig_sp_ctor(n), !spt_sig_allowed(n), spt_sig_sp(d, n, _, _, _, _, _), spt_sig_doc(d, p), node_line_number(n, l).
+violation("data-layer-serverplan-state-tripwires", "state-signatures", "SPT-013", p, l) :- spt_sig_sp(d, n, _, s, _, "__init__", _), s != "self", spt_sig_sp_sr(n), spt_sig_sp_un(n), spt_sig_doc(d, p), node_line_number(n, l).
+violation("data-layer-serverplan-state-tripwires", "state-signatures", "SPT-014", p, l) :- spt_sig_sp(d, n, _, s, _, "__init__", _), s != "self", match("(?s:.*)[tT][aA][bB][lL][eE](?s:.*)", s), !spt_sig_alias_name(n), spt_sig_sp_hs(n), spt_sig_doc(d, p), node_line_number(n, l).
+violation("data-layer-serverplan-state-tripwires", "state-signatures", "SPT-018", p, l) :- spt_sig_shape_branch(d, b), spt_sig_doc(d, p), node_line_number(b, l).
 spt_flow_opt("entryPoint", v) :- option_value("entryPoint", v).
 spt_flow_opt("oracleAnalyzer", "true") :- option_on("oracleAnalyzer").
 spt_flow_opt("oracleAnalyzer", "false") :- spt_flow_digit(0), !option_on("oracleAnalyzer").
@@ -1620,7 +1620,7 @@ spt_flow_hit(d, "SPT-012", n) :- spt_flow_sattr(d, f, n, "call", "context", "mat
 spt_flow_hit(d, "SPT-023", n) :- spt_flow_call(d, n, _, _), spt_flow_callee(n, "convert_row_to_model"), !spt_tests_path(d), node(d, n, _, ns, ne), spt_flow_fn(d, nf, fs, fe, _), fs <= ns, fe >= ne, spt_flow_param(d, nf, _, x), spt_flow_cbparam(d, of, x, _, _), spt_flow_ctx(d, of, os, oe, _), fs > os, fe <= oe.
 spt_flow_hit(d, "SPT-028", n) :- spt_flow_sps(1), spt_flow_planning(f), spt_flow_ps(d, f, "builder", n), !spt_flow_pk_sink(d, f, "semantic").
 spt_flow_pk_sink(d, f, k) :- spt_flow_ps(d, f, k, _).
-violation("data-layer-serverplan-state-tripwires", "state-flow-narrow", code, p, l) :- spt_flow_hit(d, code, n), spt_doc(d, p), line(n, l).
+violation("data-layer-serverplan-state-tripwires", "state-flow-narrow", code, p, l) :- spt_flow_hit(d, code, n), spt_doc(d, p), node_line_number(n, l).
 rr_demand_agg_rr_agg17(d, f, k) :- spt_flow_tcand(d, f, k, _, _, _).
 rr_demand_agg_rr_agg18(d, f, k, l, p) :- spt_flow_plprio(d, f, k, l, p), spt_flow_pl(d, f, k, l, p, n), node(d, n, _, s, _).
 rr_demand_agg_rr_agg3(q) :- spt_flow_juq(q).

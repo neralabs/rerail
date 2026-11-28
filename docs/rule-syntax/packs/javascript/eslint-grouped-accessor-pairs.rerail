@@ -14,7 +14,7 @@
 //   ({ set a(v) {}, get a() {} })          with getBeforeSet → Expected getter 'a' to be before setter 'a'.
 // enforceForTSTypes: also object types and interfaces. A property with two getters or two setters is skipped.
 // Reported at the latter of the two.
-.violation grouped_accessor_pairs(at: loc, msg: symbol) code "grouped-accessor-pairs" "{msg}"
+.violation grouped_accessor_pairs(at: place, msg: symbol) code "grouped-accessor-pairs" "{msg}"
     suppress eslint "grouped-accessor-pairs"
     suppress oxlint "grouped-accessor-pairs"
     suppress biome "lint/style/useGroupedAccessorPairs"

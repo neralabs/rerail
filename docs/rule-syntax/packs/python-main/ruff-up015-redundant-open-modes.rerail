@@ -21,7 +21,7 @@ up015_plain_string(n) :- kind(n, "concatenated_string"),
 
 // open_call(n): the JSON util `open-call`, used where the JSON says `matches: "open-call"`
 //   M: metavariable this relation binds for the calling rule
-.decl up015_open_call(n: node, m: loc)
+.decl up015_open_call(n: node, m: node)
 up015_open_call(n, M) :- kind(n, "call"), field(n, "function", c1), up015_callee(c1),
     up015_arg_mode_1(n, a2), M = a2.
 
@@ -64,7 +64,7 @@ up015_mode_after_continued_comma(n) :- child(p1, n, _), up015_counted_2(n),
 // `detail`: each rule's head gives its clause's words. Each rule is one way a JSON `rule` can match.
 // Columns after `at` are the metavariables the JSON's message, anchor or `each` names: one finding per distinct row.
 // The JSON `constraints` on M are added to every rule.
-.violation UP015(at: loc, s: node, detail: symbol) "{detail}."
+.violation UP015(at: node, s: node, detail: symbol) "{detail}."
     suppress noqa "UP015"
 UP015(S, n, "Remove this mode argument; open() reads text by default, so `r`, `t` and `U` add nothing") :- kind(n, "call"),
     field(n, "function", c1), up015_callee(c1), up015_arg_mode_1(n, a2), M = a2,
@@ -83,37 +83,37 @@ UP015(S, n, "Drop the redundant flags from this mode: `t` and `U` always, and `r
 
 // mode_only_redundant_site(n): the JSON util `mode-only-redundant-site`, used where the JSON says `matches: "mode-only-redundant-site"`
 //   S: metavariable this relation binds for the calling rule
-.decl up015_mode_only_redundant_site(n: node, s: loc)
+.decl up015_mode_only_redundant_site(n: node, s: node)
 up015_mode_only_redundant_site(n, S) :- up015_empty_mode(n), node(_, n, _, _, _), S = n.
 up015_mode_only_redundant_site(n, S) :- kind(n, "parenthesized_expression"), child(n, c1, _),
     up015_mode_only_redundant_site(c1, S).
 
 // mode_only_redundant_slot(n): the JSON util `mode-only-redundant-slot`, used where the JSON says `matches: "mode-only-redundant-slot"`
 //   M: metavariable this relation binds for the calling rule
-.decl up015_mode_only_redundant_slot(n: node, m: loc)
+.decl up015_mode_only_redundant_slot(n: node, m: node)
 up015_mode_only_redundant_slot(n, M) :- up015_empty_mode(n), node(_, n, _, _, _), L = n, up015_alt_10(n, L, M).
 
 // mode_only_redundant_in_string(n): the JSON util `mode-only-redundant-in-string`, used where the JSON says `matches: "mode-only-redundant-in-string"`
 //   M, S: metavariables this relation binds for the calling rule
-.decl up015_mode_only_redundant_in_string(n: node, m: loc, s: loc)
+.decl up015_mode_only_redundant_in_string(n: node, m: node, s: node)
 up015_mode_only_redundant_in_string(n, M, S) :- (kind(n, "string") ; kind(n, "concatenated_string")),
     parsed(n, "annotation", r1), within(c2, r1), up015_alt_8(c2, M, S).
 
 // mode_has_redundant_flags_site(n): the JSON util `mode-has-redundant-flags-site`, used where the JSON says `matches: "mode-has-redundant-flags-site"`
 //   S: metavariable this relation binds for the calling rule
-.decl up015_mode_has_redundant_flags_site(n: node, s: loc)
+.decl up015_mode_has_redundant_flags_site(n: node, s: node)
 up015_mode_has_redundant_flags_site(n, S) :- up015_flags_mode(n), node(_, n, _, _, _), S = n.
 up015_mode_has_redundant_flags_site(n, S) :- kind(n, "parenthesized_expression"),
     child(n, c1, _), up015_mode_has_redundant_flags_site(c1, S).
 
 // mode_has_redundant_flags_slot(n): the JSON util `mode-has-redundant-flags-slot`, used where the JSON says `matches: "mode-has-redundant-flags-slot"`
 //   M: metavariable this relation binds for the calling rule
-.decl up015_mode_has_redundant_flags_slot(n: node, m: loc)
+.decl up015_mode_has_redundant_flags_slot(n: node, m: node)
 up015_mode_has_redundant_flags_slot(n, M) :- up015_flags_mode(n), node(_, n, _, _, _), L = n, up015_alt_10(n, L, M).
 
 // mode_has_redundant_flags_in_string(n): the JSON util `mode-has-redundant-flags-in-string`, used where the JSON says `matches: "mode-has-redundant-flags-in-string"`
 //   M, S: metavariables this relation binds for the calling rule
-.decl up015_mode_has_redundant_flags_in_string(n: node, m: loc, s: loc)
+.decl up015_mode_has_redundant_flags_in_string(n: node, m: node, s: node)
 up015_mode_has_redundant_flags_in_string(n, M, S) :- (kind(n, "string") ; kind(n, "concatenated_string")),
     parsed(n, "annotation", r1), within(c2, r1), up015_alt_12(c2, M, S).
 
@@ -191,7 +191,7 @@ up015_tok_has_1(n) :- node_text(n, g9), !child(n, _, _),
     match("(?s)^(?:(?:.*\\W)?(?:mode)(?:\\W.*)?)$", g9).
 
 // demand_alt_10: the rows of alt_10 its callers ask for (the metavariable columns they pass in)
-.decl up015_demand_alt_10(n: node, l: loc)
+.decl up015_demand_alt_10(n: node, l: node)
 up015_demand_alt_10(n, L) :- up015_empty_mode(n), node(_, n, _, _, _), L = n.
 up015_demand_alt_10(n, L) :- up015_flags_mode(n), node(_, n, _, _, _), L = n.
 
@@ -205,7 +205,7 @@ up015_stop_3(n) :- node(_, n, _, _, _), !kind(n, "comment").
 
 // alt_8(n): the JSON `any`: n matches if any one of these rules does
 //   M, S: metavariables this relation binds for the calling rule
-.decl up015_alt_8(n: node, m: loc, s: loc)
+.decl up015_alt_8(n: node, m: node, s: node)
 up015_alt_8(n, M, S) :- up015_mode_only_redundant_slot(n, M), S = n.
 up015_alt_8(n, M, S) :- up015_mode_only_redundant_in_string(n, M, S).
 
@@ -216,7 +216,7 @@ up015_stop_11(n) :- node(_, n, _, _, _), !kind(n, "parenthesized_expression").
 // alt_10(n): the JSON `any`: n matches if any one of these rules does
 //   L: metavariable of the calling rule, passed in (bound by the caller)
 //   M: metavariable this relation binds for the calling rule
-.decl up015_alt_10(n: node, l: loc, m: loc)
+.decl up015_alt_10(n: node, l: node, m: node)
 up015_alt_10(n, L, M) :- up015_demand_alt_10(n, L), within(n, p1), up015_open_call(p1, M),
     node(_, L, _, _, _), node(_, M, _, _, _), L = M.
 up015_alt_10(n, L, M) :- up015_demand_alt_10(n, L), within_stop(n, p4, up015_stop_11),
@@ -225,6 +225,6 @@ up015_alt_10(n, L, M) :- up015_demand_alt_10(n, L), within_stop(n, p4, up015_sto
 
 // alt_12(n): the JSON `any`: n matches if any one of these rules does
 //   M, S: metavariables this relation binds for the calling rule
-.decl up015_alt_12(n: node, m: loc, s: loc)
+.decl up015_alt_12(n: node, m: node, s: node)
 up015_alt_12(n, M, S) :- up015_mode_has_redundant_flags_slot(n, M), S = n.
 up015_alt_12(n, M, S) :- up015_mode_has_redundant_flags_in_string(n, M, S).

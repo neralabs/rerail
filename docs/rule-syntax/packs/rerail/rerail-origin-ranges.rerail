@@ -26,8 +26,8 @@ inside_origin(n) :- mapper_name(n), inside(n, f, "function_item"), field(f, "nam
 inside_origin(n) :- mapper_name(n), inside(n, i, "impl_item"), field(i, "trait", t), glob("{Origin,*::Origin}", t).
 inside_origin(n) :- mapper_name(n), inside(n, m, "mod_item"), field(m, "name", x), text(x, "tests").
 
-.violation RANGE_MAPPER_OUTSIDE_ORIGIN(at: span) "Don't add a mapper from this nested document to its file; implement Origin for the document beside its type so callers use of_node and of_range."
-RANGE_MAPPER_OUTSIDE_ORIGIN(m) :- source(_, sp), match_all("\\bfn\\s+host_(?:range|span)\\s*[<(]", sp, m).
+.violation RANGE_MAPPER_OUTSIDE_ORIGIN(at: match) "Don't add a mapper from this nested document to its file; implement Origin for the document beside its type so callers use of_node and of_range."
+RANGE_MAPPER_OUTSIDE_ORIGIN(m) :- document_source(_, sp), line_regex_match("\\bfn\\s+host_(?:range|span)\\s*[<(]", sp, m).
 
 // The pack's example (packs/rerail/pack.json), a path call, and a mapper.
 .test mapping_outside_origin_is_reported exactly
