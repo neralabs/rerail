@@ -6368,7 +6368,9 @@ pub mod tests {
                 room.index
             };
             let (d, w) = (r.index_at(ix.index as usize), h.index_at(hosts));
-            if std::ptr::eq(dev, &placed) {
+            // The case is a Metal buffer's: on the CPU device (`RERAIL_GPU=cpu`) a block is bound whole, and the
+            // index's checks below are the CPU executor's.
+            if std::ptr::eq(dev, &placed) && !rerail_device::device::cpu_chosen() {
                 let end = dev.home.as_ref().unwrap().block.offset_of(d.rows.as_slice().as_ptr()) + 4 * n;
                 assert!(end as u64 > placed.buffer.buffer.length(), "the case: the index past the buffer its relation was bound by");
             }

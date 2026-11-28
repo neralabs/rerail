@@ -2296,21 +2296,41 @@ unsafe fn ix_mark_range(bb: *const u8, keys: *const u32, offs: *const u32, rows:
     // Place `u`'s tag, its row's as its key's pass wrote it (`ix_key_tag`, at the level's `eb` + its row): no row is
     // read again for its hash, only a pair's whose tags agree, for their keys.
     let tag = |u: u32| *tags.add((eb + row(u)) as usize);
+    // A place's key, its columns read once: the range's places in order, a place's key mostly compared with the one
+    // before it, whose key the last place's comparison read (on `all`, each key was read twice: half of `ix_mark`'s
+    // samples selected a view row's tape node, or found its document). The document memo is the range's.
+    let nc = (p.ncols & !IX_LIVE).min(8) as usize;
+    let mut memo = NONE;
+    let mut key_of = |r: u32| {
+        let row = ix_row(bb, bf, p, r, &mut memo);
+        let mut k = [0i64; 8];
+        for (i, v) in k.iter_mut().enumerate().take(nc) {
+            *v = row.get(p.cols[i]);
+        }
+        k
+    };
+    // The last place whose key was read, and its key.
+    let mut last: Option<(u32, [i64; 8])> = None;
     for t in t0..t1 {
         let lo = *offs.add((*keys.add((eb + t) as usize)).wrapping_sub(kb) as usize);
         let rt = row(t);
         let tg = tag(t);
         let mut same = false;
+        let mut read = None;
         for u in (lo.max(t.saturating_sub(MARK_REACH))..t).rev() {
-            let ru = row(u);
             if tag(u) != tg {
                 continue;
             }
-            let (mut mu, mut mt) = (NONE, NONE);
-            let (a, b) = (ix_row(bb, bf, p, ru, &mut mu), ix_row(bb, bf, p, rt, &mut mt));
-            same = (0..(p.ncols & !IX_LIVE).min(8) as usize).all(|i| a.get(p.cols[i]) == b.get(p.cols[i]));
+            let ka = match last {
+                Some((q, k)) if q == u => k,
+                _ => key_of(row(u)),
+            };
+            let kt = key_of(rt);
+            same = ka[..nc] == kt[..nc];
+            read = Some((t, kt));
             break;
         }
+        last = read;
         *rows.add((p.n + t) as usize) = tg | u32::from(same);
     }
 }
