@@ -1138,3 +1138,21 @@ statements and blocks end.
       AArch64 (812 on x86-64), against `block_map`'s 12631; 0 conditional branches and 0 calls on both.
     - **As measured** (as item 115, the host at load 13 to 17): the strata's summaries 100 instructions a byte
       (280 before) and about 21 cycles a byte (55). From the middle, all passes about 118 cycles a byte (166).
+117. **The walk's layout steps: 2 a block, 4 more for a block of more events** (as built: `middle::FIRST_EVENTS`,
+    `layout_more`, `walk_more`).
+    - **Counted first:** by source line, about 35% of `walk_block`'s 20487 x86-64 instructions were the 3 lanes'
+      layout steps (`line`, `cond`, `in_brackets` and their compares). They ran 6 events a block for every block,
+      though a Python line is about 35 bytes. Only 6.7% of the corpus's blocks (16044 of 241179, at 16 blocks a
+      chunk) have more than 2 events.
+    - **The split:** `walk_block` takes the first 2 events. Where none is left it reads the tokens after them;
+      else it leaves them, with the events left, to `walk_more`. `walk_more` reads the window's masks again and
+      takes the other 4. Which runs is the loop over blocks' choice, as `block_map_each`'s is (item 114).
+    - **A correction to item 116:** its 686 instructions were the symbol of a closure `block_map_tracks` called
+      3 times, which the branch check matched first. The tracks are now a local macro's expansions:
+      `block_map_tracks` has 2300 instructions on AArch64 and 2702 on x86-64, with 0 calls.
+    - **As tested:** the 30 tests pass on AArch64 and x86-64. From the middle is still the serial lexer's in 1644
+      of 1644 files. `walk_block` has 10720 instructions on AArch64 and 12914 on x86-64 (20487 before), and
+      `walk_more` 6856 and 8074. All have 0 conditional branches and 0 calls.
+    - **As measured** (as item 113, 16 blocks a chunk, on the M1 Max at load 2, both builds there): the walk's
+      summaries from 22472M to 15310M instructions and from 4346M to 3055M cycles, about 61 to 43 cycles a
+      byte. All the passes from the middle went from 8646M to 7343M cycles.

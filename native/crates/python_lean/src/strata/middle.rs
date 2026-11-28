@@ -632,21 +632,19 @@ const TRACKS: usize = 3;
 #[inline(never)]
 fn block_map_tracks(prev: &B, blk: &B, b1: &B, st: &[u8; TRACKS]) -> ([u8; TRACKS], [Depth; TRACKS]) {
     let sh = shared(prev, blk, b1);
-    let one = |l: u8| {
-        let wrong_in = usize::from(l) == WRONG;
-        let l = l.min(LANES as u8 - 1);
-        let (t0, s0, ccarry, cext_prev, tr_taken) = (l / 48, (l / 16) % 3, u64::from((l / 8) & 1), u64::from((l / 4) & 1), u64::from(l & 3));
-        let t = t_layer(&sh, t0);
-        let s = s_layer(&sh, &t, tr_taken, s0);
-        let c = c_layer(&sh, &t, &s, ccarry);
-        let (e, _) = lane_exit(&sh, &t, &s, &c, cext_prev);
-        (pick(wrong_in, WRONG as u8, e), Depth::of_masks(blk.ob & c.code, blk.cb & c.code))
-    };
-    // The tracks written out (a closure called three times may stay a call: each a local macro's expansion).
+    // A track from its state, written out for each (a closure called three times may stay a call).
     macro_rules! track {
-        ($k:expr) => {
-            one(st[$k])
-        };
+        ($k:expr) => {{
+            let l = st[$k];
+            let wrong_in = usize::from(l) == WRONG;
+            let l = l.min(LANES as u8 - 1);
+            let (t0, s0, ccarry, cext_prev, tr_taken) = (l / 48, (l / 16) % 3, u64::from((l / 8) & 1), u64::from((l / 4) & 1), u64::from(l & 3));
+            let t = t_layer(&sh, t0);
+            let s = s_layer(&sh, &t, tr_taken, s0);
+            let c = c_layer(&sh, &t, &s, ccarry);
+            let (e, _) = lane_exit(&sh, &t, &s, &c, cext_prev);
+            (pick(wrong_in, WRONG as u8, e), Depth::of_masks(blk.ob & c.code, blk.cb & c.code))
+        }};
     }
     const _: () = assert!(TRACKS == 3);
     let (a, b, c) = (track!(0), track!(1), track!(2));
@@ -1494,17 +1492,38 @@ fn event_step(src: &[u8], em: &EventMasks, bi: usize, rest: &mut u128, k: &mut u
     why(on, ebad)
 }
 
+/// The steps `layout_block` takes: a block of more events (6.7% of the corpus's at 16 blocks a chunk) goes on in
+/// `layout_more`.
+const FIRST_EVENTS: usize = 2;
+
 /// One block's layout by masks, for each lane: its window `em`, its tokens `tk` (starts in the chunk's range) and
-/// loop tops `tops` (in it, and at bit 64 one at the text's end just past it), its events in `EVENTS` steps of
-/// selections, written out. Why masks do not know it (`WHY_*`). No branch: pass 1 runs it for every lane at once.
+/// loop tops `tops` (in it, and at bit 64 one at the text's end just past it), its first `FIRST_EVENTS` events in
+/// steps of selections, written out. Why masks do not know it (`WHY_*`), and the events and tokens left (none
+/// where it took them all). No branch: pass 1 runs it for every lane at once.
 #[inline(always)]
-fn layout_block(src: &[u8], em: &EventMasks, bi: usize, tk: u64, tops: u128, lanes: &mut [LayoutLane; 3], last: &mut LastToks) -> u32 {
+fn layout_block(src: &[u8], em: &EventMasks, bi: usize, tk: u64, tops: u128, lanes: &mut [LayoutLane; 3], last: &mut LastToks) -> (u32, u128, u64) {
     let (events, mut bad) = em.events(tops);
     let (mut rest, mut k) = (events, tk);
-    // `EVENTS` steps, written out (a loop of them may stay a loop).
-    const _: () = assert!(EVENTS == 6);
+    // The steps written out (a loop of them may stay a loop).
+    const _: () = assert!(FIRST_EVENTS == 2);
     bad |= event_step(src, em, bi, &mut rest, &mut k, lanes, last);
     bad |= event_step(src, em, bi, &mut rest, &mut k, lanes, last);
+    // The tokens after the last event, where no event is left (else `layout_more` reads them).
+    let done = rest == 0;
+    let n = read_toks(src, em, bi, pick(done, k, 0), last);
+    let [a, b, c] = lanes;
+    a.read(n, last.colon);
+    b.read(n, last.colon);
+    c.read(n, last.colon);
+    (bad, rest, pick(done, 0, k))
+}
+
+/// The rest of a block's layout by masks after `layout_block`: its events `rest` and tokens `k` left, in
+/// `EVENTS - FIRST_EVENTS` more steps, then the tokens after them. No branch.
+#[inline(always)]
+fn layout_more(src: &[u8], em: &EventMasks, bi: usize, mut rest: u128, mut k: u64, lanes: &mut [LayoutLane; 3], last: &mut LastToks) -> u32 {
+    let mut bad = 0;
+    const _: () = assert!(EVENTS - FIRST_EVENTS == 4);
     bad |= event_step(src, em, bi, &mut rest, &mut k, lanes, last);
     bad |= event_step(src, em, bi, &mut rest, &mut k, lanes, last);
     bad |= event_step(src, em, bi, &mut rest, &mut k, lanes, last);
@@ -1526,12 +1545,16 @@ struct WalkAcc {
     extras: usize,
     /// Why masks do not know the chunk (`WHY_*`).
     bad: u32,
+    /// The last block's events and tokens `layout_block` left (`walk_more`'s).
+    rest: u128,
+    k: u64,
 }
 
 /// One block of the walk's pass 1 by masks, from its reads `r`, in the chunk's range `lo..hi` (and its eof's `n`):
-/// its tokens' and extras' starts, its loop tops and its layout, for every lane at once. No branch.
+/// its tokens' and extras' starts, its loop tops and its layout, for every lane at once. Whether events are left
+/// (`walk_more`'s). No branch.
 #[inline(never)]
-fn walk_block<const S: bool>(r: &Win<'_, S>, lo: usize, hi: usize, far: Far, acc: &mut WalkAcc) {
+fn walk_block<const S: bool>(r: &Win<'_, S>, lo: usize, hi: usize, far: Far, acc: &mut WalkAcc) -> bool {
     let (src, bi) = (r.src, r.bi);
     let n = src.len();
     let mk = |x: usize| pick(x >= 64, !0u64, (1u64 << (x & 63)).wrapping_sub(1));
@@ -1550,7 +1573,18 @@ fn walk_block<const S: bool>(r: &Win<'_, S>, lo: usize, hi: usize, far: Far, acc
     let end = u128::from(at_end & (n >= lo) & (n < hi)) << 64;
     let tops = u128::from(tp & range) | own | end;
     let em = EventMasks { far, ..EventMasks::of(r) };
-    acc.bad |= layout_block(src, &em, bi, tk, tops, &mut acc.lanes, &mut acc.last);
+    let (bad, rest, k) = layout_block(src, &em, bi, tk, tops, &mut acc.lanes, &mut acc.last);
+    acc.bad |= bad;
+    (acc.rest, acc.k) = (rest, k);
+    rest != 0
+}
+
+/// The rest of block `r.bi`'s layout after `walk_block` (the events and tokens it left), for every lane at once: its
+/// window's masks again (a rare block's). No branch.
+#[inline(never)]
+fn walk_more<const S: bool>(r: &Win<'_, S>, far: Far, acc: &mut WalkAcc) {
+    let em = EventMasks { far, ..EventMasks::of(r) };
+    acc.bad |= layout_more(r.src, &em, r.bi, acc.rest, acc.k, &mut acc.lanes, &mut acc.last);
 }
 
 /// Pass 1 of the walk by masks: chunk `from..to`'s summary from its place `p` to the chunk after's (`next`), over
@@ -1578,6 +1612,8 @@ pub fn walk_summary_masks(src: &[u8], from: usize, to: usize, rb: RB, depth: i8,
             toks: usize::from(eof),
             extras: 0,
             bad: 0,
+            rest: 0,
+            k: 0,
         };
         // Each block's first content past its window, from the right: the first its windows above read in their
         // upper halves (to the chunk's last and the walk's), then the chunks' after it (`after`).
@@ -1592,12 +1628,19 @@ pub fn walk_summary_masks(src: &[u8], from: usize, to: usize, rb: RB, depth: i8,
             }
         }
         // The loop over blocks: each block's reads from the window, then its block function (one instance for the
-        // text: under 64 bytes or not).
+        // text: under 64 bytes or not), and for a block of more events than it takes, the rest of them.
         for bi in b0..=b1 {
+            let far = fars[bi - b0];
             if n < 64 {
-                walk_block(&m.win::<true>(bi), lo, hi, fars[bi - b0], &mut acc);
+                let r = m.win::<true>(bi);
+                if walk_block(&r, lo, hi, far, &mut acc) {
+                    walk_more(&r, far, &mut acc);
+                }
             } else {
-                walk_block(&m.win::<false>(bi), lo, hi, fars[bi - b0], &mut acc);
+                let r = m.win::<false>(bi);
+                if walk_block(&r, lo, hi, far, &mut acc) {
+                    walk_more(&r, far, &mut acc);
+                }
             }
         }
         let WalkAcc { lanes, toks, extras, bad, .. } = acc;
