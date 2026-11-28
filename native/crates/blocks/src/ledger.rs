@@ -172,8 +172,9 @@ impl Ledger {
 
     /// Its block keeps only its first `len` bytes now (a freeze gave the rest of its reservation back).
     pub(crate) fn resized(&self, len: usize) {
-        if let Some(e) = blocks_mut().iter_mut().find(|e| std::ptr::eq(e.2.as_ptr(), self)) {
-            e.1 = self.base + len;
+        let mut live = blocks_mut();
+        if let Some(i) = entry_of(&live, self.base, std::ptr::from_ref(self) as usize) {
+            live[i].1 = self.base + len;
         }
     }
 
@@ -525,11 +526,16 @@ impl Ledger {
     /// The block is dropped: `release` lets its memory go, now when no GPU use is queued, else when the last one
     /// completes (R5).
     pub(crate) fn let_go(&self, release: Box<dyn FnOnce() + Send>) {
-        let me = std::ptr::from_ref(self) as usize;
+        let (me, base) = (std::ptr::from_ref(self) as usize, self.base);
         let release: Box<dyn FnOnce() + Send> = Box::new(move || {
             // No longer found by its address before another mapping can take it; an outer ledger of the same memory
-            // (a lease's) stays.
-            blocks_mut().retain(|e| e.2.as_ptr() as usize != me);
+            // (a lease's) stays. Found among the entries at its base (the list is in base order), not by a scan of
+            // every live block: on `all` the scan was 16% of the device joins' host side.
+            let mut live = blocks_mut();
+            if let Some(i) = entry_of(&live, base, me) {
+                live.remove(i);
+            }
+            drop(live);
             release()
         });
         let now = {
@@ -605,6 +611,12 @@ fn blocks() -> RwLockReadGuard<'static, Live> {
 
 fn blocks_mut() -> RwLockWriteGuard<'static, Live> {
     BLOCKS.write().unwrap_or_else(|e| e.into_inner())
+}
+
+/// The place in `live` (in base order) of ledger `me`'s entry, whose base is `base`: among the entries at that base.
+fn entry_of(live: &Live, base: usize, me: usize) -> Option<usize> {
+    let lo = live.partition_point(|e| e.0 < base);
+    live[lo..].iter().take_while(|e| e.0 == base).position(|e| e.2.as_ptr() as usize == me).map(|i| lo + i)
 }
 
 /// Every live block's free chunks' pages to the OS (`Ledger::trim`): a run's end. The bytes given.

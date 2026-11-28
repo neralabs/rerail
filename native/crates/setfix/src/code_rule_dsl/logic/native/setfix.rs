@@ -7363,6 +7363,18 @@ impl InRel {
     pub fn len(&self) -> usize {
         match &self.view { Some(v) => v.len(), None => self.n }
     }
+    /// Its rows' count for a reader that sizes by it and reads the rows where they lie (a device stage's table):
+    /// `len`, but a view filtered by constants whose rows were not found is not filtered for it. It is its source's
+    /// estimate of its rarest constant's rows (`Source::estimated_matches`). Found, its rows for a size alone were a
+    /// list of every filtered row's place, 3.7% of the device joins' host side on `all`.
+    pub fn rows_guess(&self) -> usize {
+        match &self.view {
+            Some(v) if v.ids.as_ref().is_some_and(|i| i.get().is_none()) && !v.eqs.is_empty() => {
+                v.eqs.iter().map(|&(c, _)| v.src.estimated_matches(c, false)).min().unwrap_or(0).min(v.src.len())
+            }
+            _ => self.len(),
+        }
+    }
     /// A flat relation's row (a derived one: views are base inputs, or an index's relation, `hold_source`).
     pub fn row(&self, id: usize) -> Row { self.rows.row(id as u32, self.k) }
     /// A flat relation's rows in one block, for a reader that binds its block (the device, decision 0325): none for

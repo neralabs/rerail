@@ -2265,7 +2265,7 @@ impl<'p> Run<'p> {
                         // every row of `child` (the join scratch held at most rose from 93 to 141 MB, ab116). An own
                         // relation's rows are as many as it holds now (`Own::now`).
                         let nr = match &s.kind {
-                            Kind::Atom { rel, .. } | Kind::Witness { rel, .. } if !self.consts[k].is_empty() => Some(rel.len()),
+                            Kind::Atom { rel, .. } | Kind::Witness { rel, .. } if !self.consts[k].is_empty() => Some(rel.rows_guess()),
                             Kind::Own { rel, delta, .. } => own.now.get(&(*rel, *delta)).copied(),
                             _ => None,
                         };
