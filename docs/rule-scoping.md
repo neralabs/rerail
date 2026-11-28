@@ -386,7 +386,7 @@ A checkout wins, then the repository, then the calling agent's checkout. A repos
 
 How rule configuration moves between machines, and what each audit records about it.
 
-`rerail rules export` writes a version 1 dump: the library, and each repository's key, name, aliases, set-up time, attachments and repository settings. `rerail rules import <file>` reads it back. Checkout settings, start state and approvals belong to this machine and are not exported.
+`rerail rules export` writes a version 1 dump: the library, and each repository's key, name, aliases, set-up time, attachments and repository settings. `rerail rules import <file>` reads it back. Checkout settings, start state and approvals belong to this machine and are not exported. It refuses a library rule that is quarantined and a repository setting whose stored options are no JSON (a damaged file or a hand edit), naming the setting on its error output, since a dump without them would import without them.
 
 Each audit records, per rule, its revision, payload hash, source (pack, By Rerail rule or library rule), repository key, checkout, and a `placement` array. Later edits don't rewrite past audits.
 
