@@ -158,11 +158,9 @@ pub fn define_function(
 }
 
 /// The tape's cold reads (decision 0310), defined once in `module` as every function is
-/// (`define_function`): what a call the pass leaves calls. The closure hands `define_cold` Cranelift's own
-/// `ModuleError`, as its signature asks.
-#[allow(clippy::result_large_err)]
+/// (`define_function`): what a call the pass leaves calls.
 pub fn define_reads(module: &mut JITModule) -> Result<(), Box<ModuleError>> {
-    rerail_clif::inline::define_cold(module, &mut |module, id, context| define_function(module, id, context).map_err(|error| *error))?;
+    rerail_clif::inline::define_cold(module, &mut |module, id, context| define_function(module, id, context))?;
     Ok(())
 }
 

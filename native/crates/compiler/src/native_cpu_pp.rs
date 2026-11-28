@@ -6840,7 +6840,7 @@ fn compile_kept(program: &Words, keep: bool) -> Result<CompiledPp, Error> {
         if keep {
             ir.push((id.as_u32(), context.func.clone()));
         }
-        module.define_function(id, context).map(|_| ())
+        module.define_function(id, context).map(|_| ()).map_err(Box::new)
     })
     .map_err(|e| Error::RefusedShape(format!("the reads: {e:?}")))?;
     module.finalize_definitions().map_err(|_| Error::BackendFailure)?;

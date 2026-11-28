@@ -604,8 +604,7 @@ impl<'a> Search<'a> {
                     r.mode = Mode::Conflict;
                     if write {
                         self.cbuf.push(o);
-                        for i in 0..n {
-                            let a = args[i];
+                        for &a in args.iter() {
                             self.cbuf.push(-a);
                         }
                     }
@@ -690,8 +689,7 @@ impl<'a> Search<'a> {
                 } else if unset == 0 {
                     r.mode = Mode::Conflict;
                     if write {
-                        for i in 0..n {
-                            let a = args[i];
+                        for &a in args.iter() {
                             self.cbuf.push(a);
                         }
                     }
@@ -776,8 +774,8 @@ impl<'a> Search<'a> {
             // read before any is placed).
             let mut live = [0u8; LANES];
             let mut nl = 0;
-            for i in 0..gs.len() {
-                if ls[i].0 != 0 {
+            for (i, l) in ls.iter().enumerate().take(gs.len()) {
+                if l.0 != 0 {
                     live[nl] = i as u8;
                     nl += 1;
                 }
@@ -915,10 +913,8 @@ impl<'a> Search<'a> {
                 }
             }
         }
-        if n > 0 {
-            if self.items(&chunk[..n]) {
-                return true;
-            }
+        if n > 0 && self.items(&chunk[..n]) {
+            return true;
         }
         self.head = hd + f;
         false
@@ -932,7 +928,7 @@ impl<'a> Search<'a> {
     fn up(&mut self, mut i: usize) {
         let v = self.heap[i];
         while i > 0 {
-            let p = (i + 1) / 2 - 1;
+            let p = i.div_ceil(2) - 1;
             let pv = self.heap[p];
             if !self.before(v, pv) {
                 break;
@@ -1126,8 +1122,7 @@ impl<'a> Search<'a> {
                     }
                 }
                 count += cands.len() - pushes;
-                for i in 0..cands.len() {
-                    let v = cands[i].0;
+                for &(v, _, _) in &cands {
                     self.bump_var(v);
                 }
             }
@@ -1285,9 +1280,9 @@ impl<'a> Search<'a> {
             }
         }
         let (mut kept, mut used) = (0usize, 0usize);
-        for j in 0..n {
+        for (j, &kept_j) in keep.iter().enumerate() {
             let (b, e) = (self.lstart[j] as usize, self.lstart[j + 1] as usize);
-            if !keep[j] {
+            if !kept_j {
                 continue;
             }
             self.arena.copy_within(b..e, used);

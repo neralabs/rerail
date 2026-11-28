@@ -183,7 +183,7 @@ pub fn with_helpers<M: Module>(module: &mut M, context: &mut Context, helpers: &
 
 /// Every cold read defined in `module`, once, by `define` (the module's way to define a function), each
 /// through the pass: what a call the pass leaves calls.
-pub fn define_cold<M: Module>(module: &mut M, define: &mut dyn FnMut(&mut M, FuncId, &mut Context) -> Result<(), ModuleError>) -> Result<(), ModuleError> {
+pub fn define_cold<M: Module>(module: &mut M, define: &mut dyn FnMut(&mut M, FuncId, &mut Context) -> Result<(), Box<ModuleError>>) -> Result<(), ModuleError> {
     let all: Vec<&str> = READS.iter().filter(|read| !read.hot).map(|read| read.name).collect();
     define_cold_of(module, &all, define)
 }
@@ -191,7 +191,7 @@ pub fn define_cold<M: Module>(module: &mut M, define: &mut dyn FnMut(&mut M, Fun
 /// `define_cold`, of the cold reads named (those a module's functions still call after the pass,
 /// `reads_called`) and the cold reads their bodies call: a module whose code reaches few reads defines
 /// those alone.
-pub fn define_cold_of<M: Module>(module: &mut M, names: &[&str], define: &mut dyn FnMut(&mut M, FuncId, &mut Context) -> Result<(), ModuleError>) -> Result<(), ModuleError> {
+pub fn define_cold_of<M: Module>(module: &mut M, names: &[&str], define: &mut dyn FnMut(&mut M, FuncId, &mut Context) -> Result<(), Box<ModuleError>>) -> Result<(), ModuleError> {
     let mut work: Vec<&'static Read> = names.iter().filter_map(|name| reads::read(name)).filter(|read| !read.hot).collect();
     let mut done: Vec<&str> = Vec::new();
     while let Some(read) = work.pop() {
@@ -203,7 +203,7 @@ pub fn define_cold_of<M: Module>(module: &mut M, names: &[&str], define: &mut dy
         let mut context = Context::for_function(body(module, id, read)?);
         reads(module, &mut context)?;
         work.extend(called(module, &context.func).into_iter().map(|(_, read)| read).filter(|read| !read.hot && !done.contains(&read.name)));
-        define(module, id, &mut context)?;
+        define(module, id, &mut context).map_err(|e| *e)?;
     }
     Ok(())
 }

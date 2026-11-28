@@ -33,7 +33,7 @@ pub(super) struct Bytes<'a> {
     class_code: HashMap<String, String>,
     /// Whether the line read is in a region's row: its reads go from the opener, as the lean lexer's micro-lexers.
     in_region: bool,
-    /// Whether a read with no form of the bytes stays as it is (`partial_windows`), its mask in `failed`.
+    /// Whether a read with no form of the bytes stays as it is (`partial_line`), its mask in `failed`.
     partial: bool,
     /// The run the last token's `run_last` read forward (`forward_run`): its mask and its terms. A test at its last
     /// byte `l` takes them there: the mask holds at `l`, at `l + 1` it and its terms do not, and its terms at `l` are
@@ -130,7 +130,7 @@ impl<'a> Bytes<'a> {
 
     /// `code` with each read of the masks it has (`locals`) in the windows' form, no block's words (decision 0721): a
     /// read of another mask, or one with no such form, stays as it is, the mask then in `failed`.
-    /// Reads with no form of the bytes stay as they are (`partial_windows`), and each mask's test is written once.
+    /// Reads with no form of the bytes stay as they are (`partial_line`), and each mask's test is written once.
     pub(super) fn set_partial(&mut self) {
         self.partial = true;
     }
@@ -140,11 +140,7 @@ impl<'a> Bytes<'a> {
         self.named.borrow().iter().map(|x| x.1.as_str()).collect()
     }
 
-    pub(super) fn partial_windows(&mut self, code: &str) -> String {
-        self.partial_line(code, true)
-    }
-
-    /// `partial_windows` of a line of the token loop: a token of code's (`in_region` false) reads a mask with no escapes
+    /// A line of the token loop read in windows: a token of code's (`in_region` false) reads a mask with no escapes
     /// from its block's word (`k_M`, made once a block, as the lean lexer's `lex_blocks` reads its block's masks), then
     /// windows past the block.
     pub(super) fn partial_line(&mut self, code: &str, in_region: bool) -> String {
@@ -190,12 +186,6 @@ impl<'a> Bytes<'a> {
         }
         out.push_str("        i += 1;\n    }\n    c\n};\n\n");
         out
-    }
-
-    /// The bytes `e` holds at a byte, where it reads that byte alone (its classes, `~`, `&`, `|`).
-    /// `e` as one test of the byte at an offset from the byte asked (`prev`, `next` of a set of bytes).
-    fn single(&self, e: &Expr, depth: usize) -> Option<(i64, [bool; 256])> {
-        self.one_byte(e, depth).filter(|o| !o.out && o.req == 0).map(|o| (o.at, o.set))
     }
 
     /// `e` as a test of one byte at an offset (`OneByte`): `prev` and `next` of a set of bytes, their `~`, `&` and `|`.
@@ -966,7 +956,7 @@ impl<'a> Bytes<'a> {
     /// `e` at byte `at` (Rust, a `usize`), a test of the bytes there: none past the file or before it. At a token's
     /// first byte (`s`) the byte is in the file.
     pub(super) fn at(&self, e: &Expr, at: &str, depth: usize) -> Result<String, String> {
-        // A fill's or an escape's test written once (`af_*`), where a read may stay as it is (`partial_windows`).
+        // A fill's or an escape's test written once (`af_*`), where a read may stay as it is (`partial_line`).
         if self.partial && matches!(e, Expr::Call(f, _) if f == "fill" || f == "escaped") {
             let got = self.amemo.borrow().get(e).cloned();
             let f = match got {
@@ -1063,12 +1053,12 @@ impl<'a> Bytes<'a> {
             Expr::And(a, b) => format!("({} && {})", self.at(a, at, depth + 1)?, self.at(b, at, depth + 1)?),
             Expr::Or(a, b) => format!("({} || {})", self.at(a, at, depth + 1)?, self.at(b, at, depth + 1)?),
             Expr::Xor(a, b) => format!("({} != {})", self.at(a, at, depth + 1)?, self.at(b, at, depth + 1)?),
-            // An escaped byte: after an odd run of the escaping bytes (`partial_windows`).
+            // An escaped byte: after an odd run of the escaping bytes (`partial_line`).
             Expr::Call(f, args) if f == "escaped" && self.partial && let [Arg::E(b)] = args.as_slice() => {
                 let t = self.at(b, "q", depth + 1)?;
                 format!("(esc_back(({at}) as isize, |q: usize| {t}) == 1)")
             }
-            // A fill's byte (`partial_windows`): its run read back from the byte to its nearest start or end.
+            // A fill's byte (`partial_line`): its run read back from the byte to its nearest start or end.
             Expr::Call(f, args) if f == "fill" && self.partial && let [Arg::E(st), Arg::E(e)] = args.as_slice() => {
                 let (st, e) = (self.at(st, "q", depth + 1)?, self.at(e, "q", depth + 1)?);
                 format!("(fill_back(({at}) as isize + 1, |q: usize| {st}, |q: usize| {e}) == 1)")
@@ -1105,7 +1095,7 @@ impl<'a> Bytes<'a> {
     /// `e`'s bits in the 64 bytes from byte `p + off`: none past the file or before it. `escaped`: the search's
     /// carried escapes (`esc`), from its first byte.
     fn win(&mut self, e: &Expr, off: i64, depth: usize) -> Result<String, String> {
-        // A fill's or an escape's window written once (`wf_*`), where a read may stay as it is (`partial_windows`).
+        // A fill's or an escape's window written once (`wf_*`), where a read may stay as it is (`partial_line`).
         if self.partial && matches!(e, Expr::Call(f, _) if f == "fill" || f == "escaped") {
             let f = match self.wmemo.get(e) {
                 Some(f) => f.clone(),
@@ -1235,7 +1225,7 @@ impl<'a> Bytes<'a> {
             }
             Expr::Or(a, b) => format!("({} | {})", self.win(a, off, depth + 1)?, self.win(b, off, depth + 1)?),
             Expr::Xor(a, b) => format!("({} ^ {})", self.win(a, off, depth + 1)?, self.win(b, off, depth + 1)?),
-            // A read from anywhere (`partial_windows`): the window's carry read back from the bytes, the run of the
+            // A read from anywhere (`partial_line`): the window's carry read back from the bytes, the run of the
             // escaping bytes that ends before it (odd: the window's first byte is escaped), as simdjson's carry is.
             Expr::Call(f, args) if f == "escaped" && self.partial => {
                 let Some(Arg::E(b)) = args.first() else { return Err("`escaped` of no mask".into()) };
@@ -1243,7 +1233,7 @@ impl<'a> Bytes<'a> {
                 let b = self.win(b, off, depth + 1)?;
                 format!("{{ let mut c = esc_back({p}, |q: usize| {at}); escaped_step({b}, &mut c) }}")
             }
-            // A fill from anywhere (`partial_windows`): stage 1's add, its carry the fill at the byte before the
+            // A fill from anywhere (`partial_line`): stage 1's add, its carry the fill at the byte before the
             // window, read back over the run to its nearest start (in) or end (out), as the lean lexer reads a run.
             Expr::Call(f, args) if f == "fill" && self.partial && let [Arg::E(st), Arg::E(e)] = args.as_slice() => {
                 let (sa, ea) = (self.at(st, "q", depth + 1)?, self.at(e, "q", depth + 1)?);
@@ -1761,7 +1751,7 @@ impl<'a> Bytes<'a> {
                     jumped.push(set);
                     let cls = self.win(c, 0, 0).ok()?;
                     let here = class_test("q", &set);
-                    let _ = write!(jump_why, "            // `{cn}`'s run: term {k} alone holds over it (the lean lexer's `class_end`).\n");
+                    let _ = writeln!(jump_why, "            // `{cn}`'s run: term {k} alone holds over it (the lean lexer's `class_end`).");
                     let _ = write!(jumps, "if now == 1 << {k} && {here} {{\n                wfirst_clear(n, q + 1, n, |p: isize, esc: &mut u64| {cls}).unwrap_or(n)\n            }} else ");
                 }
             }
@@ -2070,15 +2060,13 @@ impl<'a> Bytes<'a> {
         let mut rest = text;
         'scan: while !rest.is_empty() {
             // A word of a mask (`M[i]`, `prev(&M, i, k)`, `next(&M, i, k)`) in a pass over the words: its window there.
-            if self.partial && !out.chars().next_back().is_some_and(|c| c.is_alphanumeric() || c == '_' || c == '.') {
-                if let Some(r) = self.word_read(rest)? {
-                    out.push_str(&r.0);
-                    rest = &rest[r.1..];
-                    continue 'scan;
-                }
+            if self.partial && !out.chars().next_back().is_some_and(|c| c.is_alphanumeric() || c == '_' || c == '.') && let Some(r) = self.word_read(rest)? {
+                out.push_str(&r.0);
+                rest = &rest[r.1..];
+                continue 'scan;
             }
             for (name, _) in READS {
-                // `put` only where a read may stay as it is (`partial_windows`).
+                // `put` only where a read may stay as it is (`partial_line`).
                 if (name == "put" || name == "last_in") && !self.partial {
                     continue;
                 }
@@ -2277,7 +2265,15 @@ impl<'a> Bytes<'a> {
         let mut full = terms.clone();
         full.push(run.clone());
         let all = Expr::Not(Box::new(Expr::Empty));
-        fn go(me: &Bytes, e: &Expr, off: i64, run: &Expr, terms: &[Expr], full: &[Expr], all: &Expr, depth: usize) -> Expr {
+        /// The run, its terms, the two together and the test of any byte, which `go` reads at each depth.
+        struct Ends<'a> {
+            run: &'a Expr,
+            terms: &'a [Expr],
+            full: &'a [Expr],
+            all: &'a Expr,
+        }
+        fn go(me: &Bytes, e: &Expr, off: i64, ends: &Ends<'_>, depth: usize) -> Expr {
+            let Ends { run, terms, full, all } = *ends;
             if depth > 48 {
                 return e.clone();
             }
@@ -2295,15 +2291,15 @@ impl<'a> Bytes<'a> {
                     _ => e.clone(),
                 };
             }
-            let r = |x: &Expr, o: i64| Box::new(go(me, x, o, run, terms, full, all, depth + 1));
+            let r = |x: &Expr, o: i64| Box::new(go(me, x, o, ends, depth + 1));
             match e {
                 Expr::Name(n) if !me.classes.contains_key(n.as_str()) => match me.locals.get(n).or_else(|| me.defs.get(n)) {
-                    Some(d) if reads_terms(me, d, full, 0) => go(me, d, off, run, terms, full, all, depth + 1),
+                    Some(d) if reads_terms(me, d, full, 0) => go(me, d, off, ends, depth + 1),
                     _ => e.clone(),
                 },
                 Expr::Call(f, args) if matches!(f.as_str(), "prev" | "next") => match Bytes::shift(f, args) {
                     Some((x, k)) if reads_terms(me, &x, full, 0) => {
-                        let inner = go(me, &x, off + k, run, terms, full, all, depth + 1);
+                        let inner = go(me, &x, off + k, ends, depth + 1);
                         if inner == Expr::Empty || inner == *all || !reads_terms(me, &x, full, 0) || no_byte(&inner) {
                             inner
                         } else {
@@ -2319,7 +2315,7 @@ impl<'a> Bytes<'a> {
                 _ => e.clone(),
             }
         }
-        let got = fold(go(self, &self.norm(e, 0), off, run, terms, &full, &all, 0));
+        let got = fold(go(self, &self.norm(e, 0), off, &Ends { run, terms, full: &full, all: &all }, 0));
         Some(fold(self.past_run(&got, off)))
     }
 

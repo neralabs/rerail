@@ -57,7 +57,9 @@ pub use rerail_workspace::panic_boundary;
 mod path_owner;
 pub mod pipe_server;
 pub mod process;
-/// The warning on a macOS whose allocator aborts the engine's work (`bin/rerail-engine.rs`).
+/// The warning on a macOS whose allocator aborts the engine's work (`bin/rerail-engine.rs`). The test binary has the
+/// watchdog's (`test_watchdog`), loaded once.
+#[cfg(not(test))]
 pub mod os_warning;
 pub use rerail_logic::threads;
 /// The browser's long-lived engine: `rerail_command` and its buffers (wasm/README.md).

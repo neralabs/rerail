@@ -282,7 +282,7 @@ fn matrix_shapes_divide_the_block() {
         let s = &c[t..t + 5];
         assert!(s[0..2].iter().all(|&d| d > 0 && 64 % d == 0), "the shape {:?} divides 64", &s[0..3]);
         if t == 18 {
-            assert!(s[2] > 0 && s[2] % 64 == 0, "b1's K {} is whole words", s[2]);
+            assert!(s[2] > 0 && s[2].is_multiple_of(64), "b1's K {} is whole words", s[2]);
         } else {
             assert!(s[2] > 0 && 64 % s[2] == 0, "the shape {:?} divides 64", &s[0..3]);
         }

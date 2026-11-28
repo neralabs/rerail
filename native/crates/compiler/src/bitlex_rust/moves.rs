@@ -204,7 +204,7 @@ pub(crate) fn word_runs(ws: &[String]) -> Option<Vec<(String, String)>> {
 /// How many tests words `ws` are, a run of three or more numbers one range (`word_pattern`).
 pub(crate) fn word_tests(ws: &[String]) -> usize {
     match word_runs(ws) {
-        Some(r) => r.iter().map(|(a, b)| if a == b { 1 } else if runs_long(a, b) { 1 } else { 2 }).sum(),
+        Some(r) => r.iter().map(|(a, b)| if a == b || runs_long(a, b) { 1 } else { 2 }).sum(),
         None => ws.len(),
     }
 }

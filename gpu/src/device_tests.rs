@@ -483,11 +483,7 @@ fn the_device_clock_counts_nanoseconds() {
     let host = start.elapsed().as_nanos() as u64;
     let w = read::<u32>(&t, 4);
     let (a, b) = (w[0] as u64 | (w[1] as u64) << 32, w[2] as u64 | (w[3] as u64) << 32);
-    let clocked = match crate::device::backend() {
-        "CUDA" | "HIP" => true,
-        "CPU" => cfg!(target_arch = "aarch64"),
-        _ => false,
-    };
+    let clocked = matches!(crate::device::backend(), "CUDA" | "HIP") || (crate::device::backend() == "CPU" && cfg!(target_arch = "aarch64"));
     if !clocked {
         assert_eq!((a, b), (0, 0), "{} has no kernel clock", crate::device::backend());
         return;

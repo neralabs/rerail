@@ -916,7 +916,7 @@ impl Solver {
     /// `-assume`): one without `-assume` used none of the last. The solve's own gates (`base` on) must each define a
     /// variable past `vars` and past its arguments: then any values of the first `vars` the rest allow, they allow
     /// too, and what was learned over those holds without them. Where they do not, nothing is taken.
-    pub fn learned_without(&self, gates: &Gates, base: usize, assume: Lit, (trail, clauses): (usize, usize), vars: usize, longest: usize, mut take: impl FnMut(&[Lit])) {
+    pub fn learned_without(&self, gates: &Gates, base: usize, assume: Lit, (trail, clauses): (usize, usize), (vars, longest): (usize, usize), mut take: impl FnMut(&[Lit])) {
         let defines = |g: usize| {
             let o = var(gates.out(g));
             gates.kind(g) != Kind::One && o > vars && gates.args(g).iter().all(|&a| var(a) < o)
@@ -1227,7 +1227,7 @@ mod tests {
                     }
                     Answer::Unknown => unreachable!(),
                 }
-                s.learned_without(&gates, base, sel, marks, wvars, 64, |c| {
+                s.learned_without(&gates, base, sel, marks, (wvars, 64), |c| {
                     // Implied by the window's: with its negation added, they are unsatisfiable.
                     let mut w = wcnf.clone();
                     for &l in c {

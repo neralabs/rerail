@@ -2523,7 +2523,9 @@ fn a_published_tape_keeps_its_count_of_programs_where_its_documents_are_all_of_t
         host_errors: b"",
         at: None,
     };
-    let cases: [(&str, &[u8], &[DocumentPayload<'_>], bool, Option<i64>); 3] = [
+    // A file's path and text, its tape's documents, whether the tape is whole, and its count of programs.
+    type Case<'a> = (&'a str, &'a [u8], &'a [DocumentPayload<'a>], bool, Option<i64>);
+    let cases: [Case<'_>; 3] = [
         ("one.blade.php", b"{{ e($title) }}", std::slice::from_ref(&document), true, Some(1)),
         ("none.blade.php", b"plain", &[], true, Some(0)),
         ("unknown.blade.php", b"{{ e($other) }}", std::slice::from_ref(&document), false, None),
@@ -2752,7 +2754,7 @@ fn a_managed_cache_directory_is_made_private_and_refused_once_shared() {
     assert_eq!(mode_of(&folder), 0o700);
     // Shared since (decision 0574): refused on reopen, never repaired.
     set_mode(&folder, 0o755);
-    let refused = prepare_cache_directory(&folder).err().expect("a shared cache folder is refused");
+    let refused = prepare_cache_directory(&folder).expect_err("a shared cache folder is refused");
     assert_eq!(refused.kind(), std::io::ErrorKind::PermissionDenied);
     assert_eq!(mode_of(&folder), 0o755);
 }

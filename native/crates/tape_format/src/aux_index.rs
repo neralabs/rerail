@@ -1152,7 +1152,8 @@ mod tests {
             let home = w.extent().to_vec();
             // A tape's bytes, its presence and its auxiliary index, as read back from its home.
             type Parts = (Vec<u8>, Vec<u8>, Option<Vec<u8>>);
-            let held: Box<dyn Fn(&[u8]) -> Result<Parts, String>> = if z {
+            type Held = Box<dyn Fn(&[u8]) -> Result<Parts, String>>;
+            let held: Held = if z {
                 Box::new(|b| Tape16Z::from_bytes(crate::Vector::from(b)).map(|t| (t.as_bytes().to_vec(), t.presence_bytes().unwrap().to_vec(), t.aux_bytes().map(<[u8]>::to_vec))))
             } else {
                 Box::new(|b| Tape16::from_bytes(crate::Vector::from(b)).map(|t| (t.as_bytes().to_vec(), t.presence_bytes().unwrap().to_vec(), t.aux_bytes().map(<[u8]>::to_vec))))

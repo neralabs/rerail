@@ -268,14 +268,16 @@ fn not_equals_reference_on_every_executor() {
 #[test]
 fn binary_operators_equal_reference_on_every_executor() {
     type Op = fn(u64, u64) -> u64;
+    // The reference: a text's output masks.
+    type Want = Box<dyn Fn(&[u8]) -> Vec<Vector<u64>>>;
     let cases: [(&str, Op); 4] =
         [("and", |x, y| x & y), ("or", |x, y| x | y), ("xor", |x, y| x ^ y), ("andnot", |x, y| x & !y)];
     // Each operator on the two masks, and on a mask with itself.
     let wants: Vec<_> = cases
         .iter()
         .flat_map(|&(name, f)| {
-            let two: Box<dyn Fn(&[u8]) -> Vec<Vector<u64>>> = Box::new(move |bytes| vec![zip(&quote(bytes), &backslash(bytes), f)]);
-            let one: Box<dyn Fn(&[u8]) -> Vec<Vector<u64>>> = Box::new(move |bytes| vec![zip(&quote(bytes), &quote(bytes), f)]);
+            let two: Want = Box::new(move |bytes| vec![zip(&quote(bytes), &backslash(bytes), f)]);
+            let one: Want = Box::new(move |bytes| vec![zip(&quote(bytes), &quote(bytes), f)]);
             [(format!("{QUOTE_AND_BACKSLASH}  block 0 %2 = {name} %0, %1\n  block 0 output %2\n"), two), (format!("{QUOTE_AND_BACKSLASH}  block 0 %2 = {name} %0, %0\n  block 0 output %2\n"), one)]
         })
         .collect();

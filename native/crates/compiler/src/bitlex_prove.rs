@@ -1520,10 +1520,8 @@ impl Induction {
         let whole = hypothesis.filter(|h| self.whole_hypothesis && h.iter().any(|&(at, _, _)| at == v));
         let made_of = &ops[self.question.min(end)..end];
         let key = (v, d, whole.is_some(), {
-            use std::hash::{BuildHasher as _, Hash as _, Hasher as _};
-            let mut h = rustc_hash::FxBuildHasher.build_hasher();
-            made_of.hash(&mut h);
-            h.finish()
+            use std::hash::BuildHasher as _;
+            rustc_hash::FxBuildHasher.hash_one(made_of)
         });
         let found = self.windows.get(&key).and_then(|js| js.iter().copied().find(|&j| self.window_list[j].0 == made_of));
         let j = match found {
@@ -1699,7 +1697,7 @@ impl Induction {
         }
         self.work.spend(u64::from(x.conflicts));
         self.spent += u64::from(x.conflicts);
-        let answer = match x.answer {
+        match x.answer {
             // With a hypothesis, its values the contradiction read at the position: the rest may go (`prove`).
             lanes::Answer::Unsat => Outcome::Proved(hypothesis.and_then(|h| {
                 let used = x.used.as_ref()?;
@@ -1745,8 +1743,7 @@ impl Induction {
                 way.extend((m..=far).map(|lag| (STREAM, lag - m, inside(lag))));
                 Outcome::Way(way, group)
             }
-        };
-        answer
+        }
         };
         window.give_back(u);
         out

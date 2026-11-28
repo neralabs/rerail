@@ -430,7 +430,9 @@ mod tests {
         let codes = aux_index::sample::renumbered(&aux_index::sample::codes(), &number);
         let named: Vec<u64> = codes.named.iter().chain(&codes.comments).copied().collect();
         // Documents: the sample, and its first subtrees as documents of their own.
-        let mut docs: Vec<(Vec<(u32, u64, u64, usize)>, Vec<u8>)> = vec![(sample.nodes.clone(), sample.source.clone())];
+        // A document's nodes (kind, start, end, depth) and its source.
+        type Doc = (Vec<(u32, u64, u64, usize)>, Vec<u8>);
+        let mut docs: Vec<Doc> = vec![(sample.nodes.clone(), sample.source.clone())];
         let mut c = 1;
         while c < sample.nodes.len() && docs.len() < 6 {
             let end = sample.nodes[c].3;

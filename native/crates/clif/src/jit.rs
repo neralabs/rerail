@@ -49,7 +49,7 @@ impl Reads {
         use cranelift_codegen::ir::{InstBuilder, UserFuncName};
         use cranelift_module::Linkage;
         let mut module = cranelift_jit::JITModule::new(builder().unwrap());
-        crate::inline::define_cold(&mut module, &mut |module, id, context| module.define_function(id, context)).unwrap();
+        crate::inline::define_cold(&mut module, &mut |module, id, context| module.define_function(id, context).map_err(Box::new)).unwrap();
         let mut ids = Vec::new();
         for read in crate::reads::READS {
             let signature = crate::reads::signature(read, module.isa().default_call_conv());

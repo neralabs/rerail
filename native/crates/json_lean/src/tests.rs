@@ -135,7 +135,7 @@ fn lean_nodes(p: &mut Parser, f: &[u8]) -> usize {
 /// The nodes a window of events gives: its events but closes.
 #[cfg(target_os = "macos")]
 fn nodes_in(w: &[u32]) -> usize {
-    w.chunks_exact(3).filter(|e| e[0] & 0xff != rerail_simdjson::EV_CLOSE).count()
+    w.as_chunks::<3>().0.iter().filter(|e| e[0] & 0xff != rerail_simdjson::EV_CLOSE).count()
 }
 
 /// The process's instructions retired and cycles (`proc_pid_rusage`, macOS's).

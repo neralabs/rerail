@@ -3683,7 +3683,6 @@ impl Gen<'_> {
             }
             let i = self.fills.len();
             let (xv, ev) = (if matches!(x0, Expr::Empty) { None } else { Some(self.val(&x0)?) }, if matches!(e0, Expr::Empty) { None } else { Some(self.val(&e0)?) });
-            let xb = self.bytes_at(&x0, 0, &mut HashMap::new());
             let s_at = |xs: Known| if prev { Known::Test(format!("xs_{i}")) } else { xs };
             let carry = Known::Test(format!("fs_{i}"));
             let mut codes = Vec::new();
@@ -4085,7 +4084,6 @@ impl Gen<'_> {
             };
             let sb = self.bytes_at(start, 0, &mut HashMap::new());
             let sb: [bool; 256] = std::array::from_fn(|b| sb[b] && !self.skipped[b]);
-            let bit = |at: &str| yv.as_ref().map(|v| format!("bit(&{v}, {at})"));
             let Some(ys) = self.known_first(y, &sb, yv.as_ref()) else { return Ok(false) };
             // The stop `Z` at the first byte, and none over the bytes after.
             let zs = match &z {
@@ -8449,15 +8447,15 @@ impl Gen<'_> {
         }
         for g in &gaps {
             if spanned.iter().any(|d| d.0 == g.bit) {
-                let _ = write!(gap_code, "                // `{}`: tier 2 asks it of the spans between the records (`SPANNED`)\n", g.name);
-                let _ = write!(gap_asked, "                // `{}`: tier 2 asks it of the spans between the records (`SPANNED`)\n", g.name);
-                let _ = write!(gap_tested, "                // `{}`: tier 2 asks it of the spans between the records (`SPANNED`)\n", g.name);
+                let _ = writeln!(gap_code, "                // `{}`: tier 2 asks it of the spans between the records (`SPANNED`)", g.name);
+                let _ = writeln!(gap_asked, "                // `{}`: tier 2 asks it of the spans between the records (`SPANNED`)", g.name);
+                let _ = writeln!(gap_tested, "                // `{}`: tier 2 asks it of the spans between the records (`SPANNED`)", g.name);
                 continue;
             }
             if derived.iter().any(|d| d.0 == g.bit) {
-                let _ = write!(gap_code, "                // `{}`: its carrier's bit (`DERIVED`)\n", g.name);
-                let _ = write!(gap_asked, "                // `{}`: its carrier's bit (`DERIVED`)\n", g.name);
-                let _ = write!(gap_tested, "                // `{}`: its carrier's bit (`DERIVED`)\n", g.name);
+                let _ = writeln!(gap_code, "                // `{}`: its carrier's bit (`DERIVED`)", g.name);
+                let _ = writeln!(gap_asked, "                // `{}`: its carrier's bit (`DERIVED`)", g.name);
+                let _ = writeln!(gap_tested, "                // `{}`: its carrier's bit (`DERIVED`)", g.name);
                 continue;
             }
             // `C.eq(k)`: the count's test, before the gap's.
@@ -11854,32 +11852,8 @@ fn win_clear(v: &mut u64, p: usize, a: usize, b: usize) {
 
 "#;
 
-/// `e` with each part equal to `from` made `to`.
-fn replace_sub(e: &Expr, from: &Expr, to: &Expr) -> Expr {
-    if e == from {
-        return to.clone();
-    }
-    let r = |x: &Expr| Box::new(replace_sub(x, from, to));
-    match e {
-        Expr::Not(a) => Expr::Not(r(a)),
-        Expr::And(a, b) => Expr::And(r(a), r(b)),
-        Expr::Or(a, b) => Expr::Or(r(a), r(b)),
-        Expr::Xor(a, b) => Expr::Xor(r(a), r(b)),
-        Expr::Call(f, args) => Expr::Call(
-            f.clone(),
-            args.iter()
-                .map(|a| match a {
-                    Arg::E(x) => Arg::E(replace_sub(x, from, to)),
-                    a => a.clone(),
-                })
-                .collect(),
-        ),
-        _ => e.clone(),
-    }
-}
-
-/// `replace_sub` outside calls: a call reads bytes about the byte (`prev`, `next`, `fill`), which a kind's
-/// assumptions, of its token's bytes, do not speak of.
+/// `e` with each part equal to `from` made `to`, outside calls: a call reads bytes about the byte (`prev`, `next`,
+/// `fill`), which a kind's assumptions, of its token's bytes, do not speak of.
 /// With `prev_in`, the byte before is the token's too: in a `prev(X)` of one byte, its `X`, read as the byte's.
 fn replace_here(e: &Expr, from: &Expr, to: &Expr, prev_in: bool) -> Expr {
     if e == from {

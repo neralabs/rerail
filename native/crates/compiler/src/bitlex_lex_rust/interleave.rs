@@ -261,7 +261,6 @@ pub(super) fn interleave(text: &str) -> Option<String> {
 /// one `m: Vec<[u64; K]>`, each mask its column (`Col`), read by the helpers through `Words`. A mask tier 2 takes, the
 /// loop writes, or only a test build keeps stays a vector of its own. `None` where the text is not of that form.
 fn together(text: &str) -> Option<String> {
-    let whole = |t: &str, pat: &str| t.match_indices(pat).filter(|(i, _)| !t[..*i].ends_with(|c: char| c.is_ascii_alphanumeric() || c == '_' || c == '.') && !t[i + pat.len()..].starts_with(|c: char| c.is_ascii_alphanumeric() || c == '_')).count();
     let sd = text.find("struct Stage1 {\n")?;
     let se = sd + text[sd..].find("\n}\n")?;
     let def = &text[sd..se];

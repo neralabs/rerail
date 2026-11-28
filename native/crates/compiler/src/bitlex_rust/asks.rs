@@ -156,10 +156,9 @@ pub(super) fn settle(rules: &str, root: &str) -> String {
         out.push_str(l);
         if let Some(name) = starts.get(&j)
             && let Some((keep, set)) = own.get(name)
+            && changes(name, *keep, *set)
         {
-            if changes(name, *keep, *set) {
-                let _ = std::fmt::Write::write_fmt(&mut out, format_args!("        // The level's questions (`asks`, decision 0721): its own, set where it starts.\n        let level_asks = self.asks;\n        self.asks = level_asks & {keep:#x} | {set:#x};\n"));
-            }
+            let _ = std::fmt::Write::write_fmt(&mut out, format_args!("        // The level's questions (`asks`, decision 0721): its own, set where it starts.\n        let level_asks = self.asks;\n        self.asks = level_asks & {keep:#x} | {set:#x};\n"));
         }
     }
     // A level whose setting left every value it is entered with: no restore either.
@@ -269,7 +268,7 @@ pub(super) fn contexts(rules: &str) -> String {
     let starts: BTreeMap<usize, &str> = fns.iter().map(|f| (f.1, f.0.as_str())).collect();
     let ends: BTreeMap<usize, &str> = fns.iter().map(|f| (f.2, f.0.as_str())).collect();
     let mut skip: BTreeMap<usize, usize> = BTreeMap::new();
-    for (name, _) in &own {
+    for name in own.keys() {
         for s in &settings[name] {
             skip.insert(s.lines.start, s.lines.end);
         }
@@ -492,11 +491,10 @@ pub(super) fn lift(rules: &str, root: &str, asking: &BTreeMap<String, u32>) -> S
         if let (Some(v), None) = (set, &x.own) {
             let _ = std::fmt::Write::write_fmt(&mut out, format_args!("        // The context's questions (`asks`, decision 0721): set where its body starts, for every level it calls.\n        let level_asks = self.asks;\n        self.asks = level_asks & 0x0 | {v:#x};\n"));
         }
-        for k in a + 1..=b {
+        for (k, &l) in lines.iter().enumerate().take(b + 1).skip(a + 1) {
             if skip.contains(&k) {
                 continue;
             }
-            let l = lines[k];
             if let Some(v) = set {
                 if let Some(o) = &x.own {
                     if k == o.lines.end - 1 {

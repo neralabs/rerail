@@ -6796,15 +6796,15 @@ fn row_modes(
     let mut need: Vec<Vec<Option<bool>>> = Vec::new();
     let mut flip: Vec<Vec<Option<bool>>> = Vec::new();
     let mut dead: Vec<bool> = vec![false; token_rows.len()];
-    for r in 0..token_rows.len() {
+    for (r, dead_r) in dead.iter_mut().enumerate() {
         let (mut n, mut f) = (Vec::new(), Vec::new());
         for m in 0..modes.len() {
             // The mode before the token: the toggle at its start, less `x` there (the toggle's
             // read only where `x`'s is fixed: else the mode is free). A row whose start never
             // holds is dead (`fixed`): `x` read first finds it.
-            let xv = fixed(r, 2 * m, &mut dead[r]);
+            let xv = fixed(r, 2 * m, dead_r);
             n.push(match xv {
-                Some(b) => fixed(r, 2 * m + 1, &mut dead[r]).map(|a| a != b),
+                Some(b) => fixed(r, 2 * m + 1, dead_r).map(|a| a != b),
                 None => None,
             });
             f.push(xv);
