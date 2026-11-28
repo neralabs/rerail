@@ -1180,3 +1180,27 @@ statements and blocks end.
 
     - **As measured** (2 passes, on the M1 Max, both builds there): the walk's pass 3 went from 4779M to 521M
       cycles at 1 block a chunk, and from 112M to 6M at 16.
+119. **The walk's starts in strings: interpolations only where a block may hold one; the byte classes once a block**
+    (as built: `starts::interp_may`, `string_starts_w`'s `INTERP`, `walk_block`'s, `Cls`, `Bytes::from`,
+    `SBytes::from`).
+    - **Measured first,** with Instruments' Time Profiler on the M1 Max: each sample's address through `atos -i` to
+      its innermost frame in the lexer's own source. The walk's largest costs were the byte classes
+      (`sclasses`, `classes`), the interpolations' 5 rounds (their depth compares, `eqm`) and the layout's `cond`
+      and `keep`.
+    - **How it was not measured:** toggles that stub a part out change the records. The `passes` mode then
+      drops the files whose records go wrong, so it lexes fewer bytes. One such toggle seemed to put 74% of the
+      walk in the interpolations' code starts; they were about 10%.
+    - **Interpolations where a block may hold one:** a window holds an interpolation only where the block has a
+      `{`, or one or its format spec is open into it, or the block before had interpolations' code. That is 11%
+      of the corpus's blocks (26820 of 241179). The loop over blocks picks `walk_block`'s instance by it, a
+      choice as `walk_more`'s (item 117). Without it, the rounds and the interpolations' starts are not read:
+      they find none. The tests' builds run the rounds there anyway and assert that they found none.
+    - **The byte classes once a block:** a byte's classes are of it and the two after it. So the classes at the
+      bytes 1 to 5 after each byte are the block's and the next block's masks shifted, not classified again: 3
+      `classes` a block for both starts in code (7 before, read again for interpolations' code), and 2
+      `sclasses` (7 before).
+    - **As tested:** the 30 tests pass on AArch64 and x86-64. From the middle is still the serial lexer's in
+      1644 of 1644 files. The 4 instances of `walk_block` have 8080 to 13072 instructions on AArch64 (10720
+      before) and 9637 to 13817 on x86-64 (12914). All have 0 conditional branches and 0 calls.
+    - **As measured** (3 passes, on the M1 Max at load 4 to 7, both builds there): the walk's summaries went from
+      1821M to 1380M cycles at 16 blocks a chunk, and from 9163M to 7239M instructions.

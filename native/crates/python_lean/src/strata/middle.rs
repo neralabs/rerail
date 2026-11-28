@@ -1552,15 +1552,18 @@ struct WalkAcc {
 
 /// One block of the walk's pass 1 by masks, from its reads `r`, in the chunk's range `lo..hi` (and its eof's `n`):
 /// its tokens' and extras' starts, its loop tops and its layout, for every lane at once. Whether events are left
-/// (`walk_more`'s). No branch.
+/// (`walk_more`'s). Without `INTERP` (no interpolation in its window: `interp_may`), the starts in strings read no
+/// interpolations' rounds or starts. No branch.
 #[inline(never)]
-fn walk_block<const S: bool>(r: &Win<'_, S>, lo: usize, hi: usize, far: Far, acc: &mut WalkAcc) -> bool {
+fn walk_block<const S: bool, const INTERP: bool>(r: &Win<'_, S>, lo: usize, hi: usize, far: Far, acc: &mut WalkAcc) -> bool {
     let (src, bi) = (r.src, r.bi);
     let n = src.len();
     let mk = |x: usize| pick(x >= 64, !0u64, (1u64 << (x & 63)).wrapping_sub(1));
     let range = mk(hi.saturating_sub(64 * bi)) & !mk(lo.saturating_sub(64 * bi));
-    let (cs, r1) = super::starts::code_starts_w(r);
-    let (ss, r2) = super::starts::string_starts_w(r, &mut acc.carry);
+    // The block's byte classes once, for its starts in code and in interpolations' code.
+    let cl = super::starts::cls(r);
+    let (cs, r1) = super::starts::code_starts_c(r, &cl);
+    let (ss, r2) = super::starts::string_starts_c::<S, INTERP>(r, &cl, &mut acc.carry);
     let (xs, r3) = super::starts::extra_starts_w(r);
     let some = range != 0;
     acc.bad |= why((r1 != 0) & some, WHY_CODE) | why((r2 != 0) & some, WHY_STRINGS) | why(r3 & some, WHY_EXTRAS);
@@ -1628,19 +1631,26 @@ pub fn walk_summary_masks(src: &[u8], from: usize, to: usize, rb: RB, depth: i8,
             }
         }
         // The loop over blocks: each block's reads from the window, then its block function (one instance for the
-        // text: under 64 bytes or not), and for a block of more events than it takes, the rest of them.
+        // text: under 64 bytes or not; one for a window that may hold an interpolation, one for one that does not), and for a block of more events than it takes, the rest of them.
+        macro_rules! block {
+            ($s:literal, $r:expr, $far:expr) => {{
+                let (r, far) = ($r, $far);
+                let more = if super::starts::interp_may(&r, &acc.carry) {
+                    walk_block::<$s, true>(&r, lo, hi, far, &mut acc)
+                } else {
+                    walk_block::<$s, false>(&r, lo, hi, far, &mut acc)
+                };
+                if more {
+                    walk_more(&r, far, &mut acc);
+                }
+            }};
+        }
         for bi in b0..=b1 {
             let far = fars[bi - b0];
             if n < 64 {
-                let r = m.win::<true>(bi);
-                if walk_block(&r, lo, hi, far, &mut acc) {
-                    walk_more(&r, far, &mut acc);
-                }
+                block!(true, m.win::<true>(bi), far);
             } else {
-                let r = m.win::<false>(bi);
-                if walk_block(&r, lo, hi, far, &mut acc) {
-                    walk_more(&r, far, &mut acc);
-                }
+                block!(false, m.win::<false>(bi), far);
             }
         }
         let WalkAcc { lanes, toks, extras, bad, .. } = acc;

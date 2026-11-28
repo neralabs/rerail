@@ -70,6 +70,32 @@ struct Bytes {
     len1: u64,
 }
 
+impl Bytes {
+    /// The classes of the bytes `k` (1 to 63) after those of `a`, the next 64 bytes' `b`: a byte's classes are of it
+    /// and the two after it, so the two blocks' masks shifted, no bytes read again.
+    #[inline(always)]
+    fn from(a: &Bytes, b: &Bytes, k: u32) -> Bytes {
+        macro_rules! sh {
+            ($($f:ident),*) => {
+                Bytes { $($f: (a.$f >> k) | (b.$f << (64 - k))),* }
+            };
+        }
+        sh!(digit, dot, exp, sign, under, suffix, zero, letter_x, letter_o, letter_b, hex, oct, bin, long, high, len3, len2, len1)
+    }
+}
+
+/// The byte classes of the block below `r.bi` (its own where it is the text's first), of the block and of the block
+/// after: what the starts in code read (for code and for interpolations' code alike).
+#[derive(Clone, Copy)]
+pub(super) struct Cls([Bytes; 3]);
+
+/// Block `r.bi`'s `Cls`.
+#[inline(always)]
+pub(super) fn cls<const S: bool>(r: &Win<'_, S>) -> Cls {
+    let at = 64 * r.bi;
+    Cls([classes(r, at.saturating_sub(64)), classes(r, at), classes(r, at + 64)])
+}
+
 /// A block's reads in the walk's pass 1, by value: the text, and the masks of the block below, the block and the one
 /// after (the loop over blocks reads them from the window). Below the text's first block, the block below is empty, at
 /// depth 0. `S`: the text is under 64 bytes. The block functions read nothing else, and have no branch.
@@ -245,7 +271,13 @@ pub(super) fn code_starts(t: &Masks<'_>, bi: usize) -> (u64, u32) {
 /// `code_starts` from the block's reads.
 #[inline(always)]
 pub(super) fn code_starts_w<const S: bool>(r: &Win<'_, S>) -> (u64, u32) {
-    starts_in(r, w(r.pb.code, r.b.code), false)
+    code_starts_c(r, &cls(r))
+}
+
+/// `code_starts_w` from the block's classes.
+#[inline(always)]
+pub(super) fn code_starts_c<const S: bool>(r: &Win<'_, S>, cl: &Cls) -> (u64, u32) {
+    starts_in(r, cl, w(r.pb.code, r.b.code), false)
 }
 
 /// What the numbers read: the classes at a byte and the bytes after it, the digits' runs, the `.`s that start a
@@ -321,18 +353,20 @@ fn numbers_from(cx: &NumCx, ds: u128) -> (u128, u128, u128, u128, u128) {
 /// block is rare. In an interpolation (`one_by_one`) the walk reads a token at a time, so a number's rest of a word
 /// run is always a name.
 #[inline(always)]
-fn starts_in<const S: bool>(r: &Win<'_, S>, code: u128, one_by_one: bool) -> (u64, u32) {
+fn starts_in<const S: bool>(r: &Win<'_, S>, cl: &Cls, code: u128, one_by_one: bool) -> (u64, u32) {
     let (src, bi) = (r.src, r.bi);
     // The block below (none below the text's start: masked).
     let (pb, b) = (r.pb, r.b);
     let keep = 0u64.wrapping_sub(u64::from(bi > 0));
-    // The reads written out (a local macro: a closure called four times may be a call).
+    // The classes at each byte, and at the bytes one, two, three after it: the blocks' classes shifted (a local
+    // macro: a closure called three times may be a call).
+    let [lo, mid, up] = &cl.0;
     macro_rules! at {
         ($d:expr) => {
-            (classes(r, (64 * bi.saturating_sub(1)) + $d), classes(r, 64 * bi + $d))
+            (Bytes::from(lo, mid, $d), Bytes::from(mid, up, $d))
         };
     }
-    let (c0, c1, c2, c3) = (at!(0), at!(1), at!(2), at!(3));
+    let (c0, c1, c2, c3) = ((*lo, *mid), at!(1), at!(2), at!(3));
     let m = |f: fn(&B) -> u64| w(f(&pb), f(&b));
     let k = |f: fn(&Bytes) -> u64| w(f(&c0.0) & keep, f(&c0.1));
     // A class of the byte one, two, three after each (read past the window's top, not shifted in).
@@ -571,6 +605,20 @@ struct SBytes {
     lower: u64,
 }
 
+impl SBytes {
+    /// The classes of the bytes `k` (1 to 63) after those of `a`, the next 64 bytes' `b`: each a byte's own, so the
+    /// two blocks' masks shifted, no bytes read again.
+    #[inline(always)]
+    fn from(a: &SBytes, b: &SBytes, k: u32) -> SBytes {
+        macro_rules! sh {
+            ($($f:ident),*) => {
+                SBytes { $($f: (a.$f >> k) | (b.$f << (64 - k))),* }
+            };
+        }
+        sh!(r, b, f, pfx, sq, dq, u, big_u, x, big_n, digit, hex, cr, lf, lbrace, rbrace, simple, colon, bang, eq, lower)
+    }
+}
+
 #[inline(always)]
 fn sclasses<const S: bool>(r: &Win<'_, S>, at: usize) -> SBytes {
     let v = r.bytes(at);
@@ -654,20 +702,37 @@ pub(super) fn fill(seeds: u128, through: u128) -> u128 {
 /// Block `bi`'s token starts in its strings (a string's start, its text, escapes and brace pairs, its end) from the
 /// carry `c` into it (left as the carry out), and whether the block is rare.
 pub(super) fn string_starts(t: &Masks<'_>, bi: usize, c: &mut StrCarry) -> (u64, u32) {
-    by_len!(t, bi, |r| string_starts_w(&r, c))
+    by_len!(t, bi, |r| string_starts_w::<_, true>(&r, c))
 }
 
-/// `string_starts` from the block's reads.
+/// Whether block `win.bi`'s window may hold an interpolation from the carry `c` into it: a `{` in the block, an
+/// interpolation or a format spec open into it, or the code of one in the block before. Where not,
+/// `string_starts_w` reads no interpolations' rounds or starts (`INTERP` false): they find none.
 #[inline(always)]
-pub(super) fn string_starts_w<const S: bool>(win: &Win<'_, S>, c: &mut StrCarry) -> (u64, u32) {
+pub(super) fn interp_may<const S: bool>(win: &Win<'_, S>, c: &StrCarry) -> bool {
+    (win.b.lb != 0) | c.reg | c.spec | (c.rcode != 0)
+}
+
+/// `string_starts` from the block's reads. Without `INTERP` (where `interp_may` is false), no interpolations'
+/// rounds or starts are read: there are none in the window.
+#[inline(always)]
+pub(super) fn string_starts_w<const S: bool, const INTERP: bool>(win: &Win<'_, S>, c: &mut StrCarry) -> (u64, u32) {
+    string_starts_c::<S, INTERP>(win, &cls(win), c)
+}
+
+/// `string_starts_w` from the block's classes.
+#[inline(always)]
+pub(super) fn string_starts_c<const S: bool, const INTERP: bool>(win: &Win<'_, S>, cl: &Cls, c: &mut StrCarry) -> (u64, u32) {
+    debug_assert!(INTERP || !interp_may(win, c), "a block of interpolations read without");
     let (b, bi) = (win.b, win.bi);
     let at = 64 * bi;
-    let n: [SBytes; 6] = [sclasses(win, at), sclasses(win, at + 1), sclasses(win, at + 2), sclasses(win, at + 3), sclasses(win, at + 4), sclasses(win, at + 5)];
+    // The block's bytes' classes and the next block's, once; those of the bytes 1 to 5 after each byte from them.
+    let (n0, up_n) = (sclasses(win, at), sclasses(win, at + 64));
+    let n: [SBytes; 6] = [n0, SBytes::from(&n0, &up_n, 1), SBytes::from(&n0, &up_n, 2), SBytes::from(&n0, &up_n, 3), SBytes::from(&n0, &up_n, 4), SBytes::from(&n0, &up_n, 5)];
     let hi = |x: u64| u128::from(x);
     let bool128 = |x: bool| u128::from(x);
     // The strings that start in the block, the quote after each prefix (the prefix's letters read into the block
     // after), and the opener's end.
-    let up_n = sclasses(win, at + 64);
     let s = hi(b.sstart);
     let pfx = w(n[0].pfx, up_n.pfx);
     let pre = fill(s & pfx, pfx);
@@ -786,12 +851,24 @@ pub(super) fn string_starts_w<const S: bool>(win: &Win<'_, S>, c: &mut StrCarry)
         })($st)};
     }
     let r0 = Round { todo: !0, reg: c.reg, spec: c.spec, gv: c.idepth.wrapping_neg(), ..Round::default() };
-    // One after another: each round's argument a local (nested, each expansion would hold the ones before).
-    let r1 = round!(r0);
-    let r2 = round!(r1);
-    let r3 = round!(r2);
-    let r4 = round!(r3);
-    let r = round!(r4);
+    // One after another: each round's argument a local (nested, each expansion would hold the ones before). Without
+    // `INTERP` the rounds find nothing (no `{`, none open): what they leave is none, which the tests' builds check.
+    let rounds = || {
+        let r1 = round!(r0);
+        let r2 = round!(r1);
+        let r3 = round!(r2);
+        let r4 = round!(r3);
+        round!(r4)
+    };
+    let none = Round { todo: 0, ..Round::default() };
+    let r = if INTERP { rounds() } else { none };
+    if cfg!(debug_assertions) && !INTERP {
+        let f = rounds();
+        assert!(
+            (f.code, f.convs, f.marks, f.bytes, f.closes, f.bad, f.reg, f.spec, f.cont_reg, f.cont_spec, f.cont_gv) == (0, 0, 0, 0, 0, false, false, false, false, false, 0),
+            "the rounds found an interpolation in a block without"
+        );
+    }
     let r = Round { code: r.code & !u64::from(c.cv), ..r };
     // A string in an interpolation's code (B reads it by its quotes, `Walk::string` at a depth): its quotes pair by
     // a prefix XOR, from the one the block before left open. Its records: its start at its opener, its text after
@@ -813,7 +890,8 @@ pub(super) fn string_starts_w<const S: bool>(win: &Win<'_, S>, c: &mut StrCarry)
     // More interpolations than the rounds read: rare.
     let more = r.reg;
     let ibytes_all = hi(r.bytes);
-    let (rcode, rare_code) = starts_in(win, w(c.rcode, icode), true);
+    // The interpolations' code's starts (none in the window without `INTERP`).
+    let (rcode, rare_code) = if INTERP { starts_in(win, cl, w(c.rcode, icode), true) } else { (0, 0) };
     let lb_pair = lb & !ibytes_all & hi(b.lbu) & hi(n[1].lbrace);
     let rb_t = rb & !ibytes_all;
     let rbu = rb_t & !hi(super::escaped(rb_t as u64, &mut c.rb));
