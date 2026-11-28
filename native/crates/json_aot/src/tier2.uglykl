@@ -1610,48 +1610,110 @@ typedef struct json_t2_WArgs {
 } json_t2_WArgs;
 UKL_REFLECT_STRUCT(json_t2_WArgs, chunks, count, len, write)
 
-// Pass 2: chunk `c`'s nodes written from its state (`write_range`), through a cursor from the middle on the writer's
-// region `t` (its state at 0, its blocks made): counting its side-list entries (`args.write` 0), or writing them. Its
-// state, `ats`' 13 words: its entry (`i`, `e`, `depth`, `st`), the record it stops at, its first node, the start
-// before it (two words), its frames' room in `f` (`FRAME` words each), the frames open at its entry (their count and
-// place in `frames`: node, children, last child, start's two words), and the levels it holds (their count and place in
-// `levels`, the innermost last). Where it stopped: `out`'s two words, its stop's kind and record.
+// Pass 2: chunk `c`'s nodes written from its state (`write_range`), pass 3's in the pool (`states[c]`), through a
+// cursor from the middle on the writer's region `t` (its state at 0, its blocks made): counting its side-list entries
+// (`args.write` 0), or writing them. The chunk's frames' room in `f` is placed by its first record and its number
+// (`5 * (span + 1)` frames: those open at its entry, and as many as its records open); its levels in its row of `rets`.
+// Where it stopped: `out`'s two words, its stop's kind and record (4: no state, 5: past its room, 6: after the end).
 DEFINE_KERNEL2(tier2, json_t2_write,
                ARGS,     json_t2_WArgs, args,   ,
                ROBUFFER, uint8_t,  src,    "[len + 64]",
                ROBUFFER, uint32_t, starts, "[count + 3]",
                RWBUFFER, uint8_t,  t,      "[region]",
-               ROBUFFER, uint32_t, ats,    "[chunks * 13]",
-               ROBUFFER, uint32_t, frames, "[entry frames * 5]",
-               ROBUFFER, uint8_t,  levels, "[entry levels]",
-               RWBUFFER, uint32_t, f,      "[room * 5]",
+               ROBUFFER, uint32_t, chunks, "[chunks]",
+               ROBUFFER, uint32_t, pool,   "[pool]",
+               ROBUFFER, uint32_t, states, "[chunks]",
+               RWBUFFER, uint32_t, f,      "[(count + 1 + chunks) * 25]",
                RWBUFFER, uint8_t,  rets,   "[chunks * json_t2_DEPTH]",
                RWBUFFER, uint32_t, out,    "[chunks * 2]",
                GID0,     uint32_t, c,      )
 {
     if (c >= args.chunks)
         return;
-    UKL_GLOBAL const uint32_t* a = ats + c * 13u;
-    UKL_GLOBAL uint32_t* room = f + a[8] * UKL_WMID_FRAME;
-    for (uint32_t k = 0u; k < a[9] * UKL_WMID_FRAME; k++)
-        room[k] = frames[a[10] * UKL_WMID_FRAME + k];
+    uint32_t a = states[c];
+    out[c * 2u + 1u] = 0u;
+    if (a >= UKL_LANE_FULL || pool[a + 5u] != 0u) {
+        out[c * 2u] = a >= UKL_LANE_FULL ? 4u : 6u;
+        return;
+    }
+    uint32_t start = chunks[c];
+    uint32_t stop = c + 1u < args.chunks ? chunks[c + 1u] : args.count + 1u;
+    uint32_t span = stop - start;
+    uint32_t nret = pool[a + 9u], nf = pool[a + 10u];
+    if (nf + 3u * span + 4u > 5u * (span + 1u)) {
+        out[c * 2u] = 5u;
+        return;
+    }
+    UKL_GLOBAL uint32_t* room = f + UKL_WMID_FRAME * 5u * (start + c);
+    for (uint32_t k = 0u; k < nf * UKL_WMID_FRAME; k++)
+        room[k] = pool[a + UKL_AT_HEAD + nret + k];
     UKL_GLOBAL uint8_t* ret = rets + c * json_t2_DEPTH;
-    uint32_t base = a[2] - a[11];
-    for (uint32_t k = 0u; k < a[11]; k++)
-        ret[base + k] = levels[a[12] + k];
+    uint32_t base = pool[a + 2u] - nret;
+    for (uint32_t k = 0u; k < nret; k++)
+        ret[base + k] = (uint8_t)pool[a + UKL_AT_HEAD + k];
     json_t2_Lx lx;
     lx.starts = starts;
     lx.count = args.count;
     lx.len = args.len;
     json_t2_Entry en;
-    en.i = a[0];
-    en.e = a[1];
-    en.depth = a[2];
-    en.st = a[3];
-    UklWMid d = ukl_wmid_resume(t, 0u, a[5], (uint64_t)a[6] | ((uint64_t)a[7] << 32), room, a[9], args.write == 0u);
-    json_t2_Stop r = json_t2_run_range_Mid(src, lx, &d, en, ret, 0u, a[4]);
+    en.i = pool[a];
+    en.e = pool[a + 1u];
+    en.depth = pool[a + 2u];
+    en.st = pool[a + 3u];
+    uint64_t prev = (uint64_t)pool[a + 7u] | ((uint64_t)pool[a + 8u] << 32);
+    UklWMid d = ukl_wmid_resume(t, 0u, pool[a + 4u], prev, room, nf, args.write == 0u);
+    json_t2_Stop r = json_t2_run_range_Mid(src, lx, &d, en, ret, 0u, stop);
     out[c * 2u] = r.kind;
     out[c * 2u + 1u] = r.en.i;
+}
+
+typedef struct json_t2_BArgs {
+    uint32_t most;
+    uint32_t end;
+} json_t2_BArgs;
+UKL_REFLECT_STRUCT(json_t2_BArgs, most, end)
+
+// The tape's blocks made before pass 2 (`make_blocks`), a thread a block, as many as the file's end state's nodes
+// fill (at most `most`), from the writer's region `t` (its state at 0).
+DEFINE_KERNEL2(tier2, json_t2_blocks,
+               ARGS,     json_t2_BArgs, args,   ,
+               RWBUFFER, uint8_t,  t,      "[region]",
+               ROBUFFER, uint32_t, pool,   "[pool]",
+               ROBUFFER, uint32_t, states, "[end + 1]",
+               GID0,     uint32_t, b,      )
+{
+    uint32_t a = states[args.end];
+    if (a >= UKL_LANE_FULL || pool[a + 5u] != 1u)
+        return;
+    uint32_t nb = (pool[a + 4u] + CLIF_W_Z - 1u) / CLIF_W_Z;
+    nb = nb == 0u ? 1u : nb;
+    if (b >= nb || nb > args.most)
+        return;
+    ukl_wmid_make_block(t, 0u, b);
+    if (b == 0u)
+        ukl_wmid_made(t, 0u, nb);
+}
+
+// The tape after pass 2 (`end_middle`), a thread a block: each side list's count, and the state's nodes and last start
+// the file's end state's.
+DEFINE_KERNEL2(tier2, json_t2_ended,
+               ARGS,     json_t2_BArgs, args,   ,
+               RWBUFFER, uint8_t,  t,      "[region]",
+               ROBUFFER, uint32_t, pool,   "[pool]",
+               ROBUFFER, uint32_t, states, "[end + 1]",
+               GID0,     uint32_t, b,      )
+{
+    uint32_t a = states[args.end];
+    if (a >= UKL_LANE_FULL || pool[a + 5u] != 1u)
+        return;
+    uint32_t n = pool[a + 4u];
+    uint32_t nb = (n + CLIF_W_Z - 1u) / CLIF_W_Z;
+    nb = nb == 0u ? 1u : nb;
+    if (b >= nb || nb > args.most)
+        return;
+    ukl_wmid_end_block(t, 0u, b);
+    if (b == 0u)
+        ukl_wmid_ended(t, 0u, n, (uint64_t)pool[a + 7u] | ((uint64_t)pool[a + 8u] << 32));
 }
 
 // Pass 1's summaries: a chunk's at most `LANES` lanes, after its status (0 made; 1 more lanes than its room before

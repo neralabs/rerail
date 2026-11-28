@@ -240,3 +240,70 @@ UKL_INLINE void UklWMid_close(UKL_PRIVATE UklWMid* d, uint64_t end)
     if (size > 1u)
         ukl_wmid_put_in(d, room, area, 0u, j, (uint64_t)size << 1);
 }
+
+// `make_blocks`' block `b` of a fresh format 16 writer (no node, no block made, none given back), every block at once,
+// a thread a block: its room its place in the tape, its side area the `b`-th, its table entry, its counts and its
+// side lists' masks 0, its presence 0 where kept. Each part's room checked; `ukl_wmid_made` sets their lengths.
+UKL_INLINE uint32_t ukl_wmid_make_block(UKL_W_T, uint64_t s, uint32_t b)
+{
+    uint64_t stride = ukl_w_get32(t, s, CLIF_W_AT_STRIDE);
+    uint64_t room = (uint64_t)b * stride + CLIF_W_HEAD16;
+    UKL_W_TRY(ukl_w_room(t, s, CLIF_W_PART_OUT, room + stride));
+    UKL_W_TRY(ukl_w_room(t, s, CLIF_W_PART_TABLE, ((uint64_t)b + 1u) * CLIF_W_TABLE));
+    UKL_W_TRY(ukl_w_room(t, s, CLIF_W_PART_SIDES, ((uint64_t)b + 1u) * CLIF_W_SIDE_AREA));
+    bool keep = (ukl_w_get32(t, s, CLIF_W_AT_FLAGS) & 1u) != 0u;
+    uint64_t bytes = keep ? ukl_w_presence_bytes(t, s) : 0u;
+    if (keep)
+        UKL_W_TRY(ukl_w_room(t, s, CLIF_W_PART_PRESENCE, ((uint64_t)b + 2u) * bytes));
+    clif_w_zero(t, s, ukl_w_rooms(t, s) + room, stride);
+    uint64_t e = ukl_w_entry(t, s, b);
+    ukl_w_st32(t, e, (uint32_t)room);
+    ukl_w_st32(t, e + 4u, b);
+    ukl_w_st32(t, e + 8u, 0u);
+    uint64_t area = ukl_w_area_of(t, s, b);
+    ukl_w_st64(t, area, 0u);
+    ukl_w_st64(t, area + 8u, 0u);
+    for (uint32_t w = 0u; w < 4u * CLIF_W_Z / 64u; w++)
+        ukl_w_st64(t, area + UKL_WMID_SIDE_MASKS + 8u * (uint64_t)w, 0u);
+    if (keep)
+        clif_w_zero(t, s, ukl_w_part(t, s, CLIF_W_PART_PRESENCE) + ((uint64_t)b + 1u) * bytes, bytes);
+    return 0u;
+}
+
+// `make_blocks`' parts once its `nb` blocks are made: their lengths and the blocks' count (one thread, the state's
+// fields read by no block's thread). A writer not fresh, or in 16z, is refused as the Rust refuses it.
+UKL_INLINE uint32_t ukl_wmid_made(UKL_W_T, uint64_t s, uint32_t nb)
+{
+    if (ukl_w_is_z(t, s) || ukl_w_get32(t, s, CLIF_W_AT_N) != 0u || ukl_w_get32(t, s, CLIF_W_AT_BLOCKS) != 0u)
+        return clif_w_fail(t, s, CLIF_W_OUTSIDE, 0u);
+    uint64_t stride = ukl_w_get32(t, s, CLIF_W_AT_STRIDE);
+    ukl_w_grow(t, s, CLIF_W_PART_OUT, (uint64_t)nb * stride + CLIF_W_HEAD16);
+    ukl_w_grow(t, s, CLIF_W_PART_TABLE, (uint64_t)nb * CLIF_W_TABLE);
+    ukl_w_set_len(t, s, CLIF_W_PART_SIDES, (uint64_t)nb * CLIF_W_SIDE_AREA);
+    if ((ukl_w_get32(t, s, CLIF_W_AT_FLAGS) & 1u) != 0u)
+        ukl_w_grow(t, s, CLIF_W_PART_PRESENCE, ((uint64_t)nb + 1u) * ukl_w_presence_bytes(t, s));
+    ukl_w_set32(t, s, CLIF_W_AT_BLOCKS, nb);
+    return 0u;
+}
+
+// `end_middle`'s block `b`, a thread a block: each side list's count, its mask's rows.
+UKL_INLINE void ukl_wmid_end_block(UKL_W_T, uint64_t s, uint32_t b)
+{
+    uint64_t area = ukl_w_area_of(t, s, b);
+    for (uint32_t q = 0u; q < 4u; q++) {
+        uint64_t masks = area + UKL_WMID_SIDE_MASKS + (uint64_t)q * (CLIF_W_Z / 8u);
+        uint32_t c = 0u;
+        for (uint32_t w = 0u; w < CLIF_W_Z / 64u; w++)
+            c += ukl_popcount64(ukl_w_ld64(t, masks + 8u * (uint64_t)w));
+        ukl_w_st32(t, area + 4u * (uint64_t)q, c);
+    }
+}
+
+// `end_middle`'s state (one thread): `n` nodes, the last one's start, none open, each node final as written.
+UKL_INLINE void ukl_wmid_ended(UKL_W_T, uint64_t s, uint32_t n, uint64_t prev_start)
+{
+    ukl_w_set32(t, s, CLIF_W_AT_N, n);
+    ukl_w_set64(t, s, CLIF_W_AT_PREV_START, prev_start);
+    ukl_w_set32(t, s, CLIF_W_AT_OPEN_LEN, 0u);
+    ukl_w_set32(t, s, CLIF_W_AT_FRONTIER, n);
+}

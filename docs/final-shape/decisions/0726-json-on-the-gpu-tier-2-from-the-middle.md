@@ -194,6 +194,15 @@ file's end through the root; then the states down it, a level a launch, a right 
 (`At`'s fields; its levels innermost last, its frames outermost first); one no lane meets is `NONE`, one past the room
 `FULL`. The launches are a tree's height twice, plus one: the phases on one persistent grid make them a fixed count.
 
+Pass 2 reads each chunk's state where pass 3 left it in the pool (`json_t2_write`): its frames into the chunk's room
+(placed by its first record and its number, as pass 1's), its levels into its row. The blocks are made on the device
+before it (`json_t2_blocks`, `<ukl/writer_mid.h>`'s `ukl_wmid_make_block`, a thread a block: a fresh format 16
+writer's block `b` is at a place of `b` alone, so every block at once, as many as the file's end state's nodes fill),
+and the tape ended after it (`json_t2_ended`: each block's side lists counted from their masks, the state's nodes and
+last start the end state's). So passes 1, 3 and 2 run with nothing read by the host between them, in one command
+buffer. The host sets the writer's room before (`reserve_run`, for the most nodes the file's records and bytes can
+have) and finishes the tape after (`finish`).
+
 ### 7. Every chunk on its own, in any order
 
 The user (2026-11-27): "run the blocks in random order (including the prefix sum). This should allow us to validate the
@@ -213,8 +222,8 @@ scan round, each chunk a thread or a group.
 ### 8. Still to build (the design's stages)
 
 - S6's scan of the piece lengths and its tail as device phases (the pieces' count and write are built).
-- The blocks made (`make_blocks`) and the tape ended (`end_middle`) on the device; pass 2 reading pass 3's states
-  where they lie in the pool.
+- The tape finished on the device (each block final: its presence, its side lists laid), then S6's encoding of its
+  blocks.
 - The phases as one program on the work queue, a fixed number of launches.
 
 ## Tests
@@ -231,7 +240,9 @@ records, every pass in order and in two random orders (270 tapes, 13,800 chunks)
 every refusal the serial one; the slot and length lists hold up to 991 entries a block there. The entries test also runs the token pass in a random order (16,684 tokens): its answers are the same in any order,
 and every chunk's summary from them is the summary of pass 1 reading each token itself. `typed_records_are_the_records_split_by_type`: 390 files in chunks of
 1, 2, 3 and 16 blocks (8,784 records), every pass in a random order, the records `lex`'s and each type's the records split by their first byte.
-`rerail-gpu`'s `json_tier2_lanes_are_its_rust`: pass 1 on the device, 9 files (the tier 1 cases and nests 60 deep,
+`rerail-gpu`'s `json_tier2_writes_from_the_middle_as_its_rust`: passes 1, 3 and 2, the blocks made and the tape ended
+on the device in one command buffer, 21 tapes (the same files that parse) in chunks of 1, 3 and 16 records (12,369
+chunks): the serial walk's tape byte for byte, on the CPU backend and on Metal on the M3 Max and the M1 Max. `rerail-gpu`'s `json_tier2_lanes_are_its_rust`: pass 1 on the device, 9 files (the tier 1 cases and nests 60 deep,
 mixed, and closers that do not match) in chunks of 1, 3 and 16 records (12,381 chunks, 28,944 lanes, 3,749
 refusals): each chunk's lanes are `summaries`', lane for lane, on UKL's CPU backend and on Metal on the M3 Max and
 the M1 Max. `json_tier2_entries_are_its_rust`: pass 3 on the device on pass 1's lanes there, the same runs (12,408
@@ -242,10 +253,8 @@ bytes to 69,804): each loads as a 16z tape and decodes to its tape. `rerail-gpu`
 tapes of several blocks with side lists (384 pieces, 388,473 bytes to 36,059), each piece counted and then written by a
 group from where it lies in the tape, at the places its counts give: each the greedy parse of its bytes, on the CPU
 backend, compiled and on the vector path. On Metal, on the farm's M3 Max and M1 Max, the three device tests below give the same answers as on UKL's CPU
-backend. `rerail-gpu`'s `json_tier2_writes_from_the_middle_as_its_rust`: the tier 1 test's files in chunks of 1, 3 and 16
-records, each chunk's state from Rust's passes 1 and 3, every chunk written by the device at once, counting and then
-writing, the writer's region taken back (`Writer::device_region`, `from_device_region`, a test's) and finished: the
-serial walk's tape, byte for byte (12 tapes, 10,467 chunks). `json_tokens_as_ukl_are_its_rust`: every record of the tier 1 test's files and of a file of the
+backend (the writer's region taken to the device and back by `Writer::device_region` and `from_device_region`, a
+test's). `json_tokens_as_ukl_are_its_rust`: every record of the tier 1 test's files and of a file of the
 token errors (numbers, words, surrogate pairs, bad escapes): each token is Rust's `tokens`' (14,865 records, 11
 refused). `rerail-gpu`'s `json_tier1_as_ukl_is_its_rust`: JSON files (a list of 400 objects with escapes and multibyte text, a
 byte-order mark, 3,000 strings of backslashes, and the refusals: a control byte in a string, bad UTF-8, a string open at
