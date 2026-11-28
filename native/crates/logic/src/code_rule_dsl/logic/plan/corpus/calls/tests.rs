@@ -178,12 +178,12 @@ fn a_callables_memo_holds_what_was_asked() {
 fn a_call_leaves_its_files_state_as_it_was() {
     let v = parse_version(THREADS).unwrap();
     let split = callable::split(&v).unwrap().unwrap();
-    let callee = &split.callees[0];
-    let heads: BTreeSet<&str> = callee.program.rules().map(|r| callee.program.rel_name(r.head().rel())).collect();
+    let callees = &split.program;
+    let heads: BTreeSet<&str> = callees.rules().map(|r| callees.rel_name(r.head().rel())).collect();
     assert_eq!(heads, BTreeSet::from(["same_globals"]));
-    let inputs: Vec<&str> = callee.program.inputs().map(|a| callee.program.text(a)).collect();
+    let inputs: Vec<&str> = callees.inputs().map(|a| callees.text(a)).collect();
     assert_eq!(inputs, ["same_globals__call", "touches"]);
-    assert!(callee.program.rules().all(|r| callee.program.show_rule(r).contains("same_globals__call(")), "each rule reads its request first");
+    assert!(callees.rules().all(|r| callees.show_rule(r).contains("same_globals__call(")), "each rule reads its request first");
     let asks: Vec<String> = split.caller.rules().filter(|r| split.caller.rel_name(r.head().rel()) == "same_globals__call").map(|r| split.caller.show_rule(r)).collect();
     assert_eq!(asks.len(), 1, "one request rule, from unsafe_pair: {asks:?}");
     assert!(asks[0].contains("runs_in(") && !asks[0].contains("same_globals("), "{asks:?}");

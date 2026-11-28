@@ -1506,6 +1506,9 @@ pub fn run(version: Arc<Version>, factorize: bool, dialect: crate::code_rule_dsl
     let common_digest = with_shared(&common_digest, &v1, &shared);
     let by1 = ByRelation::of(&v1);
     let (inputs_shared, outputs) = (v1.input_names().len(), v1.output_names());
+    // A callable's router (`.callable R PATTERN by H`) is read by the request the callable split writes after these
+    // passes, from no part's rules: it is its part's output, as a relation another part reads is.
+    let routers = super::callable::routers(&v1);
     // Each part's own header, with its interface: what it is given of the split, and how its outputs are read.
     let s_heads = crate::code_rule_dsl::logic::profile::span(|| "the parts' headers and interfaces".into());
     let heads: Vec<Own> = parts
@@ -1513,7 +1516,7 @@ pub fn run(version: Arc<Version>, factorize: bool, dialect: crate::code_rule_dsl
         .enumerate()
         .map(|(j, part)| {
             let elsewhere = |r: &str| readers.get(r).into_iter().flatten().filter(move |(o, _)| *o != j);
-            let read_elsewhere: BTreeSet<String> = part.made.iter().filter(|r| elsewhere(r).next().is_some()).cloned().collect();
+            let read_elsewhere: BTreeSet<String> = part.made.iter().filter(|r| elsewhere(r).next().is_some() || routers.contains(*r)).cloned().collect();
             let mut head = part_header(&v1, part, &read_elsewhere, &made_by_parts, &shared);
             let mut word = |r: &str, w: String| {
                 head.words.entry(r.to_owned()).or_default().insert(w);

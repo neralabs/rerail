@@ -1,5 +1,5 @@
-//! T's `prune` on the version (decision 0281's path, step 6d): the rules of relations no output reads, directly
-//! or through other rules, dropped, and the request rules none of whose readers is read (decision 0174). The record
+//! T's `prune` on the version (decision 0281's path, step 6d): the rules of relations no output (nor a callable's
+//! router, which the callable split reads) reads, directly or through other rules, dropped, and the request rules none of whose readers is read (decision 0174). The record
 //! of each request's readers follows the rules kept; a native nothing reads is dropped with them. Facts stay. A
 //! reader outside the version (another part's, decision 0345) keeps its ask.
 
@@ -17,7 +17,10 @@ impl ProgramPass for Prune {
     fn run(&mut self, cx: &Cx<'_>, w: &mut ProgramW<'_>) -> Result<(), String> {
         let v = cx.v();
         let about = About::of(v);
-        let roots: Vec<String> = v.outputs().map(|a| v.text(a).to_owned()).collect();
+        let mut roots: Vec<String> = v.outputs().map(|a| v.text(a).to_owned()).collect();
+        // A callable's router (`.callable R PATTERN by H`): the callable split reads it, in the request it writes, after
+        // this pass.
+        roots.extend(super::callable::routers(v));
         let rules: Vec<RuleRef<'_>> = v.rules().collect();
         let head = |i: usize| v.rel_name(rules[i].head().rel());
         // Each request's readers, rule by rule (`Program::asked_by`, the `asked` rows).

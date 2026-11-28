@@ -935,8 +935,19 @@ fn existence_reads(v: &std::sync::Arc<Version>) -> Result<Option<std::sync::Arc<
         let f = crate::code_rule_dsl::logic::plan::fields::Fields::over(v, &d);
         v.rules().map(|r| r.head().rel()).filter(|&h| f.native(v.rel_name(h)).is_some()).collect::<BTreeSet<_>>()
     };
-    let reading: Vec<_> =
-        v.rules().filter(|r| !natives.contains(&r.head().rel()) && r.body().any(|l| matches!(l.view(), Lit::Atom(a) if open(a).is_some()))).collect();
+    // A callable's rule (decision 0725) is kept as written too: it runs in the file its request is routed to, and its
+    // read with the placing columns open (`qtouch(_, q, v)`) is of that file's rows, not of any file's. Read through a
+    // relation of names, the callee read no relation of its file, and the call was refused.
+    let callables: BTreeSet<String> = rerail_corpus_prep::code_rule_dsl::logic::plan::corpus::preparation::callable::declared(v)
+        .map_err(Error::Plan)?
+        .into_iter()
+        .map(|c| c.rel)
+        .collect();
+    let reading: Vec<_> = v
+        .rules()
+        .filter(|r| !natives.contains(&r.head().rel()) && !callables.contains(v.rel_name(r.head().rel())))
+        .filter(|r| r.body().any(|l| matches!(l.view(), Lit::Atom(a) if open(a).is_some())))
+        .collect();
     if reading.is_empty() {
         return Ok(None);
     }

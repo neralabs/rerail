@@ -617,6 +617,13 @@ impl<'v> Ctx<'v, '_> {
         for (o, _) in &todo {
             self.free_by.insert(o.clone(), "an output of the program".to_owned());
         }
+        // A callable's router (`.callable R PATTERN by H`): the callable split reads it, in the request it writes after
+        // this pass, so it is a root as an output is, all free (its asks bound it, `H__ask`).
+        for h in super::callable::routers(v).into_iter().filter(|h| self.idb.contains(h.as_str())) {
+            self.free_by.insert(h.clone(), "a callable's router".to_owned());
+            let ad = "f".repeat(self.arity(&h));
+            todo.push((h, ad));
+        }
         while let Some((rel, mut ad)) = todo.pop() {
             if full.contains(&rel) {
                 ad = "f".repeat(self.arity(&rel));
