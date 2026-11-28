@@ -16,6 +16,8 @@ import { isWorktreePack, WORKTREE_PACK_ID, WORKTREE_RULES_FOLDER, worktreeRuleCa
 import { experimentEnabled } from "../engine/experimental-features.js";
 import { defaultRerailDatabasePath, openRerailDatabase, type RerailDatabase } from "../engine/storage/database.js";
 import { libraryRules } from "../engine/storage/schema.js";
+import { storedLibraryRows } from "../engine/catalog/rule-library.js";
+import type { RuleDocument } from "../engine/catalog/rule-store.js";
 import { ruleDocumentDigest } from "../engine/stable-json.js";
 import { clean } from "../harness/setup-screens.js";
 import { agentRunsText, agentSession, type AgentSession } from "../engine/agent-session.js";
@@ -81,16 +83,59 @@ function visibleJson(value: unknown): string {
   });
 }
 
+/** What approving `subject` approves, written before it is approved, and whether it could be shown (`shown`). */
+interface ApprovalText {
+  readonly text: string;
+  readonly shown: boolean;
+}
+
 /** What approving `subject` approves, written before it is approved: a rule's content in full, a pack's rules by id. */
-function approvalText(db: RerailDatabase, catalog: RuleCatalog, subject: RuleApprovalSubject): string {
+function approvalText(db: RerailDatabase, catalog: RuleCatalog, subject: RuleApprovalSubject): ApprovalText {
   if (subject.kind === "pack") {
     const pack = [...catalog.packs.values()].find(candidate => (candidate.packageName ?? candidate.id) === subject.id);
     const ids = pack?.rules.map(rule => clean(rule.id)) ?? [];
-    return `● pack ${clean(subject.id)}@${clean(pack?.version ?? "?")} ships ${ids.length} ${ids.length === 1 ? "rule" : "rules"}: ${ids.join(", ")}\n`;
+    return { text: `● pack ${clean(subject.id)}@${clean(pack?.version ?? "?")} ships ${ids.length} ${ids.length === 1 ? "rule" : "rules"}: ${ids.join(", ")}\n`, shown: true };
   }
-  const document = db.select({ document: libraryRules.document }).from(libraryRules).where(eq(libraryRules.ruleId, subject.id)).get()?.document
-    ?? catalog.documents.get(subject.id);
-  return `● ${clean(subject.id)}${document === undefined ? "" : ` (${document.kind} rule)`} has this content:\n${visibleJson(document?.rule)}\n`;
+  return ruleApprovalText(db, catalog, subject.id);
+}
+
+/**
+ * A rule's content in full, as {@link approvalText} writes it: the library's, else the catalog's. A library rule whose
+ * stored document is no JSON object is quarantined and runs nowhere, so its line says that, and why, and it is not shown.
+ */
+function ruleApprovalText(db: RerailDatabase, catalog: RuleCatalog, id: string): ApprovalText {
+  const [row] = storedLibraryRows(db, eq(libraryRules.ruleId, id));
+  const stored = row?.document;
+  if (typeof stored === "string") {
+    return { text: `● ${clean(id)} has content that is no JSON object (${clean(stored)}), which only a damaged file or a hand edit leaves; it runs nowhere and is not approved\n`, shown: false };
+  }
+  // The library's own writer stored it as a rule document; `main` read it so unchecked.
+  const document = (stored as RuleDocument | undefined) ?? catalog.documents.get(id);
+  return { text: `● ${clean(id)}${document === undefined ? "" : ` (${document.kind} rule)`} has this content:\n${visibleJson(document?.rule)}\n`, shown: true };
+}
+
+/**
+ * Approves each of `subjects` that waits, its content written first; one whose content could not be shown is not
+ * approved. The command's exit code: 1 when one was not, as for a name that waits for nothing, else 0.
+ */
+function approveShown(db: RerailDatabase, subjects: readonly { subject: RuleApprovalSubject; owner: RuleCatalog }[], write: (text: string) => void): number {
+  const approvals = readApprovals(db);
+  let code = 0;
+  for (const { subject, owner } of subjects) {
+    if (approvals.has(approvalKey(subject))) {
+      write(`● ${clean(subject.id)} is already approved as it is.\n`);
+      continue;
+    }
+    const { text, shown } = approvalText(db, owner, subject);
+    write(text);
+    if (!shown) {
+      code = 1;
+      continue;
+    }
+    approve(db, subject);
+    write(`● Approved ${subject.kind} ${clean(subject.id)}: it runs in the mode it is set to from the next edit.\n`);
+  }
+  return code;
 }
 
 /**
@@ -146,7 +191,6 @@ export function runRuleApproveCommand(
       list(db, catalog, declared, write, session);
       return 0;
     }
-    const approvals = readApprovals(db);
     // A name can be both an installed pack and a pack the repository keeps, with other content: each that waits is
     // shown, then approved, so the copy a scan of this checkout runs is never left waiting behind the installed one.
     const subjects = positionals.flatMap(name => {
@@ -157,16 +201,7 @@ export function runRuleApproveCommand(
       if (found.length === 0) throw new Error(`${name} is no rule or pack waiting for approval here: Rerail's own rules and packs need none. \`rerail rules approve\` lists what waits.`);
       return found;
     });
-    for (const { subject, owner } of subjects) {
-      if (approvals.has(approvalKey(subject))) {
-        write(`● ${clean(subject.id)} is already approved as it is.\n`);
-        continue;
-      }
-      write(approvalText(db, owner, subject));
-      approve(db, subject);
-      write(`● Approved ${subject.kind} ${clean(subject.id)}: it runs in the mode it is set to from the next edit.\n`);
-    }
-    return 0;
+    return approveShown(db, subjects, write);
   } finally {
     db.$client.close();
   }

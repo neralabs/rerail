@@ -240,6 +240,31 @@ describe("rerail show-me", () => {
       after.$client.close();
     }
   });
+
+  it("never replaces or removes a rule with the demo's id whose stored document is no JSON", async () => {
+    const repo = await repository();
+    setUpTestRepository(repo);
+    // The closing brace gone, as a damaged file or a hand edit leaves it.
+    const text = `{"kind":"code","rule":{"id":"${SHOW_ME_RULE_ID}","description":"Mine."}`;
+    const database = openRerailDatabase(defaultRerailDatabasePath());
+    try {
+      database.$client.prepare("INSERT INTO library_rules (rule_id, kind, document_json, revision, payload_hash, created_at, updated_at) VALUES (?, 'code', ?, 1, 'mine', 1, 1)")
+        .run(SHOW_ME_RULE_ID, text);
+    } finally {
+      database.$client.close();
+    }
+
+    const start = run(["--repo", repo]);
+    expect(start.exit).toBe(1);
+    expect(start.stderr).toContain("the demo did not add");
+    expect(JSON.parse(run(["--cleanup", "--repo", repo, "--json"]).stdout)).toEqual({ fileRemoved: false, ruleRemoved: false });
+    const after = openRerailDatabase(defaultRerailDatabasePath(), { readonly: true });
+    try {
+      expect(after.$client.prepare("SELECT document_json FROM library_rules").pluck().all()).toEqual([text]);
+    } finally {
+      after.$client.close();
+    }
+  });
 });
 
 describe("the demo rule", () => {

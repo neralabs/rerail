@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import type { RerailDatabase } from "../../../src/engine/storage/database.js";
 import type { RuleCatalog, EffectiveRule, RuleSetting } from "../../../src/engine/catalog/repository-model.js";
 import { codeRuleSchema } from "../../../src/engine/code-rule/code-rule-schema.js";
@@ -437,5 +437,93 @@ describe("listRepositoryRules", () => {
     ]);
     const worktreeView = listRepositoryRules(db, ruleCatalog, REPOSITORY, { checkoutPath: WORKTREE });
     expect(worktreeView.rules.find(rule => rule.document.rule.id === "no-console")?.decidedBy.mode).toMatchObject({ by: "checkout" });
+  });
+});
+
+describe("a library rule or a setting whose stored text is no JSON", () => {
+  /** The first character of one stored JSON text changed to `to`, as a damaged file leaves it. */
+  function damage(db: RerailDatabase, table: "library_rules" | "rule_settings", column: string, where: string, to: string): void {
+    const text = db.$client.prepare(`SELECT ${column} FROM ${table} WHERE ${where}`).pluck().get() as string;
+    db.$client.prepare(`UPDATE ${table} SET ${column} = ? WHERE ${where}`).run(`${to}${text.slice(1)}`);
+  }
+
+  /** The lines written to the process's error output while `read` runs, and what it gave. */
+  function logged<T>(read: () => T): { value: T; lines: string[] } {
+    const write = vi.spyOn(process.stderr, "write").mockReturnValue(true);
+    try {
+      const value = read();
+      return { value, lines: write.mock.calls.map(([chunk]) => String(chunk)) };
+    } finally {
+      write.mockRestore();
+    }
+  }
+
+  it("quarantines a library rule whose document is no JSON, names it once, and runs every other rule of the repository", async () => {
+    const db = await workedExample();
+    for (const id of ["mine", "broken"]) {
+      writeLibraryRule(db, ruleCatalog, { kind: "code", rule: codeRule(id) });
+      addAttachment(db, { repositoryKey: REPOSITORY, folder: "", sourceKind: "library_rule", sourceId: id });
+    }
+    damage(db, "library_rules", "document_json", "rule_id = 'broken'", "[");
+
+    const { value: rules, lines } = logged(() => {
+      const loaded = loadCheckoutRuleSet(db, ruleCatalog, checkout(OTHER_CHECKOUT), RUNNING, []);
+      listRepositoryRules(db, ruleCatalog, REPOSITORY);
+      return loaded;
+    });
+    expect(rules.rulesFor("web/a.ts").map(rule => rule.document.rule.id)).toEqual(["mine", "no-console", "no-var"]);
+    expect(rules.unavailable).toEqual([{ sourceKind: "library_rule", sourceId: "broken", folder: "", reason: "missing" }]);
+    expect(listRepositoryRules(db, ruleCatalog, REPOSITORY).rules.map(rule => rule.document.rule.id)).toEqual(["mine", "no-console", "no-var"]);
+    expect(rules.signature.startsWith(`${ruleConfigurationSignature(db, ruleCatalog, REPOSITORY, [OTHER_CHECKOUT])}:`)).toBe(true);
+    expect(lines).toEqual([expect.stringMatching(
+      /^rerail: .+rerail\.sqlite: library rule broken is quarantined and runs nowhere: the document_json of its row is no JSON object \(.+\), which only a damaged file or a hand edit leaves\.\n$/u,
+    )]);
+  });
+
+  it("runs the rule by Rerail a setting gives options that are no JSON nowhere, with why, and every other rule as before", async () => {
+    const db = await temporaryDatabase();
+    addRepository(db, REPOSITORY);
+    setUpRepository(db, REPOSITORY, { packs: [{ packId: "lint", folder: "" }], rules: [{ sourceKind: "rerail_rule", sourceId: "configurable", folder: "" }] }, 10);
+    setRuleSetting(db, repositorySetting("", "rule", "configurable", { on: null, mode: "steer", config: { word: "alert" } }));
+    setRuleSetting(db, repositorySetting("", "rule", "no-var", { on: null, mode: "steer", config: { word: "alert" } }));
+    const read = () => loadCheckoutRuleSet(db, configurableBundle, checkout(OTHER_CHECKOUT), RUNNING, []);
+    const before = read().rulesFor("a.ts").map(rule => [rule.document.rule.id, rule.on, rule.mode, rule.configError === null]);
+    const version = repositoryRulesVersionReader(db);
+    damage(db, "rule_settings", "config_json", "target_id = 'configurable'", "[");
+    const damagedVersion = version();
+
+    const { value: rules, lines } = logged(() => [read(), read()][1]!);
+    const byId = new Map(rules.rulesFor("a.ts").map(rule => [rule.document.rule.id, rule]));
+    expect(byId.get("configurable")).toMatchObject({
+      on: true, mode: "steer", config: null,
+      configError: expect.stringMatching(/^the options a setting gives it in the database are no JSON object \(.+\), which only a damaged file or a hand edit leaves; set them again to run it$/u),
+    });
+    expect([...byId.values()].filter(rule => rule.document.rule.id !== "configurable").map(rule => [rule.document.rule.id, rule.on, rule.mode, rule.configError === null]))
+      .toEqual(before.filter(([id]) => id !== "configurable"));
+    expect(rules.signature.startsWith(`${ruleConfigurationSignature(db, configurableBundle, REPOSITORY, [OTHER_CHECKOUT])}:`)).toBe(true);
+    expect(lines).toEqual([expect.stringMatching(
+      /^rerail: .+rerail\.sqlite: the rule setting of configurable by repository .+ at folder "" reads with no options, .+: the config_json of its row is no JSON object \(.+\), which only a damaged file or a hand edit leaves\.\n$/u,
+    )]);
+
+    setRuleSetting(db, repositorySetting("", "rule", "configurable", { on: null, mode: "steer", config: { word: "debug" } }));
+    expect(read().rulesFor("a.ts").find(rule => rule.document.rule.id === "configurable")).toMatchObject({ config: { word: "debug" }, configError: null });
+    expect(version()).not.toBe(damagedVersion);
+  });
+
+  it("gives one signature by both reads, another when a setting's options stop reading, and another when it is written again", async () => {
+    const db = await workedExample();
+    const setting = (config: { word: string } | null) => repositorySetting("", "rule", "no-console", { on: null, mode: "steer", config });
+    const signature = () => logged(() => ruleConfigurationSignature(db, ruleCatalog, REPOSITORY, [WORKTREE])).value;
+    const loaded = () => logged(() => loadCheckoutRuleSet(db, ruleCatalog, checkout(WORKTREE), RUNNING, [])).value.signature;
+    setRuleSetting(db, setting({ word: "alert" }));
+    const readable = signature();
+    expect(loaded().startsWith(`${readable}:`)).toBe(true);
+    damage(db, "rule_settings", "config_json", "owner_kind = 'repository' AND target_id = 'no-console' AND folder = ''", "[");
+    const damaged = signature();
+    expect(damaged).not.toBe(readable);
+    expect(loaded().startsWith(`${damaged}:`)).toBe(true);
+    // Written with no options, as the Rules page writes a change of the mode alone over options that do not read.
+    setRuleSetting(db, setting(null));
+    expect(signature()).not.toBe(damaged);
   });
 });

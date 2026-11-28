@@ -6,7 +6,7 @@ import { dirname, join, resolve } from "node:path";
 import { pathToFileURL } from "node:url";
 import { createInterface } from "node:readline";
 import Database from "better-sqlite3";
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { openRerailDatabase } from "../../../src/engine/storage/database.js";
 import { codeRuleSchema, type CodeRule } from "../../../src/engine/code-rule/code-rule-schema.js";
 import { loadPackRuleDocuments } from "../../../src/engine/catalog/rule-documents.js";
@@ -178,6 +178,24 @@ describe("rules dump", () => {
       expect(exportRulesDump(target).repositories[0]?.settings).toEqual([{ folder: "", targetKind: "pack", targetId: "lint", on: false, mode: null }]);
     } finally {
       target.$client.close();
+    }
+  });
+
+  it("refuses to export a setting whose stored options are no JSON, and names it", async () => {
+    const source = openRerailDatabase(await temporaryDatabase());
+    const log = vi.spyOn(process.stderr, "write").mockReturnValue(true);
+    try {
+      source.$client.exec("INSERT INTO repositories (repository_key, display_name, created_at, updated_at) VALUES ('repo', 'repo', 0, 0)");
+      // The closing brace gone, as a damaged file or a hand edit leaves it.
+      source.$client.exec(`INSERT INTO rule_settings (owner_kind, owner_id, folder, target_kind, target_id, config_json, updated_at)
+        VALUES ('repository', 'repo', '', 'rule', 'no-console', '{"word":"alert"', 0)`);
+      expect(() => exportRulesDump(source)).toThrow(/^cannot export 1 rule setting\(s\) whose stored options are no JSON object$/u);
+      expect(log.mock.calls.map(([line]) => String(line))).toEqual([
+        expect.stringMatching(/^rerail: .+: the rule setting of no-console by repository repo at folder "" reads with no options, .+ the config_json of its row is no JSON object/u),
+      ]);
+    } finally {
+      log.mockRestore();
+      source.$client.close();
     }
   });
 

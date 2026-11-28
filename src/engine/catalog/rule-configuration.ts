@@ -4,7 +4,7 @@
  * its parent checkouts or the repository change them. See `repository-model.ts` for the precedence.
  */
 import { createHash } from "node:crypto";
-import { and, eq, inArray, or, sql } from "drizzle-orm";
+import { and, eq, getTableColumns, inArray, or, sql, type SQL } from "drizzle-orm";
 import type { RerailDatabase } from "../storage/database.js";
 import {
   folderContains,
@@ -24,13 +24,15 @@ import {
   type RuleSourceKind,
   type UnavailableReference,
 } from "./repository-model.js";
-import { readLibraryRow } from "./rule-library.js";
+import { readLibraryRow, storedLibraryRows, type StoredLibraryRow } from "./rule-library.js";
+import { stderrRowLog, storedObject, type StoredRowLog } from "./rule-quarantine.js";
 import type { CodeRuleDslValue } from "../code-rule/code-rule.js";
 import type { RuleMode } from "./rule-mode.js";
 import type { RulePackRule } from "./rule-packs.js";
 import { ruleKindOf, type RuleDocument } from "./rule-store.js";
 import { libraryRules, repositories, ruleApprovals, ruleAttachments, ruleSettings, type RuleKind } from "../storage/schema.js";
 import { clearSetupReview } from "./setup-review.js";
+import { nameOnce } from "../storage/stored-list.js";
 import { compareDeterministicStrings, ruleDocumentDigest, stableJsonText } from "../stable-json.js";
 import { configureBundledCodeRule } from "./rule-config.js";
 import { isWorktreePack, WORKTREE_PACK_ID } from "./worktree-pack.js";
@@ -40,6 +42,59 @@ type Queries = Pick<RerailDatabase, "insert" | "delete" | "select" | "update">;
 type AttachmentRow = typeof ruleAttachments.$inferSelect;
 type SettingRow = typeof ruleSettings.$inferSelect;
 type LibraryRow = typeof libraryRules.$inferSelect;
+
+/**
+ * A `rule_settings` row with `config_json` parsed by `storedObject` where the ORM's JSON column would parse it, so a
+ * setting whose text a damaged file or a hand edit left costs its own rule's options (`readSettings`), never every rule
+ * of the repository.
+ */
+const STORED_SETTING_COLUMNS = {
+  ...getTableColumns(ruleSettings),
+  config: sql<Record<string, unknown> | string | null>`${ruleSettings.config}`.mapWith(storedObject),
+};
+/** A `rule_settings` row as `STORED_SETTING_COLUMNS` reads it: its options, or, as a string, why the text holds none. */
+type StoredSettingRow = Omit<SettingRow, "config"> & { readonly config: Record<string, unknown> | string | null };
+/** A setting as read: its options, or none where their stored text holds no JSON object, and then why (`unread`). */
+export type ReadSetting = SettingRow & { readonly unread: string | null };
+
+/**
+ * The settings `where` selects, in `order`, each with its options read (`readConfig`). A row whose options do not read
+ * is named once in `named`'s log.
+ */
+export function readSettings(
+  db: Pick<RerailDatabase, "select">,
+  query: { readonly where?: SQL | undefined; readonly order?: readonly SQL[]; readonly named?: StoredRowLog },
+): ReadSetting[] {
+  const rows: StoredSettingRow[] = db.select(STORED_SETTING_COLUMNS).from(ruleSettings).where(query.where).orderBy(...(query.order ?? [])).all();
+  return rows.map(row => {
+    const read = readConfig(row.config);
+    if (read.unread !== null && query.named !== undefined) sayUnreadConfig(query.named, row, read.unread);
+    return { ...row, ...read };
+  });
+}
+
+/** Stored options as a setting reads them (`storedObject` read their text): the object, or none and why. */
+function readConfig(stored: Record<string, unknown> | string | null): Pick<ReadSetting, "config" | "unread"> {
+  if (typeof stored === "string") return { config: null, unread: stored };
+  // The type the ORM's JSON column gave these values: Rerail writes only option values there, and no reader checked them.
+  return { config: stored as RuleConfig | null, unread: null };
+}
+
+/** Names, once in `named`'s log, the setting whose stored options are no JSON object, and why. */
+function sayUnreadConfig({ file, log }: StoredRowLog, row: StoredSettingRow, why: string): void {
+  // The column name the schema gives, so the line names the place a person mends.
+  const column = ruleSettings.config.name;
+  const setting = `the ${row.targetKind} setting of ${row.targetId} by ${row.ownerKind} ${row.ownerId} at folder "${row.folder}"`;
+  nameOnce(log, { file, place: `rule setting ${row.ownerKind} ${row.ownerId} ${row.folder} ${row.targetKind} ${row.targetId}` },
+    `rerail: ${file}: ${setting} reads with no options, and a rule by Rerail it gives options runs nowhere until they are set again: `
+    + `the ${column} of its row is no JSON object (${why}), which only a damaged file or a hand edit leaves.\n`);
+}
+
+/** Why a rule whose setting holds options that do not read runs nowhere (`configError`). */
+function unreadOptionsError(why: string): string {
+  return `the options a setting gives it in the database are no JSON object (${why}), which only a damaged file or a hand edit leaves; `
+    + "set them again to run it";
+}
 
 function ownerColumns(owner: RuleSetting["owner"]): { ownerKind: "repository" | "checkout"; ownerId: string } {
   return owner.kind === "repository"
@@ -105,6 +160,23 @@ export function setRuleSetting(db: Queries, setting: RuleSetting, now: number = 
   writeSetting(db, setting, now);
 }
 
+/**
+ * Store a setting's fields but its options over its row, whose stored options text stays as it is: a change that names
+ * no options over options that do not read (`ReadSetting.unread`) keeps them, so the rule keeps its `configError`.
+ */
+export function setRuleSettingKeepingOptions(db: Queries, setting: RuleSetting, now: number = Date.now()): void {
+  const { ownerKind, ownerId } = ownerColumns(setting.owner);
+  db.update(ruleSettings)
+    .set({ on: setting.on, mode: setting.mode, suppressions: setting.suppressions ?? null, origin: setting.origin ?? null, updatedAt: now })
+    .where(and(
+      eq(ruleSettings.ownerKind, ownerKind),
+      eq(ruleSettings.ownerId, ownerId),
+      eq(ruleSettings.folder, normalizeFolder(setting.folder)),
+      eq(ruleSettings.targetKind, setting.targetKind),
+      eq(ruleSettings.targetId, setting.targetId),
+    )).run();
+}
+
 export interface SetUpChoice {
   readonly packs: readonly { readonly packId: string; readonly folder: string }[];
   readonly rules?: readonly { readonly sourceKind: RuleSourceKind; readonly sourceId: string; readonly folder: string }[];
@@ -137,10 +209,18 @@ export function recordSetUp(tx: Queries, repositoryKey: RepositoryKey, choice: S
 interface ConfigurationRows {
   readonly configuredAt: number | null;
   readonly attachments: readonly AttachmentRow[];
-  readonly settings: readonly SettingRow[];
-  readonly library: readonly LibraryRow[];
+  readonly settings: readonly ReadSetting[];
+  readonly library: readonly LibraryEntry[];
   /** Every approval recorded (`rule-approval.ts`), by key. */
   readonly approvals: ReadonlySet<string>;
+}
+
+/** A library rule row as the configuration reads it: what the signature hashes, and the rule, none where it is quarantined. */
+type LibraryEntry = Pick<LibraryRow, "ruleId" | "revision" | "payloadHash"> & { readonly rule: LibraryRule | undefined };
+
+function libraryEntry(row: StoredLibraryRow, named: StoredRowLog): LibraryEntry {
+  const read = readLibraryRow(row, named);
+  return { ruleId: row.ruleId, revision: row.revision, payloadHash: row.payloadHash, rule: read.ok ? read.rule : undefined };
 }
 
 /** A checkout's own rules (`worktree-pack.ts`): in its catalog alone, and present in it for the whole checkout. */
@@ -161,11 +241,15 @@ function readRows(db: RerailDatabase, ruleCatalog: RuleCatalog, repositoryKey: R
   const repository = db.select({ configuredAt: repositories.configuredAt }).from(repositories).where(eq(repositories.repositoryKey, repositoryKey)).get();
   const attachments = [...db.select().from(ruleAttachments).where(eq(ruleAttachments.repositoryKey, repositoryKey)).all(), ...worktreeAttachments(ruleCatalog, repositoryKey)];
   const repositoryOwned = and(eq(ruleSettings.ownerKind, "repository"), eq(ruleSettings.ownerId, repositoryKey));
-  const settings = db.select().from(ruleSettings).where(ownerCheckoutPaths.length === 0
-    ? repositoryOwned
-    : or(repositoryOwned, and(eq(ruleSettings.ownerKind, "checkout"), inArray(ruleSettings.ownerId, [...ownerCheckoutPaths])))).all();
+  const named = stderrRowLog(db);
+  const settings = readSettings(db, {
+    where: ownerCheckoutPaths.length === 0
+      ? repositoryOwned
+      : or(repositoryOwned, and(eq(ruleSettings.ownerKind, "checkout"), inArray(ruleSettings.ownerId, [...ownerCheckoutPaths]))),
+    named,
+  });
   const ids = libraryIdsOf(ruleCatalog, attachments);
-  const library = ids.length === 0 ? [] : db.select().from(libraryRules).where(inArray(libraryRules.ruleId, ids)).all();
+  const library = ids.length === 0 ? [] : storedLibraryRows(db, inArray(libraryRules.ruleId, ids)).map(row => libraryEntry(row, named));
   return { configuredAt: repository?.configuredAt ?? null, attachments, settings, library, approvals: readApprovals(db) };
 }
 
@@ -174,7 +258,7 @@ interface SignatureRows {
   readonly configuredAt: number | null;
   readonly attachments: readonly Pick<AttachmentRow, "folder" | "sourceKind" | "sourceId">[];
   // A setting's origin says who made it and decides no rule, so the signature leaves it out, as it leaves updatedAt.
-  readonly settings: readonly Omit<SettingRow, "updatedAt" | "origin">[];
+  readonly settings: readonly Omit<ReadSetting, "updatedAt" | "origin">[];
   readonly library: readonly Pick<LibraryRow, "ruleId" | "revision" | "payloadHash">[];
   readonly approvals: ReadonlySet<string>;
 }
@@ -188,7 +272,7 @@ function signatureOf(catalogDigest: string, ownerCheckoutPaths: readonly string[
     ...rows.settings
       .map(row => [
         `setting\0${row.ownerKind}\0${row.ownerId}\0${row.folder}\0${row.targetKind}\0${row.targetId}`,
-        `${String(row.on)}\0${String(row.mode)}\0${String(row.suppressions)}\0${stableJsonText(row.config) ?? "null"}`,
+        `${String(row.on)}\0${String(row.mode)}\0${String(row.suppressions)}\0${optionsText(row)}`,
       ].join("\0"))
       .sort(compareDeterministicStrings),
     ...rows.library
@@ -197,6 +281,14 @@ function signatureOf(catalogDigest: string, ownerCheckoutPaths: readonly string[
     ...[...rows.approvals].map(key => `approval\0${key}`).sort(compareDeterministicStrings),
   ];
   return `sha256:${createHash("sha256").update(lines.join("\n")).digest("hex")}`;
+}
+
+/**
+ * A setting's options as the signature hashes them: as before for options that read, so a configuration that reads keeps
+ * its signature, and why they do not read for those that do not.
+ */
+function optionsText(row: Pick<ReadSetting, "config" | "unread">): string {
+  return row.unread === null ? stableJsonText(row.config) ?? "null" : `unread\0${row.unread}`;
 }
 
 /**
@@ -212,7 +304,7 @@ function signatureStatement(db: RerailDatabase) {
     attachments: sql<string>`(SELECT json_group_array(json_array(${ruleAttachments.folder}, ${ruleAttachments.sourceKind}, ${ruleAttachments.sourceId}))
       FROM ${ruleAttachments} WHERE ${ruleAttachments.repositoryKey} = ${key})`,
     settings: sql<string>`(SELECT json_group_array(json_array(${ruleSettings.ownerKind}, ${ruleSettings.ownerId}, ${ruleSettings.folder},
-      ${ruleSettings.targetKind}, ${ruleSettings.targetId}, ${ruleSettings.on}, ${ruleSettings.mode}, ${ruleSettings.suppressions}, json(${ruleSettings.config})))
+      ${ruleSettings.targetKind}, ${ruleSettings.targetId}, ${ruleSettings.on}, ${ruleSettings.mode}, ${ruleSettings.suppressions}, ${ruleSettings.config}))
       FROM ${ruleSettings} WHERE (${ruleSettings.ownerKind} = 'repository' AND ${ruleSettings.ownerId} = ${key})
       OR (${ruleSettings.ownerKind} = 'checkout' AND ${ruleSettings.ownerId} IN (SELECT value FROM json_each(${owners}))))`,
     library: sql<string>`(SELECT json_group_array(json_array(${libraryRules.ruleId}, ${libraryRules.revision}, ${libraryRules.payloadHash})) FROM ${libraryRules})`,
@@ -227,6 +319,11 @@ function tuples<Tuple extends readonly unknown[]>(json: string): Tuple[] {
   return JSON.parse(json) as Tuple[]; // Built by json_group_array over the table's own columns.
 }
 
+/** A setting's options text as {@link signatureStatement} gives it, read as `STORED_SETTING_COLUMNS` reads it. */
+function configOfText(text: string | null): Record<string, unknown> | string | null {
+  return text === null ? null : storedObject(text);
+}
+
 /** {@link SignatureRows} from {@link signatureStatement}'s row: the same rows {@link readRows} gives the signature. */
 function signatureRowsOf(read: SignatureRead, ruleCatalog: RuleCatalog, repositoryKey: RepositoryKey): SignatureRows {
   const attachments = [
@@ -234,12 +331,12 @@ function signatureRowsOf(read: SignatureRead, ruleCatalog: RuleCatalog, reposito
     ...worktreeAttachments(ruleCatalog, repositoryKey),
   ];
   const ids = new Set(libraryIdsOf(ruleCatalog, attachments));
-  type Setting = [SettingRow["ownerKind"], string, string, SettingRow["targetKind"], string, number | null, SettingRow["mode"], SettingRow["suppressions"], SettingRow["config"]];
+  type Setting = [SettingRow["ownerKind"], string, string, SettingRow["targetKind"], string, number | null, SettingRow["mode"], SettingRow["suppressions"], string | null];
   return {
     configuredAt: read.configuredAt,
     attachments,
     settings: tuples<Setting>(read.settings).map(([ownerKind, ownerId, folder, targetKind, targetId, on, mode, suppressions, config]) =>
-      ({ ownerKind, ownerId, folder, targetKind, targetId, on: on === null ? null : on === 1, mode, suppressions, config })),
+      ({ ownerKind, ownerId, folder, targetKind, targetId, on: on === null ? null : on === 1, mode, suppressions, ...readConfig(configOfText(config)) })),
     library: tuples<[string, number, string]>(read.library).filter(([ruleId]) => ids.has(ruleId)).map(([ruleId, revision, payloadHash]) => ({ ruleId, revision, payloadHash })),
     approvals: new Set(tuples<[RuleApprovalSubject["kind"], string, string]>(read.approvals).map(([kind, id, digest]) => approvalKey({ kind, id, digest }))),
   };
@@ -297,7 +394,7 @@ export function ruleConfigurationVersionReader(db: RerailDatabase): () => string
     attachments: sql<string>`(SELECT json_group_array(json_array(${ruleAttachments.repositoryKey}, ${ruleAttachments.folder},
       ${ruleAttachments.sourceKind}, ${ruleAttachments.sourceId})) FROM ${ruleAttachments})`,
     settings: sql<string>`(SELECT json_group_array(json_array(${ruleSettings.ownerKind}, ${ruleSettings.ownerId}, ${ruleSettings.folder},
-      ${ruleSettings.targetKind}, ${ruleSettings.targetId}, ${ruleSettings.on}, ${ruleSettings.mode}, ${ruleSettings.suppressions}, json(${ruleSettings.config})))
+      ${ruleSettings.targetKind}, ${ruleSettings.targetId}, ${ruleSettings.on}, ${ruleSettings.mode}, ${ruleSettings.suppressions}, ${ruleSettings.config}))
       FROM ${ruleSettings})`,
     library: sql<string>`(SELECT json_group_array(json_array(${libraryRules.ruleId}, ${libraryRules.revision}, ${libraryRules.payloadHash})) FROM ${libraryRules})`,
     approvals: sql<string>`(SELECT json_group_array(json_array(${ruleApprovals.subjectKind}, ${ruleApprovals.subjectId}, ${ruleApprovals.digest})) FROM ${ruleApprovals})`,
@@ -371,7 +468,9 @@ class ConfigurationResolver {
   readonly #ruleCatalog: RuleCatalog;
   readonly #attachments: readonly AttachmentRow[];
   readonly #owners: readonly Owner[];
-  readonly #settingsByOwner = new Map<string, SettingRow[]>();
+  readonly #settingsByOwner: ReadonlyMap<string, readonly ReadSetting[]>;
+  /** Why the options a setting gives a rule over the whole repository do not read, by the rule's id (`unreadRuleOptions`). */
+  readonly #unreadOptions: ReadonlyMap<string, string>;
   readonly #library = new Map<string, LibraryRule>();
   /** Library ids that exist at all (readable or not); a By Rerail rule with one of these ids is shadowed. */
   readonly #libraryIds: ReadonlySet<string>;
@@ -384,16 +483,10 @@ class ConfigurationResolver {
     this.#approvals = rows.approvals;
     // Deepest attachment first, so a rule present through two folders reports the deepest one.
     this.#attachments = [...rows.attachments].sort((left, right) => right.folder.length - left.folder.length);
-    for (const setting of rows.settings) {
-      const key = `${setting.ownerKind}\0${setting.ownerId}`;
-      this.#settingsByOwner.set(key, [...(this.#settingsByOwner.get(key) ?? []), setting]);
-    }
-    for (const list of this.#settingsByOwner.values()) list.sort(compareSettings);
+    this.#settingsByOwner = settingsByOwner(rows.settings);
+    this.#unreadOptions = unreadRuleOptions(rows.settings);
     this.#libraryIds = new Set(rows.library.map(row => row.ruleId));
-    for (const row of rows.library) {
-      const read = readLibraryRow(row);
-      if (read.ok) this.#library.set(row.ruleId, read.rule);
-    }
+    for (const row of rows.library) if (row.rule !== undefined) this.#library.set(row.ruleId, row.rule);
     this.unavailable = rows.attachments.flatMap((row): UnavailableReference[] => {
       const reference = { sourceKind: row.sourceKind, sourceId: row.sourceId, folder: row.folder };
       if (row.sourceKind === "pack") {
@@ -495,11 +588,20 @@ class ConfigurationResolver {
     return this.#ruleConfig(presence.document.rule.id);
   }
 
+  /**
+   * Why options a setting gives `presence`'s rule do not read, where options apply to it (`#config`); undefined when they
+   * read. Which options such a setting held is lost, so the rule runs nowhere rather than with some of them.
+   */
+  #unreadOptionsOf(presence: Presence): string | undefined {
+    if (presence.document.kind === "conversation" || presence.source.kind === "library_rule") return undefined;
+    return this.#unreadOptions.get(presence.document.rule.id);
+  }
+
   /** The option values the settings of each owner, nearest first, give rule `id` over the whole repository. */
   #ruleConfig(id: string): { config: RuleConfig | null; deciders: Record<string, Decider> } {
     const config: Record<string, CodeRuleDslValue> = {};
     const deciders: Record<string, Decider> = {};
-    const configures = (setting: SettingRow): setting is SettingRow & { config: RuleConfig } =>
+    const configures = (setting: ReadSetting): setting is ReadSetting & { config: RuleConfig } =>
       setting.targetKind === "rule" && setting.targetId === id && setting.folder === "" && setting.config !== null;
     for (const owner of this.#owners) {
       for (const setting of (this.#settingsByOwner.get(`${owner.kind}\0${owner.id}`) ?? []).filter(configures)) {
@@ -578,11 +680,33 @@ class ConfigurationResolver {
 
   /** The rule as its settings' options configure it, those options and who set each, and why they do not apply when they do not. */
   #configured(presence: Presence): { rule: RuleDocument["rule"]; config: RuleConfig | null; deciders: Record<string, Decider>; configError: string | null } {
+    const unread = this.#unreadOptionsOf(presence);
+    if (unread !== undefined) return { rule: presence.document.rule, config: null, deciders: {}, configError: unreadOptionsError(unread) };
     const { config, deciders } = this.#config(presence);
     const configured = config === null ? undefined : configureBundledCodeRule(this.#ruleCatalog, presence.document.rule.id, config);
     if (configured === undefined) return { rule: presence.document.rule, config, deciders, configError: null };
     return configured.ok ? { rule: configured.rule, config, deciders, configError: null } : { rule: presence.document.rule, config, deciders, configError: configured.reason };
   }
+}
+
+/** `settings` by owner (`<kind>\0<id>`), each owner's in the order `compareSettings` gives. */
+function settingsByOwner(settings: readonly ReadSetting[]): Map<string, ReadSetting[]> {
+  const byOwner = new Map<string, ReadSetting[]>();
+  for (const setting of settings) {
+    const key = `${setting.ownerKind}\0${setting.ownerId}`;
+    byOwner.set(key, [...(byOwner.get(key) ?? []), setting]);
+  }
+  for (const list of byOwner.values()) list.sort(compareSettings);
+  return byOwner;
+}
+
+/** Why options do not read, by the id of the rule a setting gives them over the whole repository, where `#ruleConfig` reads them. */
+function unreadRuleOptions(settings: readonly ReadSetting[]): Map<string, string> {
+  const unread = new Map<string, string>();
+  for (const setting of settings) {
+    if (setting.unread !== null && setting.targetKind === "rule" && setting.folder === "") unread.set(setting.targetId, setting.unread);
+  }
+  return unread;
 }
 
 /** A value of a rule's configuration and who decided it. */

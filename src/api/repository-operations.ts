@@ -20,6 +20,7 @@ import {
   type EffectiveRule,
   type LibraryRule,
   type RepositoryStatus,
+  type RuleAttachment,
   type RuleCatalog,
   type RuleConfig,
   type RuleSetting,
@@ -38,7 +39,9 @@ import {
   type RepositoryListing,
 } from "../engine/catalog/repository-registry.js";
 import { setCheckoutStarted, setRepositoryStarted, stateOf } from "../runtime/repository-start.js";
-import { addAttachment, listRepositoryRules, recordSetUp, removeAttachment, setRuleSetting } from "../engine/catalog/rule-configuration.js";
+import {
+  addAttachment, listRepositoryRules, readSettings, recordSetUp, removeAttachment, setRuleSetting, setRuleSettingKeepingOptions, type ReadSetting,
+} from "../engine/catalog/rule-configuration.js";
 import {
   copyRerailRuleToLibrary,
   getLibraryRule,
@@ -464,16 +467,20 @@ function notSetUp(db: Pick<RerailDatabase, "select">, repositoryKey: string): bo
     .where(eq(repositories.repositoryKey, repositoryKey)).get()?.configuredAt === null;
 }
 
-/** The setting `owner` stores for `change`'s folder and target, if any. */
-function storedSetting(db: Pick<RerailDatabase, "select">, owner: RuleSetting["owner"], change: SettingChange) {
-  return db.select({ on: ruleSettings.on, mode: ruleSettings.mode, suppressions: ruleSettings.suppressions, config: ruleSettings.config })
-    .from(ruleSettings).where(and(
+/**
+ * The setting `owner` stores for `change`'s folder and target, if any. Options whose stored text does not read are none
+ * here (`readSettings`): a change that names no options keeps that text (`keepsOptions`), and one that names them mends the row.
+ */
+function storedSetting(db: Pick<RerailDatabase, "select">, owner: RuleSetting["owner"], change: SettingChange): ReadSetting | undefined {
+  return readSettings(db, {
+    where: and(
       eq(ruleSettings.ownerKind, owner.kind),
       eq(ruleSettings.ownerId, owner.kind === "repository" ? owner.repositoryKey : owner.checkoutPath),
       eq(ruleSettings.folder, change.folder),
       eq(ruleSettings.targetKind, change.targetKind),
       eq(ruleSettings.targetId, change.targetId),
-    )).get();
+    ),
+  })[0];
 }
 
 /** The mode `change` writes to `owner`'s setting, beside the mode stored there. */
@@ -494,6 +501,36 @@ function mergedSetting(db: Pick<RerailDatabase, "select">, owner: RuleSetting["o
     suppressions: change.suppressions === undefined ? stored?.suppressions ?? null : change.suppressions,
     config: change.config === undefined ? stored?.config ?? null : change.config,
   };
+}
+
+/**
+ * Whether `change` names no options while those `owner`'s setting stores do not read: its write keeps that text, so the
+ * rule keeps its `configError` until a change names options, `null` included, rather than running with its defaults.
+ */
+function keepsOptions(db: Pick<RerailDatabase, "select">, owner: RuleSetting["owner"], change: SettingChange): boolean {
+  return change.config === undefined && (storedSetting(db, owner, change)?.unread ?? null) !== null;
+}
+
+/** Writes each of `changes` that keeps its stored options (`keepsOptions`); returns the others' settings for the caller to write. */
+function writeKeptOptions(db: Pick<RerailDatabase, "select" | "insert" | "update" | "delete">, owner: RuleSetting["owner"], changes: readonly SettingChange[]): RuleSetting[] {
+  const others: RuleSetting[] = [];
+  for (const change of changes) {
+    const setting = mergedSetting(db, owner, change);
+    if (keepsOptions(db, owner, change)) setRuleSettingKeepingOptions(db, setting);
+    else others.push(setting);
+  }
+  return others;
+}
+
+/** Adds `add` to repository `repositoryKey`, set up already, and writes `settings` there, in the caller's transaction. */
+function addWithSettings(
+  tx: Pick<RerailDatabase, "select" | "insert" | "update" | "delete">,
+  repositoryKey: string,
+  add: readonly Omit<RuleAttachment, "repositoryKey">[],
+  settings: readonly RuleSetting[],
+): void {
+  for (const entry of add) addAttachment(tx, { repositoryKey, ...entry });
+  for (const setting of settings) setRuleSetting(tx, setting);
 }
 
 function settingRecord(setting: RuleSetting): z.infer<typeof ruleSettingRecordSchema> {
@@ -634,7 +671,7 @@ export const repositoryOperations: readonly Operation[] = [
     id: "repository_settings_set",
     method: "PUT",
     path: "/api/repository/settings",
-    summary: "Turn rules or whole packs on or off, change their mode, or choose whether linters' suppression comments (eslint-disable, noqa, ...) silence them (suppressions: honour or ignore), for the repository or for one checkout (this worktree), optionally in one folder. config sets the option values of one code rule by Rerail over the whole repository (folder \"\"); an unknown option or a value the option does not allow is rejected. null clears a value so the next owner decides; an omitted value is kept. A coding agent may change checkout settings at any time, and the repository's only before it is set up.",
+    summary: "Turn rules or whole packs on or off, change their mode, or choose whether linters' suppression comments (eslint-disable, noqa, ...) silence them (suppressions: honour or ignore), for the repository or for one checkout (this worktree), optionally in one folder. config sets the option values of one code rule by Rerail over the whole repository (folder \"\"); an unknown option or a value the option does not allow is rejected. null clears a value so the next owner decides; an omitted value is kept. Stored options that are no JSON object (a damaged file or a hand edit) stay as stored until a change names config, and this answer gives them as config null; the rule's configError in repository_rules_get says why. A coding agent may change checkout settings at any time, and the repository's only before it is set up.",
     body: settingsSetBodySchema,
     output: z.object({ settings: z.array(ruleSettingRecordSchema), ...blockNoteShape }),
     handler: async (stores, input, caller) => {
@@ -659,7 +696,7 @@ export const repositoryOperations: readonly Operation[] = [
       // Merged over the settings as the database holds them once the write lock is free, and saved in that transaction.
       const settings = await writtenWhenFree(stores, database => {
         const merged = changes.map(change => mergedSetting(database, owner, change));
-        for (const setting of merged) setRuleSetting(database, setting);
+        for (const setting of writeKeptOptions(database, owner, changes)) setRuleSetting(database, setting);
         return merged;
       });
       return { settings: settings.map(settingRecord), ...blockNote([input.mode]) };
@@ -688,7 +725,7 @@ export const repositoryOperations: readonly Operation[] = [
       for (const change of changes) checkSetting(stores, catalog, change);
       // The attachments and the settings that go with them are one change: nobody sees a pack before its settings.
       db.transaction(tx => {
-        const settings = changes.map(change => mergedSetting(tx, owner, change));
+        const settings = writeKeptOptions(tx, owner, changes);
         if (notSetUp(tx, repositoryKey) && (add.length > 0 || input.configure === true)) {
           recordSetUp(tx, repositoryKey, {
             packs: add.filter(entry => entry.sourceKind === "pack").map(entry => ({ packId: entry.sourceId, folder: entry.folder })),
@@ -696,8 +733,7 @@ export const repositoryOperations: readonly Operation[] = [
             settings,
           });
         } else {
-          for (const entry of add) addAttachment(tx, { repositoryKey, ...entry });
-          for (const setting of settings) setRuleSetting(tx, setting);
+          addWithSettings(tx, repositoryKey, add, settings);
         }
         for (const entry of remove) removeAttachment(tx, { repositoryKey, ...entry });
       }, { behavior: "immediate" });

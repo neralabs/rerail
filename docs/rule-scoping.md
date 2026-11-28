@@ -233,7 +233,7 @@ So `config` merges per option: a checkout that sets `{ "option": "type" }` keeps
 
 `repository_rules_get` reports what decided each field of every effective rule as `onSource`, `modeSource`, `suppressionsSource` and `configSource`. `configSource` names, per option, this checkout's or a containing checkout's setting, the repository's setting, the pack's starting value, or the rule's default.
 
-If a stored `config` no longer applies to the rule's document (a later release removed the option), `configError` says why. The rule runs nowhere: it is quarantined with that reason.
+If a stored `config` no longer applies to the rule's document (a later release removed the option), `configError` says why. The rule runs nowhere: it is quarantined with that reason. So is a rule by Rerail whose setting's stored options are no JSON object (a damaged file or a hand edit), until a change names its options again (`config`, `null` included): a change of only its other fields keeps the damaged ones. Its other fields still apply, and `daemon.log` names the setting once.
 
 Conversation rules, in [internal testing](../README.md#internal-testing), resolve the same way for the folder the session started in.
 
@@ -268,7 +268,7 @@ An edit, or a new pack version, is new content and waits again. Going back to ap
 <details>
 <summary>How approving works, and its limits</summary>
 
-`rerail rules approve` first prints what it approves: a rule's JSON in full, invisible characters written as escapes, or a pack's rule ids. Rerail's command files never pre-approve it, so a coding agent's host asks the person before it runs.
+`rerail rules approve` first prints what it approves: a rule's JSON in full, invisible characters written as escapes, or a pack's rule ids. A library rule whose stored document is no JSON (a damaged file or a hand edit) cannot be shown, so it is not approved and the command exits 1. Rerail's command files never pre-approve it, so a coding agent's host asks the person before it runs.
 
 The session footer counts what waits (`2 to approve`), as does `/rerail`, and Overview lists it. An approval changes the configuration signature, so a running session picks it up at its next event.
 
@@ -386,7 +386,7 @@ A checkout wins, then the repository, then the calling agent's checkout. A repos
 
 How rule configuration moves between machines, and what each audit records about it.
 
-`rerail rules export` writes a version 1 dump: the library, and each repository's key, name, aliases, set-up time, attachments and repository settings. `rerail rules import <file>` reads it back. Checkout settings, start state and approvals belong to this machine and are not exported.
+`rerail rules export` writes a version 1 dump: the library, and each repository's key, name, aliases, set-up time, attachments and repository settings. `rerail rules import <file>` reads it back. Checkout settings, start state and approvals belong to this machine and are not exported. It refuses a library rule that is quarantined and a repository setting whose stored options are no JSON (a damaged file or a hand edit), naming the setting on its error output, since a dump without them would import without them.
 
 Each audit records, per rule, its revision, payload hash, source (pack, By Rerail rule or library rule), repository key, checkout, and a `placement` array. Later edits don't rewrite past audits.
 

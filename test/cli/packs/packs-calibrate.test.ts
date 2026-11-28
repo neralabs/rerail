@@ -309,6 +309,47 @@ describe("rerail packs calibrate", () => {
     ].join("\n") + "\n");
   });
 
+  it("writes again the options the lint config gave where their stored text is no JSON, and names the setting", async () => {
+    const where = await repository({ [NO_EXPLICIT_ANY]: { config: { ignoreRestArgs: false }, origin: "lint-config" } });
+    eslintrc(where.repo, RULES);
+    const database = openRerailDatabase(where.databasePath);
+    try {
+      // The closing brace gone, as a damaged file or a hand edit leaves it.
+      database.$client.prepare("UPDATE rule_settings SET config_json = ? WHERE target_id = ? AND folder = ''").run('{"ignoreRestArgs":false', NO_EXPLICIT_ANY);
+    } finally {
+      database.$client.close();
+    }
+    const log = vi.spyOn(process.stderr, "write").mockReturnValue(true);
+    try {
+      expect(kinds(calibrated(where))[NO_EXPLICIT_ANY]).toBe("options-set");
+      expect(log.mock.calls.map(([line]) => String(line))).toEqual([
+        expect.stringMatching(/: the rule setting of typescript-eslint-no-explicit-any by repository .+ reads with no options, .+ no JSON object/u),
+      ]);
+    } finally {
+      log.mockRestore();
+    }
+    expect(rows(where.databasePath, [NO_EXPLICIT_ANY])[NO_EXPLICIT_ANY]).toEqual({ on: null, mode: null, config: { ignoreRestArgs: true }, origin: "lint-config" });
+  });
+
+  it("writes again a setting the lint config gave whose stored options are no JSON where the lint config gives the rule none", async () => {
+    const where = await repository({ [ARRAY_TYPE]: { on: true, origin: "lint-config" } });
+    eslintrc(where.repo, RULES);
+    const database = openRerailDatabase(where.databasePath);
+    try {
+      // Options with their closing brace gone, as a damaged file or a hand edit leaves them.
+      database.$client.prepare("UPDATE rule_settings SET config_json = ? WHERE target_id = ? AND folder = ''").run('{"default":"generic"', ARRAY_TYPE);
+    } finally {
+      database.$client.close();
+    }
+    const log = vi.spyOn(process.stderr, "write").mockReturnValue(true);
+    try {
+      expect(kinds(calibrated(where))[ARRAY_TYPE]).toBe("turned-on");
+    } finally {
+      log.mockRestore();
+    }
+    expect(rows(where.databasePath, [ARRAY_TYPE])[ARRAY_TYPE]).toEqual({ on: true, mode: null, config: null, origin: "lint-config" });
+  });
+
   it("refuses a repository that is recorded but not set up, and an unknown option", async () => {
     const where = await repository({}, false);
     eslintrc(where.repo, { "@typescript-eslint/ban-ts-comment": "off" });

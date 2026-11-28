@@ -1,0 +1,1 @@
+One damaged library rule or rule setting no longer stops every rule of its repository: a rule whose stored document is damaged is quarantined, a rule whose setting holds damaged options runs nowhere until they are set again, `daemon.log` names each, and the other rules run.
