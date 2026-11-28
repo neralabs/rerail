@@ -2692,12 +2692,19 @@ impl Batch {
             job.desc.v = job.reach(&finds.buffer, 0, true)?;
             job.own.push(finds);
         }
+        // A scan's candidates, found once by its prep (`PK_SCAN_PREP`, before its level's size script): `lo, n, tag,
+        // how`. Its rows counted are `n`: its counts, their scan and its items its candidates', not its relation's
+        // rows (a probed scan's counts were zeros past them, 37% of the CPU's `scan_count`).
+        if from_one {
+            let cands = Held::new(16)?;
+            job.desc.v = job.reach(&cands.buffer, 0, true)?;
+            job.own.push(cands);
+        }
         (job.n, job.count, job.scatter) = (n, n, n);
-        job.m = match (from_one, stage.r_len != 0) {
-            (true, true) => (Some(job.desc.r + stage.r_at + REL_ROWS + ROWS_LEN), stage.nr as usize),
-            (true, false) => (None, stage.nr as usize),
-            (false, _) => (Some(job.desc.totals + 4 * in_slot as u64), left.room()),
-        };
+        job.m = if from_one { (Some(job.desc.v + 4), stage.nr as usize) } else { (Some(job.desc.totals + 4 * in_slot as u64), left.room()) };
+        // Where its level makes what it reads first (`queue`: an index it probes, rows copied, `prep_late`): its rows
+        // counted its relation's, as its prep runs after them.
+        job.m_late = (stage.r_len != 0).then(|| job.desc.r + stage.r_at + REL_ROWS + ROWS_LEN);
         let (l, o) = (left.key(job.desc.l), out.key(job.desc.o));
         job.order(&[l, job.desc.r, job.desc.totals], &[o, job.desc.totals]);
         self.queue(job)
@@ -3441,6 +3448,17 @@ impl Batch {
         if after {
             self.flush()?;
         }
+        // A scan that reads what a job of its level makes in an earlier phase (rows copied, or an index: an index's
+        // job names no writes, its room in its relation's block, so any index of the level where it probes one): its
+        // candidates found after them (`PK_SCAN_PREP`'s late phase), its counts its relation's rows', zeros past them.
+        let mut job = job;
+        let probes_index = job.stage.nkeys != 0 && job.stage.v_parent == 0 && job.stage.v_has == 0;
+        if job.kind == JobKind::Scan
+            && self.queued.iter().any(|q| (q.kind == JobKind::Index && probes_index) || (q.kind.phase() < job.kind.phase() && job.reads.iter().any(|a| q.writes.contains(a) || q.reads.contains(a) && q.kind == JobKind::Index)))
+        {
+            job.prep_late = true;
+            job.m.0 = job.m_late;
+        }
         // A block the job reaches through another wrap than the open program does: grown since (an index's room, a
         // head's rows), wrapped anew at another device address (`Block::device_buffer`). One launch reaching a block
         // through two wraps misreads on G15 (`launch`): the work encoded so far commits as a launch of its own, which
@@ -3695,7 +3713,7 @@ impl Batch {
                 for &(k, what, threads) in kinds {
                     // A fold's map left as it is has no pass to empty or grow it.
                     // A sorted dedup has no places to clear or claim, and an unsorted one no keys (t58 increment A).
-                    if j.kind == k && !(matches!(k, JobKind::Lattice | JobKind::Dedup) && threads(j) == 0) {
+                    if j.kind == k && !((matches!(k, JobKind::Lattice | JobKind::Dedup) || what == PK_SCAN_PREP) && threads(j) == 0) {
                         let n = if what == PK_ROW_TEXT { threads(j).div_ceil(rows_a_group).max(1) } else { groups(threads(j)) };
                         // Its items as many as its rows' count needs, where its kernel's threads past them do nothing;
                         // else all of them (`per` 0).
@@ -3732,6 +3750,8 @@ impl Batch {
         // The wide sort's passes after the index sort's.
         let wide_first = sort_first + if sort.is_some() { passes as usize } else { 0 };
         let wide_sizes = wide.map(|tiles| SortSizes { first: wide_first, passes: wide_passes, hist: prog.scan_levels_sized(ScanData::Script, 256 * tiles), tiles });
+        // Its scans' candidates, which its size script reads (`Job::rows_word`).
+        job_phase(prog, &[(JobKind::Scan, PK_SCAN_PREP, |j| usize::from(!j.prep_late))]);
         let sized = level_sizes(prog, &jobs, first_job, total, pa, &placed, sizes, wide_sizes)?;
         job_phase(prog, &[(JobKind::Copy, PK_COPY, |j| j.count)]);
         if let (Some((a, b, hist, tiles)), Some(f)) = (&sort, sorted) {
@@ -3787,6 +3807,7 @@ impl Batch {
             }
             prog.arena += units(16 * wide_rows.max(1) + 4 * (256 * tiles + 1));
         }
+        job_phase(prog, &[(JobKind::Scan, PK_SCAN_PREP, |j| usize::from(j.prep_late))]);
         job_phase(prog, &[
             (JobKind::Stage, PK_STAGE_COUNT, |j| j.count),
             (JobKind::Scan, PK_SCAN_COUNT, |j| j.count),
@@ -5089,6 +5110,8 @@ const PK_RADIX_SCATTER: u32 = 4;
 /// A sorted dedup's keys (t58 increment A, `dedup_key_one`).
 const PK_DEDUP_KEY: u32 = 32;
 const PK_SET_PLACE: u32 = 33;
+/// A scan's candidates found once (`scan_prep_one`), before its level's size script.
+const PK_SCAN_PREP: u32 = 34;
 
 /// `HeadKeyP`'s level's keys and its passes' parity (its size script's, `flush`'s).
 const HK_TOTAL: WordAt = WordAt::word(68);
@@ -5806,6 +5829,10 @@ struct Job {
     /// Its output placed by its level's size script at its start, its rows a word's or its input's room, not
     /// after the level's scan (`made_sizes`): a union's (`Batch::append_rows`), a fold's changed rows.
     o_rows: Option<OutRows>,
+    /// A scan's candidates found after its level's earlier phases (`queue`), its rows counted its relation's: the
+    /// word of its relation's length (none: `nr`).
+    prep_late: bool,
+    m_late: Option<u64>,
     v_place: bool,
     h_place: Option<HPlace>,
     /// Its rows counted: the word that holds them (none: all), at most its input's room where that is not placed.
@@ -5885,6 +5912,8 @@ impl Job {
             d_place: None,
             d_caps: Vec::new(),
             o_rows: None,
+            prep_late: false,
+            m_late: None,
             in_caps: Vec::new(),
             out_caps: Vec::new(),
             out_slots: 0,
@@ -5946,7 +5975,8 @@ impl Job {
         match self.kind {
             JobKind::Stage | JobKind::Witness | JobKind::Row => Some((self.desc.totals + 4 * u64::from(self.stage.in_slot), 1)),
             JobKind::Map => Some((self.desc.totals + 4 * u64::from(self.stage.in_slot), 0)),
-            JobKind::Scan if self.stage.r_len != 0 => Some((self.desc.r + self.stage.r_at + REL_ROWS + ROWS_LEN, 1)),
+            JobKind::Scan if !self.prep_late => Some((self.desc.v + 4, 1)),
+            JobKind::Scan => self.m_late.map(|w| (w, 1)),
             JobKind::Dedup => self.dedup.map(|d| (self.desc.totals + 4 * u64::from(d[1]), 1)),
             JobKind::Copy | JobKind::Lattice | JobKind::Index => self.rows,
             _ => None,

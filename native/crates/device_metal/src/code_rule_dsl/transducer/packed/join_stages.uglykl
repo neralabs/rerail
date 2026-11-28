@@ -1993,42 +1993,52 @@ UKL_INLINE void stage_map_one(JSPACE int64_t* B, JSPACE const uint32_t* totals, 
     }
 }
 
-// A join from one binding (a rule's first table), thread `r`'s candidate (`join_program::ScanCands`): its keys' index
-// group's `r`th place, as a probe walks it (a place of another tag is none), where the stage probes an index by keys;
-// else the relation's row `r_from + r`. `NONE` past them. Its keys: slot 0's or constants.
-UKL_INLINE uint32_t scan_cand(StageP s, Longs L, RelB R, UKL_PRIVATE int64_t* kv, uint32_t r) {
+// A join from one binding (a rule's first table): its keys, slot 0's or constants.
+UKL_INLINE void scan_keys(StageP s, Longs L, UKL_PRIVATE int64_t* kv) {
     for (uint32_t i = 0; i < s->nkeys && i < 8; i++) kv[i] = s->key_kind[i] == 1 ? L[(uint64_t)s->key_slot[i] * s->cap_in] : s->key_const[i];
-    uint32_t rows = stage_rows(s, R);
-    if (s->nkeys == 0u || s->v_parent == 1u || s->v_has != 0u) return r < rows ? s->r_from + r : NONE;
-    // A node's own row (`by_own`): its one candidate.
-    if (s->v_parent == 2u) {
-        uint32_t lo, hi;
-        by_own(s, kv, &lo, &hi);
-        return r < hi - lo ? lo + r : NONE;
+}
+
+// Its candidates found once (`PK_SCAN_PREP`, `join_program::St::scan_probe`), before its level's size script: four
+// words at `V` (`lo, n, tag, how`; how 1 an index group's places, 5 a kind's candidates, else rows). Its counts, their
+// scan and its items are its candidates' (its row word is `n`), not its relation's rows. Its keys' index group, a
+// node's own row (`by_own`), the `node` view by its kind (`by_kind`), or the relation's rows from `r_from`.
+UKL_INLINE void scan_prep_one(Longs L, Longs R_rows, JSPACE const uint8_t* R_far, JSPACE const uint32_t* totals, JSPACE uint32_t* V, StageP s, uint32_t t) {
+    if (t != 0u) return;
+    RelB R = rel_b(R_rows, R_far);
+    int64_t kv[8];
+    scan_keys(s, L, kv);
+    uint32_t rows = totals[s->in_slot] == 0 ? 0u : stage_rows(s, R);
+    uint32_t lo = s->r_from, n = rows, tag = 0u, how = 0u;
+    if (s->nkeys != 0u && s->v_parent != 1u && s->v_has == 0u && rows != 0u) {
+        uint32_t hi;
+        if (s->v_parent == 2u) { by_own(s, kv, &lo, &hi); }
+        else if (s->v_parent == 3u) { by_kind(s, kv, &lo, &hi); how = 5u; }
+        else { group_of(R, s->r_at, s->r_index, kv, s->nkeys, &lo, &hi); how = 1u; tag = (uint32_t)(key_hash(kv, s->nkeys) >> 32) & ~MARK_SAME; }
+        n = ukl_min(hi - lo, rows);
     }
-    // The `node` view by its kind (`by_kind`): its `r`th candidate's row.
-    if (s->v_parent == 3u) {
-        uint32_t lo, hi;
-        by_kind(s, kv, &lo, &hi);
-        return r < hi - lo ? kind_row(s, lo + r) : NONE;
-    }
-    uint32_t lo, hi;
-    group_of(R, s->r_at, s->r_index, kv, s->nkeys, &lo, &hi);
-    if (r >= ukl_min(hi - lo, rows)) return NONE;
-    uint32_t tag = (uint32_t)(key_hash(kv, s->nkeys) >> 32) & ~MARK_SAME;
-    uint32_t m = clif_rel_group_mark((JSPACE const uint8_t*)R.p, s->r_at, s->r_index, lo + r);
-    if (((m ^ tag) & ~MARK_SAME) != 0u) return NONE;
-    return group_row(s, R, lo + r);
+    V[0] = lo; V[1] = n; V[2] = tag; V[3] = how;
+}
+
+// Thread `r`'s candidate of its prep's (`join_program::St::scan_cand`): `NONE` past them, or at a place of another
+// key's tag (as a probe's walk passes it).
+UKL_INLINE uint32_t scan_cand(StageP s, RelB R, JSPACE const uint32_t* V, uint32_t r) {
+    if (r >= V[1]) return NONE;
+    if (V[3] == 5u) return kind_row(s, V[0] + r);
+    if (V[3] != 1u) return V[0] + r;
+    uint32_t m = clif_rel_group_mark((JSPACE const uint8_t*)R.p, s->r_at, s->r_index, V[0] + r);
+    if (((m ^ V[2]) & ~MARK_SAME) != 0u) return NONE;
+    return group_row(s, R, V[0] + r);
 }
 
 // A join from one binding (a rule's first table): a thread per candidate (`scan_cand`), not one thread walking them all.
-UKL_INLINE void scan_count_one(Longs L, Longs R_rows, JSPACE const uint8_t* R_far, JSPACE uint32_t* counters, JSPACE uint32_t* counts, JSPACE const uint32_t* totals, StageP s, uint32_t r)
+UKL_INLINE void scan_count_one(Longs L, Longs R_rows, JSPACE const uint8_t* R_far, JSPACE uint32_t* counters, JSPACE uint32_t* counts, JSPACE const uint32_t* V, StageP s, uint32_t r)
 {
     RelB R = rel_b(R_rows, R_far);
+    // Its counts are its candidates' and one (`scan_prep_one`), or its relation's (a late prep's): none past them.
     if (r > s->nr) return;
-    // Past its candidates (R's rows, its length on the device at most `nr`, or its keys' group): a count of none.
     int64_t kv[8];
-    uint32_t id = totals[s->in_slot] == 0 ? NONE : scan_cand(s, L, R, kv, r);
+    scan_keys(s, L, kv);
+    uint32_t id = scan_cand(s, R, V, r);
     if (id == NONE) { counts[r] = 0; return; }
     uint32_t c = 0;
     if (matches(s, R, id, kv)) {
@@ -2044,17 +2054,16 @@ UKL_INLINE void scan_count_one(Longs L, Longs R_rows, JSPACE const uint8_t* R_fa
     counts[r] = c;
 }
 
-UKL_INLINE void scan_scatter_one(Longs L, Longs R_rows, JSPACE const uint8_t* R_far, JSPACE uint32_t* totals, JSPACE const uint32_t* offsets, JSPACE int64_t* O, StageP s, uint32_t r)
+UKL_INLINE void scan_scatter_one(Longs L, Longs R_rows, JSPACE const uint8_t* R_far, JSPACE uint32_t* totals, JSPACE const uint32_t* offsets, JSPACE int64_t* O, JSPACE const uint32_t* V, StageP s, uint32_t r)
 {
     RelB R = rel_b(R_rows, R_far);
-    // Its offsets are its own: the level's scan's, less its first (`Batch::level`).
+    // Its offsets are its own: the level's scan's, less its first (`Batch::level`), its candidates' (`scan_prep_one`).
     uint32_t o0 = offsets[0];
-    uint32_t rows = stage_rows(s, R);
+    uint32_t rows = V[1];
     if (r == 0) totals[s->out_slot] = (offsets[rows] - o0);
     if (r >= rows) return;
     uint32_t at = (offsets[r] - o0);
-    int64_t kv[8];
-    if ((offsets[r + 1] - o0) > at && at < s->cap_out) write_row(s, L, 0, R, scan_cand(s, L, R, kv, r), O, at);
+    if ((offsets[r + 1] - o0) > at && at < s->cap_out) write_row(s, L, 0, R, scan_cand(s, R, V, r), O, at);
 }
 
 // A rule's head rows made distinct: each row claims a place in an open-addressed table by its columns' hash (the
@@ -2838,6 +2847,8 @@ UKL_INLINE void round_one(JSPACE const RoundP* p, UKL_GLOBAL uint32_t* ctl, uint
 #define PK_DEDUP_KEY 32u
 // A round's new rows placed in its set head's map after its gate (code 7 of `lat_rehash_one`), its items its rows'.
 #define PK_SET_PLACE 33u
+// A scan's candidates found once (`scan_prep_one`), before its level's size script.
+#define PK_SCAN_PREP 34u
 
 // An item: its kind and which job, scan level or sort pass (`kind << 24 | which`), its group in that, its phase, its
 // segment and one (`Seg`; 0: none).
@@ -3099,7 +3110,8 @@ UKL_INLINE bool prog_item(UKL_GLOBAL const Job* jobs, UKL_GLOBAL const ScanLevel
         }
         case PK_MAP: stage_map_one(O, j->totals, j->s, t); break;
         case PK_STAGE_COUNT: stage_count_one(L, j->R, j->RF, j->totals, j->counters, c, V, j->A, j->D, j->F, j->s, t); break;
-        case PK_SCAN_COUNT: scan_count_one(L, j->R, j->RF, j->counters, c, j->totals, j->s, t); break;
+        case PK_SCAN_COUNT: scan_count_one(L, j->R, j->RF, j->counters, c, (JSPACE const uint32_t*)V, j->s, t); break;
+        case PK_SCAN_PREP: scan_prep_one(L, j->R, j->RF, j->totals, (JSPACE uint32_t*)V, j->s, t); break;
         case PK_WITNESS_COUNT: witness_count_one(L, j->R, j->RF, j->totals, c, j->bs, j->W[0], j->W[1], j->W[2], j->WF[0], j->WF[1], j->WF[2], j->F, j->s, t); break;
         case PK_ROW_TEXT:
             if ((j->s->agg[0] & 15u) == 6u) row_strjoin(L, j->R, j->RF, j->F, j->A, j->totals, j->counters, c, V, j->P, j->D, H, ctl, j->s, g * (JOIN_TG / SGW) + l / SGW, l % SGW __UKL_ARGS);
@@ -3113,7 +3125,7 @@ UKL_INLINE bool prog_item(UKL_GLOBAL const Job* jobs, UKL_GLOBAL const ScanLevel
             else dedup_mark_one(L, j->totals, H, c, (JSPACE const uint8_t*)j->S, j->VC, j->dd, t);
             break;
         case PK_STAGE_SCATTER: stage_scatter_one(L, j->R, j->RF, j->totals, c, O, V, j->A, j->counters, j->D, j->F, j->ws, t); break;
-        case PK_SCAN_SCATTER: scan_scatter_one(L, j->R, j->RF, j->totals, c, O, j->s, t); break;
+        case PK_SCAN_SCATTER: scan_scatter_one(L, j->R, j->RF, j->totals, c, O, (JSPACE const uint32_t*)V, j->s, t); break;
         case PK_ROW_SCATTER: row_scatter_one(L, V, j->totals, c, O, j->s, t); break;
         case PK_DEDUP_SCATTER:
             if (j->dd->sorted != 0u) {

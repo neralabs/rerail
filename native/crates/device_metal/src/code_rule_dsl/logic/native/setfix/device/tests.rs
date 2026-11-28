@@ -1004,6 +1004,57 @@ use rerail_blocks::vector::Vector;
         }
     }
 
+    /// A scan from one binding (`PK_SCAN_PREP`) of a relation whose index its own level builds: the round's delta
+    /// probed by a constant (`h0(3, z) :- d0(3, y), e(y, z)`), its index of the delta made each round in the level
+    /// that scans it. Its candidates are found after that index (the prep's late phase, `Batch::queue`), not before
+    /// it: found before it, they were the last round's index's (on `all`, the rule library's front end lost its
+    /// declarations). The device's rows are the CPU's.
+    #[test]
+    fn a_scan_of_an_index_its_level_builds_finds_its_candidates_after_it() {
+        if !crate::code_rule_dsl::transducer::packed::metal_join::available() {
+            return;
+        }
+        let store = crate::code_rule_dsl::fixtures::temp();
+        drop(crate::content_store::ContentStore::open(&store).unwrap());
+        let db = Connection::open(&store).unwrap();
+        crate::code_rule_dsl::logic::native::register(&db).unwrap();
+        crate::code_rule_dsl::logic::native::register_symbols(&db).unwrap();
+        db.execute_batch("CREATE TEMP TABLE e (c0, c1);").unwrap();
+        for v in 0..60 {
+            db.execute("INSERT INTO e VALUES (?1, ?2)", [v, v + 1]).unwrap();
+            db.execute("INSERT INTO e VALUES (?1, ?2)", [v, (v * 7 + 3) % 61]).unwrap();
+        }
+        let e = format!("t:x:{}:{}:ii", hex("temp.e"), hex("c0, c1"));
+        // h0(x, y) :- e(x, y).  h0(3, z) :- h0(3, y), e(y, z).
+        let seed = format!("pos {e} v0 v1\nhead v0 v1");
+        let join = format!("pos d0 i:3 v0\npos {e} v0 v1\nhead i:3 v1");
+        let mut got: Vec<Vec<(i64, i64)>> = Vec::new();
+        for device in [false, true] {
+            db.execute_batch("DROP TABLE IF EXISTS temp.h0; CREATE TEMP TABLE h0 (c0, c1);").unwrap();
+            let mut spec = vec!["name dev_scan_ix".to_owned()];
+            if device {
+                spec.push("device".into());
+            }
+            spec.push("rel h0 ii empty".into());
+            spec.push(format!("seed 0 {}", hex(&seed)));
+            spec.push(format!("join 0 0 {}", hex(&join)));
+            super::super::open(&db, &spec.join("\n")).unwrap();
+            super::super::run(&db, "dev_scan_ix", 0).unwrap();
+            let report = super::take_report();
+            if device {
+                let r = report.as_ref().expect("a device report");
+                assert!(r.refused.is_none() && r.rounds > 3, "on the device, in rounds: {r:?}");
+            }
+            super::super::close(&db, "dev_scan_ix").unwrap();
+            let mut rows: Vec<(i64, i64)> = db.prepare("SELECT c0, c1 FROM temp.h0").unwrap().query_map([], |r| Ok((r.get(0)?, r.get(1)?))).unwrap().map(Result::unwrap).collect();
+            rows.sort_unstable();
+            rows.dedup();
+            got.push(rows);
+        }
+        assert!(got[0].iter().filter(|r| r.0 == 3).count() > 30, "3 reaches most nodes: {:?}", got[0].len());
+        assert_eq!(got[0], got[1], "the device's rows are the CPU's");
+    }
+
     /// Decision 0384 step 5 (R5): the device folds a `min` lattice's rounds into its one relation through its key map
     /// in its block; the relation takes the rows as they lie and the map as its own, and a CPU fold goes on in that
     /// map (the device's slots are the host's: one hash, one layout). Its rows and each key's changes are those of a

@@ -60,6 +60,9 @@ const PK_IX_MARK: u32 = 31;
 const PK_DEDUP_KEY: u32 = 32;
 /// A round's new rows placed in its set head's map after its gate (code 7 of `lat_rehash_one`), its items its rows'.
 const PK_SET_PLACE: u32 = 33;
+/// A scan's candidates found once (`scan_prep`), before its level's size script: its counts, their scan and its items
+/// are as many as its candidates, not its relation's rows.
+const PK_SCAN_PREP: u32 = 34;
 const PK_DEDUP_CLEAR: u32 = 6;
 const PK_DEDUP_CLAIM: u32 = 7;
 const PK_MAP: u32 = 8;
@@ -2069,20 +2072,33 @@ struct ScanCands {
 }
 
 impl St<'_> {
-    /// The scan's keys (slot 0's or constants) and its candidates (`ScanCands`).
-    unsafe fn scan_cands(&self, j: &Job) -> ([i64; 8], ScanCands) {
+    /// The scan's keys: slot 0's or constants.
+    unsafe fn scan_keys(&self) -> [i64; 8] {
         let s = self.s;
         let mut kv = [0i64; 8];
         for (i, k) in kv.iter_mut().enumerate().take(s.nkeys.min(8) as usize) {
             *k = if s.key_kind[i] == 1 { col(self.l, s.key_slot[i], s.cap_in, 0) } else { s.key_const[i] };
         }
+        kv
+    }
+
+    /// The scan's keys and its candidates as its prep found them (`scan_prep`): four words at `v` (`lo, n, tag, how`).
+    unsafe fn scan_cands(&self, v: *const i64) -> ([i64; 8], ScanCands) {
+        let w = v.cast::<u32>();
+        (self.scan_keys(), ScanCands { lo: *w, n: *w.add(1), tag: *w.add(2), how: *w.add(3) })
+    }
+
+    /// The scan's candidates (`ScanCands`), found by its probe: its prep's (`PK_SCAN_PREP`), once.
+    unsafe fn scan_probe(&self, j: &Job) -> ScanCands {
+        let s = self.s;
+        let kv = self.scan_keys();
         let rows = if *j.totals.add(s.in_slot as usize) == 0 { 0 } else { self.rows() };
         if s.nkeys == 0 || s.v_parent == 1 || s.v_has != 0 || rows == 0 {
-            return (kv, ScanCands { lo: s.r_from, n: rows, tag: 0, how: 0 });
+            return ScanCands { lo: s.r_from, n: rows, tag: 0, how: 0 };
         }
         // Its keys' index group, or a node's own row (`by_own`).
         let w = self.probe(&kv);
-        (kv, ScanCands { lo: w.lo, n: w.hi.wrapping_sub(w.lo).min(rows), tag: w.tag, how: w.how })
+        ScanCands { lo: w.lo, n: w.hi.wrapping_sub(w.lo).min(rows), tag: w.tag, how: w.how }
     }
 
     /// Thread `r`'s candidate of `c`: its row; `None` past them, or at a place of another key's tag (as a probe's walk
@@ -2659,7 +2675,9 @@ unsafe fn scan_count_range(st: &St, j: &Job, b: &Bufs, t0: u32, t1: u32) {
     if t0 >= t1 {
         return;
     }
-    let (kv, cands) = st.scan_cands(j);
+    // Its counts are its candidates' and one (its row word is `n`, its prep's), or its relation's rows' (a late
+    // prep's): none past its candidates.
+    let (kv, cands) = st.scan_cands(b.v);
     fill_u32(b.c, t0.max(cands.n), t1, 0);
     for r in t0..t1.min(cands.n) {
         scan_count_one(st, j, b, &kv, &cands, r);
@@ -2732,13 +2750,12 @@ unsafe fn scan_scatter_range(st: &St, j: &Job, b: &Bufs, r0: u32, r1: u32) {
     let s = st.s;
     let offsets = b.c;
     let o0 = *offsets;
-    let rows = st.rows();
+    // Its counts are its candidates' (`scan_prep`).
+    let (_, cands) = st.scan_cands(b.v);
     if r0 == 0 && r1 > 0 {
-        *j.totals.add(s.out_slot as usize) = (*offsets.add(rows as usize)).wrapping_sub(o0);
+        *j.totals.add(s.out_slot as usize) = (*offsets.add(cands.n as usize)).wrapping_sub(o0);
     }
-    // Past its candidates every count is none (`scan_count_range`): nothing kept there to walk.
-    let (_, cands) = st.scan_cands(j);
-    kept_runs(offsets, o0, r0, r1.min(rows).min(cands.n), |r, a, len| {
+    kept_runs(offsets, o0, r0, r1.min(cands.n), |r, a, len| {
         for i in 0..below(a, len, s.cap_out) {
             let id = st.scan_cand(&cands, r + i).expect("a kept candidate is one of the scan's");
             st.write_row(0, id, b.o, a + i);
@@ -4255,6 +4272,13 @@ impl Prog {
             }
             PK_STAGE_COUNT => stage_count_range(&stage(j.s), j, b, t0, t1),
             PK_SCAN_COUNT => scan_count_range(&stage(j.s), j, b, t0, t1),
+            PK_SCAN_PREP => {
+                if t0 == 0 {
+                    let c = stage(j.s).scan_probe(j);
+                    let w = b.v.cast::<u32>();
+                    (*w, *w.add(1), *w.add(2), *w.add(3)) = (c.lo, c.n, c.tag, c.how);
+                }
+            }
             PK_WITNESS_COUNT => witness_count_range(&stage(j.s), j, b, t0, t1),
             // A sorted dedup's (t58 increment A): `h` its keys in, `w[0]` its places in; `w[1]`, `w[2]` its keys and
             // places sorted.
