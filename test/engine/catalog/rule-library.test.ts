@@ -1,4 +1,6 @@
+import { execFileSync } from "node:child_process";
 import { describe, expect, it, vi } from "vitest";
+import { runRuleApproveCommand } from "../../../src/cli/index.js";
 import { exportRulesDump, importRulesDump } from "../../../src/engine/catalog/rule-bootstrap.js";
 import { approve, isApproved, ruleSubject } from "../../../src/engine/catalog/rule-approval.js";
 import {
@@ -25,6 +27,7 @@ import {
   REPOSITORY,
   RUNNING,
   temporaryDatabase,
+  temporaryDirectory,
   testBundle,
 } from "../../support/rule-configuration-builders.js";
 
@@ -124,6 +127,24 @@ describe("library rules", () => {
     upsertLibraryRule(db, ruleCatalog, codeRule("broken"), "code");
     expect(listLibraryRules(db).map(rule => rule.document.rule.id)).toEqual(["broken", "chat", "good"]);
     expect(quarantinedLibraryRules(db)).toEqual([]);
+  });
+
+  it("rerail rules approve says a library rule whose stored document is no JSON runs nowhere", async () => {
+    const db = await temporaryDatabase();
+    upsertLibraryRule(db, ruleCatalog, codeRule("broken"), "code");
+    // Its first byte changed, as a damaged file leaves it.
+    const text = db.$client.prepare("SELECT document_json FROM library_rules WHERE rule_id = 'broken'").pluck().get() as string;
+    db.$client.prepare("UPDATE library_rules SET document_json = ? WHERE rule_id = 'broken'").run(`[${text.slice(1)}`);
+    const repo = await temporaryDirectory();
+    execFileSync("git", ["init", "-q", "-b", "main"], { cwd: repo });
+    let printed = "";
+    const stdout = { write: (line: string) => { printed += line; } };
+
+    expect(runRuleApproveCommand(["broken", "--repo", repo], () => "usage", { stdout }, db.$client.name)).toBe(0);
+
+    expect(printed).toMatch(
+      /^● broken has content that is no JSON object \(.+\), which only a damaged file or a hand edit leaves; it runs nowhere\n● Approved rule broken: .+\n$/u,
+    );
   });
 });
 
