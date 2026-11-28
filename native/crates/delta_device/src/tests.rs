@@ -287,7 +287,7 @@ fn the_harness_passes_l1_over_edits_of_l0_on_the_device_or_mixed() {
 }
 
 /// L6, L7, L8 and P1's drivers (`rerail_delta_exec::laws`) on the tests' device and on a mixed runner: each gives the
-/// CPU's verdicts, work and launches (the CPU's tests hold those to the laws).
+/// CPU's verdicts, work and launches (the CPU's tests hold those to the laws); and D5's holds on each.
 #[test]
 fn the_laws_hold_on_the_device_or_mixed() {
     use rerail_delta_exec::contract::Bench;
@@ -302,6 +302,11 @@ fn the_laws_hold_on_the_device_or_mixed() {
         let l8 = coalescing(bench, &base(&format!("{name}-l8"))).unwrap_or_else(|e| panic!("{name}: {e}"));
         (c.same_as_cold, (c.touched.asked, c.touched.launches, c.touched.work), among, l8)
     };
+    // D5 holds on each (its driver refuses where it breaks).
+    for (name, b) in [("the device", Runner::on(Box::new(Gpu::host().expect("the tests' device")))), ("mixed", Runner::mixed(Box::new(Gpu::host().expect("the tests' device")), 9))] {
+        let mut bench = Bench::on(b.unwrap_or_else(|e| panic!("{e}")));
+        rerail_delta_exec::laws::demand_moves(&mut bench, &base(&format!("{name}-d5"))).unwrap_or_else(|e| panic!("{name}: {e}"));
+    }
     let want = laws(&mut Bench::new().unwrap(), "cpu");
     assert!(want.0.iter().all(|&s| s), "the CPU's runs are the cold composed runs");
     let on = Runner::on(Box::new(Gpu::host().expect("the tests' device"))).unwrap_or_else(|e| panic!("{e}"));

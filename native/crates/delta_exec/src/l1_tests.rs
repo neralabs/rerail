@@ -10,10 +10,6 @@ use crate::files::tests::{past_racy_window, racy_window, root, write};
 use crate::sym::Atoms;
 use rerail_blocks::maps::hash_bytes;
 
-/// The keys (column 0) of `t`'s rows at its head: the oracle's, by meaning.
-fn keys(dir: &Directory, t: &crate::trace::Trace) -> BTreeSet<i64> {
-    oracle_rows(dir, t, t.head()).unwrap().into_iter().map(|r| r[0]).collect()
-}
 use std::collections::BTreeSet;
 use std::path::PathBuf;
 
@@ -95,45 +91,12 @@ fn the_harness_passes_l1_under_a_changing_want() {
     crate::boot::harness_over_edits(&mut bench, root.parent().unwrap(), true, 4..=5).unwrap_or_else(|e| panic!("{e}"));
 }
 
-/// Demand reaches the world as reads (P§7.1): a run whose productions name another document asks for it and lets l0
-/// go: l0 is not read, its row leaves the document set (X → ∅) and its rows leave L1's output, which is the plain
-/// function's on the set as it now is.
+/// D5, demand reaches the world as reads (P§7.1): a run whose productions name another document asks for it and lets
+/// l0 go (not read, its row and its rows gone), and l0 asked again comes back from the store, not parsed
+/// (`laws::demand_moves`).
 #[test]
 fn a_document_no_longer_asked_goes_and_is_not_read() {
-    let _racy = racy_window();
-    let mut bench = Bench::new().unwrap();
-    let mut disk = Disk::new(&mut bench, "b6-demand");
-    write(&disk.root.join("other.rerail"), &edits()[0], 60);
-    past_racy_window();
-    disk.run(&mut bench).unwrap();
-    let (reads, l0) = (disk.docs.world.asked.reads, disk.docs.key(&bench.dir, disk.atoms, PATH).unwrap());
-    let last = disk.last.take();
-    let (pins, doc, _) = crate::boot::run(&disk.l1, &mut disk.inst, "other.rerail", "other", disk.atoms, &mut disk.docs, &mut bench, last.as_ref()).unwrap();
-    disk.last = Some(pins);
-    assert!(!doc.is_identity());
-    assert_eq!(disk.docs.world.asked.reads, reads + 1, "the other document read; l0, asked by no one, not read");
-    let other = disk.docs.key(&bench.dir, disk.atoms, "other.rerail").unwrap();
-    assert_ne!(other, l0);
-    assert_eq!(keys(&bench.dir, &disk.docs.tape), BTreeSet::from([other]), "l0 gone from the document set");
-    assert_eq!(keys(&bench.dir, disk.inst.asks_of(0).expect("L1 asks of its tape port")), BTreeSet::from([other]), "L1 asks for the other alone");
-    let outs: Vec<BTreeSet<Vec<i64>>> = disk.inst.outs.iter().map(|t| oracle_rows(&bench.dir, t, t.head()).unwrap()).collect();
-    assert!(outs.iter().flatten().all(|r| r[0] == other), "no row of l0 left in L1's output");
-    let globals = [disk.globals(&bench)];
-    let plain = crate::contract::apply(&disk.l1, &mut bench.cx(), &[(&disk.docs.tape, disk.docs.tape.head())], &globals).unwrap();
-    assert_eq!(outs, plain, "L1's output is the plain function's on the document set as it is");
-    // Asked again, l0 comes back as an initial run of it, from the store (its content answered before).
-    let parses = disk.docs.world.asked.parses;
-    let last = disk.last.take();
-    let (pins, _, _) = crate::boot::run(&disk.l1, &mut disk.inst, PATH, MODULE, disk.atoms, &mut disk.docs, &mut bench, last.as_ref()).unwrap();
-    disk.last = Some(pins);
-    assert_eq!(keys(&bench.dir, &disk.docs.tape), BTreeSet::from([l0]));
-    assert_eq!(disk.docs.world.asked.parses, parses, "l0's content is answered before: not parsed again");
-    let outs: Vec<BTreeSet<Vec<i64>>> = disk.inst.outs.iter().map(|t| oracle_rows(&bench.dir, t, t.head()).unwrap()).collect();
-    assert_eq!(outs[0].len(), 14, "l0's 14 rules again");
-    assert!(outs.iter().flatten().all(|r| r[0] == l0), "no row of the other left");
-    let globals = [disk.globals(&bench)];
-    let plain = crate::contract::apply(&disk.l1, &mut bench.cx(), &[(&disk.docs.tape, disk.docs.tape.head())], &globals).unwrap();
-    assert_eq!(outs, plain);
+    crate::laws::demand_moves(&mut Bench::new().unwrap(), &laws_base("d5")).unwrap_or_else(|e| panic!("{e}"));
 }
 
 /// The digest of a block's bytes, where they lie.

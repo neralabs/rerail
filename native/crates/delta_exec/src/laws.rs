@@ -235,3 +235,58 @@ pub fn coalescing(bench: &mut Bench, base: &Path) -> Result<Coalesced, String> {
     let undo_in_identity = (b.is_identity(), gone == added);
     Ok(Coalesced { once_is_twice, once: once_work, least, undo: undo_work, undo_rows_same, undo_out_identity, undo_in_identity })
 }
+
+/// D5 on `bench` (P§7.1, demand reaches the world as reads): l0 and another document under a root; a run naming l0,
+/// then one naming the other, then l0 again, each from the last's pins. The second asks for the other alone and lets
+/// l0 go: l0 is not read, its row leaves the document set (X → ∅) and its rows leave L1's output. The third brings l0
+/// back as an initial run of it, from the store (its content answered before: not parsed again). Every run's output is
+/// the plain function's on the set as it is. Refused naming what broke.
+pub fn demand_moves(bench: &mut Bench, base: &Path) -> Result<(), String> {
+    const L0: &str = "bootstrap-l0.rerail";
+    let root = base.join("root");
+    std::fs::create_dir_all(&root).map_err(|e| e.to_string())?;
+    write(&root.join(L0), crate::L0, 600)?;
+    write(&root.join("other.rerail"), &crate::boot::chain_edits()[0], 600)?;
+    let atoms = Atoms::new(&mut bench.dir);
+    let world = World::new(root, Store::open(&base.join("store"))?, &bench.dir, [None; 3])?;
+    let mut docs = DocSet::new(world, &bench.dir, None, None)?;
+    let mut inst = Instance::new(&L1, &mut bench.dir)?;
+    let keys = |bench: &Bench, t: &crate::trace::Trace| -> Result<BTreeSet<i64>, String> { Ok(oracle_rows(&bench.dir, t, t.head())?.into_iter().map(|r| r[0]).collect()) };
+    let plain = |bench: &mut Bench, docs: &DocSet, inst: &Instance| -> Result<(), String> {
+        let globals = [crate::contract::Global { block: atoms.0, count: u64::from(atoms.count(&bench.dir)) }];
+        if outs(bench, inst)? != apply(&L1, &mut bench.cx(), &[(&docs.tape, docs.tape.head())], &globals)? {
+            return Err("L1's output is not the plain function's on the document set".into());
+        }
+        Ok(())
+    };
+    let (pins, ..) = crate::boot::run(&L1, &mut inst, L0, "bootstrap-l0", atoms, &mut docs, bench, None)?;
+    let (reads, l0) = (docs.world.asked.reads, docs.key(&bench.dir, atoms, L0)?);
+    let (pins, doc, _) = crate::boot::run(&L1, &mut inst, "other.rerail", "other", atoms, &mut docs, bench, Some(&pins))?;
+    let other = docs.key(&bench.dir, atoms, "other.rerail")?;
+    if doc.is_identity() || other == l0 {
+        return Err("the other document read as a new one".into());
+    }
+    if docs.world.asked.reads != reads + 1 {
+        return Err(format!("D5: {} reads, not the other's alone (l0, asked by no one, read)", docs.world.asked.reads - reads));
+    }
+    if keys(bench, &docs.tape)? != BTreeSet::from([other]) {
+        return Err("D5: l0 not gone from the document set".into());
+    }
+    if keys(bench, inst.asks_of(0).ok_or("L1 asks of its tape port")?)? != BTreeSet::from([other]) {
+        return Err("D5: L1 asks for more than the other".into());
+    }
+    if outs(bench, &inst)?.iter().flatten().any(|r| r[0] != other) {
+        return Err("D5: a row of l0 left in L1's output".into());
+    }
+    plain(bench, &docs, &inst)?;
+    let parses = docs.world.asked.parses;
+    crate::boot::run(&L1, &mut inst, L0, "bootstrap-l0", atoms, &mut docs, bench, Some(&pins))?;
+    if keys(bench, &docs.tape)? != BTreeSet::from([l0]) || docs.world.asked.parses != parses {
+        return Err("D5: l0 asked again is not back, from the store, with no parse".into());
+    }
+    let o = outs(bench, &inst)?;
+    if o[0].len() != 14 || o.iter().flatten().any(|r| r[0] != l0) {
+        return Err("D5: l0 asked again is not its 14 rules alone".into());
+    }
+    plain(bench, &docs, &inst)
+}
