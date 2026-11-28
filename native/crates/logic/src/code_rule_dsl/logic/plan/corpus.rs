@@ -3152,12 +3152,37 @@ fn run_observed_within(
     drop(section.take()); section = Some(crate::code_rule_dsl::logic::profile::span(|| "the cone of requests".into()));
     // A program whose every file read its preparation decided away (decision 0665: a read of a setting the run does
     // not give, `env("python.venv", e)`) loads nothing.
-    // A program with callable relations asks for them in the cone too, loads or none (the spike, `calls`).
-    let still_reads_world = (loading_run && !world::answers(&super::body::Placed::whole(shared_split.versions.cross.clone()).fields()?).is_empty()) || !callees.is_empty();
+    // A program with callable relations asks for them in its cross-file part itself (the spike, `calls`), as a
+    // stratum of their answers above their request, when no request reads an answer and the cone of the file reads
+    // (decision 0065 §2a) reads neither: the part runs once, each callable asked in bulk when its request is whole, and
+    // an edit maintains the part by delta as it does a part without calls. Else (or with `RERAIL_CALLS_IN_CONE=on`)
+    // the cone asks for them.
+    let whole_cross = super::body::Placed::whole(shared_split.versions.cross.clone());
+    let world_requests = world::answers(&whole_cross.fields()?);
+    let world_reads = loading_run && !world_requests.is_empty();
+    let files_cone = if world_reads { crate::code_rule_dsl::logic::answers::cone(&whole_cross, world_requests.keys().map(String::as_str)) } else { BTreeSet::new() };
+    let calls_why: Option<&str> = if callees.is_empty() {
+        None
+    } else if std::env::var("RERAIL_CALLS_IN_CONE").is_ok_and(|v| v == "on") {
+        Some("RERAIL_CALLS_IN_CONE=on")
+    } else if callees.iter().any(|c| crate::code_rule_dsl::logic::answers::cone(&whole_cross, std::iter::once(c.callable.request.as_str())).contains(c.callable.rel.as_str())) {
+        Some("a request reads its answers")
+    } else if callees.iter().any(|c| files_cone.contains(c.callable.rel.as_str()) || files_cone.contains(c.callable.request.as_str())) {
+        Some("the file reads' cone reads a call")
+    } else {
+        None
+    };
+    let calls_in_part = !callees.is_empty() && calls_why.is_none();
+    crate::code_rule_dsl::logic::profile::decision("callable relations asked (the spike)", || match (callees.is_empty(), calls_why) {
+        (true, _) => "none".to_owned(),
+        (false, None) => format!("{} callables asked in the cross-file part, in bulk once each request is whole", callees.len()),
+        (false, Some(why)) => format!("{} callables asked in the cone of requests ({why})", callees.len()),
+    });
+    let still_reads_world = world_reads || (!callees.is_empty() && !calls_in_part);
     let loading: Option<(Arc<crate::code_rule_dsl::logic::program_image::Version>, BTreeSet<String>)> = if still_reads_world {
         // The prepared split's cone, made once, of the cross-file part's version.
         let cone = shared_cone
-            .get_or_init(|| cone_of(&super::body::Placed::whole(shared_split.versions.cross.clone()), &split.exports, &split.base, head).map(Arc::new).map_err(|e| e.to_string()))
+            .get_or_init(|| cone_of(&super::body::Placed::whole(shared_split.versions.cross.clone()), &split.exports, &split.base, head, !calls_in_part).map(Arc::new).map_err(|e| e.to_string()))
             .clone()
             .map_err(Error::Plan)?;
         cross_version = cone.rest.clone();
@@ -6801,10 +6826,10 @@ fn run_observed_within(
         // Each of the cone's relations' width, for the job's thread.
         let widths: BTreeMap<String, usize> = load_f.decls().into_iter().map(|d| (load_f.text(d.name()).to_owned(), d.arity())).collect();
         // The cone as rounds of its stratified program, maintained by delta (decision 0145): with a store to keep
-        // them in. `RERAIL_CONE_ROUNDS=off` runs the gated fixpoint alone; so does a program with callable relations,
-        // whose calls the rounds' loads do not answer (the spike: calls are answered in the fixpoint, `calls`).
+        // them in. `RERAIL_CONE_ROUNDS=off` runs the gated fixpoint alone. A callable's requests are among a round's
+        // (decision 0725): a round's calls are answered in one call, and a call into a file the memo gave whole keeps
+        // the answer the last run's rounds kept (`cone_rounds::On::calls`).
         let rounds_wanted = cone_store.is_some()
-            && callees.is_empty()
             && std::env::var("RERAIL_CONE_ROUNDS").map_or(true, |v| v != "off" && v != format!("off-{}", phases::current().as_deref().unwrap_or("none")));
         let round = rounds_wanted.then(|| cone_rounds::RoundProgram::of(load, &per_file, &lowered.domains)).flatten();
         let lowered_round = round.as_ref().map(|r| part_of(r.placed.v.clone()));
@@ -6819,7 +6844,10 @@ fn run_observed_within(
         // What the journal names as changed since the last run kept its rounds (decision 0105): the roots and cursors
         // recorded with them, the paths named since, and the digest of the file system's answers kept with them.
         // The rounds' key: the cone's round program's digest (`Placed::digest`), made once.
-        let rounds_key = round.as_ref().map(|r| retain::key(&[0; 32], r.placed.digest()));
+        // A callable's answers are kept with the rounds, made by the callees' rules, which the round program does not
+        // hold: their program's digest is the rounds' key's too.
+        let callees_digest = callee_program.as_ref().filter(|_| !callees.is_empty() && !calls_in_part).map_or(0, |p| super::body::Placed::whole(p.clone()).digest());
+        let rounds_key = round.as_ref().map(|r| retain::key(&[0; 32], r.placed.digest() ^ callees_digest.wrapping_mul(0x9e37_79b9_7f4a_7c15)));
         // A kept manifest names the rounds' key, which keeps their frames (decision 0227); their record names it too,
         // and goes with it (decision 0252, `observe::collect`).
         part_keys.lock().expect("the parts' keys").extend(rounds_key);
@@ -6852,7 +6880,7 @@ fn run_observed_within(
         let still_root = root.to_path_buf();
         // Beside the main thread, which answers its requests: a job of the pool's that takes turns with this one.
         // Callable relations' calls (the spike), answered on a connection of their own over the run's store.
-        let mut calls = match callees.is_empty() {
+        let mut calls = match callees.is_empty() || calls_in_part {
             true => None,
             false => {
                 let at = db.path().ok_or_else(|| Error::Plan("callable relations: the run's store has no path".to_owned()))?;
@@ -6867,6 +6895,14 @@ fn run_observed_within(
         let decl_types: HashMap<String, Vec<u8>> = run_f.decls_by_name().into_iter().map(|(r, _)| (r.to_owned(), retain::types_of(&run_placed, &lowered.domains, r))).collect();
         let vocabulary_cone = Arc::clone(&vocabulary);
         let arena = in_memory.then(|| store.atoms_handle());
+        // The callables' requests as the rounds answer them, and the files the memo gave whole, whose calls keep their
+        // kept answers.
+        let call_kept: Vec<cone_rounds::CallKept> = callees
+            .iter()
+            .filter(|_| !calls_in_part)
+            .map(|c| cone_rounds::CallKept { request: c.callable.request.clone(), answer: c.callable.rel.clone(), bound_at: c.callable.request_width() - c.callable.bound.len(), bound: c.callable.bound.clone() })
+            .collect();
+        let call_hits: std::collections::HashSet<i64> = call_held.borrow().hits();
         let cone = crate::threads::beside("the cone of requests", move || -> Result<(Vec<(String, Arc<dyn crate::code_rule_dsl::facts::vtab::Source>)>, Option<(usize, usize)>, usize)> {
             let db2 = connections::Cone::take_db(&cone_slot, &db_path, arena)?;
             let statements = Statements::on_as(&db2, ".cone");
@@ -6910,7 +6946,7 @@ fn run_observed_within(
             // Requests go to the main thread with a ticket, and their answers come back with it (decision 0114 §3).
             let asks = std::cell::RefCell::new(Asks { tx: ask_tx, rx: reply_rx, next: 0, early: BTreeMap::new(), posted: HashMap::new(), recorded: None, unsaid: false });
             // A request answered in place (the rounds, a stratum needed at once): it waits for its own ticket.
-            let mut answer = |rel: &str, rows: &crate::code_rule_dsl::logic::native::component::Asked| -> Result<Vec<(String, Vec<Vector<i64>>)>> { asks.borrow_mut().ask(rel, rows) };
+            let mut answer = |all: &[(String, crate::code_rule_dsl::logic::native::component::Asked)]| -> Result<Vec<Vec<(String, Vec<Vector<i64>>)>>> { asks.borrow_mut().ask_all(all) };
             // The rounds from the last run's final round, kept in the store.
             let rounds_space = rounds_key.as_ref().map(&rounds_space_of).unwrap_or_default();
             let rounds_in = cone_rounds::Inputs { per_file: &corpus_rows, corpus: &corpus_docs, constants: &constants_at, ledger: &load_ledger_in };
@@ -6996,7 +7032,8 @@ fn run_observed_within(
                 let path = path.as_path();
                 roots.iter().any(|(r, _)| path.starts_with(r)) && named.iter().all(|n| !path.starts_with(n) && !(req == "rr_dir_req" && n.parent() == Some(path)))
             };
-            let on = lowered_round.as_ref().zip(rounds_key).zip(cone_handle.as_ref()).map(|((lowered, key), store)| cone_rounds::On { store, space: rounds_space, db: &db2, modules: &modules, lowered, key, stats: &rounds_stats, keep: &keep_rounds, modes: &modes, still: Some(&still_fn), texts: &vocabulary_cone });
+            let call_unchanged = |at: i64| call_hits.contains(&memo::document_of(at));
+            let on = lowered_round.as_ref().zip(rounds_key).zip(cone_handle.as_ref()).map(|((lowered, key), store)| cone_rounds::On { store, space: rounds_space, db: &db2, modules: &modules, lowered, key, stats: &rounds_stats, keep: &keep_rounds, modes: &modes, still: Some(&still_fn), texts: &vocabulary_cone, calls: (!call_kept.is_empty()).then_some((call_kept.as_slice(), &call_unchanged as &dyn Fn(i64) -> bool)) });
             let mut gave_up = None;
             if let (Some(r), Some(on), Some(k)) = (&round, &on, from_rounds) {
                 load_ledger_in.lock().unwrap_or_else(|e| e.into_inner()).rounds = true;
@@ -7019,7 +7056,7 @@ fn run_observed_within(
                         // The answers' relations as the rounds ended: the kept answers that still stand among them.
                         out.extend(done.produced.iter().filter(|(r, _)| kept_in.contains(r) || world_answer_rels.contains(r)).map(|(r, rows)| (r.clone(), rows_source(widths[r.as_str()], rows))));
                         crate::code_rule_dsl::logic::profile::decision("the cone's rounds (decision 0145)", || {
-                            format!("{} rounds from the last run's; {} of {} strata run ({} maintained, {} derived again: {:?}); answered: {:?}; {} file-system requests kept as the journal names no change there; {} rows written back", done.rounds, done.strata.0, done.strata.1, done.maintained, done.derived_again, done.again_why, done.answered, done.still, done.written)
+                            format!("{} rounds from the last run's; {} of {} strata run ({} maintained, {} derived again: {:?}); answered: {:?}; {} file-system requests kept as the journal names no change there; {} calls kept, their files given whole by the memo; {} rows written back", done.rounds, done.strata.0, done.strata.1, done.maintained, done.derived_again, done.again_why, done.answered, done.still, done.calls_kept, done.written)
                         });
                         *rounds_world_in.lock().unwrap_or_else(|e| e.into_inner()) = Some(done.world);
                         rounds_withdrawn_in.lock().unwrap_or_else(|e| e.into_inner()).extend(done.withdrawn.iter().copied());
@@ -7093,7 +7130,7 @@ fn run_observed_within(
                 for ask in r.asks() {
                     asks.insert(ask.clone(), held_rows(&db2, &got, ask, widths[ask.as_str()])?);
                 }
-                let mut refuse = |rel: &str, _: &crate::code_rule_dsl::logic::native::component::Asked| -> Result<Vec<(String, Vec<Vector<i64>>)>> { Err(Error::Plan(format!("the closing round asked {rel}"))) };
+                let mut refuse = |all: &[(String, crate::code_rule_dsl::logic::native::component::Asked)]| -> Result<Vec<Vec<(String, Vec<Vector<i64>>)>>> { Err(Error::Plan(format!("the closing round asked {}", all.iter().map(|(r, _)| r.as_str()).collect::<Vec<_>>().join(", ")))) };
                 match r.run(on, &rounds_in, cone_rounds::Start::Closing(asks), recorded, &mut refuse) {
                     Ok(done) => {
                         crate::code_rule_dsl::logic::profile::decision("the cone's rounds (decision 0145)", || format!("closing round over the fixpoint's answers kept ({} of {} strata; {} rows written back)", done.strata.0, done.strata.1, done.written));
@@ -9019,6 +9056,41 @@ fn run_observed_within(
         }
     }
     drop(binding_exports);
+    // Callables asked in the cross-file part (`calls_in_part`): answered as its strata of their answers are reached,
+    // each request whole, in one call into each file (`calls::Calls::answer_all`), on a connection of the callees'
+    // own over the run's store.
+    let part_calls: Option<std::cell::RefCell<calls::Calls>> = match calls_in_part {
+        false => None,
+        true => {
+            let at = db.path().ok_or_else(|| Error::Plan("callable relations: the run's store has no path".to_owned()))?;
+            let conn = rusqlite::Connection::open(at).map_err(|e| Error::Plan(format!("callable relations: {e}")))?;
+            let program = callee_program.as_ref().ok_or_else(|| Error::Plan("callable relations: the callees have no program".to_owned()))?;
+            Some(std::cell::RefCell::new(calls::Calls::new(&callees, program, lowered.ops, dialect, conn, modes)?))
+        }
+    };
+    let mut answer_calls = |req: &str, asked: &crate::code_rule_dsl::logic::native::component::Asked| -> Result<Vec<(String, Vec<Vector<i64>>)>> {
+        let calls = part_calls.as_ref().filter(|c| c.borrow().answers(req)).ok_or_else(|| Error::Plan(format!("{req}: a request, and no callable answers it")))?;
+        let state = call_held.borrow();
+        if let Some(at) = state.unheld_of(asked) {
+            return Err(Error::Plan(format!("{req}: a call into document {}, a partial memo hit (decision 0225 §2), whose rows are not held for calls", memo::document_of(at))));
+        }
+        let _s = crate::code_rule_dsl::logic::profile::span(|| "callables asked".into());
+        calls.borrow_mut().answer(req, asked, &*state)
+    };
+    // Every callable's requests ready when the run reaches a stratum of their answers, answered in one call.
+    let mut answer_calls_together = |asks: &[(String, crate::code_rule_dsl::logic::native::component::Asked)]| -> Result<Vec<(String, Vec<Vector<i64>>)>> {
+        let calls = part_calls.as_ref().ok_or_else(|| Error::Plan("requests, and no callable answers them".to_owned()))?;
+        if let Some((req, _)) = asks.iter().find(|(r, _)| !calls.borrow().answers(r)) {
+            return Err(Error::Plan(format!("{req}: a request, and no callable answers it")));
+        }
+        let state = call_held.borrow();
+        if let Some(at) = asks.iter().find_map(|(_, rows)| state.unheld_of(rows)) {
+            return Err(Error::Plan(format!("a call into document {}, a partial memo hit (decision 0225 §2), whose rows are not held for calls", memo::document_of(at))));
+        }
+        let _s = crate::code_rule_dsl::logic::profile::span(|| "callables asked".into());
+        let given = calls.borrow_mut().answer_all(&asks.iter().map(|(r, rows)| (r.as_str(), rows)).collect::<Vec<_>>(), &*state)?;
+        Ok(given.into_iter().flatten().collect())
+    };
     // The source texts no wave took (decision 0300), and the chunks' freed pages, go back before the cross part
     // builds its own.
     {
@@ -9119,6 +9191,11 @@ fn run_observed_within(
                         digests.insert(retain::GIT.to_owned(), answers.digest());
                         (key, answers)
                     });
+                    // The callables' answers read the files they are asked into: an input of their strata, by the
+                    // run's documents (`retain::CALLS`).
+                    if part_calls.is_some() {
+                        digests.insert(retain::CALLS.to_owned(), retain::calls_digest(&run_docs_held.lock().expect("the run's documents")));
+                    }
                     part_keys.lock().expect("the parts' keys").push(ckey);
                     let mut cells = cell.lock().expect("the session's cross-file part");
                     // Taken out while the run uses it; a run that fails leaves no kept part for this program.
@@ -9225,6 +9302,15 @@ fn run_observed_within(
                             cut = retain::cut(None, ckey, &cross_placed, &cross_sccs, &digests)?;
                         }
                     }
+                    // The callables' last answers, for the files as the last run read them (`calls::Calls::keep`):
+                    // read where the kept part holds them.
+                    if let (Some(calls), Some(kept), Some(same)) = (part_calls.as_ref(), cell.as_ref().filter(|k| kept_cells.is_some() && k.is_of(ckey)), same_docs.as_ref()) {
+                        for c in &callees {
+                            if let (Some(keys), Some(answers)) = (kept.derived_source(store, &c.callable.request), kept.derived_source(store, &c.callable.rel)) {
+                                calls.borrow_mut().keep(&c.callable.request, keys, answers, same.clone());
+                            }
+                        }
+                    }
                     let was_kept = cell.as_ref().filter(|_| kept_cells.is_some()).and_then(|k| k.in_kept().cloned());
                     // An input with the rows it had is read from the last run's source, with its indexes and statistics.
                     let s = span("bind unchanged inputs");
@@ -9285,6 +9371,11 @@ fn run_observed_within(
                                 Arc::new(crate::code_rule_dsl::facts::vtab::Relation::from_rows(&[super::sql_col(rel, 0).as_str()], &mut std::iter::empty()))
                             };
                             return Some((none(), none()));
+                        }
+                        // What the Git functors answer and the files the callables are asked into have no rows: the
+                        // strata that read them are derived or asked again, from no delta.
+                        if rel == retain::GIT || rel == retain::CALLS {
+                            return None;
                         }
                         let kept = cell.as_ref()?;
                         let Some((_, new)) = cross_inputs.iter().find(|(r, _)| r == rel) else {
@@ -9469,8 +9560,11 @@ fn run_observed_within(
                         _ => None,
                     };
                     // `false`: not taken, so the run holds it to its end as before.
+                    // A callable's requests and answers are kept held (`calls_in_part`): the next run's calls are
+                    // answered from them (`calls::Calls::keep`), and its answers' delta made against them.
+                    let call_rel = |rel: &str| part_calls.is_some() && callees.iter().any(|c| c.callable.request == rel || c.callable.rel == rel);
                     let mut hand = |rel: &str| -> Result<bool> {
-                        if wanted.contains(rel) || fields.is_output(rel) || (driven && !derived_again.borrow().contains(rel)) {
+                        if wanted.contains(rel) || fields.is_output(rel) || (driven && !derived_again.borrow().contains(rel)) || call_rel(rel) {
                             return Ok(false);
                         }
                         let Some(held) = crate::code_rule_dsl::logic::native::component::held(db, rel) else { return Ok(false) };
@@ -9536,8 +9630,9 @@ fn run_observed_within(
                                 // not stratify as one (phase 1's C includes read their own results negatively, ranked by
                                 // phase), though each part it runs does; the part's run then checks its own version.
                                 proofs: crate::code_rule_dsl::logic::plan::kept_analyses::kept::<crate::code_rule_dsl::logic::plan::wellfounded::Proofs>(&split.program).ok(),
+                                calls_moved: cut.changed.iter().any(|c| c == retain::CALLS),
                             };
-                            let hooks = crate::code_rule_dsl::logic::plan::Hooks { maintain: Some(&mut driver), hand_off: hand_off.then_some(&mut hand as &mut dyn FnMut(&str) -> Result<bool>), unload: let_go_inputs.then_some(&mut unload as &mut dyn FnMut(&[String]) -> Result<()>), texts: Some(Arc::clone(&vocabulary)), ..Default::default() };
+                            let hooks = crate::code_rule_dsl::logic::plan::Hooks { answer: part_calls.is_some().then_some(&mut answer_calls as crate::code_rule_dsl::logic::plan::Answer<'_>), answer_together: part_calls.is_some().then_some(&mut answer_calls_together as crate::code_rule_dsl::logic::plan::AnswerTogether<'_>), maintain: Some(&mut driver), hand_off: hand_off.then_some(&mut hand as &mut dyn FnMut(&str) -> Result<bool>), unload: let_go_inputs.then_some(&mut unload as &mut dyn FnMut(&[String]) -> Result<()>), texts: Some(Arc::clone(&vocabulary)), ..Default::default() };
                             let got = super::run_atoms_native_hooked(part, db, "main", stats, keep, modes, hooks)?;
                             let (rows_read, rels_read) = kept.admitted();
                             if std::env::var_os("RERAIL_STATS_KEEP_TRACE").is_some() {
@@ -9568,7 +9663,11 @@ fn run_observed_within(
                             got
                         }
                         None if hand_off => {
-                            let hooks = crate::code_rule_dsl::logic::plan::Hooks { hand_off: Some(&mut hand), unload: let_go_inputs.then_some(&mut unload as &mut dyn FnMut(&[String]) -> Result<()>), texts: Some(Arc::clone(&vocabulary)), ..Default::default() };
+                            let hooks = crate::code_rule_dsl::logic::plan::Hooks { answer: part_calls.is_some().then_some(&mut answer_calls as crate::code_rule_dsl::logic::plan::Answer<'_>), answer_together: part_calls.is_some().then_some(&mut answer_calls_together as crate::code_rule_dsl::logic::plan::AnswerTogether<'_>), hand_off: Some(&mut hand), unload: let_go_inputs.then_some(&mut unload as &mut dyn FnMut(&[String]) -> Result<()>), texts: Some(Arc::clone(&vocabulary)), ..Default::default() };
+                            super::run_atoms_native_hooked(part, db, "main", stats, keep, modes, hooks)?
+                        }
+                        None if part_calls.is_some() => {
+                            let hooks = crate::code_rule_dsl::logic::plan::Hooks { answer: Some(&mut answer_calls), answer_together: Some(&mut answer_calls_together), texts: Some(Arc::clone(&vocabulary)), ..Default::default() };
                             super::run_atoms_native_hooked(part, db, "main", stats, keep, modes, hooks)?
                         }
                         None => texts_run(part, db, stats, keep, modes, &vocabulary)?,
@@ -9635,6 +9734,9 @@ fn run_observed_within(
                             }
                             let held = match held {
                                 Some(h) => h,
+                                // A callable's answers the run holds none of: none were given (the engine holds no
+                                // empty answers, and they have no table).
+                                None if call_rel(rel) && fields.produced(rel) => crate::code_rule_dsl::logic::native::component::InRel::flat(&[], retain::types_of(&placed, &part.domains, rel)),
                                 None => {
                                     let types = retain::types_of(&placed, &part.domains, rel);
                                     crate::code_rule_dsl::logic::native::component::InRel::flat(&held_rows(db, &got, rel, width)?, types)
@@ -9987,7 +10089,9 @@ fn run_observed_within(
                         Ok(())
                     };
                     let strata = kept_strata.as_mut().map(|k| k as &mut dyn super::KeptStrata);
-                    let hooks = if one_fixpoint { super::Hooks { load: Some(&mut load), unload: Some(&mut unload), strata, texts: Some(Arc::clone(&vocabulary)), ..Default::default() } } else { super::Hooks { texts: Some(Arc::clone(&vocabulary)), ..Default::default() } };
+                    let answer = part_calls.is_some().then_some(&mut answer_calls as super::Answer<'_>);
+                    let answer_together = part_calls.is_some().then_some(&mut answer_calls_together as super::AnswerTogether<'_>);
+                    let hooks = if one_fixpoint { super::Hooks { answer, answer_together, load: Some(&mut load), unload: Some(&mut unload), strata, texts: Some(Arc::clone(&vocabulary)), ..Default::default() } } else { super::Hooks { answer, answer_together, texts: Some(Arc::clone(&vocabulary)), ..Default::default() } };
                     let got = super::run_atoms_native_hooked(&cross, db, "main", cross_stats, wanted.clone(), modes, hooks)?;
                     cross_atoms_ahead(store);
                     if let Some(k) = kept_strata {
@@ -10007,6 +10111,10 @@ fn run_observed_within(
         }
     }
     phase("cross", statements.count());
+    // What the cross-file part's calls did (the spike's counters, per run).
+    if let Some(c) = &part_calls {
+        crate::code_rule_dsl::logic::profile::decision("callable relations' calls, in the cross-file part", || format!("{}; {} files' rows held", c.borrow().counts.text(), call_held.borrow().documents()));
+    }
     drop(waves.take());
     if let Some((relations, reading)) = publish_later {
         let _s = crate::code_rule_dsl::logic::profile::span(|| "record the run in the store".into());
@@ -10357,6 +10465,8 @@ pub(in crate::code_rule_dsl) struct Binder<'k> {
 struct Driver<'d, 'k> {
     /// `cross`'s version: what the run reads of it.
     cross_placed: &'d super::body::Placed,
+    /// Whether the files the callables are asked into changed (`retain::CALLS`): their answers may have.
+    calls_moved: bool,
     kept: &'k retain::Retained,
     /// Where the kept part's frames are read from, when it was read from them (a session's); none when the caller
     /// holds the whole kept part in memory, its clean reads bound before the run (`maintained::run`).
@@ -10446,6 +10556,9 @@ impl crate::code_rule_dsl::logic::plan::Maintain for Driver<'_, '_> {
 
     fn proofs(&self) -> Option<Arc<crate::code_rule_dsl::logic::plan::wellfounded::Proofs>> {
         self.proofs.clone()
+    }
+    fn answers_moved(&self, _rel: &str) -> bool {
+        self.calls_moved
     }
 
     fn mode_ran(&mut self, scc: &super::super::front::Comp, recursive: bool) {
@@ -12066,6 +12179,18 @@ impl Asks {
     /// A request answered in place: posted, then its own answer waited for (the others come are kept).
     fn ask(&mut self, rel: &str, rows: &crate::code_rule_dsl::logic::native::component::Asked) -> Result<Vec<(String, Vec<Vector<i64>>)>> {
         let ticket = self.post(rel, rows)?;
+        self.taken(ticket)
+    }
+
+    /// Requests answered in place together: every one posted, then the cone waits once (`waits`), so the answering
+    /// thread answers the callables' among them in one call; their answers in their order.
+    fn ask_all(&mut self, all: &[(String, crate::code_rule_dsl::logic::native::component::Asked)]) -> Result<Vec<Vec<(String, Vec<Vector<i64>>)>>> {
+        let tickets: Vec<u64> = all.iter().map(|(rel, rows)| self.post(rel, rows)).collect::<Result<_>>()?;
+        tickets.into_iter().map(|t| self.taken(t)).collect()
+    }
+
+    /// Ticket `ticket`'s answer, waited for (the others come are kept).
+    fn taken(&mut self, ticket: u64) -> Result<Vec<(String, Vec<Vector<i64>>)>> {
         self.waits()?;
         loop {
             if let Some(given) = self.early.remove(&ticket) {
@@ -12101,11 +12226,12 @@ impl super::Asking for Posting<'_> {
 /// relation, `base`, is refused), made by the chunk path as any file's are; the rest of the cross-file part reads the
 /// cone's rows as inputs. A derivation of the part's version alone (`answers::gate`, `answers::split`), reading no
 /// tree: made once for a prepared split (`Prepared::cone`).
-fn cone_of(cross: &super::body::Placed, exports: &[String], base: &[String], prog: &dyn ProgramFields) -> Result<Cone> {
+fn cone_of(cross: &super::body::Placed, exports: &[String], base: &[String], prog: &dyn ProgramFields, calls: bool) -> Result<Cone> {
     let f = cross.fields()?;
     let mut answers = world::answers(&f);
-    // A callable relation's requests (the spike, `preparation::callable`): answered by calls, as the caller states.
-    for &(req, by) in f.answers() {
+    // A callable relation's requests (the spike, `preparation::callable`): answered by calls, as the caller states,
+    // in the cone where the cross-file part does not ask them itself (`calls`).
+    for &(req, by) in f.answers().iter().filter(|_| calls) {
         let (req, by) = (cross.v.rel_name(req), cross.v.rel_name(by));
         if req.ends_with(preparation::callable::REQUEST) && f.derives(req) {
             answers.entry(req.to_owned()).or_default().push(by.to_owned());
@@ -12149,6 +12275,28 @@ fn cone_of(cross: &super::body::Placed, exports: &[String], base: &[String], pro
         }
     }
     let (load, rest) = parts.parts(&whole.v).map_err(Error::Plan)?;
+    // A callable the rest asks itself (`calls` off) keeps its request's answers declared there: the gate and the split
+    // are of the file reads' requests alone.
+    let callable: Vec<(String, String)> = f
+        .answers()
+        .iter()
+        .map(|&(req, by)| (cross.v.rel_name(req).to_owned(), cross.v.rel_name(by).to_owned()))
+        .filter(|(req, _)| !calls && req.ends_with(preparation::callable::REQUEST) && f.derives(req))
+        .collect();
+    let rest = if callable.is_empty() {
+        rest
+    } else {
+        let mut kept: BTreeMap<String, Vec<String>> = ProgramFields::answers(&*rest);
+        for (req, by) in callable {
+            let produced = kept.entry(req).or_default();
+            if !produced.contains(&by) {
+                produced.push(by);
+            }
+        }
+        let mut b = crate::code_rule_dsl::logic::program_image::Builder::on(&rest);
+        b.fields().set_answers(&kept);
+        b.finish_overlay().map_err(Error::Plan)?
+    };
     crate::code_rule_dsl::logic::profile::decision("requests (decision 0065 §2a)", || {
         let gates = super::body::Placed::whole(load.clone()).fields().map_or(0, |f| f.gates().len());
         format!(

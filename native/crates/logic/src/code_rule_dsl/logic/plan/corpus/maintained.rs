@@ -201,6 +201,7 @@ pub(in crate::code_rule_dsl) fn run_with(
             let derived_again = std::cell::RefCell::new(BTreeSet::new());
             let mut driver = super::Driver {
                 cross_placed: &placed,
+                calls_moved: false,
                 kept: k,
                 store: None,
                 clean_reads: BTreeSet::new(),

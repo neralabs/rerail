@@ -215,6 +215,27 @@ fn an_edit_invalidates_what_called_into_the_file() {
     assert_eq!(findings(PROGRAM, &dir), fresh);
 }
 
+/// An edit asks again only into the file it changed: the cross-file part asks its callable itself (the program reads
+/// no file), maintained by delta as a part without calls, and a request into a file as the last run read it is
+/// answered by the last run's answers (`Calls::keep`), entering no file. The run equals a fresh one.
+#[test]
+fn an_edit_asks_again_only_into_the_file_it_changed() {
+    let dir = corpus("callable-kept", &[("a.py", A), ("b.py", B), ("c.py", C)]);
+    let prof = dir.join("prof");
+    crate::code_rule_dsl::logic::profile::set(true);
+    crate::code_rule_dsl::logic::profile::set_directory(&prof);
+    assert_eq!(findings(PROGRAM, &dir).len(), 2);
+    let asked = decided(&prof, &["callable relations asked"]);
+    assert!(asked.iter().any(|l| l.contains("asked in the cross-file part")), "{asked:?}");
+    let edited = A.replace("return 2", "return x * 2");
+    std::fs::write(dir.join("a.py"), &edited).unwrap();
+    let again = findings(PROGRAM, &dir);
+    let calls = decided(&prof, &["callable relations' calls, in the cross-file part"]);
+    let kept = |l: &String| l.split(" from the memo, ").nth(1).and_then(|r| r.split(' ').next()).and_then(|n| n.parse::<usize>().ok()).unwrap_or(0);
+    assert!(calls.iter().any(|l| kept(l) > 0 && l.contains(" 1 files asked")), "b.py's requests answered by the last run's answers, a.py's asked: {calls:?}");
+    assert_eq!(again, findings(PROGRAM, &corpus("callable-kept-fresh", &[("a.py", &edited), ("b.py", B), ("c.py", C)])));
+}
+
 /// The page's measurement: 3 files of `n` functions, each touching `x` (so every pair of a file shares it), and one
 /// function a file calling 4 of them (12 ordered pairs asked a file). `mode` is `whole` (`same_globals` made in full:
 /// n(n-1) rows a file), `magic` (made whole, demand by magic sets: `.pragma "magic-transform"`) or `called` (the 12

@@ -31,6 +31,10 @@ use rusqlite::Connection;
 use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 use std::sync::Arc;
 
+/// How the rounds' requests are answered: a round's requests together, each request relation with its keys, and for
+/// each what it was given, by relation.
+pub(in crate::code_rule_dsl) type AnswerAll<'a> = dyn FnMut(&[(String, crate::code_rule_dsl::logic::native::component::Asked)]) -> Result<Vec<Vec<(String, Vec<Vector<i64>>)>>> + 'a;
+
 /// Rounds past this many go back to the gated fixpoint.
 const LIMIT: usize = 64;
 
@@ -344,6 +348,8 @@ pub(in crate::code_rule_dsl) struct Done {
     pub(in crate::code_rule_dsl) again_why: BTreeMap<&'static str, BTreeSet<String>>,
     /// Requests of the file system kept as the last run answered them (`On::still`).
     pub(in crate::code_rule_dsl) still: usize,
+    /// Calls into files the memo gave whole, kept as the last run answered them (`On::calls`).
+    pub(in crate::code_rule_dsl) calls_kept: usize,
     /// The file system's answers as the last round bound them (`world_digest`).
     pub(in crate::code_rule_dsl) world: u64,
     /// The documents loaded this run and taken back: the run drops them (`Answers::withdraw`).
@@ -389,6 +395,19 @@ pub(in crate::code_rule_dsl) struct On<'a> {
     pub(in crate::code_rule_dsl) still: Option<&'a dyn Fn(&str, &[i64], &[&Vector<i64>]) -> bool>,
     /// The run's text tests (`plan::Hooks::texts`).
     pub(in crate::code_rule_dsl) texts: &'a Arc<crate::code_rule_dsl::logic::strings::Vocabulary>,
+    /// The callables' requests, and whether a request's file (its row's first value, the document a router names
+    /// or the bound value naming it) is as the last run had it: the memo gave its entry whole. A carried call into
+    /// such a file keeps its kept answer and is not asked again; a call into any other is.
+    pub(in crate::code_rule_dsl) calls: Option<(&'a [CallKept], &'a dyn Fn(i64) -> bool)>,
+}
+
+/// A callable's request as the rounds answer it (decision 0725): the relation its calls answer, and where a request
+/// row's bound values lie (after the document a router names) and their columns in an answer's row.
+pub(in crate::code_rule_dsl) struct CallKept {
+    pub(in crate::code_rule_dsl) request: String,
+    pub(in crate::code_rule_dsl) answer: String,
+    pub(in crate::code_rule_dsl) bound_at: usize,
+    pub(in crate::code_rule_dsl) bound: Vec<usize>,
 }
 
 /// The digest of the file system's answers `kept` holds as inputs (`rr::WORLD`'s relations): what a record of the
@@ -407,14 +426,15 @@ pub(in crate::code_rule_dsl) enum Start {
 }
 
 impl RoundProgram {
-    /// The rounds from `start`, answering through `answer`; `answers` what was answered before them.
+    /// The rounds from `start`, answering through `answer` (a round's requests together: each request relation's
+    /// keys, and what each was given); `answers` what was answered before them.
     pub(in crate::code_rule_dsl) fn run(
         &self,
         on: &On<'_>,
         inputs: &Inputs<'_>,
         start: Start,
         mut answers: Answers,
-        answer: &mut dyn FnMut(&str, &crate::code_rule_dsl::logic::native::component::Asked) -> Result<Vec<(String, Vec<Vector<i64>>)>>,
+        answer: &mut AnswerAll<'_>,
     ) -> std::result::Result<Done, Gave> {
         let (kept, closing) = match start {
             Start::Kept(k) => (Some(k), None),
@@ -427,6 +447,7 @@ impl RoundProgram {
         });
         let mut provisional: BTreeMap<String, Vec<Vector<i64>>> = BTreeMap::new();
         let mut still_n = 0;
+        let mut calls_kept = 0;
         // The documents loaded this run and taken back (`Answers::withdraw`).
         let mut withdrawn: HashSet<i64> = HashSet::new();
         let mut carried: HashSet<(String, Vector<i64>)> = HashSet::new();
@@ -518,6 +539,26 @@ impl RoundProgram {
                     answers.rows.entry(produced).or_default().extend(given);
                 }
             }
+            // A carried call into a file the memo gave whole keeps its answer: its rows of the kept answers (those
+            // whose bound columns hold the request's bound values) are its answer again, and it is not asked.
+            if let Some((calls, unchanged)) = on.calls {
+                let _s = crate::code_rule_dsl::logic::profile::span(|| "rounds/calls the memo keeps".into());
+                for c in calls {
+                    let produced = self.kept_as(&c.answer);
+                    let mut by: HashMap<Vector<i64>, Vec<&Vector<i64>>> = HashMap::new();
+                    for row in provisional.get(&produced).into_iter().flatten() {
+                        if c.bound.iter().all(|&b| b < row.len()) {
+                            by.entry(c.bound.iter().map(|&b| row[b]).collect()).or_default().push(row);
+                        }
+                    }
+                    let n = c.bound_at + c.bound.len();
+                    let keys: Vec<Vector<i64>> = carried.iter().filter(|(q, key)| *q == c.request && key.len() == n && key.first().is_some_and(|&f| unchanged(f))).map(|(_, key)| key.clone()).collect();
+                    let given: Vec<Vector<i64>> = keys.iter().flat_map(|key| by.get(&key[c.bound_at..].iter().copied().collect::<Vector<i64>>()).into_iter().flatten().map(|row| (*row).clone())).collect();
+                    calls_kept += keys.len();
+                    answers.asked.extend(keys.into_iter().map(|k| (c.request.clone(), k)));
+                    answers.rows.entry(produced).or_default().extend(given);
+                }
+            }
         }
         let mut kept = kept;
         let (mut rounds, mut strata, mut maintained_n, mut again) = (0, (0, 0), 0, 0);
@@ -527,7 +568,9 @@ impl RoundProgram {
         // first) are made and bound again.
         let mut bound: BTreeMap<String, (Arc<dyn Source>, u64)> = BTreeMap::new();
         let mut dirty: BTreeSet<String> = self.inputs.iter().cloned().collect();
-        let corpus_rows: BTreeMap<&str, Vec<Vector<i64>>> = inputs.per_file.iter().map(|(r, s, _)| (r.as_str(), rows(s.as_ref()))).collect();
+        // The corpus's rows of a per-file relation, bound where they lie: made into rows only for a relation loads add
+        // rows to (the loaded documents', provisional or answered), once a round that binds it.
+        let corpus_of: BTreeMap<&str, &Arc<dyn Source>> = inputs.per_file.iter().map(|(r, s, _)| (r.as_str(), s)).collect();
         loop {
             rounds += 1;
             if rounds > LIMIT {
@@ -542,9 +585,16 @@ impl RoundProgram {
                 } else if let Some(keys) = open.get(&rel) {
                     of_rows(width, keys.iter())
                 } else {
-                    let mut seen: HashSet<&Vector<i64>> = HashSet::new();
-                    let all = corpus_rows.get(rel.as_str()).into_iter().flatten().chain(provisional.get(&rel).into_iter().flatten()).chain(answers.rows.get(&rel).into_iter().flatten()).filter(|r| seen.insert(*r));
-                    of_rows(width, all)
+                    let added = provisional.get(&rel).is_some_and(|r| !r.is_empty()) || answers.rows.get(&rel).is_some_and(|r| !r.is_empty());
+                    match corpus_of.get(rel.as_str()) {
+                        Some(corpus) if !added => Arc::clone(corpus),
+                        corpus => {
+                            let corpus_rows = corpus.map(|c| rows(c.as_ref())).unwrap_or_default();
+                            let mut seen: HashSet<&Vector<i64>> = HashSet::new();
+                            let all = corpus_rows.iter().chain(provisional.get(&rel).into_iter().flatten()).chain(answers.rows.get(&rel).into_iter().flatten()).filter(|r| seen.insert(*r));
+                            of_rows(width, all)
+                        }
+                    }
                 };
                 let digest = retain::digest(source.as_ref(), &retain::cells_of(&atoms, &self.placed, domains, &rel, width));
                 bound.insert(rel, (source, digest));
@@ -580,10 +630,15 @@ impl RoundProgram {
             };
             let batch = [pick(true, false), pick(true, true), pick(false, false), pick(false, true)].into_iter().find(|b| !b.is_empty());
             if let Some(batch) = batch {
-                for (req, keys) in batch {
-                    // The keys the rounds chose (rows they made), asked.
-                    let keys = crate::code_rule_dsl::logic::native::component::Asked::rows(keys);
-                    let given: Vec<(String, Vec<Vector<i64>>)> = answer(&req, &keys)?.into_iter().map(|(r, rows)| (self.kept_as(&r), rows)).collect();
+                // The keys the rounds chose (rows they made), every request relation's asked together: the callables'
+                // in one call (`calls::Calls::answer_all`).
+                let asked: Vec<(String, crate::code_rule_dsl::logic::native::component::Asked)> = batch.into_iter().map(|(req, keys)| (req, crate::code_rule_dsl::logic::native::component::Asked::rows(keys))).collect();
+                let all_given = answer(&asked)?;
+                if all_given.len() != asked.len() {
+                    return Err(Gave::Err(super::Error::Plan(format!("the rounds asked {} requests and were given {} answers", asked.len(), all_given.len()))));
+                }
+                for ((req, keys), given) in asked.into_iter().zip(all_given) {
+                    let given: Vec<(String, Vec<Vector<i64>>)> = given.into_iter().map(|(r, rows)| (self.kept_as(&r), rows)).collect();
                     if inputs.ledger.lock().unwrap_or_else(|e| e.into_inner()).bound {
                         return Err(Gave::Up("a load past the budget: where it binds, the loads are taken level by level, in a fresh cone".into()));
                     }
@@ -672,7 +727,7 @@ impl RoundProgram {
             Some((rel.clone(), rows(source.as_ref()).into_iter().map(|row| at.iter().map(|&c| row[c]).collect()).collect()))
         }).collect();
         let world = world_digest(|rel| bound.get(rel).map(|(_, d)| *d));
-        Ok(Done { next, rounds, strata, maintained: maintained_n, derived_again: again, again_why, still: still_n, world, withdrawn, written, produced, views, answered })
+        Ok(Done { next, rounds, strata, maintained: maintained_n, derived_again: again, again_why, still: still_n, calls_kept, world, withdrawn, written, produced, views, answered })
     }
 
     /// The input `rel` is a view of by the rounds' rules (`plan::input_view_shape`: its one rule copies the input's

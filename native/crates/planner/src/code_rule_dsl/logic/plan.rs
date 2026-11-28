@@ -371,6 +371,9 @@ pub struct Run<'a, 'b> {
     /// Answers a request (decision 0065 §2a): the request relation and its new rows, to the produced relations'
     /// rows. A component with a request pauses for it (`setfix`'s `request`).
     answer: Option<Answer<'b>>,
+    /// Answers the requests of every stratum of answers ready at once (`Hooks::answer_together`), where requests are
+    /// not posted (`asking`).
+    answer_together: Option<AnswerTogether<'b>>,
     /// The run's text tests (`Hooks::texts`), or its own, made from the program's tests when one first runs.
     texts: Option<Arc<super::strings::Vocabulary>>,
     /// Posts requests and gives their answers as they arrive (decision 0114 §3): where the strata loop retires
@@ -398,6 +401,10 @@ pub struct Run<'a, 'b> {
 /// produced relation gains.
 pub type Answer<'a> = &'a mut dyn FnMut(&str, &super::native::component::Asked) -> Result<Vec<(String, Vec<Vector<i64>>)>>;
 
+/// Answers several requests at once (`Hooks::answer_together`): each request relation with its rows, to the rows each
+/// produced relation gains, of them all.
+pub type AnswerTogether<'a> = &'a mut dyn FnMut(&[(String, super::native::component::Asked)]) -> Result<Vec<(String, Vec<Vector<i64>>)>>;
+
 /// A request relation's rows where they are: the engine's (a relation it holds, read where its rows lie, decision
 /// 0353 step 8), none (one still to be made: no table, no rows), or its table's (SQL's rows, a relation the engine
 /// does not hold).
@@ -422,6 +429,27 @@ fn request_asked(run: &mut Run<'_, '_>, db: &Connection, f0: Fields<'_>, req: &s
 /// Complete requests (`asks`) posted together, then their answers waited for (`answer_complete`'s, for several at
 /// once): the rows each produced relation gains, the rows an answer held back asked again until none is. Answers
 /// that come meanwhile for strata suspended on their own requests are kept for them (`arrived`).
+/// `asks` answered together by `answer` (`Hooks::answer_together`), the rows an answer held back asked again until
+/// none is: the rows each produced relation gains.
+fn answered_together(answer: &mut dyn FnMut(&[(String, super::native::component::Asked)]) -> Result<Vec<(String, Vec<Vector<i64>>)>>, mut asks: Vec<(String, super::native::component::Asked)>) -> Result<BTreeMap<String, Vec<Vector<i64>>>> {
+    let mut produced: BTreeMap<String, Vec<Vector<i64>>> = BTreeMap::new();
+    while !asks.is_empty() {
+        let mut held: BTreeMap<String, Vec<Vector<i64>>> = BTreeMap::new();
+        for (rel, rows) in answer(&asks)? {
+            match rel.strip_prefix(super::answers::HELD_BACK) {
+                Some(request) => {
+                    if !rows.is_empty() {
+                        held.entry(request.to_owned()).or_default().extend(rows);
+                    }
+                }
+                None => produced.entry(rel).or_default().extend(rows),
+            }
+        }
+        asks = held.into_iter().map(|(req, rows)| (req, super::native::component::Asked::rows(rows))).collect();
+    }
+    Ok(produced)
+}
+
 fn posted_together(run: &mut Run<'_, '_>, asks: Vec<(String, super::native::component::Asked)>, arrived: &mut HashMap<u64, Vec<(String, Vec<Vector<i64>>)>>) -> Result<BTreeMap<String, Vec<Vector<i64>>>> {
     use super::native::component::Asked;
     let asking = run.asking.as_deref_mut().ok_or_else(|| Error::Plan("requests posted, and no one to answer them".into()))?;
@@ -2065,6 +2093,7 @@ impl<'a> Run<'a, '_> {
             versions: Arc::clone(&self.versions),
             version: self.version,
             answer: None,
+            answer_together: None,
             texts: self.texts.clone(),
             asking: None,
             why_class: None, mode_reads: Default::default(),
@@ -5592,6 +5621,10 @@ pub struct Hooks<'a> {
     pub unload: Option<&'a mut dyn FnMut(&[String]) -> Result<()>>,
     /// Answers the requests a component makes, inside the fixpoint (decision 0065 §2a).
     pub answer: Option<Answer<'a>>,
+    /// Answers together the requests of every stratum of answers above its request that is ready when one is reached
+    /// (a callable's: one call into each file for them all, `calls::Calls::answer_all`), where requests are not
+    /// posted (`asking`); else each is answered by `answer`.
+    pub answer_together: Option<AnswerTogether<'a>>,
     /// The run's text tests (`preparation::text::TextRelations`): a test over strings the run answers (`front::Native::TextTest`)
     /// tests them with every other test at once, each string once a run, as the batches do. Without it the run
     /// makes its own from the program's tests.
@@ -5640,6 +5673,11 @@ pub trait Maintain {
     /// checks its own version, which holds only the part's rules.
     fn proofs(&self) -> Option<Arc<wellfounded::Proofs>> {
         None
+    }
+    /// Whether produced relation `rel`'s answers (decision 0065 §2a) may differ from the last run's though its request
+    /// is as it was: they are the world's, which no read of the program shows (a callable's, whose files changed).
+    fn answers_moved(&self, _rel: &str) -> bool {
+        false
     }
 }
 
@@ -7013,7 +7051,7 @@ fn run_within(program: &body::Placed, db: &Connection, inputs: Inputs, lowering:
     let mut unread: BTreeSet<String> = BTreeSet::new();
     let mut prepared_to = 0usize;
     let projections0: HashMap<String, Vec<(usize, i64)>> = super::program_image::analyses::projections(&p0.v).into_iter().map(|(r, eqs)| (p0.v.rel_name(r).to_owned(), eqs)).collect();
-    let mut run = Run { db: crate::code_rule_dsl::facts::vtab::Db::of(db), model, views: Default::default(), made: HashSet::new(), orders: HashMap::new(), keyless: HashSet::new(), native_rels: adopted, device_views: HashSet::new(), proofs: Default::default(), mode_reads: Default::default(), demands: Default::default(), pending: HashMap::new(), why_not: None, projections: Arc::new(projections0), inputs: Arc::new(RunInputs { program: f0.inputs().collect(), added: Default::default() }), versions: Arc::new(body::Versions::of_placed(placed)), version: 0, answer: hooks.answer.take(), texts: hooks.texts.take(), asking: None, why_class: None, answered: BTreeMap::new(), logging: None, answer_logs: HashMap::new(), logs_posted: false, quiet: Default::default() };
+    let mut run = Run { db: crate::code_rule_dsl::facts::vtab::Db::of(db), model, views: Default::default(), made: HashSet::new(), orders: HashMap::new(), keyless: HashSet::new(), native_rels: adopted, device_views: HashSet::new(), proofs: Default::default(), mode_reads: Default::default(), demands: Default::default(), pending: HashMap::new(), why_not: None, projections: Arc::new(projections0), inputs: Arc::new(RunInputs { program: f0.inputs().collect(), added: Default::default() }), versions: Arc::new(body::Versions::of_placed(placed)), version: 0, answer: hooks.answer.take(), answer_together: hooks.answer_together.take(), texts: hooks.texts.take(), asking: None, why_class: None, answered: BTreeMap::new(), logging: None, answer_logs: HashMap::new(), logs_posted: false, quiet: Default::default() };
     if let Some(p) = maintaining.as_deref().and_then(|m| m.proofs()) {
         let _ = run.proofs.set(p);
     }
@@ -7468,11 +7506,28 @@ fn run_within(program: &body::Placed, db: &Connection, inputs: Inputs, lowering:
                 let mut base_strata: Vector<usize> = rerail_blocks::vector::Vector::new();
                 let mut reached_strata: Vec<(usize, Vec<RuleKey>, BTreeSet<String>)> = Vec::new();
                 let mut need: BTreeSet<String> = BTreeSet::new();
+                // The strata of answers reached (decision 0065 §2a), placed once what they read is.
+                let mut produced_strata: Vec<usize> = Vec::new();
                 for j in at..end {
                     let scc = &sccs[j];
                     let rules: Vec<RuleKey> = scc.iter().flat_map(|rel| rules_by.get(rel).into_iter().flatten().copied()).collect();
                     let reads = stratum_reads(f0, &run_vs, scc, &rules);
                     let moved: BTreeSet<String> = reads.iter().filter(|r| !scc.contains(*r) && moved_rels.contains(r.as_str())).cloned().collect();
+                    // A stratum of produced relations above their requests (decision 0065 §2a): its rows are the
+                    // answers, which have no maintained form. Reached when its request moved, or when the driver says
+                    // its answers may have (`Maintain::answers_moved`), it is asked again whole (an answerer keeps what
+                    // it can), and its delta is its diff against its kept rows (`again_olds`), so its readers are
+                    // maintained.
+                    if !scc.is_empty()
+                        && scc.iter().all(|r| f0.produced(r) && f0.request_of(r).is_some_and(|q| !scc.contains(q)))
+                        && (!moved.is_empty() || scc.iter().any(|r| m.answers_moved(r)))
+                    {
+                        waved[j] = true;
+                        need.extend(reads.iter().cloned());
+                        need.extend(scc.iter().map(str::to_owned));
+                        produced_strata.push(j);
+                        continue;
+                    }
                     // Decision 0563 B: a stratum none of whose rules sees a row of its changed reads' deltas, by kind
                     // or by key, is passed on as one no read of which changed. A native's stratum and a view of an
                     // input are left to their own paths.
@@ -7549,6 +7604,21 @@ fn run_within(program: &body::Placed, db: &Connection, inputs: Inputs, lowering:
                 // What the level's strata read of what is kept, read now in one batch, and held where unread.
                 let need: Vec<String> = need.into_iter().collect();
                 m.need(&need, &mut run.model)?;
+                // Each stratum of answers reached, asked again whole: its delta is its diff against its kept rows.
+                for j in produced_strata {
+                    let scc = &sccs[j];
+                    base_strata.push(j);
+                    outcome.again.push((stratum_key(scc), crate::code_rule_dsl::logic::plan::again::ANSWERS));
+                    for r in scc {
+                        moved_rels.insert(r.to_owned());
+                        match m.kept(r) {
+                            Some(old) => {
+                                again_olds.insert(r.to_owned(), old);
+                            }
+                            None => m.no_delta(r),
+                        }
+                    }
+                }
                 // A kept relation that is no stratum of this program (an earlier round's, decision 0331) is held too:
                 // a stratum derived again reads it as it was. Only the program's own quiet strata were held (`unread`),
                 // so `chain_below`'s reach, derived again in a later guest round, found `chain_step` and its seed read
@@ -7877,7 +7947,7 @@ fn run_within(program: &body::Placed, db: &Connection, inputs: Inputs, lowering:
             // stratum's and those above, asked together: posted, then waited for once, so their requests reach the
             // runner before it answers any (a callable's: one call into each file for them all,
             // `calls::Calls::answer_all`). Where requests are posted (`Run::asking`).
-            if run.asking.is_some() {
+            if run.asking.is_some() || run.answer_together.is_some() {
                 let ready: Vec<String> = sccs
                     .iter()
                     .skip(at)
@@ -7896,7 +7966,11 @@ fn run_within(program: &body::Placed, db: &Connection, inputs: Inputs, lowering:
                         let asked = request_asked(&mut run, db, f0, &req)?;
                         asks.push((req, asked));
                     }
-                    for (p, rows) in posted_together(&mut run, asks, &mut arrived)? {
+                    let given = match run.asking.is_some() {
+                        true => posted_together(&mut run, asks, &mut arrived)?,
+                        false => answered_together(run.answer_together.as_deref_mut().expect("checked"), asks)?,
+                    };
+                    for (p, rows) in given {
                         run.answered.entry(p).or_default().extend(rows);
                     }
                     for rel in &ready {

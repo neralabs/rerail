@@ -292,3 +292,37 @@ was; 98 of 119 strata skipped, 21 derived again), +0.68 s; the requests' side on
 calls asked again of all 163 files, about 0.15 s of it); the cone's relations' delta found from their input frames
 (their changed documents' old rows read, the other owners' rows hashed), +0.34 s. The rest of the cross part did
 less, −0.47 s: without the call the solve is in it, maintained from deltas (87 of 255 strata run, 57 from deltas).
+
+**Calls asked in the cross-file part, maintained by delta.** The cost was the cone: `pt_vopen`'s request is bound
+by `pt_ext_attr`, whose cone is most of the points-to solve, so the cone derived the solve apart from the rest of the
+part, and an edit derived it again or diffed it there. The cone was tried kept by rounds (decision 0145) instead of
+the fixpoint, with the calls into files as the last run read them kept. The edit was then 110.0 G, and a cold run
+cost 813.0 G, because the cold run ends with a closing round: the split itself still cost the edit (digests,
+statistics, a second program). No callable's request reads its answers, so a callable needs no cone. The cross-file
+part asks it itself, as a stratum of its answers above its request, when no request reads its own answers and the
+cone of the file reads (loads, the C preprocessor's requests) reads no call (`calls_in_part`; else, or with
+`RERAIL_CALLS_IN_CONE=on`, the cone asks, kept by rounds with the calls into unchanged files kept).
+The run answers every callable request ready when it reaches a stratum of answers in one call
+(`Hooks::answer_together`, `Calls::answer_all`). A maintained run reaches that stratum when its request moved, or when
+the files the calls are asked into changed (`Maintain::answers_moved`). Those files are `retain::CALLS`, a digest of
+the run's documents that the stratum reads as `GIT` is, and that the frames take as the stratum read it, so its old
+rows stay current. The run then asks the stratum again whole, and its delta is its diff against its kept rows, so its
+readers are maintained. Some requests are answered by the last run's answers, read where the kept part holds them
+(`Calls::keep`), and enter no file: a request into a file as the last run read it, whose bound values' every last
+request was into such a file and is asked again. A callable's requests and answers are held to the part's end, not
+handed off, so they are kept; answers it gave none of are kept empty. PostHog's 291 files, get-handler-writes: a cold
+run, then an edit, its revert and the edit again, in one store (instructions retired):
+
+| | cold | edit | revert | edit again |
+|---|---|---|---|---|
+| no call | 772.3 G | 90.7 G | 67.6 G | 18.5 G |
+| the call in the cone, the fixpoint | 779.9 G | 107.5 G | 86.1 G | 18.6 G |
+| the call in the cone, by rounds | 813.0 G | 110.0 G | 87.4 G | 18.6 G |
+| the call in the cross-file part | 782.6 G | 91.0 G | 68.3 G | 18.9 G |
+
+The edit asks 2,260 requests. 2,154 are answered by the last run's answers, and the call enters 1 file (9 ms). The
+cold run took 777.1 G to 782.6 G over four runs, with peak memory from 611 MB to 740 MB (no call: 569 MB to 609 MB).
+Every run gave the same 5 findings.
+Tests: `rerail-tests-corpus` (281 passed), `rerail-tests-rr` (299, with
+`an_edit_asks_again_only_into_the_file_it_changed`), its callable tests with the cone asking (`RERAIL_CALLS_IN_CONE=on`,
+9), and `rerail-logic`'s calls and answers tests (14).

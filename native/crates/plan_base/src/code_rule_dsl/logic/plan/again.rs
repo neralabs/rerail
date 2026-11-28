@@ -13,6 +13,8 @@ pub const NOT_WALKED: &str = "its part is not walked: no kept part, or gates";
 pub const NOT_KEPT: &str = "not reached, its rows not kept";
 /// A native operator's stratum (the reach index, decision 0119): made again from its reads as they are now.
 pub const NATIVE_OPERATOR: &str = "a native operator's stratum, made again";
+/// A stratum of a request's answers (decision 0065 §2a): asked again whole, as its answers have no maintained form.
+pub const ANSWERS: &str = "a request's answers, asked again";
 /// A read changed with no version (a relation derived again in SQL, or with its kept rows not held).
 pub const NO_VERSION: &str = "a read changed without a version";
 
@@ -56,6 +58,7 @@ pub fn reason_class(why: &str) -> &'static str {
         "a nearest or ast literal: no native step",
         NOT_KEPT,
         NATIVE_OPERATOR,
+        ANSWERS,
         "an aggregate over its own stratum",
         "its kept rows are not in memory",
         "no rules",

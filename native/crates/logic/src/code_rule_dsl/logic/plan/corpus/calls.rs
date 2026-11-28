@@ -11,6 +11,8 @@
 //! Each request asked is kept for the run (the memo), its key alone: asked again, it enters no file and adds nothing,
 //! for its answers are already R's rows in the caller, the one place they lie (decision 0353: no second structure of
 //! them here). A call writes nothing of its file's: the callee's only rules are R's.
+//! An edit asks again (`Calls::keep`): a request into a file as the last run read it is answered by the last run's
+//! answers, read where its kept part holds them, and enters no file.
 
 use rerail_blocks::vector::Vector;
 use super::super::{Error, Result, Stats, lower, run_atoms_native_over};
@@ -42,6 +44,8 @@ pub struct CallCounts {
     pub entered: usize,
     pub missing_files: usize,
     pub answers: usize,
+    /// Requests answered by the last run's answers (`Calls::keep`).
+    pub kept: usize,
     pub seconds: f64,
 }
 
@@ -49,8 +53,8 @@ impl CallCounts {
     /// The profile's line.
     pub fn text(&self) -> String {
         format!(
-            "{} batches, {} requests ({} from the memo), {} files asked, {} holders entered ({} requests of no file), {} answer rows, {:.0} µs ({:.0} µs a holder entered)",
-            self.batches, self.asked, self.memo_hits, self.files, self.entered, self.missing_files, self.answers, self.seconds * 1e6, self.seconds * 1e6 / self.entered.max(1) as f64
+            "{} batches, {} requests ({} from the memo, {} by the last run's answers), {} files asked, {} holders entered ({} requests of no file), {} answer rows, {:.0} µs ({:.0} µs a holder entered)",
+            self.batches, self.asked, self.memo_hits, self.kept, self.files, self.entered, self.missing_files, self.answers, self.seconds * 1e6, self.seconds * 1e6 / self.entered.max(1) as f64
         )
     }
 }
@@ -82,6 +86,18 @@ fn empty(width: usize) -> Arc<dyn Source> {
     component::columns_source((0..width).map(|c| format!("c{c}")).collect(), vec![Some(Vector::new()); width])
 }
 
+/// A callable's answers as the last run gave them (`Calls::keep`), read where its kept part holds them: its requests
+/// and answers, each by its bound values, as row numbers into them. Only bound values whose every request was into a
+/// file as this run has it.
+struct Kept {
+    keys: Arc<dyn Source>,
+    answers: Arc<dyn Source>,
+    keys_of: rustc_hash::FxHashMap<Vector<i64>, Vec<u32>>,
+    answers_of: rustc_hash::FxHashMap<Vector<i64>, Vec<u32>>,
+    /// The documents as the last run read them.
+    same: rustc_hash::FxHashSet<i64>,
+}
+
 /// A run's callees and their memo (module docs).
 pub struct Calls {
     by_request: BTreeMap<String, Prepared>,
@@ -96,6 +112,8 @@ pub struct Calls {
     modes: String,
     /// Each request asked, by its relation and row.
     memo: BTreeSet<(String, Vector<i64>)>,
+    /// The last run's answers, by request (`keep`).
+    kept: BTreeMap<String, Kept>,
     pub counts: CallCounts,
 }
 
@@ -117,12 +135,43 @@ impl Calls {
             .iter()
             .map(|c| (c.callable.request.clone(), Prepared { rel: c.callable.rel.clone(), width: c.callable.width, key: c.callable.request_width(), bound: c.callable.bound.clone() }))
             .collect();
-        Ok(Calls { by_request, lowered, reads, widths, db, modules: Modules::default(), modes: modes.to_owned(), memo: BTreeSet::new(), counts: CallCounts::default() })
+        Ok(Calls { by_request, lowered, reads, widths, db, modules: Modules::default(), modes: modes.to_owned(), memo: BTreeSet::new(), kept: BTreeMap::new(), counts: CallCounts::default() })
     }
 
     /// For a split's callees.
     pub fn of(split: &Split, db: Connection, modes: &str) -> Result<Calls> {
         Calls::new(&split.callees, &split.program, [0; 3], crate::code_rule_dsl::language::GrammarDialect::Python, db, modes)
+    }
+
+    /// The last run's requests `keys` of callable request `request` and its answers `answers` (its kept part's rows,
+    /// read where they lie), for the documents as it read them (`same`, by `memo::document_of`): a request asked again
+    /// into such a file, whose bound values' every last request was into such a file and is asked again, is answered by
+    /// the answers of those values, and enters no file.
+    pub fn keep(&mut self, request: &str, keys: Arc<dyn Source>, answers: Arc<dyn Source>, same: rustc_hash::FxHashSet<i64>) {
+        let Some(p) = self.by_request.get(request) else { return };
+        let at = p.bound_at();
+        if keys.columns().len() != p.key || answers.columns().len() != p.width {
+            return;
+        }
+        let mut keys_of: rustc_hash::FxHashMap<Vector<i64>, Vec<u32>> = rustc_hash::FxHashMap::default();
+        let mut stale: rustc_hash::FxHashSet<Vector<i64>> = rustc_hash::FxHashSet::default();
+        for i in 0..keys.len() {
+            let b: Vector<i64> = (at..p.key).map(|c| keys.value(i, c)).collect();
+            if !same.contains(&super::memo::document_of(keys.value(i, 0))) {
+                stale.insert(b);
+                continue;
+            }
+            keys_of.entry(b).or_default().push(i as u32);
+        }
+        keys_of.retain(|b, _| !stale.contains(b));
+        let mut answers_of: rustc_hash::FxHashMap<Vector<i64>, Vec<u32>> = rustc_hash::FxHashMap::default();
+        for i in 0..answers.len() {
+            let b: Vector<i64> = p.bound.iter().map(|&c| answers.value(i, c)).collect();
+            if keys_of.contains_key(&b) {
+                answers_of.entry(b).or_default().push(i as u32);
+            }
+        }
+        self.kept.insert(request.to_owned(), Kept { keys, answers, keys_of, answers_of, same });
     }
 
     /// Whether `request` is a callable's.
@@ -158,9 +207,12 @@ impl Calls {
         let mut by_holder: BTreeMap<u64, BTreeMap<&str, Vec<Vector<i64>>>> = BTreeMap::new();
         let mut wanted: Vec<BTreeSet<Vector<i64>>> = vec![BTreeSet::new(); asks.len()];
         let mut files: BTreeSet<i64> = BTreeSet::new();
+        // Each callable's rows made, over every holder entered, and those the last run's answers give (`keep`).
+        let mut made: BTreeMap<String, Vec<Vector<i64>>> = BTreeMap::new();
         for (i, &(request, rows)) in asks.iter().enumerate() {
             let at = self.by_request[request].bound_at();
             let mut seen: BTreeSet<Vector<i64>> = BTreeSet::new();
+            let mut fresh: Vec<Vector<i64>> = Vec::new();
             for row in rows.to_vec() {
                 if !seen.insert(row.clone()) {
                     continue;
@@ -171,6 +223,38 @@ impl Calls {
                     continue;
                 }
                 wanted[i].insert(row[at..].iter().copied().collect());
+                fresh.push(row);
+            }
+            // The bound values whose every last request is asked again, into a file as the last run read it: their
+            // answers are the last run's.
+            let mut given: BTreeSet<Vector<i64>> = BTreeSet::new();
+            if let Some(k) = self.kept.get(request) {
+                let p = &self.by_request[request];
+                let asked_of = |b: &Vector<i64>| k.keys_of.get(b);
+                for row in &fresh {
+                    let b: Vector<i64> = row[at..].iter().copied().collect();
+                    if given.contains(&b) || !k.same.contains(&super::memo::document_of(row[0])) {
+                        continue;
+                    }
+                    let Some(last) = asked_of(&b) else { continue };
+                    let again = last.iter().all(|&j| seen.contains(&(0..p.key).map(|c| k.keys.value(j as usize, c)).collect::<Vector<i64>>()));
+                    let was = last.iter().any(|&j| (0..p.key).all(|c| k.keys.value(j as usize, c) == row[c]));
+                    if again && was {
+                        given.insert(b);
+                    }
+                }
+                let out = made.entry(p.rel.clone()).or_default();
+                for b in &given {
+                    for &j in k.answers_of.get(b).into_iter().flatten() {
+                        out.push((0..p.width).map(|c| k.answers.value(j as usize, c)).collect());
+                    }
+                }
+            }
+            for row in fresh {
+                if given.contains(&row[at..].iter().copied().collect::<Vector<i64>>()) {
+                    self.counts.kept += 1;
+                    continue;
+                }
                 match state.holder(row[0]) {
                     Some(h) => {
                         files.insert(row[0]);
@@ -181,8 +265,6 @@ impl Calls {
             }
         }
         self.counts.files += files.len();
-        // Each callable's rows made, over every holder entered.
-        let mut made: BTreeMap<String, Vec<Vector<i64>>> = BTreeMap::new();
         for (holder, keys) in by_holder {
             self.counts.entered += 1;
             let sources = state.rows(holder, &self.reads)?;
@@ -238,6 +320,9 @@ pub struct Held {
     by_doc: std::collections::HashMap<i64, u64>,
     chunks: Vec<Vec<(String, Arc<dyn Source>)>>,
     unheld: std::collections::HashSet<i64>,
+    /// The documents the memo gave whole (`add_entry`): their relations are the last run's, so a call into one is
+    /// answered as it was (the cone's rounds keep its answer, decision 0145).
+    hits: std::collections::HashSet<i64>,
 }
 
 /// A file's rows of a relation as its memo entry held them, flat (`width` values a row), read where they lie: the
@@ -279,6 +364,7 @@ impl Held {
     }
     /// A file's rows the memo gave (a full hit): its entry's rows of `rels`, moved here (`Flat`).
     pub fn add_entry(&mut self, doc: i64, rels: Vec<(String, (usize, Vector<i64>))>) {
+        self.hits.insert(doc);
         self.add([doc], rels.into_iter().map(|(r, (w, v))| (r, Arc::new(Flat { width: w, values: v }) as Arc<dyn Source>)).collect());
     }
     /// Documents whose rows it does not hold (a partial memo hit's, decision 0225 §2): a call into one is refused.
@@ -288,6 +374,10 @@ impl Held {
     /// The first of `rows`' files (column 0) whose rows it does not hold, where one is.
     pub fn unheld_of(&self, rows: &Asked) -> Option<i64> {
         rows.iter().map(|r| r[0]).find(|v| self.unheld.contains(&super::memo::document_of(*v)))
+    }
+    /// The documents the memo gave whole: a call into one is answered as the last run's was.
+    pub fn hits(&self) -> std::collections::HashSet<i64> {
+        self.hits.clone()
     }
     /// How many documents' rows it holds.
     pub fn documents(&self) -> usize {

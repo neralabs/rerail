@@ -543,6 +543,36 @@ pub(in crate::code_rule_dsl) const TREE: [&str; 2] = ["node", "child"];
 /// is: a run that finds an answer changed runs them again, and a kept stratum names it among its reads.
 pub(in crate::code_rule_dsl) const GIT: &str = "@git: the Git functors' answers";
 
+/// What a callable's answers (the spike, `calls`) read beside their request: the files they are asked into, which
+/// move between runs. An input of the strata of those answers by the digest of the run's documents (`calls_digest`),
+/// as `GIT` is: a run whose documents changed asks them again.
+pub(in crate::code_rule_dsl) const CALLS: &str = "@calls: the callables' files";
+
+/// `CALLS`'s digest: every document's path, content and key (`docs`). The callees' rules are the prepared program's,
+/// which keys the kept part.
+pub(in crate::code_rule_dsl) fn calls_digest(docs: &super::input_delta::Docs) -> u64 {
+    use std::hash::Hasher;
+    let mut paths: Vec<(&String, &(super::memo::Content, i64))> = docs.iter().collect();
+    paths.sort_by(|a, b| a.0.cmp(b.0));
+    let mut h = siphasher::sip::SipHasher13::new_with_keys(0x6361_6c6c_7320_6669, 0x6c65_7320_6469_6765);
+    for (path, (content, key)) in paths {
+        h.write(path.as_bytes());
+        h.write(&[0xff]);
+        match content {
+            super::memo::Content::Stored(id) => {
+                h.write(&[0]);
+                h.write(&id.0.to_le_bytes());
+            }
+            super::memo::Content::Unstored(d) => {
+                h.write(&[1]);
+                h.write(d);
+            }
+        }
+        h.write(&key.to_le_bytes());
+    }
+    h.finish()
+}
+
 /// The functors that answer from the repository holding the run's root (`strings::git`).
 const GIT_FUNCTORS: [&str; 3] = ["git_tracked", "git_commit", "git_has"];
 
@@ -588,6 +618,9 @@ impl<'a> Reads<'a> {
         }
         if rules().any(|r| calls_git(v, *r)) {
             out.insert(GIT.to_owned());
+        }
+        if scc.iter().any(|rel| self.f.request_of(rel).is_some_and(|q| q.ends_with(super::preparation::callable::REQUEST))) {
+            out.insert(CALLS.to_owned());
         }
         for rel in scc {
             if let Some(native) = self.f.native(rel) {
@@ -3007,7 +3040,13 @@ impl Retained {
             let current: Option<Vec<KeptStored>> = scc.iter().map(|rel| {
                 let n = frames.names.get(rel)?;
                 let at = stored.get(n)?;
-                let now: Vec<(String, u64)> = at.reads.iter().map(|(read, _)| read_digest(read, &known, &derived, prog, leaves).map(|d| (read.clone(), d))).collect::<Option<_>>()?;
+                // The callables' files (`CALLS`) have no frame: the frames hold them as the stratum read them, and
+                // the cut finds whether they changed (the inputs' digests below).
+                let now: Vec<(String, u64)> = at
+                    .reads
+                    .iter()
+                    .map(|(read, was)| if read == CALLS { Some((read.clone(), *was)) } else { read_digest(read, &known, &derived, prog, leaves).map(|d| (read.clone(), d)) })
+                    .collect::<Option<_>>()?;
                 (now == at.reads).then(|| at.clone())
             }).collect();
             if let Some(current) = current {
@@ -3321,6 +3360,11 @@ impl Retained {
     /// Derived relation `rel` where it lies, as held or bound from the frames: a source of columns `c0`, `c1`, … over
     /// the held relation itself (its live rows), for a reader that binds it (the cone's relations, handed on to the
     /// rest of the cross-file part). Decision 0353: never its rows copied out.
+    /// Whether it is the kept part of the program of `key`.
+    pub(in crate::code_rule_dsl) fn is_of(&self, key: [u8; 32]) -> bool {
+        self.key == key
+    }
+
     pub(in crate::code_rule_dsl) fn derived_source(&self, store: &ContentStore, rel: &str) -> Option<Arc<dyn crate::code_rule_dsl::facts::vtab::Source>> {
         let names = |w: usize| (0..w).map(|c| format!("c{c}")).collect::<Vec<_>>();
         if let Some(k) = self.rels.get(rel) {
