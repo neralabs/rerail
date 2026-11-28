@@ -3039,9 +3039,6 @@ UKL_INLINE bool prog_item(UKL_GLOBAL const Job* jobs, UKL_GLOBAL const ScanLevel
         // its keys claimed, an item each stride.
         uint32_t wat = sw[UKL_WORD_INDEX(SortWords, wide)];
         uint32_t tstep = step / JOIN_TG;
-        // The wide sort's (t58 increment A): its region the arena's, from its size script's word; its tiles as many as
-        // its keys claimed.
-        uint32_t wat = sw[UKL_WORD_INDEX(SortWords, wide)];
         for (uint32_t tile = g; tile < PHASE_TURNS; tile += tstep) {
             if (wat != 0u) {
                 if (tile >= a.tiles) break;

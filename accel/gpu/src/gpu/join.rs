@@ -754,10 +754,12 @@ impl Pass {
     /// The block or pooled lease `b` lies in (by its contents' address), held by this submission's fence until its
     /// work completes (decision 0491 step 2): what drops it meanwhile keeps it from the pool until then. A block's
     /// own region, while a handle holds it, is pinned as the kernel declares the argument, read or written (step 5). Every mapped
-    /// buffer a kernel binds is one: a test build fails on one that is not, which nothing would keep.
+    /// buffer a kernel binds is one, or a wrap of the binary's memory the device holds for its life
+    /// (`Shared::wrap_static`, the codes' directory of decision 0697): a test build fails on any other, which nothing
+    /// would keep.
     fn holds(&self, b: &Buffer, kernel: &'static str, arg: usize, write: bool) {
         let at = b.contents() as usize;
-        let known = at == 0 || rerail_blocks::region::bind_address(self.queue.fence(), at, write, kernel);
+        let known = at == 0 || rerail_device::shared::opened().is_some_and(|s| s.holds_static(at)) || rerail_blocks::region::bind_address(self.queue.fence(), at, write, kernel);
         #[cfg(any(test, feature = "test-hooks"))]
         assert!(known, "{kernel}'s buffer {arg} ({} bytes) lies in no block or pooled lease the ledger knows: nothing holds it while the work runs (decision 0491 step 2)", b.length());
         let _ = (known, kernel, arg);

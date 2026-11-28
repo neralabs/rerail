@@ -81,6 +81,13 @@ pub mod shared {
             held.push((key.0, key.1, b.clone()));
             Ok(b)
         }
+
+        /// Whether `addr` lies in one of its wraps of the binary's memory (`wrap_static`): held as long as the device,
+        /// so a submission that binds it need hold nothing for it (decision 0491 step 2).
+        pub fn holds_static(&self, addr: usize) -> bool {
+            let held = self.statics.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+            held.iter().any(|(at, len, _)| *at <= addr && addr < at + len)
+        }
     }
 
     static SHARED: OnceLock<Option<Shared>> = OnceLock::new();
