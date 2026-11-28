@@ -215,9 +215,9 @@ pub struct Class {
 mod table;
 pub use table::CLASSES;
 
-/// The class registered for the shape of key `key`.
+/// The class registered for the shape of key `key` (the table is in its keys' order, as its generator writes it).
 pub fn class_of(key: u64) -> Option<&'static Class> {
-    CLASSES.iter().find(|c| c.key == key)
+    CLASSES.binary_search_by_key(&key, |c| c.key).ok().map(|i| &CLASSES[i])
 }
 
 /// The classes a launch is run with (`join_run_classed`): their stages by form, and the jobs' ranges each ran. Its
@@ -244,6 +244,13 @@ impl Classes {
             }
         }
         Ok(Classes { stages, ran: Default::default(), unfit: Default::default() })
+    }
+
+    /// The classes of those of `keys` that have one (a launch's runs' shapes, the executor's: a run of a shape with
+    /// none runs the program's work); none where no key has one.
+    pub fn of_some(keys: &[u64]) -> Option<Classes> {
+        let found: Vec<u64> = keys.iter().copied().filter(|&k| class_of(k).is_some()).collect();
+        if found.is_empty() { None } else { Classes::of(&found).ok() }
     }
 
     /// The ranges its classes ran, left to the program, and of no class (`ran`).

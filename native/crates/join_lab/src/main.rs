@@ -179,7 +179,16 @@ fn main() {
                         continue;
                     }
                     match rerail_join_lab::replay_in(&w, e, args.iter().any(|a| a == "--reverse")) {
-                        Ok(r) if r.same() => println!("{:<16} {:<8} same   {:>4} dispatches {:>9} groups {:>9.3} ms", w.name(), e.name(), r.ran.dispatches, r.ran.groups, r.ran.seconds * 1e3),
+                        // On the classes: the stage ranges they ran, and those whose text work they left to the program.
+                        Ok(r) if r.same() => println!(
+                            "{:<16} {:<8} same   {:>4} dispatches {:>9} groups {:>9.3} ms{}",
+                            w.name(),
+                            e.name(),
+                            r.ran.dispatches,
+                            r.ran.groups,
+                            r.ran.seconds * 1e3,
+                            if e == Engine::Class { format!("  {} ranges by classes, {} texts by the program", r.ran.classed[0], r.ran.classed[1]) } else { String::new() }
+                        ),
                         Ok(r) => {
                             failed += 1;
                             println!("{:<16} {:<8} DIFFERS {}", w.name(), e.name(), r.differing());

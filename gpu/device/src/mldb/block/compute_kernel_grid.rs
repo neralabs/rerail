@@ -458,6 +458,9 @@ pub trait GridBindContext {
     fn launch_indirect(&mut self, _groups: &BufferRef, _offset: u64, _max_groups: &[u64], _block: &[u64]) -> Result<(), String> {
         Err("an indirect launch is not made here".into())
     }
+    /// A word for the kernel's Rust beside its arguments (`rerail_ukl_rust::Launch::host`): the CPU's, where a kernel
+    /// runs as its Rust; no other device's kernel reads one.
+    fn set_host(&mut self, _word: u64) {}
 }
 
 /// Writes a scalar into its field's bytes, as the field's type is.

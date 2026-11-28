@@ -592,7 +592,7 @@ impl Pass {
 
     /// `launch`, each buffer bound at its offset.
     fn launch_at(&self, pipe: &Pipe, buffers: &[(&Buffer, u64)], bytes: &[u8], grid: Grid<'_>) {
-        self.dispatch_at(pipe, buffers, bytes, grid, None);
+        self.dispatch_at(pipe, buffers, bytes, grid, None, 0);
     }
 
     /// A chain (decision 0674): `pipe` dispatched once a phase, in order, phase `p`'s threadgroups the three words at
@@ -603,16 +603,23 @@ impl Pass {
     /// the encoder its dispatches share. Where a GPU has no indirect dispatch, each phase is `CHAIN_GROUPS` groups
     /// that run its count's groups between them (the shims' re-dispatcher).
     pub fn chain_at(&self, pipe: &Pipe, buffers: &[(&Buffer, u64)], bytes: &[u8], counts: &Buffer, offsets: &[u64]) {
+        self.chain_at_host(pipe, buffers, bytes, counts, offsets, 0);
+    }
+
+    /// `chain_at`, its dispatches given `host`, a word for the kernel's Rust beside its arguments (the CPU device's,
+    /// `rerail_ukl_rust::Launch::host`; on another device, none). 0: none.
+    pub fn chain_at_host(&self, pipe: &Pipe, buffers: &[(&Buffer, u64)], bytes: &[u8], counts: &Buffer, offsets: &[u64], host: u64) {
         for (p, &offset) in offsets.iter().enumerate() {
             if p > 0 && self.error.borrow().is_none() {
                 self.queue.memory_barrier();
             }
-            self.dispatch_at(pipe, buffers, bytes, Grid::Indirect { grid: counts, offset, most: CHAIN_GROUPS }, Some(p == 0));
+            self.dispatch_at(pipe, buffers, bytes, Grid::Indirect { grid: counts, offset, most: CHAIN_GROUPS }, Some(p == 0), host);
         }
     }
 
-    /// `launch_at`, or a chain's dispatch (`chained`: whether it is its chain's first, the one charged).
-    fn dispatch_at(&self, pipe: &Pipe, buffers: &[(&Buffer, u64)], bytes: &[u8], grid: Grid<'_>, chained: Option<bool>) {
+    /// `launch_at`, or a chain's dispatch (`chained`: whether it is its chain's first, the one charged), given `host`
+    /// (`chain_at_host`).
+    fn dispatch_at(&self, pipe: &Pipe, buffers: &[(&Buffer, u64)], bytes: &[u8], grid: Grid<'_>, chained: Option<bool>, host: u64) {
         if self.error.borrow().is_some() {
             return;
         }
@@ -643,6 +650,9 @@ impl Pass {
             }
             if pipe.args {
                 l = l.bytes("a", bytes);
+            }
+            if host != 0 {
+                l = l.host(host);
             }
             // Made resident once a span (`residency_span`, Metal's encoder): those added since, or all in a new one.
             let span = self.queue.residency_span();

@@ -1778,6 +1778,8 @@ struct Run<'p> {
     arena: Option<Rc<mj::Arena>>,
     /// Its stratum's identity across runs (`Store::stratum`), which the join lab's captures name it by.
     stratum: u64,
+    /// Its join's shape's name (`shape_of`), made once its stages are encoded: its launches' labels name it.
+    shape: std::cell::OnceCell<String>,
 }
 
 /// `rel`'s rows where they lie in a block, and the columns there: a flat relation's (its dead rows marked by its
@@ -2100,7 +2102,7 @@ impl<'p> Run<'p> {
         if uniq_cols.len() > 16 {
             return Err("a head of more than 16 slots".into());
         }
-        Ok(Run { plan: Rc::new(plan.clone()), _plan: std::marker::PhantomData, io, tables, caps, totals, counters, counter, rels: vec![None; plan.stages.len()], places: vec![None; plan.stages.len()], screens: vec![None; plan.stages.len()], key: None, consts: vec![Vec::new(); plan.stages.len()], probes: vec![None; plan.stages.len()], uniq: None, uniq_cols, raw: false, arena: None, stratum })
+        Ok(Run { plan: Rc::new(plan.clone()), _plan: std::marker::PhantomData, io, tables, caps, totals, counters, counter, rels: vec![None; plan.stages.len()], places: vec![None; plan.stages.len()], screens: vec![None; plan.stages.len()], key: None, consts: vec![Vec::new(); plan.stages.len()], probes: vec![None; plan.stages.len()], uniq: None, uniq_cols, raw: false, arena: None, stratum, shape: std::cell::OnceCell::new() })
     }
 
     /// The space for stage `k`'s rows out, from its input's space.
@@ -2308,13 +2310,14 @@ fn encode_levels(runs: &mut [(&mut Run<'_>, usize)], batch: &mut mj::Batch, rep:
     for (r, _) in runs.iter_mut() {
         r.encode_head(batch)?;
     }
-    // The join lab's captures (`join_capture`): each run's shape, rule and work (its inputs' rows), named on the
-    // launch that runs it.
-    if batch.capturing() {
+    // The join lab's captures (`join_capture`), and the classes the launch is run by (`mj::Batch::classed`): each
+    // run's shape, rule and work (its inputs' rows), named on the launch that runs it.
+    if batch.capturing() || batch.classed() {
         for (x, (r, _)) in runs.iter().enumerate() {
             let work = r.rels.iter().flatten().map(|(rel, _)| rel.rows as u64).sum::<u64>().max(1);
             let forms = std::mem::take(&mut forms[x]);
-            batch.label(mj_capture::Label { shape: shape_of(r, &r.plan).name(), rule: format!("rule {:016x}", r.plan.key), work, stratum: r.stratum, forms });
+            let shape = r.shape.get_or_init(|| shape_of(r, &r.plan).name()).clone();
+            batch.label(mj_capture::Label { shape, rule: format!("rule {:016x}", r.plan.key), work, stratum: r.stratum, forms });
         }
         batch.forms.clear();
     }

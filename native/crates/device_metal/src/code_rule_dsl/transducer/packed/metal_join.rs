@@ -1888,6 +1888,10 @@ pub(in crate::code_rule_dsl) struct Batch {
     /// Where it captures: the forms of the stage records its jobs queued (`rerail_ukl_rust::join_program::classes`),
     /// in their order, a witness's write after its stage; the runs' labels name theirs (`join_capture::Label::forms`).
     pub(in crate::code_rule_dsl) forms: Vec<u64>,
+    /// Whether its launches run their stages' jobs by their runs' shapes' classes (the join lab's design, step 7:
+    /// `rerail_ukl_rust::join_program::classes`), on the CPU device, where the program is its Rust; on unless
+    /// `RERAIL_JOIN_CLASSES=off`. Read once a batch.
+    classes: bool,
 }
 
 /// A relation a batch's kernels write (`Batch::written`).
@@ -1987,12 +1991,18 @@ impl Batch {
             reserved: None,
             capture: super::join_capture::Config::from_env(),
             forms: Vec::new(),
+            classes: rerail_accel::gpu::shared::is_on_host() && std::env::var("RERAIL_JOIN_CLASSES").map_or(true, |v| v != "off"),
         })
     }
 
     /// Whether its launches may be captured (`join_capture`): its runs' labels are wanted.
     pub(in crate::code_rule_dsl) fn capturing(&self) -> bool {
         self.capture.is_some()
+    }
+
+    /// Whether its launches run by their runs' shapes' classes (`classes`): its runs are then named on them.
+    pub(in crate::code_rule_dsl) fn classed(&self) -> bool {
+        self.classes
     }
 
     /// A run encoded into its open program, named on the launch that runs it (`join_capture::Label`).
@@ -4031,7 +4041,7 @@ impl Batch {
         }
         let ctl = Words::zeroed(10 + 2 * kit.phase_items.len() + 4 * (kit.dispatches as usize + 2))?;
         let last = kit.end as usize - 1;
-        let r = Ran { ctl: std::sync::Arc::new(ctl), last, phases: kit.phase_items.len(), items: kit.phase_items[last][1], kit, holds, capture: None };
+        let r = Ran { ctl: std::sync::Arc::new(ctl), last, phases: kit.phase_items.len(), items: kit.phase_items[last][1], kit, holds, capture: None, classes: None };
         // One that goes on from a program that may still launch again (a park, a chain's budget spent: `finish`) is held until
         // every program before it is whole: launched now, it would read that one's tables and counts before its later
         // phases wrote them, and nothing would run it again (decision 0679: a waved stratum's heads, cut from its
@@ -4183,6 +4193,7 @@ impl Batch {
             }
             _ => None,
         };
+        let classed = self.classes;
         let pass = self.open()?;
         // What its jobs reach by address, and its own buffers: resident for the launch.
         let mut seen = std::collections::HashSet::new();
@@ -4205,14 +4216,27 @@ impl Batch {
         if let Some(t) = &kit.top {
             pass.use_read_write(&t.buffer.buffer);
         }
-        pass.chain_at(
+        // Its runs' shapes' classes (the join lab's design, step 7): the CPU device's program runs each stage job
+        // whose form is theirs by its class (`join_run`, given their address), held by the program until it is done.
+        let classes = if classed {
+            let keys: Vec<u64> = kit.labels.iter().filter_map(|l| rerail_join_shapes::parts::key_of(&l.shape)).collect();
+            rerail_ukl_rust::join_program::classes::Classes::of_some(&keys).map(Box::new)
+        } else {
+            None
+        };
+        let host = classes.as_deref().map_or(0, |c| c as *const rerail_ukl_rust::join_program::classes::Classes as u64);
+        pass.chain_at_host(
             &pipe,
             &[(&kit.descs.buffer, 0), (&kit.items.buffer, 0), (&kit.phases.buffer, 0), (&kit.segs.buffer, 0), (&kit.scans.buffer, 0), (&kit.sorts.buffer, 0), (&kit.script.buffer, 0), (&r.ctl.buffer.buffer, 0), (&kit.counts.buffer, 0)],
             &args,
             &r.ctl.buffer.buffer,
             &offsets,
+            host,
         );
         r.capture = capture;
+        // Its classes' counts so far, a launch before (`Ran::classes`), and these its own.
+        r.count_classes();
+        r.classes = classes;
         self.programs.push(r);
         // Committed now: the next launch's chain is its own submission too.
         self.submit_open()
@@ -4229,6 +4253,7 @@ impl Batch {
             if let Some(c) = r.capture.take() {
                 c.after();
             }
+            r.count_classes();
             let flags = r.ctl.get(6);
             let done = r.ctl.get(10 + r.last);
             // Its last phase's items as reset: its segments' groups (0: all of them).
@@ -5605,9 +5630,24 @@ struct Ran {
     holds: std::sync::Arc<rerail_blocks::ledger::Fence>,
     /// Its launch as captured (`join_capture`), finished once its work is done (`programs_done`).
     capture: Option<super::join_capture::Pending>,
+    /// The classes its launch's program runs its stages' jobs by (`Batch::classes`), whose address its launch holds:
+    /// kept until its work is done, as its holds are, its counts then counted (`count_classes`).
+    classes: Option<Box<rerail_ukl_rust::join_program::classes::Classes>>,
 }
 
 impl Ran {
+    /// Its classes' counts (`classes`, its last launch's), once its work is done: the stage jobs' ranges they ran, left
+    /// to the program's text work, or that no class fit.
+    fn count_classes(&mut self) {
+        if let Some(c) = self.classes.take() {
+            let [by, text, none] = c.ran();
+            let count = crate::code_rule_dsl::prof::count_named;
+            count("device.join classes: stage ranges run by their classes".into(), by as usize);
+            count("device.join classes: stage ranges of text work, the program's".into(), text as usize);
+            count("device.join classes: stage ranges no class fits".into(), none as usize);
+        }
+    }
+
     /// What tells whether it built its builders' indexes (`Built`).
     fn built(&self) -> Built {
         Built { ctl: self.ctl.clone(), last: self.last, phases: self.phases, items: self.items }

@@ -23,13 +23,17 @@ pub use sources::*;
 pub const JOIN_PROGRAM: [u64; 3] = [0x8a1e957eb06a8f0f, 0x60b9e42a694ade7d, 0x9231ed8639031286];
 
 /// A group's launch, as a kernel's Rust reads it: its group's position, its threads' (each dimension's), and the
-/// groups'.
+/// groups'; and a word its host gives it beside its arguments (`host`).
 #[repr(C)]
 #[derive(Clone, Copy, Debug)]
 pub struct Launch {
     pub group: [u32; 3],
     pub block: [u32; 3],
     pub groups: [u32; 3],
+    /// The CPU device's word for the kernel's Rust beside its arguments (`GridBindContext::set_host`), which no
+    /// other device's kernel has: the join program's is the address of its launch's classes
+    /// (`join_program::classes::Classes`, `join_run`). 0: none.
+    pub host: u64,
 }
 
 /// A kernel's Rust: one group's threads. `argv` holds the address of each argument's bytes (a buffer's: of its
@@ -43,7 +47,7 @@ pub type Kernel = unsafe fn(*const *const u8, &Launch);
 /// `argv` holds `k`'s arguments, its buffers as large as the launch reads and writes.
 pub unsafe fn launch(k: Kernel, argv: &[*const u8], groups: u32, block: u32) {
     for g in 0..groups {
-        let l = Launch { group: [g, 0, 0], block: [block, 1, 1], groups: [groups, 1, 1] };
+        let l = Launch { group: [g, 0, 0], block: [block, 1, 1], groups: [groups, 1, 1], host: 0 };
         unsafe { k(argv.as_ptr(), &l) };
     }
 }

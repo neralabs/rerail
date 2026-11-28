@@ -385,6 +385,13 @@ impl<B: GridBindContext> Launch<'_, B> {
         self
     }
 
+    /// A word for the kernel's Rust beside its arguments (the CPU device's, `rerail_ukl_rust::Launch::host`); on
+    /// another device, none.
+    pub fn host(mut self, word: u64) -> Self {
+        self.ctx.set_host(word);
+        self
+    }
+
     /// Threadgroup memory for a `RWLOCAL` row.
     pub fn local(mut self, name: &str, bytes: u64) -> Self {
         if let Some(i) = self.index(name) {

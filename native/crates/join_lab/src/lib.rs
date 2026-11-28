@@ -542,7 +542,7 @@ impl Loaded {
                 let i = if self.reverse { groups - 1 - k } else { k };
                 let (x, rest) = ((i % u64::from(grid[0])) as u32, i / u64::from(grid[0]));
                 let (y, z) = ((rest % u64::from(grid[1])) as u32, (rest / u64::from(grid[1])) as u32);
-                let l = rerail_ukl_rust::Launch { group: [x, y, z], block: [TG, 1, 1], groups: grid };
+                let l = rerail_ukl_rust::Launch { group: [x, y, z], block: [TG, 1, 1], groups: grid, host: 0 };
                 // SAFETY: `argv` holds the program's buffers' addresses where the lab placed them, its `ProgP`, and the
                 // shim's two; the regions they reach are the capture's, bound again.
                 unsafe { rerail_ukl_rust::join_program::join_run_classed(argv.as_ptr(), &l, clock_at, classes) };

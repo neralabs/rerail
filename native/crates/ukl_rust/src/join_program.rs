@@ -4497,7 +4497,8 @@ pub unsafe fn join_run_timed(argv: *const *const u8, l: &Launch, clock: *mut Ite
 }
 
 /// `join_run_timed`, each job of a stage whose form is one of `classes`' run by its class's parts
-/// (`classes::Classes`), the rest by the program's work.
+/// (`classes::Classes`), the rest by the program's work. None: the classes its host gave the launch (`Launch::host`,
+/// the CPU device's: the address of its runs' shapes' classes), or none.
 ///
 /// # Safety
 ///
@@ -4519,7 +4520,8 @@ pub unsafe fn join_run_classed(argv: *const *const u8, l: &Launch, clock: *mut I
         counts: buf(8) as *mut u32,
         a,
         clock,
-        classes: classes.map_or(core::ptr::null(), |c| c as *const classes::Classes),
+        // SAFETY: a host's word is the address of classes its launch holds until its groups are done.
+        classes: classes.map_or(l.host as *const classes::Classes, |c| c as *const classes::Classes),
     };
     // Its groups run one after another on one thread (the CPU device's), each as the kernel's group.
     prog.group(l.group[0]);

@@ -668,7 +668,7 @@ impl CpuComputeQueue {
     }
 
     pub fn new_bind_context<'a>(&'a self, function: &'a CpuComputeFunction) -> CpuBindContext<'a> {
-        CpuBindContext { queue: self, function, params: vec![Vec::new(); function.param_sizes.len()], shared: 0, keep: Vec::new() }
+        CpuBindContext { queue: self, function, params: vec![Vec::new(); function.param_sizes.len()], shared: 0, keep: Vec::new(), host: 0 }
     }
 
     fn push(&self, op: impl FnOnce(&mut Worker) -> Result<(), String> + Send + 'static) {
@@ -955,6 +955,8 @@ pub struct CpuBindContext<'a> {
     params: Vec<Vec<u64>>,
     shared: u64,
     keep: Vec<CpuBuffer>,
+    /// The word its kernel's Rust reads beside its arguments (`rerail_ukl_rust::Launch::host`): 0, none.
+    host: u64,
 }
 
 fn words(bytes: &[u8]) -> Vec<u64> {
@@ -968,6 +970,11 @@ impl CpuBindContext<'_> {
         let want = self.function.param_sizes[arg_num as usize];
         assert_eq!(bytes.len(), want, "{}: argument {arg_num} is {want} bytes, given {}", self.function.name, bytes.len());
         self.params[arg_num as usize] = words(bytes);
+    }
+
+    /// A word for its kernel's Rust beside its arguments (`rerail_ukl_rust::Launch::host`).
+    pub fn set_host(&mut self, word: u64) {
+        self.host = word;
     }
 
     pub fn set_buffer(&mut self, arg_num: u64, buffer: &CpuBuffer) {
@@ -1015,7 +1022,7 @@ impl CpuBindContext<'_> {
             return Ok(());
         }
         let threads = block.iter().map(|&b| b as usize).product::<usize>();
-        let (entry, name, shared) = (f.entry.clone(), f.name.clone(), self.shared);
+        let (entry, name, shared, host) = (f.entry.clone(), f.name.clone(), self.shared, self.host);
         let params = std::mem::take(&mut self.params);
         self.params = vec![Vec::new(); params.len()];
         let keep = std::mem::take(&mut self.keep);
@@ -1051,7 +1058,7 @@ impl CpuBindContext<'_> {
                     let one = |i: u64| {
                         let (x, rest) = ((i % u64::from(grid[0])) as u32, i / u64::from(grid[0]));
                         let (y, z) = ((rest % u64::from(grid[1])) as u32, (rest / u64::from(grid[1])) as u32);
-                        let l = rerail_ukl_rust::Launch { group: [x, y, z], block, groups: grid };
+                        let l = rerail_ukl_rust::Launch { group: [x, y, z], block, groups: grid, host };
                         // SAFETY: `argv` holds the kernel's arguments as its rows bound them (each buffer's address,
                         // each value's bytes), and the shim's two; it outlives the launch's groups.
                         unsafe { k(argv.0.as_ptr(), &l) };
