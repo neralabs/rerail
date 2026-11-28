@@ -8,7 +8,7 @@ import { checkoutRealpath, earlierRealpath, physicalPath } from "../catalog/chec
 import { outsideGit } from "../catalog/repository-identity.js";
 import { openRerailDatabase, type RerailDatabase } from "../storage/database.js";
 import { openRecordWriter, type RecordWriter } from "../storage/record-writes.js";
-import { nameOnce, storedList, storedValue } from "../storage/stored-list.js";
+import { isStoredItem, nameOnce, storedList, storedValue } from "../storage/stored-list.js";
 import { apartFromLockWaits } from "../storage/write-lock-wait.js";
 import { runGitWithoutBlocking } from "../git.js";
 import { processState } from "../process-liveness.js";
@@ -131,13 +131,31 @@ function settingsUnderEither(database: RerailDatabase) {
     ...SETTINGS_COLUMNS, recorded: recordedRepository(auditSettings.workspaceRoot), own: recordedRepository(sql.placeholder("stored")),
   }).from(auditSettings).where(inArray(auditSettings.workspaceRoot, [sql.placeholder("stored"), sql.placeholder("earlier")])).prepare();
 }
-/** The settings `text`, a row's stored settings, holds, or why it holds none, in words that follow "the row". */
-function storedSettings(text: string): AuditSettings | string {
+/**
+ * What a row's stored settings give this version: the settings it reads, and each stored field it does not read (a key
+ * it does not know, or a value it does not take, as a newer build can write) with why, which a save keeps as stored.
+ */
+interface StoredSettings { readonly settings: AuditSettings; readonly unread: Readonly<Record<string, unknown>>; readonly why?: string }
+/**
+ * The settings `text`, a row's stored settings, holds, or why it holds none, in words that follow "the row": text that
+ * holds no JSON object holds none. Of an object, each field this version takes reads as stored, and each setting whose
+ * stored value it does not take reads as its default.
+ */
+function storedSettings(text: string): StoredSettings | string {
   const stored = storedValue(text);
   if (typeof stored === "string") return `is not JSON (${stored})`;
-  const settings = auditSettingsSchema.safeParse(stored.value);
-  if (settings.success) return settings.data;
-  return `holds no settings this version reads (${settings.error.issues.map(issue => [...issue.path.map(String), issue.message].join(": ")).join("; ")})`;
+  const parsed = auditSettingsSchema.safeParse(stored.value);
+  if (parsed.success) return { settings: parsed.data, unread: {} };
+  const words = parsed.error.issues.map(issue => [...issue.path.map(String), issue.message].join(": ")).join("; ");
+  if (!isStoredItem(stored.value, "object")) return `holds no settings this version reads (${words})`;
+  // A field's issue names its key in its path; one issue lists every key this version does not know.
+  const keys = new Set(parsed.error.issues.flatMap(issue => issue.code === "unrecognized_keys" ? issue.keys : [String(issue.path[0])]));
+  const fields = Object.entries(stored.value as Record<string, unknown>); // an object: `isStoredItem` tested it
+  return {
+    settings: auditSettingsSchema.parse({ ...DEFAULT_AUDIT_SETTINGS, ...Object.fromEntries(fields.filter(([key]) => !keys.has(key))) }),
+    unread: Object.fromEntries(fields.filter(([key]) => keys.has(key))),
+    why: `${[...keys].join(", ")} (${words})`,
+  };
 }
 /**
  * The line that names a checkout whose saved settings do not read (`storedSettings`), so its sessions run with the
@@ -148,6 +166,13 @@ function saySettingsUnread(file: string, row: SettingsRow, why: string): void {
   const [table, column] = [getTableName(auditSettings), auditSettings.settings.name];
   nameOnce(process.stderr, { file, place: `${table} ${row.workspaceRoot}` }, `rerail: ${file}: the scan settings saved for ${row.workspaceRoot} `
     + `read as the defaults: the ${column} of its ${table} row ${why}. A \`rerail settings --session <id> --mode <mode>\` there saves new ones over it.\n`);
+}
+/** The line that names a checkout whose saved settings this version reads in part (`storedSettings`), as `saySettingsUnread` does. */
+function saySettingsReadInPart(file: string, row: SettingsRow, why: string): void {
+  const [table, column] = [getTableName(auditSettings), auditSettings.settings.name];
+  nameOnce(process.stderr, { file, place: `${table} ${row.workspaceRoot}` }, `rerail: ${file}: the scan settings saved for ${row.workspaceRoot} read in part: `
+    + `the ${column} of its ${table} row holds ${why}, which this version does not read: a setting among them runs with its default, and a `
+    + `\`rerail settings\` there keeps each as stored.\n`);
 }
 /**
  * An `audit_requests` row with its paths and audit ids as the text the database holds, which `storedRequest` reads, so
@@ -342,20 +367,24 @@ export class SqliteAuditControlStore {
    * ({@link #savedHere}), so the read needs no session row.
    */
   getWorkspaceSettings(workspaceRoot: string, repositoryId: string | null = null): AuditSettings | undefined {
-    return this.#settings(canonicalWorkspace(workspaceRoot), { cwd: workspaceRoot, repositoryId });
+    return this.#settings(canonicalWorkspace(workspaceRoot), { cwd: workspaceRoot, repositoryId })?.settings;
   }
 
   /**
-   * The settings saved for the folder, as {@link #settingsRow} finds them. A row whose text does not read (`storedSettings`)
-   * reads as none, so the checkout runs with the defaults and `rerail settings` can save over it, and is named once.
+   * The settings saved for the folder, as {@link #settingsRow} finds them (`storedSettings`). A row whose text holds no
+   * JSON object reads as none, so the checkout runs with the defaults and `rerail settings` can save over it; it, or a
+   * row this version reads in part, is named once.
    */
-  #settings(workspaceRoot: string, spelt: SpeltFolder): AuditSettings | undefined {
+  #settings(workspaceRoot: string, spelt: SpeltFolder): StoredSettings | undefined {
     const row = this.#settingsRow(workspaceRoot, spelt);
     if (row === undefined) return undefined;
     const settings = storedSettings(row.settings);
-    if (typeof settings !== "string") return settings;
-    saySettingsUnread(this.path, row, settings);
-    return undefined;
+    if (typeof settings === "string") {
+      saySettingsUnread(this.path, row, settings);
+      return undefined;
+    }
+    if (settings.why !== undefined) saySettingsReadInPart(this.path, row, settings.why);
+    return settings;
   }
 
   /**
@@ -428,7 +457,7 @@ export class SqliteAuditControlStore {
     return controls(
       this.path,
       session,
-      this.#settings(workspaceRoot, session),
+      this.#settings(workspaceRoot, session)?.settings,
       repositoryAudit === undefined ? undefined : repositoryAuditSchema.parse(repositoryAudit),
       owner,
     );
@@ -456,15 +485,18 @@ export class SqliteAuditControlStore {
   /**
    * Merges `patch` over the checkout's saved settings, else the defaults, and saves the result under the canonical key.
    * The saved settings are read as the folder spelt `spelt` finds them, so a session's own spelling starts from what
-   * Rerail 0.1.4 saved under it; that row stays for 0.1.4 to read. Saved settings that do not read count as none
-   * ({@link #settings}), so the patch over the defaults replaces them. The default strategy, `message`, is left out of the
-   * row, as rows read before the key existed, so a release that reads `{ scope, mode }` strictly still reads every row
-   * that does not opt into an experimental strategy.
+   * Rerail 0.1.4 saved under it; that row stays for 0.1.4 to read. Saved settings whose text holds no JSON object count
+   * as none ({@link #settings}), so the patch over the defaults replaces them. Each stored field this version does not
+   * read and the patch does not set is saved as stored, so the build that wrote it finds it again. The default strategy,
+   * `message`, is left out of the row, as rows read before the key existed, so a release that reads `{ scope, mode }`
+   * strictly still reads every row that does not opt into an experimental strategy or hold such a field.
    */
   #saveSettings(workspaceRoot: string, patch: AuditSettingsPatch, spelt: SpeltFolder = { cwd: workspaceRoot }): AuditSettings {
-    const settings = auditSettingsSchema.parse({ ...DEFAULT_AUDIT_SETTINGS, ...this.#settings(workspaceRoot, spelt), ...patch });
+    const { settings: before, unread } = this.#settings(workspaceRoot, spelt) ?? { settings: DEFAULT_AUDIT_SETTINGS, unread: {} };
+    const settings = auditSettingsSchema.parse({ ...before, ...patch });
     const { steerStrategy, ...saved } = settings;
-    const row = steerStrategy === "message" ? saved : settings;
+    const kept = Object.fromEntries(Object.entries(unread).filter(([key]) => !(key in patch)));
+    const row = { ...(steerStrategy === "message" ? saved : settings), ...kept };
     this.#database.insert(auditSettings).values({ workspaceRoot, settings: row, updatedAt: Date.now() })
       .onConflictDoUpdate({ target: auditSettings.workspaceRoot, set: { settings: row, updatedAt: Date.now() } }).run();
     return settings;

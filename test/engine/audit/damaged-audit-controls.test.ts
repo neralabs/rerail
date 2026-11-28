@@ -48,6 +48,21 @@ function cutShort(path: string, table: "audit_settings" | "audit_requests", colu
   }
 }
 
+/** Stores `text` as the settings of every `audit_settings` row, as a newer build or a hand edit leaves it. */
+function storeSettings(path: string, text: string): void {
+  const client = new Database(path);
+  client.prepare("UPDATE audit_settings SET settings_json = ?").run(text);
+  client.close();
+}
+
+/** The settings text the one `audit_settings` row holds. */
+function settingsText(path: string): unknown {
+  const client = new Database(path, { readonly: true });
+  const text: unknown = client.prepare("SELECT settings_json FROM audit_settings").pluck().get();
+  client.close();
+  return text;
+}
+
 /**
  * Another program's hold on the database's write lock, as `rerail scrub` or another build's migration takes it: a
  * connection of its own in an immediate transaction, so this thread's writes meet `SQLITE_BUSY`. `release` gives it back.
@@ -94,16 +109,16 @@ describe("a checkout's saved scan settings whose stored text does not read", () 
     controls.close();
   });
 
-  it("read as the defaults when they parse to settings this version does not know", async () => {
+  it("read as the defaults when they parse to a JSON value that is no object, and a write saves over them", async () => {
     const { path, controls } = await fixture();
     controls.updateSettings("a", { mode: "log" });
-    const client = new Database(path);
-    client.prepare("UPDATE audit_settings SET settings_json = ?").run(JSON.stringify({ scope: "ai-output", mode: "later" }));
-    client.close();
+    storeSettings(path, JSON.stringify(JSON.stringify({ scope: "touched-files", mode: "log" })));
     const logged = spyOnStderr();
 
     expect(controls.getSettings("a").settings).toEqual(DEFAULT_AUDIT_SETTINGS);
-    expect(logged()).toMatch(/the settings_json of its audit_settings row holds no settings this version reads \(mode: /u);
+    expect(logged()).toMatch(/read as the defaults: the settings_json of its audit_settings row holds no settings this version reads \(/u);
+    controls.updateSettings("a", { mode: "log" });
+    expect(settingsText(path)).toBe("{\"scope\":\"ai-output\",\"mode\":\"log\"}");
     controls.close();
   });
 
@@ -154,6 +169,41 @@ describe("a checkout's saved scan settings whose stored text does not read", () 
       controls.close();
     }
   }, 20_000);
+});
+
+// A newer build can store settings this version does not know: a key it added, or a value it added to a setting.
+describe("a checkout's saved scan settings that parse to settings this version knows in part", () => {
+  it("read the rest as stored, are named once, and a save keeps the key this version does not know", async () => {
+    const { path, controls } = await fixture();
+    controls.updateSettings("a", { mode: "log" });
+    storeSettings(path, "{\"scope\":\"touched-files\",\"mode\":\"log\",\"later\":{\"on\":true}}");
+    const logged = spyOnStderr();
+
+    const read = controls.getSettings("a");
+    expect(read.settings).toEqual({ ...DEFAULT_AUDIT_SETTINGS, scope: "touched-files", mode: "log" });
+    expect(controls.updateSettings("a", { mode: "steer" }).settings).toEqual({ ...DEFAULT_AUDIT_SETTINGS, scope: "touched-files" });
+    expect(settingsText(path)).toBe("{\"scope\":\"touched-files\",\"mode\":\"steer\",\"later\":{\"on\":true}}");
+    expect(logged().match(/rerail: /gu)).toHaveLength(1);
+    expect(logged()).toContain(`: the scan settings saved for ${read.workspaceRoot} read in part: the settings_json of its audit_settings row holds later (`);
+    controls.close();
+  });
+
+  it("read a value this version does not know as its setting's default, and a save keeps it until it sets that setting", async () => {
+    const { path, controls } = await fixture();
+    controls.updateSettings("a", { mode: "log" });
+    storeSettings(path, "{\"scope\":\"touched-files\",\"mode\":\"later\"}");
+    const logged = spyOnStderr();
+
+    const read = controls.getSettings("a");
+    expect(read.settings).toEqual({ ...DEFAULT_AUDIT_SETTINGS, scope: "touched-files" });
+    expect(controls.updateSettings("a", { scope: "ai-output" }).settings).toEqual(DEFAULT_AUDIT_SETTINGS);
+    expect(settingsText(path)).toBe("{\"scope\":\"ai-output\",\"mode\":\"later\"}");
+    expect(controls.updateSettings("a", { mode: "log" }).settings).toEqual({ ...DEFAULT_AUDIT_SETTINGS, mode: "log" });
+    expect(settingsText(path)).toBe("{\"scope\":\"ai-output\",\"mode\":\"log\"}");
+    expect(logged().match(/rerail: /gu)).toHaveLength(1);
+    expect(logged()).toContain(`: the scan settings saved for ${read.workspaceRoot} read in part: the settings_json of its audit_settings row holds mode (mode: `);
+    controls.close();
+  });
 });
 
 describe("a session's scan requests whose stored text does not read", () => {
