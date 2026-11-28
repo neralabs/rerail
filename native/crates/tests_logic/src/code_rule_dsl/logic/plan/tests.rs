@@ -2063,6 +2063,46 @@ seen(x, "c") :- c(_, x, _).
     assert_eq!(got, stored, "the start stored");
 }
 
+/// S1's pass a name where the start's head column is a call's value (`path_module(d, @replace_all(..))`): unfolded
+/// into its readers, the call binds the reader's variable (`$q = @dot(..)`, the variable on the left, as the planner
+/// binds one), and the rows are those stored. Unfolded as `@dot(..) = $q`, the planner bound nothing, and the rule's
+/// literals stayed unplaced (`pn_path_module`, the data layer's `cached-pure-lazy-allowlist` of 2026-11-27).
+#[test]
+fn a_start_whose_head_is_a_calls_value_unfolds_into_its_readers() {
+    let program = r#"
+.decl node(d: number, n: node, kind: symbol, start: number, end: number)
+.input node
+.layout node key(n)
+.decl nm(n: node, x: number)
+nm(n, x) :- node(_, n, "identifier", x, _).
+.decl near(n: node, s: node)
+near(n, s) :- node(d, n, "identifier", _, _), node(d, s, "module", _, _).
+.decl st(n: node, q: symbol)
+.layout st key(n)
+st(n, @dot("m", to_string(x))) :- nm(n, x), near(n, _).
+.decl a(n: node, x: number, q: symbol)
+a(n, x, q) :- nm(n, x), st(n, q).
+.decl b(n: node, x: number, q: symbol)
+b(n, x, q) :- st(n, q), nm(n, x), x > 10.
+.decl c(n: node, x: number, q: symbol)
+c(n, x, q) :- st(n, q), nm(n, x), !b(n, x, q).
+.decl seen(q: symbol, w: symbol)
+seen(q, "a") :- a(_, _, q).
+seen(q, "b") :- b(_, _, q).
+seen(q, "c") :- c(_, _, q).
+.output seen
+"#;
+    let src = [("a.py", "f = 1\ng = f\nprint(g, f)\n")];
+    let got = corpus_outputs("per-name-call", &src, program, &["seen"]);
+    assert!(got[0].iter().any(|r| r[1] == "b") && got[0].iter().any(|r| r[1] == "c"), "{got:?}");
+    assert!(got[0].iter().all(|r| r[0].starts_with("m.")), "each a call's value: {got:?}");
+    // SAFETY: nextest runs each test in a process of its own; nothing else reads the environment meanwhile.
+    unsafe { std::env::set_var("RERAIL_SHAPE_PER_NAME", "off") };
+    let stored = corpus_outputs("per-name-call-off", &src, program, &["seen"]);
+    unsafe { std::env::remove_var("RERAIL_SHAPE_PER_NAME") };
+    assert_eq!(got, stored, "the start stored");
+}
+
 /// A variable named `top` is a variable where an atom binds it, not the lattice's top: `child(p, top, _)` joins as
 /// `child(p, c, _)` does.
 #[test]

@@ -399,11 +399,11 @@ impl Lanes<'_> {
             5 => (x.simd_max(y), Mask::splat(true)),
             6 => (x.simd_min(y), Mask::splat(true)),
             // A node's preorder key (`ARITH_NODE_ORDER`): each lane's node read off its tape through the stage's
-            // node view; the lanes' rows are mostly one document's, found once and tried first for the next.
+            // node view, its document by its page (a load).
             _ => {
-                let (xs, mut memo) = (x.to_array(), u32::MAX);
+                let xs = x.to_array();
                 // SAFETY: the stage's node view, bound for it (`Batch::bind_node_texts`), held for the launch.
-                let r: [Option<i64>; N] = core::array::from_fn(|i| unsafe { super::node_order(self.st.s.v_dir, xs[i], &mut memo) });
+                let r: [Option<i64>; N] = core::array::from_fn(|i| unsafe { super::node_order(self.st.s.v_dir, xs[i]) });
                 (Simd::from_array(r.map(|v| v.unwrap_or(0))), Mask::from_array(r.map(|v| v.is_some())))
             }
         }

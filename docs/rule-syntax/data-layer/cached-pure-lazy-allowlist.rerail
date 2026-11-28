@@ -22,7 +22,7 @@
 //              storage access are items with an error.
 //   runtime:   a hash of the named top-level runtime definitions in three files, and the list of their names.
 //   signature: when nothing else differs, the policy's Ed25519 signature over its canonical entry texts.
-// Hashes are of trees, @sha256 over @tree_digest, where the verifier hashes ast.dump text: the policy is
+// Hashes are of trees, @sha256 over @tree_digest_hex, where the verifier hashes ast.dump text: the policy is
 // re-signed once under this digest (OPEN-ISSUES.md), since no CPython runs.
 // The recorded tests call policy_violations(discovered, entries) with entries they build; the option
 // policyEntries (their JSON) stands in for them and replaces the module's entries (step 6).
@@ -262,10 +262,10 @@ cpl_args_txt(x, s) :- cpl_item(x, _), s = join q by i sep ", " : { cpl_arg(x, i,
 cpl_members_txt(x, s) :- cpl_item(x, _),
     s = join q by (p, m) sep ", " : { cpl_member(x, p, m), q = cat("[", @json_str(p), ", ", @json_str(m), "]") }.
 .decl tree_hashes(x: node, body: symbol, sig: symbol)
-tree_hashes(f, @sha256(@tree_digest(b)), @sha256(cat(@tree_digest(ps), "|", r, "|", tp))) :- field(f, "body", b),
-    field(f, "parameters", ps), (field(f, "return_type", rt), r = @tree_digest(rt) ; !field(f, "return_type", _), r = "None"),
-    (field(f, "type_parameters", t), tp = @tree_digest(t) ; !field(f, "type_parameters", _), tp = "()").
-tree_hashes(x, h, h) :- (cpl_odd_call(x, _) ; cpl_escaped(x) ; mpl_odd(x, _, _)), h = @sha256(@tree_digest(x)).
+tree_hashes(f, @sha256(@tree_digest_hex(b)), @sha256(cat(@tree_digest_hex(ps), "|", r, "|", tp))) :- field(f, "body", b),
+    field(f, "parameters", ps), (field(f, "return_type", rt), r = @tree_digest_hex(rt) ; !field(f, "return_type", _), r = "None"),
+    (field(f, "type_parameters", t), tp = @tree_digest_hex(t) ; !field(f, "type_parameters", _), tp = "()").
+tree_hashes(x, h, h) :- (cpl_odd_call(x, _) ; cpl_escaped(x) ; mpl_odd(x, _, _)), h = @sha256(@tree_digest_hex(x)).
 
 // ---- 3. memoized items ------------------------------------------------------------------------------------------
 // Only in documents whose text mentions memoized_pure_lazy (comments too), as the verifier reads them.
@@ -444,8 +444,12 @@ item_entry(e, k, fn) :- it_last(k, fn), pe_last(e, k, fn).
 .decl cpl_word(k: symbol, dup: symbol, w: symbol)
 cpl_word("cached", "", "cached"). cpl_word("memoized", "memoized ", "memoized").
 
-cpl_msg(cat("duplicate ", p, "decorator entry: ", fn)) :- item_of(_, k, fn), cpl_word(k, p, _),
-    count : { item_of(_, k, fn) } > 1.
+cpl_msg(cat("duplicate ", p, "decorator entry: ", fn)) :- item_count(_, k, fn, _), cpl_word(k, p, _),
+    n = sum j : { item_count(_, k, fn, j) }, n > 1.
+// item_count(d, k, fn, n): file d's n items of kind k for fn, counted in the file; summed over files above, so no item
+// node crosses into the cross part (decision 0727).
+.decl item_count(d: number, k: symbol, fn: symbol, n: number)
+item_count(d, k, fn, n) :- item_of(x, k, fn), docof(x, d), n = count : { item_of(y, k, fn), docof(y, d) }.
 cpl_msg(cat("duplicate ", p, "policy entry: ", fn)) :- pe(_, k, fn), cpl_word(k, p, _), count : { pe(_, k, fn) } > 1.
 cpl_msg(cat("unsigned ", w, " pure-lazy function: ", fn)) :- item_of(_, k, fn), cpl_word(k, _, w), !pe(_, k, fn).
 cpl_msg(cat("stale ", w, " pure-lazy policy entry: ", fn)) :- pe(_, k, fn), cpl_word(k, _, w), !item_of(_, k, fn).
@@ -532,7 +536,7 @@ cpl_crash(cat("Missing cached pure-lazy runtime symbols: (", l, t, ")")) :- cpl_
     l = join r by x sep ", " : { cpl_missing(x), r = @py_repr(x) }.
 .decl cpl_runtime_hash(h: symbol)
 cpl_runtime_hash(@sha256(p)) :- cpl_runtime_symbol(_, _),
-    p = join q by x sep "|" : { cpl_runtime_last(src, x, s), q = cat(src, ":", x, ":", @tree_digest(s)) }.
+    p = join q by x sep "|" : { cpl_runtime_last(src, x, s), q = cat(src, ":", x, ":", @tree_digest_hex(s)) }.
 cpl_msg(cat("cached pure-lazy runtime source hash changed: actual=", h, " policy=", v)) :- cpl_runtime_hash(h),
     cpl_const("CACHED_PURE_LAZY_RUNTIME_SOURCE_HASH", n), plain_str(n, v), h != v.
 

@@ -1,9 +1,10 @@
-// python/references-defs: each Python definition of the reference graph's files, its qualified name and its symbol
-// (core.rerail's reference_def), as W's summaries name them. Both graphs read it: the rules' (python/references.rerail)
-// and W's Rust (python/references_w.rerail), so a definition's symbol is made one way whichever makes the graph.
+// python/reference-defs: each Python definition's symbol (reference_def, core.rerail), which the reference graph is
+// keyed by across files (decision 0677). Both graphs take it: the rules' (python/references.rerail) and W's Rust one
+// (python/references_w.rerail), so a program reads the same symbols either way.
 //
-// The program's `.references` setting (W's, decision 0483 R5) reaches the rules as facts the engine gives
-// (`rr::lower::findings`, from the setting's JSON; none without one); python/references.rerail says what each holds.
+// The program's `.references` setting reaches the rules as facts the engine gives (python/references.rerail's head
+// names them): its scope says which documents are the graph's.
+#include "python/names.rerail"
 
 .decl references_given(k: number)
 .decl references_include(g: symbol)
@@ -11,6 +12,7 @@
 .decl references_sibling(i: number, decorator: symbol, name: symbol, rename: symbol, by: symbol)
 .decl references_field(rename: symbol, by: symbol)
 
+// ---- definitions --------------------------------------------------------------------------------------------------
 // rf_dc: the kinds that make a definition.
 .decl rf_dc(kind: symbol)
 rf_dc("function_definition"). rf_dc("class_definition").
@@ -40,6 +42,10 @@ rf_qn(f, q) :- rf_def(f, x), nearest(f, s, rf_dc), kind(s, "function_definition"
 // rf_start(n, s): node n starts at byte s.
 .decl rf_start(n: node, s: number)
 rf_start(n, s) :- node(_, n, _, s, _).
+.decl rf_is_class(f: node)
+rf_is_class(f) :- rf_def(f, _), kind(f, "class_definition").
+.decl rf_is_function(f: node)
+rf_is_function(f) :- rf_def(f, _), kind(f, "function_definition").
 // rf_sym(f, s): definition f's symbol, which the cross-file part keys it by (decision 0677): its file's path, its
 // qualified name, and how many of the file's definitions of that name start before it (`pkg/m.py:pkg.m.f#0`, the
 // first). A definition moved within its file keeps it; its node does not.

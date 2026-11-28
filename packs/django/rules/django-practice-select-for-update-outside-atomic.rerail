@@ -25,10 +25,10 @@
 
 .violation SelectForUpdateOutsideAtomic(at: node, f: symbol, why: symbol) "`select_for_update()` in `{f}` runs outside transaction.atomic(): {why}. In autocommit mode Django raises TransactionManagementError here on PostgreSQL, MySQL and Oracle, though a TestCase (which wraps each test in a transaction) passes. Wrap the locking read and the writes that depend on it in `transaction.atomic()`, and give any try/except of a DatabaseError inside it its own nested `atomic()`."
 SelectForUpdateOutsideAtomic(c, x, why) :- field(c, "function", e), attr_of(e, _, "select_for_update"), owner(c, f),
-    pt_tm(f, fq), pt_tm(c, ct), sfu_site(fq, ct), def_name(f, x), sfu_exposed(fq), sfu_why(fq, why).
+    pt_scope_tm(f, fq), ct = @node_path(c), sfu_site(fq, ct), def_name(f, x), sfu_exposed(fq), sfu_why(fq, why).
 
-// Across files, everything is by symbol (decision 0677): a def by its symbol (`pt_tm`, as `call_target` names it), a
-// call in it by its term there, and whether a node runs in a transaction as each file states it: for reasons of its
+// Across files, everything is by symbol (decision 0677): a def by its symbol (`pt_scope_tm`, as `call_target` names it), a
+// call in it by its node path (decision 0722), and whether a node runs in a transaction as each file states it: for reasons of its
 // own file (`sfu_loc`), or because a context manager or a decorator of the run, by its symbol, opens one
 // (`sfu_via`). Which of those do is a fixpoint over symbols (`sfu_atomic`).
 
@@ -37,15 +37,15 @@ SelectForUpdateOutsideAtomic(c, x, why) :- field(c, "function", e), attr_of(e, _
 // sfu_lock_call(c): c is `<qs>.select_for_update(…)`.
 .decl sfu_lock_call(c: node)
 sfu_lock_call(c) :- kind(c, "call"), field(c, "function", e), attr_of(e, _, "select_for_update").
-.decl sfu_site_cand(f: symbol, c: symbol)
+.decl sfu_site_cand(f: symbol, c: node_path)
 sfu_site_cand(fq, ct) :- sfu_lock_call(c), owner(c, f),
-    !sfu_loc(c), !sfu_guarded(c), !sfu_built_loc(c), docof(c, d), !dj_test_doc(d), pt_tm(f, fq), pt_tm(c, ct).
-.decl sfu_site_via(f: symbol, c: symbol, s: symbol)
+    !sfu_loc(c), !sfu_guarded(c), !sfu_built_loc(c), docof(c, d), !dj_test_doc(d), pt_scope_tm(f, fq), ct = @node_path(c).
+.decl sfu_site_via(f: symbol, c: node_path, s: symbol)
 sfu_site_via(fq, ct, s) :- sfu_lock_call(c), owner(c, f),
-    (sfu_via(c, s) ; sfu_built_via(c, s)), pt_tm(f, fq), pt_tm(c, ct).
-.decl sfu_site(f: symbol, c: symbol)
+    (sfu_via(c, s) ; sfu_built_via(c, s)), pt_scope_tm(f, fq), ct = @node_path(c).
+.decl sfu_site(f: symbol, c: node_path)
 sfu_site(fq, ct) :- sfu_site_cand(fq, ct), !sfu_site_covered(fq, ct).
-.decl sfu_site_covered(f: symbol, c: symbol)
+.decl sfu_site_covered(f: symbol, c: node_path)
 sfu_site_covered(fq, ct) :- sfu_site_via(fq, ct, s), sfu_atomic(s).
 // sfu_built_loc(c), sfu_built_via(c, s): `qs = qs.select_for_update(…)` whose name the same function reads inside an
 // atomic region: the queryset is built first and evaluated in the transaction (`with transaction.atomic():
@@ -128,11 +128,11 @@ sfu_method_atomic(e) :- kind(e, "call"), field(e, "function", mf), sym_of(mf, "d
 // states its own: for a reason of its own (sfu_sym_loc), or if another does (sfu_sym_via).
 .decl sfu_sym_loc(s: symbol)
 sfu_sym_loc(cat("cm:", gq)) :- kind(y, "yield"), sfu_loc(y), nearest(y, g, dj_region_stop),
-    kind(g, "function_definition"), pt_tm(g, gq).
+    kind(g, "function_definition"), pt_scope_tm(g, gq).
 sfu_sym_loc(cat("wrap:", q)) :- sfu_wrapper_call(d, c), sfu_loc(c), qualname(d, q).
 .decl sfu_sym_via(s: symbol, t: symbol)
 sfu_sym_via(cat("cm:", gq), t) :- kind(y, "yield"), sfu_via(y, t), nearest(y, g, dj_region_stop),
-    kind(g, "function_definition"), pt_tm(g, gq).
+    kind(g, "function_definition"), pt_scope_tm(g, gq).
 sfu_sym_via(cat("wrap:", q), t) :- sfu_wrapper_call(d, c), sfu_via(c, t), qualname(d, q).
 .decl sfu_wrapper_call(d: node, c: node)
 sfu_wrapper_call(d, c) :- kind(d, "function_definition"), param(d, x, 0), kind(c, "call"), field(c, "function", fn),
@@ -145,9 +145,9 @@ sfu_atomic(s) :- sfu_sym_via(s, t), sfu_atomic(t).
 .decl sfu_plain(f: symbol)
 sfu_plain(fq) :- sfu_def_cand(fq), !sfu_def_atomic(fq).
 .decl sfu_def_cand(f: symbol)
-sfu_def_cand(fq) :- kind(f, "function_definition"), !sfu_def_loc(f), docof(f, d), !dj_test_doc(d), pt_tm(f, fq).
+sfu_def_cand(fq) :- kind(f, "function_definition"), !sfu_def_loc(f), docof(f, d), !dj_test_doc(d), pt_scope_tm(f, fq).
 .decl sfu_def_via_at(f: symbol, s: symbol)
-sfu_def_via_at(fq, s) :- sfu_def_via(f, s), pt_tm(f, fq).
+sfu_def_via_at(fq, s) :- sfu_def_via(f, s), pt_scope_tm(f, fq).
 .decl sfu_def_atomic(f: symbol)
 sfu_def_atomic(fq) :- sfu_def_via_at(fq, s), sfu_atomic(s).
 // sfu_up(f): def f holds a site, or calls a sfu_up def outside any atomic region: the only defs whose exposure
@@ -157,16 +157,16 @@ sfu_up(fq) :- sfu_site(fq, _), sfu_plain(fq).
 sfu_up(gq) :- sfu_up(fq), sfu_bare(gq, _, fq), sfu_plain(gq).
 // sfu_bare(g, c, f): call c, in def g, reaches f and is not inside an atomic region. Each file states its calls
 // (sfu_call_cand, sfu_call_via) and where they are (sfu_call_at).
-.decl sfu_call_cand(g: symbol, c: symbol, f: symbol)
-sfu_call_cand(gq, ct, fq) :- call_target(c, fq), owner(c, g), !sfu_loc(c), pt_tm(g, gq), pt_tm(c, ct).
-.decl sfu_call_via(g: symbol, c: symbol, s: symbol)
-sfu_call_via(gq, ct, s) :- call_target(c, _), owner(c, g), sfu_via(c, s), pt_tm(g, gq), pt_tm(c, ct).
-.decl sfu_call_at(g: symbol, c: symbol, gx: symbol, p: symbol, l: number)
-sfu_call_at(gq, ct, gx, p, l) :- call_target(c, _), owner(c, g), pt_tm(g, gq), pt_tm(c, ct), def_name(g, gx), node_line_number(c, l),
+.decl sfu_call_cand(g: symbol, c: node_path, f: symbol)
+sfu_call_cand(gq, ct, fq) :- call_target(c, fq), owner(c, g), !sfu_loc(c), pt_scope_tm(g, gq), ct = @node_path(c).
+.decl sfu_call_via(g: symbol, c: node_path, s: symbol)
+sfu_call_via(gq, ct, s) :- call_target(c, _), owner(c, g), sfu_via(c, s), pt_scope_tm(g, gq), ct = @node_path(c).
+.decl sfu_call_at(g: symbol, c: node_path, gx: symbol, p: symbol, l: number)
+sfu_call_at(gq, ct, gx, p, l) :- call_target(c, _), owner(c, g), pt_scope_tm(g, gq), ct = @node_path(c), def_name(g, gx), node_line_number(c, l),
     docof(c, d), doc(d, p, _).
-.decl sfu_call_covered(g: symbol, c: symbol)
+.decl sfu_call_covered(g: symbol, c: node_path)
 sfu_call_covered(gq, ct) :- sfu_call_via(gq, ct, s), sfu_atomic(s).
-.decl sfu_bare(g: symbol, c: symbol, f: symbol)
+.decl sfu_bare(g: symbol, c: node_path, f: symbol)
 sfu_bare(gq, ct, fq) :- sfu_call_cand(gq, ct, fq), !sfu_call_covered(gq, ct).
 // sfu_mod_call(f, l): a call at module level, outside tests, at line l reaches f.
 .decl sfu_mod_call(f: symbol, l: number)
@@ -186,12 +186,12 @@ sfu_exposed(fq) :- sfu_up(fq), sfu_mod_call(fq, _).
 sfu_entry(fq) :- sfu_up(fq), !sfu_called(fq), sfu_name(fq, x), !sfu_open_name(x), !sfu_run_passed(x),
     !sfu_atomic_view(fq), !sfu_property(fq), sfu_framework_shape(fq).
 .decl sfu_name(f: symbol, x: symbol)
-sfu_name(fq, x) :- kind(f, "function_definition"), def_name(f, x), pt_tm(f, fq).
+sfu_name(fq, x) :- kind(f, "function_definition"), def_name(f, x), pt_scope_tm(f, fq).
 // sfu_property(f): f is a `@property` or `@cached_property`: read as an attribute, never called, so "no caller" says
 // nothing (saleor's `Reordering.ordered_node_map`).
 .decl sfu_property(f: symbol)
 sfu_property(fq) :- kind(f, "function_definition"), decorator(f, e), unparen(e, m), leaf_name(m, x),
-    (x = "property" ; x = "cached_property"), pt_tm(f, fq).
+    (x = "property" ; x = "cached_property"), pt_scope_tm(f, fq).
 .decl sfu_called(f: symbol)
 sfu_called(fq) :- call_target(c, fq), docof(c, d), !dj_test_doc(d).
 // sfu_open_name(x): a call outside tests whose target is unknown or unresolved is spelled `x(…)` or `<obj>.x(…)`, x a
@@ -224,10 +224,10 @@ sfu_framework_shape(fq) :- sfu_shaped(fq).
 sfu_framework_shape(fq) :- sfu_method_of(fq, kq), !sfu_model_side(kq).
 sfu_framework_shape(fq) :- sfu_up(fq), sfu_name(fq, x), sfu_framework_passed(x).
 .decl sfu_shaped(f: symbol)
-sfu_shaped(fq) :- kind(f, "function_definition"), decorator(f, _), pt_tm(f, fq).
-sfu_shaped(fq) :- kind(f, "function_definition"), param(f, "request", _), pt_tm(f, fq).
+sfu_shaped(fq) :- kind(f, "function_definition"), decorator(f, _), pt_scope_tm(f, fq).
+sfu_shaped(fq) :- kind(f, "function_definition"), param(f, "request", _), pt_scope_tm(f, fq).
 .decl sfu_method_of(f: symbol, k: symbol)
-sfu_method_of(fq, kq) :- kind(f, "function_definition"), nearest(f, k, scope), class_def(k, kq), pt_tm(f, fq).
+sfu_method_of(fq, kq) :- kind(f, "function_definition"), nearest(f, k, scope), class_def(k, kq), pt_scope_tm(f, fq).
 // sfu_model_side(k): class k is a model, or a base of one of the run's models.
 .decl sfu_model_side(k: symbol)
 sfu_model_side(kq) :- dj_model(k), class_def(k, kq).
@@ -238,9 +238,9 @@ sfu_model_side_of(mq) :- dj_model(m), class_def(m, mq).
 // view: it takes `request`, or it is a method of a view class.
 // (dj_view_class holds a class's node in the cross-file part, so this reads one, 0677's list.)
 .decl sfu_atomic_view(f: symbol)
-sfu_atomic_view(fq) :- dj_atomic_requests(), kind(f, "function_definition"), param(f, "request", _), pt_tm(f, fq).
+sfu_atomic_view(fq) :- dj_atomic_requests(), kind(f, "function_definition"), param(f, "request", _), pt_scope_tm(f, fq).
 sfu_atomic_view(fq) :- dj_atomic_requests(), dj_view_class(k), nearest(f, k, scope), kind(f, "function_definition"),
-    pt_tm(f, fq).
+    pt_scope_tm(f, fq).
 
 // sfu_why(f, why): how f runs outside a transaction: an entry point, or its first bare call by a key an edit in another
 // file does not move (decision 0695): a module-level call first (it names no caller, so no reason is given), then the

@@ -169,29 +169,53 @@ UKL_SHARED int64_t rget(StageP s, RelB R, uint32_t r, uint32_t col) {
     return (int64_t)clif_rel_get((JSPACE const uint8_t*)R.p, s->r_at, r, col, R.far);
 }
 
+// The directory whose page table the stage's ids are read by: its view's, a placed view's (`VIEW_PLACED`: `v_dir`
+// its `PlacedDir`) the view's own, under the spans placed beside it.
+UKL_INLINE UKL_GLOBAL const ViewDir* ids_dir(StageP s) {
+    if (s->v_dir != 0 && (s->r_view & VIEW_PLACED) != 0u) return ((UKL_GLOBAL const PlacedDir*)s->v_dir)->dir;
+    return s->v_dir;
+}
+
+// Id `v`'s document key (`docof`): its page's, in the chunk's page table, which the stage's directory reaches
+// (`clif_dir_key_of_id`, plan "Chunk node numbers"). A negative value (no node) keeps its `>> 32`, as the host's.
+UKL_INLINE int64_t doc_of(StageP s, int64_t v) {
+    UKL_GLOBAL const ViewDir* d = ids_dir(s);
+    if (v < 0 || d == 0) return v >> 32;
+    return (int64_t)clif_dir_key_of_id(view_block(d), d->at, (uint32_t)v);
+}
+
+// Node `key`'s document's row in the stage's directory and its local id there (`clif_dir_doc_of_id`,
+// `clif_dir_local_of_id`): false for a value that is no id of the chunk, or a document the directory does not hold.
+UKL_INLINE bool doc_local(UKL_GLOBAL const ViewDir* d, int64_t key, UKL_PRIVATE uint32_t* a, UKL_PRIVATE uint32_t* local) {
+    if (key < 0 || key > (int64_t)0xffffffffu || d->ndocs == 0u) return false;
+    *a = clif_dir_doc_of_id(view_block(d), d->at, (uint32_t)key);
+    if (*a == NONE) return false;
+    *local = clif_dir_local_of_id(view_block(d), d->at, (uint32_t)key);
+    return true;
+}
+
 UKL_INLINE int64_t colval(StageP s, uint32_t k, Longs L, uint32_t t, RelB R, uint32_t r) {
     int64_t v = s->col_kind[k] == 0 ? rget(s, R, r, s->col_idx[k]) : L[(uint64_t)s->col_idx[k] * s->cap_in + t];
-    return s->col_doc[k] != 0 ? (v >> 32) : v;
+    return s->col_doc[k] != 0 ? doc_of(s, v) : v;
 }
 
 UKL_INLINE int64_t parval(StageP s, uint32_t k, Longs L, uint32_t t) {
     int64_t v = s->par_kind[k] == 0 ? s->par_const[k] : L[(uint64_t)s->par_slot[k] * s->cap_in + t];
-    return s->par_doc[k] != 0 ? (v >> 32) : v;
+    return s->par_doc[k] != 0 ? doc_of(s, v) : v;
 }
 
-// Node v's preorder key (`@rr_node_order`, `ARITH_NODE_ORDER`): its document by key in the stage's node view
-// (`Stage::v_dir`, `clif_dir_doc_of_key`), its numbered node (`clif_view_number`), its order there (`clif_view_order`'s
-// key). False where the view numbers no node v, as the host's read has none.
+// Node v's preorder key (`@rr_node_order`, `ARITH_NODE_ORDER`): its document and local id in the stage's node view
+// by its page (`Stage::v_dir`, `doc_local`), its numbered node (`clif_view_number`), its order there
+// (`clif_view_order`'s key). False where the view numbers no node v, as the host's read has none.
 UKL_INLINE bool node_order(StageP s, int64_t v, UKL_PRIVATE int64_t* out) {
     UKL_GLOBAL const ViewDir* d = s->v_dir;
-    if (d == 0 || v < 0) return false;
-    uint32_t a = clif_dir_doc_of_key(view_block(d), d->at, (uint32_t)((uint64_t)v >> 32), NONE);
-    if (a == NONE) return false;
+    uint32_t a = NONE, local = NONE;
+    if (d == 0 || !doc_local(d, v, &a, &local)) return false;
     UKL_GLOBAL const ViewRow* e = &view_rows(d)[a];
     UKL_GLOBAL const uint8_t* ch = view_block(d);
     UKL_GLOBAL const uint8_t* t = view_tape(d, e);
     UKL_GLOBAL const uint8_t* ls = view_lines_base(d, e);
-    uint32_t l = clif_view_number(ch, e->entry, t, e->view, ls, e->lines, view_codes(d), (uint32_t)((uint64_t)v & 0xfffffffful));
+    uint32_t l = clif_view_number(ch, e->entry, t, e->view, ls, e->lines, view_codes(d), local);
     if (l == NONE) return false;
     *out = (int64_t)clif_view_order(ch, e->entry, t, e->view, ls, e->lines, view_codes(d), l, 1u);
     return true;
@@ -298,21 +322,20 @@ UKL_INLINE void group_of(RelB R, uint64_t at, uint32_t index, UKL_PRIVATE const 
 // parent's children from row lo, each step the next sibling's row (`NONE` ends it), 3 a node's numbered ancestors
 // from row lo, each step the next one up (`has_up`; `NONE` ends it).
 
-// A parent `key`'s children: its document by the directory's search on its key (`clif_dir_doc_of_key`; the batch's
-// documents are in key order), its numbered node (`clif_view_number`), then its first child. The root's children are also the nodes
+// A parent `key`'s children: its document and local id by its page (`doc_local`), its numbered node
+// (`clif_view_number`), then its first child. The root's children are also the nodes
 // under unnumbered ones (a narrowed projection): its probe walks its document's rows, which `matches` tests.
 UKL_INLINE void by_parent(StageP s, int64_t key, UKL_PRIVATE uint32_t* lo, UKL_PRIVATE uint32_t* hi, UKL_PRIVATE uint32_t* how) {
     UKL_GLOBAL const ViewDir* d = s->v_dir;
     *lo = 0u; *hi = 0u; *how = 0u;
-    if (key < 0 || d->ndocs == 0u) return;
-    uint32_t a = clif_dir_doc_of_key(view_block(d), d->at, (uint32_t)((uint64_t)key >> 32), NONE);
-    if (a == NONE) return;
+    uint32_t a = NONE, local = NONE;
+    if (!doc_local(d, key, &a, &local)) return;
     UKL_GLOBAL const ViewRow* e = &view_rows(d)[a];
     UKL_GLOBAL const uint8_t* ch = view_block(d);
     UKL_GLOBAL const uint8_t* t = view_tape(d, e);
     UKL_GLOBAL const uint8_t* ls = view_lines_base(d, e);
     uint64_t la = e->lines;
-    uint32_t l = clif_view_number(ch, e->entry, t, e->view, ls, la, view_codes(d), (uint32_t)((uint64_t)key & 0xfffffffful));
+    uint32_t l = clif_view_number(ch, e->entry, t, e->view, ls, la, view_codes(d), local);
     if (l == NONE) return;
     // By its own id (`Stage::v_parent` 2, `join_program::St::by_own`): its id checked, its one row (a `child` row: the
     // root has none), the other keys checked on it (`matches`); as the host's probe by a node's own id.
@@ -377,20 +400,18 @@ UKL_INLINE bool has_member(StageP s, uint32_t q) {
     return lo < s->v_nset && s->v_set[lo] == k;
 }
 
-// The candidates of node `key`: its document by the directory's search on its key (`clif_dir_doc_of_key`), its
-// number, then its walk.
+// The candidates of node `key`: its document and local id by its page (`doc_local`), its number, then its walk.
 UKL_INLINE void by_has(StageP s, int64_t key, UKL_PRIVATE uint32_t* lo, UKL_PRIVATE uint32_t* hi, UKL_PRIVATE uint32_t* how) {
     UKL_GLOBAL const ViewDir* d = s->v_dir;
     *lo = 0u; *hi = 0u; *how = 0u;
-    if (key < 0 || d->ndocs == 0u) return;
-    uint32_t a = clif_dir_doc_of_key(view_block(d), d->at, (uint32_t)((uint64_t)key >> 32), NONE);
-    if (a == NONE) return;
+    uint32_t a = NONE, local = NONE;
+    if (!doc_local(d, key, &a, &local)) return;
     UKL_GLOBAL const ViewRow* e = &view_rows(d)[a];
     UKL_GLOBAL const uint8_t* ch = view_block(d);
     UKL_GLOBAL const uint8_t* t = view_tape(d, e);
     UKL_GLOBAL const uint8_t* ls = view_lines_base(d, e);
     uint64_t la = e->lines;
-    uint32_t l = clif_view_number(ch, e->entry, t, e->view, ls, la, view_codes(d), (uint32_t)((uint64_t)key & 0xfffffffful));
+    uint32_t l = clif_view_number(ch, e->entry, t, e->view, ls, la, view_codes(d), local);
     if (l == NONE) return;
     uint32_t first = e->rows[0];
     if (s->v_has == 1u) {
@@ -409,17 +430,17 @@ UKL_INLINE void by_has(StageP s, int64_t key, UKL_PRIVATE uint32_t* lo, UKL_PRIV
 UKL_INLINE void has_pair(StageP s, int64_t a, int64_t n, UKL_PRIVATE uint32_t* lo, UKL_PRIVATE uint32_t* hi, UKL_PRIVATE uint32_t* how) {
     UKL_GLOBAL const ViewDir* d = s->v_dir;
     *lo = 0u; *hi = 0u; *how = 0u;
-    if (n < 0 || a < 0 || d->ndocs == 0u || ((uint64_t)n >> 32) != ((uint64_t)a >> 32)) return;
-    uint32_t at = clif_dir_doc_of_key(view_block(d), d->at, (uint32_t)((uint64_t)a >> 32), NONE);
-    if (at == NONE) return;
+    // Both by their pages (`doc_local`), in one document.
+    uint32_t at = NONE, la_ = NONE, an = NONE, ln = NONE;
+    if (!doc_local(d, a, &at, &la_) || !doc_local(d, n, &an, &ln) || an != at) return;
     UKL_GLOBAL const ViewRow* e = &view_rows(d)[at];
     UKL_GLOBAL const uint8_t* ch = view_block(d);
     UKL_GLOBAL const uint8_t* t = view_tape(d, e);
     UKL_GLOBAL const uint8_t* ls = view_lines_base(d, e);
     uint64_t la = e->lines;
-    uint32_t l = clif_view_number(ch, e->entry, t, e->view, ls, la, view_codes(d), (uint32_t)((uint64_t)a & 0xfffffffful));
+    uint32_t l = clif_view_number(ch, e->entry, t, e->view, ls, la, view_codes(d), la_);
     if (l == NONE) return;
-    uint32_t m = clif_view_number(ch, e->entry, t, e->view, ls, la, view_codes(d), (uint32_t)((uint64_t)n & 0xfffffffful));
+    uint32_t m = clif_view_number(ch, e->entry, t, e->view, ls, la, view_codes(d), ln);
     if (m == NONE || m <= l || m >= clif_view_end(ch, e->entry, t, e->view, ls, la, view_codes(d), l)) return;
     *lo = e->rows[0] + m; *hi = *lo + 1u;
 }
@@ -792,8 +813,8 @@ UKL_INLINE JSPACE const uint8_t* sym_text(JSPACE const uint8_t* D, int64_t v, UK
     return D + clif_atoms_at(D, 0ul, (uint32_t)v);
 }
 
-// Node `key`'s text, read where its document's source lies (decision 0287 §2): its document by the directory's search
-// on its key (`clif_dir_doc_of_key`), its numbered node (`clif_view_number`), its bytes' range in its own source
+// Node `key`'s text, read where its document's source lies (decision 0287 §2): its document and local id by its page
+// (`doc_local`), its numbered node (`clif_view_number`), its bytes' range in its own source
 // (`clif_view_text_span`), read at the source's home (`view_source`). The stage's `node` view binds the directory
 // (`Stage::v_dir`). With `lines` (`rr_node_text_any`'s), a document's `source` span or a `src_line` span (decision
 // 0353 row 7) is its line's bytes there (without, `none`: no row)
@@ -808,14 +829,12 @@ UKL_INLINE Txt node_txt(StageP s, JSPACE const uint8_t* D, int64_t key, bool lin
     x.bl = 0;
     x.dot = 0;
     UKL_GLOBAL const ViewDir* d = s->v_dir;
-    if (key < 0 || d == 0 || d->ndocs == 0u) { *unheld = true; return x; }
-    uint32_t m = clif_dir_doc_of_key(view_block(d), d->at, (uint32_t)((uint64_t)key >> 32), NONE);
-    if (m == NONE) { *unheld = true; return x; }
+    uint32_t m = NONE, low = NONE;
+    if (d == 0 || !doc_local(d, key, &m, &low)) { *unheld = true; return x; }
     UKL_GLOBAL const ViewRow* e = &view_rows(d)[m];
     UKL_GLOBAL const uint8_t* ch = view_block(d);
     UKL_GLOBAL const uint8_t* t = view_tape(d, e);
     UKL_GLOBAL const uint8_t* ls = view_lines_base(d, e);
-    uint32_t low = (uint32_t)((uint64_t)key & 0xfffffffful);
     uint64_t line = clif_view_line_span(ch, e->entry, t, e->view, ls, e->lines, view_codes(d), low);
     // `rr_node_text_any`'s alone: the long-text twin (`rr_node_text`) has no row of a line, as the host's `long_text`.
     if (line != ~(uint64_t)0 && !lines) { *none = true; return x; }
@@ -1944,7 +1963,7 @@ UKL_INLINE void stage_map_one(JSPACE int64_t* B, JSPACE const uint32_t* totals, 
             v = parval(s, k, B, t);
         } else {
             v = B[(uint64_t)s->col_idx[k] * s->cap_in + t];
-            if (s->col_doc[k] != 0) v = v >> 32;
+            if (s->col_doc[k] != 0) v = doc_of(s, v);
         }
         B[(uint64_t)s->bind_slot[b] * s->cap_in + t] = v;
     }

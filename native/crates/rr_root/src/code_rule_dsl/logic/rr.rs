@@ -1692,6 +1692,9 @@ pub enum TailStep {
     SourcesOnRequest,
     OrderNodes,
     DeclareAxes,
+    /// Each place read by its value's type (decision 0724 step 3), once the findings' and core's reads are written: its
+    /// types inferred over every rule's heads, so the whole program's.
+    TypedReads,
     /// `finish`'s checks, on the version.
     Checks,
     AggregateDemand,
@@ -1704,9 +1707,9 @@ pub enum TailStep {
 }
 
 /// The tail's steps in the order `whole` runs them.
-pub const TAIL: [TailStep; 27] = {
+pub const TAIL: [TailStep; 28] = {
     use TailStep::*;
-    [ContextPasses, CrossingCycles, HostCopiesOut, PassesOnce, Declared, ThreeValued, Findings, CoreDecls, SpanPatterns, GrammarNames, BuiltinsOut, WithinRead, KindSets, Unit, BooleanRelations, ScopeGlobs, SourcesOnRequest, OrderNodes, DeclareAxes, Checks, AggregateDemand, Unit, LiteralsOnce, DropSelfRules, DropRepeated, FactsOnce, Widen]
+    [ContextPasses, CrossingCycles, HostCopiesOut, PassesOnce, Declared, ThreeValued, Findings, CoreDecls, SpanPatterns, GrammarNames, BuiltinsOut, WithinRead, KindSets, Unit, BooleanRelations, ScopeGlobs, SourcesOnRequest, OrderNodes, DeclareAxes, TypedReads, Checks, AggregateDemand, Unit, LiteralsOnce, DropSelfRules, DropRepeated, FactsOnce, Widen]
 };
 
 /// The tail's steps that read what the whole program reads (decision 0639 §6, downward), in `TAIL`'s order: those
@@ -1876,6 +1879,9 @@ pub fn tail_steps_in(start: std::sync::Arc<super::program_image::Version>, decla
                 TailStep::DeclareAxes => {
                     p.program(&mut lowering_tail::DeclareAxes);
                 }
+                TailStep::TypedReads => {
+                    p.program(&mut lowering_tail::TypedReads);
+                }
                 TailStep::Checks => {
                     let v = p.current().map_err(Error::Syntax)?;
                     match &touched {
@@ -1977,7 +1983,7 @@ impl TailStep {
         use TailStep::*;
         match self {
             ContextPasses | CrossingCycles | ThreeValued | SpanPatterns | Checks => Place::Upward,
-            KindSets | SourcesOnRequest => Place::Downward,
+            KindSets | SourcesOnRequest | TypedReads => Place::Downward,
             // What a module holds, kept, dropped or stated by what other modules derive or read: a prelude's `within`,
             // which its readers read; a context's pass, which each module that reads it states as its scope makes it,
             // and the host's copies its instance, made in a reader, holds.
@@ -2593,11 +2599,10 @@ impl LibraryFile {
 /// The relations `core.rerail` declares for libraries to derive for the engine to read: the documents they load (t21 E2).
 pub const LIBRARY_DERIVED: [&str; 1] = ["load"];
 /// The relations `core.rerail` declares that one library file derives, and that file (decision 0483: the reference graph).
-/// A definition's symbol (`reference_def`) is `python/references-defs.rerail`'s, which both graphs include; the graph
-/// itself is `python/references.rerail`'s rules, or `python/references_w.rerail`'s from W's Rust graph, which the engine
-/// binds (`RERAIL_REFERENCES`).
+/// `python/references_w.rerail` derives the graph from W's Rust graph instead, which the engine binds
+/// (`RERAIL_REFERENCES`); both take `reference_def` from `python/reference-defs.rerail`.
 pub const DERIVED_BY: [(&str, &str); 5] = [
-    ("reference_def", "python/references-defs.rerail"),
+    ("reference_def", "python/reference-defs.rerail"),
     ("reference_edge", "python/references.rerail"),
     ("reference_open", "python/references.rerail"),
     ("reference_edge", REFERENCES_W),

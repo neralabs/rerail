@@ -120,7 +120,8 @@ pub fn is_extra(low: u32) -> bool {
     (EXTRA_FIRST..SPAN_FIRST).contains(&(low >> INDEX_BITS))
 }
 
-/// The line (from 1; 0 the whole source) of a `Line` span's low bits, as `extra_low(ExtraSpan::Line, l)` made them.
+/// The line of a `Line` span's low bits, as `extra_low(ExtraSpan::Line, l)` made them: 0 the whole source (`source`),
+/// `l` line `l` (`src_line`).
 pub fn line_of(low: u32) -> Option<u32> {
     let first = EXTRA_FIRST + ExtraSpan::Line.first();
     (low >> INDEX_BITS == first).then_some(low % INDEX)
@@ -336,6 +337,7 @@ pub fn number(p: &Projected, dialect: &Dialect, tokens: &[u32], mut reference: O
             }
             let mut table = Table::new(fr, p, &cut, nodes, &all);
             table.whole = fold == Fold::All;
+            table.fold = fold;
             Some(table)
         });
         if let Some(table) = table {
@@ -750,6 +752,8 @@ pub struct Table {
     /// Every granule folded into the root (`Fold::All`): no definition starts one, so a node's definition unit is
     /// climbed on the tree (`units`).
     whole: bool,
+    /// How far its granules were folded: `keys` cuts them again so.
+    fold: Fold,
 }
 
 /// The table's columns (`Table::cells`), each of `u32`s or of items of `u32`s:
@@ -969,7 +973,7 @@ impl Table {
             cols[COLS] as usize
         })
         .expect("a batch's block holds its projection");
-        Table { cells, cols, preorder_keys, whole: false }
+        Table { cells, cols, preorder_keys, whole: false, fold: Fold::None }
     }
 
     /// Points the projection's descriptor's table runs at these columns (`rerail_clif::ids::Numbering`), so the reads
@@ -1036,6 +1040,19 @@ impl Table {
     /// Granule `g`'s start (a tape node) and its parent granule (`None` for the root's).
     pub fn start_up(&self, g: usize) -> (u32, Option<usize>) {
         (self.starts()[g], (self.parents()[g] != u32::MAX).then_some(self.parents()[g] as usize))
+    }
+    /// Each granule's key (`a.py/class_definition:C/function_definition:m#0` less its document's path; the root's is
+    /// empty), in the order of its starts: the document cut again as `p`'s numbering cut it (node paths' bases,
+    /// decision 0722).
+    pub fn keys(&self, p: &Projected, dialect: &Dialect) -> Vec<String> {
+        frame::op(|fr| {
+            let k = cut(fr, p, dialect, self.fold).keys;
+            (0..k.len()).map(|i| String::from_utf8_lossy(k.get(i)).into_owned()).collect()
+        })
+    }
+    /// The granules: their count (`start_up`'s `g`).
+    pub fn granules(&self) -> usize {
+        self.starts().len()
     }
     /// Whether every granule is folded into the root (`Fold::All`): no definition starts one.
     pub fn whole(&self) -> bool {

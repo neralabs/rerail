@@ -461,7 +461,7 @@ fn diagnostic_rows(outputs: &crate::code_rule_dsl::logic::plan::output::Outputs)
 
 /// A finding's row as its JSON object: `policy`, `clause`, `code`, `path`, `line`, `at`, `tag` (`null` for none),
 /// `message`, and `parameters` by name. Each value as its column holds it: a text a string, an integer or a node a
-/// number (a node's value as the run held it), NULL `null`. Nothing is parsed.
+/// number (a node's value as the run held it), a node path its text, NULL `null`. Nothing is parsed.
 fn diagnostic(rel: &str, row: &crate::code_rule_dsl::logic::plan::output::Row<'_>) -> Result<serde_json::Value, String> {
     use crate::code_rule_dsl::logic::plan::output::Value;
     let value = |c: usize| -> serde_json::Value {
@@ -469,6 +469,8 @@ fn diagnostic(rel: &str, row: &crate::code_rule_dsl::logic::plan::output::Row<'_
             Value::Text(t) => serde_json::json!(t),
             Value::Int(n) => serde_json::json!(n),
             Value::Node(_) => serde_json::json!(row.raw(c)),
+            // A node path's text, as the outputs show it (decision 0722).
+            v @ Value::Path { .. } => serde_json::json!(v.to_string()),
             Value::Null => serde_json::Value::Null,
         }
     };
@@ -1198,7 +1200,7 @@ fn report_text(programs: usize, report: &super::logic::plan::corpus::Report, mod
 //   rerail-engine test-rr <rule or directory>... [--filter <text>]
 use std::path::Path;
 
-const USAGE: &str = "usage:\n  rerail-engine repeat <script>\n  rerail-engine dump --rule <file>... [--clause <id>] [--fused] [--setplan] [--capabilities <file>]\n  rerail-engine asm <file.rir>\n  rerail-engine logic <program.rerail | dir of .rerail> <corpus root> [<T facts.sqlite>] <out dir> [--modes <modes> | --sql] [--metal] [--chunk <nodes>] [--env key=value]... [--full] [--facts <dir>] [--require-facts] [--base <rev>] [--revision <commit-or-tree> --analysis-scope <name>]\n  rerail-engine facts-stamp <raw dir> --out <facts dir> --root <repository> <policy.rerail>...\n  rerail-engine images pack <exported dir> <bundle>\n  rerail-engine gc <store.sqlite> [--history-mb <n>]\n  rerail-engine delete-scope <store.sqlite> <name>\n  rerail-engine capture-tapes <root> <out file> [--every <k>] [--max <files>] [--all-tokens]\n  rerail-engine code-counts <root>... [--per-repo N] --out <counts.tsv>\n  rerail-engine upkeep [<store.sqlite>...] [--cpu <percent>] [--jobs <list>]\n  rerail-engine kernels [list | compile [--all] [--idle] | ship <dir> [--from <store dir>] [--air] | prune [--mb <n>]]\n  rerail-engine sql <store.sqlite> <request.json>\n  rerail-engine flatten [--lowered] <program.rerail>\n  rerail-engine csv <out dir> [<to dir>]\n  rerail-engine run-rr <policy.rerail> <corpus root> <out dir> [<options.json>] [--revision <commit-or-tree> --analysis-scope <name>]\n  rerail-engine run-policies [--tool-calls <calls.json>] <corpus root> <out dir> <policy.rerail>... [--revision <commit-or-tree> --analysis-scope <name>]\n  rerail-engine check-rr <rule>...\n  rerail-engine convert-rr [--cases <cases.json>] <rule>...\n  rerail-engine test-rr <rule or directory>... [--filter <text>] [--json]\n  rerail-engine translate-json [--display] <rule.json>... --out <dir>\nevery command: [--memory-mb <n>] (overall memory budget, default 1024) [--metal-mb <n>] (Metal budget on top of it, default half the overall)";
+const USAGE: &str = "usage:\n  rerail-engine repeat <script>\n  rerail-engine dump --rule <file>... [--clause <id>] [--fused] [--setplan] [--capabilities <file>]\n  rerail-engine asm <file.rir>\n  rerail-engine logic <program.rerail | dir of .rerail> <corpus root> [<T facts.sqlite>] <out dir> [--modes <modes> | --sql] [--metal] [--chunk <nodes>] [--env key=value]... [--full] [--facts <dir>] [--require-facts] [--base <rev>] [--revision <commit-or-tree> --analysis-scope <name>]\n  rerail-engine facts-stamp <raw dir> --out <facts dir> --root <repository> <policy.rerail>...\n  rerail-engine images pack <exported dir> <bundle>\n  rerail-engine gc <store.sqlite> [--history-mb <n>]\n  rerail-engine delete-scope <store.sqlite> <name>\n  rerail-engine capture-tapes <root> <out file> [--every <k>] [--max <files>] [--all-tokens]\n  rerail-engine code-counts <root>... [--per-repo N] --out <counts.tsv>\n  rerail-engine node-path-table <label> <root>... [--node-types <node-types.json>]... --out <file.rs>\n  rerail-engine upkeep [<store.sqlite>...] [--cpu <percent>] [--jobs <list>]\n  rerail-engine kernels [list | compile [--all] [--idle] | ship <dir> [--from <store dir>] [--air] | prune [--mb <n>]]\n  rerail-engine sql <store.sqlite> <request.json>\n  rerail-engine flatten [--lowered] <program.rerail>\n  rerail-engine csv <out dir> [<to dir>]\n  rerail-engine run-rr <policy.rerail> <corpus root> <out dir> [<options.json>] [--revision <commit-or-tree> --analysis-scope <name>]\n  rerail-engine run-policies [--tool-calls <calls.json>] <corpus root> <out dir> <policy.rerail>... [--revision <commit-or-tree> --analysis-scope <name>]\n  rerail-engine check-rr <rule>...\n  rerail-engine convert-rr [--cases <cases.json>] <rule>...\n  rerail-engine test-rr <rule or directory>... [--filter <text>] [--json]\n  rerail-engine translate-json [--display] <rule.json>... --out <dir>\nevery command: [--memory-mb <n>] (overall memory budget, default 1024) [--metal-mb <n>] (Metal budget on top of it, default half the overall)";
 
 /// One `rerail-engine` command (`args` after the program's name): its output, or the error to report. The binary
 /// runs one per process; a long-lived instance (the browser's engine: `reactor`) runs one per call, and with
@@ -1336,6 +1338,7 @@ fn command(args: &[String], kept: &mut crate::code_rule_dsl::logic::plan::corpus
         Some("facts-stamp") => facts_stamp_command(&args[1..]),
         Some("capture-tapes") => capture_tapes_command(&args[1..]),
         Some("code-counts") => code_counts_command(&args[1..]),
+        Some("node-path-table") => node_path_table_command(&args[1..]),
         Some("kind-names") => kind_names_command(&args[1..]),
         Some("run-rr") => run_rr_command(&args[1..], &with_revision),
         // Several policies over one repository, each over its own language's files (O105), and the tool calls it is
@@ -2394,6 +2397,54 @@ fn tape_files(root: &Path) -> Vec<(std::path::PathBuf, crate::code_rule_dsl::lan
             Some((p, d))
         })
         .collect()
+}
+
+/// `node-path-table <label> <root>... [--node-types <node-types.json>]... --out <file.rs>`: the node path slots of the
+/// family of dialect `label` (decision 0722, `PathTables::parents`), counted over every file of the family under the
+/// roots and completed from its grammars' node types, as the Rust its adapter includes (`Adapter::NODE_PATH`). The
+/// family's lists of statements are its tables' own (`PathTables::lists`).
+fn node_path_table_command(args: &[String]) -> Result<String, String> {
+    use crate::code_rule_dsl::facts::core::{Built, Source, build};
+    use crate::code_rule_dsl::facts::vtab::syntax::{Dialect, paths};
+    use crate::code_rule_dsl::language::{Family, base, dialect_by_label, tape_tag};
+    let usage = || "usage: rerail-engine node-path-table <label> <root>... [--node-types <node-types.json>]... --out <file.rs>".to_owned();
+    let (mut positional, mut types, mut out) = (Vec::new(), Vec::new(), None);
+    let mut rest = args.iter();
+    while let Some(a) = rest.next() {
+        match a.as_str() {
+            "--node-types" => types.push(rest.next().ok_or_else(usage)?),
+            "--out" => out = Some(rest.next().ok_or_else(usage)?),
+            _ => positional.push(a),
+        }
+    }
+    let (Some(out), [label, roots @ ..]) = (out, positional.as_slice()) else { return Err(usage()) };
+    let family = Family::of(dialect_by_label(label).ok_or_else(|| format!("no dialect is labelled {label}"))?);
+    let node_types = types.iter().map(|t| read(t).and_then(|j| serde_json::from_str(&j).map_err(|e| format!("{t}: {e}")))).collect::<Result<Vec<serde_json::Value>, String>>()?;
+    let mut census = paths::Census::default();
+    let (mut files, mut refused) = (0usize, 0usize);
+    for root in roots {
+        for (path, dialect) in tape_files(Path::new(root.as_str())) {
+            if Family::of(dialect) != family {
+                continue;
+            }
+            let Some(source) = std::fs::read(&path).ok().and_then(|s| String::from_utf8(s).ok()) else { continue };
+            let file = Source { language: crate::code_rule_dsl::language::label(dialect).unwrap_or_default().to_owned(), source: std::sync::Arc::new(crate::code_rule_dsl::tape::Text::from(source.as_str())) };
+            let Ok(Built::Facts(facts)) = build(&file) else {
+                refused += 1;
+                continue;
+            };
+            let Some(d) = tape_tag(dialect).and_then(|t| Dialect::new(t).ok()) else { continue };
+            facts.alone(|f| census.add(f, &d));
+            files += 1;
+        }
+    }
+    let header = format!("// Generated by `rerail-engine node-path-table {label}` over {files} files and {} node types (decision 0722): each parent kind's\n// node path slots, the most frequent first. Do not edit: run it again over a sample, with the grammars' node types.\n", node_types.len());
+    let dialects: Vec<_> = crate::code_rule_dsl::language::GrammarDialect::all().iter().copied().filter(|&d| Family::of(d) == family).collect();
+    let kind = |k: &str| dialects.iter().any(|d| d.kinds().kind_id(k) != 0);
+    let field = |f: &str| dialects.iter().any(|d| d.kinds().field_id(f).is_some());
+    let text = paths::table_source(&census, &node_types, base(family).path_tables().lists, &kind, &field, &header);
+    std::fs::write(out, text).map_err(|e| e.to_string())?;
+    Ok(format!("{files} files counted ({refused} refused), {} slots\n", census.slots.len()))
 }
 
 /// `code-counts <root>... --out <counts.tsv>`: how often each code of each language's format 16 table is a node's,

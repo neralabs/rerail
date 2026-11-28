@@ -57,9 +57,12 @@ fn encode_in(fr: &rerail_blocks::frame::Frame, entry: &Entry, syms: &Syms, atoms
             continue;
         }
         let Some(cols) = syms.columns(key, w).filter(|c| c.len() == w) else { continue };
+        let paths = syms.paths(key, w).filter(|c| c.len() == w).unwrap_or_else(|| vec![false; w]);
         for row in values.chunks_exact(w) {
             for (c, &v) in row.iter().enumerate() {
-                if cols[c] && !shown.contains_key(&v) {
+                // A node path's atom: its high 32 bits (decision 0722).
+                let v = if paths[c] { v >> 32 } else { v };
+                if (cols[c] || paths[c]) && !shown.contains_key(&v) {
                     let atom = Sym::try_from(v).map_err(|_| bad(format!("of {key}: symbol {v} is no atom")))?;
                     let at = atoms.with_str(atom, |s| i64::from(b.text(s))).ok_or_else(|| bad(format!("of {key}: symbol {v} is no atom of this process's")))?;
                     shown.insert(v, at);
@@ -78,10 +81,16 @@ fn encode_in(fr: &rerail_blocks::frame::Frame, entry: &Entry, syms: &Syms, atoms
             continue;
         }
         let cols = syms.columns(key, w).filter(|c| c.len() == w).unwrap_or_else(|| vec![false; w]);
-        let types: rerail_blocks::frame::InlineVec<u8, 16> = cols.iter().map(|&s| if s { col::TEXT } else { col::INT }).collect();
+        let paths = syms.paths(key, w).filter(|c| c.len() == w).unwrap_or_else(|| vec![false; w]);
+        let types: rerail_blocks::frame::InlineVec<u8, 16> = cols.iter().zip(&paths).map(|(&s, &p)| if s { col::TEXT } else if p { col::PATH } else { col::INT }).collect();
         let mut rows = fr.vec_with::<i64>(values.len());
         for row in values.chunks_exact(w) {
             for (c, &v) in row.iter().enumerate() {
+                if paths[c] {
+                    let at = *shown.get(&(v >> 32)).ok_or_else(|| bad(format!("of {key}: node path {v}'s atom is not shown")))?;
+                    rows.push(at << 32 | (v & 0xffff_ffff));
+                    continue;
+                }
                 if !cols[c] {
                     rows.push(v);
                     continue;
@@ -134,6 +143,8 @@ fn atoms_of(image: &Image, keep: &dyn Fn(&str) -> bool, atoms: &Atoms) -> StoreR
         for (c, &t) in rel.types().iter().enumerate() {
             if t == col::TEXT {
                 wanted.extend(rel.col(c).iter().map(|&v| v as u32));
+            } else if t == col::PATH {
+                wanted.extend(rel.col(c).iter().map(|&v| (v >> 32) as u32));
             }
         }
     }
@@ -177,6 +188,8 @@ pub fn hold(entries: &[&SegmentBytes], atoms: &Atoms) -> StoreResult<usize> {
             for (c, &t) in rel.types().iter().enumerate() {
                 if t == col::TEXT {
                     wanted.extend(rel.col(c).iter().map(|&v| v as u32));
+                } else if t == col::PATH {
+                    wanted.extend(rel.col(c).iter().map(|&v| (v >> 32) as u32));
                 }
             }
         }
@@ -216,7 +229,11 @@ pub fn decode(bytes: &SegmentBytes, keep: &dyn Fn(&str) -> bool, atoms: &Atoms) 
             for i in 0..rel.rows {
                 for (c, &t) in types.iter().enumerate() {
                     let v = rel.col(c)[i];
-                    values.push(if t == col::TEXT { *ids.get(&(v as u32)).ok_or_else(|| bad("names a string not interned"))? } else { v });
+                    values.push(match t {
+                        col::TEXT => *ids.get(&(v as u32)).ok_or_else(|| bad("names a string not interned"))?,
+                        col::PATH => *ids.get(&((v >> 32) as u32)).ok_or_else(|| bad("names a string not interned"))? << 32 | (v & 0xffff_ffff),
+                        _ => v,
+                    });
                 }
             }
             entry.rows.insert(key.to_owned(), (rel.width, values));

@@ -469,6 +469,36 @@ unsafe fn cache_done(t: *const u8, a0: u64, entry: u64) {
     cache::done(at_(t, a0), entry)
 }
 
+/// Id `v`'s document key (`docof`, `join_stages`' `doc_of`): its page's in directory `d`'s page table (plan "Chunk
+/// node numbers"); a negative value (no node), or no directory, its `>> 32` as the host's.
+#[inline]
+unsafe fn doc_of(d: *const ViewDir, v: i64) -> i64 {
+    if v < 0 || d.is_null() {
+        return v >> 32;
+    }
+    i64::from(ViewDir::key_of_id(d, v as u32))
+}
+
+/// The directory whose page table stage `s`'s ids are read by (`join_stages`' `ids_dir`): its view's, a placed
+/// view's (`VIEW_PLACED`: `v_dir` its `PlacedDir`) the view's own, under the spans placed beside it.
+#[inline]
+unsafe fn ids_dir(s: &Stage) -> *const ViewDir {
+    if s.r_view & VIEW_PLACED != 0 && !s.v_dir.is_null() {
+        return (*s.v_dir.cast::<PlacedDir>()).dir;
+    }
+    s.v_dir
+}
+
+/// Node `key`'s document's row in directory `d` and its local id (`join_stages`' `doc_local`), by its page: `None`
+/// for a value that is no id of the chunk, or a document `d` does not hold.
+#[inline]
+unsafe fn doc_local(d: *const ViewDir, key: i64) -> Option<(u32, u32)> {
+    if (*d).ndocs == 0 {
+        return None;
+    }
+    ViewDir::of_value(d, key)
+}
+
 // ---- Views read in place (decision 0353 step 4d). ----
 
 unsafe fn view_block(d: *const ViewDir) -> *const u8 {
@@ -648,13 +678,13 @@ impl St<'_> {
     unsafe fn colval(&self, k: u32, t: u32, r: u32) -> i64 {
         let (s, k) = (self.s, k as usize);
         let v = if s.col_kind[k] == 0 { self.rget(r, s.col_idx[k]) } else { self.slot(s.col_idx[k], t) };
-        if s.col_doc[k] != 0 { v >> 32 } else { v }
+        if s.col_doc[k] != 0 { doc_of(ids_dir(s), v) } else { v }
     }
 
     unsafe fn parval(&self, k: u32, t: u32) -> i64 {
         let (s, k) = (self.s, k as usize);
         let v = if s.par_kind[k] == 0 { s.par_const[k] } else { self.slot(s.par_slot[k], t) };
-        if s.par_doc[k] != 0 { v >> 32 } else { v }
+        if s.par_doc[k] != 0 { doc_of(ids_dir(s), v) } else { v }
     }
 
     /// Arithmetic bind `j`'s value, as the CPU's checked arithmetic gives it: none on an overflow or a zero divisor.
@@ -670,7 +700,7 @@ impl St<'_> {
             4 => x.checked_rem(y),
             5 => Some(x.max(y)),
             6 => Some(x.min(y)),
-            _ => node_order(self.s.v_dir, x, &mut { NONE }),
+            _ => node_order(self.s.v_dir, x),
         }
     }
 
@@ -792,16 +822,10 @@ impl St<'_> {
     /// A parent's children (`by_parent`) or a node's walk of `has` (`by_has`): its document, its numbered node.
     unsafe fn doc_node(&self, key: i64) -> Option<(*const ViewRow, u32)> {
         let d = self.s.v_dir;
-        if key < 0 || (*d).ndocs == 0 {
-            return None;
-        }
+        let (a, local) = doc_local(d, key)?;
         let mut f = self.found.borrow_mut();
-        let a = ViewDir::doc_of_key(d, ((key as u64) >> 32) as u32, if f.d == d { f.lo } else { NONE });
-        if a == NONE {
-            return None;
-        }
         let e = view_rows(d).add(a as usize);
-        let l = f.doc(d, a).number(key as u32);
+        let l = f.doc(d, a).number(local);
         (l != NONE).then_some((e, l))
     }
 
@@ -834,12 +858,14 @@ impl St<'_> {
         let none = Walk { lo: 0, hi: 0, how: 0, tag: 0 };
         // Its two keys, its ancestor's first (`bind_right`), as the kernels read them.
         let (n, a) = (kv[1], kv[0]);
-        if n < 0 || (n as u64) >> 32 != (a as u64) >> 32 {
+        // Both by their pages (`doc_local`), in one document.
+        let Some((an, local)) = doc_local(s.v_dir, n) else { return none };
+        let Some((e, la)) = self.doc_node(a) else { return none };
+        if view_rows(s.v_dir).add(an as usize) != e {
             return none;
         }
-        let Some((e, la)) = self.doc_node(a) else { return none };
         let d = doc(s.v_dir, e);
-        let ln = d.number(n as u32);
+        let ln = d.number(local);
         if ln == NONE || ln <= la || ln >= d.end(la) {
             return none;
         }
@@ -1409,20 +1435,16 @@ unsafe fn sym_text(d: *const u8, v: i64, unheld: &mut bool) -> (*const u8, u32) 
     (atoms_at(d, 0, v as u32) as *const u8, n)
 }
 
-/// Node `v`'s preorder key (`@rr_node_order`, `ARITH_NODE_ORDER`): its document by key in the stage's node view `d`
-/// (`memo`: the document found last, tried first), its numbered node's order there; `None` where the view numbers no
-/// node `v`, as the host's read (`LongTexts::order_any`) has none.
+/// Node `v`'s preorder key (`@rr_node_order`, `ARITH_NODE_ORDER`): its document and local id in the stage's node view
+/// `d` by its page (`doc_local`), its numbered node's order there; `None` where the view numbers no node `v`, as the
+/// host's read (`LongTexts::order_any`) has none.
 #[inline]
-pub(super) unsafe fn node_order(d: *const ViewDir, v: i64, memo: &mut u32) -> Option<i64> {
-    if d.is_null() || v < 0 {
+pub(super) unsafe fn node_order(d: *const ViewDir, v: i64) -> Option<i64> {
+    if d.is_null() {
         return None;
     }
-    let m = ViewDir::doc_of_key(d, ((v as u64) >> 32) as u32, *memo);
-    if m == rerail_reads::views::NO_DOC {
-        return None;
-    }
-    *memo = m;
-    reads::node_order(d, m, v as u32).map(|k| k as i64)
+    let (m, local) = doc_local(d, v)?;
+    reads::node_order(d, m, local).map(|k| k as i64)
 }
 
 /// Why a node's text is none (`node_txt`).
@@ -1435,20 +1457,17 @@ enum NoText {
 }
 
 /// Node `key`'s text, read where its document's source lies (`join_stages`' `node_txt`, decision 0287 §2): its document
-/// by the directory's search on its key (`dir_doc_of_key`), its numbered node (`number`), its bytes' range in its own
+/// and local id by its page (`doc_local`), its numbered node (`number`), its bytes' range in its own
 /// source (`text_span`), read at the source's home. The stage's `node` view binds the directory (`Stage::v_dir`). With
 /// `lines` (`rr_node_text_any`'s), a document's `source` span or a `src_line` span (decision 0353 row 7) is its line's
 /// bytes there (`line_span`), less its terminator where it has one (`line_terminated`, `lines::length_ending_at`).
 unsafe fn node_txt(s: &Stage, key: i64, lines: bool) -> Result<Txt, NoText> {
     let d = s.v_dir;
-    if key < 0 || d.is_null() || (*d).ndocs == 0 {
+    if d.is_null() {
         return Err(NoText::Unheld);
     }
-    let m = ViewDir::doc_of_key(d, ((key as u64) >> 32) as u32, NONE);
-    if m == NONE {
-        return Err(NoText::Unheld);
-    }
-    match reads::node_span(d, m, key as u64 as u32) {
+    let Some((m, local)) = doc_local(d, key) else { return Err(NoText::Unheld) };
+    match reads::node_span(d, m, local) {
         None => Err(NoText::Unheld),
         Some((_, _, true)) if !lines => Err(NoText::Line),
         Some((p, n, _)) => Ok(Txt::raw(p, n)),
@@ -2740,20 +2759,16 @@ unsafe fn fill_i64(dst: *mut i64, n: u32, v: i64) {
     }
 }
 
-/// `n` values from `src` to `dst`: one copy, or each shifted to its document (`doc`: its high word), 4 a step.
-unsafe fn copy_col(src: *const i64, dst: *mut i64, n: u32, doc: bool) {
-    if !doc {
-        core::ptr::copy(src, dst, n as usize);
-        return;
+/// `n` ids from `src` to `dst`, each as its document's key (`doc_of`: a load of its page).
+unsafe fn copy_docs(d: *const ViewDir, src: *const i64, dst: *mut i64, n: u32) {
+    for i in 0..n as usize {
+        *dst.add(i) = doc_of(d, *src.add(i));
     }
-    let mut i = 0;
-    while i + 4 <= n as usize {
-        st(dst.add(i), ld::<i64, 4>(src.add(i)) >> i64x4::splat(32));
-        i += 4;
-    }
-    for i in i..n as usize {
-        *dst.add(i) = *src.add(i) >> 32;
-    }
+}
+
+/// `n` values from `src` to `dst`: one copy.
+unsafe fn copy_col(src: *const i64, dst: *mut i64, n: u32) {
+    core::ptr::copy(src, dst, n as usize);
 }
 
 /// Row `t`'s place in column `c` of a table of columns `stride` rows apart.
@@ -2922,7 +2937,7 @@ unsafe fn stage_scatter_range(st: &St, j: &Job, b: &Bufs, t0: u32, t1: u32) {
     kept_runs(offsets, o0, t0, t1.min(n), |t, a, len| {
         let len = below(a, len, s.cap_out);
         for k in 0..s.nslots {
-            copy_col(colp(st.l, k, s.cap_in, t), colp_mut(o, k, s.cap_out, a), len, false);
+            copy_col(colp(st.l, k, s.cap_in, t), colp_mut(o, k, s.cap_out, a), len);
         }
         for i in 0..len {
             st.write_binds(t + i, 0, o, a + i);
@@ -2942,10 +2957,10 @@ unsafe fn row_scatter_range(st: &St, j: &Job, b: &Bufs, t0: u32, t1: u32) {
     kept_runs(offsets, o0, t0, t1.min(n), |t, a, len| {
         let len = below(a, len, s.cap_out);
         for k in 0..s.nslots {
-            copy_col(colp(st.l, k, s.cap_in, t), colp_mut(o, k, s.cap_out, a), len, false);
+            copy_col(colp(st.l, k, s.cap_in, t), colp_mut(o, k, s.cap_out, a), len);
         }
         if op != 3 && op != 5 {
-            copy_col(b.v.add(t as usize), colp_mut(o, s.bind_slot[0], s.cap_out, a), len, false);
+            copy_col(b.v.add(t as usize), colp_mut(o, s.bind_slot[0], s.cap_out, a), len);
         }
     });
 }
@@ -3124,7 +3139,7 @@ unsafe fn dedup_scatter_range(t: *const i64, totals: *mut u32, offsets: *const u
     kept_runs(offsets, o0, x0, x1.min(n), |x, a, len| {
         let len = below(a, len, d.ocap);
         for c in 0..d.ncols.min(16) {
-            copy_col(colp(t, d.cols[c as usize], d.cap, x), colp_mut(o, c, d.ocap, a), len, false);
+            copy_col(colp(t, d.cols[c as usize], d.cap, x), colp_mut(o, c, d.ocap, a), len);
         }
         if d.seen == 1 {
             dedup_lanes::dedup_place_lanes::<{ stage_lanes::LANES }>(t, hb, d, x, len, had + a);
@@ -3132,7 +3147,7 @@ unsafe fn dedup_scatter_range(t: *const i64, totals: *mut u32, offsets: *const u
     });
 }
 
-/// A stage's map of its bindings' columns: each bind's column over the range, a document's high words 2 a step.
+/// A stage's map of its bindings' columns: each bind's column over the range, an id's document its page's key.
 unsafe fn stage_map_range(s: &Stage, bb: *mut i64, totals: *const u32, t0: u32, t1: u32) {
     let t1 = t1.min((*totals.add(s.in_slot as usize)).min(s.cap_in));
     if t0 >= t1 {
@@ -3145,12 +3160,18 @@ unsafe fn stage_map_range(s: &Stage, bb: *mut i64, totals: *const u32, t0: u32, 
         if s.bind_kind[b] == 1 {
             if s.par_kind[k] == 0 {
                 let v = s.par_const[k];
-                fill_i64(dst, cnt, if s.par_doc[k] != 0 { v >> 32 } else { v });
+                fill_i64(dst, cnt, if s.par_doc[k] != 0 { doc_of(ids_dir(s), v) } else { v });
+            } else if s.par_doc[k] != 0 {
+                copy_docs(ids_dir(s), colp(bb, s.par_slot[k], s.cap_in, t0), dst, cnt);
             } else {
-                copy_col(colp(bb, s.par_slot[k], s.cap_in, t0), dst, cnt, s.par_doc[k] != 0);
+                copy_col(colp(bb, s.par_slot[k], s.cap_in, t0), dst, cnt);
             }
         } else {
-            copy_col(colp(bb, s.col_idx[k], s.cap_in, t0), dst, cnt, s.col_doc[k] != 0);
+            if s.col_doc[k] != 0 {
+                copy_docs(ids_dir(s), colp(bb, s.col_idx[k], s.cap_in, t0), dst, cnt);
+            } else {
+                copy_col(colp(bb, s.col_idx[k], s.cap_in, t0), dst, cnt);
+            }
         }
     }
 }
@@ -3177,7 +3198,7 @@ unsafe fn rows_copy_range(src: *const u8, rf: *const u8, dst: *mut u8, totals: *
         let d = colp_mut(dst as *mut i64, k, c.dst_stride, a);
         match c.src[k as usize] {
             NONE => fill_i64(d, t1 - t0, c.konst[k as usize]),
-            from => copy_col(colp(src as *const i64, from, c.src_stride, t0), d, t1 - t0, false),
+            from => copy_col(colp(src as *const i64, from, c.src_stride, t0), d, t1 - t0),
         }
     }
 }
@@ -4528,6 +4549,39 @@ pub unsafe fn join_run(argv: *const *const u8, l: &Launch) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// A docof (`par_doc`) on a stage that probes a placed view (`VIEW_PLACED`): its id's document key, by the page
+    /// table of the view's own directory, which its `PlacedDir` names. Read as a directory itself, the `PlacedDir`
+    /// gave a page table at an address of nothing (the data layer's segfault of 2026-11-27, in `ViewDir::key_of_id`).
+    /// And of a stage on the view itself, the same key.
+    #[test]
+    fn a_docof_on_a_placed_view_reads_its_views_page_table() {
+        use rerail_reads::views::IdPages;
+        let dir_bytes = core::mem::size_of::<ViewDir>();
+        let mut block = vec![0u64; (dir_bytes + IdPages::BYTES).div_ceil(8)];
+        let base = block.as_mut_ptr().cast::<u8>();
+        // SAFETY: the block holds the directory at 0 and its table past it; the page is taken before its id is read.
+        let id = unsafe {
+            let d = base.cast::<ViewDir>();
+            (*d).at = 0;
+            (*d).pages = dir_bytes as u64;
+            (*d).ndocs = 1;
+            IdPages::take_pages(base.add(dir_bytes).cast::<IdPages>(), 0, 0, 42, 0, 3).expect("a page")
+        };
+        let placed = PlacedDir { dir: base.cast::<ViewDir>(), tail: core::ptr::null(), at: 0, rows: 0, pad: 0 };
+        // SAFETY: a plain record of the source's layout, all zeros a valid value.
+        let mut stage: Stage = unsafe { core::mem::zeroed() };
+        stage.par_kind[0] = 0;
+        stage.par_const[0] = i64::from(id) + 2;
+        stage.par_doc[0] = 1;
+        for (kind, dir) in [(1 | VIEW_PLACED, (&raw const placed).cast::<ViewDir>()), (1, base.cast::<ViewDir>().cast_const())] {
+            stage.r_view = kind;
+            stage.v_dir = dir;
+            // SAFETY: the stage's directory is alive, its id's page taken.
+            let key = unsafe { St::new(&stage, core::ptr::null(), core::ptr::null(), core::ptr::null()).parval(0, 0) };
+            assert_eq!(key, 42, "view kind {kind:#x}: the id's document key");
+        }
+    }
 
     /// What no count writes: the next job's counts, which follow a job's (`level_sizes`: a job's counts are its rows'
     /// and one, end to end in the level's scan).

@@ -207,8 +207,29 @@ pub const LONG_TEXT_NODES: &str = "rr_long_text_node";
 /// the run's, so `functions::eval` gives none. `rr_node_order` is a node's preorder key, `node_order`'s `k`: what a
 /// comparison of two nodes reads (`lowering_tail::OrderNodes`), with no join. `name`, `comment`, `strprefix`, `op_at`
 /// and T's `text`, `intval` and `op` are core.rerail's and T's per-node values, read where a rule binds the node
-/// (decision 0353 step 3).
-pub const NODE_READS: [&str; 12] = ["rr_node_text", "rr_node_text_any", "rr_node_value", "rr_node_str", "rr_node_name", "rr_node_comment", "rr_node_strprefix", "rr_node_op_at", "rr_node_intval", "rr_node_op_t", "rr_node_t_text", "rr_node_order"];
+/// (decision 0353 step 3). Node paths are decision 0722's.
+pub const NODE_READS: [&str; 20] = [
+    "rr_node_text",
+    "rr_node_text_any",
+    "rr_node_value",
+    "rr_node_str",
+    "rr_node_name",
+    "rr_node_comment",
+    "rr_node_strprefix",
+    "rr_node_op_at",
+    "rr_node_intval",
+    "rr_node_op_t",
+    "rr_node_t_text",
+    "rr_node_order",
+    "tree_digest_hex",
+    "text_len",
+    "indent",
+    "node_path",
+    "path_node",
+    "path_unit",
+    "path_spelling",
+    "path_file",
+];
 
 /// A row a producer hands a relation (`Relation::from_rows`, `staged`): its values on the stack, as the relation
 /// copies them into its block (decision 0687); a row past 8 columns goes on the heap.
@@ -283,6 +304,9 @@ pub trait Source: Send + Sync {
     /// The syntax batch it reads (the syntax table's `Batch`, rerail-facts'), which its readers take as their own
     /// type (`syntax::PythonBatch`).
     fn syntax_batch(&self) -> Option<Arc<dyn std::any::Any + Send + Sync>> { None }
+    /// The numbering of the chunk whose nodes it holds (plan "Chunk node numbers"): a chunk's views name it, and a
+    /// connection that binds one reads its ids by it (`numbering::of`).
+    fn numbering(&self) -> Option<Arc<dyn super::numbering::Numbering>> { None }
     /// Node `n`'s text, value or order as the function `name` reads it (`NODE_READS`), its further arguments `more`
     /// (`op_at`'s place), for a binding of `LONG_TEXT_NODES` (the syntax table's `LongTexts`); none for another source
     /// or function.
@@ -665,6 +689,12 @@ pub trait Source: Send + Sync {
     fn keys_documents(&self, _column: usize) -> bool {
         false
     }
+    /// Whether `column` may hold node ids, whose high bits name their document (an admitted value's rows are found by
+    /// them, `values::Layered`). A source that knows its columns' kinds says which hold none (`node`'s kind, `field`'s
+    /// name, `text`'s atom).
+    fn keys_nodes(&self, _column: usize) -> bool {
+        true
+    }
     /// Whether every row is of the source's own documents: each node id it holds, and each document key, one of
     /// theirs (a view of a batch's tapes), never a host's that a place names. An admitted value's part of such a
     /// relation is found by its own documents' keys alone (`values::Values::add`).
@@ -860,6 +890,9 @@ impl Modules {
         Ok(())
     }
     fn bind_inner(&self, db:&Connection, name:&str, source:Arc<dyn Source>, restored:bool)->Result<()> {
+        if let Some(n) = source.numbering() {
+            super::numbering::set(db, n);
+        }
         let mut bindings = self.bindings.borrow_mut();
         if let Some(binding) = bindings.get(name) {
             return binding.set(source);

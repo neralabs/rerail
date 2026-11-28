@@ -7523,7 +7523,8 @@ fn run_within(program: &body::Placed, db: &Connection, inputs: Inputs, lowering:
             .iter()
             .enumerate()
             .map(|(i, t)| match *t {
-                "node" | "int" | "flat" | "min" | "max" => Ok(format!("c{i} INTEGER")),
+                // A node path (decision 0722) is a 64-bit word.
+                "node" | "int" | "flat" | "min" | "max" | "node_path" => Ok(format!("c{i} INTEGER")),
                 "sym" if atoms => Ok(format!("c{i} INTEGER")),
                 "sym" => Ok(format!("c{i} TEXT")),
                 _ => Err(Error::Plan(format!("{rel}: no SQL type for {t}"))),
@@ -9000,9 +9001,9 @@ fn run_within(program: &body::Placed, db: &Connection, inputs: Inputs, lowering:
     // and documents' inputs, in SQL.
     let native_out: BTreeSet<String> = if atoms {
         // `finding` too, when the nodes and documents it is decoded with are bound in place (`finding_rows`).
-        // Only the findings form (`finding(key, n)`) is decoded with them: a `finding` of another shape is an output
-        // like any other.
-        let findings_form = |r: &str| r == "finding" && f0.columns(r).is_none_or(|c| c.len() == 2);
+        // Only the findings form (`finding(key, n)`, `n` a node) is decoded with them: a `finding` of another shape, or
+        // placed by a symbol (decision 0727), is an output like any other.
+        let findings_form = |r: &str| r == "finding" && f0.columns(r).is_none_or(|c| c.len() == 2 && c[1].1 == "node");
         let in_place = |r: &str| !findings_form(r) || ["node", "doc"].iter().all(|t| crate::code_rule_dsl::facts::vtab::bound_source(db, t).is_some());
         written.iter().filter(|r| in_place(r) && run.native_rels.contains(*r) && !run.inputs.contains(r.as_str()) && super::native::component::held(db, r).is_some()).cloned().collect()
     } else {
@@ -9561,10 +9562,11 @@ fn decoded_outputs_within(
     let (mut outputs, mut all_nodes) = (BTreeMap::new(), BTreeMap::new());
     let text = |e: &str| if atoms { format!("sym_text({e})") } else { e.to_owned() };
     for &rel in outputs_of.iter().filter(|r| !kept.contains(**r)) {
-        // The findings form `finding(key, n)` is written as `finding_at` (key, path, start); a `finding` of another
-        // shape (a data-layer program's `finding(clause, code, n)`) is an output like any other.
+        // The findings form `finding(key, n)`, `n` a node, is written as `finding_at` (key, path, start); a `finding` of
+        // another shape (a data-layer program's `finding(clause, code, n)`, or one placed by a symbol, `n: symbol`, as
+        // a cross-file part's is: decision 0727) is an output like any other.
         let declared = types(rel);
-        let findings_form = rel == "finding" && declared.as_ref().is_none_or(|t| t.len() == 2);
+        let findings_form = rel == "finding" && declared.as_ref().is_none_or(|t| t.len() == 2 && t[1] == "node");
         // Each column's decoding: symbols as text (names in SQL, kinds and fields from the dialect's grammar).
         let domains: Vec<lower::Domain> = match lowered {
             Some(l) if !findings_form => l.domains.get(rel).cloned().ok_or_else(|| Error::Plan(format!("the output {rel} has no columns' domains")))?,
@@ -9580,7 +9582,12 @@ fn decoded_outputs_within(
             let cols: Vec<String> = domains
                 .iter()
                 .enumerate()
-                .map(|(i, d)| if *d == lower::Domain::Name { text(&format!("c{i}")) } else { format!("c{i}") })
+                .map(|(i, d)| match d {
+                    lower::Domain::Name => text(&format!("c{i}")),
+                    // A node path's text (`path_tables::path_text`): its base atom's text, a tab, `/`, its steps.
+                    lower::Domain::Path => format!("{} || char(9) || '/' || printf('%x', c{i} & 4294967295)", text(&format!("(c{i} >> 32)"))),
+                    _ => format!("c{i}"),
+                })
                 .collect();
             format!("SELECT {} FROM {}", cols.join(", "), crate::code_rule_dsl::logic::sql::ident(rel))
         } else {
@@ -9615,20 +9622,28 @@ fn decoded_outputs_within(
                 .iter()
                 .map(|d| match d {
                     lower::Domain::Node => output::col::NODE,
-                    lower::Domain::Name | lower::Domain::Kind | lower::Domain::Field => output::col::TEXT,
+                    lower::Domain::Name | lower::Domain::Kind | lower::Domain::Field | lower::Domain::Path => output::col::TEXT,
                     _ => output::col::INT,
                 })
                 .collect()
         } else {
             declared
                 .as_ref()
-                .map(|cols| cols.iter().map(|t| match t.as_str() { "node" => output::col::NODE, "number" | "int" | "unsigned" => output::col::INT, _ => output::col::TEXT }).collect())
+                .map(|cols| cols.iter().map(|t| match t.as_str() { "node" => output::col::NODE, "number" | "int" | "unsigned" | "node_path" => output::col::INT, _ => output::col::TEXT }).collect())
                 .unwrap_or_default()
         };
         let text_domain = |i: usize| types.get(i).is_none_or(|&t| t == output::col::TEXT);
+        // A node leaves its chunk here (plan "Chunk node numbers", step 3): an output's node column holds it as its
+        // document's key and its low bits in the document's own numbering (`Numbering::located`), what every reader
+        // of an output reads, never the chunk's id.
+        let numbering = crate::code_rule_dsl::facts::numbering::of(db);
+        let located = |i: usize, v: i64| match (&numbering, types.get(i)) {
+            (Some(n), Some(&output::col::NODE)) => n.located(v),
+            _ => v,
+        };
         let cell = |i: usize, v: SqlValue| -> Result<Shown> {
             Ok(match v {
-                SqlValue::Integer(v) => decode(i, v).map_or(Shown::Int(v), Shown::Text),
+                SqlValue::Integer(v) => decode(i, v).map_or_else(|| Shown::Int(located(i, v)), Shown::Text),
                 SqlValue::Null if text_domain(i) => Shown::Text("None".to_owned()),
                 SqlValue::Null => Shown::Int(output::NULL),
                 SqlValue::Text(s) if text_domain(i) => Shown::Text(s),
@@ -9636,7 +9651,14 @@ fn decoded_outputs_within(
                 other => return Err(Error::Plan(format!("{rel}: {other:?} in integer column {i}"))),
             })
         };
-        let text_cols: Vec<bool> = domains.iter().map(|d| *d == lower::Domain::Name).collect();
+        let text_cols: Vec<super::native::component::Shown> = domains
+            .iter()
+            .map(|d| match d {
+                lower::Domain::Name => super::native::component::Shown::Text,
+                lower::Domain::Path => super::native::component::Shown::Path,
+                _ => super::native::component::Shown::Int,
+            })
+            .collect();
         let held = if native.contains(rel) && findings_form {
             super::native::component::finding_rows(db)?.map(|rows| rows.into_iter().map(|(c, p, at)| vec![SqlValue::Text(c), SqlValue::Text(p), SqlValue::Integer(at)]).collect())
         } else if native.contains(rel) {

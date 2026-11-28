@@ -71,7 +71,7 @@ import_stmt(i) :- kind(i, k), (k = "import_statement" ; k = "import_from_stateme
 // from the importer's package. e.g. in package "app.web", `from ..db import x` has base "app".
 .decl rel_base(i: node, p: symbol)
 rel_base(i, @pkg_up(p, k)) :- kind(i, "import_from_statement"), field(i, "module_name", mn),
-    kind(mn, "relative_import"), child(mn, pre, 0), text(pre, dots), k = strlen(dots) - 1, docof(i, d), pkg(d, p).
+    kind(mn, "relative_import"), child(mn, pre, 0), k = @text_len(pre) - 1, docof(i, d), pkg(d, p).
 // module_text(i, m): the module statement i imports from (or imports), with relative imports resolved.
 // Rule 1: whatever impmod resolved. Rule 2: `from .. import x`, the base package itself. Rule 3: `from ..m import x`,
 // the base plus m. Rule 4: `import a.b` / `import a.b as c`, the dotted name "a.b".

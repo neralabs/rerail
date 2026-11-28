@@ -1151,7 +1151,7 @@ const FILTER_RULES: usize = 2;
 
 /// A base relation a negation may test inside a filter: the functional lookups' relations.
 fn base_lookup(rel: &str) -> bool {
-    matches!(rel, "docof" | "visit_index" | "node_order" | "kind" | "text" | "name" | "line" | "op" | "node" | "field" | "child")
+    matches!(crate::code_rule_dsl::facts::core::counterpart(rel), "docof" | "visit_index" | "node_order" | "kind" | "text" | "name" | "line" | "op" | "node" | "field" | "child")
 }
 
 /// A literal an inlined filter writes: a literal placed, or `l = r`, the reader's term `l` (of `reader`) and the
@@ -1198,7 +1198,7 @@ impl ProgramPass for InlineFilters {
                 Some(TermRef::Wild) | None => false,
                 Some(_) => true,
             };
-            match rel_of(a) {
+            match crate::code_rule_dsl::facts::core::counterpart(rel_of(a)) {
                 "docof" | "visit_index" | "node_order" | "kind" | "text" | "name" | "line" | "op" => on(0),
                 "node" => on(1),
                 "field" => on(2),
@@ -1892,7 +1892,7 @@ impl RulePass for MergeKeyed {
 }
 
 fn keyed_rel(v: &Version, a: AtomRef<'_>) -> Option<usize> {
-    KEYS.iter().find(|(rel, n, _)| *rel == v.rel_name(a.rel()) && *n == a.arity()).map(|&(_, _, k)| k)
+    KEYS.iter().find(|(rel, n, _)| *rel == crate::code_rule_dsl::facts::core::counterpart(v.rel_name(a.rel())) && *n == a.arity()).map(|&(_, _, k)| k)
 }
 
 /// Term `t` of rule `r` to write, each variable as `to` maps it.

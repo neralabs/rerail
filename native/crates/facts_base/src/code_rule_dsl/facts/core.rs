@@ -1273,8 +1273,60 @@ pub fn input_column_name(rel: &str, name: &str) -> Option<&'static str> {
     input_columns(rel)?.get(i).copied()
 }
 
+/// The types a place read of core.rerail reads (decision 0724 §3): each its own, and nothing converts between them.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub enum PlaceType {
+    Node,
+    Line,
+    Match,
+    Token,
+}
+
+/// core.rerail's reads of a line, a match and a token, each a base relation of its own (decision 0724 step 3), and the
+/// node read it is the counterpart of: a node's are `text`, `docof`, `line`, `end_line`, `col`, `token_before` and
+/// `token_after`, read over nodes alone. A pass that knows a node read by name knows each of these by its counterpart
+/// (`counterpart`), and reads the one of its value's type (`typed_read`).
+pub const TYPED_READS: [(&str, PlaceType, &str); 15] = [
+    ("line_text", PlaceType::Line, "text"),
+    ("line_document", PlaceType::Line, "docof"),
+    ("line_number", PlaceType::Line, "line"),
+    ("match_text", PlaceType::Match, "text"),
+    ("match_document", PlaceType::Match, "docof"),
+    ("match_line_number", PlaceType::Match, "line"),
+    ("match_end_line_number", PlaceType::Match, "end_line"),
+    ("match_start_column", PlaceType::Match, "col"),
+    ("token_text", PlaceType::Token, "text"),
+    ("token_document", PlaceType::Token, "docof"),
+    ("token_line_number", PlaceType::Token, "line"),
+    ("token_end_line_number", PlaceType::Token, "end_line"),
+    ("token_start_column", PlaceType::Token, "col"),
+    ("token_previous", PlaceType::Token, "token_before"),
+    ("token_next", PlaceType::Token, "token_after"),
+];
+
+/// Typed read `rel`'s type and its node counterpart (`TYPED_READS`).
+pub fn typed(rel: &str) -> Option<(PlaceType, &'static str)> {
+    TYPED_READS.iter().find(|(r, _, _)| *r == rel).map(|&(_, t, n)| (t, n))
+}
+
+/// The node read `rel` is the counterpart of: itself where it is no typed read.
+pub fn counterpart(rel: &str) -> &str {
+    typed(rel).map_or(rel, |(_, n)| n)
+}
+
+/// The read of type `ty` whose node counterpart is `node_read`; `None` where that type has none (a line's column).
+pub fn typed_read(ty: PlaceType, node_read: &str) -> Option<&'static str> {
+    if ty == PlaceType::Node {
+        return ["text", "docof", "line", "end_line", "col", "token_before", "token_after"].into_iter().find(|r| *r == node_read);
+    }
+    TYPED_READS.iter().find(|(_, t, n)| *t == ty && *n == node_read).map(|&(r, _, _)| r)
+}
+
 /// The columns of the planner's base relations (T's input schema). Others are `c0`, `c1`, ….
 pub fn input_columns(rel: &str) -> Option<&'static [&'static str]> {
+    if let Some((_, node)) = typed(rel) {
+        return input_columns(node);
+    }
     Some(match rel {
         "node" => &["d", "n", "kind", "start", "end_"],
         "line" => &["n", "l"],

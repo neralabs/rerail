@@ -208,6 +208,11 @@ conform_impl(i, m) :- edge(i, d, m), prefix("impl.", m), path_part(d, "conform")
 .input layer_group(IO=file, filename="api/LAYER_GROUPS.yaml")
 .input group_allows(IO=file, filename="api/LAYER_GROUPS.yaml")
 
+// group_skipped(d): a directory of file d's path, or its name, is one group_skip skips. Of d's own document, so the
+// finding is made in the importing file (decision 0727).
+.decl group_skipped(d: number)
+group_skipped(d) :- doc(d, _, _), path_part(d, p), group_skip(p).
+
 .violation group_dependency(at: node, src: symbol, dst: symbol, module: symbol)
     "Group violation: {src} imports from {dst}, which is not in its declared dependencies: {module}"
 // Python linter: _check_group_violation.
@@ -215,7 +220,7 @@ conform_impl(i, m) :- edge(i, d, m), prefix("impl.", m), path_part(d, "conform")
 //   or the special directories `types` / `row_id`. Leftmost match = first such component, as the Python linter loops.
 // b: the imported module's layer: the first dotted segment of the same shape.
 // Then both layers must be in a known group (layer_group); unknown layers give no row, as in the Python linter.
-group_dependency(i, g, h, m) :- edge(i, d, m), count : { path_part(d, p), group_skip(p) } = 0,
+group_dependency(i, g, h, m) :- edge(i, d, m), !group_skipped(d),
     doc(d, path, _), match("(?:|.*?/)(?<a>l\\d{4}[^/]*_[^/]*|types|row_id)(?:/.*)?", path),
     match("(?:|.*?\\.)(?<b>l\\d{4}[^.]*_[^.]*).*", m),
     layer_group(a, g), layer_group(b, h), g != h, !group_allows(g, h).

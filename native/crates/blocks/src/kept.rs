@@ -556,7 +556,8 @@ impl KeptW {
             return Err(room());
         }
         // The greatest atom, as packing found each column's greatest value.
-        let atoms_max = meta.types.iter().enumerate().filter(|&(c, &t)| t == b's' && c < rows.arity()).filter_map(|(c, _)| rows.col_max(c)).max();
+        // A node path's (`p`, decision 0722) is its high 32 bits.
+        let atoms_max = meta.types.iter().enumerate().filter(|&(c, &t)| matches!(t, b's' | b'p') && c < rows.arity()).filter_map(|(c, &t)| rows.col_max(c).map(|m| if t == b'p' { m >> 32 } else { m })).max();
         let (packed, stats) = rows.place_in(&self.block);
         let at = self.block.offset_of(std::ptr::from_ref(packed));
         self.pend(meta, ROWS, (at, self.block.used() - at), atoms_max.unwrap_or(NO_ATOMS));

@@ -853,8 +853,9 @@ impl CoreRows {
     /// `text` rows made beside these: the text of `Extra`'s spans (`granules::ExtraSpan`), which `core_rr`'s `text` has not.
     /// The literal values (n, v, v's type) of the nodes of documents `docs`: where `Extra`'s W's values are bound, a
     /// document W reads no values of (`Dialect::values`) has these.
-    pub(super) fn values_of<'a>(&'a self, docs: &'a HashSet<u32>) -> impl Iterator<Item = [i64; 3]> + 'a {
-        self.value.iter().filter(move |r| docs.contains(&rerail_blocks::located::Located(r[0]).key())).copied()
+    /// `key_of`: a node's document's key, by its page (plan "Chunk node numbers").
+    pub(super) fn values_of<'a>(&'a self, docs: &'a HashSet<u32>, key_of: impl Fn(i64) -> Option<u32> + 'a) -> impl Iterator<Item = [i64; 3]> + 'a {
+        self.value.iter().filter(move |r| key_of(r[0]).is_some_and(|k| docs.contains(&k))).copied()
     }
 
     /// The relations, the strings' indexes made atoms by `atom`.
@@ -1019,6 +1020,12 @@ pub fn digests(f: FactsIn<'_>, dialect: &Dialect, trees: bool, units: bool) -> (
 /// A digest's symbol: its 32 bytes in hex.
 pub fn hex(h: &[u8; 32]) -> String {
     hex_into(h, &mut [0; 64]).to_owned()
+}
+
+/// A digest's 64-bit value, `@tree_digest`'s: its first 8 bytes, big-endian, so the number's 16 hex digits are the
+/// first of its 64 (`@tree_digest_hex`).
+pub fn digest_value(h: &[u8; 32]) -> i64 {
+    i64::from_be_bytes(h[..8].try_into().expect("8 bytes"))
 }
 
 /// A digest's symbol written into `out`, no allocation: its 32 bytes in hex.

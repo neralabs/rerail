@@ -16,6 +16,7 @@ pub mod whole;
 pub mod lowering_tail;
 pub mod demand;
 pub mod magic;
+pub mod asks;
 pub mod callable;
 pub mod prune;
 pub mod rank;
@@ -429,7 +430,7 @@ pub fn run(version: Arc<Version>, factorize: bool, last: Option<Run>, bound: imp
     for line in &demand.lines {
         crate::code_rule_dsl::logic::profile::decision("export demand", || line.clone());
     }
-    let located = crate::code_rule_dsl::typing::file_local::locate_all(&mut p);
+    let located = crate::code_rule_dsl::typing::file_local::locate_all(&mut p, &mut pushed);
     let mut merge = MergeIdentical::default();
     let mut repeats = DropRepeated::default();
     if std::env::var("RERAIL_SAME").is_ok_and(|v| v == "off") {

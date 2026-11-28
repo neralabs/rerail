@@ -183,3 +183,21 @@ fn a_run_names_the_relations_it_could_call() {
     assert!(lines.iter().any(|l| l.contains("same_globals bbbf by file (")), "{lines:?}");
     let _ = std::fs::remove_dir_all(&dir);
 }
+
+/// The asks of a program's exported relations are recorded reader by reader (`RERAIL_ASKS`): `unsafe_pair` reads
+/// `same_globals` with its file and both functions bound (`bbbf`), so its keys and rows used are two relations
+/// named for that shape, and outputs; `runs_in` reads `calls_in` with nothing bound.
+#[test]
+fn the_asks_of_exported_relations_are_recorded_by_shape() {
+    use crate::code_rule_dsl::logic::plan::corpus::preparation::asks;
+    let v = crate::code_rule_dsl::logic::rr::parse_version(&whole()).unwrap();
+    let pre = crate::code_rule_dsl::typing::file_local::programs_of(v.clone()).unwrap();
+    let out = asks::recorded(&v, &pre.file_local).unwrap().expect("asks recorded");
+    let outputs: Vec<String> = out.outputs().map(|o| out.text(o).to_owned()).collect();
+    let named = |prefix: &str, tail: &str| outputs.iter().any(|o| o.starts_with(prefix) && o.ends_with(tail));
+    assert!(named(asks::KEY, "__same_globals__unsafe_pair__bbbf"), "{outputs:?}");
+    assert!(named(asks::USED, "__same_globals__unsafe_pair__bbbf"), "{outputs:?}");
+    assert!(named(asks::USED, "__calls_in__runs_in__fff"), "{outputs:?}");
+    assert!(!named(asks::KEY, "__calls_in__runs_in__fff"), "no keys where none is bound: {outputs:?}");
+    assert!(outputs.iter().any(|o| o == "unsafe_pair"), "the program's own outputs stay");
+}

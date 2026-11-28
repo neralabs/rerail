@@ -21,8 +21,13 @@ pub(crate) const NODE_TYPES: [&str; 2] = ["node", "place"];
 const VALUES_OF_A_NODE: [&str; 6] = ["doc", "tree_digest", "unparse", "py_unparse", "ast_dump", "place"];
 
 fn value_of_a_node(f: &str) -> bool {
-    VALUES_OF_A_NODE.contains(&f) || crate::code_rule_dsl::facts::vtab::syntax::NODE_READS.contains(&f)
+    f != MAKES_A_NODE && (VALUES_OF_A_NODE.contains(&f) || crate::code_rule_dsl::facts::vtab::syntax::NODE_READS.contains(&f))
 }
+
+/// The function whose value is a node whatever its arguments: `@path_node(p)`, the node a node path names (decision
+/// 0722). A node path may cross (0677 as amended: `@node_path(n)` is one of `NODE_READS`, a value of the node); the node
+/// it decodes to is an id again.
+const MAKES_A_NODE: &str = "path_node";
 
 /// Which columns of each relation hold a node id: its declared `node` and `loc` columns, and each column a rule
 /// fills from a node (a variable bound at such a column, by `nearest` or an `ast` pattern, a function of one but
@@ -123,7 +128,12 @@ impl<'v> NodeColumns<'v> {
                                 && !flows.slots[s.index()]
                                 && term_flows(v, from, &flows.slots)
                             {
-                                flows.mark(s, || "computes a value from a node".to_owned());
+                                if decodes(v, from) {
+                                    // The node enters here: a path's node is an id of its file's again.
+                                    flows.enter(s, || "decodes a node path to its node (`@path_node`)".to_owned());
+                                } else {
+                                    flows.mark(s, || "computes a value from a node".to_owned());
+                                }
                                 changed = true;
                             }
                         }
@@ -183,9 +193,18 @@ pub fn regex_group_only(matcher: &str, name: &str) -> bool {
 }
 
 /// Whether term `t` holds a node id: a variable that does, or a function of one but `VALUES_OF_A_NODE`.
+/// Whether term `t` decodes a node path to a node (`MAKES_A_NODE`), at any depth.
+fn decodes(v: &Version, t: TermRef<'_>) -> bool {
+    match t {
+        TermRef::Call(f, mut args) => v.text(f) == MAKES_A_NODE || args.any(|a| decodes(v, a)),
+        _ => false,
+    }
+}
+
 fn term_flows(v: &Version, t: TermRef<'_>, slots: &[bool]) -> bool {
     match t {
         TermRef::Var(s) => slots.get(s.index()).copied().unwrap_or(false),
+        TermRef::Call(f, _) if v.text(f) == MAKES_A_NODE => true,
         TermRef::Call(f, mut args) => !value_of_a_node(v.text(f)) && args.any(|a| term_flows(v, a, slots)),
         _ => false,
     }
@@ -300,11 +319,11 @@ fn readers_of(program: &Version) -> HashMap<&str, BTreeSet<&str>> {
 /// relation follows it, and is not named: it holds a node
 /// because that relation does, and goes per file with it (`air302_alt_1(n) :- sym_of(n, "…"), kind(n, …)` follows
 /// `sym_of`, Python's name resolution, 0677's first family), as 0652 names a crossing and not its readers. An output
-/// is not one: its node is the finding's place, written once (0677, Open: which form a finding that pairs two files'
-/// nodes takes is the rewrite of its family), and a relation reading an output's node is named. A relation only
-/// outputs read is (unlike 0652's `placement_only`): a set of other files' nodes is maintained over every file, and
-/// changes with their ids, for every finding that reads it; keyed by a symbol, the finding is placed in its own
-/// file's rules.
+/// made in the cross-file part with a node column is named too: no node crosses, not even as a finding's place (the
+/// user, 2026-11-27, past 0677's exception for a finding's node). The finding is made in its node's own file, reading
+/// the cross part's answer by a symbol, a document or a node path (decision 0722: `Calls(c, p) :- callee(c, s),
+/// target(s, p)`). A relation only outputs read is named as well (unlike 0652's `placement_only`): a set of other
+/// files' nodes is maintained over every file, and changes with their ids, for every finding that reads it.
 pub fn node_crossings(program: &Version, f: &Fields<'_>, cross: &Version, local: &BTreeSet<String>) -> Vec<NodeCrossing> {
     let nodes = NodeColumns::of(program, f);
     let mut found: BTreeMap<String, String> = BTreeMap::new();
@@ -313,17 +332,41 @@ pub fn node_crossings(program: &Version, f: &Fields<'_>, cross: &Version, local:
     // for its cross-file readers, `value_type`).
     let crossing = |rel: &str| (f.derives(rel) || f.native(rel).is_some()) && !local.contains(rel);
     let inherited = |rel: &str| crossing(rel) && !f.is_output(rel);
+    // A relation's node, line, match and token columns, by their declared types (decision 0724 §3): a number named
+    // like a node (an `_at` relay's document `d`) is no id.
+    let typed_nodes = |rel: &str| -> Vec<String> {
+        f.columns(rel)
+            .map(|cols| cols.iter().enumerate().filter(|(_, (_, t))| matches!(*t, "node" | "line" | "match" | "token" | "place")).map(|(c, _)| column_name(f, rel, c)).collect())
+            .unwrap_or_default()
+    };
     for r in cross.rules() {
         let head = cross.rel_name(r.head().rel());
         // A file-local relation the cross part derives again for its readers (`kind`, a projected export) holds each
         // file's own rows: the node enters at the cross-file rule that reads it, which is named. An output's located
         // form (`locate`'s `violation_at`, read back as `violation`) is the output.
         let output_at = head.strip_suffix("_at").is_some_and(|o| f.is_output(o));
-        if found.contains_key(head) || f.is_output(head) || output_at || local.contains(head) {
+        if (f.is_output(head) || output_at) && !local.contains(head) {
+            let out = if output_at { &head[..head.len() - 3] } else { head };
+            let held = typed_nodes(head);
+            if !held.is_empty() && !found.contains_key(out) {
+                found.insert(
+                    out.to_owned(),
+                    format!(
+                        "holds a node in {}: an output made in the cross-file part; make it in its node's own file, reading the cross part's answer by a symbol, a document or a node path (decision 0722)\n      {}",
+                        held.join(", "),
+                        shown(cross, r)
+                    ),
+                );
+            }
+            continue;
+        }
+        if found.contains_key(head) || local.contains(head) {
             continue;
         }
         let flows = nodes.flowing(cross, r, &inherited);
-        let Some(cause) = flows.entry().map(str::to_owned) else { continue };
+        // A node a head decodes from a path enters there too.
+        let decoded = r.head().args().any(|t| decodes(cross, t)).then(|| "decodes a node path to its node (`@path_node`)".to_owned());
+        let Some(cause) = flows.entry().map(str::to_owned).or(decoded) else { continue };
         let held: Vec<String> = r.head().args().enumerate().filter(|(_, t)| term_flows(cross, *t, &flows.slots)).map(|(i, _)| column_name(f, head, i)).collect();
         let what = if held.is_empty() { "reads a node".to_owned() } else { format!("holds a node in {}", held.join(", ")) };
         found.insert(head.to_owned(), format!("{what}: its rule {cause}\n      {}", shown(cross, r)));
@@ -349,6 +392,25 @@ pub fn node_crossings(program: &Version, f: &Fields<'_>, cross: &Version, local:
         if f.native(rel).is_some() && crossing(rel) && read_there.contains(rel) && !nodes.of_relation(rel).is_empty() {
             let held: Vec<String> = nodes.of_relation(rel).into_iter().map(|c| column_name(f, rel, c)).collect();
             found.entry(rel.to_owned()).or_insert_with(|| format!("holds a node in {}: made natively in the cross-file part", held.join(", ")));
+        }
+    }
+    // A per-file relation the cross-file part reads (an export) with a node column: the column is handed on with
+    // every row, whether or not the cross part's rule names it (`p0_from(f, at, n) :- p0_names(_, f, at, n)` handed
+    // each include's node on). No node id reaches the cross-file part, read or not.
+    for (rel, _) in f.decls_by_name() {
+        if !local.contains(rel) || found.contains_key(rel) || !read_there.contains(rel) || f.is_output(rel) || f.is_input(rel) {
+            continue;
+        }
+        let held = typed_nodes(rel);
+        if !held.is_empty() {
+            // Each cross-part rule that reads it, with what else it reads: `head <- a b c`.
+            let by: BTreeSet<String> = cross
+                .rules()
+                .filter(|r| r.body().filter_map(|l| l.atom()).any(|a| cross.rel_name(a.rel()) == rel))
+                .map(|r| format!("{} <- {}", cross.rel_name(r.head().rel()), r.body().filter_map(|l| l.atom()).map(|a| cross.rel_name(a.rel())).filter(|&b| b != rel).collect::<Vec<_>>().join(" ")))
+                .collect();
+            let by: Vec<String> = by.into_iter().collect();
+            found.insert(rel.to_owned(), format!("holds a node in {}: a per-file relation the cross-file part reads (in {}), handed on with that column", held.join(", "), by.join(", ")));
         }
     }
     let readers = readers_of(program);

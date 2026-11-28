@@ -105,3 +105,41 @@ of one of its two key columns (8 a key at most). The policies' `violation`: 461,
 keys handed on for routing would be as many rows as these exports are: the exports are already keyed summaries
 (decision 0677), and no export of these programs is the generated corpus's shape, many rows a key.
 
+## The asks of the exported relations
+
+Recorded (`RERAIL_ASKS=1`, `preparation::asks`, a measurement aid): for each rule of the cross part and each
+relation of the files it reads (through the split's relays), the keys it uses, by the columns the rest of its body
+binds (its shape), and the rows of the relation it uses, each from the reader's whole body; written to the profile
+beside the relation's rows made. A key that finds no row is not counted, nor a read inside an aggregate; several
+readers of one relation use between the largest one's rows and their sum. The tables, a row a (relation, reader,
+shape): `rerail-shared/callable-asks` (`asks-posthog.tsv`, `asks-dl.tsv`); the samples, `rerail-shared/bench/
+posthog-291` and `dl-224`.
+
+| | PostHog's 291 files, Django's points_to policies | The data layer's 224 files, `bandit-b113` |
+|---|---|---|
+| Asks (relation, reader, shape) | 425, over 260 relations | 37, over 24 relations |
+| Exported relations' rows made | 2,848,456 | 149,589 |
+| Rows their readers use | 427,804 to 524,952 (15 to 18%) | 54,326 to 55,498 (36 to 37%) |
+
+By shape, over PostHog (rows made summed over asks, so a relation read twice counts twice):
+
+| Shape | Asks | Rows made | Rows used |
+|---|---|---|---|
+| every column bound (a test) | 104 | 1,310,079 | 128,916 |
+| 1 bound, 1 free | 102 | 1,266,438 | 134,106 |
+| 1 bound, 2 free | 53 | 756,286 | 31,281 |
+| nothing bound | 77 | 498,952 | 154,598 |
+| 2 bound, 1 free | 23 | 496,145 | 82,055 |
+| 1 bound, 3 free | 16 | 482,212 | 245 |
+| 3 bound, 1 free | 10 | 135,312 | 0 |
+| negated test | 23 | 128,587 | 15,875 |
+| the rest (2 bound and 2 or 3 free, 1 bound and 4 free, 3 bound and 2 free) | 17 | 53,104 | 284 |
+
+The largest relations: the sync-orm policy's `violation` and its `rr_diagnostic`, 461,298 rows each (53% and 40% of
+the run's 28 MB of values), whose one reader each uses none (the run's 5 findings are get-handler-writes'):
+candidate findings made in every file that the cross part rejects. `pt_at` and `pt_chk`, 118,867 rows, used
+30,524 to 42,121 (shapes `bf`, `b`); `pt_vpos_t`, 106,654, used 44,471 to 72,138 (`b`, `f`); `pt_vopen_l_0`, 106,654,
+used 987 (`ff`); `pt_look_t`, 93,224, used 44,979 to 61,385 (`fbb`); `pt_vopen_l_8`, 79,319, used 1,193 (`b`);
+`pt_btype_l_0`, 50,764, used 16,601 (`fb`). Over the data layer: `imported`, 16,916 rows, used 10,941 to 11,877
+(`bb`, `fb`, `ff`); `asks_at`, 18,853, used 3,512 (`bb`); `reads_at`, 14,521, used 516 (`bf`).
+

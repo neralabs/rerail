@@ -81,7 +81,7 @@ pub unsafe fn node_span(d: *const ViewDir, m: u32, low: u32) -> Option<(*const u
     Some((source.add(from as usize), to.saturating_sub(from), false))
 }
 
-/// Node `low`'s preorder key in directory `d`'s document `m` (`@rr_node_order`, `ARITH_NODE_ORDER`; the `order`
+/// Node `low`'s (its local id's) preorder key in directory `d`'s document `m` (`@rr_node_order`, `ARITH_NODE_ORDER`; the `order`
 /// view's column 1, `Doc::order_row`): none for a node the document does not number, as the host's
 /// (`LongTexts::order_any`).
 pub unsafe fn node_order(d: *const ViewDir, m: u32, low: u32) -> Option<u64> {

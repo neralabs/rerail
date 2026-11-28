@@ -926,6 +926,61 @@ use rerail_blocks::vector::Vector;
         assert_eq!(r.dispatches, 1 + r.relaunches + r.remaps, "one launch, its relaunches and its remaps: {r:?}");
     }
 
+    /// A view's rows are its documents' as they are made (decision 0494), so the rows it holds when a stratum is placed
+    /// bound nothing the stratum reaches through it: `reach` takes no bound from it, and a flat input's its rows. (The
+    /// data layer's SBC beside cpl, 2026-11-28: a head bound at its view's 10,482 rows placed 10,485, two programs.)
+    #[test]
+    fn a_views_rows_bound_no_reach() {
+        use super::super::InRel;
+        let flat = InRel::from_flat(Vector::from(&[1i64, 2, 3, 4, 5, 6][..]), 3, vec![b'i'; 2]);
+        assert_eq!(super::input_rows(&flat), Some(3), "a flat input's rows");
+        let view = InRel::viewed(flat.source(vec!["a".into(), "b".into()]), Vector::from(&[0usize, 1][..]), vec![b'i'; 2]);
+        assert_eq!(view.len(), 3, "the view holds its source's rows now");
+        assert_eq!(super::input_rows(&view), None, "a view's rows now are no bound");
+    }
+
+    /// Decision 0603 where a stage's guess is far under its rows: `h(x, y) :- a(x), b(x, y)`, 101 rows of `a`, one of
+    /// them the key of all 70,000 of `b`, no estimate and no growth filed (the device's run alone). Its reach (7 M
+    /// rows) is past the head's most, and the stage guesses twice its input: the head's bound is its most, its first
+    /// room the guess, and the room grows as its rows reach it, in the one program; the head is not placed again by a
+    /// batch of its own (the data layer's `ast_walk(f, n) :- kind(f, ..), within(n, f)` of 2026-11-27: a bound of the
+    /// guess stopped the program, 2 programs). Its rows every `b` row's.
+    #[test]
+    fn a_heads_rows_past_its_guessed_room_stay_one_program() {
+        if !crate::code_rule_dsl::transducer::packed::metal_join::available() {
+            return;
+        }
+        const N: i64 = 70_000;
+        let store = crate::code_rule_dsl::fixtures::temp();
+        drop(crate::content_store::ContentStore::open(&store).unwrap());
+        let db = Connection::open(&store).unwrap();
+        crate::code_rule_dsl::logic::native::register(&db).unwrap();
+        crate::code_rule_dsl::logic::native::register_symbols(&db).unwrap();
+        // A series of `n` values from 1 (this SQLite has no `generate_series`).
+        let series = |n: i64| format!("WITH RECURSIVE s(v) AS (SELECT 1 UNION ALL SELECT v + 1 FROM s WHERE v < {n})");
+        db.execute_batch(&format!(
+            "CREATE TEMP TABLE a (c0); CREATE TEMP TABLE b (c0, c1); CREATE TEMP TABLE h0 (c0, c1);
+             {} INSERT INTO a SELECT 1000 + v FROM s; INSERT INTO a VALUES (7);
+             {} INSERT INTO b SELECT 7, v FROM s;",
+            series(100),
+            series(N)
+        ))
+        .unwrap();
+        let a = format!("t:x:{}:{}:i", hex("temp.a"), hex("c0"));
+        let b = format!("t:x:{}:{}:ii", hex("temp.b"), hex("c0, c1"));
+        let rule = format!("pos {a} v0\npos {b} v0 v1\nhead v0 v1");
+        let spec = ["name dev_room".to_owned(), "device".into(), "rel h0 ii empty".into(), format!("seed 0 {}", hex(&rule))];
+        super::super::open(&db, &spec.join("\n")).unwrap();
+        super::super::run(&db, "dev_room", 0).unwrap();
+        let r = super::take_report().expect("a device report");
+        super::super::close(&db, "dev_room").unwrap();
+        let rows: i64 = db.query_row("SELECT count(DISTINCT c1) FROM temp.h0", [], |r| r.get(0)).unwrap();
+        assert!(r.refused.is_none(), "{r:?}");
+        assert_eq!(rows, N, "every b row's: {r:?}");
+        assert_eq!(r.programs, 1, "one program, its head placed in it: {r:?}");
+        assert_eq!(r.dispatches, 1 + r.relaunches + r.remaps, "one launch, its relaunches and its remaps: {r:?}");
+    }
+
     /// A recursive component that keeps levels (decision 0311): the device's rows and each row's level are the CPU's,
     /// for a set head (its rows appended a round at a time) and a `min` lattice head (its values improved in place,
     /// the level column `lat_merge` writes). Again with each head's room one row past its rows (decision 0603's fewer

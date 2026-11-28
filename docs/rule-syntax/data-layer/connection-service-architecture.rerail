@@ -214,8 +214,9 @@ CONN300(f, x) :- csa_owner(d, _, cx, f, x), !suffix("Service", cx), count : { cs
 CONN301(f, x) :- csa_owner(_, _, cx, f, x), !suffix("Service", cx), csa_owners(x, n), n > 1.
 .decl csa_owner_key(d: number, cx: symbol, x: symbol)  // distinct (file, class) owners of x
 csa_owner_key(d, cx, x) :- csa_owner(d, _, cx, _, x).
-// Cross-file: x's owners counted over every file of the surface (decision 0652).
-.decl csa_owners(x: symbol, n: number) cross_file
+// x's owners counted over every file of the surface: a relation of names, staged before the program (decision 0709),
+// which CONN301 reads in each owner's own file (decision 0727 §3).
+.decl csa_owners(x: symbol, n: number)
 csa_owners(x, n) :- csa_owner_key(_, _, x), n = count : { csa_owner_key(_, _, x) }.
 
 // ---- CONN400, CONN401, CONN402: legacy delegate triples -----------------------------------------------------------

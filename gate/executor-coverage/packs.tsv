@@ -32,6 +32,8 @@
 7	shipped functor @printf/5	not native: sqlite: error: no SQL for @printf($a, $b, $c, $a, $b)	data-layer (engine) 6, lib 1
 6	function @flat_bin/3	not on the device: no computed term	engine 6
 6	function @semver_subset/2	not on the device: no computed term	node 5, lib 1
+5	function @node_path/1	not on the device: no computed term	django 2, lib 2, engine 1
+5	function @text_len/1	not on the device: no computed term	python 4, lib 1
 4	function @join/2	not on the device: no computed term	lib 3, engine 1
 4	function @sha256/1	not on the device: no computed term	lib 3, data-layer 1
 4	shipped functor @cast_int/1	not on the device: no computed term	data-layer (engine) 4
@@ -52,9 +54,13 @@
 1	aggregate product	not native: sqlite: aggregate product (the native engine declined: rule #0000: $c = product $v : { p($a, $v) } has no native step)	lib 1
 1	function @ascii_lower/1	not on the device: no computed term	lib 1
 1	function @glob_sub/3	not on the device: no computed term	engine 1
+1	function @indent/1	not on the device: no computed term	lib 1
 1	function @package_of/1	not on the device: no computed term	engine 1
+1	function @path_node/1	not on the device: no computed term	lib 1
+1	function @path_spelling/1	not on the device: no computed term	lib 1
 1	function @py_repr/1	not on the device: no computed term	data-layer 1
 1	function @to_precision/2	not on the device: no computed term	lib 1
+1	function @tree_digest_hex/1	not on the device: no computed term	data-layer 1
 1	functor @py_repr/1	not on the device: no computed term	data-layer 1
 1	shipped functor @char/1	not on the device: no computed term	data-layer (engine) 1
 1	shipped functor @class_prefix/1	not native: sqlite: error: no SQL for @class_prefix($a)	data-layer (engine) 1

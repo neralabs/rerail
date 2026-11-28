@@ -36,6 +36,7 @@ UKL_INLINE uint32_t clif_rel_group_mark(CLIF_BLOCK_SPACE const uint8_t* t,uint64
 UKL_COLD uint32_t clif_atoms_find(CLIF_BLOCK_SPACE const uint8_t* t,uint64_t a0,uint64_t a1,uint32_t a2,uint32_t a3);
 UKL_INLINE uint32_t clif_dir_doc_of_id(CLIF_BLOCK_SPACE const uint8_t* t,uint64_t a0,uint32_t a1);
 UKL_INLINE uint32_t clif_dir_local_of_id(CLIF_BLOCK_SPACE const uint8_t* t,uint64_t a0,uint32_t a1);
+UKL_INLINE uint32_t clif_dir_key_of_id(CLIF_BLOCK_SPACE const uint8_t* t,uint64_t a0,uint32_t a1);
 UKL_INLINE uint64_t clif_rows_col(CLIF_BLOCK_SPACE const uint8_t* t,uint64_t a0,uint32_t a1){
  uint64_t v0=0;
  uint32_t v1=0;
@@ -3523,7 +3524,7 @@ UKL_INLINE uint32_t clif_dir_doc_of_id(CLIF_BLOCK_SPACE const uint8_t* t,uint64_
  uint64_t v6=v5+((uint64_t)(16ul));
  uint32_t v7=((uint32_t)((uint32_t)(v1)>>(((uint32_t)(12))&31u)));
  uint64_t v8=((uint64_t)(v7));
- uint64_t v9=v8*((uint64_t)(8ul));
+ uint64_t v9=v8*((uint64_t)(16ul));
  uint64_t v10=v6+v9;
  uint32_t v11=((uint32_t)(*(CLIF_BLOCK_SPACE const uint32_t*)(t+v10)));
  uint32_t v12=((uint32_t)(*(CLIF_BLOCK_SPACE const uint32_t*)(t+(v0+((uint64_t)(((int64_t)(184))))))));
@@ -3546,10 +3547,27 @@ UKL_INLINE uint32_t clif_dir_local_of_id(CLIF_BLOCK_SPACE const uint8_t* t,uint6
  uint64_t v6=v5+((uint64_t)(16ul));
  uint32_t v7=((uint32_t)((uint32_t)(v1)>>(((uint32_t)(12))&31u)));
  uint64_t v8=((uint64_t)(v7));
- uint64_t v9=v8*((uint64_t)(8ul));
+ uint64_t v9=v8*((uint64_t)(16ul));
  uint64_t v10=v6+v9;
  uint32_t v11=((uint32_t)(*(CLIF_BLOCK_SPACE const uint32_t*)(t+(v10+((uint64_t)(((int64_t)(4))))))));
  uint32_t v12=v1&((uint32_t)(4095ul));
  uint32_t v13=v11+v12;
  return v13;
+}
+UKL_INLINE uint32_t clif_dir_key_of_id(CLIF_BLOCK_SPACE const uint8_t* t,uint64_t a0,uint32_t a1){
+ uint64_t v0=0;
+ uint32_t v1=0;
+ v0=a0;
+ v1=a1;
+ uint64_t v2=((uint64_t)(*(CLIF_BLOCK_SPACE const uint64_t*)(t+v0)));
+ uint64_t v3=v0-v2;
+ uint64_t v4=((uint64_t)(*(CLIF_BLOCK_SPACE const uint64_t*)(t+(v0+((uint64_t)(((int64_t)(168))))))));
+ uint64_t v5=v3+v4;
+ uint64_t v6=v5+((uint64_t)(16ul));
+ uint32_t v7=((uint32_t)((uint32_t)(v1)>>(((uint32_t)(12))&31u)));
+ uint64_t v8=((uint64_t)(v7));
+ uint64_t v9=v8*((uint64_t)(16ul));
+ uint64_t v10=v6+v9;
+ uint32_t v11=((uint32_t)(*(CLIF_BLOCK_SPACE const uint32_t*)(t+(v10+((uint64_t)(((int64_t)(8))))))));
+ return v11;
 }

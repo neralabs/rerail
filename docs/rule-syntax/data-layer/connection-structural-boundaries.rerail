@@ -146,7 +146,11 @@ CSB021(n, x) :- csb_role(d, "backend"), csb_top(d, n, x), csb_residual("backend"
 
 .violation CSB030(at: node, x: symbol) "_ConnectionLifecycleMixin.{x} auto-opens driver state"
 CSB030(f, x) :- csb_lifecycle(f, x, "lifecycle_file").
-CSB030(f, x) :- csb_lifecycle(f, x, "connection"), csb_path("lifecycle_file", l), !file(l).
+CSB030(f, x) :- csb_lifecycle(f, x, "connection"), csb_no_lifecycle_file(_).
+// csb_no_lifecycle_file(l): the tree has no lifecycle file at l. Names, staged before the program (decision 0709), so
+// CSB030 is made in the connection file (decision 0727 §3), not by reading the tree's files in the cross part.
+.decl csb_no_lifecycle_file(l: symbol)
+csb_no_lifecycle_file(l) :- csb_path("lifecycle_file", l), !file(l).
 // csb_lifecycle(f, x, r): f, named x, auto-opens in the mixin of the file of role r. In its file; whether the
 // lifecycle file exists, a fact of the whole repository, is the finding's test.
 .decl csb_lifecycle(f: node, x: symbol, r: symbol)

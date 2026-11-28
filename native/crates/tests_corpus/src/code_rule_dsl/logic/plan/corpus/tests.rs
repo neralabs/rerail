@@ -4161,6 +4161,27 @@ fn a_host_reading_a_contexts_export_runs_on_every_reading_path() {
     }
 }
 
+/// A relation of names over a guest's code, read by a per-file rule, is staged (decision 0709, 0727), and the stage
+/// asks for the guests itself: it holds the demand (`rr_embed_req`) the lowering derives beside `parsed`, which none of
+/// the staged rules reads. Without it the stage's `parsed` was empty, and so every name.
+#[test]
+fn a_staged_relation_over_a_guests_code_asks_for_the_guest() {
+    let program = "\
+.language python
+#include \"python/ast.rerail\"
+.decl quoted_root(r: node)
+quoted_root(r) :- string_annotation(s), parsed(s, \"annotation\", r).
+.decl inner(x: symbol)
+inner(x) :- quoted_root(r), within(n, r), kind(n, \"identifier\"), place_text(n, x).
+.decl named(n: node, x: symbol)
+named(n, x) :- kind(n, \"string\"), inner(x).
+.output named
+";
+    let rows = printed_run("staged-guest", ("a.py", "x: \"List[int]\" = []\n"), program, "named");
+    let names: std::collections::BTreeSet<&str> = rows.iter().map(|r| r[1].as_str()).collect();
+    assert_eq!(names, std::collections::BTreeSet::from(["List", "int"]), "{rows:?}");
+}
+
 /// 0597 rung 2.3: a context's views give its roots' nodes alone: the annotation's identifiers are `List` and `int`,
 /// never the host's `x`.
 #[test]

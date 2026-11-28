@@ -223,6 +223,10 @@ pub struct Plan {
     /// input's key measured so. Empty: none known.
     #[archive(flat)]
     pub one: Vec<bool>,
+    /// Where a step reads a node's document (`Doc`, `DocOf`): the run's binding of the long-text nodes, whose view's
+    /// directory holds the growth's page table an id's document is read through (decision 0724). The device binds that
+    /// view to a stage that takes a document and reads no view of its own. None: no step reads one.
+    pub docs: Option<Bound<NodeTexts>>,
 }
 
 /// An edit an analysis of the plan's view asks for, made on the owned steps before they are encoded again.
@@ -357,6 +361,7 @@ impl Plan {
             ranges: p.ranges.to_vec(),
             lookups: p.lookups.to_vec(),
             one: p.one.to_vec(),
+            docs: p.docs.as_ref().map(|h| Bound(n.get(h))),
         }
     }
 }

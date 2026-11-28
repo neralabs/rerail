@@ -591,6 +591,7 @@ pub mod tests {
         let mut store = Store {
             rels: vec![input, values, Rel::new("output", b"i")],
             syms: shared,
+            docs: Default::default(),
         };
         let rule = parse_join(
             &db,
@@ -623,6 +624,7 @@ pub mod tests {
         let mut store = Store {
             rels: vec![input, Rel::new("output", b"i")],
             syms: shared,
+            docs: Default::default(),
         };
         let filtered = parse_join(
             &db,
@@ -782,6 +784,7 @@ pub mod tests {
         let store = Store {
             rels: vec![Rel::new("output", b"iiiii"), Rel::new("counts", b"ii")],
             syms: shared,
+            docs: Default::default(),
         };
         let mut counted = vec![Fresh::default(); 2];
         run_join(&counts, 1, &store, &mut syms, &mut counted).unwrap();
@@ -826,6 +829,7 @@ pub mod tests {
         let mut store = Store {
             rels: vec![input, Rel::new("output", b"iii")],
             syms: shared,
+            docs: Default::default(),
         };
         let full = parse_join(
             &db,
@@ -870,6 +874,7 @@ pub mod tests {
         let mut store = Store {
             rels: vec![input, Rel::new("output", b"iii")],
             syms: shared,
+            docs: Default::default(),
         };
         let full = parse_join(
             &db,
@@ -904,6 +909,7 @@ pub mod tests {
         let store = Store {
             rels: vec![Rel::new("output", b"iiiii")],
             syms: shared,
+            docs: Default::default(),
         };
         let mut fresh = vec![Fresh::default()];
         assert_eq!(
@@ -975,6 +981,7 @@ pub mod tests {
         let store = Store {
             rels: vec![Rel::new("output", b"ii")],
             syms: shared,
+            docs: Default::default(),
         };
         let mut run = |j: &JoinRule| {
             let mut fresh = vec![Fresh::default()];

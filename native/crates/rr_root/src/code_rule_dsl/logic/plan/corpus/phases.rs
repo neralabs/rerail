@@ -635,7 +635,9 @@ pub fn stage(v: &std::sync::Arc<Version>, options: &serde_json::Value) -> Result
     // columns it fixes, which a stage may take (§1).
     let projected = existence_reads(v)?;
     let v = projected.as_ref().unwrap_or(v);
-    let staging = crate::code_rule_dsl::typing::file_local::FileLocal::staging(v, &requests).map_err(Error::Plan)?;
+    // What the run folds before the program (decision 0094 §6): facts by the time any stage runs.
+    let constants = super::constants::foldable_of(v)?;
+    let staging = crate::code_rule_dsl::typing::file_local::FileLocal::staging(v, &requests, &constants).map_err(Error::Plan)?;
     // Why each relation of names is not staged, also when none is: the report's cause for a chain it flags.
     for (rel, cause) in &staging.refused {
         crate::code_rule_dsl::logic::profile::decision("staging", || format!("{rel}: {cause}"));
@@ -652,6 +654,25 @@ pub fn stage(v: &std::sync::Arc<Version>, options: &serde_json::Value) -> Result
                 let x = v.rel_name(a.rel());
                 if v.rules().any(|q| v.rel_name(q.head().rel()) == x) && below.insert(x.to_owned()) {
                     todo.push(x.to_owned());
+                }
+            }
+        }
+    }
+    // A guest's answer (`parsed`, `sub_tape`: decision 0055) is asked through a demand no staged rule reads
+    // (`rr_embed_req`, which the lowering derives beside the read): a stage reading one holds the demands' rules too, and
+    // asks for its guests itself, as the program would (decision 0727: a relation of names over a quoted annotation's
+    // code, `rr_pass_quoted_ann_ident`, is staged).
+    let guests_read = v.rules().filter(|r| below.contains(v.rel_name(r.head().rel()))).any(|r| r.reads().any(|a| matches!(v.rel_name(a.rel()), "parsed" | "sub_tape")));
+    if guests_read {
+        let mut todo: Vec<String> = crate::code_rule_dsl::logic::rr::lower::DEMANDS.iter().filter(|d| v.rules().any(|q| v.rel_name(q.head().rel()) == **d)).map(|d| (*d).to_owned()).collect();
+        below.extend(todo.iter().cloned());
+        while let Some(rel) = todo.pop() {
+            for r in v.rules().filter(|r| v.rel_name(r.head().rel()) == rel) {
+                for a in r.reads() {
+                    let x = v.rel_name(a.rel());
+                    if v.rules().any(|q| v.rel_name(q.head().rel()) == x) && below.insert(x.to_owned()) {
+                        todo.push(x.to_owned());
+                    }
                 }
             }
         }
@@ -1475,6 +1496,8 @@ fn read_exports(name: &str, program: &(impl ProgramFields + ?Sized), declared: &
                 .zip(&types)
                 .map(|(v, t)| match (v, *t) {
                     (output::Value::Text(s), _) => Ok(Value::Str(s.to_owned().into())),
+                    // A node path, as its text: the reader's binding makes its word again (`corpus::atoms_source`).
+                    (v @ output::Value::Path { .. }, _) => Ok(Value::Str(v.to_string().into())),
                     (v, "symbol" | "sym") => Err(Error::Plan(format!("phase {name}: {export}: a symbol column holds {v:?}"))),
                     (v, _) => v.int().map(Value::Int).ok_or_else(|| Error::Plan(format!("phase {name}: {export}: not a number: {v:?}"))),
                 })

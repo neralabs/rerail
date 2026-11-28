@@ -13,12 +13,15 @@
 // The graph is by symbol, as the rules' is (decision 0677: no node crosses into the cross-file part). The engine names
 // each definition as rf_sym does, from W's own summary: its file's path, its qualified name, and how many of the file's
 // definitions of that name start before it. A file's definitions get their symbols from the rules both graphs read
-// (python/references-defs.rerail's reference_def).
-#include "python/references-defs.rerail"
+// (python/reference-defs.rerail's reference_def).
 
-// The engine's inputs, and the graph derived from them `cross_file` (decision 0652): its rows join definitions of
-// any files. An input is per-document to the split whatever it is declared; its one reader here, derived across files,
-// keeps it in the cross-file part, where the engine binds it, as the rules' graph is derived there.
+// The engine's inputs, by each definition's symbol as python/reference-defs.rerail's rf_sym spells it (`path:q#k`,
+// decision 0677): no node crosses into the cross-file part, where the engine binds them. Each is derived there
+// `cross_file` (decision 0652): its rows join definitions of any files. An input is per-document to the split whatever
+// it is declared; its one reader here, derived across files, keeps it in the cross-file part, as the rules' graph is
+// derived there.
+#include "python/reference-defs.rerail"
+
 .decl w_reference_edge(src: symbol, dst: symbol, via: symbol)
 .decl w_reference_open(s: symbol)
 .input w_reference_edge, w_reference_open

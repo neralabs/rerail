@@ -500,17 +500,8 @@ impl Within {
         }
         start.push(len);
         // A derived fact like a rule's head, in a run's block alone, with room for an index at every entry of its
-        // directory (`Part::over_key_runs`), as the device's solve writes it. File-local: a row's `n` and `a` are of
-        // one document, so each column holds its ids' low bits, their key a run's, one run a document that has rows
-        // (decision 0494 step 7).
-        let offsets = self.batch.nodes();
-        let first = |doc: usize| start[offsets.at(doc)];
-        let has_rows = |doc: usize| first(doc + 1) > first(doc);
-        let runs = (0..self.batch.docs.len()).filter(|&d| has_rows(d)).count();
-        let (rows, keys) = Part::over_key_runs(crate::code_rule_dsl::facts::rows::Life::Run, 2, len as usize, runs);
-        for (k, (doc, key)) in self.batch.docs.keys().enumerate().filter(|&(d, _)| has_rows(d)).enumerate() {
-            keys.put(k, first(doc), key);
-        }
+        // directory, as the device's solve writes it: each column a chunk's ids, 4 bytes (plan "Chunk node numbers").
+        let rows = Part::of_ids(crate::code_rule_dsl::facts::rows::Life::Run, 2, len as usize);
         let mut at = 0u32;
         for v in 0..n {
             let id = self.batch.id(v, &mut memo);
@@ -631,32 +622,14 @@ impl Within {
                 a = if inside { found[a as usize] } else { file_local::NONE };
             }
         };
-        // Per batch, per node row its first row in the relation (past the batches' before), and the runs: one a
-        // document that has rows.
-        let (mut starts, mut len, mut runs) = (Vec::with_capacity(all.len()), 0u32, 0usize);
-        for (w, f) in all.iter().zip(&found) {
-            let mut start = Vector::with_capacity(f.len() + 1);
+        // Its rows in all, every batch's: each column a chunk's ids, 4 bytes, whole (plan "Chunk node numbers").
+        let mut len = 0u32;
+        for f in &found {
             for v in 0..f.len() {
-                start.push(len);
                 chain(f, v, &mut |_| len += 1);
             }
-            start.push(len);
-            let offsets = w.batch.nodes();
-            runs += (0..w.batch.docs.len()).filter(|&d| start[offsets.at(d + 1)] > start[offsets.at(d)]).count();
-            starts.push(start);
         }
-        let (rows, keys) = Part::over_key_runs(Life::Run, 2, len as usize, runs);
-        let mut k = 0;
-        for (w, start) in all.iter().zip(&starts) {
-            let offsets = w.batch.nodes();
-            for (doc, key) in w.batch.docs.keys().enumerate() {
-                let first = start[offsets.at(doc)];
-                if start[offsets.at(doc + 1)] > first {
-                    keys.put(k, first, key);
-                    k += 1;
-                }
-            }
-        }
+        let rows = Part::of_ids(Life::Run, 2, len as usize);
         let mut at = 0u32;
         for (w, f) in all.iter().zip(&found) {
             // The directory's searches' memo, this batch's.

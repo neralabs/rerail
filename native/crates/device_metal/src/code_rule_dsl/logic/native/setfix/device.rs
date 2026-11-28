@@ -169,6 +169,15 @@ fn same_nodes(a: &Arc<super::NodeTexts>, b: &Arc<super::NodeTexts>) -> bool {
         }
 }
 
+/// Whether the chunk the binding of the nodes `nodes` reads is numbered (`numbering::of_data`): a held source is a
+/// bound chunk's.
+fn numbered(nodes: &super::NodeTexts) -> bool {
+    match nodes {
+        super::NodeTexts::Held(_) => true,
+        super::NodeTexts::At(at) => at.upgrade().is_some_and(|d| crate::code_rule_dsl::facts::numbering::of_data(&d).is_some()),
+    }
+}
+
 /// The node view the binding of the long-text nodes `nodes` reads nodes' texts through
 /// (`Source::node_texts_in_place`), where it is in place.
 fn node_view(nodes: &super::NodeTexts) -> Option<crate::code_rule_dsl::facts::vtab::ViewInPlace> {
@@ -1493,6 +1502,12 @@ pub(in crate::code_rule_dsl) fn compile(j: &JoinRule, spec: &str, own_texts: &[(
         h.finish()
     };
     let est = stages.iter().map(|s| j.from.get(s.first + s.span.max(1) - 1).and_then(|&p| j.est.get(p)).copied().filter(|e| e.is_finite() && *e >= 0.0)).collect();
+    // A stage that takes a node's document of a numbered chunk (`steps::Plan::docs`) reads the growth's page table
+    // through the batch's node view's directory (decision 0724), bound where the stage reads no view of its own
+    // (`Batch::bind_node_texts`). With no numbering, an id's document is its high bits, as the host's `DocOf`.
+    if nodes.is_none() && stages.iter().any(|s| mj::reads_docs(&s.desc)) && let Some(h) = j.docs.as_ref() {
+        nodes = Some(j.bound(h).clone());
+    }
     Ok(Plan { stages, head, head_slots, head_from, arena, nslots, nsteps: j.steps.len(), key, est, nodes })
 }
 
@@ -2133,6 +2148,24 @@ impl<'p> Run<'p> {
         Ok(())
     }
 
+    /// Gives `batch` the node view stage `desc` reads nodes' texts or documents through (`Batch::bind_node_texts`).
+    fn bind_nodes(&self, desc: &mj::Stage, batch: &mut mj::Batch) -> Result<(), String> {
+        if mj::reads_node_texts(desc) {
+            let nodes = self.plan.nodes.as_deref().expect("a plan reading nodes' texts binds their reads");
+            let view = node_view(nodes).ok_or("a node's text with no node view in place (its batch's directory on no device)")?;
+            batch.node_texts(view).map_err(|e| format!("{e:?}: the node view"))?;
+        } else if mj::reads_docs(desc) && let Some(nodes) = self.plan.nodes.as_deref() {
+            // A node's document: through the node view's directory where the chunk is numbered; an id's high bits
+            // where it is not, as the host's `DocOf`.
+            match node_view(nodes) {
+                Some(view) => batch.node_texts(view).map_err(|e| format!("{e:?}: the node view"))?,
+                None if numbered(nodes) => return Err("a node's document of a numbered chunk with no node view in place".into()),
+                None => {}
+            }
+        }
+        Ok(())
+    }
+
     /// Encodes stage `k` into `batch`, queued in its level (`encode_levels`); the component's own relations are
     /// `own`'s.
     fn encode_stage(&mut self, k: usize, batch: &mut mj::Batch, rep: &mut Report, own: &mut Own, names: &Interner) -> Result<(), String> {
@@ -2143,6 +2176,7 @@ impl<'p> Run<'p> {
                 Kind::Pass => {}
                 Kind::Map => {
                     let t = self.tables[i].as_ref().expect("the map's table");
+                    self.bind_nodes(&s.desc, batch)?;
                     batch.map(s.desc, t, i, &self.totals).map_err(|e| format!("{e:?}"))?;
                 }
                 Kind::Filter | Kind::Atom { .. } | Kind::Own { .. } | Kind::Verdict { .. } | Kind::Names | Kind::RowText { .. } | Kind::Witness { .. } => {
@@ -2225,11 +2259,7 @@ impl<'p> Run<'p> {
                     if reads_names(s.desc.mode) {
                         dev_atoms(batch, names)?;
                     }
-                    if mj::reads_node_texts(&s.desc) {
-                        let nodes = self.plan.nodes.as_deref().expect("a plan reading nodes' texts binds their reads");
-                        let view = node_view(nodes).ok_or("a node's text with no node view in place (its batch's directory on no device)")?;
-                        batch.node_texts(view).map_err(|e| format!("{e:?}: the node view"))?;
-                    }
+                    self.bind_nodes(&s.desc, batch)?;
                     let left = self.tables[i].as_ref().expect("the stage's input");
                     if s.desc.mode == mj::ROWTEXT {
                         // Its automaton, and its id in the one rolling cache: a test's (its verdicts) or the
@@ -3091,9 +3121,6 @@ impl PrePlaced {
 /// Metal once bound.
 const PLACE_ROOM_BYTES: usize = REACH_BYTES;
 
-/// A head's room's rows at least where its reach is not its room (`encode_place`).
-const PLACE_ROOM_MIN: usize = 1 << 16;
-
 /// The rows under which a head's room is reserved whole (`place_first`): a few pages.
 const ALONE_ROWS: usize = 4096;
 
@@ -3240,14 +3267,14 @@ fn encode_place(runs: &[Run<'static>], rules: &[(&Plan, &JoinRule, usize)], stor
             continue;
         }
         let guess: usize = from.iter().map(|&x| runs[x].uniq.as_ref().map_or(0, |u| u.cap)).sum();
-        // Its room: the rows it can reach, where they fit `PLACE_ROOM_BYTES`; else eight times the rows guessed (at least
-        // `PLACE_ROOM_MIN`), within it, the gate holding the rows to it.
+        // Its room: the rows it can reach, where they fit `PLACE_ROOM_BYTES`; else those bytes' rows, the gate holding
+        // the rows to them. Address space either way: a first room (`place_first`) the rows' guess where a mapped page
+        // is real memory, grown as they reach it (`place_growth`); its bound whole where mapping commits nothing (the
+        // CPU backend's pages are committed as touched). A bound of the guess stopped the program at it, past which a
+        // head of rows in all made the stratum's program again apart (`place`): two programs, not one (decision 0603;
+        // the data layer's `ast_walk` and `mf_walk`, 2026-11-27, `a_heads_rows_past_its_guessed_room_stay_one_program`).
         let most = PLACE_ROOM_BYTES / (8 * k);
-        let bound = match reaches.get(&h).copied() {
-            Some(r) if r <= most => r,
-            _ => guess.saturating_mul(8).max(PLACE_ROOM_MIN).min(most),
-        }
-        .max(1);
+        let bound = reaches.get(&h).copied().map_or(most, |r| r.min(most)).max(1);
         pre.heads.push(h);
         if guess == 0 {
             continue;
@@ -4032,6 +4059,14 @@ const REACH_BYTES: usize = 64 << 20;
 /// rule's stage tables, a stage's rows at most the product of the values of the slots bound by then, its slots' words
 /// a row (decision 0603 5c: rows × slots × 8 bytes), and its head's: its union's rows (its bindings') and its
 /// distinct and new rows (its head's reach at most). The arena is emptied at each round's end, so a round's claims are all it holds.
+/// An input's rows at most, where it holds them (`reach`): none for a view, whose rows are its documents' as they are
+/// made (decision 0494: a document, a guest's too, made when first read), so the rows it holds now bound nothing a
+/// stratum reaches through it (the data layer's SBC beside cpl, 2026-11-28: a head bound at a view's 10,482 rows
+/// placed 10,485, and its program stopped at the bound, two programs).
+fn input_rows(rel: &InRel) -> Option<usize> {
+    rel.view.is_none().then(|| rel.rows() + rel.ndead)
+}
+
 fn reach(rules: &[(&Plan, &JoinRule, usize)], heads: &[usize], store: &Store) -> (HashMap<usize, usize>, Option<usize>) {
     use std::collections::BTreeSet;
     // A base column (its relation, by address or store index, and its column) with its rows, or a constant.
@@ -4054,7 +4089,7 @@ fn reach(rules: &[(&Plan, &JoinRule, usize)], heads: &[usize], store: &Store) ->
         match src {
             Src::In(rel, _) => {
                 let rel = j.bound(rel);
-                Some([Of::Col(Arc::as_ptr(rel) as usize, col, rel.rows() + rel.ndead)].into())
+                Some([Of::Col(Arc::as_ptr(rel) as usize, col, input_rows(rel)?)].into())
             }
             Src::Delta(r) | Src::Full(r) | Src::FullMulti(r, _) => match dom.get(&(*r, col)) {
                 Some(d) => d.clone(),
@@ -4136,10 +4171,7 @@ fn reach(rules: &[(&Plan, &JoinRule, usize)], heads: &[usize], store: &Store) ->
                 Step::Atom { src, neg: false, .. } if in_component(src) => return None,
                 Step::Atom { src, neg: false, .. } => {
                     let n = match src {
-                        Src::In(rel, _) => {
-                            let rel = j.bound(rel);
-                            rel.rows() + rel.ndead
-                        }
+                        Src::In(rel, _) => input_rows(j.bound(rel))?,
                         Src::Delta(r) | Src::Full(r) | Src::FullMulti(r, _) => store.rels[*r].n,
                     };
                     rows = rows.saturating_mul(n);

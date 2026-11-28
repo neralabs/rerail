@@ -328,7 +328,7 @@ fn reference_edge_matches_the_eager_graph_after_git_cache_reuse() {
     rerail_accel::upkeep::retire_files_under(root.path());
 }
 
-/// A definition as the graph names it: its symbol (`python/references-defs.rerail`'s rf_sym, decision 0677).
+/// A definition as the graph names it: its symbol (`python/reference-defs.rerail`'s rf_sym: `path:q#k`, decision 0677).
 type At = String;
 
 /// The graph a program of `head` (its settings) makes over the files under `dir` with `include`'s rules

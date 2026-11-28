@@ -194,6 +194,16 @@ fn grammar(name: &str) -> Option<(&'static str, Option<core::Fragment>)> {
     crate::code_rule_dsl::language::label(dialect).map(|label| (label, None))
 }
 
+/// A tape value made again from its grammar and text (`Guests::tape_value`, decision 0431): its facts and its place
+/// as a guest, parsed as the run parses it (no store). What a node path rooted at a tape value is read in (decision
+/// 0722 §7).
+pub fn tape_value_again(grammar_name: &str, text: &str) -> Option<(Arc<core::Facts>, Guest)> {
+    let (label, fragment) = grammar(grammar_name)?;
+    let (facts, root, _) = parse("", label, fragment, text.to_owned(), &Parses::new(None)).ok().flatten()?;
+    let none = Placement::At([0, 0]);
+    Some((facts, Guest { host: 0, file: 0, at: 0, grammar: grammar_name.to_owned(), role: "fragment".to_owned(), root, place: none.clone(), in_file: none, made: Made::Tape { places: Vec::new() } }))
+}
+
 /// The tag a grammar's tapes are stored under: a fragment's own, else its dialect's.
 fn tape_tag_of(label: &str, fragment: Option<core::Fragment>) -> Option<i64> {
     fragment.map(|f| i64::from(f.tag)).or_else(|| core::label_tag(label))
