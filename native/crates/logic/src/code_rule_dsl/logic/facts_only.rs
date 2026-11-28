@@ -176,14 +176,6 @@ const STATE: &[(&str, &str)] = &[
     ("code_rule_dsl/logic/device/binding.rs", "Device"),
     // Profiling: the placements a recording run made, and the writer's jobs by kind.
     ("code_rule_dsl/logic/plan/placement.rs", "Recording"),
-    // Profiling (`RERAIL_PROF`): the join walker's plans' calls and steps' rows, summed over the run for its report
-    // (`walk_report`), and the walk's caller, set before it and taken by it. Measurements, not results kept.
-    ("code_rule_dsl/logic/native/setfix.rs", "WALK_PLANS"),
-    ("code_rule_dsl/logic/native/setfix.rs", "WALK_ENTRY"),
-    // The run's `RERAIL_KIND_BATCH` setting (decision 0706 E1), read once; and the open file of the join shapes'
-    // spike (`RERAIL_SPIKE_SHAPES`), where its lines are written. Settings and an open thing, not results kept.
-    ("code_rule_dsl/logic/native/setfix/kinds.rs", "MODE"),
-    ("code_rule_dsl/logic/plan.rs", "FILE"),
     // The coverage check's census of the shipped rule files, read once by a test process.
     // A rule's pattern compiled on this thread (decision 0161's group patterns, where `GROUPS` was): the in-memory form of
     // the rule's own text, made again from it; compiling a regex is cheap, so nothing is written (t33 step 7).
@@ -207,11 +199,15 @@ const STATE: &[(&str, &str)] = &[
     // The SQL lane's executor, and the work a thread's device wave runs when flushed (`lanes::wave`).
     ("code_rule_dsl/logic/lanes.rs", "DEFERRED"),
     // The device's waves on this thread (decision 0113 §3; the open one is the job's, `lanes::OPEN`): the waves
-    // flushed, the strata waiting for theirs; and the rule being compiled's arena-text slots. State of the run, not a
-    // result kept.
+    // flushed, the strata waiting for theirs; and the rule being compiled's arena-text slots and its own relation's
+    // symbol slots (`OWN_SYMS`). State of the run, not a result kept.
     ("code_rule_dsl/logic/native/setfix/device.rs", "FLUSHED"),
     ("code_rule_dsl/logic/native/setfix/device.rs", "SUSPENDED"),
     ("code_rule_dsl/logic/native/setfix/device.rs", "ARENA"),
+    ("code_rule_dsl/logic/native/setfix/device.rs", "OWN_SYMS"),
+    // A test hook's record of the indexes each stratum's own batch built (index-aware step 1): what a test reads, not a
+    // result kept.
+    ("code_rule_dsl/logic/native/setfix/device.rs", "STRATUM_BUILDS"),
     // The job's open device submission its strata share (`lanes::open`): an open thing, as `WAVE`.
     ("code_rule_dsl/logic/lanes.rs", "OPEN"),
     ("code_rule_dsl/logic/lanes.rs", "DONE"),
@@ -492,8 +488,8 @@ fn every_table_is_facts_or_listed() {
     for t in FACT_STORE.iter().chain(SCRATCH).chain(NOT_YET_TABLES.iter().map(|t| &t.0)) {
         assert!(seen.insert(*t), "{t} is in two lists");
     }
-    assert!(NOT_YET_TABLES.len() <= NOT_YET_TABLES_PIN, "a cache table added to the list (it may only shrink): {} > {NOT_YET_TABLES_PIN}", NOT_YET_TABLES.len());
-    assert_eq!(NOT_YET_TABLES.len(), NOT_YET_TABLES_PIN, "a cache table moved: lower NOT_YET_TABLES_PIN to {}", NOT_YET_TABLES.len());
+    // At its pin, 0, the list can only grow: so it is equal to the pin.
+    assert_eq!(NOT_YET_TABLES.len(), NOT_YET_TABLES_PIN, "a cache table added to the list, pinned at {NOT_YET_TABLES_PIN} (it may only shrink)");
 }
 
 #[test]
@@ -505,6 +501,6 @@ fn every_kept_map_is_state_or_listed() {
     assert!(new.is_empty(), "maps in no list of decision 0104 (a result kept for later use is facts, not a map of its own):\n{}", new.join("\n"));
     let gone: Vec<String> = listed.difference(&found).map(|(f, s)| format!("{f}\t{s}")).collect();
     assert!(gone.is_empty(), "listed maps no longer there (cut them from the list, and lower the pin if moved):\n{}", gone.join("\n"));
-    assert!(NOT_YET_MAPS.len() <= NOT_YET_MAPS_PIN, "a cache map added to the list (it may only shrink): {} > {NOT_YET_MAPS_PIN}", NOT_YET_MAPS.len());
-    assert_eq!(NOT_YET_MAPS.len(), NOT_YET_MAPS_PIN, "a cache map moved: lower NOT_YET_MAPS_PIN to {}", NOT_YET_MAPS.len());
+    // At its pin, 0, the list can only grow: so it is equal to the pin.
+    assert_eq!(NOT_YET_MAPS.len(), NOT_YET_MAPS_PIN, "a cache map added to the list, pinned at {NOT_YET_MAPS_PIN} (it may only shrink)");
 }

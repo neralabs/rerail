@@ -963,7 +963,10 @@ impl<T: rerail_blocks::Pod> InRelations for Vector<T> {
         if !self.can_give(facts) {
             return Err(self);
         }
-        let (region, len) = self.into_region()?;
+        if !self.owns_region() {
+            return Err(self);
+        }
+        let (region, len) = self.into_region();
         let held = region.into_owner().downcast::<rerail_blocks::maps::Held>().unwrap_or_else(|_| unreachable!("a relation block's region (`can_give`)"));
         let rerail_blocks::maps::Held(m, keep) = *held;
         let (at, kept) = m.into_chunk();

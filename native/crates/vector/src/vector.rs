@@ -93,17 +93,20 @@ impl<T: Pod> Vector<T> {
         self.cap < self.len
     }
 
-    /// Its region and length, handed on whole (a chunk to its relation's directory), where it is its own: else
-    /// itself (borrowed, or with no region).
-    pub fn into_region(mut self) -> Result<(Region, usize), Self> {
-        if self.is_borrowed() || self.mem.is_none() {
-            return Err(self);
-        }
+    /// Whether its region can be handed on whole (`into_region`): it is its own, not borrowed, and it has one.
+    pub fn owns_region(&self) -> bool {
+        !self.is_borrowed() && self.mem.is_some()
+    }
+
+    /// Its region and length, handed on whole (a chunk to its relation's directory), where it is its own
+    /// (`owns_region`).
+    pub fn into_region(mut self) -> (Region, usize) {
+        assert!(self.owns_region(), "a vector's region handed on whole is its own");
         let len = self.len;
         let mut region = self.mem.take().expect("a region");
         self.queued = std::ptr::null();
         region.tag.handed();
-        Ok((region, len))
+        (region, len)
     }
 
     /// Its room: where its regions come from (none until its first, for the run's).

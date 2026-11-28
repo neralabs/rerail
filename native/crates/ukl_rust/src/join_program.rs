@@ -187,7 +187,7 @@ struct Dedup {
     ocap: u32,
     places: u32,
     /// Its rows less those a relation holds, through its map (`dedup_held`), its rows out placed in it (decision 0567):
-    /// 1. 2: the map read only, its rows out placed in it after its head's gate once written (code 7 of
+    /// `1`; `2`, the map read only, its rows out placed in it after its head's gate once written (code 7 of
     /// `lat_rehash_one`), so a park may grow it.
     seen: u32,
     hmask: u32,
@@ -340,7 +340,7 @@ struct SortPass {
     w: [u32; 4],
     pad2: u64,
 }
-#[repr(C)]
+
 /// A phase's dispatch or its grid's (`PhaseP`, decision 0648): the phase, whether its groups run the listed items
 /// (`slots[at + g]`), and its grid's first word (`NONE`: a phase of no segments, its own groups checking the flags,
 /// `at` its dispatch's sequence).

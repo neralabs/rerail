@@ -301,7 +301,7 @@ impl MetalComputeFunction {
         // it does not hold is compiled as usual. Each says which.
         if let Some(path) = std::env::var_os("RERAIL_METAL_BINARY_ARCHIVE") {
             // Its G13 code read first, as every archive's is there (decision 0672).
-            refuse_exit_codes_in(device, std::path::Path::new(&path), &function.name())?;
+            refuse_exit_codes_in(device, std::path::Path::new(&path), function.name())?;
             let ad = metal::BinaryArchiveDescriptor::new();
             ad.set_url(&metal::URL::new_with_string(&format!("file://{}", path.to_string_lossy())));
             match device.new_binary_archive_with_descriptor(&ad) {
@@ -319,7 +319,7 @@ impl MetalComputeFunction {
                 Err(e) => eprintln!("RERAIL_METAL_BINARY_ARCHIVE: {}: {e}", path.to_string_lossy()),
             }
         }
-        let (state, reflection) = checked_pipeline(device, &desc, options, &function.name()).map_err(|e| format!("Error making pipeline state for function: {e}"))?;
+        let (state, reflection) = checked_pipeline(device, &desc, options, function.name()).map_err(|e| format!("Error making pipeline state for function: {e}"))?;
         Self::from_reflection(function, state, &reflection)
     }
 

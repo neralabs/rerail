@@ -118,8 +118,12 @@ impl Census {
     fn write(&self) {
         use std::fmt::Write;
         let s = self.sites.lock().unwrap_or_else(|e| e.into_inner());
+        // dyld's (`<mach-o/dyld.h>`): libc's binding of it is deprecated for the `mach2` crate, which this crate does not use.
+        unsafe extern "C" {
+            fn _dyld_get_image_vmaddr_slide(image_index: u32) -> isize;
+        }
         // SAFETY: image 0 is the program.
-        let slide = unsafe { libc::_dyld_get_image_vmaddr_slide(0) };
+        let slide = unsafe { _dyld_get_image_vmaddr_slide(0) };
         let mut out = format!("slide\t{slide:#x}\nregions\t{}\nelapsed_us\t{}\n", self.seq.load(Relaxed), self.t0.elapsed().as_micros());
         for site in s.values() {
             let _ = write!(out, "site\t{}\t{}\t{}\t{}\t{}\t{}", site.name, site.n, site.bytes, site.freed, site.freed_bytes, site.same_thread);

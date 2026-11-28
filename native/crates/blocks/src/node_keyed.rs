@@ -72,7 +72,7 @@ pub struct Broken {
 }
 
 impl NodeKeyed {
-    fn make<'b>(block: &'b Block, nodes: u32, form: u32) -> Option<&'b NodeKeyed> {
+    fn make(block: &Block, nodes: u32, form: u32) -> Option<&NodeKeyed> {
         let p: *mut NodeKeyed = block.try_alloc_t(1)?;
         let words = (nodes as usize).div_ceil(64);
         let bits: *mut u64 = block.try_alloc_t(words.max(1))?;

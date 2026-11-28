@@ -79,9 +79,11 @@ thread_local! {
 }
 
 impl Arena {
-    fn chunks(&self) -> &mut Vec<Chunk> {
-        // SAFETY: the arena is its thread's alone, and no reference to its list outlives a call of its own.
-        unsafe { &mut *self.chunks.get() }
+    /// `f` of its chunks' list.
+    fn with_chunks<R>(&self, f: impl FnOnce(&mut Vec<Chunk>) -> R) -> R {
+        // SAFETY: the arena is its thread's alone, and the list's one reference is `f`'s, which calls nothing of the
+        // arena's that reaches it.
+        f(unsafe { &mut *self.chunks.get() })
     }
 
     /// `bytes` at `align`, past the top: in the current chunk, else the next (made, or made bigger, as needed).
@@ -101,33 +103,34 @@ impl Arena {
     #[cold]
     #[inline(never)]
     fn bump_slow(&self, bytes: usize, align: usize) -> *mut u8 {
-        let chunks = self.chunks();
-        let mut cur = self.cur.get();
-        let mut top = chunks.get(cur).filter(|_| !self.top.get().is_null()).map_or(0, |c| self.top.get() as usize - c.ptr as usize);
-        loop {
-            if let Some(c) = chunks.get(cur) {
-                let start = top.next_multiple_of(align);
-                if start + bytes <= c.len {
-                    self.cur.set(cur);
-                    // SAFETY: inside the chunk.
-                    unsafe {
-                        self.top.set(c.ptr.add(start + bytes));
-                        self.end.set(c.ptr.add(c.len));
-                        return c.ptr.add(start);
+        self.with_chunks(|chunks| {
+            let mut cur = self.cur.get();
+            let mut top = chunks.get(cur).filter(|_| !self.top.get().is_null()).map_or(0, |c| self.top.get() as usize - c.ptr as usize);
+            loop {
+                if let Some(c) = chunks.get(cur) {
+                    let start = top.next_multiple_of(align);
+                    if start + bytes <= c.len {
+                        self.cur.set(cur);
+                        // SAFETY: inside the chunk.
+                        unsafe {
+                            self.top.set(c.ptr.add(start + bytes));
+                            self.end.set(c.ptr.add(c.len));
+                            return c.ptr.add(start);
+                        }
                     }
-                }
-                if top == 0 {
-                    // A free chunk too small for this take: made again, big enough.
-                    chunks[cur] = Chunk::new(Self::grown(c.len, bytes));
+                    if top == 0 {
+                        // A free chunk too small for this take: made again, big enough.
+                        chunks[cur] = Chunk::new(Self::grown(c.len, bytes));
+                        continue;
+                    }
+                    cur += 1;
+                    top = 0;
                     continue;
                 }
-                cur += 1;
-                top = 0;
-                continue;
+                let last = chunks.last().map_or(FIRST / 2, |c| c.len);
+                chunks.push(Chunk::new(Self::grown(last, bytes)));
             }
-            let last = chunks.last().map_or(FIRST / 2, |c| c.len);
-            chunks.push(Chunk::new(Self::grown(last, bytes)));
-        }
+        })
     }
 
     /// The size of the chunk after one of `last` bytes, for a take of `bytes`.
@@ -138,7 +141,7 @@ impl Arena {
     /// Whether `end` is the top's address.
     #[inline]
     fn at_top(&self, end: *const u8) -> bool {
-        !end.is_null() && self.top.get() as *const u8 == end
+        !end.is_null() && std::ptr::eq(self.top.get(), end)
     }
 
     /// Grows the take that ends at the top by `extra` bytes, where its chunk has them.
@@ -161,20 +164,21 @@ impl Arena {
 
     /// Keeps at most `KEEP` bytes of chunks (with no frame open), and puts the top at the first one's start.
     fn trim(&self) {
-        let chunks = self.chunks();
-        let mut kept = 0;
-        let n = chunks.iter().take_while(|c| {
-            kept += c.len;
-            kept <= KEEP
-        });
-        let n = n.count().max(1);
-        chunks.truncate(n);
-        self.cur.set(0);
-        if let Some(c) = chunks.first() {
-            self.top.set(c.ptr);
-            // SAFETY: the chunk's end.
-            self.end.set(unsafe { c.ptr.add(c.len) });
-        }
+        self.with_chunks(|chunks| {
+            let mut kept = 0;
+            let n = chunks.iter().take_while(|c| {
+                kept += c.len;
+                kept <= KEEP
+            });
+            let n = n.count().max(1);
+            chunks.truncate(n);
+            self.cur.set(0);
+            if let Some(c) = chunks.first() {
+                self.top.set(c.ptr);
+                // SAFETY: the chunk's end.
+                self.end.set(unsafe { c.ptr.add(c.len) });
+            }
+        })
     }
 }
 
@@ -844,7 +848,7 @@ mod tests {
             small.fill(3);
             assert_eq!(big[MOST * 2 - 1], 1);
         });
-        ARENA.with(|a| assert!(a.chunks().iter().map(|c| c.len).sum::<usize>() <= KEEP.max(MOST * 2 + ALIGN), "kept within the bound"));
+        ARENA.with(|a| a.with_chunks(|chunks| assert!(chunks.iter().map(|c| c.len).sum::<usize>() <= KEEP.max(MOST * 2 + ALIGN), "kept within the bound")));
     }
 
     #[test]

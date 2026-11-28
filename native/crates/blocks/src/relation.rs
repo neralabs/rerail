@@ -1082,7 +1082,7 @@ impl Relation {
                 std::ptr::write_bytes(p, 0, v1);
                 (std::slice::from_raw_parts_mut(p, v1), std::slice::from_raw_parts_mut(p.add(v1), n as usize))
             };
-            let (w, rank) = (&*w, &*rank);
+            let rank = &*rank;
             let value = |v: i64, hint: &mut u32| {
                 let (word, bit) = node_place(group, words, v, hint).expect("every row's value has its place");
                 (rank[word] + (w[word] & ((1u64 << bit) - 1)).count_ones()) as usize

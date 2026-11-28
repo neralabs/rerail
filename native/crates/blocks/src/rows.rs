@@ -689,7 +689,7 @@ impl Rows {
         if lo >= hi {
             return lo;
         }
-        if self.col(c).has_runs() && (0..1 << 63).contains(&key) {
+        if self.col(c).has_runs() {
             return self.lower_bound_in_runs(c, lo, hi, key);
         }
         let ml = self.min_log;
@@ -734,7 +734,8 @@ impl Rows {
     /// searched the runs again for every row it read: `text(n, s)` by `n` at about 230 ns a probe of 17 k rows.
     fn lower_bound_in_runs(&self, c: usize, lo: u32, hi: u32, key: i64) -> u32 {
         let d = self.col(c);
-        let (kh, kl) = ((key >> 32) as u32, key as u32);
+        // The high bits ordered as the values are, signed (a run of high bits 2^31 or more holds negative values).
+        let (kh, kl) = ((key >> 32) as i32, key as u32);
         // SAFETY: the column has runs; run `m`'s first row is at `2 + 2m`, its high bits at `3 + 2m`.
         let (t, count) = unsafe { d.runs_table() };
         let first = |m: u32| unsafe { *t.add(2 + 2 * m as usize) };
@@ -744,14 +745,14 @@ impl Rows {
         let (mut a, mut b) = (0u32, count);
         while a < b {
             let m = a + (b - a) / 2;
-            if high(m) < kh { a = m + 1 } else { b = m }
+            if (high(m) as i32) < kh { a = m + 1 } else { b = m }
         }
         let start = if a < count { first(a).max(lo) } else { hi };
-        if a == count || high(a) > kh || start >= hi {
+        if a == count || high(a) as i32 > kh || start >= hi {
             return start.min(hi);
         }
         let mut e = a + 1;
-        while e < count && high(e) == kh {
+        while e < count && high(e) as i32 == kh {
             e += 1;
         }
         let end = if e < count { first(e).min(hi) } else { hi };
@@ -984,9 +985,10 @@ mod tests {
         let lock = Mutex::new(());
         let rows: &Rows = unsafe { &*block.alloc_t::<Rows>(1) };
         unsafe { Rows::init(rows as *const Rows as *mut Rows, &block, &[4, 4], MIN_LOG) };
-        // Documents of uneven rows (one of a single row), keys ascending, past a u32 once shifted.
+        // Documents of uneven rows (one of a single row), keys ascending, past a u32 once shifted: the last the most a
+        // column sorted as its values are can hold (`i32::MAX`: above it, its values are negative).
         let firsts = [0u32, 1, 2_900, 2_901, 7_000, 19_999];
-        let keys = [3u32, 9, 10, 4_000_000, 4_000_001, u32::MAX];
+        let keys = [3u32, 9, 10, 4_000_000, 4_000_001, i32::MAX as u32];
         let t = alloc_runs(&block, firsts.len());
         for (k, (&f, &key)) in firsts.iter().zip(&keys).enumerate() {
             unsafe { put_run(t, k, f, key) };

@@ -148,8 +148,8 @@ pub fn doing(kind: u8) -> Doing {
 
 #[cfg(target_vendor = "apple")]
 fn this_thread() -> Option<u64> {
-    // SAFETY: the calling thread's port; its reference is kept with the slot for the process.
-    Some(u64::from(unsafe { libc::mach_thread_self() }))
+    // SAFETY: the calling thread's port, named by its pthread: no reference taken, the thread holds it while it lives.
+    Some(u64::from(unsafe { libc::pthread_mach_thread_np(libc::pthread_self()) }))
 }
 
 #[cfg(target_vendor = "apple")]

@@ -177,12 +177,15 @@ impl Room for HeapRoom {
     }
 }
 
+/// What gives the run's room (`install_default_room`).
+type RoomProvider = fn() -> Arc<dyn Room>;
+
 /// The run's room, as the blocks crate gives it (`install_default_room`): registered once, at load.
-static DEFAULT_ROOM: rerail_registry::Slot<fn() -> Arc<dyn Room>> = rerail_registry::Slot::new("the run's room every structure made with no room takes (rerail_vector::DEFAULT_ROOM)");
+static DEFAULT_ROOM: rerail_registry::Slot<RoomProvider> = rerail_registry::Slot::new("the run's room every structure made with no room takes (rerail_vector::DEFAULT_ROOM)");
 
 /// Installs the run's room: what a structure made with no room (`Vector::new`) takes its regions from. Once, at load
 /// (a second registration is a bug in the program's composition: `rerail_registry::Slot`).
-pub fn install_default_room(provider: &'static str, room: fn() -> Arc<dyn Room>) {
+pub fn install_default_room(provider: &'static str, room: RoomProvider) {
     DEFAULT_ROOM.register(provider, room);
 }
 
@@ -191,7 +194,7 @@ pub fn default_room() -> Arc<dyn Room> {
     // The provider, kept a thread once found: the slot's lock is every thread's, and a vector's every growth asks.
     // Registered once, at load, and never taken back, so a found one stays right.
     thread_local! {
-        static FOUND: std::cell::Cell<Option<fn() -> Arc<dyn Room>>> = const { std::cell::Cell::new(None) };
+        static FOUND: std::cell::Cell<Option<RoomProvider>> = const { std::cell::Cell::new(None) };
     }
     let found = FOUND.try_with(|f| f.get()).ok().flatten();
     let room: Arc<dyn Room> = match found.or_else(|| {

@@ -12,8 +12,9 @@ use std::fmt;
 #[cfg(unix)]
 use std::io::Read;
 use std::path::{Path, PathBuf};
+use std::sync::atomic::Ordering;
 #[cfg(any(test, feature = "test-hooks"))]
-use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::atomic::AtomicUsize;
 #[cfg(unix)]
 use std::{
     ffi::CString,

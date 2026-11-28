@@ -175,6 +175,11 @@ struct Mem {
     base: *mut u8,
 }
 
+// SAFETY: `base` is its region's first byte, and the region is `Send` and `Sync`: what reads or writes through it is
+// the structure's (`BlockHash`, `BlockSorted`, …), whose own impls state when that crosses threads.
+unsafe impl Send for Mem {}
+unsafe impl Sync for Mem {}
+
 impl Mem {
     fn new(room: &dyn Room, bytes: usize, align: usize, name: &'static str) -> Mem {
         let bytes = bytes.max(8);
@@ -267,11 +272,10 @@ impl<const N: usize> Key for [u64; N] {
 /// The engine's hash of a string's bytes: `mix` over its little-endian 8-byte words, then its length.
 pub fn hash_bytes(b: &[u8]) -> u64 {
     let mut h = crate::SEED;
-    let mut words = b.chunks_exact(8);
-    for w in &mut words {
-        h = crate::mix(h, i64::from_le_bytes(w.try_into().expect("8 bytes")));
+    let (words, rest) = b.as_chunks::<8>();
+    for w in words {
+        h = crate::mix(h, i64::from_le_bytes(*w));
     }
-    let rest = words.remainder();
     if !rest.is_empty() {
         let mut w = [0u8; 8];
         // copy: not block data: a hash's last, partial word

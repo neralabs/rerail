@@ -33,7 +33,7 @@ const NONE: u8 = u8::MAX;
 /// apart, are all at a multiple of `align`. None past the last.
 fn class_of(bytes: usize, align: usize) -> Option<usize> {
     let align = align.max(8);
-    CLASSES.iter().position(|&c| c as usize >= bytes.max(8) && c as usize % align == 0)
+    CLASSES.iter().position(|&c| c as usize >= bytes.max(8) && (c as usize).is_multiple_of(align))
 }
 
 #[derive(Clone, Copy)]
@@ -111,8 +111,7 @@ impl Long {
         let size = CLASSES[class] as usize;
         let slots = (RUN / size) as u32;
         let mut s = self.state.lock().unwrap_or_else(|e| e.into_inner());
-        loop {
-            let Some(&r) = s.partial[class].last() else { break };
+        while let Some(&r) = s.partial[class].last() {
             let run = &mut s.runs[r as usize];
             if run.free != 0 {
                 let slot = run.free - 1;
