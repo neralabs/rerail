@@ -111,6 +111,14 @@ pub fn split_negations(placed: &Placed, model: &super::Model) -> Option<(Vec<Str
         }
         candidates.retain(|c| !above.contains(*c));
     }
+    // A relation a Rust form reads (its rule only orders it after them, `preparation::forms`) is read whole by it.
+    {
+        use super::super::program_image::fields::ProgramFields;
+        let v = &placed.v;
+        let forms: BTreeSet<String> = ProgramFields::setting_values(&**v, "form").iter().filter_map(|t| t.split_whitespace().next().map(|w| w.trim_matches('"').to_owned())).collect();
+        let read: BTreeSet<&str> = v.rules().filter(|r| forms.contains(v.rel_name(r.head().rel()))).flat_map(|r| r.reads().map(|a| v.rel_name(a.rel()))).collect();
+        candidates.retain(|c| !read.contains(*c));
+    }
     if candidates.is_empty() {
         return None;
     }

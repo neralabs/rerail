@@ -32,6 +32,9 @@ ann_root(t) :- kind(p, k), (k = "typed_parameter" ; k = "typed_default_parameter
 ann_root(t) :- kind(f, "function_definition"), field(f, "return_type", t).
 ann_root(t) :- kind(a, "assignment"), field(a, "type", t).
 .decl ann_ctx(s: node)
+// Made by its Rust form (`tape.subtrees`): each root's subtree, read off the tape in order. The rule is its definition,
+// and the form's tests' oracle.
+.form ann_ctx tape.subtrees reads ann_root
 ann_ctx(s) :- ann_root(a), (s = a ; within(s, a)).
 .decl str_node(s: node)
 str_node(s) :- kind(s, "string").

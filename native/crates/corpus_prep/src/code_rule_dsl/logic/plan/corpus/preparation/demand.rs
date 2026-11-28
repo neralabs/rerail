@@ -510,7 +510,16 @@ impl ProgramPass for NegatedDemand {
         // atom stays whole.
         let mut wanted: BTreeMap<String, Vec<Vec<(String, Vec<TermRef<'_>>, RuleRef<'_>, crate::code_rule_dsl::logic::program_image::Slot)>>> = BTreeMap::new();
         let mut unbounded: BTreeSet<String> = BTreeSet::new();
+        // A Rust form reads every row of what it reads (its rule only orders it after them, `forms::ordering_rule`):
+        // those stay whole.
+        let forms = super::forms::relations(v);
         for r in v.rules() {
+            if forms.contains(v.rel_name(r.head().rel())) {
+                for a in r.reads() {
+                    unbounded.insert(v.rel_name(a.rel()).to_owned());
+                }
+                continue;
+            }
             for l in r.body() {
                 let Lit::Atom(a) = l.view() else { continue };
                 let rel = v.rel_name(a.rel());

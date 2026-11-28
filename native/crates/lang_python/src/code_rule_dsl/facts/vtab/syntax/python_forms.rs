@@ -6,7 +6,7 @@ use crate::code_rule_dsl::facts::core::NONE;
 use rustc_hash::FxHashMap;
 
 /// Python's forms.
-pub const FORMS: &[&dyn Form] = &[&Term, &InLiteral];
+pub const FORMS: &[&dyn Form] = &[&Term, &InLiteral, &WalkStart];
 
 /// `python.term SKIP… / SCOPE… reads scope_tm hosted given…`: `r(n, t)`, node `n`'s term (python/points-to-file's
 /// `pt_tm`, decision 0677): each row of `scope_tm` (a module's or a definition's) and of each `given` (a guest's
@@ -214,6 +214,113 @@ impl Form for InLiteral {
                         out.push(&[p.global(s)]);
                     }
                     s += 1;
+                }
+            }
+        }
+        Ok(())
+    }
+}
+
+/// `python.wstart SCOPE… / COMP… reads nameref def_outside in_first_iter host_node ann_start`: `r(n, s)`, where the
+/// lookup of name `n` starts (python/scopes' `wstart`): its nearest scope or comprehension (`lscope`, a strict
+/// ancestor of a SCOPE or COMP kind), except that a name `def_outside(n, f)` holds starts at f's, one
+/// `in_first_iter(n, c)` holds at c's, and a string annotation's name at its host's `ann_start`. Made whole: one pass
+/// down each tape, each node's nearest scope carried from its parent's (the pass's scratch).
+pub struct WalkStart;
+
+impl Form for WalkStart {
+    fn name(&self) -> &'static str {
+        "python.wstart"
+    }
+    fn version(&self) -> u32 {
+        1
+    }
+    fn columns(&self) -> &'static [&'static str] {
+        &["node", "node"]
+    }
+    fn keyed(&self) -> &'static [usize] {
+        &[]
+    }
+    fn rows(&self, call: &FormCall<'_>, _column: usize, out: &mut FormRows) -> Result<(), String> {
+        let Some(cut) = call.args.iter().position(|a| *a == "/") else {
+            return Err("python.wstart takes the scopes' kinds, `/`, then the comprehensions'".into());
+        };
+        let [nameref, def_outside, in_first_iter, host_node, ann_start] = call.reads else {
+            return Err("python.wstart reads nameref, def_outside, in_first_iter, host_node and ann_start".into());
+        };
+        let (mut scope, mut comp) = (KindSet::new(&call.args[..cut]), KindSet::new(&call.args[cut + 1..]));
+        let pairs = |r: &std::sync::Arc<dyn crate::code_rule_dsl::facts::vtab::Source>| -> Vec<(i64, i64)> {
+            let mut v: Vec<(i64, i64)> = (0..r.len()).map(|i| (r.value(i, 0), r.value(i, 1))).collect();
+            v.sort_unstable();
+            v.dedup();
+            v
+        };
+        let mut names: Vec<i64> = (0..nameref.len()).map(|i| nameref.value(i, 0)).collect();
+        names.sort_unstable();
+        names.dedup();
+        let (outside, first, hosts, starts) = (pairs(def_outside), pairs(in_first_iter), pairs(host_node), pairs(ann_start));
+        let of = |v: &[(i64, i64)], n: i64| {
+            let at = v.partition_point(|&(a, _)| a < n);
+            v[at..].iter().take_while(move |&&(a, _)| a == n).map(|&(_, b)| b).collect::<Vec<i64>>()
+        };
+        // A string annotation's name starts where its host's string does: no tape read.
+        for &n in &names {
+            for h in of(&hosts, n) {
+                for t in of(&starts, h) {
+                    out.push(&[n, t]);
+                }
+            }
+        }
+        // Each document's rows of def_outside and in_first_iter, their second node's nearest scope asked.
+        let doc = |n: i64| (n >> 32) as u32;
+        for (i, p) in (&call.batch.docs).into_iter().enumerate() {
+            if call.batch.docs.withheld(i) {
+                continue;
+            }
+            let f = p.f();
+            // Each node's nearest strict ancestor of a scope's or a comprehension's kind, and whether it is a scope.
+            let mut near: Vec<(u32, bool, bool)> = Vec::with_capacity(p.len() as usize);
+            for local in 0..p.len() {
+                let up = p.parent(local as usize);
+                let at = if up == NONE {
+                    (NONE, false, false)
+                } else {
+                    let k = f.kind(p.node(up));
+                    let (is_scope, is_comp) = (scope.has(k), comp.has(k));
+                    if is_scope || is_comp { (up, is_scope, is_comp) } else { near[up as usize] }
+                };
+                near.push(at);
+            }
+            let Some(key) = (p.len() > 0).then(|| doc(p.global(0))) else { continue };
+            let mut hint = NONE;
+            let mut near_of = |n: i64| -> Option<u32> {
+                let l = p.local_of_near(n as u32, &mut hint).filter(|&l| l < p.len())?;
+                Some(near[l as usize].0).filter(|&s| s != NONE)
+            };
+            let lo = names.partition_point(|&n| doc(n) < key);
+            for &n in names[lo..].iter().take_while(|&&n| doc(n) == key) {
+                let mut h2 = NONE;
+                let Some(l) = p.local_of_near(n as u32, &mut h2).filter(|&l| l < p.len()) else { continue };
+                let (s, is_scope, is_comp) = near[l as usize];
+                if s != NONE {
+                    let s = p.global(s);
+                    if is_scope && of(&outside, n).is_empty() {
+                        out.push(&[n, s]);
+                    }
+                    if is_comp && first.binary_search(&(n, s)).is_err() {
+                        out.push(&[n, s]);
+                    }
+                }
+            }
+            for rows in [&outside, &first] {
+                let lo = rows.partition_point(|&(n, _)| doc(n) < key);
+                for &(n, g) in rows[lo..].iter().take_while(|&&(n, _)| doc(n) == key) {
+                    if doc(g) != key {
+                        continue;
+                    }
+                    if let Some(s) = near_of(g) {
+                        out.push(&[n, p.global(s)]);
+                    }
                 }
             }
         }

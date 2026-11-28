@@ -239,6 +239,10 @@ cls_early(n, x, s) :- wstart(n, s), kind(s, "class_definition"), nameref(n, x), 
 // comprehension's first iterable starts at the outer comprehension.) A name in a string annotation's tree starts
 // where the string sits (`ann_start` below).
 .decl wstart(n: node, s: node)
+// Made by its Rust form (`python.wstart`): one pass down each tape, each node's nearest scope carried from its
+// parent's, the exceptions read from their relations. The rules are its definition, and the form's tests' oracle;
+// the form's kinds are scope's, then comp_scope's.
+.form wstart python.wstart reads nameref def_outside in_first_iter host_node ann_start args module function_definition class_definition lambda / list_comprehension set_comprehension dictionary_comprehension generator_expression
 wstart(n, s) :- nameref(n, _), nearest(n, s, lscope), kind(s, k), scope(k), !def_outside(n, _).
 wstart(n, c) :- nameref(n, _), nearest(n, c, lscope), kind(c, k), comp_scope(k), !in_first_iter(n, c).
 wstart(n, s) :- def_outside(n, f), nearest(f, s, lscope).

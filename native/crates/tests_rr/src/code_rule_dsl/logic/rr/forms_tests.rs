@@ -280,3 +280,92 @@ fn a_literals_form_gives_its_rules_rows() {
     assert!(formed.iter().any(|r| r[1] == "attribute"), "{formed:?}");
 }
 
+
+/// `ctx(s)`, python/annotation's `ann_ctx`: the nodes of the annotations' roots' subtrees, a root under another's
+/// among them (a default parameter's annotation inside a lambda's, none here; a nested subscript's).
+const SUBTREES: &str = r#"#include "core.rerail"
+.decl root(t: node)
+root(t) :- kind(p, k), (k = "typed_parameter" ; k = "typed_default_parameter"), field(p, "type", t).
+root(t) :- kind(f, "function_definition"), field(f, "return_type", t).
+root(t) :- kind(a, "assignment"), field(a, "type", t).
+root(t) :- kind(t, "subscript").
+.decl ctx(s: node)
+ctx(s) :- root(a), (s = a ; within(s, a)).
+.decl ctxs(b: number, k: symbol)
+ctxs(b, k) :- ctx(s), node(_, s, k, b, _).
+.output ctxs
+"#;
+
+/// `ann_ctx`'s form gives its rule's rows.
+#[test]
+fn a_subtrees_form_gives_its_rules_rows() {
+    let text = "x: dict[str, list[int]] = {}\ndef f(m: 'A', n: int = 1) -> list[str]: return m[0]\n";
+    let run = |program: &str, tag: &str| {
+        let dir = crate::code_rule_dsl::fixtures::temp().with_extension(tag);
+        std::fs::create_dir_all(&dir).unwrap();
+        std::fs::write(dir.join("c.py"), text).unwrap();
+        rows(program, &dir, "ctxs")
+    };
+    let formed = run(&format!("{SUBTREES}.form ctx tape.subtrees reads root\n"), "subtrees");
+    let ruled = run(SUBTREES, "subtrees-rules");
+    assert_eq!(formed, ruled);
+    assert!(formed.iter().any(|r| r[1] == "subscript") && formed.iter().any(|r| r[1] == "string"), "{formed:?}");
+}
+
+/// `start(n, s)`, python/scopes' `wstart`, over its rules' own inputs: a name's nearest scope or comprehension, a
+/// parameter's default or annotation started outside its definition, a comprehension's first iterable outside it,
+/// and (standing in for a string annotation's names) each name in a call `g(...)` started at the module.
+const STARTS: &str = r#"#include "core.rerail"
+.decl scope(kind: symbol)
+scope("module"). scope("function_definition"). scope("class_definition"). scope("lambda").
+.decl comp_scope(kind: symbol)
+comp_scope("list_comprehension"). comp_scope("set_comprehension"). comp_scope("dictionary_comprehension").
+comp_scope("generator_expression").
+.decl lscope(kind: symbol)
+lscope(k) :- scope(k).
+lscope(k) :- comp_scope(k).
+.decl nameref(n: node, x: symbol)
+nameref(n, x) :- kind(n, "identifier"), text(n, x), !field(_, "attribute", n), !field(_, "name", n).
+.decl first_for(c: node, fc: node)
+first_for(c, fc) :- comp_scope(k), kind(c, k), child(c, fc, i), kind(fc, "for_in_clause"),
+    count : { child(c, g, j), kind(g, "for_in_clause"), j < i } = 0.
+.decl def_outside(n: node, f: node)
+def_outside(n, f) :- nameref(n, _), nearest(n, f, lscope), (kind(f, "function_definition") ; kind(f, "lambda")),
+    (field(f, "parameters", p) ; field(f, "return_type", p)), within(n, p).
+.decl in_first_iter(n: node, c: node)
+in_first_iter(n, c) :- nameref(n, _), nearest(n, c, lscope), comp_scope(k), kind(c, k), first_for(c, fc),
+    field(fc, "right", e), (n = e ; within(n, e)).
+.decl hosted(n: node, h: node)
+hosted(n, c) :- kind(c, "call"), field(c, "function", g), text(g, "g"), within(n, c), kind(n, "identifier").
+.decl starts_at(h: node, s: node)
+starts_at(c, m) :- kind(c, "call"), field(c, "function", g), text(g, "g"), kind(m, "module"), docof(c, d), docof(m, d).
+.decl start(n: node, s: node)
+start(n, s) :- nameref(n, _), nearest(n, s, lscope), kind(s, k), scope(k), !def_outside(n, _).
+start(n, c) :- nameref(n, _), nearest(n, c, lscope), kind(c, k), comp_scope(k), !in_first_iter(n, c).
+start(n, s) :- def_outside(n, f), nearest(f, s, lscope).
+start(n, s) :- in_first_iter(n, c), nearest(c, s, lscope).
+start(n, s) :- nameref(n, _), hosted(n, h), starts_at(h, s).
+.decl starts(b: number, x: symbol, sb: number, k: symbol)
+starts(b, x, sb, k) :- start(n, s), node(_, n, _, b, _), text(n, x), node(_, s, k, sb, _).
+.output starts
+"#;
+
+/// `wstart`'s form gives its rules' rows.
+#[test]
+fn a_walk_starts_form_gives_its_rules_rows() {
+    let text = "class C:\n    y = [a for a in xs if a]\n    def m(self, k=d, *, j: T = lambda q=r: q) -> R:\n        return {v: w for v in self.ys for w in v}\nz = g(p, (h for h in hs))\n";
+    let run = |program: &str, tag: &str| {
+        let dir = crate::code_rule_dsl::fixtures::temp().with_extension(tag);
+        std::fs::create_dir_all(&dir).unwrap();
+        std::fs::write(dir.join("c.py"), text).unwrap();
+        rows(program, &dir, "starts")
+    };
+    let form = ".form start python.wstart reads nameref def_outside in_first_iter hosted starts_at args module function_definition class_definition lambda / list_comprehension set_comprehension dictionary_comprehension generator_expression\n";
+    let formed = run(&format!("{STARTS}{form}"), "wstart");
+    let ruled = run(STARTS, "wstart-rules");
+    assert_eq!(formed, ruled);
+    // `xs` (a first iterable) starts at the class, `d` and `T` (a default, an annotation) at the class too, `r` (a
+    // lambda's default in a parameter's) at the method.
+    let at = |x: &str| formed.iter().filter(|r| r[1] == x).map(|r| r[3].clone()).collect::<Vec<_>>();
+    assert_eq!((at("xs"), at("d"), at("T"), at("r")), (vec!["class_definition".to_owned()], vec!["class_definition".to_owned()], vec!["class_definition".to_owned()], vec!["function_definition".to_owned()]), "{formed:?}");
+}

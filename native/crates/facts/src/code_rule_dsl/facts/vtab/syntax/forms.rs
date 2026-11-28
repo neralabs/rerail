@@ -68,7 +68,7 @@ pub trait Form: Send + Sync {
 static FORMS: OnceLock<Vec<&'static dyn Form>> = OnceLock::new();
 
 /// The language-free forms.
-const TAPE: &[&dyn Form] = &[&SameSpan, &Unwrap, &NearestText];
+const TAPE: &[&dyn Form] = &[&SameSpan, &Unwrap, &NearestText, &Subtrees];
 
 /// Registers a language's forms (once, at load), with the tape's.
 pub fn install_forms(forms: Vec<&'static dyn Form>) {
@@ -292,6 +292,47 @@ impl Form for NearestText {
                 }
                 at = up;
             }
+        })
+    }
+}
+
+/// `tape.subtrees reads roots`: `r(s)`, `s` a node of `roots` (its first column) or a node within one: each root's
+/// subtree, its nodes in tape order (Python's `ann_ctx`, the annotations' nodes). Made whole, from the roots' rows.
+pub struct Subtrees;
+
+impl Form for Subtrees {
+    fn name(&self) -> &'static str {
+        "tape.subtrees"
+    }
+    fn version(&self) -> u32 {
+        1
+    }
+    fn columns(&self) -> &'static [&'static str] {
+        &["node"]
+    }
+    fn keyed(&self) -> &'static [usize] {
+        &[]
+    }
+    fn rows(&self, call: &FormCall<'_>, _column: usize, out: &mut FormRows) -> Result<(), String> {
+        let [roots] = call.reads else { return Err("tape.subtrees reads one relation of roots".into()) };
+        let mut keys: Vec<i64> = (0..roots.len()).map(|r| roots.value(r, 0)).collect();
+        keys.sort_unstable();
+        keys.dedup();
+        // A root under another root gives its nodes once: its subtree is the outer one's.
+        let mut covered: Option<(*const Projected, u32)> = None;
+        each_node(call.batch, Some(&keys), |p, local| {
+            let f = p.f();
+            let end = f.subtree_end(p.node(local));
+            if covered.is_some_and(|(q, e)| std::ptr::eq(q, p) && p.node(local) < e) {
+                return Ok(());
+            }
+            covered = Some((p as *const Projected, end));
+            let mut s = local;
+            while s < p.len() && p.node(s) < end {
+                out.push(&[p.global(s)]);
+                s += 1;
+            }
+            Ok(())
         })
     }
 }

@@ -51,6 +51,11 @@ pub fn parse(text: &str) -> Result<Declared> {
     Ok(Declared { rel: (*rel).to_owned(), form: (*form).to_owned(), reads, args })
 }
 
+/// The relations `v` makes by Rust forms (its `.form` settings' first words).
+pub fn relations(v: &Version) -> std::collections::BTreeSet<String> {
+    ProgramFields::setting_values(v, SETTING).iter().filter_map(|t| t.split_whitespace().next().map(|w| w.trim_matches('"').to_owned())).collect()
+}
+
 /// `settings`' forms' reads renamed (`rename`: a relation's new name, as a pass renames the rules' reads of it): a
 /// form reads what its relation's rules read. Whether one was.
 pub fn rename_reads(settings: &mut [(String, String)], rename: impl Fn(&str) -> Option<String>) -> bool {
