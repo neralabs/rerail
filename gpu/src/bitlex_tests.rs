@@ -4,16 +4,6 @@
 use crate::kernels::{alloc, buffer_of, launch, program, read};
 use crate::Pod;
 
-#[repr(C)]
-#[derive(Clone, Copy)]
-struct T1Args {
-    n: u32,
-    blocks: u32,
-    chunks: u32,
-    write: u32,
-}
-unsafe impl Pod for T1Args {}
-
 /// JSON files for tier 1: lists of objects (several chunks), strings with escapes and multibyte text, a byte-order
 /// mark, and the refusals (a control byte in a string, bad UTF-8, a string open at the end).
 fn files() -> Vec<Vec<u8>> {
@@ -33,153 +23,72 @@ fn files() -> Vec<Vec<u8>> {
     v
 }
 
-/// Tier 1's passes as UKL (`json_t1_ends`, `json_t1_from`) on the device are its Rust's, chunk by chunk: each chunk's
-/// end from each lane's entry, its records' and each type's counts and its verdict from its entry, then its records and
-/// each type's records' numbers written at their places, which are `lex_typed`'s.
+/// Tier 1 and the token pass on the device from the file's bytes alone (`Lex`: `json_t1_lex`, `<ukl/lex_run.h>`, and
+/// `json_t2_tokens`) are their Rust's: each chunk's entry (`entries`, the maps' scan) and counts, the refusal, and
+/// where the file is not refused the records, each type's records and every record's token (`lex_typed`,
+/// `middle::tokens`), for the tier 1 cases and the token errors (numbers, words, surrogate pairs, bad escapes), in
+/// chunks of 1, 3 and 16 blocks.
 #[test]
 fn json_tier1_as_ukl_is_its_rust() {
+    use rerail_json_aot::middle;
     let Some(shared) = crate::shared::get() else {
         eprintln!("no device: tier 1 as UKL did not run");
         return;
     };
     let mut q = crate::device::ComputeQueue::new(&shared.queue);
-    let p = program("json_tier1.uglykl", rerail_json_aot::TIER1_UKL).unwrap_or_else(|e| panic!("{}: {e}", crate::device::backend()));
-    let lanes = rerail_json_aot::LANES;
-    let types = rerail_json_aot::TYPES;
-    let (mut chunks_run, mut records) = (0usize, 0usize);
-    for (k, f) in files().iter().enumerate() {
+    let p1 = program("json_tier1.uglykl", rerail_json_aot::TIER1_UKL).unwrap_or_else(|e| panic!("{}: {e}", crate::device::backend()));
+    let p2 = program("json_tier2.uglykl", rerail_json_aot::TIER2_UKL).unwrap_or_else(|e| panic!("{}: {e}", crate::device::backend()));
+    let mut all = files();
+    all.push(b"[1, -0, 0.5, 1e9, -12.75E-3, 01, 1., -, 1e, true, false, null, tru, nul, \"\\ud83d\\ude00\", \"\\ud83d\", \"\\ude00\", \"\\u12\", \"\\x\", \"\"]".to_vec());
+    all.push(b"{\"k\": 3truex}".to_vec());
+    let (mut chunks_run, mut records, mut tokens_refused, mut refusals) = (0usize, 0usize, 0usize, 0usize);
+    for (k, f) in all.iter().enumerate() {
         let buf = rerail_json_aot::padded(f);
         let n = f.len();
         let off = if f.starts_with(&[0xef, 0xbb, 0xbf]) { 3 } else { 0 };
         let nw = (n - off).div_ceil(64);
-        for blocks in [1usize, 3] {
-            let chunks = nw.div_ceil(blocks).max(1);
-            let args = |write: u32| T1Args { n: n as u32, blocks: blocks as u32, chunks: chunks as u32, write };
-            // Pass 1.
-            let want: Vec<[rerail_json_aot::Carries; 4]> = (0..chunks).map(|c| rerail_json_aot::stage1_ends_best(&buf, n, c * blocks, (c + 1) * blocks)).collect();
-            let sb = buffer_of(&buf).unwrap();
-            let eb = alloc::<u64>(chunks * lanes * 2).unwrap();
-            launch(&q, p.function("json_t1_ends").unwrap()).value("args", &args(0)).buffer("src", &sb).buffer("ends", &eb).run(&[chunks as u64], &[1]).unwrap();
+        for blocks in [1usize, 3, 16] {
+            let at = |what: &str| format!("{}: file {k}, chunks of {blocks}: {what}", crate::device::backend());
+            let lex = Lex::go(&mut q, p1, p2, &buf, n, blocks);
             q.flush().await_().unwrap();
-            let got: Vec<u64> = read(&eb, chunks * lanes * 2);
-            for (c, w) in want.iter().enumerate() {
-                for (l, e) in w.iter().enumerate() {
-                    let at = (c * lanes + l) * 2;
-                    assert_eq!((got[at], got[at + 1]), (e.m_escaped, e.m_in_string), "{}: file {k}, chunks of {blocks}: chunk {c}, lane {l}'s end", crate::device::backend());
-                }
+            let typed = rerail_json_aot::lex_typed(&buf, n, blocks);
+            let (refused, count, typed_count) = lex.said();
+            assert_eq!(refused, typed.lexed.refused, "{}", at("the verdict"));
+            // Each chunk's entry and counts: Rust's chunks (the device's may have one more, past a byte-order mark,
+            // empty).
+            let rchunks = nw.div_ceil(blocks);
+            let ends: Vec<[rerail_json_aot::Carries; 4]> = (0..rchunks).map(|c| rerail_json_aot::stage1_ends_best(&buf, n, c * blocks, (c + 1) * blocks)).collect();
+            let ent = rerail_json_aot::entries(&ends);
+            let pool: Vec<u32> = read(&lex.pool, 32 + 7 * (2 * lex.chunks + 64) + lex.chunks);
+            let (ok, oe) = (pool[5] as usize, pool[6] as usize);
+            for c in 0..rchunks {
+                assert_eq!(pool[oe + c] as usize, rerail_json_aot::lane_of(ent[c]), "{}", at(&format!("chunk {c}'s entry")));
+                let mut want = [0usize; 4];
+                rerail_json_aot::stage1_from_best(&buf, n, c * blocks, (c + 1) * blocks, ent[c], &mut want, std::ptr::null_mut(), [std::ptr::null_mut(); 3], false);
+                let have: Vec<usize> = pool[ok + 4 * c..ok + 4 * c + 4].iter().map(|&x| x as usize).collect();
+                assert_eq!(have, want.to_vec(), "{}", at(&format!("chunk {c}'s counts")));
             }
-            // Pass 2, counting, from pass 3's entries.
-            let ent = rerail_json_aot::entries(&want);
-            let words: Vec<u64> = ent.iter().flat_map(|e| [e.m_escaped, e.m_in_string]).collect();
-            let entb = buffer_of(&words).unwrap();
-            let atb = alloc::<u32>(chunks * (types + 1)).unwrap();
-            let (stb, tyb, rb) = (alloc::<u32>(1).unwrap(), alloc::<u32>(1).unwrap(), alloc::<u32>(chunks).unwrap());
-            launch(&q, p.function("json_t1_from").unwrap()).value("args", &args(0)).buffer("src", &sb).buffer("entries", &entb).buffer("at", &atb).buffer("starts", &stb).buffer("types", &tyb).buffer("refused", &rb).run(&[chunks as u64], &[1]).unwrap();
-            q.flush().await_().unwrap();
-            let counts: Vec<u32> = read(&atb, chunks * (types + 1));
-            let refused: Vec<u32> = read(&rb, chunks);
-            let mut rust_refused = false;
-            for c in 0..chunks {
-                let mut at = [0usize; 4];
-                // Counting writes nothing.
-                let (r, _) = rerail_json_aot::stage1_from_best(&buf, n, c * blocks, (c + 1) * blocks, ent[c], &mut at, std::ptr::null_mut(), [std::ptr::null_mut(); 3], false);
-                rust_refused |= r;
-                let have: Vec<usize> = counts[c * (types + 1)..(c + 1) * (types + 1)].iter().map(|&x| x as usize).collect();
-                assert_eq!(have, at.to_vec(), "{}: file {k}, chunks of {blocks}: chunk {c}'s counts", crate::device::backend());
-                assert_eq!(refused[c] != 0, r, "{}: file {k}, chunks of {blocks}: chunk {c}'s verdict", crate::device::backend());
-            }
-            chunks_run += chunks;
-            if rust_refused {
+            chunks_run += rchunks;
+            if refused {
+                refusals += 1;
                 continue;
             }
-            // Pass 2, writing, at the places an exclusive scan of the counts gives: the records, then each type's list
-            // after the types before it.
-            let total: Vec<usize> = (0..=types).map(|t| (0..chunks).map(|c| counts[c * (types + 1) + t] as usize).sum()).collect();
-            let mut places = vec![0u32; chunks * (types + 1)];
-            let mut run = vec![0usize; types + 1];
-            for t in 1..=types {
-                run[t] = total[1..t].iter().sum();
+            assert_eq!(count, typed.lexed.count, "{}", at("the records"));
+            let starts: Vec<u32> = read(&lex.starts, count + 3);
+            assert!(starts == typed.lexed.starts, "{}", at("the records' starts"));
+            let lists: Vec<u32> = read(&lex.types, typed_count);
+            assert!(lists == typed.types.concat(), "{}", at("each type's records"));
+            let want = middle::tokens(&buf, &typed.lexed, &typed.types, &middle::in_order);
+            let got: Vec<u32> = read(&lex.tokens, count * 5);
+            for (r, w) in want.iter().enumerate() {
+                assert_eq!(&got[r * 5..r * 5 + 5], &[w.end, w.kind, w.nodes, w.last, w.err], "{}", at(&format!("record {r}'s token")));
+                tokens_refused += usize::from(w.err != middle::NONE);
             }
-            for c in 0..chunks {
-                for t in 0..=types {
-                    places[c * (types + 1) + t] = run[t] as u32;
-                    run[t] += counts[c * (types + 1) + t] as usize;
-                }
-            }
-            let atb = buffer_of(&places).unwrap();
-            let stb = alloc::<u32>(total[0].max(1)).unwrap();
-            let tyb = alloc::<u32>(total[1..].iter().sum::<usize>().max(1)).unwrap();
-            launch(&q, p.function("json_t1_from").unwrap()).value("args", &args(1)).buffer("src", &sb).buffer("entries", &entb).buffer("at", &atb).buffer("starts", &stb).buffer("types", &tyb).buffer("refused", &rb).run(&[chunks as u64], &[1]).unwrap();
-            q.flush().await_().unwrap();
-            let starts: Vec<u32> = read(&stb, total[0]);
-            let lists: Vec<u32> = read(&tyb, total[1..].iter().sum());
-            let typed = rerail_json_aot::lex_typed(&buf, n, 16);
-            assert!(starts[..] == typed.lexed.starts[..total[0]], "{}: file {k}, chunks of {blocks}: the records", crate::device::backend());
-            let mut at = 0;
-            for t in 0..types {
-                assert!(lists[at..at + total[1 + t]] == typed.types[t][..], "{}: file {k}, chunks of {blocks}: type {t}'s records", crate::device::backend());
-                at += total[1 + t];
-            }
-            records += total[0];
+            records += count;
         }
     }
-    eprintln!("{}: tier 1 as UKL, {chunks_run} chunks in chunks of 1 and 3 blocks: each chunk's ends, counts and verdict its Rust's; {records} records and their types written as lex_typed's", crate::device::backend());
+    eprintln!("{}: tier 1 and the token pass from the bytes, {chunks_run} chunks in chunks of 1, 3 and 16 blocks ({refusals} runs refused): each chunk's entry and counts Rust's; {records} records, their types and their tokens ({tokens_refused} refused) lex_typed's and tokens'", crate::device::backend());
 }
-
-#[repr(C)]
-#[derive(Clone, Copy)]
-struct T2Args {
-    n: u32,
-    count: u32,
-}
-unsafe impl Pod for T2Args {}
-
-/// Tier 2's token pass as UKL (`json_t2_tokens`, of `TIER2_UKL`) on the device, a thread a record of tier 1's type lists (one buffer,
-/// as `json_t1_from` writes them): each record's token is Rust's `tokens`' (its end, first node's number, nodes, last
-/// node's start, or the byte it is refused at).
-#[test]
-fn json_tokens_as_ukl_are_its_rust() {
-    let Some(shared) = crate::shared::get() else {
-        eprintln!("no device: the token pass as UKL did not run");
-        return;
-    };
-    let mut q = crate::device::ComputeQueue::new(&shared.queue);
-    let p = program("json_tier2.uglykl", rerail_json_aot::TIER2_UKL).unwrap_or_else(|e| panic!("{}: {e}", crate::device::backend()));
-    let mut more: Vec<Vec<u8>> = vec![
-        b"[1, -0, 0.5, 1e9, -12.75E-3, 01, 1., -, 1e, true, false, null, tru, nul, \"\\ud83d\\ude00\", \"\\ud83d\", \"\\ude00\", \"\\u12\", \"\\x\", \"\"]".to_vec(),
-        b"{\"k\": 3truex}".to_vec(),
-    ];
-    let mut all = files();
-    all.append(&mut more);
-    let (mut records, mut refused) = (0usize, 0usize);
-    for (k, f) in all.iter().enumerate() {
-        let buf = rerail_json_aot::padded(f);
-        let typed = rerail_json_aot::lex_typed(&buf, f.len(), 16);
-        if typed.lexed.refused {
-            continue;
-        }
-        let want = rerail_json_aot::middle::tokens(&buf, &typed.lexed, &typed.types, &rerail_json_aot::middle::in_order);
-        let list: Vec<u32> = typed.types.iter().flatten().copied().collect();
-        let count = typed.lexed.count;
-        let sb = buffer_of(&buf).unwrap();
-        let stb = buffer_of(&typed.lexed.starts).unwrap();
-        let lb = buffer_of(&list).unwrap();
-        let tb = alloc::<u32>(count * 5).unwrap();
-        let args = T2Args { n: list.len() as u32, count: count as u32 };
-        launch(&q, p.function("json_t2_tokens").unwrap()).value("args", &args).buffer("src", &sb).buffer("starts", &stb).buffer("list", &lb).buffer("tokens", &tb).run(&[list.len() as u64], &[1]).unwrap();
-        q.flush().await_().unwrap();
-        let got: Vec<u32> = read(&tb, count * 5);
-        for &r in &list {
-            let r = r as usize;
-            let w = want[r];
-            assert_eq!(&got[r * 5..r * 5 + 5], &[w.end, w.kind, w.nodes, w.last, w.err], "{}: file {k}, record {r}'s token", crate::device::backend());
-            refused += usize::from(w.err != rerail_json_aot::middle::NONE);
-        }
-        records += list.len();
-    }
-    eprintln!("{}: the token pass as UKL, {records} records: each token Rust's ({refused} refused)", crate::device::backend());
-}
-
 
 /// Tier 2 from the middle on the device as one program (`json_t2_run`, `<ukl/middle_run.h>`), from tier 1's records
 /// and the token pass's answers to the finished tape: the chunk starts and depths, the bracket scan, each chunk's one
@@ -196,6 +105,7 @@ fn json_tier2_writes_from_the_middle_as_its_rust() {
     };
     let mut q = crate::device::ComputeQueue::new(&shared.queue);
     let p = program("json_tier2.uglykl", rerail_json_aot::TIER2_UKL).unwrap_or_else(|e| panic!("{}: {e}", crate::device::backend()));
+    let p1 = program("json_tier1.uglykl", rerail_json_aot::TIER1_UKL).unwrap_or_else(|e| panic!("{}: {e}", crate::device::backend()));
     let lang = json_lang();
     let (mut tapes, mut chunks_run, mut bytes_out, mut launches) = (0usize, 0usize, 0usize, 0usize);
     let (mut zbytes, mut zlaunches) = (0usize, 0usize);
@@ -208,11 +118,11 @@ fn json_tier2_writes_from_the_middle_as_its_rust() {
             continue;
         }
         let want = w.finish().expect("the serial tape").tape.as_bytes().to_vec();
-        let types = rerail_json_aot::lex_typed(&buf, n, 16).types;
-        let toks = middle::tokens(&buf, &lx, &types, &middle::in_order);
         for size in [1usize, 3, 16] {
+            // From the file's bytes alone: tier 1 and the token pass, then tier 2.
             let mut m = json_writer(&lang, &f);
-            let run = Run::go(&mut q, p, &buf, &lx, &toks, size, &mut m);
+            let lex = Lex::go(&mut q, p1, p, &buf, n, LEX_BLOCKS);
+            let run = Run::go(&mut q, p, &lex, size, &mut m);
             let pool: Vec<u32> = read(&run.pool, run.words);
             assert_eq!((pool[4], pool[6], pool[14]), (1, 0, 1), "{}: file {k}, chunks of {size}: the verdict, failure and finish", crate::device::backend());
             let nc = pool[2] as usize;
@@ -224,7 +134,7 @@ fn json_tier2_writes_from_the_middle_as_its_rust() {
                 assert!(fine, "{}: file {k}, chunks of {size}: chunk {c} stopped as ({}, {})", crate::device::backend(), out[2 * c], out[2 * c + 1]);
             }
             // Then stored as 16z where it lies, by the second program.
-            let (z, zl) = run.z(&mut q, p, most_blocks(&lx));
+            let (z, zl) = run.z(&mut q, p, most_blocks(n));
             let want_z = rerail_tape_format::f16::z_of(&want, &rerail_tape_format::f16::lz4_greedy).expect("16z");
             assert!(z == want_z, "{}: file {k}, chunks of {size}: the 16z tape differs at byte {:?} of {} ({} bytes)", crate::device::backend(), z.iter().zip(&want_z).position(|(a, b)| a != b), want_z.len(), z.len());
             zbytes += z.len();
@@ -253,6 +163,7 @@ fn json_tier2_timings() {
     let Some(shared) = crate::shared::get() else { return };
     let mut q = crate::device::ComputeQueue::new(&shared.queue);
     let p = program("json_tier2.uglykl", rerail_json_aot::TIER2_UKL).unwrap();
+    let p1 = program("json_tier1.uglykl", rerail_json_aot::TIER1_UKL).unwrap();
     let lang = json_lang();
     let mut f = b"[".to_vec();
     let mut i = 0usize;
@@ -276,7 +187,6 @@ fn json_tier2_timings() {
     let lx = rerail_json_aot::lex(&buf, n);
     let t1 = best(&mut || drop(std::hint::black_box(rerail_json_aot::lex(&buf, n))));
     let types = rerail_json_aot::lex_typed(&buf, n, 16).types;
-    let toks = middle::tokens(&buf, &lx, &types, &middle::in_order);
     let tt = best(&mut || drop(std::hint::black_box(middle::tokens(&buf, &lx, &types, &middle::in_order))));
     let mut want = Vec::new();
     let t2 = best(&mut || {
@@ -297,23 +207,26 @@ fn json_tier2_timings() {
     eprintln!("{}: {n} bytes, {} records, a tape of {} bytes, 16z {} bytes", crate::device::backend(), lx.count, want.len(), want_z.len());
     eprintln!("CPU, one thread: tier 1 {t1:?}, the token pass {tt:?}, tier 2 serial {t2:?}, its finish {tf:?}, z_of {tz:?}");
     for size in [16usize, 64, 256] {
-        let (mut chain, mut z, mut wall) = (f64::MAX, f64::MAX, std::time::Duration::MAX);
+        let (mut lexing, mut chain, mut z, mut wall) = (f64::MAX, f64::MAX, f64::MAX, std::time::Duration::MAX);
         let mut launches = (0, 0);
         for _ in 0..3 {
             let mut m = json_writer(&lang, &f);
             let (g0, t) = (crate::device::gpu_seconds_awaited(), std::time::Instant::now());
-            let run = Run::go(&mut q, p, &buf, &lx, &toks, size, &mut m);
+            let lex = Lex::go(&mut q, p1, p, &buf, n, LEX_BLOCKS);
+            q.flush().await_().unwrap();
+            let gl = crate::device::gpu_seconds_awaited();
+            let run = Run::go(&mut q, p, &lex, size, &mut m);
             let g1 = crate::device::gpu_seconds_awaited();
-            let (zb, zl) = run.z(&mut q, p, most_blocks(&lx));
+            let (zb, zl) = run.z(&mut q, p, most_blocks(n));
             let g2 = crate::device::gpu_seconds_awaited();
             wall = wall.min(t.elapsed());
             assert!(zb == want_z, "chunks of {size}: the 16z tape");
             m.from_device_region(&read::<u8>(&run.t, run.region));
             assert!(m.finished_on_device().unwrap().tape.as_bytes() == &want[..], "chunks of {size}: the tape");
-            (chain, z) = (chain.min(g1 - g0), z.min(g2 - g1));
+            (lexing, chain, z) = (lexing.min(gl - g0), chain.min(g1 - gl), z.min(g2 - g1));
             launches = (run.launches, zl);
         }
-        eprintln!("{}, {} groups, chunks of {size} records: tier 2 to the finished tape {:.2} ms GPU ({} launches), 16z {:.2} ms GPU ({} launches); wall with the test's buffers {wall:?}", crate::device::backend(), groups(), chain * 1e3, launches.0, z * 1e3, launches.1);
+        eprintln!("{}, {} groups, chunks of {size} records: tier 1 and the token pass {:.2} ms GPU (4 launches), tier 2 to the finished tape {:.2} ms GPU ({} launches), 16z {:.2} ms GPU ({} launches), all {:.2} ms; wall with the test's buffers {wall:?}", crate::device::backend(), groups(), lexing * 1e3, chain * 1e3, launches.0, z * 1e3, launches.1, (lexing + chain + z) * 1e3);
     }
 }
 
@@ -360,9 +273,9 @@ fn groups() -> u64 {
     std::env::var("RERAIL_T2_GROUPS").ok().and_then(|v| v.parse().ok()).unwrap_or(512)
 }
 
-/// The most blocks a tape of the file's records and bytes has (`Run::go`'s room).
-fn most_blocks(lx: &rerail_json_aot::Lexed) -> usize {
-    (1 + lx.count + lx.len).div_ceil(1024).max(1)
+/// The most blocks a tape of a file of `n` bytes has (`Run::go`'s room).
+fn most_blocks(n: usize) -> usize {
+    (2 + 2 * n).div_ceil(1024).max(1)
 }
 
 /// Each of `<ukl/middle_run.h>`'s phases' kernel, in the phases' order.
@@ -404,18 +317,97 @@ struct Run {
     launches: usize,
 }
 
+/// Tier 1 and the token pass on the device from the file's bytes alone (`json_t1_lex`, `<ukl/lex_run.h>`, then
+/// `json_t2_tokens`): its pool (the header's layout, and what the phases said), the source, the records (`starts`),
+/// each type's records (`types`, one list after another), each record's token, and the source's length. Every buffer
+/// is sized by the length: a file of `n` bytes has at most `n + 1` records.
+struct Lex {
+    pool: crate::device::Buffer,
+    src: crate::device::Buffer,
+    starts: crate::device::Buffer,
+    types: crate::device::Buffer,
+    tokens: crate::device::Buffer,
+    n: usize,
+    chunks: usize,
+}
+
+/// Tier 1's chunks: `LEX_BLOCKS` blocks of 64 bytes (`lex_typed`'s 16).
+const LEX_BLOCKS: usize = 16;
+
+impl Lex {
+    fn go(q: &mut crate::device::ComputeQueue, p1: &crate::kernels::Program, p2: &crate::kernels::Program, buf: &[u8], n: usize, blocks: usize) -> Lex {
+        let chunks = n.div_ceil(64).div_ceil(blocks).max(1);
+        let tn = 2 * chunks + 64;
+        let (om, ok) = (32, 32 + 2 * tn);
+        let oe = ok + 5 * tn;
+        let words = oe + chunks + 64;
+        let mut pool = vec![0u32; words];
+        pool[..7].copy_from_slice(&[chunks as u32, n as u32, blocks as u32, tn as u32, om as u32, ok as u32, oe as u32]);
+        let records = n + 1;
+        let (pb, sb) = (buffer_of(&pool).unwrap(), buffer_of(buf).unwrap());
+        let (stb, tyb, tkb) = (alloc::<u32>(records + 3).unwrap(), alloc::<u32>(records).unwrap(), alloc::<u32>(records * 5).unwrap());
+        for phase in 0..3u32 {
+            launch(q, p1.function("json_t1_lex").unwrap())
+                .value("args", &T1LArgs { n: n as u32, phase })
+                .buffer("src", &sb)
+                .buffer("pool", &pb)
+                .buffer("starts", &stb)
+                .buffer("types", &tyb)
+                .buffer("tokens", &tkb)
+                .run(&[groups()], &[64])
+                .unwrap();
+        }
+        // The token pass, a thread a typed record.
+        let args = T2Args { n: records as u32, count: records as u32 };
+        launch(q, p2.function("json_t2_tokens").unwrap())
+            .value("args", &args)
+            .buffer("src", &sb)
+            .buffer("starts", &stb)
+            .buffer("list", &tyb)
+            .buffer("lexed", &pb)
+            .buffer("tokens", &tkb)
+            .run(&[records as u64], &[1])
+            .unwrap();
+        Lex { pool: pb, src: sb, starts: stb, types: tyb, tokens: tkb, n, chunks }
+    }
+
+    /// What tier 1 said: whether it refused the file, its records, its typed records.
+    fn said(&self) -> (bool, usize, usize) {
+        let h: Vec<u32> = read(&self.pool, 32);
+        (h[8] != 0, h[9] as usize, h[10] as usize)
+    }
+}
+
+/// The token pass's arguments: the threads, the records' room.
+#[repr(C)]
+#[derive(Clone, Copy)]
+struct T2Args {
+    n: u32,
+    count: u32,
+}
+unsafe impl Pod for T2Args {}
+
+#[repr(C)]
+#[derive(Clone, Copy)]
+struct T1LArgs {
+    n: u32,
+    phase: u32,
+}
+unsafe impl Pod for T1LArgs {}
+
 impl Run {
-    fn go(q: &mut crate::device::ComputeQueue, p: &crate::kernels::Program, buf: &[u8], lx: &rerail_json_aot::Lexed, toks: &[rerail_json_aot::middle::Token], size: usize, m: &mut rerail_tape_format::f16::Writer) -> Run {
+    fn go(q: &mut crate::device::ComputeQueue, p: &crate::kernels::Program, lex: &Lex, size: usize, m: &mut rerail_tape_format::f16::Writer) -> Run {
         const DEPTH: usize = 1024;
-        // The writer's room for the most nodes a file of its records and bytes can have.
-        let most = 1 + lx.count + lx.len;
+        // The records and the nodes, bounded by the file's length (`Lex`): the buffers' room.
+        let count = lex.n + 1;
+        let most = 1 + count + lex.n;
         m.reserve_run(most, (DEPTH + 1) * 3 + 1);
-        debug_assert_eq!(most.div_ceil(1024).max(1), most_blocks(lx));
+        debug_assert_eq!(most.div_ceil(1024).max(1), most_blocks(lex.n));
         m.final_as_written();
         m.reserve_device_finish(most);
         let region = m.device_region();
         let blocks = most.div_ceil(1024).max(1);
-        let runs = lx.count.div_ceil(size.max(1)).max(1);
+        let runs = count.div_ceil(size.max(1)).max(1);
         let (tn, tbn) = (2 * runs + 64, 2 * blocks + 64);
         // The pool's layout, after its 64 header words.
         let mut at = 64;
@@ -427,7 +419,7 @@ impl Run {
         let o = [take(runs), take(runs + 1), take(runs), take(runs), take(runs + 1), take(2 * runs)];
         let tree = [take(3 * tn + 1), take(3 * tn + 1), take(3 * tn + 1), take(3 * tn + 1), take(3 * tbn + 1)];
         let fin = take(32);
-        let words = at + 64 * (lx.count + 1) + 64 * runs + 16 * blocks + 4096;
+        let words = at + 64 * (count + 1) + 64 * runs + 16 * blocks + 4096;
         let mut pool = vec![0u32; words];
         pool[0] = at as u32;
         pool[1] = words as u32;
@@ -438,25 +430,25 @@ impl Run {
             pool[22 + k] = x as u32;
         }
         (pool[27], pool[28], pool[29], pool[30]) = (tn as u32, tbn as u32, fin as u32, at as u32);
-        let tw: Vec<u32> = toks.iter().flat_map(|t| [t.end, t.kind, t.nodes, t.last, t.err]).chain([0]).collect();
-        let room = lx.count + 1 + runs;
-        let (sb, stb, tb, mb, rb) = (buffer_of(buf).unwrap(), buffer_of(&lx.starts).unwrap(), buffer_of(&tw).unwrap(), buffer_of(&pool).unwrap(), buffer_of(&region).unwrap());
+        let room = count + 1 + runs;
+        let (mb, rb) = (buffer_of(&pool).unwrap(), buffer_of(&region).unwrap());
         let (retb, f1, th, f2) = (alloc::<u8>(runs * DEPTH).unwrap(), alloc::<u32>(room * 10).unwrap(), alloc::<u32>(room * 2).unwrap(), alloc::<u32>(room * 25).unwrap());
         // A launch a phase, in one command buffer.
         let (groups, threads) = (groups(), 64u64);
         for (phase, kernel) in RUN_PHASES.iter().enumerate() {
-            let args = T2RArgs { count: lx.count as u32, len: lx.len as u32, ntoks: toks.len() as u32, size: size as u32, runs: runs as u32, most: blocks as u32, phase: phase as u32, pad: 0 };
+            let args = T2RArgs { count: count as u32, len: lex.n as u32, ntoks: count as u32, size: size as u32, runs: runs as u32, most: blocks as u32, phase: phase as u32, pad: 0 };
             launch(q, p.function(&format!("json_t2_run_{kernel}")).unwrap())
                 .value("args", &args)
-                .buffer("src", &sb)
-                .buffer("starts", &stb)
-                .buffer("toks", &tb)
+                .buffer("src", &lex.src)
+                .buffer("starts", &lex.starts)
+                .buffer("toks", &lex.tokens)
                 .buffer("pool", &mb)
                 .buffer("t", &rb)
                 .buffer("rets", &retb)
                 .buffer("f1", &f1)
                 .buffer("touch", &th)
                 .buffer("f2", &f2)
+                .buffer("lexed", &lex.pool)
                 .run(&[groups], &[threads])
                 .unwrap();
         }
@@ -600,6 +592,7 @@ fn json_tier2_program_is_its_rust() {
     let compiling = std::time::Instant::now();
     let p = program("json_tier2.uglykl", rerail_json_aot::TIER2_UKL).unwrap_or_else(|e| panic!("{}: {e}", crate::device::backend()));
     eprintln!("{}: tier 2's program compiled in {:?}", crate::device::backend(), compiling.elapsed());
+    let p1 = program("json_tier1.uglykl", rerail_json_aot::TIER1_UKL).unwrap_or_else(|e| panic!("{}: {e}", crate::device::backend()));
     let lang = json_lang();
     let (mut runs, mut chunks_run, mut anti, mut broken, mut launches) = (0usize, 0usize, 0usize, 0usize, 0usize);
     let mut ran = std::time::Duration::ZERO;
@@ -622,7 +615,8 @@ fn json_tier2_program_is_its_rust() {
             let ats = middle::entries(&buf, &lx, &toks, size, &middle::in_order);
             let mut mw = json_writer(&lang, &f);
             let started = std::time::Instant::now();
-            let run = Run::go(&mut q, p, &buf, &lx, &toks, size, &mut mw);
+            let lex = Lex::go(&mut q, p1, p, &buf, n, LEX_BLOCKS);
+            let run = Run::go(&mut q, p, &lex, size, &mut mw);
             ran += started.elapsed();
             let m: Vec<u32> = read(&run.pool, run.words);
             assert!((m[0] as usize) <= run.words, "{}", at("the pool's room passed"));

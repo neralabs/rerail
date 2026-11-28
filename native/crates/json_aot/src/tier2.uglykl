@@ -8,6 +8,7 @@
 #include <ukl/middle.h>
 #include <ukl/middle_run.h>
 #include <ukl/z16_run.h>
+#include <ukl/lex_pool.h>
 
 UKL_TABLE uint8_t json_t2_ROWS[256] = {3, 3, 3, 3, 3, 3, 3, 3, 3, 0, 0, 3, 3, 0, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 0, 3, 1, 3, 3, 3, 3, 3, 3, 3, 3, 3, 2, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 2, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 2, 3, 2, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 2, 3, 2, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3};
 UKL_TABLE uint32_t json_t2_HEX_VALUE[256] = {0xffff0000u, 0xffff0000u, 0xffff0000u, 0xffff0000u, 0xffff0000u, 0xffff0000u, 0xffff0000u, 0xffff0000u, 0xffff0000u, 0xffff0000u, 0xffff0000u, 0xffff0000u, 0xffff0000u, 0xffff0000u, 0xffff0000u, 0xffff0000u, 0xffff0000u, 0xffff0000u, 0xffff0000u, 0xffff0000u, 0xffff0000u, 0xffff0000u, 0xffff0000u, 0xffff0000u, 0xffff0000u, 0xffff0000u, 0xffff0000u, 0xffff0000u, 0xffff0000u, 0xffff0000u, 0xffff0000u, 0xffff0000u, 0xffff0000u, 0xffff0000u, 0xffff0000u, 0xffff0000u, 0xffff0000u, 0xffff0000u, 0xffff0000u, 0xffff0000u, 0xffff0000u, 0xffff0000u, 0xffff0000u, 0xffff0000u, 0xffff0000u, 0xffff0000u, 0xffff0000u, 0xffff0000u, 0u, 1u, 2u, 3u, 4u, 5u, 6u, 7u, 8u, 9u, 0xffff0000u, 0xffff0000u, 0xffff0000u, 0xffff0000u, 0xffff0000u, 0xffff0000u, 0xffff0000u, 10u, 11u, 12u, 13u, 14u, 15u, 0xffff0000u, 0xffff0000u, 0xffff0000u, 0xffff0000u, 0xffff0000u, 0xffff0000u, 0xffff0000u, 0xffff0000u, 0xffff0000u, 0xffff0000u, 0xffff0000u, 0xffff0000u, 0xffff0000u, 0xffff0000u, 0xffff0000u, 0xffff0000u, 0xffff0000u, 0xffff0000u, 0xffff0000u, 0xffff0000u, 0xffff0000u, 0xffff0000u, 0xffff0000u, 0xffff0000u, 0xffff0000u, 0xffff0000u, 10u, 11u, 12u, 13u, 14u, 15u, 0xffff0000u, 0xffff0000u, 0xffff0000u, 0xffff0000u, 0xffff0000u, 0xffff0000u, 0xffff0000u, 0xffff0000u, 0xffff0000u, 0xffff0000u, 0xffff0000u, 0xffff0000u, 0xffff0000u, 0xffff0000u, 0xffff0000u, 0xffff0000u, 0xffff0000u, 0xffff0000u, 0xffff0000u, 0xffff0000u, 0xffff0000u, 0xffff0000u, 0xffff0000u, 0xffff0000u, 0xffff0000u, 0xffff0000u, 0xffff0000u, 0xffff0000u, 0xffff0000u, 0xffff0000u, 0xffff0000u, 0xffff0000u, 0xffff0000u, 0xffff0000u, 0xffff0000u, 0xffff0000u, 0xffff0000u, 0xffff0000u, 0xffff0000u, 0xffff0000u, 0xffff0000u, 0xffff0000u, 0xffff0000u, 0xffff0000u, 0xffff0000u, 0xffff0000u, 0xffff0000u, 0xffff0000u, 0xffff0000u, 0xffff0000u, 0xffff0000u, 0xffff0000u, 0xffff0000u, 0xffff0000u, 0xffff0000u, 0xffff0000u, 0xffff0000u, 0xffff0000u, 0xffff0000u, 0xffff0000u, 0xffff0000u, 0xffff0000u, 0xffff0000u, 0xffff0000u, 0xffff0000u, 0xffff0000u, 0xffff0000u, 0xffff0000u, 0xffff0000u, 0xffff0000u, 0xffff0000u, 0xffff0000u, 0xffff0000u, 0xffff0000u, 0xffff0000u, 0xffff0000u, 0xffff0000u, 0xffff0000u, 0xffff0000u, 0xffff0000u, 0xffff0000u, 0xffff0000u, 0xffff0000u, 0xffff0000u, 0xffff0000u, 0xffff0000u, 0xffff0000u, 0xffff0000u, 0xffff0000u, 0xffff0000u, 0xffff0000u, 0xffff0000u, 0xffff0000u, 0xffff0000u, 0xffff0000u, 0xffff0000u, 0xffff0000u, 0xffff0000u, 0xffff0000u, 0xffff0000u, 0xffff0000u, 0xffff0000u, 0xffff0000u, 0xffff0000u, 0xffff0000u, 0xffff0000u, 0xffff0000u, 0xffff0000u, 0xffff0000u, 0xffff0000u, 0xffff0000u, 0xffff0000u, 0xffff0000u, 0xffff0000u, 0xffff0000u, 0xffff0000u, 0xffff0000u, 0xffff0000u, 0xffff0000u, 0xffff0000u, 0xffff0000u, 0xffff0000u, 0xffff0000u, 0xffff0000u, 0xffff0000u, 0xffff0000u, 0xffff0000u, 0xffff0000u, 0xffff0000u, 0xffff0000u, 0xffff0000u, 0xffff0000u, 0xffff0000u, 0xffff0000u, 0xffff0000u, 0xffff0000u, 0xffff0000u, 0xffff0000u, 0xffff0000u, 0xffff0000u, 0xffff0000u, 0xffff0000u, 0xffff0000u, 0xffff0000u, 0xffff0000u, 0xffff0000u, 0xffff0000u, 0xffff0000u, 0xffff0000u, 0xffff0000u, 0xffff0000u, 0xffff0000u, 0xffff0000u};
@@ -1574,17 +1575,19 @@ typedef struct json_t2_TArgs {
 UKL_REFLECT_STRUCT(json_t2_TArgs, n, count)
 
 // Stage 2: the token at record `list[j]`, read on its own (`token_at`): its end, its first node's number among the
-// primitive's alternatives, its nodes, the last one's start, or the byte it is refused at (`err`, else `NONE`). A
-// record that starts no token has `kind` `NONE` and `err` `NONE`.
+// primitive's alternatives, its nodes, the last one's start, or the byte it is refused at (`err`, else `NONE`). The
+// list is tier 1's types' (`<ukl/lex_run.h>`), as many as its pool says (`lexed`); the grid `args.n` threads, at
+// least that many. A record that starts no token keeps the none tier 1 wrote.
 DEFINE_KERNEL2(tier2, json_t2_tokens,
                ARGS,     json_t2_TArgs, args,   ,
                ROBUFFER, uint8_t,  src,    "[n + 64]",
                ROBUFFER, uint32_t, starts, "[count + 3]",
                ROBUFFER, uint32_t, list,   "[n]",
+               ROBUFFER, uint32_t, lexed,  "[32]",
                RWBUFFER, uint32_t, tokens, "[count * 5]",
                GID0,     uint32_t, j,      )
 {
-    if (j >= args.n)
+    if (j >= args.n || j >= lexed[UKL_LEX_TYPED] || lexed[UKL_LEX_REFUSED] != 0u)
         return;
     uint32_t r = list[j];
     uint32_t b = src[starts[r]];
@@ -1788,6 +1791,7 @@ DEFINE_KERNEL2(tier2, json_t2_run_scan,
                RWBUFFER, uint32_t, f1,      "[(count + 1 + runs) * 10]",
                RWBUFFER, uint32_t, touch,   "[(count + 1 + runs) * 2]",
                RWBUFFER, uint32_t, f2,      "[(count + 1 + runs) * 25]",
+               ROBUFFER, uint32_t, lexed,   "[32]",
                LANE,     uint16_t, lane,    )
 {
     UklRun r;
@@ -1801,11 +1805,14 @@ DEFINE_KERNEL2(tier2, json_t2_run_scan,
     r.touch = touch;
     r.f2 = f2;
     r.phase = args.phase;
-    r.count = args.count;
+    // The records tier 1 found (`args.count` and `args.runs` bound them: the buffers' room).
+    r.count = lexed[UKL_LEX_COUNT];
+    r.refused = lexed[UKL_LEX_REFUSED];
     r.len = args.len;
-    r.ntoks = args.ntoks;
+    r.ntoks = r.count;
     r.size = args.size;
-    r.runs = args.runs;
+    r.runs = (r.count + args.size - 1u) / args.size;
+    r.runs = r.runs == 0u ? 1u : r.runs;
     r.most = args.most;
     ukl_run_worker(&r, 1839u, lane __UKL_ARGS);
 }
@@ -1824,6 +1831,7 @@ DEFINE_KERNEL2(tier2, json_t2_run_walk,
                RWBUFFER, uint32_t, f1,      "[(count + 1 + runs) * 10]",
                RWBUFFER, uint32_t, touch,   "[(count + 1 + runs) * 2]",
                RWBUFFER, uint32_t, f2,      "[(count + 1 + runs) * 25]",
+               ROBUFFER, uint32_t, lexed,   "[32]",
                LANE,     uint16_t, lane,    )
 {
     UklRun r;
@@ -1837,11 +1845,14 @@ DEFINE_KERNEL2(tier2, json_t2_run_walk,
     r.touch = touch;
     r.f2 = f2;
     r.phase = args.phase;
-    r.count = args.count;
+    // The records tier 1 found (`args.count` and `args.runs` bound them: the buffers' room).
+    r.count = lexed[UKL_LEX_COUNT];
+    r.refused = lexed[UKL_LEX_REFUSED];
     r.len = args.len;
-    r.ntoks = args.ntoks;
+    r.ntoks = r.count;
     r.size = args.size;
-    r.runs = args.runs;
+    r.runs = (r.count + args.size - 1u) / args.size;
+    r.runs = r.runs == 0u ? 1u : r.runs;
     r.most = args.most;
     ukl_run_worker(&r, 16u, lane __UKL_ARGS);
 }
@@ -1860,6 +1871,7 @@ DEFINE_KERNEL2(tier2, json_t2_run_write,
                RWBUFFER, uint32_t, f1,      "[(count + 1 + runs) * 10]",
                RWBUFFER, uint32_t, touch,   "[(count + 1 + runs) * 2]",
                RWBUFFER, uint32_t, f2,      "[(count + 1 + runs) * 25]",
+               ROBUFFER, uint32_t, lexed,   "[32]",
                LANE,     uint16_t, lane,    )
 {
     UklRun r;
@@ -1873,11 +1885,14 @@ DEFINE_KERNEL2(tier2, json_t2_run_write,
     r.touch = touch;
     r.f2 = f2;
     r.phase = args.phase;
-    r.count = args.count;
+    // The records tier 1 found (`args.count` and `args.runs` bound them: the buffers' room).
+    r.count = lexed[UKL_LEX_COUNT];
+    r.refused = lexed[UKL_LEX_REFUSED];
     r.len = args.len;
-    r.ntoks = args.ntoks;
+    r.ntoks = r.count;
     r.size = args.size;
-    r.runs = args.runs;
+    r.runs = (r.count + args.size - 1u) / args.size;
+    r.runs = r.runs == 0u ? 1u : r.runs;
     r.most = args.most;
     ukl_run_worker(&r, 192u, lane __UKL_ARGS);
 }

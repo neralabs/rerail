@@ -291,8 +291,37 @@ work (the M3 Max at a load average of 10, the M1 Max at 9 to 20).
 | 16z (2 launches) | 1.2 to 2.0 ms | 2.2 ms |
 
 On the M3 Max, at 64 groups tier 2 took 11.6 to 17.2 ms and 16z 2.1 ms; at 2,048, 7.8 to 13.8 ms and 1.2 to 1.7 ms.
-The device covers tier 2 and its finish and 16z; tier 1 and the token pass ran on the CPU (the token pass's kernel,
-`json_t2_tokens`, is tested apart).
+
+### 10. The whole chain from the bytes on the device
+
+The user (2026-11-27): "which part of parsing JSON on the GPU meant parsing JSON on the CPU?" The timings above fed
+tier 2 tier 1's records and the token pass's answers computed on the host. Now nothing but the source and its
+length goes to the device:
+
+- `<ukl/lex_run.h>` (`json_t1_lex`), tier 1 in three phases, a launch each, the scans of `lex_typed_in` on the
+  device. ENDS: pass 1, each chunk's end lane from each entry lane, a map, a leaf of the maps' scan. COUNT: each
+  chunk's entry (the maps before it composed, walked down from the top, applied to the file's start lane), pass 2
+  counting, a leaf of the counts' scan, whose root says the totals and ends the records. WRITE: each chunk's places
+  (walked down; each type's list after the types before it), pass 2 writing the records and the types' records, and
+  each of its records' token none.
+- The token pass (`json_t2_tokens`), a thread a typed record, as many as tier 1's pool says.
+- Tier 2's kernels read the records and the refusal from tier 1's pool's header (`<ukl/lex_pool.h>`); a refused file
+  gives every phase no items.
+
+The host sizes every buffer by the file's length alone (a file of `n` bytes has at most `n + 1` records), so the
+rooms are bounds, not the records' counts.
+
+On the M3 Max (`json_tier2_timings`, the same 2 MB file, 512 groups, a load average of 6), GPU time:
+
+| | chunks of 16 records | 64 | 256 |
+|---|---|---|---|
+| tier 1 and the token pass (4 launches) | 1.4 ms | 2.3 ms | 1.5 ms |
+| tier 2 to the finished tape (11 launches) | 10.3 ms | 8.7 ms | 13.3 ms |
+| 16z (2 launches) | 1.8 ms | 2.0 ms | 1.2 ms |
+| all | 13.5 ms | 13.0 ms | 16.0 ms |
+
+One CPU thread, the same steps: tier 1 0.41 ms, the token pass 4.4 ms, tier 2's serial walk 77 ms, its finish
+0.17 ms, `z_of` 2.7 ms: 85 ms.
 
 ## Tests
 

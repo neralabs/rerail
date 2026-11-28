@@ -130,7 +130,9 @@ typedef struct UklRun {
     UKL_GLOBAL uint32_t* f1;
     UKL_GLOBAL uint32_t* touch;
     UKL_GLOBAL uint32_t* f2;
-    uint32_t count, len, ntoks, size, runs, most, phase;
+    // Tier 1's records, from its pool's header (`<ukl/lex_pool.h>`), and whether it refused the file (no phase then
+    // has items); the runs of `size` records.
+    uint32_t count, len, ntoks, size, runs, most, phase, refused;
 } UklRun;
 
 // The grammar's (the two walks each a function compiled once and called, `UKL_ONCE`: inlined into the one kernel with
@@ -756,6 +758,8 @@ UKL_INLINE void ukl_run_leaf(UKL_PRIVATE UklRun* r, uint32_t tr, uint32_t i)
 UKL_INLINE uint32_t ukl_run_items(UKL_PRIVATE UklRun* r, uint32_t ph)
 {
     UklMidPool m = r->m;
+    if (r->refused != 0u)
+        return 0u;
     bool ok = ukl_atomic_poll(&m[UKL_RUN_VERDICT]) == 1u;
     uint32_t nc = m[UKL_RUN_NC], nb = ok ? m[UKL_RUN_NB] : 0u;
     if (ph <= UKL_RUN_PH_STARTS)
