@@ -1295,27 +1295,13 @@ pub fn tier2_loop_reads(x: &Input<'_>) -> Result<(String, Option<u32>), String> 
 /// (`STEP_CONT`, `STEP_CYCLE`), and its places' count (`STEP_PLACES`).
 fn step_of(split: &str) -> Result<String, String> {
     let why = |w: &str| format!("tier 2 a record at a time: {w}");
-    let head = "pub unsafe fn run_range<D: Out>(";
-    let f = split.find(head).ok_or_else(|| why("no run_range"))?;
-    // Its end: where its braces close (its code holds no brace in a string or a character).
-    let open = f + split[f..].find('{').ok_or_else(|| why("run_range's body"))?;
-    let mut depth = 0i32;
-    let mut e = None;
-    for (k, c) in split[open..].char_indices() {
-        depth += match c {
-            '{' => 1,
-            '}' => -1,
-            _ => 0,
-        };
-        if depth == 0 {
-            e = Some(open + k + 2);
-            break;
-        }
-    }
-    let e = e.ok_or_else(|| why("run_range's end"))?;
-    // Its doc comment: the lines above it.
-    let doc = split[..f].rfind("\n\n").map_or(f, |d| d + 2);
-    let body = split[doc..e].replacen("pub unsafe fn run_range<", "pub unsafe fn run_step<", 1);
+    let (run, doc_run) = fn_text(split, "pub unsafe fn run_range<D: Out>(").ok_or_else(|| why("no run_range"))?;
+    let (write, _) = fn_text(split, "pub unsafe fn write_range(").ok_or_else(|| why("no write_range"))?;
+    let body = format!("{doc_run}{}", run.replacen("pub unsafe fn run_range<", "pub unsafe fn run_step<", 1));
+    let write = format!(
+        "/// `write_range` a record at a time: the nodes of the records from `at` to `stop`, through `run_step`'s places.\n{}",
+        write.replacen("pub unsafe fn write_range(", "pub unsafe fn write_step(", 1).replace("run_range(", "run_step(")
+    );
     let konst = |name: &str| -> Result<String, String> {
         let at = split.find(&format!("pub const {name}: &[u8] = &[")).ok_or_else(|| why(name))?;
         let line = &split[at..at + split[at..].find('\n').unwrap_or(0)];
@@ -1323,12 +1309,31 @@ fn step_of(split: &str) -> Result<String, String> {
     };
     let places = body.lines().filter_map(|l| l.split(" => ").next()).flat_map(|p| p.split(" | ")).filter_map(|n| n.trim().parse::<usize>().ok()).max().map_or(0, |m| m + 1);
     Ok(format!(
-        "\n// Tier 2 a record at a time (decision 0726's tier 2 by record): the same loop with every record read ending a\n// place, so the walk from a place to the first place past record `i` is record `i`'s step.\n\n/// The places of `run_step`'s loop.\npub const STEP_PLACES: usize = {places};\n\n/// The levels the walk opens at most (`run_step`'s levels' places).\npub const STEP_DEPTH: usize = DEPTH;\n\n/// `run_step`'s places a level returns to.\n{}\n\n/// `run_step`'s lists' cycle places.\n{}\n\n/// `run_step`'s return place of each level kind (the root's last).\n{}\n\n/// `run_step`'s cycle place of each level kind.\n{}\n\n{body}",
+        "\n// Tier 2 a record at a time (decision 0726's tier 2 by record): the same loop with every record read ending a\n// place, so the walk from a place to the first place past record `i` is record `i`'s step.\n\n/// The places of `run_step`'s loop.\npub const STEP_PLACES: usize = {places};\n\n/// The levels the walk opens at most (`run_step`'s levels' places).\npub const STEP_DEPTH: usize = DEPTH;\n\n/// `run_step`'s places a level returns to.\n{}\n\n/// `run_step`'s lists' cycle places.\n{}\n\n/// `run_step`'s return place of each level kind (the root's last).\n{}\n\n/// `run_step`'s cycle place of each level kind.\n{}\n\n{body}\n{write}",
         konst("RETS")?,
         konst("CYCLES")?,
         konst("CONT")?,
         konst("CYCLE")?
     ))
+}
+
+/// A function of `text` by its head: its text to its braces' close, and the doc comment above it.
+fn fn_text<'t>(text: &'t str, head: &str) -> Option<(&'t str, &'t str)> {
+    let f = text.find(head)?;
+    let open = f + text[f..].find('{')?;
+    let mut depth = 0i32;
+    for (k, c) in text[open..].char_indices() {
+        depth += match c {
+            '{' => 1,
+            '}' => -1,
+            _ => 0,
+        };
+        if depth == 0 {
+            let doc = text[..f].rfind("\n\n").map_or(f, |d| d + 2);
+            return Some((&text[f..open + k + 2], &text[doc..f]));
+        }
+    }
+    None
 }
 
 /// The one loop's text and its chunked form; with `split`, the loop a record at a time.

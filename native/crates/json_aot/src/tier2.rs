@@ -2042,3 +2042,19 @@ _ => unreachable!(),
 }
 
 }
+
+/// `write_range` a record at a time: the nodes of the records from `at` to `stop`, through `run_step`'s places.
+pub unsafe fn write_step(src: &[u8], lx: &crate::tier1::Lexed, state: *mut u8, at: &At, stop: usize, count: bool) -> Stop {
+    let mut ret = std::boxed::Box::new([0u8; DEPTH]);
+    // The levels it holds, at their depths.
+    let base = at.entry.depth - at.ret.len();
+    ret[base..at.entry.depth].copy_from_slice(&at.ret);
+    // The frames' room: those open at its entry, and as many as a chunk opens at most.
+    let mut buf: Vec<u8> = Vec::with_capacity(((DEPTH + 1) * 3 + 1 + at.frames.len()) * 24);
+    let frames: Vec<(u32, u32, u32, u64)> = at.frames.iter().map(|f| (f.node, f.kids, f.last, f.start)).collect();
+    // SAFETY: the caller's; the frames' room is `buf`'s.
+    unsafe {
+        let mut d = Cursor::<Cells, true>::resume(state, buf.as_mut_ptr(), at.nodes, at.prev_start, &frames, count);
+        run_step(src, lx, &mut d, at.entry, &mut *ret, 0, stop)
+    }
+}
