@@ -33,7 +33,7 @@ import {
   type AdapterEvent, leaveUntaken, openRerailDatabase, RepositoryWorktreeWalks, setRuleSetting, SqliteAuditStore, SqliteAuditControlStore,
   UNTAKEN_EVENTS_DIR, untakenFolderId, type UntakenPass,
 } from "../../src/engine/index.js";
-import { keepClaudeStatusFiles, presentedSessionNoteRules, steerDashboard } from "../../src/presentation/index.js";
+import { type ClaudeStatusFiles, keepClaudeStatusFiles, presentedSessionNoteRules, steerDashboard } from "../../src/presentation/index.js";
 import { startTestRepository, stopTestRepository } from "../support/started-repository.js";
 import { setUpTestRepository } from "../support/repository-rules.js";
 import { linkFolder } from "../support/platform/links.js";
@@ -90,6 +90,22 @@ describe("Rerail daemon", () => {
     });
     daemons.push(daemon);
     return daemon;
+  }
+
+  /**
+   * A status line keeper for the daemon a case starts, writing into `folder`, which the case holds so it can run a pass
+   * itself (`refresh`) and read the file after it: after each pass of its own the keeper rests ten times as long as the
+   * pass took, so on a loaded machine its next pass can come later than a wait shorter than the case's.
+   */
+  function statusKeeper(folder: string): { statusLines: NonNullable<RerailDaemonOptions["statusLines"]>; refresh: () => Promise<void> } {
+    let keeper: ClaudeStatusFiles | undefined;
+    return {
+      statusLines: stores => {
+        keeper = keepClaudeStatusFiles({ stores, folder, checkEveryMs: 20 });
+        return keeper;
+      },
+      refresh: async () => await keeper!.refresh(),
+    };
   }
 
   async function getJson<T = unknown>(daemon: RerailDaemon, path: string): Promise<{ status: number; body: T }> {
@@ -177,15 +193,14 @@ describe("Rerail daemon", () => {
     try {
       store.openSession(session);
       store.startHudTracking(session, true);
-      const daemon = await start({
-        contentStoreProblem: () => why,
-        statusLines: stores => keepClaudeStatusFiles({ stores, folder, checkEveryMs: 20 }),
-      });
+      const status = statusKeeper(folder);
+      const daemon = await start({ contentStoreProblem: () => why, statusLines: status.statusLines });
       // `/api/presentation` carries only whether the engine is ok; `/healthz` carries the reason.
       expect((await getJson<DaemonHealth>(daemon, "/healthz")).body).toMatchObject({ native: { ok: false, error: `no code rule can run: ${why}` }, healthy: false });
       // The footer's line for a terminal with no colour.
       const line = async (): Promise<string> => (await readFile(join(folder, session.sessionId), "utf8")).split("\n")[2]!;
-      await vi.waitFor(async () => expect(await line()).toContain("engine unavailable"), { timeout: 10_000 });
+      await status.refresh();
+      expect(await line()).toContain("engine unavailable");
       await daemon.close();
     } finally {
       store.close();
@@ -395,19 +410,25 @@ describe("Rerail daemon", () => {
     try {
       store.openSession(session);
       store.startHudTracking(session, true);
-      const daemon = await start({ statusLines: stores => keepClaudeStatusFiles({ stores, folder, checkEveryMs: 20 }) });
+      const status = statusKeeper(folder);
+      const daemon = await start({ statusLines: status.statusLines });
+      const file = join(folder, session.sessionId);
       // The file's last line is the one for a terminal with no colour.
-      const line = async (): Promise<string> => (await readFile(join(folder, session.sessionId), "utf8")).split("\n")[2]!;
-      await vi.waitFor(async () => expect(await line()).toContain("rules unavailable"), { timeout: 10_000 });
+      const line = async (): Promise<string> => (await readFile(file, "utf8")).split("\n")[2]!;
+      await status.refresh();
+      expect(await line()).toContain("rules unavailable");
       // The links are into this daemon's own dashboard.
       expect(await line()).toContain(`\u001b]8;;${new URL(daemon.url).origin}/?`);
-      // A steer another process records, as Claude Code's hook does, reaches the file without anything asking for it.
+      // A steer another process records, as Claude Code's hook does, reaches the file without anything asking for it: the
+      // keeper's own check draws it once the rest its last pass earned is over, so this waits within the case's bound.
       store.recordSteer(session, "receipt", ["team:rule"]);
-      await vi.waitFor(async () => expect(await line()).toContain("steered 1×"), { timeout: 10_000 });
+      await vi.waitFor(async () => expect(await line()).toContain("steered 1×"), { timeout: 50_000 });
       store.closeSession(session.sessionId);
-      await vi.waitFor(() => expect(existsSync(join(folder, session.sessionId))).toBe(false), { timeout: 10_000 });
+      await status.refresh();
+      expect(existsSync(file)).toBe(false);
       store.openSession(session);
-      await vi.waitFor(() => expect(existsSync(join(folder, session.sessionId))).toBe(true), { timeout: 10_000 });
+      await status.refresh();
+      expect(existsSync(file)).toBe(true);
       await daemon.close();
       expect(await line()).toBe("R E R A I L ✕ not running");
     } finally {
