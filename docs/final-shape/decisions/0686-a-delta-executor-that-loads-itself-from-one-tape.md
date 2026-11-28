@@ -1985,3 +1985,32 @@ names), `consolidate` (its own layer; each kill a search of O(log n) layers), `m
 amortized by the roll-up), `cache_open` and `cache_commit` (the header). **O(data) by meaning:** a cold run's every
 id; `named_blocks` and `forget_dead` after an eviction (the residency's event, not an edit's); a consolidate's kill
 search in a layer whose shape declares no index (`own_row` scans its rows).
+
+## L6, L7, L9 and P1 beyond their narrow forms (2026-11-28)
+
+Each of the four held only on the one pipeline the engine has (the world's answerers into L1), on L1's declaration,
+or on one edit. Each is now checked on any operator the harness is given.
+
+| Law | Was | Now |
+|---|---|---|
+| L9 | by column types, and in the validation mode the outputs' changed partitions | by meaning (`by_partition`, in every harness run of an operator declared per partition): at every state, each partition's inputs alone give exactly the full output's rows in that partition and none in another; no output row lies in a partition no input holds. A toy whose plain function counts every partition's rows fails on L9 alone (`a_per_partition_toy_passes_and_one_reading_across_partitions_fails_l9`); L1 passes over l0's edits. |
+| L6 | the boot's pipeline (answerers into L1) | `pipeline_laws`: stages of any operators (`Stage`, `Staged`), wired by `Wire` into any acyclic shape, stepped over their sources' change. At every state each stage is its composed function's output (the pipeline run cold), and a stage whose every input is the identity cuts off: checks only, no launch, its output unmoved. A chain (Toy, Back, Toy) and a diamond (Toy, Back, a union of Back's output with the input) pass, with every predicted cutoff (`pipelines_of_operators_are_their_composed_functions_and_cut_off`). A stage that reads at the identity, and one that drops its kills, fail L6 (`a_pipeline_with_a_broken_stage_fails_l6`). |
+| L7 | L1's changed partitions and kept rows | as well, the work of an operator declared per partition (`partition_work`): an edit of one partition among 4 to 64 others, by the validation mode's ledger, the operator's own reads among it. The ledger now counts the reads an operator's host code makes of its ports' states in `Instance::step` (`<op>.host`), not only its launches'. The toy passes; a toy that scans its input on each step grows and fails (`a_per_partition_operators_work_does_not_grow_with_the_partitions_an_edit_leaves`). |
+| P1 | one edit (a rule added) | every edit L1 sees (`laws::Edit`): a rule added, a rule removed, a fact's value changed, comments alone, a module added, each among 4 to 64 modules, L1's own reads in the ledger; one document let go among 4 to 64 (`let_go_among`). The edits and the let-go run on the device and a mixed runner too, among 3. |
+
+**What it found.**
+- *An operator's output read by another must be read as a chain.* An instance's outputs roll up geometrically at its
+  commits, and a merge renumbers the ids above its base, so a later stage's before was no state of its after
+  (`Bistate::new`'s "a later state keeps every id of the earlier one"). The document set's tape under L1 already kept
+  the rule: no roll-up while a run reads it, rolled up at the run's end. An output wired to a later stage now keeps it
+  too (`Instance::read_as_chain`, `roll_up_outs`).
+- *Letting a document go walked the whole set.* `forget_unasked` ran `semi_change` from ∅ over every row of the set
+  whenever the asks moved. The set now keeps both heads at its last forget (`covered`: the asks', and its own after
+  the drop), where no row of it was unasked. The documents to let go are the change of `A ▷ B` since then, its rows
+  of sign +1 (`How::UNMATCHED`), found from the change's candidates. It falls back to the walk from ∅ only where
+  either state has left its chain. The asks are read as chains, as the want is: no roll-up while a run reads them, and
+  rolled up at its end (`Instance::roll_up_asks`). `covered` follows the run's roll-ups (`DocSet::rolled_up`: a
+  roll-up changes no state). Letting one document go among 4 to 64 now costs `semi_change` the same reads. The old
+  walk read 664 beside 16 documents, against 152 beside 4, and fails the test.
+- *A test copied a 1 GB reservation.* The k0 cache test copied the cache block, a 1 GB reservation touched only where
+  it is written, three times (4.3 GB peak). It now reads the block where it lies (17 MB).
