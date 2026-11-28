@@ -87,6 +87,8 @@ async function fixture(createAuditor?: RerailRuntimeOptions["createAuditor"]) {
 
 describe("rerail scan and settings CLI", () => {
   it("starts, stops, and restarts this repository through slash commands", async () => {
+    // A person who runs the daemon themselves: the restart below ends on the line saying none runs.
+    vi.stubEnv("RERAIL_AUTOSTART", "0");
     const { root } = await fixture();
     const name = basename(root);
     const commands = new Map<string, Parameters<HostCommandHost["registerCommand"]>[1]>();
@@ -144,7 +146,7 @@ describe("rerail scan and settings CLI", () => {
 
     await commands.get("rerail-start")!.handler("", { ui });
     // Restarting a set-up repository ends as the terminal's `rerail start` does. The launcher finds no daemon of this
-    // home, and the suite's RERAIL_AUTOSTART=0 keeps it from starting one, so the line saying so, and how to start one,
+    // home, and RERAIL_AUTOSTART=0 keeps it from starting one, so the line saying so, and how to start one,
     // takes the place of the link and its reason.
     expect(notices.at(-1)).toMatch(/rules are on, as you left them\.\n {2}△ The Rerail daemon is not running, and RERAIL_AUTOSTART=0 keeps hooks from starting it, so nothing is recorded until it runs\. Start it with rerail daemon start\.$/u);
     expect(isRerailStarted(root)).toBe(true);

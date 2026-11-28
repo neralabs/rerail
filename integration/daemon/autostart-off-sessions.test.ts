@@ -39,7 +39,7 @@ afterEach(async () => {
  * kept; every other call of the API does nothing.
  */
 async function openSession(place: Place, entry: string, hasUI: boolean): Promise<Session> {
-  for (const name of ["RERAIL_HOME", "HOME", "USERPROFILE", "BROWSER"] as const) vi.stubEnv(name, place.env[name]);
+  for (const name of ["RERAIL_HOME", "HOME", "USERPROFILE", "BROWSER", "RERAIL_AUTOSTART"] as const) vi.stubEnv(name, place.env[name]);
   const handlers = new Map<string, Handler>();
   const commands = new Map<string, Command>();
   const shown: string[] = [];
