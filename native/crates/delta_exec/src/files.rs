@@ -24,7 +24,7 @@
 //! the old tape → the new one when it changed: the file is the grain. A file that does not parse, is not UTF-8, or
 //! cannot be read is refused, naming its path. Nothing here reads a file itself.
 
-use crate::contract::{push_layer, push_with};
+use crate::contract::push_with;
 use crate::dir::{BlockId, Directory};
 use crate::answer::{Ask, READ_ANYWAY, answer_load, code, parse_sources};
 use crate::op::Runner;
@@ -58,6 +58,12 @@ pub fn blobs_shape() -> Shape {
     Shape::run(c, (0..7).collect(), None)
 }
 
+impl Default for BlobRows {
+    fn default() -> BlobRows {
+        BlobRows::new()
+    }
+}
+
 impl BlobRows {
     /// No blob.
     pub fn new() -> BlobRows {
@@ -66,7 +72,7 @@ impl BlobRows {
 
     /// The blobs' rows placed at `place` (`dir::PLACE_KEPT`: they last across processes), at `head`.
     pub fn resumed(self, place: u32, head: Option<BlockId>) -> BlobRows {
-        BlobRows { rows: self.rows.resumed(place, head), ..self }
+        BlobRows { rows: self.rows.resumed(place, head) }
     }
 
     /// Their rows' trace.
@@ -74,9 +80,21 @@ impl BlobRows {
         &self.rows
     }
 
-    /// Their rows' head, as a run's pins record it.
+    /// Their rows' head, as a run's pins and an operation's launch read it: every row housed committed
+    /// (`commit`).
     pub fn head(&self) -> Option<BlockId> {
+        debug_assert!(!self.rows.is_written(), "blobs housed and not committed: their rows' head is not the blobs'");
         self.rows.head()
+    }
+
+    /// Their rows' trace, to commit what was housed with a run's other traces (`Trace::commit_wide`).
+    pub fn rows_mut(&mut self) -> &mut Trace {
+        &mut self.rows
+    }
+
+    /// The blobs housed since the last commit, committed (one launch; none when nothing was housed).
+    pub fn commit(&mut self, ops: &Runner, dir: &mut Directory) -> Result<(), String> {
+        Trace::commit_open(ops, dir, &mut [&mut self.rows], crate::op::Tiling::WHOLE)
     }
 
     /// Forgets the blobs whose block nothing holds: a slab the residency retired or dropped, or a new process's (a slab
@@ -105,15 +123,9 @@ impl BlobRows {
         Ok(self.row(dir, id)?.filter(|p| dir.alive(p.block)))
     }
 
-    /// Blob `id`'s row, its block held or not.
+    /// Blob `id`'s row, its block held or not: probed by its name in the rows as the run has them (`Trace::now`).
     fn row(&self, dir: &Directory, id: &BlobId) -> Result<Option<Placed>, String> {
-        let Some(h) = self.rows.head() else { return Ok(None) };
-        let l = self.rows.read(dir, &[Some(h)])?;
-        let table = l.table();
-        let s = self.rows.state(&table, Some(h))?;
-        let (cols, key) = ([0, 1, 2, 3].map(ColumnIndex::new), id.words());
-        let c = |r, k| Read::get(&s, r, ColumnIndex::new(k));
-        Ok(Read::matching(&s, &cols, &key).next().map(|r| Placed { block: BlockId(c(r, 4) as u32), at: c(r, 5) as usize, len: c(r, 6) as usize }))
+        Ok(self.rows.now(dir, &id.words())?.map(|r| Placed { block: BlockId(r[4] as u32), at: r[5] as usize, len: r[6] as usize }))
     }
 
     /// Houses the bytes at `p` where they lie, named by their sha256 (`house(bytes: Placed) -> BlobId`): the name,
@@ -133,20 +145,18 @@ impl BlobRows {
         let w = id.words();
         let row = |p: Placed| -> [i64; 7] { [w[0], w[1], w[2], w[3], i64::from(p.block.0), p.at as i64, p.len as i64] };
         // A blob whose slab went, resident again: its row moves to where it lies now. The change written into the
-        // layer's runs as it is made.
-        push_with(ops, dir, &mut self.rows, 2, |_, _, runs| {
-            if let Some(w) = was {
-                runs.push(&row(w), -1).ok_or("room for a blob's row")?;
-            }
-            runs.push(&row(p), 1).ok_or("room for a blob's row")?;
-            Ok(())
-        })?;
+        // rows' open runs as it is made, committed with the run's other traces.
+        match was {
+            Some(w) => self.rows.write(ops, dir, &[(row(w), -1), (row(p), 1)])?,
+            None => self.rows.write(ops, dir, &[(row(p), 1)])?,
+        }
         Ok((id, true))
     }
 
-    /// How many it holds.
+    /// How many it holds, the ones housed since the last commit among them.
     pub fn len(&self, dir: &Directory) -> Result<usize, String> {
-        self.rows.reading(dir, self.rows.head(), |s| s.live_ids().count())
+        let n = self.rows.reading(dir, self.rows.head(), |s| s.live_ids().count())?;
+        Ok((n as i64 + self.rows.written_diff(dir)?) as usize)
     }
 }
 
@@ -335,7 +345,7 @@ impl Answerer for Intern<'_> {
 /// found)`, against the row the committed trace holds for its key, pushed as its change into a δ runs block, and
 /// committed as the run's layer (`World::commit_leaves`). A key's leaf is written once a run (its answer is).
 pub struct LeavesW {
-    runs: BlockId,
+    pub(crate) runs: BlockId,
 }
 
 /// The leaves' rows (P§11.4: "leaves read: path, digest, hit or miss", the world's before): `(d, digest's four words,
@@ -360,13 +370,14 @@ pub fn places_shape() -> Shape {
     Shape::run(c, (0..13).collect(), Some(0))
 }
 
-/// The first row of `t` at its head whose leading columns are `key`, read where it lies (`Trace::probe`).
+/// The first row of `t` whose leading columns are `key`, as the run has it (its head, then what the run wrote: `Trace::now`),
+/// read where it lies.
 pub fn probe(dir: &Directory, t: &Trace, key: &[i64]) -> Result<Option<Row>, String> {
-    t.probe(dir, t.head(), key)
+    t.now(dir, key)
 }
 
-/// `t`'s row keyed by `key` (its leading columns) replaced by `row` (`None`: taken out), in one layer; nothing written
-/// when it holds that row already.
+/// `t`'s row keyed by `key` (its leading columns) replaced by `row` (`None`: taken out), written into its open runs
+/// (`Trace::write`), committed with the run's other traces; nothing written when it holds that row already.
 pub fn put_row(ops: &Runner, dir: &mut Directory, t: &mut Trace, key: &[i64], row: Option<Row>) -> Result<(), String> {
     let old = probe(dir, t, key)?;
     if old == row {
@@ -378,8 +389,7 @@ pub fn put_row(ops: &Runner, dir: &mut Directory, t: &mut Trace, key: &[i64], ro
         pairs[n] = p;
         n += 1;
     }
-    push_layer(ops, dir, t, &pairs[..n])?;
-    Ok(())
+    t.write(ops, dir, &pairs[..n])
 }
 
 /// A document's key (decision 0052 §3, `rerail_blocks::blob::doc_key`): from its path's hash, the next free one on a
@@ -433,8 +443,10 @@ impl World {
         })
     }
 
-    /// The traces' heads (`[leaves, answers, places]`), as a run's pins record them.
+    /// The traces' heads (`[leaves, answers, places]`), as a run's pins record them: everything written committed
+    /// (`commit`).
     pub fn heads(&self) -> [Option<BlockId>; 3] {
+        debug_assert!(!self.answers.is_written() && !self.places.is_written(), "the world's answers or places written and not committed");
         [self.leaves.head(), self.answers.head(), self.places.head()]
     }
 
@@ -755,6 +767,7 @@ pub fn doc_of(ops: &Runner, dir: &mut Directory, blobs: &mut BlobRows, src: &str
     let t = parsed_tape(dir, block, s, tape)?;
     let (source, _) = blobs.house(ops, dir, s)?;
     let (tape, _) = blobs.house(ops, dir, t)?;
+    blobs.commit(ops, dir)?;
     Ok(DocIds { source, tape })
 }
 

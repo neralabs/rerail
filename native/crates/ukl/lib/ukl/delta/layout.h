@@ -116,7 +116,8 @@
 #define DOCS_LEN_AT 320u
 #define DOCS_N_AT 328u
 #define DOCS_MISSING_AT 336u
-#define DOCS_AT 344u
+#define DOCS_NODES_AT 344u
+#define DOCS_AT 352u
 #define DOC_WORDS 8u
 #define K0_RELATIONS 8u
 #define ATOMS_ROOT_WORD 40u

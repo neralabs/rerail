@@ -103,7 +103,7 @@ pub(crate) fn launch(dir: &mut Directory, atoms: Atoms, src: Placed, tape: Place
         let bytes = &l.block(0)[tape.at..tape.at + tape.len];
         let v = rerail_rr_syntax::tape_format::f16::placement(bytes)?.view(rerail_rr_syntax::tape::lang(), 0)?;
         // SAFETY: a view is `VIEW_WORDS` u32s (`TapeView`, `repr(C)`), its size checked by the transmute.
-        unsafe { core::mem::transmute::<_, [u32; twin::VIEW_WORDS]>(v) }
+        unsafe { core::mem::transmute::<rerail_rr_syntax::tape_format::reads::TapeView, [u32; twin::VIEW_WORDS]>(v) }
     };
     let lang = language(dir)?;
     let body = twin::syms_bytes(n, path, module);

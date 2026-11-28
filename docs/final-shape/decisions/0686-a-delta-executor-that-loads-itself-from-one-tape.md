@@ -1859,3 +1859,43 @@ each (median), `intern` 3.2 ms, `merge` 0.8 ms, the rest 0.2–0.5 ms each, abou
   document trace's rows), quadratic otherwise.
 - `k0_pass`'s keep walks the cache's entries for each document on one thread.
 - The probe reads no Bloom filter, sorted order or permutation index (no executor trace declares one).
+
+## Step 4, continued: a cold boot run in 12 device launches (2026-11-27)
+
+l0's cold boot run was 32 launches: L1's step ran twice (its runs outgrew their first room), every answer committed
+its own layer (blob rows three times, then merges of those small traces), and each trace's commit was a launch of its
+own. Rebuilt:
+
+**Wide launches** (`Runner::run_wide`, `op.h`). One launch runs several instances of one operation, each with its
+own slots, params and state words (`DELTA_STATE_WORDS` apart). Each phase's grid is the instances' grids end to
+end. An item finds its instance by their prefix (`delta_instance`) and moves its kernel's arguments to that
+instance's (`DELTA_ITEM`, `DELTA_GROUP_ITEM`, `DELTA_MOVE_TO`). The count and again kernels walk the instances in
+turn. An instance that needs room runs again alone. Past `MAX_WIDE` (32) instances, a launch takes each 32. Every
+version's check also runs its cases as two instances of one launch, against each run alone.
+
+**One room, no rerun.** A K-form relation's rows of a document are at most its nodes (each row names a node of its
+own). So `docs_of` sums a bound on the read documents' nodes into the docs block (`DOCS_NODES_AT`: each symbols
+blob's eighth, a word a node). With no document gone, L1 opens each relation's runs at that bound. With one gone,
+`room_of` adds the gone documents' cached sizes, or the kept relations' rows when the cache reads as empty.
+
+**Commits wide.** `Trace::commit_wide` commits each trace's runs as its new layer, all of their `consolidate`s in
+one launch, then each one's roll-up; `commit` is a wide commit of one. The step commits every output and ask that got
+rows in one launch. The world's traces write open rows (`Trace::write`: into runs that grow, the head plus them read
+by `Trace::now`), and each document read ends with one wide commit (`DocSet::commit_read`): the blobs it housed, the
+answers and places it kept, the leaves so far, the document set's change. `resident` commits the blobs it loaded.
+`BlobRows::head` and `World::heads` assert that nothing is open.
+
+**Asks covered.** `forget_unasked` is skipped when the asks' head is the one the set was last read against: every
+document read since was asked there.
+
+**Counted** (`RERAIL_KERNEL_TIMES` now logs a CPU launch too). The cold run is 14 launches, 12 on the device:
+
+| Round | Launches |
+|---|---|
+| 0 | `consolidate` (the want), `semi_change` (L1's asks), `consolidate` (the asks) |
+| 0, the read | `answer_load`, `parse` (host operations, on the CPU), `intern`, `consolidate` ×5 wide (blobs, answers, places, leaves, the set) |
+| 1 | `named_blocks`, `semi_change`, `docs_of`, `cache_open`, `k0_pass`, `consolidate` ×7 wide (the K-form), `cache_commit` |
+
+A boot run on Metal (m1max, `the_boot_run_on_the_device_repeated`, 5 runs): 39 ms each, in the 34–56 ms of the
+last point: each launch still waits for its command. Queuing a run's launches between the host's two points
+(`answer_load` and `parse`) as one command, the needs and refusals read at its end, is the next step.

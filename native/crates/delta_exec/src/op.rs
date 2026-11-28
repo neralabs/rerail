@@ -974,6 +974,10 @@ fn shuffled(n: usize, seed: u64) -> Vec<usize> {
 }
 
 fn execute(sig: &Signature, v: &Version, dir: &Directory, wide: &Wide<'_>, tiling: Tiling, device: Option<&dyn Kernels>) -> Result<(), String> {
+    // A launch on the CPU, logged as the device's are (`RERAIL_KERNEL_TIMES`), so a run's launches are counted whole.
+    if device.is_none() && std::env::var_os("RERAIL_KERNEL_TIMES").is_some() {
+        eprintln!("delta-launch {} on the CPU ({} wide)", sig.name, wide.len());
+    }
     for &(slots, params) in wide {
         if slots.len() != sig.slots.len() {
             return Err(format!("{}: {} blocks for {} slots", sig.name, slots.len(), sig.slots.len()));

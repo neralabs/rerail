@@ -48,6 +48,7 @@ impl Fx {
         let module = path.strip_suffix(".rerail").unwrap_or(path);
         let (s, t) = (self.place(&ids.source), self.place(&ids.tape));
         let syms = intern(&self.ops, &mut self.dir, &mut self.blobs, self.atoms, s, t, path, module).expect("interned");
+        self.blobs.commit(&self.ops, &mut self.dir).expect("the symbols' blob committed");
         D { ids, syms }
     }
 
@@ -346,6 +347,7 @@ fn a_gone_document_is_retracted_from_the_kept_rows_not_its_old_tape() {
         let p = fx.place(&id);
         only_b.house(&fx.ops, &mut fx.dir, p).unwrap();
     }
+    only_b.commit(&fx.ops, &mut fx.dir).unwrap();
     let mut cx = Cx { ops: &fx.ops, dir: &mut fx.dir, blobs: &only_b };
     let work = inst.step(&l1, &mut cx, &[(&t, Some(h1), Some(h2))], &atoms, None).unwrap();
     let added: usize = want.iter().map(BTreeSet::len).sum();

@@ -18,7 +18,7 @@ UKL_INLINE bool row_blob(CBlk t, uint32_t blobs, CBlk rows, uint32_t k, uint32_t
 // Each +1 row of the selection a document, its blobs found by their names, written into the docs block in the
 // selection's order; the blocks it names, `(block << 32) | the furthest offset referred to`, into the blocks' list.
 // One threadgroup: a lane a row, a round of rows placed by an exclusive scan; the first row missing a blob (the least)
-// names the missing document.
+// names the missing document. The bound on their nodes, each symbols blob's eighth, summed.
 DELTA_COUNT(docs_of_docs_of_items) { return 1u; }
 DELTA_GROUPS(docs_of_docs_of)
 {
@@ -27,7 +27,7 @@ DELTA_GROUPS(docs_of_docs_of)
     CBlk rows = SLOT(0);
     Blk docs = SLOT(2), blocks = SLOT(3);
     uint32_t blobs = (uint32_t)q.blobs, n = 0u, len = runs_len(rows);
-    uint64_t missing = 0x7FFFFFFFFFFFFFFFull;
+    uint64_t missing = 0x7FFFFFFFFFFFFFFFull, nodes = 0u;
     for (uint32_t base = 0u; base < len; base += lsz) {
         uint32_t k = base + lid;
         Blob s, tp, y;
@@ -40,6 +40,7 @@ DELTA_GROUPS(docs_of_docs_of)
         UklScan e = ukl_tg_exclusive_sum(found ? 1u : 0u, lid, lsz, scratch __UKL_ARGS);
         uint64_t m = ukl_tg_reduce64(UKL_MIN_I64, row && !found ? (uint64_t)k : 0x7FFFFFFFFFFFFFFFull, lid, lsz, scratch __UKL_ARGS);
         missing = m < missing ? m : missing;
+        nodes += ukl_tg_reduce64(UKL_SUM_U64, found ? y.len / 8u : 0u, lid, lsz, scratch __UKL_ARGS);
         if (found) {
             uint32_t d = n + e.exclusive;
             uint64_t w[8] = {(uint64_t)runs_get(rows, k, q.module), s.block, tp.block, y.block, s.at, s.len, tp.at, tp.len};
@@ -54,6 +55,7 @@ DELTA_GROUPS(docs_of_docs_of)
     if (lid != 0u) return;
     if (missing != 0x7FFFFFFFFFFFFFFFull && I64(docs, DOCS_MISSING_AT) == NO_DOC) I64(docs, DOCS_MISSING_AT) = runs_get(rows, (uint32_t)missing, q.module);
     docs_seal(docs, n);
+    U64(docs, DOCS_NODES_AT) = nodes;
     parts_seal(blocks, 3u * n);
 }
 

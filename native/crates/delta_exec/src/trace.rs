@@ -178,6 +178,22 @@ pub fn facts_of(_: &Table<'_>, slot: usize, bytes: &[u8]) -> Vec<Vec<i64>> {
     out
 }
 
+/// Why `consolidate` refused a run's change, by its code.
+fn refusal_of(code: u64) -> &'static str {
+    match code {
+        1 => "a row's diffs sum past ±1",
+        2 => "a row gone is not live in the trace",
+        3 => "a row added is already live in the trace",
+        4 => "a key is live at two levels (0364: a rewrite kills the old level's row)",
+        _ => "an unknown refusal",
+    }
+}
+
+/// Whether the runs block `runs` holds a pair.
+pub fn holds_rows(dir: &Directory, runs: BlockId) -> Result<bool, String> {
+    Ok(!Runs::new(dir.read("a runs block", &[runs])?.block(0)).is_empty())
+}
+
 /// A δ runs block of rows of `shape`, with room for `cap` of them, empty.
 pub fn open_runs(dir: &mut Directory, shape: &ShapeW, cap: usize) -> BlockId {
     let id = dir.make(kind::SCRATCH, runs_bytes(shape, cap));
@@ -207,17 +223,24 @@ pub enum RollUp {
     Never,
 }
 
-/// A trace on the host: its shape, its newest layer's block id and its roll-up policy.
+/// A trace on the host: its shape, its newest layer's block id, its roll-up policy, and the rows a run has written
+/// and not yet committed (`write`): its open runs, read after the head by `now`, committed with the run's other traces
+/// in one launch (`commit_wide`).
 pub struct Trace {
     shape: ShapeW,
     head: Option<BlockId>,
     roll: RollUp,
+    written: Option<BlockId>,
 }
+
+/// The room a trace's open runs first have (`Trace::write`); past it, what is open is committed and the next runs
+/// have twice the room.
+const FIRST_WRITTEN: usize = 64;
 
 impl Trace {
     /// An empty trace of `shape`; refused when the shape cannot be stored (P§11.2's grouping, what is not built).
     pub fn new(shape: &Shape) -> Result<Trace, String> {
-        Ok(Trace { shape: shape.encode()?, head: None, roll: RollUp::Geometric })
+        Ok(Trace { shape: shape.encode()?, head: None, roll: RollUp::Geometric, written: None })
     }
 
     /// A kept trace (`Placement::KeptFile`) opened from its blocks' folder (`Directory::open_kept`): its head the
@@ -265,54 +288,171 @@ impl Trace {
     /// are merged (`roll_up`), and the merged layer is the head. The runs block is let go. Refused, with the head as it was, when
     /// the runs overflowed (rerun at the size it names) or `consolidate` refused the change.
     pub fn commit(&mut self, ops: &Runner, dir: &mut Directory, runs: BlockId, tiling: Tiling) -> Result<BlockId, String> {
-        let (n, needed) = {
-            let l = dir.read("commit", &[runs])?;
-            let r = Runs::new(l.block(0));
-            (r.len(), r.needed())
-        };
-        if needed > 0 {
-            dir.release(runs);
-            return Err(format!("the run's δ outgrew its runs block by {needed} pairs: rerun at {}", n + needed));
+        Trace::commit_wide(ops, dir, &mut [(self, runs)], tiling)?;
+        Ok(self.head.expect("committed"))
+    }
+
+    /// Commits each trace's runs as its new layer (`commit`), every one's `consolidate` in one launch (`run_wide`), the
+    /// traces' layers independent; then each one's roll-up. Refused, every head as it was, when a runs block
+    /// overflowed or `consolidate` refused a change; every runs block is let go.
+    pub fn commit_wide(ops: &Runner, dir: &mut Directory, items: &mut [(&mut Trace, BlockId)], tiling: Tiling) -> Result<(), String> {
+        let release_runs = |dir: &mut Directory, items: &[(&mut Trace, BlockId)]| items.iter().for_each(|(_, r)| dir.release(*r));
+        let mut sizes = Vec::with_capacity(items.len()); // copy: not block data (each runs block's pairs)
+        for (_, runs) in items.iter() {
+            let (n, needed) = {
+                let l = dir.read("commit", &[*runs])?;
+                let r = Runs::new(l.block(0));
+                (r.len(), r.needed())
+            };
+            if needed > 0 {
+                release_runs(dir, items);
+                return Err(format!("the run's δ outgrew its runs block by {needed} pairs: rerun at {}", n + needed));
+            }
+            sizes.push(n);
         }
-        let out = dir.make_placed(self.shape.placement, kind::FACTS, out_bytes(n), layer_room(&self.shape, n))?;
-        if let Some(h) = self.head {
-            dir.refer(out, h, BODY_AT)?;
+        // Each trace's launch: its runs, the new layer's block over its head, control, and the scratch slot.
+        let mut slots: Vec<[BlockId; 4]> = Vec::with_capacity(items.len()); // copy: not block data (the launches' slots)
+        let mut params: Vec<[u8; ConsolidateP::SIZE]> = Vec::with_capacity(items.len()); // copy: not block data (the launches' params)
+        let made = (|| {
+            for ((t, runs), &n) in items.iter().zip(&sizes) {
+                let out = dir.make_placed(t.shape.placement, kind::FACTS, out_bytes(n), layer_room(&t.shape, n))?;
+                slots.push([*runs, out, dir.make(kind::CONTROL, CONTROL_BYTES), scratch_slot(dir, n)]);
+                if let Some(h) = t.head {
+                    dir.refer(out, h, BODY_AT)?;
+                }
+                let mut p = [0u8; ConsolidateP::SIZE];
+                ConsolidateP { below: t.head.map_or(NONE, |h| h.0), pad: 0 }.write(&mut p);
+                params.push(p);
+            }
+            Ok::<_, String>(())
+        })();
+        let run = made.and_then(|()| {
+            let wide: Vec<(&[BlockId], &[u8])> = slots.iter().zip(&params).map(|(s, p)| (&s[..], &p[..])).collect(); // copy: not block data (the launch's instances)
+            ops.run_wide(dir, &CONSOLIDATE, &wide, tiling)
+        });
+        let mut codes = Vec::with_capacity(slots.len()); // copy: not block data (each launch's refusal and roll-up)
+        for s in &slots {
+            if run.is_ok() {
+                let l = dir.read("commit", &[s[2]])?;
+                codes.push((refused(l.block(0)), due(l.block(0))));
+            }
+            for &b in &[s[0], s[2], s[3]] {
+                dir.release(b);
+            }
         }
-        let ctl = dir.make(kind::CONTROL, CONTROL_BYTES);
-        let scratch = scratch_slot(dir, n);
-        let mut params = [0u8; ConsolidateP::SIZE];
-        ConsolidateP { below: self.head.map_or(NONE, |h| h.0), pad: 0 }.write(&mut params);
-        let run = ops.run(dir, &CONSOLIDATE, &[runs, out, ctl, scratch], &params, tiling);
-        let (code, due) = {
-            let l = dir.read("commit", &[ctl])?;
-            (refused(l.block(0)), due(l.block(0)))
-        };
-        dir.release(runs);
-        dir.release(ctl);
-        dir.release(scratch);
-        if let Err(e) = run {
-            dir.release(out);
+        // A runs block whose launch was never made.
+        for (_, r) in items.iter().skip(slots.len()) {
+            dir.release(*r);
+        }
+        let refusal = codes.iter().find(|c| c.0 != 0).map(|c| c.0);
+        if let Err(e) = run.and_then(|()| refusal.map_or(Ok(()), |code| Err(format!("consolidate refused the run's change: {}", refusal_of(code))))) {
+            slots.iter().for_each(|s| dir.release(s[1]));
             return Err(e);
         }
-        if code != 0 {
-            dir.release(out);
-            return Err(format!("consolidate refused the run's change: {}", match code {
-                1 => "a row's diffs sum past ±1",
-                2 => "a row gone is not live in the trace",
-                3 => "a row added is already live in the trace",
-                4 => "a key is live at two levels (0364: a rewrite kills the old level's row)",
-                _ => "an unknown refusal",
-            }));
+        for ((t, _), (s, &(_, due))) in items.iter_mut().zip(slots.iter().zip(&codes)) {
+            let out = s[1];
+            dir.freeze(out)?;
+            if let Some(h) = t.head {
+                dir.release(h);
+            }
+            t.head = Some(out);
+            if t.roll == RollUp::Geometric && due >= 2 {
+                t.roll_up(ops, dir, due as u32, tiling)?;
+            }
         }
-        dir.freeze(out)?;
-        if let Some(h) = self.head {
-            dir.release(h);
+        Ok(())
+    }
+
+    /// Writes `pairs` into the trace's open runs, as the run makes them (`now` reads them; `commit_open` commits them).
+    /// Past their room, what is open is committed, and the next pairs go into runs of twice the room.
+    pub fn write<R: AsRef<[i64]>>(&mut self, ops: &Runner, dir: &mut Directory, pairs: &[(R, i32)]) -> Result<(), String> {
+        let r = match self.written {
+            Some(r) => {
+                let (len, cap) = {
+                    let l = dir.read("a trace's open runs", &[r])?;
+                    let runs = Runs::new(l.block(0));
+                    (runs.len(), runs.head.cap as usize)
+                };
+                if len + pairs.len() <= cap {
+                    r
+                } else {
+                    self.written = None;
+                    self.commit(ops, dir, r, Tiling::WHOLE)?;
+                    let r = self.open(dir, (2 * cap).max(pairs.len()));
+                    self.written = Some(r);
+                    r
+                }
+            }
+            None => {
+                let r = self.open(dir, FIRST_WRITTEN.max(pairs.len()));
+                self.written = Some(r);
+                r
+            }
+        };
+        let b = dir.block(r).ok_or("a trace's open runs, held by nothing")?;
+        let pin = rerail_blocks::region::pin_block(&b, "a trace's open runs", true)?;
+        let w = rerail_blocks::layer::RunsW::new(&pin);
+        for (row, diff) in pairs {
+            w.push(row.as_ref(), *diff).ok_or("a trace's open runs, full")?;
         }
-        self.head = Some(out);
-        if self.roll == RollUp::Geometric && due >= 2 {
-            return self.roll_up(ops, dir, due as u32, tiling);
+        Ok(())
+    }
+
+    /// Its open runs, taken (`None`: nothing written since the last commit): the caller commits them
+    /// (`commit_wide`) or lets them go.
+    pub fn take_written(&mut self) -> Option<BlockId> {
+        self.written.take()
+    }
+
+    /// The sum of the diffs its open runs hold: how many rows the run's writes add, net.
+    pub fn written_diff(&self, dir: &Directory) -> Result<i64, String> {
+        let Some(r) = self.written else { return Ok(0) };
+        let l = dir.read("a trace's open runs", &[r])?;
+        let runs = Runs::new(l.block(0));
+        Ok((0..runs.len()).map(|i| i64::from(runs.diff(i))).sum())
+    }
+
+    /// Whether it holds rows written and not committed.
+    pub fn is_written(&self) -> bool {
+        self.written.is_some()
+    }
+
+    /// Each trace's open runs that hold rows committed, in one launch (`commit_wide`); empty ones let go.
+    pub fn commit_open(ops: &Runner, dir: &mut Directory, traces: &mut [&mut Trace], tiling: Tiling) -> Result<(), String> {
+        let mut items = Vec::with_capacity(traces.len()); // copy: not block data (the traces to commit)
+        for t in traces.iter_mut() {
+            if let Some(r) = t.take_written() {
+                if holds_rows(dir, r)? {
+                    items.push((&mut **t, r));
+                } else {
+                    dir.release(r);
+                }
+            }
         }
-        Ok(out)
+        if items.is_empty() {
+            return Ok(());
+        }
+        Trace::commit_wide(ops, dir, &mut items, tiling)
+    }
+
+    /// The first row whose leading columns are `key` in the trace as the run has it now: at its head, then each pair
+    /// its open runs hold, in order (a row gone, a row come), read where they lie.
+    pub fn now(&self, dir: &Directory, key: &[i64]) -> Result<Option<Row>, String> {
+        let mut row = self.probe(dir, self.head, key)?;
+        if let Some(r) = self.written {
+            let l = dir.read("a trace's open runs", &[r])?;
+            let runs = Runs::new(l.block(0));
+            let a = self.shape.arity();
+            for i in (0..runs.len()).filter(|&i| key.iter().enumerate().all(|(c, &k)| runs.get(i, c) == k)) {
+                let x: Row = (0..a).map(|c| runs.get(i, c)).collect();
+                if runs.diff(i) > 0 {
+                    row = Some(x);
+                } else if row == Some(x) {
+                    row = None;
+                }
+            }
+        }
+        Ok(row)
     }
 
     /// Rolls the newest `count` layers up into one (`merge`), over the layer below them; the merged generations are let

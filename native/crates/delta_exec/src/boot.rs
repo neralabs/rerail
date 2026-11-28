@@ -65,6 +65,9 @@ pub struct DocSet {
     pub tape: Trace,
     /// The last run's pins, kept (`Pins::keep`).
     kept: Option<BlockId>,
+    /// The asks' head the set was last read against (`forget_unasked`; `None`: never): every document read since was
+    /// asked there, so while the asks stay at it no document is unasked.
+    covered: Option<Option<BlockId>>,
 }
 
 impl DocSet {
@@ -72,7 +75,7 @@ impl DocSet {
     /// lasts; `kept` the pins block that run left (let go when the next run keeps its own).
     pub fn new(world: World, dir: &Directory, head: Option<BlockId>, kept: Option<BlockId>) -> Result<DocSet, String> {
         let tape = Trace::new(&tape_shape())?.with_roll_up(RollUp::Never).resumed(dir.lasting(), head);
-        Ok(DocSet { world, tape, kept })
+        Ok(DocSet { world, tape, kept, covered: None })
     }
 
     /// The row of the document at `path`, by its path's symbol (the set's index on its path), when it has one.
@@ -94,7 +97,15 @@ impl DocSet {
     /// whose document no ask holds (`How::UNMATCHED`), their documents into a parts block; then each such document's
     /// rows retracted where the set keeps them, and its places, by `drop_parts` over that block.
     pub fn forget_unasked(&mut self, bench: &mut Bench, asks: Option<&Trace>) -> Result<(), String> {
-        let Some(h) = self.tape.head() else { return Ok(()) };
+        // Asks where the set was last read against them: the set holds only what they ask (each read is of an ask).
+        let at = asks.and_then(Trace::head);
+        if self.covered == Some(at) {
+            return Ok(());
+        }
+        let Some(h) = self.tape.head() else {
+            self.covered = Some(at);
+            return Ok(());
+        };
         let n = self.tape.reading(&bench.dir, Some(h), |s| Read::end(s).get() as usize)?;
         let a = Side { before: None, after: Some(h), arity: TAPE_ARITY, col: 0 };
         let b = asks.map(|t| Side { before: None, after: t.head(), arity: 1, col: 0 });
@@ -122,6 +133,9 @@ impl DocSet {
         };
         let dropped = self.drop_from(bench, &parts);
         parts.release(&mut bench.dir);
+        if dropped.is_ok() {
+            self.covered = Some(at);
+        }
         dropped
     }
 
@@ -177,6 +191,7 @@ impl DocSet {
             }
         };
         if doc.is_identity() {
+            self.commit_read(bench, leaves, None)?;
             return Ok(doc);
         }
         let (s, t) = (doc.after.source.words(), doc.after.tape.words());
@@ -206,8 +221,36 @@ impl DocSet {
         };
         // The one not committed let go: the opened runs, when the set was empty and the answer is its change.
         bench.dir.release(if runs == given { opened } else { given });
-        self.tape.commit(&bench.ops, &mut bench.dir, runs, Tiling::WHOLE)?;
+        self.commit_read(bench, leaves, Some(runs))?;
         Ok(doc)
+    }
+
+    /// A read's writes committed in one launch (`Trace::commit_wide`): the blobs it housed, the answers and places it
+    /// kept, the leaves it read so far (the run's next in runs of their own) and the document set's change `tape`.
+    fn commit_read(&mut self, bench: &mut Bench, leaves: &mut LeavesW, tape: Option<BlockId>) -> Result<(), String> {
+        let Bench { ops, dir, blobs, .. } = &mut *bench;
+        let w = &mut self.world;
+        let mut items: Vec<(&mut Trace, BlockId)> = Vec::new(); // copy: not block data (the traces to commit)
+        for t in [blobs.rows_mut(), &mut w.answers, &mut w.places] {
+            if let Some(r) = t.take_written() {
+                if crate::trace::holds_rows(dir, r)? {
+                    items.push((t, r));
+                } else {
+                    dir.release(r);
+                }
+            }
+        }
+        if crate::trace::holds_rows(dir, leaves.runs)? {
+            let next = w.leaves.open(dir, 64);
+            items.push((&mut w.leaves, std::mem::replace(&mut leaves.runs, next)));
+        }
+        if let Some(r) = tape {
+            items.push((&mut self.tape, r));
+        }
+        if items.is_empty() {
+            return Ok(());
+        }
+        Trace::commit_wide(ops, dir, &mut items, Tiling::WHOLE)
     }
 
     /// Every document of the set resident (B§8's `world.tape`: a tape read where the residency holds it), its slabs
@@ -233,7 +276,9 @@ impl DocSet {
                 let row = probe(&bench.dir, &self.tape, &[d])?.ok_or("a document the set names, its row")?;
                 self.world.resident(&bench.ops, &mut bench.dir, &mut bench.blobs, d, row_blobs(&row).0)?;
             }
-            blocks.each(&bench.dir, &mut |b| bench.dir.touch(BlockId(b as u32)))
+            blocks.each(&bench.dir, &mut |b| bench.dir.touch(BlockId(b as u32)))?;
+            // The blobs loaded, housed, committed before a launch reads their rows.
+            bench.blobs.commit(&bench.ops, &mut bench.dir)
         })();
         blocks.release(&mut bench.dir);
         missing.release(&mut bench.dir);

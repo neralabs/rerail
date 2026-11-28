@@ -811,6 +811,7 @@ pub fn layout() -> Vec<(&'static str, usize)> {
         ("DOCS_LEN_AT", k0_twin::DOCS_LEN_AT),
         ("DOCS_N_AT", k0_twin::DOCS_N_AT),
         ("DOCS_MISSING_AT", k0_twin::DOCS_MISSING_AT),
+        ("DOCS_NODES_AT", k0_twin::DOCS_NODES_AT),
         ("DOCS_AT", k0_twin::DOCS_AT),
         ("DOC_WORDS", k0_twin::DOC_WORDS),
         ("K0_RELATIONS", k0_twin::R),
@@ -900,9 +901,7 @@ pub fn layout_h() -> String {
         s += &format!("#define {name} {v}u\n");
     }
     // The signed ones, as their bits: `k0`'s no document.
-    for (name, v) in [("NO_DOC", k0_twin::NO_DOC)] {
-        s += &format!("#define {name} ((int64_t){:#x}ull)\n", v as u64);
-    }
+    s += &format!("#define NO_DOC ((int64_t){:#x}ull)\n", k0_twin::NO_DOC as u64);
     s
 }
 

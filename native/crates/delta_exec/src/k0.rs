@@ -190,6 +190,8 @@ pub struct K0Doc {
 pub struct DocsIn {
     pub first: BlockId,
     pub n: usize,
+    /// A bound on its documents' nodes (`docs_of`'s), so on each K-form relation's rows of them.
+    pub nodes: u64,
     holders: Option<BlockId>,
 }
 
@@ -283,16 +285,16 @@ impl DocsIn {
                 DocsOfP { blobs: u64::from(b.0), module: cols.module as u32, source: cols.source as u32, tape: cols.tape as u32, syms: cols.syms as u32 }.write(&mut p);
                 ops.run(dir, &DOCS_OF, &[rows, b, docs, list], &p, Tiling::WHOLE)?;
             }
-            let (n, missing) = {
+            let (n, missing, nodes) = {
                 let l = dir.read("k0_pass's docs", &[docs])?;
-                (twin::docs_n(l.block(0)), twin::docs_missing(l.block(0)))
+                (twin::docs_n(l.block(0)), twin::docs_missing(l.block(0)), twin::docs_nodes(l.block(0)))
             };
             if let Some(d) = missing {
                 return Err(format!("document {d}: a blob the tape port names, which nothing holds"));
             }
-            Ok(n)
+            Ok((n, nodes))
         })();
-        let n = match made {
+        let (n, nodes) = match made {
             Ok(n) => n,
             Err(e) => {
                 dir.release(list);
@@ -300,15 +302,15 @@ impl DocsIn {
                 return Err(e);
             }
         };
-        DocsIn::bound(dir, docs, list, n)
+        DocsIn::bound(dir, docs, list, n, nodes)
     }
 
     /// The open docs block `docs` of `n` documents, sealed, its blocks (the list `list` names) bound, and frozen.
-    fn bound(dir: &mut Directory, docs: BlockId, list: BlockId, n: usize) -> Result<DocsIn, String> {
+    fn bound(dir: &mut Directory, docs: BlockId, list: BlockId, n: usize, nodes: u64) -> Result<DocsIn, String> {
         let holders = bind(dir, docs, list);
         dir.release(list);
         match holders.and_then(|h| dir.freeze(docs).map(|()| h)) {
-            Ok(holders) => Ok(DocsIn { first: docs, n, holders }),
+            Ok(holders) => Ok(DocsIn { first: docs, n, nodes, holders }),
             Err(e) => {
                 dir.release(docs);
                 Err(e)
@@ -320,6 +322,11 @@ impl DocsIn {
     #[cfg(any(test, feature = "test-hooks"))]
     pub fn of(dir: &mut Directory, docs: &[K0Doc]) -> Result<DocsIn, String> {
         let id = dir.make(kind::CONTROL, twin::docs_bytes(docs.len().max(1)));
+        // Their nodes, as their symbols blocks count them.
+        let mut nodes = 0u64;
+        for d in docs {
+            nodes += rerail_delta_twins::intern::count(dir.read("a document's symbols", &[d.syms])?.block(0)) as u64;
+        }
         let list = Parts::write(dir, 3 * docs.len(), |put| {
             for d in docs {
                 for (b, at) in [(d.src.block, d.src.at), (d.tape.block, d.tape.at), (d.syms, rerail_blocks::gens::BODY_AT)] {
@@ -333,9 +340,10 @@ impl DocsIn {
                 twin::put_doc(b, i, &twin::DocAt { module: d.module, source: d.src.block.0, tape: d.tape.block.0, syms: d.syms.0, src: (d.src.at as u64, d.src.len as u64), at: (d.tape.at as u64, d.tape.len as u64) });
             }
             twin::seal_docs(b, docs.len());
+            rerail_blocks::gens::set_word::<u64>(b, twin::DOCS_NODES_AT, nodes);
         })?;
         let list_id = list.id();
-        DocsIn::bound(dir, id, list_id, docs.len())
+        DocsIn::bound(dir, id, list_id, docs.len(), nodes)
     }
 
     pub fn is_empty(&self) -> bool {

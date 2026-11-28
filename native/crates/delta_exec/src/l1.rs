@@ -241,9 +241,10 @@ impl L1 {
         // The room the run needs (`room_of`), so it never outgrows its runs and runs again: each gone document's kept
         // rows, from the cache's sizes, and each read one's nodes, a bound on its rows. A cache read as ∅ names no
         // gone document's: their retractions are then bounded by each kept relation's rows, read at its head.
+        // With no document gone, the room is the read ones' nodes, which `docs_of` bounded: no launch to find it.
         let sized = cache.read(cx)?.is_some();
         let cache = cache.write(cx)?;
-        let need = room_of(cx.ops, cx.dir, cache, parts, docs)?;
+        let need = if parts.is_empty() { [docs.nodes; RELATIONS.len()] } else { room_of(cx.ops, cx.dir, cache, parts, docs)? };
         for (k, n) in need.into_iter().enumerate() {
             let kept = match out.kept(L1Ports::relation(k)) {
                 Some(h) if !sized && !parts.is_empty() => {

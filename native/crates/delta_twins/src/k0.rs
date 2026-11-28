@@ -183,13 +183,15 @@ pub const CACHE: usize = RUNS + R;
 pub const LANG: usize = CACHE + 1;
 
 /// A docs block's words, at `BODY_AT`: its body's length, its documents' count, the first document a blob of which no
-/// blobs' row names (`NO_DOC`: none; `docs_of`'s); then each document's: its module, its source's, its tape's and its
-/// symbols' blocks, where its source and its tape lie in theirs. The blocks they name are bound to the launch by
+/// blobs' row names (`NO_DOC`: none; `docs_of`'s), a bound on their nodes (each symbols blob's eighth: a node takes a
+/// word of it); then each document's: its module, its source's, its tape's and its symbols' blocks, where its source
+/// and its tape lie in theirs. The blocks they name are bound to the launch by
 /// reference, not by the docs block (it refers to at most `MAX_REFS`).
 pub const DOCS_LEN_AT: usize = BODY_AT;
 pub const DOCS_N_AT: usize = BODY_AT + 8;
 pub const DOCS_MISSING_AT: usize = BODY_AT + 16;
-pub const DOCS_AT: usize = BODY_AT + 24;
+pub const DOCS_NODES_AT: usize = BODY_AT + 24;
+pub const DOCS_AT: usize = BODY_AT + 32;
 pub const DOC_WORDS: usize = 8;
 pub const NO_DOC: i64 = i64::MIN;
 
@@ -215,6 +217,17 @@ pub fn open_docs(bytes: &mut [u8]) {
     set_word::<u64>(bytes, DOCS_LEN_AT, docs_bytes(0) as u64);
     set_word::<u64>(bytes, DOCS_N_AT, 0);
     set_word::<i64>(bytes, DOCS_MISSING_AT, NO_DOC);
+    set_word::<u64>(bytes, DOCS_NODES_AT, 0);
+}
+
+/// A sealed docs block's bound on its documents' nodes (`docs_of`'s: a K-form relation's rows of them are no more).
+pub fn docs_nodes(bytes: &[u8]) -> u64 {
+    word::<u64>(bytes, DOCS_NODES_AT)
+}
+
+/// The bound on a document's nodes its symbols blob's length gives: a node takes a word of it.
+pub fn syms_nodes(len: u64) -> u64 {
+    len / 8
 }
 
 /// Document `d` at place `i` of an open docs block.
@@ -511,7 +524,7 @@ fn docs_of_rows(c: &mut Ctx<'_, '_, '_>, _: Tile) {
     let ([rows], [docs, blocks]) = c.views([D_ROWS], [D_DOCS, D_BLOCKS]);
     let rows = Runs::new(rows);
     let words = |i: usize, at: u32| core::array::from_fn::<i64, 4, _>(|k| rows.get(i, at as usize + k));
-    let (mut n, mut nb) = (0usize, 0usize);
+    let (mut n, mut nb, mut nodes) = (0usize, 0usize, 0u64);
     for i in (0..rows.len()).filter(|&i| rows.diff(i) > 0) {
         let module = rows.get(i, p.module as usize);
         let (Some(s), Some(t), Some(y)) = (blob_at(&blobs, words(i, p.source)), blob_at(&blobs, words(i, p.tape)), blob_at(&blobs, words(i, p.syms))) else {
@@ -522,12 +535,14 @@ fn docs_of_rows(c: &mut Ctx<'_, '_, '_>, _: Tile) {
         };
         put_doc(docs, n, &DocAt { module, source: s.0, tape: t.0, syms: y.0, src: (s.1, s.2), at: (t.1, t.2) });
         n += 1;
+        nodes += syms_nodes(y.2);
         for (b, at) in [(s.0, s.1), (t.0, t.1), (y.0, BODY_AT as u64)] {
             crate::drop::put_part(blocks, nb, (i64::from(b) << 32) | at as i64);
             nb += 1;
         }
     }
     seal_docs(docs, n);
+    set_word::<u64>(docs, DOCS_NODES_AT, nodes);
     crate::drop::seal_parts(blocks, nb);
 }
 

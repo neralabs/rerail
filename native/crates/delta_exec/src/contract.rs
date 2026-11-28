@@ -692,18 +692,19 @@ impl Instance {
                 again += 1;
                 continue;
             }
+            // Every output and ask that got rows committed in one launch, the empty ones let go.
             let commits = self.outs.iter_mut().zip(out.runs.iter().copied().map(Some)).chain(self.asks.iter_mut().flatten().zip(asks.runs.iter().copied().filter(Option::is_some)));
+            let mut items = Vec::new(); // copy: not block data (the traces to commit)
             for (t, r) in commits {
                 let r = r.expect("an asked port's runs");
-                let n = {
-                    let l = cx.dir.read("an operator's output", &[r])?;
-                    Runs::new(l.block(0)).len()
-                };
-                if n == 0 {
-                    cx.dir.release(r);
+                if crate::trace::holds_rows(cx.dir, r)? {
+                    items.push((t, r));
                 } else {
-                    t.commit(cx.ops, cx.dir, r, Tiling::WHOLE)?;
+                    cx.dir.release(r);
                 }
+            }
+            if !items.is_empty() {
+                Trace::commit_wide(cx.ops, cx.dir, &mut items, Tiling::WHOLE)?;
             }
             if cache.begun() {
                 self.cache.commit(cx.ops, cx.dir, to)?;
