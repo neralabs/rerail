@@ -12,14 +12,24 @@ const isWrite = (path: string, method: string) => (request: Request) => request.
 test.describe("Merge Assist", () => {
   test("with the experiment off, the page says so and the sidebar has no Merge Assist", async ({ page, rerail }) => {
     // Only the merge-assist scenario's daemon runs with RERAIL_EXPERIMENTAL_MERGE_ASSIST=1.
-    const offRead = page.waitForResponse(response => new URL(response.url()).pathname === "/api/merge-assist");
+    const mergeAssistRequests: string[] = [];
+    const clientErrors: string[] = [];
+    page.on("request", request => {
+      if (new URL(request.url()).pathname === "/api/merge-assist") mergeAssistRequests.push(request.url());
+    });
+    page.on("response", response => {
+      if (response.status() >= 400 && response.status() < 500) clientErrors.push(`${response.status()} ${response.url()}`);
+    });
+    const health = page.waitForResponse(response => new URL(response.url()).pathname === "/healthz");
+    const repositories = page.waitForResponse(response => new URL(response.url()).pathname === "/api/repositories");
     await page.goto(await rerail.dashboard("mature", { hash: "merge" }));
-    const answer = await offRead;
-    expect([answer.status(), (await answer.json() as { error: string }).error]).toEqual([404, "experimental-off"]);
+    await Promise.all([health, repositories]);
     await expect(page.locator("#content")).toContainText("RERAIL_EXPERIMENTAL_MERGE_ASSIST=1");
     await expect(page.locator('#content [data-act="maon"]')).toHaveCount(0);
     await expect(page.locator("#sidenav")).toContainText("By session");
     await expect(page.locator('#sidenav [data-i="merge"]')).toHaveCount(0);
+    expect(mergeAssistRequests).toEqual([]);
+    expect(clientErrors).toEqual([]);
   });
 
   test("a person turns it on from the page, and off again", async ({ page, rerail }) => {

@@ -70,7 +70,7 @@ describe("a browser without the dashboard's access capability", () => {
     ["packs", ["/api/rules/activity"]],
     ["history", ["/api/rules/activity"]],
     ["sessions", ["/api/sessions"]],
-    ["merge", ["/api/merge-assist"]],
+    ["merge", []],
     ["create", []],
     ["settings", []],
   ])("shows the access page in place of %s once its reads are refused", async (view, own) => {
@@ -80,6 +80,7 @@ describe("a browser without the dashboard's access capability", () => {
     await refresh();
 
     expect(requested).toEqual(expect.arrayContaining(["/api/repository", "/api/repository/rules", "/api/rule-packs", ...own]));
+    if (view === "merge") expect(requested).not.toContain("/api/merge-assist");
     expect(data.accessRequired).toBe(true);
     expect(data.disconnected).toBe(false);
     expect(pageKey()).toBe("access");
