@@ -107,6 +107,15 @@ function rulesLink(place: Place): string {
   return `  <daemon>/?${new URLSearchParams({ repository: place.repositoryKey, checkout: place.repo })}#rules`;
 }
 
+/** What daemon-port.json, the port a start without `--port` comes back on, holds in the place's Rerail home. */
+function rememberedPort(place: Place): string {
+  try {
+    return readFileSync(join(place.home, "daemon-port.json"), "utf8").trim();
+  } catch {
+    return "no file";
+  }
+}
+
 /**
  * A copy of this package another daemon runs from, as a version `rerail update` replaced runs from its own folder: its
  * own `dist` and `package.json`, and links to the rest.
@@ -188,14 +197,16 @@ describe("rerail start in a repository set up before, with and without --json", 
   }, TEST_TIMEOUT_MS);
 
   // OMP's and Pi's `/rerail-start` runs `rerail start --json` from the extension's package, then the extension attaches
-  // its session again, which replaces a daemon of another package with its own. The person opens the link next.
+  // its session again, which replaces a daemon of another package with its own. The person opens the link next. The
+  // replacement only tries the old daemon's port, a throwaway one, so later starts keep the port the home remembers.
   test("in OMP and Pi, the link /rerail-start shows still answers once the extension attaches again", async () => {
     const place = makePlace();
     expect((await rerail(otherPackage(place), place, ["daemon", "start", "--port", "0"])).code).toBe(0);
     const step = await rerail(PACKAGE_ROOT, place, ["start", "--json"]);
     const link = shownLines(step.stdout, true).map(line => line.trim()).find(line => line.startsWith("http")) ?? `no link in ${step.stdout}`;
+    const remembered = rememberedPort(place);
     await attachAsTheExtension(place);
-    expect({ link: await answerOf(link), daemon: daemonServing(place, link) })
-      .toEqual({ link: "answers", daemon: "this package's, on the link's origin" });
+    expect({ link: await answerOf(link), daemon: daemonServing(place, link), remembered: rememberedPort(place) })
+      .toEqual({ link: "answers", daemon: "this package's, on the link's origin", remembered });
   }, TEST_TIMEOUT_MS);
 });

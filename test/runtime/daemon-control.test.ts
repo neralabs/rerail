@@ -486,12 +486,13 @@ describe("Rerail daemon control", () => {
 
   // The start a hook makes before it sends its settings replaces a running daemon of another package. One found in its
   // start that answers as another package's is replaced the same way, once it answers, never used. OMP's and Pi's attach
-  // takes any port and launches the replacement on the port the replaced daemon had, so a dashboard link shown for that
-  // daemon still answers; a hook's start names no port, and the daemon takes the one it remembers.
+  // takes any port and launches the replacement to try the port the replaced daemon had first, so a dashboard link shown
+  // for that daemon still answers, and to take a free one where that port is held; a hook's start names no port, and the
+  // daemon takes the one it remembers.
   it.each([
-    ["a hook's start, which names no port", {}, false],
-    ["OMP's and Pi's attach, which takes any port", { port: 0 }, true],
-  ])("%s: replaces a daemon of another package found in its start once it answers, as it replaces a running one", async (_start, port, onFoundPort) => {
+    ["a hook's start, which names no port", {}, "unset", false],
+    ["OMP's and Pi's attach, which takes any port", { port: 0 }, "0", true],
+  ])("%s: replaces a daemon of another package found in its start once it answers, as it replaces a running one", async (_start, port, portArgument, foundPortFirst) => {
     const daemon = await recordedStartingDaemon({ packageRoot: "/older/rerail" });
     let stopped = false;
     const signals: string[] = [];
@@ -504,7 +505,8 @@ describe("Rerail daemon control", () => {
     const launched: string[] = [];
     const launch = (_command: string, args: readonly string[]): StartedChild => {
       const child = Object.assign(new EventEmitter(), { pid: 4242, unref() {} });
-      launched.push(`${child.pid} --port ${args.includes("--port") ? args[args.indexOf("--port") + 1] : "unset"}`);
+      const value = (flag: string): string => (args.includes(flag) ? args[args.indexOf(flag) + 1]! : "unset");
+      launched.push(`${child.pid} --port ${value("--port")} --prefer-port ${value("--prefer-port")}`);
       setImmediate(() => child.emit("exit", 3, null));
       return child;
     };
@@ -513,7 +515,7 @@ describe("Rerail daemon control", () => {
     try {
       await expect(startDaemonForPackage(control, { dev: true, ...port }, machine)).rejects.toThrow("Rerail daemon exited with code 3 before it was ready");
       expect(signals).toEqual([`${process.pid} SIGTERM`]);
-      expect(launched).toEqual([`4242 --port ${onFoundPort ? daemon.port : "unset"}`]);
+      expect(launched).toEqual([`4242 --port ${portArgument} --prefer-port ${foundPortFirst ? daemon.port : "unset"}`]);
     } finally {
       daemon.close();
     }

@@ -583,11 +583,13 @@ export interface DaemonLaunchOptions {
   tls?: DaemonTlsFiles;
   /** Serve plain http off loopback anyway; passed through as `--insecure-http`. See `parseDaemonTransport`. */
   insecureHttp?: boolean;
-  /**
-   * Passed through as `--port`: 0 takes a free port, but where `startDaemonForPackage` replaces a daemon, the port that
-   * daemon had. Unset, the daemon takes the port it remembers, else 4737, else a free one.
-   */
+  /** Passed through as `--port`: 0 takes a free port. Unset, the daemon takes the port it remembers, else 4737, else a free one. */
   port?: number;
+  /**
+   * Passed through as `--prefer-port`: the port a daemon started in place of another tries first, the one that daemon
+   * had, before it goes on as `port` says; an explicit `port` other than 0 wins.
+   */
+  preferredPort?: number;
   cwd?: string;
   env?: NodeJS.ProcessEnv;
 }
@@ -1599,8 +1601,10 @@ export async function startDaemonForPackage(
 /**
  * The daemon a hook's start found running (`found`), kept when it was launched from the hook's package, else ended and
  * replaced by one launched from it: always for a daemon of a release before the engine's proof ({@link OlderDaemon}).
- * A caller that takes any port (`port: 0`, as OMP's and Pi's attach does) launches it on the port `found` had, so a
- * dashboard link shown for `found` still answers: `/rerail-start` shows one just before the extension attaches again.
+ * A caller that takes any port (`port: 0`, as OMP's and Pi's attach does) launches it to try the port `found` had first
+ * ({@link DaemonLaunchOptions.preferredPort}), so a dashboard link shown for `found` still answers: `/rerail-start` shows
+ * one just before the extension attaches again. Where another program holds that port it takes a free one, and as on
+ * any port it remembers neither, so later starts keep the port the person or the default made theirs.
  */
 async function keptOrReplaced(
   control: DaemonControl,
@@ -1612,7 +1616,7 @@ async function keptOrReplaced(
     return { started: false, daemon: { state: found.state, health: found.health } };
   }
   await stopFoundDaemon(control.home, found, machine);
-  return await spawnDaemon(control, options.port === 0 ? { ...options, port: found.state.port } : options, machine);
+  return await spawnDaemon(control, options.port === 0 ? { ...options, preferredPort: found.state.port } : options, machine);
 }
 
 /**
@@ -1883,6 +1887,7 @@ function daemonArguments(control: DaemonControl, options: DaemonLaunchOptions, s
     ...optionArguments("--tls-key", options.tls?.keyFile),
     ...optionArguments("--insecure-http", options.insecureHttp),
     ...optionArguments("--port", options.port),
+    ...optionArguments("--prefer-port", options.preferredPort),
   ];
 }
 
