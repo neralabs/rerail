@@ -592,6 +592,13 @@ impl ProgramPass for Hide {
             }
             out.finish()?;
         }
+        // Each shown column stated (`host_columns`): its values lie below the bound of a node, so the planner leaves
+        // out a copied bound its reader already holds (`keeps::inline`'s `bound_by_reader`). A document's key is below it
+        // too.
+        let below = rerail_blocks::located::Located::new(bound, 0).0;
+        let mut words: Vec<(String, String)> = host.iter().flat_map(|(r, cols)| cols.iter().map(move |c| (r.clone(), format!("rr_below_{c}_{below}")))).collect();
+        words.sort();
+        b.fields().add_qualifiers(&words);
         if let Some(asked) = asked {
             b.fields().set_asked(&asked);
         }

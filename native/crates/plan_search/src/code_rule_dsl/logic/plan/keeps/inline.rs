@@ -27,6 +27,7 @@ pub struct Inlined {
 /// still reads one.
 pub fn inline(base: &Arc<Version>, order: &[RuleId], inline: &BTreeSet<String>) -> Result<Inlined, String> {
     let inline_ids: BTreeSet<RelId> = inline.iter().filter_map(|r| base.rel(r)).collect();
+    let below = below(base);
     // The program's rules in the tree pass's order (`order`, the program's; copies where their reader was), with
     // their origins.
     let mut seq: Vec<(RuleId, RuleId, BTreeSet<String>)> = order.iter().map(|&id| (id, id, BTreeSet::new())).collect();
@@ -52,7 +53,7 @@ pub fn inline(base: &Arc<Version>, order: &[RuleId], inline: &BTreeSet<String>) 
             let reader = cur.rule(id).expect("a rule of the pass");
             let ds: Vec<RuleRef<'_>> = defs[&read.rel()].iter().map(|&d| cur.rule(d).expect("a def")).collect();
             let room = (super::RULE_COPIES + 1).saturating_sub(of_rule[&origin]);
-            match unfold(&mut b, &cur, reader, at, read, &ds, pass, room)? {
+            match unfold(&mut b, &cur, reader, at, read, &ds, pass, room, &below)? {
                 Some(copies) => {
                     let n = of_rule.get_mut(&origin).expect("its origin's count");
                     *n = (*n + copies.len()).saturating_sub(1);
@@ -100,6 +101,39 @@ pub fn inline(base: &Arc<Version>, order: &[RuleId], inline: &BTreeSet<String>) 
     Ok(Inlined { v: cur, rules: seq, unfinished })
 }
 
+/// Each relation's columns whose values all lie below a value: (column, value), from its `rr_below_<column>_<value>`
+/// qualifiers. Hiding states one for each column only shown documents fill (decision 0058's bound, `hide`'s
+/// `host_columns`).
+type Below = BTreeMap<RelId, Vec<(usize, i64)>>;
+
+/// `v`'s `Below`.
+fn below(v: &Arc<Version>) -> Below {
+    let mut out = Below::new();
+    let Ok(d) = crate::code_rule_dsl::logic::program_image::manager::analysis::<super::super::fields::FieldsData>(v) else { return out };
+    for &(r, w) in d.about.qualifiers.iter() {
+        let Some((c, x)) = v.text(w).strip_prefix("rr_below_").and_then(|s| s.split_once('_')) else { continue };
+        let (Ok(c), Ok(x), Some(rel)) = (c.parse::<usize>(), x.parse::<i64>(), v.rel(v.text(r))) else { continue };
+        out.entry(rel).or_default().push((c, x));
+    }
+    out
+}
+
+/// Whether a def's literal `l` is a bound `x < c` that a positive atom of the def, or (where `x` is a head variable,
+/// `as_reader`: by the reader's slot) of the reader but the read at `at`, binds from a column whose values lie below
+/// `c` (`below`): every row of the copy passes it. `rf_fn_read` held `rf_start`'s `i < B` (`rf_start(i, r) :- node(_,
+/// i, _, r, _)`, folded in) beside `rf_bind(i, …)`, whose column holds shown nodes only, and its copy in `rf_crossing`
+/// tested every row again.
+fn bound_by_reader(reader: RuleRef<'_>, at: usize, def: RuleRef<'_>, l: LitRef<'_>, as_reader: &BTreeMap<Slot, Slot>, below: &Below) -> bool {
+    let Lit::Cmp { l: TermRef::Var(s), op: CmpOp::Lt, r: TermRef::Int(c) } = l.view() else { return false };
+    // A positive atom binding `var` from a column whose values lie below `c`.
+    let shows = |rl: LitRef<'_>, var: Slot| {
+        let Lit::Atom(a) = rl.view() else { return false };
+        !a.neg() && below.get(&a.rel()).is_some_and(|cols| cols.iter().any(|&(col, max)| max <= c && a.args().nth(col).and_then(|t| t.var()) == Some(var)))
+    };
+    // The def's own (its `rf_bind(i, …)` beside a bound an earlier unfold copied in), or the reader's but the read.
+    def.body().any(|dl| shows(dl, s)) || as_reader.get(&s).is_some_and(|&x| reader.body().enumerate().any(|(i, rl)| i != at && shows(rl, x)))
+}
+
 /// How many copies `unfold` makes of `reader`'s read at `at` of a relation whose rules are `defs`, or `None` where
 /// it makes none (`keeps::copies`): a positive read one per rule, a negated one the product of its rules'
 /// alternatives.
@@ -124,12 +158,13 @@ pub fn count(v: &Version, reader: RuleRef<'_>, at: usize, defs: &[RuleRef<'_>]) 
 pub fn copies(base: &Arc<Version>, reads: &[(RuleId, usize)], defs: &[RuleId]) -> Result<(Arc<Version>, Vec<Vec<RuleId>>), String> {
     let ds: Vec<RuleRef<'_>> = defs.iter().map(|&d| base.rule(d).expect("a def")).collect();
     let mut b = Builder::on(base);
+    let below = below(base);
     let mut out = Vec::new();
     for &(id, at) in reads {
         let reader = base.rule(id).expect("a reader");
         let read = reader.body().nth(at).and_then(|l| l.atom()).expect("a read");
         // Each read's copies within the bound a rule copied once has left in `inline` (`RULE_COPIES`).
-        out.push(unfold(&mut b, base, reader, at, read, &ds, 0, super::RULE_COPIES)?.unwrap_or_default());
+        out.push(unfold(&mut b, base, reader, at, read, &ds, 0, super::RULE_COPIES, &below)?.unwrap_or_default());
     }
     let (v, _, order) = b.finish_placing()?;
     if let Some(order) = order {
@@ -157,7 +192,7 @@ fn first_read<'v>(v: &'v Version, id: RuleId, inline: &BTreeSet<RelId>) -> Optio
 /// or `None` where a negated read is not a negation of plain literals (`keeps::unfold`), or where it would make more
 /// than `room` copies (`RULE_COPIES`: the rule then keeps its read). `fresh` names the copies' variables apart.
 #[allow(clippy::too_many_arguments)]
-fn unfold(b: &mut Builder<'_>, v: &Version, reader: RuleRef<'_>, at: usize, read: AtomRef<'_>, defs: &[RuleRef<'_>], fresh: usize, room: usize) -> Result<Option<Vec<RuleId>>, String> {
+fn unfold(b: &mut Builder<'_>, v: &Version, reader: RuleRef<'_>, at: usize, read: AtomRef<'_>, defs: &[RuleRef<'_>], fresh: usize, room: usize, below: &Below) -> Result<Option<Vec<RuleId>>, String> {
     let read_args: Vec<TermRef<'_>> = read.args().collect();
     let mut out = Vec::new();
     if !read.neg() {
@@ -170,10 +205,13 @@ fn unfold(b: &mut Builder<'_>, v: &Version, reader: RuleRef<'_>, at: usize, read
             let mut to: BTreeMap<Slot, String> = (0..def.var_count() as u32).map(|s| (Slot(s), format!("{}_i{fresh}_{n}", v.text(def.var(Slot(s)))))).collect();
             let mut eqs: Vec<(TermRef<'_>, TermRef<'_>)> = Vec::new();
             let mut matched: BTreeSet<Slot> = BTreeSet::new();
+            // The def's head variables read as the reader's, by the reader's slots.
+            let mut as_reader: BTreeMap<Slot, Slot> = BTreeMap::new();
             for (h, r) in def.head().args().zip(&read_args) {
                 match (h, *r) {
                     (_, TermRef::Wild) => {}
                     (TermRef::Var(s), TermRef::Var(x)) if matched.insert(s) => {
+                        as_reader.insert(s, x);
                         to.insert(s, v.text(reader.var(x)).to_owned());
                     }
                     _ => eqs.push((h, *r)),
@@ -188,6 +226,9 @@ fn unfold(b: &mut Builder<'_>, v: &Version, reader: RuleRef<'_>, at: usize, read
             // written once: a second `!kind(s, …)` or id bound is a step every row of the plan passes again.
             let mut rb = b.rewrite(v, reader, &mut keep).each_once();
             for l in def.body() {
+                if bound_by_reader(reader, at, *def, l, &as_reader, below) {
+                    continue;
+                }
                 rb = rb.lit_with(v, *def, l, &mut rn);
             }
             for (h, r) in eq_terms {
@@ -407,7 +448,7 @@ impl Rewrite for Renamed<'_> {
 pub fn unfolded(v: &Arc<Version>, reader: RuleRef<'_>, at: usize, defs: &[RuleRef<'_>], fresh: usize) -> Option<(Arc<Version>, Vec<RuleId>)> {
     let Lit::Atom(read) = reader.body().nth(at)?.view() else { return None };
     let mut b = Builder::on(v);
-    let made = unfold(&mut b, v, reader, at, read, defs, fresh, super::RULE_COPIES).ok()??;
+    let made = unfold(&mut b, v, reader, at, read, defs, fresh, super::RULE_COPIES, &below(v)).ok()??;
     let (out, _, order) = b.finish_placing().ok()?;
     Some((Arc::clone(&out), made.iter().map(|id| order.as_ref().map_or(*id, |o| o[id])).collect()))
 }
