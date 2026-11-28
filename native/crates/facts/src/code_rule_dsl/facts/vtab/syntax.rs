@@ -666,9 +666,11 @@ impl Source for LongTexts {
             _ => self.node_read(name, n, more).map(super::NodeRead::Value),
         }
     }
-    fn node_atom(&self, name: &str, n: i64, make: bool, held: &dyn Fn(&str) -> Option<i64>, arena: *const ()) -> Option<i64> {
-        // Its atoms the run's symbols' arena, else its atoms are another store's symbols (0706 E1).
-        (name == "rr_node_text_any" && std::ptr::addr_eq(Arc::as_ptr(&self.batch.atoms), arena)).then(|| self.text_atom_any(n, make, held)).flatten()
+    fn node_atom(&self, name: &str, n: i64, make: bool, held: &dyn Fn(&str) -> Option<i64>, table: (*const (), Option<&std::path::Path>)) -> Option<i64> {
+        // Its atoms the run's table, or of its database (one database's tables number their atoms alike); else its
+        // atoms are another store's symbols (0706 E1).
+        let ours = std::ptr::addr_eq(Arc::as_ptr(&self.batch.atoms), table.0) || table.1.is_some() && self.batch.atoms.database() == table.1;
+        (name == "rr_node_text_any" && ours).then(|| self.text_atom_any(n, make, held)).flatten()
     }
     fn rows_of_documents(&self, docs: &BTreeSet<u32>) -> Option<rerail_blocks::vector::Vector<usize>> {
         self.nodes.rows_of_documents(docs)

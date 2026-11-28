@@ -10985,9 +10985,9 @@ fn run_join_in_each_unframed(j: &JoinRule, head: usize, store: &Store, syms: &mu
                         let make = probe & PROBE_OUT == 0;
                         let syms = &cx.syms;
                         let existing = |s: &str| syms.held(s).filter(|&v| make || u32::try_from(v).is_ok());
-                        // Only where the batch's atoms are the run's symbols' arena (`Interner::atoms`).
-                        let arena = Arc::as_ptr(&syms.atoms).cast::<()>();
-                        nodes.and_then(|s| s.node_atom(name, val(slots, args[0]), make, &existing, arena))
+                        // Only where the batch's atoms are the run's symbols' table (`Interner::atoms`) or of its database.
+                        let table = (Arc::as_ptr(&syms.atoms).cast::<()>(), syms.atoms.database());
+                        nodes.and_then(|s| s.node_atom(name, val(slots, args[0]), make, &existing, table))
                     } else { None };
                     if let Some(a) = atom {
                         kinds::count_term_atom_for_tests();

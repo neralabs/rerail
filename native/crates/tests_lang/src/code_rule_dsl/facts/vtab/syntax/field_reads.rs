@@ -119,7 +119,7 @@ fn a_nodes_text_read_as_its_atom_is_the_atom_of_its_text() {
     let atom: BTreeMap<String, i64> = distinct.iter().enumerate().filter(|(i, _)| i % 3 == 0).map(|(i, t)| (t.clone(), i as i64)).collect();
     let existing = |s: &str| atom.get(s).copied();
     // The run's symbols' arena: the store's atoms, which the batch's are (`Source::node_atom` answers only there).
-    let arena = std::sync::Arc::as_ptr(&store.atoms_handle()).cast::<()>();
+    let arena = (std::sync::Arc::as_ptr(&store.atoms_handle()).cast::<()>(), None);
     let mut held = 0;
     // Twice: the second read answered from the memo.
     for _ in 0..2 {
@@ -133,7 +133,12 @@ fn a_nodes_text_read_as_its_atom_is_the_atom_of_its_text() {
     assert_eq!(texts.node_atom("rr_node_text", ids[1], false, &existing, arena), None, "another read: none");
     // A run whose symbols are another arena's reads the text: none, for a node this arena answers.
     let answered = *ids.iter().find(|&&n| texts.node_atom("rr_node_text_any", n, false, &existing, arena).is_some()).expect("a node answered");
-    assert_eq!(texts.node_atom("rr_node_text_any", answered, false, &existing, std::ptr::null()), None, "another arena's run: none");
+    assert_eq!(texts.node_atom("rr_node_text_any", answered, false, &existing, (std::ptr::null(), None)), None, "another arena's run: none");
+    // Another table of the batch's database (94df767cae): one database's tables number their atoms alike.
+    let atoms = store.atoms_handle();
+    assert!(atoms.database().is_some(), "the store's atoms are of its file");
+    let want = texts.node_atom("rr_node_text_any", answered, false, &existing, arena);
+    assert_eq!(texts.node_atom("rr_node_text_any", answered, false, &existing, (std::ptr::null(), atoms.database())), want, "its database's table: its atom");
 }
 
 /// Made where it has none (`make`), a node's text atom is the store's atom of the text `node_read` reads, for every
@@ -149,7 +154,7 @@ fn a_nodes_text_atom_made_is_the_stores_atom_of_its_text() {
     let texts = Arc::clone(&sources.iter().find(|(n, _, _)| *n == LONG_TEXT_NODES).unwrap().2);
     let ids: Vec<i64> = (0..batch.docs.len()).flat_map(|d| { let p = &batch.docs[d]; (0..p.len()).map(|l| p.global(l)).collect::<Vec<_>>() }).collect();
     let none = |_: &str| None;
-    let arena = std::sync::Arc::as_ptr(&store.atoms_handle()).cast::<()>();
+    let arena = (std::sync::Arc::as_ptr(&store.atoms_handle()).cast::<()>(), None);
     let mut made = 0;
     for _ in 0..2 {
         for &n in &ids {

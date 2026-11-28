@@ -732,7 +732,7 @@ pub fn place(shape: &Shape) -> Placement {
 }
 
 /// Whether a run bound to the CPU runs the device's join program on the host (`rerail_accel::gpu::shared::on_host`):
-/// `rerail_ukl_rust`'s `join_run`, on `rerail_simd`. `RERAIL_CPU_JOINS=scalar`, a measurement aid: the scalar joins,
+/// `rerail_ukl_rust`'s `join_program`, on `rerail_simd`. `RERAIL_CPU_JOINS=scalar`, a measurement aid: the scalar joins,
 /// as before.
 pub fn host_joins() -> bool {
     !rerail_prof::code_rule_dsl::logic::profile::setting(|| std::env::var("RERAIL_CPU_JOINS").is_ok_and(|v| v == "scalar"))

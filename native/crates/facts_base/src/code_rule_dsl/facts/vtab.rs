@@ -291,10 +291,11 @@ pub trait Source: Send + Sync {
     /// Decision 0706 E1: node `n`'s text as `name` reads it, as its value, read where the text lies, no text made: the value `held` gives
     /// it (the atom it has, or a value the reader gave it), else, with `make`, its atom made (as the `text` view's reads
     /// make it). `None` where the source has no such read, or the text has no value and none is made (a reader then
-    /// reads it by `node_read`), or where the source's atoms are not `arena` (the address of the run's symbols' atom
-    /// arena, `Interner::atoms`: a batch made over another store's atoms names another table's symbols, which the run
-    /// cannot read; the reader then reads the text).
-    fn node_atom(&self, _name: &str, _n: i64, _make: bool, _held: &dyn Fn(&str) -> Option<i64>, _arena: *const ()) -> Option<i64> { None }
+    /// reads it by `node_read`), or where the source's atoms are neither `table`'s nor of its database (`table`: the
+    /// run's symbols' atom table, `Interner::atoms`, its address and its database, `AtomTable::database`: a batch made
+    /// over another store's atoms names another table's symbols, which the run cannot read; the reader then reads the
+    /// text. One database's tables number their atoms alike).
+    fn node_atom(&self, _name: &str, _n: i64, _make: bool, _held: &dyn Fn(&str) -> Option<i64>, _table: (*const (), Option<&std::path::Path>)) -> Option<i64> { None }
     /// Column `c`'s rows a value, where the source knows them without reading its rows (`docof`'s documents: each
     /// one's nodes); `None` otherwise.
     fn column_counts(&self, _c: usize) -> Option<Vec<(i64, u64)>> { None }
